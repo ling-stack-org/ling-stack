@@ -260,10 +260,10 @@ function buildRunLeaseInputs(input: {
     const scope = input.channel?.runtimePolicy.writeLockScope ?? "boundPath";
     if (scope === "workspace") {
       leases.push({ ...base, resourceType: "workspace", resourceKey: DEFAULT_WORKSPACE_ID });
-    } else if (scope === "channel" || !input.channel?.boundPath) {
+    } else if (scope === "channel") {
       leases.push({ ...base, resourceType: "channel", resourceKey: input.channel?.id ?? input.taskId });
     } else {
-      leases.push({ ...base, resourceType: "bound_path", resourceKey: canonicalResourcePath(input.channel.boundPath) });
+      leases.push({ ...base, resourceType: "bound_path", resourceKey: canonicalResourcePath(input.runRequest.cwd) });
     }
   }
 

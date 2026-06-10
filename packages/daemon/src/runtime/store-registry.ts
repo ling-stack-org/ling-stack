@@ -2,11 +2,18 @@ import type { RunArtifact, RunStore } from "@ling-stack/core";
 
 export type RunStoreFactory = (cwd: string) => RunStore;
 
+export interface RunStoreRegistryOptions {
+  readonly onStoreInitialized?: (cwd: string, store: RunStore) => void | Promise<void>;
+}
+
 export class RunStoreRegistry {
   private readonly storesByCwd = new Map<string, RunStore>();
   private readonly storesByRunId = new Map<string, RunStore>();
 
-  constructor(private readonly storeFactory: RunStoreFactory) {}
+  constructor(
+    private readonly storeFactory: RunStoreFactory,
+    private readonly options: RunStoreRegistryOptions = {},
+  ) {}
 
   getStore(cwd: string): RunStore {
     const existing = this.storesByCwd.get(cwd);
@@ -19,6 +26,7 @@ export class RunStoreRegistry {
     store.recoverStaleRuns(now);
     store.recoverStaleChannelWorkflows(now);
     this.storesByCwd.set(cwd, store);
+    void Promise.resolve(this.options.onStoreInitialized?.(cwd, store)).catch(() => undefined);
     return store;
   }
 

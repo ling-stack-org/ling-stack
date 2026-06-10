@@ -243,8 +243,14 @@ async function handleDoctor(args: readonly string[], options: GlobalOptions): Pr
   const parsed = parseCommandArgs(args, {
     booleanFlags: new Set(["summary", "all", "ascii"]),
   });
-  assertNoPositionals(parsed.positionals, "doctor");
-  const report = await buildDoctorReport(options);
+  const mode = parsed.positionals[0];
+  if (mode && mode !== "config") {
+    throw new CliError(2, "unknown_doctor_mode", `Unknown doctor mode: ${mode}`);
+  }
+  if (parsed.positionals.length > (mode ? 1 : 0)) {
+    throw new CliError(2, "too_many_args", "doctor accepts at most one mode.");
+  }
+  const report = mode === "config" ? await buildDoctorConfigReport(options) : await buildDoctorReport(options);
 
   if (options.json) {
     printJson(report);
@@ -682,6 +688,86 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
     daemonUrl: redactSecretLikeString(options.daemonUrl),
     checks,
   };
+}
+
+async function buildDoctorConfigReport(options: GlobalOptions): Promise<DoctorReport> {
+  const snapshot = await readDaemonStateSnapshot(options.cwd);
+  const paths = resolveRuntimePaths(options.cwd);
+  const checks: DoctorCheck[] = [
+    await checkWorkspacePaths(options.cwd),
+    await checkConfigFile(paths.rootDir),
+    await checkWorkspaceSqlite(paths.rootDir),
+    await checkRuntimeSettingsFile(paths.rootDir),
+    await checkPathExists("config.sessions", "config", "sessions directory is under .ling-stack", paths.sessionsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.artifacts", "config", "artifacts directory is under .ling-stack", paths.artifactsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.attachments", "config", "attachments directory is under .ling-stack", paths.attachmentsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.pi", "config", "Pi agent directory is under .ling-stack", paths.piDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.plugins_cache", "config", "plugin cache is under .ling-stack", paths.pluginCacheDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.logs", "config", "logs directory is under .ling-stack", snapshot.paths.logsDir, "directory", "Run ling-stack daemon start."),
+    checkDaemonProcessState(snapshot),
+    await checkRootLogsLeak(options.cwd),
+  ];
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    overallStatus: overallDoctorStatus(checks),
+    cwd: options.cwd,
+    daemonUrl: redactSecretLikeString(options.daemonUrl),
+    checks,
+  };
+}
+
+async function checkConfigFile(rootDir: string): Promise<DoctorCheck> {
+  return checkPathExists("config.workspace_config", "config", ".ling-stack/config.json exists", join(rootDir, "config.json"), "file", "Run ling-stack init.");
+}
+
+async function checkRuntimeSettingsFile(rootDir: string): Promise<DoctorCheck> {
+  const startedAt = Date.now();
+  const path = join(rootDir, "runtime-settings.json");
+  try {
+    const item = await stat(path);
+    if (!item.isFile()) {
+      return warningCheck("config.runtime_settings", "config", "runtime-settings path exists but is not a file", { path }, "Repair .ling-stack/runtime-settings.json.", Date.now() - startedAt);
+    }
+    return okCheck("config.runtime_settings", "config", "runtime settings are under .ling-stack", { path }, Date.now() - startedAt);
+  } catch {
+    return okCheck("config.runtime_settings", "config", "runtime settings use defaults", { path, exists: false }, Date.now() - startedAt);
+  }
+}
+
+async function checkRootLogsLeak(cwd: string): Promise<DoctorCheck> {
+  const startedAt = Date.now();
+  const path = join(cwd, ".logs");
+  try {
+    const item = await stat(path);
+    if (item.isDirectory()) {
+      return warningCheck("config.root_logs", "config", "root .logs directory exists outside .ling-stack", { path }, "Move Ling-generated logs under .ling-stack/logs or document .logs as external development cache.", Date.now() - startedAt);
+    }
+    return warningCheck("config.root_logs", "config", "root .logs path exists outside .ling-stack", { path }, "Remove or document this external cache.", Date.now() - startedAt);
+  } catch {
+    return okCheck("config.root_logs", "config", "no root .logs Ling state detected", { path }, Date.now() - startedAt);
+  }
+}
+
+async function checkPathExists(
+  id: string,
+  category: string,
+  summary: string,
+  path: string,
+  kind: "file" | "directory",
+  remediation: string,
+): Promise<DoctorCheck> {
+  const startedAt = Date.now();
+  try {
+    const item = await stat(path);
+    const ok = kind === "file" ? item.isFile() : item.isDirectory();
+    if (!ok) {
+      return warningCheck(id, category, `${summary} but has the wrong filesystem type`, { path, kind }, remediation, Date.now() - startedAt);
+    }
+    return okCheck(id, category, summary, { path, kind }, Date.now() - startedAt);
+  } catch (error) {
+    return warningCheck(id, category, `${summary} is missing`, { path, error: errorMessage(error) }, remediation, Date.now() - startedAt);
+  }
 }
 
 function buildDoctorNextSteps({
@@ -5453,7 +5539,7 @@ function printHelp(): void {
 
 Usage:
   ling-stack [global options] init
-  ling-stack [global options] doctor
+  ling-stack [global options] doctor [config]
   ling-stack [global options] daemon status
   ling-stack [global options] daemon start
   ling-stack [global options] daemon stop
@@ -5702,9 +5788,11 @@ Behavior:
 function printDoctorHelp(): void {
   console.log(`Usage:
   ling-stack doctor [--json]
+  ling-stack doctor config [--json]
 
 Checks:
   daemon health, providers, provider preflight, channels, tasks, and approval policy.
+  doctor config audits Ling project state under .ling-stack and flags scattered Ling state.
 
 Exit codes:
   0 ready

@@ -54,6 +54,7 @@ import {
   handleChannelMessageRouteDecisionsCollection,
   handleChannelsCollection,
 } from "../features/channels/routes.js";
+import { assertChannelWorkspaceReady, handleChannelWorkspace } from "../features/channels/workspace.js";
 import {
   handleChannelWorkflowEvidence,
   handleChannelWorkflowFromHandoff,
@@ -153,8 +154,17 @@ import {
 } from "../features/runs/routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
+import { handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
+import {
+  DirectReplyControlService,
+  handleTeammateDirectInterventionCancel,
+  handleTeammateDirectInterventionPromote,
+  handleTeammateDirectInterventions,
+  handleTeammateDirectReplyCancel,
+  handleTeammateDirectRuntime,
+} from "../features/teammates/direct-controls.js";
 import { handleTeammateDirectMessagesCollection, handleTeammateDirectMessageStream, handleTeammateDirectThread } from "../features/teammates/direct-messages.js";
 import { createAiTeammateDirectReply } from "../features/teammates/direct-replies.js";
 import { handleTeammateAvatar, handleTeammateDirectAttachments, handleTeammateHardDelete } from "../features/teammates/private-attachments.js";
@@ -217,10 +227,13 @@ import {
   parseRunRoute,
   parseSkillRoute,
   parseTaskRoute,
+  parseTeammateDirectInterventionRoute,
+  parseTeammateDirectReplyRoute,
   parseTeammateRoute,
   parseWorkItemRoute,
   parseWorkUnitRoute,
 } from "./routes.js";
+import { RunControlService } from "../run-control.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 
 export async function routeRequest(
@@ -234,6 +247,7 @@ export async function routeRequest(
     extensionRegistry,
     storeRegistry,
     activeRuns,
+    activeDirectReplies,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -242,7 +256,16 @@ export async function routeRequest(
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
+    providerStartupRefresh,
   } = context;
+  const directReplyControl = new DirectReplyControlService({
+    runnerRegistry,
+    runtimeSupervisor,
+    secretResolver,
+    activeDirectReplies,
+    runControl: new RunControlService(),
+    providerStartupRefresh,
+  });
   setCorsHeaders(response);
 
   if (request.method === "OPTIONS") {
@@ -292,6 +315,11 @@ export async function routeRequest(
 
   if (url.pathname === "/channels") {
     await handleChannelsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/workspace-settings") {
+    await handleWorkspaceSettings(request, response, config, storeRegistry);
     return;
   }
 
@@ -896,6 +924,22 @@ export async function routeRequest(
     return;
   }
 
+  const teammateDirectInterventionRoute = parseTeammateDirectInterventionRoute(url.pathname);
+  if (teammateDirectInterventionRoute) {
+    if (teammateDirectInterventionRoute.kind === "promote") {
+      await handleTeammateDirectInterventionPromote(request, response, config, storeRegistry, teammateDirectInterventionRoute.interventionId, directReplyControl);
+      return;
+    }
+    await handleTeammateDirectInterventionCancel(request, response, config, storeRegistry, teammateDirectInterventionRoute.interventionId, directReplyControl);
+    return;
+  }
+
+  const teammateDirectReplyRoute = parseTeammateDirectReplyRoute(url.pathname);
+  if (teammateDirectReplyRoute) {
+    await handleTeammateDirectReplyCancel(request, response, config, storeRegistry, teammateDirectReplyRoute.workUnitId, directReplyControl);
+    return;
+  }
+
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
     handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled);
@@ -1196,6 +1240,10 @@ export async function routeRequest(
 
   const channelRoute = parseChannelRoute(url.pathname);
   if (channelRoute) {
+    if (channelRoute.action === "workspace") {
+      await handleChannelWorkspace(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.workspaceAction);
+      return;
+    }
     if (channelRoute.action === "brief") {
       await handleChannelBrief(request, response, config, storeRegistry, channelRoute.channelId);
       return;
@@ -1344,6 +1392,14 @@ export async function routeRequest(
       await handleTeammateDirectThread(request, response, config, storeRegistry, teammateRoute.teammateId);
       return;
     }
+    if (teammateRoute.action === "direct-runtime") {
+      await handleTeammateDirectRuntime(request, response, config, storeRegistry, teammateRoute.teammateId, directReplyControl);
+      return;
+    }
+    if (teammateRoute.action === "direct-interventions") {
+      await handleTeammateDirectInterventions(request, response, config, storeRegistry, teammateRoute.teammateId, directReplyControl);
+      return;
+    }
     if (teammateRoute.action === "direct-messages") {
       await handleTeammateDirectMessagesCollection(
         request,
@@ -1351,8 +1407,14 @@ export async function routeRequest(
         config,
         storeRegistry,
         teammateRoute.teammateId,
-        ({ store, teammate, thread, sourceMessage, providerPresetId }) =>
-          createAiTeammateDirectReply({
+        async ({ store, teammate, thread, sourceMessage, providerPresetId, onWorkUnitStarted }) => {
+          let sourceWorkUnitId: string | undefined;
+          await providerStartupRefresh.refreshBeforeRun({
+            cwd: store.paths.cwd,
+            store,
+            providerPresetId: providerPresetId ?? teammate.providerPresetId,
+          });
+          const reply = await createAiTeammateDirectReply({
             runnerRegistry,
             store,
             teammate,
@@ -1361,7 +1423,14 @@ export async function routeRequest(
             providerPresetId,
             runtimeSupervisor,
             secretResolver,
-          }),
+            onWorkUnitStarted: (handle) => {
+              sourceWorkUnitId = handle.workUnitId;
+              onWorkUnitStarted?.(handle);
+            },
+          });
+          await directReplyControl.maybeStartNextQueuedContinuation({ store, teammateId: teammate.id, threadId: thread.id, sourceWorkUnitId });
+          return reply;
+        },
       );
       return;
     }
@@ -1384,8 +1453,14 @@ export async function routeRequest(
         config,
         storeRegistry,
         teammateRoute.teammateId,
-        ({ store, teammate, thread, sourceMessage, providerPresetId, signal, stream }) =>
-          createAiTeammateDirectReply({
+        async ({ store, teammate, thread, sourceMessage, providerPresetId, signal, onWorkUnitStarted, stream }) => {
+          let sourceWorkUnitId: string | undefined;
+          await providerStartupRefresh.refreshBeforeRun({
+            cwd: store.paths.cwd,
+            store,
+            providerPresetId: providerPresetId ?? teammate.providerPresetId,
+          });
+          const reply = await createAiTeammateDirectReply({
             runnerRegistry,
             store,
             teammate,
@@ -1395,8 +1470,16 @@ export async function routeRequest(
             runtimeSupervisor,
             secretResolver,
             signal,
+            onWorkUnitStarted: (handle) => {
+              sourceWorkUnitId = handle.workUnitId;
+              onWorkUnitStarted?.(handle);
+            },
             stream,
-          }),
+          });
+          await directReplyControl.maybeStartNextQueuedContinuation({ store, teammateId: teammate.id, threadId: thread.id, sourceWorkUnitId });
+          return reply;
+        },
+        activeDirectReplies,
       );
       return;
     }
@@ -1414,10 +1497,15 @@ export async function routeRequest(
         storeRegistry,
         taskRoute.taskId,
         async ({ workspaceCwd, task, channel, runRequest, response }) => {
+          const workspace = assertChannelWorkspaceReady(channel, workspaceCwd);
+          if (!workspace.ok) {
+            writeJson(response, 409, { error: "channel_workspace_unavailable", message: workspace.message });
+            return;
+          }
           await executeRunRequest(
             {
               workspaceCwd,
-              cwd: channel.boundPath ?? workspaceCwd,
+              cwd: workspace.executionCwd,
               providerPresetId: runRequest.providerPresetId,
               runnerId: runRequest.runnerId,
               teammateId: task.assigneeTeammateId ?? channel.defaultTeammateId,

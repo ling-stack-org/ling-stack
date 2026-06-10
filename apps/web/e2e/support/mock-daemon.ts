@@ -42,6 +42,7 @@ export interface MockState {
   usedMemoryEvents: unknown[];
   teammateDirectThreads: Record<string, unknown>;
   teammateDirectMessages: unknown[];
+  teammateDirectInterventions: MockTeammateDirectIntervention[];
   teammatePrivateAttachments: unknown[];
   retentionTombstones: unknown[];
   tasks: unknown[];
@@ -92,6 +93,7 @@ export interface MockState {
   turnRunLinks: MockLingTurnRun[];
   failThreadTurnsForThreadIds: string[];
   executionActions: MockExecutionAction[];
+  workspaceSettings: Record<string, unknown>;
 }
 
 export interface MockLingThread {
@@ -216,6 +218,27 @@ export interface MockRunIntervention {
   instruction: string;
   requestedBy: "local-user" | "system";
   idempotencyKey: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  failureReason?: string;
+}
+
+export interface MockTeammateDirectIntervention {
+  id: string;
+  workspaceId: string;
+  teammateId: string;
+  threadId: string;
+  sourceMessageId: string;
+  sourceWorkUnitId?: string;
+  mode: "queue_followup" | "interrupt_redirect";
+  status: "queued" | "cancelling_source" | "starting_continuation" | "started" | "failed" | "cancelled";
+  instruction: string;
+  idempotencyKey: string;
+  requestedBy: "local-user" | "system";
+  continuationMessageId?: string;
+  continuationWorkUnitId?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -524,6 +547,8 @@ export interface MockWorkUnit {
   request: unknown;
   timeoutPolicy: Record<string, number>;
   linkedRunId?: string;
+  linkedMessageId?: string;
+  teammateId?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -802,6 +827,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     usedMemoryEvents: [],
     teammateDirectThreads: {},
     teammateDirectMessages: [],
+    teammateDirectInterventions: [],
     teammatePrivateAttachments: [],
     retentionTombstones: [],
     tasks: [
@@ -880,6 +906,11 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     turnRunLinks: [],
     failThreadTurnsForThreadIds: [],
     executionActions: [],
+    workspaceSettings: {
+      schemaVersion: 1,
+      workspaceCwd: cwd,
+      updatedAt: "2026-05-22T00:00:00.000Z",
+    },
   };
 }
 
@@ -2662,6 +2693,13 @@ export function createChannelFromBody(body: Record<string, unknown>, id: string,
       : isRecord(existing.runtimePolicy)
         ? existing.runtimePolicy
         : defaultRuntimePolicy,
+    workspaceBinding: body.workspaceBinding === null
+      ? undefined
+      : isRecord(body.workspaceBinding)
+        ? body.workspaceBinding
+        : isRecord(existing.workspaceBinding)
+          ? existing.workspaceBinding
+          : undefined,
     createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-25T00:15:00.000Z",
     updatedAt: "2026-05-25T00:15:00.000Z",
   };
@@ -2923,6 +2961,34 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "GET" && path === "/provider-templates") {
     await route.fulfill({ json: { templates: options.templates ?? [] } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/workspace-settings") {
+    state.workspaceSettings = {
+      schemaVersion: 1,
+      ...state.workspaceSettings,
+      workspaceCwd: typeof state.workspaceSettings.workspaceCwd === "string" ? state.workspaceSettings.workspaceCwd : cwd,
+      updatedAt: typeof state.workspaceSettings.updatedAt === "string" ? state.workspaceSettings.updatedAt : "2026-05-22T00:00:00.000Z",
+    };
+    await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
+    return;
+  }
+  if (request.method() === "PATCH" && path === "/workspace-settings") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const nextSettings = { ...state.workspaceSettings };
+    for (const key of ["workspaceCwd", "theme", "locale", "channelNotifications", "channelActivityViews"] as const) {
+      if (body[key] === null) {
+        delete nextSettings[key];
+      } else if (body[key] !== undefined) {
+        nextSettings[key] = body[key];
+      }
+    }
+    state.workspaceSettings = {
+      schemaVersion: 1,
+      ...nextSettings,
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    };
+    await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
     return;
   }
   if (request.method() === "GET" && path === "/providers") {
@@ -3773,6 +3839,67 @@ export async function handleDaemonRoute(
       });
       return;
     }
+    if (action === "direct-runtime" && request.method() === "GET") {
+      const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      await route.fulfill({ json: buildMockTeammateDirectRuntime(state, teammateId, thread) });
+      return;
+    }
+    if (action === "direct-interventions") {
+      const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      if (request.method() === "GET") {
+        await route.fulfill({
+          json: {
+            cwd,
+            teammateId,
+            thread,
+            interventions: listOpenMockTeammateDirectInterventions(state, teammateId, thread.id),
+          },
+        });
+        return;
+      }
+      if (request.method() === "POST") {
+        const body = safePostDataJson(request);
+        const runtime = buildMockTeammateDirectRuntime(state, teammateId, thread);
+        if (!runtime.activeReply) {
+          await route.fulfill({ status: 409, json: { error: "direct_reply_not_active", message: "No active direct reply." } });
+          return;
+        }
+        const mode = body.mode === "interrupt_redirect" ? "interrupt_redirect" : "queue_followup";
+        const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";
+        const idempotencyKey = typeof body.idempotencyKey === "string"
+          ? body.idempotencyKey
+          : `direct-guidance:${runtime.activeReply.workUnitId}:${mode}:${instruction}`;
+        const existing = state.teammateDirectInterventions.find((item) => item.idempotencyKey === idempotencyKey);
+        const intervention = existing ?? {
+          id: `tdint_${state.teammateDirectInterventions.length + 1}`,
+          workspaceId: "workspace_default",
+          teammateId,
+          threadId: thread.id,
+          sourceMessageId: runtime.activeReply.sourceMessageId,
+          sourceWorkUnitId: runtime.activeReply.workUnitId,
+          mode,
+          status: mode === "interrupt_redirect" ? "cancelling_source" : "queued",
+          instruction,
+          idempotencyKey,
+          requestedBy: "local-user",
+          createdAt: "2026-06-04T00:30:00.000Z",
+          updatedAt: "2026-06-04T00:30:00.000Z",
+        } satisfies MockTeammateDirectIntervention;
+        if (!existing) {
+          state.teammateDirectInterventions.push(intervention);
+        }
+        await route.fulfill({
+          status: 201,
+          json: {
+            cwd,
+            teammateId,
+            intervention,
+            runtime: buildMockTeammateDirectRuntime(state, teammateId, thread),
+          },
+        });
+        return;
+      }
+    }
     if (action === "direct-messages/stream" && request.method() === "POST") {
       const body = await request.postDataJSON() as Record<string, unknown>;
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
@@ -3917,6 +4044,129 @@ export async function handleDaemonRoute(
       });
       return;
     }
+  }
+  const teammateDirectInterventionCancelMatch = /^\/teammate-direct-interventions\/([^/]+)\/cancel$/.exec(path);
+  if (teammateDirectInterventionCancelMatch && request.method() === "POST") {
+    const interventionId = decodeURIComponent(teammateDirectInterventionCancelMatch[1]);
+    const interventionIndex = state.teammateDirectInterventions.findIndex((item) => item.id === interventionId);
+    if (interventionIndex < 0) {
+      await route.fulfill({ status: 404, json: { error: "direct_intervention_not_found" } });
+      return;
+    }
+    const intervention = {
+      ...state.teammateDirectInterventions[interventionIndex],
+      status: "cancelled",
+      completedAt: "2026-06-04T00:31:00.000Z",
+      updatedAt: "2026-06-04T00:31:00.000Z",
+    } satisfies MockTeammateDirectIntervention;
+    state.teammateDirectInterventions[interventionIndex] = intervention;
+    const thread = state.teammateDirectThreads[intervention.teammateId] ?? getOrCreateMockTeammateThread(state, intervention.teammateId, {});
+    await route.fulfill({
+      json: {
+        cwd,
+        teammateId: intervention.teammateId,
+        intervention,
+        runtime: buildMockTeammateDirectRuntime(state, intervention.teammateId, thread),
+      },
+    });
+    return;
+  }
+  const teammateDirectInterventionPromoteMatch = /^\/teammate-direct-interventions\/([^/]+)\/promote$/.exec(path);
+  if (teammateDirectInterventionPromoteMatch && request.method() === "POST") {
+    const interventionId = decodeURIComponent(teammateDirectInterventionPromoteMatch[1]);
+    const interventionIndex = state.teammateDirectInterventions.findIndex((item) => item.id === interventionId);
+    if (interventionIndex < 0) {
+      await route.fulfill({ status: 404, json: { error: "direct_intervention_not_found" } });
+      return;
+    }
+    const current = state.teammateDirectInterventions[interventionIndex];
+    if (current.status !== "queued") {
+      await route.fulfill({ status: 409, json: { error: "direct_intervention_not_queued", message: "Only queued guidance can run now." } });
+      return;
+    }
+    const thread = state.teammateDirectThreads[current.teammateId] ?? getOrCreateMockTeammateThread(state, current.teammateId, {});
+    const activeWorkUnitIndex = state.workUnits.findIndex((unit) =>
+      unit.kind === "teammate_direct_reply" &&
+      (unit.teammateId === current.teammateId || unit.ownerId === current.teammateId) &&
+      isActiveMockWorkUnit(unit.status)
+    );
+    if (activeWorkUnitIndex < 0) {
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId: current.teammateId,
+          intervention: current,
+          runtime: buildMockTeammateDirectRuntime(state, current.teammateId, thread),
+          message: "当前回复已结束，这条引导会按排队顺序继续执行。",
+        },
+      });
+      return;
+    }
+    const intervention = {
+      ...current,
+      status: "cancelling_source",
+      startedAt: "2026-06-04T00:32:30.000Z",
+      updatedAt: "2026-06-04T00:32:30.000Z",
+    } satisfies MockTeammateDirectIntervention;
+    state.teammateDirectInterventions[interventionIndex] = intervention;
+    const workUnit = {
+      ...state.workUnits[activeWorkUnitIndex],
+      status: "cancelled",
+      endedAt: "2026-06-04T00:32:30.000Z",
+      updatedAt: "2026-06-04T00:32:30.000Z",
+    };
+    state.workUnits[activeWorkUnitIndex] = workUnit;
+    const messageId = workUnit.linkedMessageId;
+    const messageIndex = state.teammateDirectMessages.findIndex((message) => isRecord(message) && message.id === messageId);
+    if (messageIndex >= 0 && isRecord(state.teammateDirectMessages[messageIndex])) {
+      state.teammateDirectMessages[messageIndex] = {
+        ...state.teammateDirectMessages[messageIndex],
+        status: "cancelled",
+        body: "Reply stopped",
+        errorMessage: "Reply stopped",
+        updatedAt: "2026-06-04T00:32:30.000Z",
+      };
+    }
+    await route.fulfill({
+      json: {
+        cwd,
+        teammateId: intervention.teammateId,
+        intervention,
+        runtime: buildMockTeammateDirectRuntime(state, intervention.teammateId, thread),
+      },
+    });
+    return;
+  }
+  const teammateDirectReplyCancelMatch = /^\/teammate-direct-replies\/([^/]+)\/cancel$/.exec(path);
+  if (teammateDirectReplyCancelMatch && request.method() === "POST") {
+    const workUnitId = decodeURIComponent(teammateDirectReplyCancelMatch[1]);
+    const workUnitIndex = state.workUnits.findIndex((unit) => unit.id === workUnitId);
+    if (workUnitIndex < 0) {
+      await route.fulfill({ status: 404, json: { error: "work_unit_not_found" } });
+      return;
+    }
+    const workUnit = {
+      ...state.workUnits[workUnitIndex],
+      status: "cancelled",
+      endedAt: "2026-06-04T00:32:00.000Z",
+      updatedAt: "2026-06-04T00:32:00.000Z",
+    };
+    state.workUnits[workUnitIndex] = workUnit;
+    const messageId = workUnit.linkedMessageId;
+    const messageIndex = state.teammateDirectMessages.findIndex((message) => isRecord(message) && message.id === messageId);
+    const message = messageIndex >= 0 && isRecord(state.teammateDirectMessages[messageIndex])
+      ? {
+          ...state.teammateDirectMessages[messageIndex],
+          status: "cancelled",
+          body: "",
+          updatedAt: "2026-06-04T00:32:00.000Z",
+        }
+      : undefined;
+    if (message && messageIndex >= 0) {
+      state.teammateDirectMessages[messageIndex] = message;
+    }
+    await route.fulfill({ json: { cwd, workUnit, ...(message ? { message } : {}) } });
+    return;
   }
   if (request.method() === "POST" && path === "/provider-check") {
     const body = await request.postDataJSON() as Record<string, unknown>;
@@ -4108,6 +4358,75 @@ export async function handleDaemonRoute(
     state.channels.unshift(channel);
     await route.fulfill({ status: 201, json: { channel } });
     return;
+  }
+  const channelWorkspaceMatch = /^\/channels\/([^/]+)\/workspace(?:\/([^/]+))?$/.exec(path);
+  if (channelWorkspaceMatch) {
+    const channelId = decodeURIComponent(channelWorkspaceMatch[1]);
+    const action = channelWorkspaceMatch[2] ? decodeURIComponent(channelWorkspaceMatch[2]) : "";
+    const channelIndex = state.channels.findIndex((item) => isRecord(item) && item.id === channelId);
+    if (channelIndex === -1 || !isRecord(state.channels[channelIndex])) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const channel = state.channels[channelIndex] as Record<string, unknown>;
+    if (request.method() === "GET" && !action) {
+      const binding = readMockChannelWorkspaceBinding(channel);
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, channel, binding) });
+      return;
+    }
+    if (request.method() === "POST" && action === "refresh") {
+      const binding = {
+        ...readMockChannelWorkspaceBinding(channel),
+        status: "ready",
+        checkedAt: "2026-05-25T00:18:00.000Z",
+        updatedAt: "2026-05-25T00:18:00.000Z",
+      };
+      const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
+      state.channels[channelIndex] = updated;
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
+      return;
+    }
+    if (request.method() === "POST" && action === "create-worktree") {
+      const binding = {
+        mode: "managed_worktree",
+        status: "ready",
+        executionPath: `${cwd}/.ling-stack/worktrees/channels/${channelId}`,
+        worktreePath: `${cwd}/.ling-stack/worktrees/channels/${channelId}`,
+        branchName: `ling/channel-${channelId}`,
+        baseBranch: "main",
+        baseCommit: "mock-base-commit",
+        createdAt: "2026-05-25T00:18:00.000Z",
+        updatedAt: "2026-05-25T00:18:00.000Z",
+        checkedAt: "2026-05-25T00:18:00.000Z",
+      };
+      const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
+      state.channels[channelIndex] = updated;
+      await route.fulfill({ status: 201, json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
+      return;
+    }
+    if (request.method() === "POST" && action === "handoff") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const existing = readMockChannelWorkspaceBinding(channel);
+      const mode = body.mode === "managed_worktree" || body.mode === "external_path" ? body.mode : "local";
+      const executionPath = mode === "managed_worktree"
+        ? typeof existing.worktreePath === "string" ? existing.worktreePath : `${cwd}/.ling-stack/worktrees/channels/${channelId}`
+        : mode === "external_path" && typeof body.executionPath === "string"
+          ? body.executionPath
+          : typeof channel.boundPath === "string" ? channel.boundPath : cwd;
+      const binding = {
+        ...existing,
+        mode,
+        status: "ready",
+        executionPath,
+        worktreePath: mode === "managed_worktree" ? executionPath : undefined,
+        updatedAt: "2026-05-25T00:18:00.000Z",
+        checkedAt: "2026-05-25T00:18:00.000Z",
+      };
+      const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
+      state.channels[channelIndex] = updated;
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
+      return;
+    }
   }
   const channelMessagesMatch = /^\/channels\/([^/]+)\/messages$/.exec(path);
   if (channelMessagesMatch && request.method() === "GET") {
@@ -6326,6 +6645,48 @@ export async function handleDaemonRoute(
   await route.fulfill({ status: 404, json: { error: "not_found", path } });
 }
 
+function readMockChannelWorkspaceBinding(channel: Record<string, unknown>): Record<string, unknown> {
+  if (isRecord(channel.workspaceBinding)) {
+    return channel.workspaceBinding;
+  }
+  const executionPath = typeof channel.boundPath === "string" && channel.boundPath.trim() ? channel.boundPath : cwd;
+  return {
+    mode: "local",
+    status: "ready",
+    executionPath,
+    updatedAt: typeof channel.updatedAt === "string" ? channel.updatedAt : "2026-05-22T00:00:00.000Z",
+  };
+}
+
+function buildMockChannelWorkspaceResponse(
+  channelId: string,
+  channel: Record<string, unknown>,
+  binding: Record<string, unknown>,
+): Record<string, unknown> {
+  const executionCwd = typeof binding.mode === "string" && binding.mode === "managed_worktree" && typeof binding.worktreePath === "string"
+    ? binding.worktreePath
+    : typeof binding.executionPath === "string" && binding.executionPath.trim()
+      ? binding.executionPath
+      : typeof channel.boundPath === "string" && channel.boundPath.trim()
+        ? channel.boundPath
+        : cwd;
+  return {
+    cwd,
+    channelId,
+    binding,
+    snapshot: {
+      mode: typeof binding.mode === "string" ? binding.mode : "local",
+      status: typeof binding.status === "string" ? binding.status : "ready",
+      workspaceCwd: cwd,
+      executionCwd,
+      boundPath: typeof channel.boundPath === "string" ? channel.boundPath : undefined,
+      worktreePath: typeof binding.worktreePath === "string" ? binding.worktreePath : undefined,
+      branchName: typeof binding.branchName === "string" ? binding.branchName : undefined,
+      checkedAt: typeof binding.checkedAt === "string" ? binding.checkedAt : undefined,
+    },
+  };
+}
+
 export function inferMockChannelAttachment(fileName: string): { readonly kind: string; readonly contentType: string } {
   const extension = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
   if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) {
@@ -6374,6 +6735,56 @@ export function getOrCreateMockTeammateThread(
   };
   state.teammateDirectThreads[teammateId] = thread;
   return thread;
+}
+
+export function buildMockTeammateDirectRuntime(
+  state: MockState,
+  teammateId: string,
+  thread: Record<string, unknown>,
+): Record<string, unknown> {
+  const threadId = typeof thread.id === "string" ? thread.id : `tdthread_${teammateId}`;
+  const activeWorkUnit = state.workUnits.find((unit) =>
+    unit.kind === "teammate_direct_reply" &&
+    (unit.teammateId === teammateId || unit.ownerId === teammateId) &&
+    isActiveMockWorkUnit(unit.status)
+  );
+  const message = activeWorkUnit?.linkedMessageId
+    ? state.teammateDirectMessages.find((item) => isRecord(item) && item.id === activeWorkUnit.linkedMessageId)
+    : undefined;
+  const request = isRecord(activeWorkUnit?.request) ? activeWorkUnit.request : {};
+  const activeReply = activeWorkUnit
+    ? {
+        status: activeWorkUnit.status === "cancelling" ? "cancelling" : "running",
+        workUnitId: activeWorkUnit.id,
+        messageId: typeof activeWorkUnit.linkedMessageId === "string" ? activeWorkUnit.linkedMessageId : "",
+        sourceMessageId: typeof request.sourceMessageId === "string"
+          ? request.sourceMessageId
+          : typeof activeWorkUnit.linkedMessageId === "string"
+            ? activeWorkUnit.linkedMessageId
+            : "",
+        workUnit: activeWorkUnit,
+        ...(isRecord(message) ? { message } : {}),
+      }
+    : undefined;
+  return {
+    cwd,
+    teammateId,
+    thread,
+    ...(activeReply ? { activeReply } : {}),
+    interventions: listOpenMockTeammateDirectInterventions(state, teammateId, threadId),
+  };
+}
+
+export function listOpenMockTeammateDirectInterventions(
+  state: MockState,
+  teammateId: string,
+  threadId: string,
+): MockTeammateDirectIntervention[] {
+  return state.teammateDirectInterventions.filter((item) =>
+    item.teammateId === teammateId &&
+    item.threadId === threadId &&
+    (item.status === "queued" || item.status === "cancelling_source" || item.status === "starting_continuation")
+  );
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

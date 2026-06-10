@@ -733,6 +733,46 @@ test("channel settings can add remove and set default teammates", async ({ page 
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBe("muted");
 });
 
+test("channel settings manage workspace binding and header badge", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.locator(".channel-workspace-badge")).toContainText("Local");
+  await expect(page.locator(".channel-workspace-badge")).toHaveAttribute("title", "/tmp/ling-stack-workspace");
+
+  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  const details = page.getByLabel("Channel management");
+  const workspaceControl = details.getByLabel("Channel workspace");
+  await expect(workspaceControl).toContainText("Local");
+  await workspaceControl.getByRole("button", { name: "Create worktree" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
+  }).toBe("managed_worktree");
+  await expect(workspaceControl).toContainText("Worktree");
+  await expect(page.locator(".channel-workspace-badge")).toContainText("Worktree");
+
+  await workspaceControl.getByPlaceholder("External workspace path").fill("/tmp/external-channel-workspace");
+  await workspaceControl.getByRole("button", { name: "Hand off to External" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.executionPath : "";
+  }).toBe("/tmp/external-channel-workspace");
+  await expect(workspaceControl).toContainText("External");
+  await expect(page.locator(".channel-workspace-badge")).toContainText("External");
+
+  await workspaceControl.getByRole("button", { name: "Hand off to Local" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
+  }).toBe("local");
+  await expect(workspaceControl).toContainText("Local");
+});
+
 test("paused channels disable task run actions", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.channels = state.channels.map((channel) => isRecord(channel) ? { ...channel, status: "paused" } : channel);

@@ -1947,6 +1947,55 @@ test("media provider check runs a real Seedream image probe", async () => {
   }
 });
 
+test("startup provider refresh does not run live media probes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-startup-media-skip-"));
+  const seedream = await startMockSeedreamServer();
+  let daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_startup_media_skip",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-key";
+  try {
+    const live = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedream Live Startup Skip",
+      capabilities: ["image_generate"],
+      baseUrl: `${seedream.url}/api/v3/images/generations`,
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    await daemon.close();
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      store.recordProviderCheckResult(live.provider.id, {
+        ok: false,
+        code: "network_failed",
+        message: "Provider network check failed: timeout",
+        checkedAt: "2026-05-01T00:00:00.000Z",
+      });
+    } finally {
+      store.close();
+    }
+
+    daemon = await startDaemonForTest(new ApprovalProbeRunner({
+      toolCallId: "tool_unused_startup_media_skip_restart",
+      toolName: "bash",
+      input: { command: "echo unused" },
+    }));
+    const listed = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+    const provider = listed.providers.find((item) => item.id === live.provider.id);
+    assert.equal(provider.lastCheck.ok, false);
+    assert.equal(provider.lastCheck.code, "network_failed");
+    assert.equal(seedream.requests.length, 0);
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await daemon.close();
+    await seedream.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("media job API creates, lists, and shows queued jobs without running on creation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-jobs-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({

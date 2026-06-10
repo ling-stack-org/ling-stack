@@ -24,6 +24,7 @@ import {
   type ChannelMessageIntent,
   type ChannelMessageKind,
   type ChannelMessageRouteDecisionStatus,
+  type ChannelWorkspaceBinding,
   type ChannelWorkflowStatus,
   type ChannelWorkflowStepStartMode,
   type ChannelWorkflowStepStatus,
@@ -234,6 +235,7 @@ export function parseCreateChannelInput(value: unknown): CreateChannelInput {
     name: readString(value, "name"),
     status: readOptionalChannelStatus(value, "status"),
     boundPath: readOptionalString(value, "boundPath"),
+    workspaceBinding: readOptionalChannelWorkspaceBinding(value, "workspaceBinding"),
     defaultProviderPresetId: readOptionalString(value, "defaultProviderPresetId"),
     defaultTeammateId: readOptionalString(value, "defaultTeammateId"),
     autoReplyMode: readOptionalChannelAutoReplyMode(value, "autoReplyMode"),
@@ -252,6 +254,7 @@ export function parseChannelUpdateInput(value: unknown): ChannelUpdateInput {
     name: readOptionalString(value, "name"),
     status: readOptionalChannelStatus(value, "status"),
     boundPath: readNullableString(value, "boundPath"),
+    workspaceBinding: readNullableChannelWorkspaceBinding(value, "workspaceBinding"),
     defaultProviderPresetId: readNullableString(value, "defaultProviderPresetId"),
     defaultTeammateId: readNullableString(value, "defaultTeammateId"),
     autoReplyMode: readNullableChannelAutoReplyMode(value, "autoReplyMode"),
@@ -980,4 +983,53 @@ function readOptionalChannelRuntimePolicy(
     policy.queueOnConflict = value.queueOnConflict;
   }
   return policy;
+}
+
+function readOptionalChannelWorkspaceBinding(record: Record<string, unknown>, key: string): ChannelWorkspaceBinding | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  return readChannelWorkspaceBinding(value, key);
+}
+
+function readNullableChannelWorkspaceBinding(record: Record<string, unknown>, key: string): ChannelWorkspaceBinding | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object or null`);
+  }
+  return readChannelWorkspaceBinding(value, key);
+}
+
+function readChannelWorkspaceBinding(value: Record<string, unknown>, key: string): ChannelWorkspaceBinding {
+  const mode = value.mode;
+  if (mode !== "local" && mode !== "managed_worktree" && mode !== "external_path") {
+    throw new Error(`${key}.mode must be local, managed_worktree, or external_path`);
+  }
+  const status = value.status;
+  if (status !== "ready" && status !== "not_created" && status !== "missing" && status !== "unsupported" && status !== "blocked") {
+    throw new Error(`${key}.status must be ready, not_created, missing, unsupported, or blocked`);
+  }
+  return {
+    mode,
+    status,
+    executionPath: readOptionalString(value, "executionPath"),
+    worktreePath: readOptionalString(value, "worktreePath"),
+    branchName: readOptionalString(value, "branchName"),
+    baseBranch: readOptionalString(value, "baseBranch"),
+    baseCommit: readOptionalString(value, "baseCommit"),
+    errorMessage: readOptionalString(value, "errorMessage"),
+    createdAt: readOptionalString(value, "createdAt"),
+    checkedAt: readOptionalString(value, "checkedAt"),
+    updatedAt: readOptionalString(value, "updatedAt") ?? new Date().toISOString(),
+  };
 }

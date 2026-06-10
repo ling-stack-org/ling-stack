@@ -2,6 +2,7 @@ import type { ToolName } from "./shared.js";
 import type { SkillApprovalProfile } from "./approvals.js";
 import type { ChannelAttachmentKind } from "./channels.js";
 import type { McpToolDefaultApproval } from "./mcp.js";
+import type { WorkUnit } from "./runtime.js";
 
 export interface TeammatePersonaDraftRequest {
   readonly content: string;
@@ -208,7 +209,7 @@ export interface TeammateDirectThread {
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
-export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed";
+export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed" | "cancelled";
 
 export interface TeammateDirectMessage {
   readonly id: string;
@@ -232,6 +233,91 @@ export interface CreateTeammateDirectMessageRequest {
   readonly attachmentIds?: readonly string[];
   readonly requestAiReply?: boolean;
   readonly providerPresetId?: string;
+}
+
+export type TeammateDirectReplyInterventionMode = "queue_followup" | "interrupt_redirect";
+
+export type TeammateDirectReplyInterventionStatus =
+  | "queued"
+  | "cancelling_source"
+  | "starting_continuation"
+  | "started"
+  | "cancelled"
+  | "failed";
+
+export interface TeammateDirectReplyIntervention {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly threadId: string;
+  readonly sourceMessageId: string;
+  readonly sourceWorkUnitId?: string;
+  readonly mode: TeammateDirectReplyInterventionMode;
+  readonly status: TeammateDirectReplyInterventionStatus;
+  readonly instruction: string;
+  readonly idempotencyKey: string;
+  readonly requestedBy: "local-user" | "system";
+  readonly continuationMessageId?: string;
+  readonly continuationWorkUnitId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly failureReason?: string;
+}
+
+export interface CreateTeammateDirectReplyInterventionRequest {
+  readonly mode: TeammateDirectReplyInterventionMode;
+  readonly instruction: string;
+  readonly idempotencyKey?: string;
+}
+
+export interface CancelTeammateDirectReplyRequest {
+  readonly reason?: string;
+}
+
+export interface CancelTeammateDirectReplyInterventionRequest {
+  readonly reason?: string;
+}
+
+export interface PromoteTeammateDirectReplyInterventionRequest {
+  readonly reason?: string;
+}
+
+export interface TeammateDirectRuntimeResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly thread: TeammateDirectThread;
+  readonly activeReply?: {
+    readonly status: "running" | "cancelling";
+    readonly workUnitId: string;
+    readonly messageId: string;
+    readonly sourceMessageId: string;
+    readonly workUnit: WorkUnit;
+    readonly message?: TeammateDirectMessage;
+  };
+  readonly interventions: readonly TeammateDirectReplyIntervention[];
+}
+
+export interface TeammateDirectInterventionListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly thread: TeammateDirectThread;
+  readonly interventions: readonly TeammateDirectReplyIntervention[];
+}
+
+export interface TeammateDirectInterventionResponse {
+  readonly cwd: string;
+  readonly teammateId?: string;
+  readonly intervention: TeammateDirectReplyIntervention;
+  readonly runtime?: TeammateDirectRuntimeResponse;
+  readonly message?: string;
+}
+
+export interface TeammateDirectReplyCancelResponse {
+  readonly cwd: string;
+  readonly workUnit: WorkUnit;
+  readonly message?: TeammateDirectMessage;
 }
 
 export type TeammatePrivateAttachmentScope = "teammate_direct_thread" | "teammate_profile_avatar";

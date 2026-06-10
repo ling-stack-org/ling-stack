@@ -853,29 +853,135 @@ button.artifact-action-link {
 
 .channel-run-guidance-list {
   display: grid;
-  gap: 6px;
+  gap: 5px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-subtle) 76%, #000 24%);
 }
 
 .channel-run-guidance-row {
-  justify-content: space-between;
-  padding: 6px;
-  border: 1px solid var(--border);
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  justify-content: stretch;
+  min-height: 38px;
+  padding: 4px 5px 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: var(--radius-md);
-  background: var(--surface-panel);
+  background: color-mix(in srgb, var(--surface-panel-strong) 72%, #000 28%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
 }
 
-.channel-run-guidance-row > span:not(.channel-run-guidance-status) {
-  display: grid;
-  gap: 2px;
+.channel-run-guidance-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
+.channel-run-guidance-token {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
+  color: var(--text-muted);
+}
+
+.channel-run-guidance-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.channel-run-guidance-instruction {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .channel-run-guidance-row small {
+  display: flex;
+  gap: 7px;
   overflow: hidden;
   color: var(--text-muted);
   font-size: 11px;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.channel-run-guidance-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: max-content;
+}
+
+.channel-run-guidance-row-actions .icon-button {
+  width: 26px;
+  height: 26px;
+  border-color: color-mix(in srgb, var(--border) 74%, transparent);
+  background: color-mix(in srgb, var(--surface-panel) 78%, transparent);
+  box-shadow: none;
+}
+
+.channel-run-guidance-row-actions .icon-button:hover:not(:disabled),
+.channel-run-guidance-row-actions .icon-button[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.channel-run-guidance-more {
+  position: relative;
+  display: inline-flex;
+}
+
+.channel-run-guidance-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  display: grid;
+  min-width: 118px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel-strong);
+  box-shadow: var(--shadow-panel);
+}
+
+.channel-run-guidance-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.channel-run-guidance-menu button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.channel-run-guidance-menu button:disabled {
+  color: var(--text-soft);
+  cursor: not-allowed;
 }
 
 .compact-inline-error {
@@ -2929,6 +3035,8 @@ code,
 
 .task-workbench-header .channel-title-line {
   gap: 8px;
+  position: relative;
+  padding-right: min(230px, 28vw);
 }
 
 .task-workbench-header .channel-title-line h1 {
@@ -6627,6 +6735,114 @@ code,
 .channel-create-teammate small {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.channel-workspace-badge {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(220px, 28vw);
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.channel-workspace-badge.ready {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.channel-workspace-badge.missing,
+.channel-workspace-badge.blocked,
+.channel-workspace-badge.unsupported {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.channel-workspace-badge span,
+.channel-workspace-badge small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-workspace-badge small {
+  min-width: 0;
+  color: inherit;
+  opacity: 0.8;
+}
+
+.channel-workspace-control {
+  display: grid;
+  gap: 10px;
+  grid-column: 1 / -1;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+}
+
+.channel-workspace-control-head,
+.channel-workspace-summary,
+.channel-workspace-actions,
+.channel-workspace-external-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-workspace-control-head {
+  justify-content: space-between;
+}
+
+.channel-workspace-control-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.channel-workspace-summary {
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.channel-workspace-summary strong {
+  color: var(--text);
+}
+
+.channel-workspace-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.channel-workspace-actions,
+.channel-workspace-external-row {
+  flex-wrap: wrap;
+}
+
+.channel-workspace-external-row input {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.danger-text {
+  color: var(--danger);
 }
 
 .channel-options-grid {

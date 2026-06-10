@@ -4,6 +4,7 @@ import type {
   ApprovalToolDecision,
   ChannelRuntimePolicy,
   ChannelAutoReplyMode,
+  ChannelWorkspaceBinding,
   ChannelStatus,
   McpServerTransportType,
   MediaOperation,
@@ -88,6 +89,7 @@ export interface ChannelFormState {
   readonly name: string;
   readonly status: ChannelStatus;
   readonly boundPath: string;
+  readonly workspaceBinding?: ChannelWorkspaceBinding;
   readonly defaultProviderPresetId: string;
   readonly defaultTeammateId: string;
   readonly autoReplyMode: ChannelAutoReplyMode;

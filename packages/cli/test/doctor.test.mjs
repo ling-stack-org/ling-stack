@@ -191,6 +191,36 @@ test("doctor warns when shell snapshot diagnostics cannot read a route and does 
   }
 });
 
+test("doctor config audits .ling-stack state and flags root logs", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-config-"));
+  try {
+    await prepareDoctorWorkspace(cwd);
+    await writeFile(resolve(cwd, ".ling-stack", "config.json"), JSON.stringify({ version: 1 }), "utf8");
+    await mkdir(resolve(cwd, ".ling-stack", "sessions"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "artifacts"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "attachments"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "pi"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "plugins", "cache"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "logs"), { recursive: true });
+    await mkdir(resolve(cwd, ".logs"), { recursive: true });
+
+    const result = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"]);
+    const body = JSON.parse(result.stdout);
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(body.overallStatus, "warning");
+    assert.equal(checks.get("config.workspace_config").status, "ok");
+    assert.equal(checks.get("workspace.sqlite").status, "ok");
+    assert.equal(checks.get("config.plugins_cache").status, "ok");
+    assert.equal(checks.get("config.root_logs").status, "warning");
+    assert.match(checks.get("config.root_logs").summary, /root \.logs/);
+    assert.doesNotMatch(result.stdout + result.stderr, /sk-/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("daemon status remains a thin health check", async () => {
   const daemon = await startDoctorDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-"));

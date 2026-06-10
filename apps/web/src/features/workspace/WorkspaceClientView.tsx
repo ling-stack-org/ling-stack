@@ -18,6 +18,7 @@ import {
   Database,
   FileCheck2,
   FileText,
+  FolderOpen,
   GitBranch,
   Hash,
   History,
@@ -50,6 +51,7 @@ import {
 import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
+import { createChannelWorktree, handoffChannelWorkspace, refreshChannelWorkspace } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -78,6 +80,7 @@ import {
   builtinChannelActivitySavedViews,
   createCustomChannelActivitySavedView,
   maxCustomChannelActivitySavedViews,
+  parseCustomChannelActivitySavedViewsValue,
   readCustomChannelActivitySavedViews,
   sanitizeSavedViewName,
   writeCustomChannelActivitySavedViews,
@@ -155,6 +158,8 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
+  ChannelWorkspaceBinding,
+  ChannelWorkspaceMode,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
   MemoryObject,
@@ -178,6 +183,8 @@ import type {
   UsedMemoryEvent,
   WorkItemView,
   WorkUnit,
+  WorkspaceSettings,
+  UpdateWorkspaceSettingsRequest,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
@@ -465,6 +472,8 @@ export function WorkspaceClientView({
   onHeartbeatWorkItem,
   busyWorkItemId,
   onOpenProviders,
+  workspaceSettings,
+  onWorkspaceSettingsPatch,
 }: {
   readonly cwd: string;
   readonly daemonHealthy: boolean | undefined;
@@ -609,10 +618,14 @@ export function WorkspaceClientView({
   readonly onHeartbeatWorkItem: (workItemId: string, claimToken: string) => void;
   readonly busyWorkItemId: string;
   readonly onOpenProviders: (run?: RunSession) => void;
+  readonly workspaceSettings: WorkspaceSettings | undefined;
+  readonly onWorkspaceSettingsPatch: (patch: UpdateWorkspaceSettingsRequest) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+  const selectedChannelWorkspace = selectedChannel ? resolveChannelWorkspaceBinding(selectedChannel, cwd) : undefined;
+  const selectedChannelExecutionPath = selectedChannel && selectedChannelWorkspace ? resolveChannelWorkspaceExecutionPath(selectedChannelWorkspace, selectedChannel, cwd) : "";
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "progress");
   const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
@@ -670,6 +683,10 @@ export function WorkspaceClientView({
   const [threadReplyError, setThreadReplyError] = useState("");
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
+  const [channelWorkspaceBusyAction, setChannelWorkspaceBusyAction] = useState("");
+  const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
+  const [channelWorkspaceNotice, setChannelWorkspaceNotice] = useState("");
+  const [channelWorkspaceError, setChannelWorkspaceError] = useState("");
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
@@ -1463,18 +1480,32 @@ export function WorkspaceClientView({
   }
 
   useEffect(() => {
-    setActivitySavedViews(readCustomChannelActivitySavedViews(cwd, selectedChannelId));
+    const selectedChannelActivityViews = workspaceSettings?.channelActivityViews?.[selectedChannelId];
+    const selectedChannelNotificationLevel = workspaceSettings?.channelNotifications?.[selectedChannelId];
+    const settingsViews = parseCustomChannelActivitySavedViewsValue(selectedChannelActivityViews);
+    setActivitySavedViews(settingsViews.length > 0 ? settingsViews : readCustomChannelActivitySavedViews(cwd, selectedChannelId));
     applyActivityView(builtinChannelActivitySavedViews[0]);
     setActivityFiltersExpanded(false);
     setAttentionQueueExpanded(false);
     setActivityDrilldownItemId("");
     setPendingChannelTeammateId("");
-    setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
+    setChannelNotificationLevel(isChannelNotificationLevel(selectedChannelNotificationLevel) ? selectedChannelNotificationLevel : readChannelNotificationLevel(cwd, selectedChannelId));
     messageFeedPinnedToLatestRef.current = true;
     messageFeedOlderLoadArmedRef.current = true;
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
-  }, [cwd, selectedChannelId]);
+  }, [cwd, selectedChannelId, workspaceSettings?.channelActivityViews?.[selectedChannelId], workspaceSettings?.channelNotifications?.[selectedChannelId]]);
+
+  useEffect(() => {
+    setChannelWorkspaceExternalPath(
+      selectedChannelWorkspace?.mode === "external_path" && selectedChannelWorkspace.executionPath
+        ? selectedChannelWorkspace.executionPath
+        : "",
+    );
+    setChannelWorkspaceNotice("");
+    setChannelWorkspaceError("");
+    setChannelWorkspaceBusyAction("");
+  }, [selectedChannelId, selectedChannelWorkspace?.mode, selectedChannelWorkspace?.executionPath]);
 
   useEffect(() => {
     if (channelMessagesLoading || channelProtocolLoading || !messageFeedPinnedToLatestRef.current) {
@@ -2017,6 +2048,89 @@ export function WorkspaceClientView({
   function updateChannelNotificationLevel(level: ChannelNotificationLevel): void {
     setChannelNotificationLevel(level);
     writeChannelNotificationLevel(cwd, selectedChannelId, level);
+    onWorkspaceSettingsPatch({
+      channelNotifications: {
+        ...(workspaceSettings?.channelNotifications ?? {}),
+        [selectedChannelId]: level,
+      },
+    });
+  }
+
+  async function runChannelWorkspaceAction(
+    action: string,
+    operation: () => Promise<{ readonly binding: ChannelWorkspaceBinding }>,
+    successMessage: string,
+  ): Promise<void> {
+    if (!selectedChannelId || channelWorkspaceBusyAction) {
+      return;
+    }
+    setChannelWorkspaceBusyAction(action);
+    setChannelWorkspaceNotice("");
+    setChannelWorkspaceError("");
+    try {
+      const response = await operation();
+      onChannelEditFormChange({ ...channelEditForm, workspaceBinding: response.binding });
+      setChannelWorkspaceNotice(successMessage);
+      onRefreshChannels();
+    } catch (caught: unknown) {
+      setChannelWorkspaceError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setChannelWorkspaceBusyAction("");
+    }
+  }
+
+  function onCreateManagedChannelWorktree(): void {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      return;
+    }
+    void runChannelWorkspaceAction(
+      "create-worktree",
+      () => createChannelWorktree(workspaceCwd, selectedChannelId),
+      t("Managed worktree is ready."),
+    );
+  }
+
+  function onRefreshChannelWorkspace(): void {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      return;
+    }
+    void runChannelWorkspaceAction(
+      "refresh",
+      () => refreshChannelWorkspace(workspaceCwd, selectedChannelId),
+      t("Workspace status refreshed."),
+    );
+  }
+
+  function onHandoffChannelWorkspace(mode: ChannelWorkspaceMode): void {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      return;
+    }
+    const executionPath = mode === "external_path" ? channelWorkspaceExternalPath.trim() : undefined;
+    if (mode === "external_path" && !executionPath) {
+      setChannelWorkspaceError(t("Enter an external workspace path."));
+      return;
+    }
+    void runChannelWorkspaceAction(
+      `handoff-${mode}`,
+      () => handoffChannelWorkspace(workspaceCwd, selectedChannelId, { mode, executionPath }),
+      mode === "local" ? t("Channel handed off to Local.") : mode === "managed_worktree" ? t("Channel handed off to Worktree.") : t("Channel handed off to External path."),
+    );
+  }
+
+  function onOpenChannelWorkspacePath(): void {
+    if (!selectedChannelExecutionPath) {
+      return;
+    }
+    try {
+      globalThis.open?.(`file://${selectedChannelExecutionPath}`, "_blank", "noopener");
+      setChannelWorkspaceNotice(t("Opening workspace path."));
+    } catch {
+      void globalThis.navigator?.clipboard?.writeText(selectedChannelExecutionPath);
+      setChannelWorkspaceNotice(t("Workspace path copied."));
+    }
   }
 
   function addSelectedChannelTeammate(): void {
@@ -2080,6 +2194,19 @@ export function WorkspaceClientView({
     const cappedViews = nextViews.slice(0, maxCustomChannelActivitySavedViews);
     setActivitySavedViews(cappedViews);
     writeCustomChannelActivitySavedViews(cwd, selectedChannelId, cappedViews);
+    onWorkspaceSettingsPatch({
+      channelActivityViews: {
+        ...(workspaceSettings?.channelActivityViews ?? {}),
+        [selectedChannelId]: cappedViews.map((view) => ({
+          id: view.id,
+          name: view.name,
+          filter: view.filter,
+          builtin: false,
+          createdAt: view.createdAt,
+          updatedAt: view.updatedAt,
+        })),
+      },
+    });
   }
 
   function saveActivityView(): void {
@@ -3687,6 +3814,65 @@ export function WorkspaceClientView({
           <span>{t("Execution path")}</span>
           <input value={channelEditForm.boundPath} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, boundPath: event.target.value })} disabled={!selectedChannelId} />
         </label>
+        {selectedChannelWorkspace ? (
+          <section className="channel-workspace-control field wide" aria-label={t("Channel workspace")}>
+            <div className="channel-workspace-control-head">
+              <span>
+                {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 15)}
+                <strong>{t("Workspace")}</strong>
+              </span>
+              <StatusBadge status={selectedChannelWorkspace.status === "ready" ? "done" : selectedChannelWorkspace.status === "missing" ? "blocked" : "todo"} />
+            </div>
+            <div className="channel-workspace-summary">
+              <strong>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</strong>
+              <small title={selectedChannelExecutionPath}>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
+              {selectedChannelWorkspace.errorMessage ? <small className="danger-text">{selectedChannelWorkspace.errorMessage}</small> : null}
+            </div>
+            <div className="channel-workspace-actions">
+              <button className="secondary-button compact-button" type="button" onClick={onCreateManagedChannelWorktree} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}>
+                {channelWorkspaceBusyAction === "create-worktree" ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
+                {t("Create worktree")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={onRefreshChannelWorkspace} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}>
+                {channelWorkspaceBusyAction === "refresh" ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                {t("Refresh status")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={onOpenChannelWorkspacePath} disabled={!selectedChannelExecutionPath}>
+                <FolderOpen size={14} />
+                {t("Open path")}
+              </button>
+            </div>
+            <div className="channel-workspace-actions">
+              <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("local")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || selectedChannelWorkspace.mode === "local"}>
+                {channelWorkspaceBusyAction === "handoff-local" ? <Loader2 className="spin" size={14} /> : <Command size={14} />}
+                {t("Hand off to Local")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("managed_worktree")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || !selectedChannelWorkspace.worktreePath}>
+                {channelWorkspaceBusyAction === "handoff-managed_worktree" ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
+                {t("Hand off to Worktree")}
+              </button>
+            </div>
+            <div className="channel-workspace-external-row">
+              <input
+                value={channelWorkspaceExternalPath}
+                onChange={(event) => setChannelWorkspaceExternalPath(event.target.value)}
+                placeholder={t("External workspace path")}
+                disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
+              />
+              <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("external_path")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || !channelWorkspaceExternalPath.trim()}>
+                {channelWorkspaceBusyAction === "handoff-external_path" ? <Loader2 className="spin" size={14} /> : <FolderOpen size={14} />}
+                {t("Hand off to External")}
+              </button>
+            </div>
+            {channelWorkspaceNotice ? <div className="inline-success compact">{channelWorkspaceNotice}</div> : null}
+            {channelWorkspaceError ? (
+              <div className="inline-error compact">
+                <CircleAlert size={14} />
+                {channelWorkspaceError}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
         <label className="field wide">
           <span>{t("Default AI teammate")}</span>
           <select value={channelEditForm.defaultTeammateId} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultTeammateId: event.target.value })} disabled={!selectedChannelId}>
@@ -3834,6 +4020,18 @@ export function WorkspaceClientView({
           <div className="channel-title-line">
             <span className="channel-title-icon" aria-hidden="true">#</span>
             <h1>{selectedChannel?.name ?? "Engineering"}</h1>
+            {selectedChannelWorkspace ? (
+              <button
+                className={`channel-workspace-badge ${selectedChannelWorkspace.mode} ${selectedChannelWorkspace.status}`}
+                type="button"
+                onClick={() => openSidePanelView("settings")}
+                title={selectedChannelExecutionPath}
+              >
+                {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 13)}
+                <span>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</span>
+                <small>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
+              </button>
+            ) : null}
             <div className="channel-more-wrap" ref={channelMoreRef}>
               <button
                 className={channelMoreOpen ? "icon-button channel-more-button active" : "icon-button channel-more-button"}
@@ -7790,6 +7988,64 @@ function channelNotificationStorageKey(cwd: string, channelId: string): string {
 
 function isChannelNotificationLevel(value: string | null | undefined): value is ChannelNotificationLevel {
   return value === "all" || value === "mentions" || value === "muted";
+}
+
+function resolveChannelWorkspaceBinding(channel: Channel, cwd: string): ChannelWorkspaceBinding {
+  return channel.workspaceBinding ?? {
+    mode: "local",
+    status: "ready",
+    executionPath: channel.boundPath || cwd,
+    updatedAt: channel.updatedAt,
+  };
+}
+
+function resolveChannelWorkspaceExecutionPath(binding: ChannelWorkspaceBinding, channel: Channel, cwd: string): string {
+  if (binding.mode === "managed_worktree" && binding.worktreePath) {
+    return binding.worktreePath;
+  }
+  if (binding.mode === "external_path" && binding.executionPath) {
+    return binding.executionPath;
+  }
+  return binding.executionPath || channel.boundPath || cwd;
+}
+
+function channelWorkspaceModeLabel(mode: ChannelWorkspaceMode): string {
+  if (mode === "managed_worktree") {
+    return "Worktree";
+  }
+  if (mode === "external_path") {
+    return "External";
+  }
+  return "Local";
+}
+
+function channelWorkspaceModeIcon(mode: ChannelWorkspaceMode, size: number): JSX.Element {
+  if (mode === "managed_worktree") {
+    return <GitBranch size={size} />;
+  }
+  if (mode === "external_path") {
+    return <FolderOpen size={size} />;
+  }
+  return <Command size={size} />;
+}
+
+function shortWorkspacePath(path: string, cwd: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const workspace = cwd.trim().replace(/\/$/, "");
+  if (workspace && trimmed === workspace) {
+    return ".";
+  }
+  if (workspace && trimmed.startsWith(`${workspace}/`)) {
+    return `.${trimmed.slice(workspace.length)}`;
+  }
+  const parts = trimmed.split("/").filter(Boolean);
+  if (parts.length <= 3) {
+    return trimmed;
+  }
+  return `.../${parts.slice(-3).join("/")}`;
 }
 
 function readRunTitle(run: RunSession): string {

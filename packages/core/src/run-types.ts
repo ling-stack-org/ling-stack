@@ -59,6 +59,7 @@ import type {
   CreateChannelMessageInput,
   CreateAiTeammateInput,
   CreateTeammateDirectMessageInput,
+  CreateTeammateDirectReplyInterventionInput,
   CreateTeammatePrivateAttachmentInput,
   CreateTaskInput,
   HardDeleteAiTeammateInput,
@@ -79,6 +80,7 @@ import type {
   ListChannelMessagesOptions,
   ListChannelMessageRouteDecisionsOptions,
   ListTeammatePrivateAttachmentsOptions,
+  ListTeammateDirectReplyInterventionsOptions,
   ListTeammateDirectMessagesOptions,
   ListTasksOptions,
   ReplaceTeammateChannelMembershipInput,
@@ -88,6 +90,7 @@ import type {
   TaskUpdateInput,
   TeammateChannelMembership,
   TeammateDirectMessage,
+  TeammateDirectReplyIntervention,
   TeammateDirectThread,
   TeammateMemoryScope,
   TeammatePrivateAttachment,
@@ -97,6 +100,8 @@ import type {
   UpdateChannelDecisionInput,
   UpdateChannelExecutionProposalInput,
   UpdateChannelMessageRouteDecisionInput,
+  UpdateWorkspaceSettingsInput,
+  WorkspaceSettings,
   UpdateWorkflowHandoffIntentInput,
   UpdateWorkflowSelectorDecisionInput,
   UpdateChannelWorkflowInput,
@@ -105,6 +110,7 @@ import type {
   WorkflowHandoffIntent,
   WorkflowSelectorDecision,
   UpdateChannelLinkPreviewInput,
+  UpdateTeammateDirectReplyInterventionStatusInput,
 } from "./workspace-types.js";
 import type {
   CreateResourceLeaseInput,
@@ -914,6 +920,8 @@ export interface RunStore {
   expireResourceLeases(now: string): number;
   listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
+  getWorkspaceSettings(): WorkspaceSettings;
+  updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings;
   createChannel(input: CreateChannelInput, now: string): Channel;
   getChannel(id: string): Channel | undefined;
   listChannels(options?: ListChannelsOptions): Channel[];
@@ -982,6 +990,11 @@ export interface RunStore {
     },
     now: string,
   ): TeammateDirectMessage | undefined;
+  createTeammateDirectReplyIntervention(input: CreateTeammateDirectReplyInterventionInput, now: string): TeammateDirectReplyIntervention;
+  getTeammateDirectReplyIntervention(interventionId: string): TeammateDirectReplyIntervention | undefined;
+  listTeammateDirectReplyInterventions(options?: ListTeammateDirectReplyInterventionsOptions): TeammateDirectReplyIntervention[];
+  updateTeammateDirectReplyInterventionStatus(input: UpdateTeammateDirectReplyInterventionStatusInput): TeammateDirectReplyIntervention | undefined;
+  cancelTeammateDirectReplyIntervention(interventionId: string, now: string, reason?: string): TeammateDirectReplyIntervention | undefined;
   createTeammatePrivateAttachment(input: CreateTeammatePrivateAttachmentInput): TeammatePrivateAttachment;
   getTeammatePrivateAttachment(id: string): TeammatePrivateAttachment | undefined;
   listTeammatePrivateAttachments(options: ListTeammatePrivateAttachmentsOptions): TeammatePrivateAttachment[];

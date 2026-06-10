@@ -54,6 +54,7 @@ import {
   createWorkflowSelectorDecisionId,
   createRetentionTombstoneId,
   createTeammateDirectMessageId,
+  createTeammateDirectReplyInterventionId,
   createTeammateDirectThreadId,
   createTeammateMemoryScopeId,
   createTeammatePrivateAttachmentId,
@@ -99,6 +100,7 @@ import {
   type ChannelRuntimePolicy,
   type ChannelStatus,
   type ChannelUpdateInput,
+  type ChannelWorkspaceBinding,
   type ChannelWorkflow,
   type ChannelWorkflowMetadata,
   type ChannelWorkflowStep,
@@ -121,6 +123,7 @@ import {
   type CreateWorkflowHandoffIntentInput,
   type CreateWorkflowSelectorDecisionInput,
   type CreateTeammateDirectMessageInput,
+  type CreateTeammateDirectReplyInterventionInput,
   type CreateTeammatePrivateAttachmentInput,
   type CreateTaskInput,
   type HardDeleteAiTeammateInput,
@@ -141,6 +144,7 @@ import {
   type ListWorkflowHandoffIntentsOptions,
   type ListWorkflowSelectorDecisionsOptions,
   type ListTeammateDirectMessagesOptions,
+  type ListTeammateDirectReplyInterventionsOptions,
   type ListTeammatePrivateAttachmentsOptions,
   type ListTasksOptions,
   type ReplaceTeammateChannelMembershipInput,
@@ -153,6 +157,9 @@ import {
   type TeammateDirectMessage,
   type TeammateDirectMessageAuthorType,
   type TeammateDirectMessageStatus,
+  type TeammateDirectReplyIntervention,
+  type TeammateDirectReplyInterventionMode,
+  type TeammateDirectReplyInterventionStatus,
   type TeammateDirectThread,
   type TeammateMemoryScope,
   type TeammateMemoryScopeKind,
@@ -167,10 +174,13 @@ import {
   type UpdateChannelMessageRouteDecisionInput,
   type UpdateChannelHandoffInput,
   type UpdateChannelLinkPreviewInput,
+  type UpdateTeammateDirectReplyInterventionStatusInput,
   type UpdateChannelWorkflowInput,
   type UpdateChannelWorkflowStepInput,
   type UpdateWorkflowHandoffIntentInput,
   type UpdateWorkflowSelectorDecisionInput,
+  type UpdateWorkspaceSettingsInput,
+  type WorkspaceSettings,
   type WorkflowFanInPolicy,
   type WorkflowHandoffIntent,
   type WorkflowHandoffIntentStatus,
@@ -563,9 +573,13 @@ const WORKFLOW_COORDINATION_RECORDS_MIGRATION_VERSION = 49;
 const WORKFLOW_COORDINATION_RECORDS_MIGRATION_NAME = "create_workflow_coordination_records";
 const CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_VERSION = 50;
 const CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_NAME = "create_channel_auto_reply_router";
-const CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_VERSION = 51;
+const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION = 51;
+const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_NAME = "create_teammate_direct_reply_interventions";
+const WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION = 52;
+const WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_NAME = "create_workspace_settings_and_channel_binding";
+const CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_VERSION = 53;
 const CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_NAME = "add_channel_execution_proposal_workflow_link";
-const CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION = 52;
+const CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION = 54;
 const CHANNEL_INTENT_DECISIONS_MIGRATION_NAME = "create_channel_intent_decisions";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
@@ -1685,9 +1699,17 @@ export class SqliteRunStore implements RunStore {
       clauses.push("channel_id = ?");
       params.push(options.channelId);
     }
+    if (options.teammateId) {
+      clauses.push("teammate_id = ?");
+      params.push(options.teammateId);
+    }
     if (options.linkedRunId) {
       clauses.push("linked_run_id = ?");
       params.push(options.linkedRunId);
+    }
+    if (options.linkedMessageId) {
+      clauses.push("linked_message_id = ?");
+      params.push(options.linkedMessageId);
     }
     params.push(limit);
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -2790,6 +2812,39 @@ export class SqliteRunStore implements RunStore {
     return row ? mapResourceLease(row) : undefined;
   }
 
+  getWorkspaceSettings(): WorkspaceSettings {
+    const row = this.database
+      .prepare("SELECT settings_json, updated_at FROM workspace_settings WHERE workspace_id = ?")
+      .get(DEFAULT_WORKSPACE_ID);
+    if (!row) {
+      return createDefaultWorkspaceSettings(new Date().toISOString());
+    }
+    return parseWorkspaceSettings(readString(row as Record<string, SQLOutputValue>, "settings_json"), readString(row as Record<string, SQLOutputValue>, "updated_at"));
+  }
+
+  updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings {
+    const current = this.getWorkspaceSettings();
+    const next: WorkspaceSettings = omitUndefined({
+      schemaVersion: 1 as const,
+      workspaceCwd: nullableUpdate(input.workspaceCwd, current.workspaceCwd),
+      theme: nullableUpdate(input.theme, current.theme),
+      locale: nullableUpdate(input.locale, current.locale),
+      channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
+      channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
+      updatedAt: now,
+    });
+    this.database
+      .prepare(`
+        INSERT INTO workspace_settings (workspace_id, settings_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET
+          settings_json = excluded.settings_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(DEFAULT_WORKSPACE_ID, stringifyJson(next), now, now);
+    return this.getWorkspaceSettings();
+  }
+
   createChannel(input: CreateChannelInput, now: string): Channel {
     const channel: Channel = {
       id: createChannelId(),
@@ -2797,6 +2852,7 @@ export class SqliteRunStore implements RunStore {
       name: input.name,
       status: input.status ?? "active",
       boundPath: input.boundPath,
+      workspaceBinding: input.workspaceBinding,
       defaultProviderPresetId: input.defaultProviderPresetId,
       defaultTeammateId: input.defaultTeammateId,
       autoReplyMode: input.autoReplyMode ?? "mentions_only",
@@ -2819,9 +2875,10 @@ export class SqliteRunStore implements RunStore {
           auto_reply_mode,
           allowed_tools_json,
           runtime_policy_json,
+          workspace_binding_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         channel.id,
@@ -2834,6 +2891,7 @@ export class SqliteRunStore implements RunStore {
         channel.autoReplyMode,
         stringifyJson(channel.allowedTools),
         stringifyJson(channel.runtimePolicy),
+        channel.workspaceBinding ? stringifyJson(channel.workspaceBinding) : null,
         channel.createdAt,
         channel.updatedAt,
       );
@@ -2869,6 +2927,7 @@ export class SqliteRunStore implements RunStore {
       name: input.name ?? existing.name,
       status: input.status ?? existing.status,
       boundPath: nullableUpdate(input.boundPath, existing.boundPath),
+      workspaceBinding: nullableUpdate(input.workspaceBinding, existing.workspaceBinding),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, existing.defaultProviderPresetId),
       defaultTeammateId: nullableUpdate(input.defaultTeammateId, existing.defaultTeammateId),
       autoReplyMode: input.autoReplyMode === null ? "mentions_only" : input.autoReplyMode ?? existing.autoReplyMode,
@@ -2889,6 +2948,7 @@ export class SqliteRunStore implements RunStore {
           auto_reply_mode = ?,
           allowed_tools_json = ?,
           runtime_policy_json = ?,
+          workspace_binding_json = ?,
           updated_at = ?
         WHERE id = ?
       `)
@@ -2901,6 +2961,7 @@ export class SqliteRunStore implements RunStore {
         next.autoReplyMode,
         stringifyJson(next.allowedTools),
         stringifyJson(next.runtimePolicy),
+        next.workspaceBinding ? stringifyJson(next.workspaceBinding) : null,
         next.updatedAt,
         id,
       );
@@ -4591,6 +4652,179 @@ export class SqliteRunStore implements RunStore {
       );
     const updated = this.database.prepare(teammateDirectMessageSelectSql("WHERE id = ?")).get(id);
     return updated ? mapTeammateDirectMessage(updated) : undefined;
+  }
+
+  createTeammateDirectReplyIntervention(input: CreateTeammateDirectReplyInterventionInput, now: string): TeammateDirectReplyIntervention {
+    const teammate = this.getAiTeammate(input.teammateId);
+    if (!teammate) {
+      throw new Error(`AI teammate not found: ${input.teammateId}`);
+    }
+    const thread = this.getOrCreateTeammateDirectThread(input.teammateId, now);
+    if (thread.id !== input.threadId) {
+      throw new Error(`Direct thread does not belong to teammate: ${input.threadId}`);
+    }
+    const sourceMessage = this.getTeammateDirectMessage(input.sourceMessageId);
+    if (!sourceMessage || sourceMessage.teammateId !== input.teammateId || sourceMessage.threadId !== input.threadId) {
+      throw new Error(`Direct message does not belong to teammate direct thread: ${input.sourceMessageId}`);
+    }
+    const existing = this.database
+      .prepare(teammateDirectReplyInterventionSelectSql("WHERE workspace_id = ? AND teammate_id = ? AND thread_id = ? AND idempotency_key = ?"))
+      .get(DEFAULT_WORKSPACE_ID, input.teammateId, input.threadId, input.idempotencyKey);
+    if (existing) {
+      return mapTeammateDirectReplyIntervention(existing);
+    }
+
+    const intervention: TeammateDirectReplyIntervention = {
+      id: input.id ?? createTeammateDirectReplyInterventionId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      teammateId: input.teammateId,
+      threadId: input.threadId,
+      sourceMessageId: input.sourceMessageId,
+      sourceWorkUnitId: input.sourceWorkUnitId,
+      mode: input.mode,
+      status: "queued",
+      instruction: input.instruction,
+      idempotencyKey: input.idempotencyKey,
+      requestedBy: input.requestedBy ?? "local-user",
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO teammate_direct_reply_interventions (
+          id,
+          workspace_id,
+          teammate_id,
+          thread_id,
+          source_message_id,
+          source_work_unit_id,
+          mode,
+          status,
+          instruction,
+          idempotency_key,
+          requested_by,
+          continuation_message_id,
+          continuation_work_unit_id,
+          created_at,
+          updated_at,
+          started_at,
+          completed_at,
+          failure_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        intervention.id,
+        intervention.workspaceId,
+        intervention.teammateId,
+        intervention.threadId,
+        intervention.sourceMessageId,
+        intervention.sourceWorkUnitId ?? null,
+        intervention.mode,
+        intervention.status,
+        intervention.instruction,
+        intervention.idempotencyKey,
+        intervention.requestedBy,
+        intervention.continuationMessageId ?? null,
+        intervention.continuationWorkUnitId ?? null,
+        intervention.createdAt,
+        intervention.updatedAt,
+        intervention.startedAt ?? null,
+        intervention.completedAt ?? null,
+        intervention.failureReason ?? null,
+      );
+    const created = this.getTeammateDirectReplyIntervention(intervention.id);
+    if (!created) {
+      throw new Error(`Failed to create teammate direct reply intervention: ${intervention.id}`);
+    }
+    return created;
+  }
+
+  getTeammateDirectReplyIntervention(interventionId: string): TeammateDirectReplyIntervention | undefined {
+    const row = this.database.prepare(teammateDirectReplyInterventionSelectSql("WHERE id = ?")).get(interventionId);
+    return row ? mapTeammateDirectReplyIntervention(row) : undefined;
+  }
+
+  listTeammateDirectReplyInterventions(options: ListTeammateDirectReplyInterventionsOptions = {}): TeammateDirectReplyIntervention[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.teammateId) {
+      clauses.push("teammate_id = ?");
+      params.push(options.teammateId);
+    }
+    if (options.threadId) {
+      clauses.push("thread_id = ?");
+      params.push(options.threadId);
+    }
+    if (options.sourceWorkUnitId) {
+      clauses.push("source_work_unit_id = ?");
+      params.push(options.sourceWorkUnitId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.mode) {
+      clauses.push("mode = ?");
+      params.push(options.mode);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${teammateDirectReplyInterventionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, id ASC LIMIT ?`)
+      .all(...params)
+      .map(mapTeammateDirectReplyIntervention);
+  }
+
+  updateTeammateDirectReplyInterventionStatus(input: UpdateTeammateDirectReplyInterventionStatusInput): TeammateDirectReplyIntervention | undefined {
+    const existing = this.getTeammateDirectReplyIntervention(input.interventionId);
+    if (!existing) {
+      return undefined;
+    }
+    const continuationMessageId = input.continuationMessageId === undefined ? existing.continuationMessageId ?? null : input.continuationMessageId;
+    const continuationWorkUnitId = input.continuationWorkUnitId === undefined ? existing.continuationWorkUnitId ?? null : input.continuationWorkUnitId;
+    const startedAt = input.startedAt === undefined ? existing.startedAt ?? null : input.startedAt;
+    const completedAt = input.completedAt === undefined ? existing.completedAt ?? null : input.completedAt;
+    const failureReason = input.failureReason === undefined ? existing.failureReason ?? null : input.failureReason;
+    this.database
+      .prepare(`
+        UPDATE teammate_direct_reply_interventions
+        SET status = ?,
+            continuation_message_id = ?,
+            continuation_work_unit_id = ?,
+            updated_at = ?,
+            started_at = ?,
+            completed_at = ?,
+            failure_reason = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.status,
+        continuationMessageId,
+        continuationWorkUnitId,
+        input.now,
+        startedAt,
+        completedAt,
+        failureReason,
+        input.interventionId,
+      );
+    return this.getTeammateDirectReplyIntervention(input.interventionId);
+  }
+
+  cancelTeammateDirectReplyIntervention(interventionId: string, now: string, reason?: string): TeammateDirectReplyIntervention | undefined {
+    const existing = this.getTeammateDirectReplyIntervention(interventionId);
+    if (!existing) {
+      return undefined;
+    }
+    if (existing.status === "started" || existing.status === "cancelled" || existing.status === "failed") {
+      return existing;
+    }
+    return this.updateTeammateDirectReplyInterventionStatus({
+      interventionId,
+      status: "cancelled",
+      completedAt: now,
+      failureReason: reason ?? "cancelled",
+      now,
+    });
   }
 
   createTeammatePrivateAttachment(input: CreateTeammatePrivateAttachmentInput): TeammatePrivateAttachment {
@@ -12484,6 +12718,69 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_VERSION, CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_NAME);
       }
     }
+
+    const hasTeammateDirectReplyInterventionsMigration = this.hasMigration(TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION);
+    if (!hasTeammateDirectReplyInterventionsMigration || !this.hasTable("teammate_direct_reply_interventions")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS teammate_direct_reply_interventions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          teammate_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          source_message_id TEXT NOT NULL,
+          source_work_unit_id TEXT,
+          mode TEXT NOT NULL,
+          status TEXT NOT NULL,
+          instruction TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL,
+          requested_by TEXT NOT NULL,
+          continuation_message_id TEXT,
+          continuation_work_unit_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT,
+          failure_reason TEXT,
+          UNIQUE(workspace_id, teammate_id, thread_id, idempotency_key),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE,
+          FOREIGN KEY(thread_id) REFERENCES teammate_direct_threads(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_message_id) REFERENCES teammate_direct_messages(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_direct_reply_interventions_thread
+        ON teammate_direct_reply_interventions(teammate_id, thread_id, status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_direct_reply_interventions_source_work_unit
+        ON teammate_direct_reply_interventions(source_work_unit_id, status, created_at);
+      `);
+      if (!hasTeammateDirectReplyInterventionsMigration) {
+        this.recordMigration(TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION, TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_NAME);
+      }
+    }
+
+    const hasWorkspaceSettingsAndChannelBindingMigration = this.hasMigration(WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION);
+    if (
+      !hasWorkspaceSettingsAndChannelBindingMigration ||
+      !this.hasColumn("channels", "workspace_binding_json") ||
+      !this.hasTable("workspace_settings")
+    ) {
+      if (!this.hasColumn("channels", "workspace_binding_json")) {
+        this.database.exec("ALTER TABLE channels ADD COLUMN workspace_binding_json TEXT;");
+      }
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS workspace_settings (
+          workspace_id TEXT PRIMARY KEY,
+          settings_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+      `);
+      if (!hasWorkspaceSettingsAndChannelBindingMigration) {
+        this.recordMigration(WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION, WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -13502,6 +13799,7 @@ function mapChannel(row: Record<string, SQLOutputValue>): Channel {
     name: readString(row, "name"),
     status: readString(row, "status") as ChannelStatus,
     boundPath: readNullableString(row, "bound_path"),
+    workspaceBinding: parseNullableChannelWorkspaceBinding(readNullableString(row, "workspace_binding_json")),
     defaultProviderPresetId: readNullableString(row, "default_provider_preset_id"),
     defaultTeammateId: readNullableString(row, "default_teammate_id"),
     autoReplyMode: readString(row, "auto_reply_mode") as Channel["autoReplyMode"],
@@ -13769,6 +14067,29 @@ function mapTeammateDirectMessage(row: Record<string, SQLOutputValue>): Teammate
     linkedRunId: readNullableString(row, "linked_run_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapTeammateDirectReplyIntervention(row: Record<string, SQLOutputValue>): TeammateDirectReplyIntervention {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    teammateId: readString(row, "teammate_id"),
+    threadId: readString(row, "thread_id"),
+    sourceMessageId: readString(row, "source_message_id"),
+    sourceWorkUnitId: readNullableString(row, "source_work_unit_id"),
+    mode: readString(row, "mode") as TeammateDirectReplyInterventionMode,
+    status: readString(row, "status") as TeammateDirectReplyInterventionStatus,
+    instruction: readString(row, "instruction"),
+    idempotencyKey: readString(row, "idempotency_key"),
+    requestedBy: readString(row, "requested_by") as TeammateDirectReplyIntervention["requestedBy"],
+    continuationMessageId: readNullableString(row, "continuation_message_id"),
+    continuationWorkUnitId: readNullableString(row, "continuation_work_unit_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    startedAt: readNullableString(row, "started_at"),
+    completedAt: readNullableString(row, "completed_at"),
+    failureReason: readNullableString(row, "failure_reason"),
   });
 }
 
@@ -14685,6 +15006,88 @@ function parseChannelRuntimePolicy(value: string): ChannelRuntimePolicy {
   });
 }
 
+function parseNullableChannelWorkspaceBinding(value: string | undefined): ChannelWorkspaceBinding | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = parseJsonObject(value);
+  return normalizeChannelWorkspaceBinding(parsed);
+}
+
+function normalizeChannelWorkspaceBinding(value: Record<string, unknown>): ChannelWorkspaceBinding | undefined {
+  const mode = value.mode;
+  if (mode !== "local" && mode !== "managed_worktree" && mode !== "external_path") {
+    return undefined;
+  }
+  const normalizedMode: ChannelWorkspaceBinding["mode"] = mode;
+  const status = value.status;
+  const normalizedStatus: ChannelWorkspaceBinding["status"] =
+    status === "ready" || status === "not_created" || status === "missing" || status === "unsupported" || status === "blocked"
+      ? status
+      : normalizedMode === "local" || normalizedMode === "external_path" ? "ready" : "not_created";
+  return omitUndefined({
+    mode: normalizedMode,
+    status: normalizedStatus,
+    executionPath: typeof value.executionPath === "string" && value.executionPath.trim() ? value.executionPath : undefined,
+    worktreePath: typeof value.worktreePath === "string" && value.worktreePath.trim() ? value.worktreePath : undefined,
+    branchName: typeof value.branchName === "string" && value.branchName.trim() ? value.branchName : undefined,
+    baseBranch: typeof value.baseBranch === "string" && value.baseBranch.trim() ? value.baseBranch : undefined,
+    baseCommit: typeof value.baseCommit === "string" && value.baseCommit.trim() ? value.baseCommit : undefined,
+    errorMessage: typeof value.errorMessage === "string" && value.errorMessage.trim() ? value.errorMessage : undefined,
+    createdAt: typeof value.createdAt === "string" && value.createdAt.trim() ? value.createdAt : undefined,
+    checkedAt: typeof value.checkedAt === "string" && value.checkedAt.trim() ? value.checkedAt : undefined,
+    updatedAt: typeof value.updatedAt === "string" && value.updatedAt.trim() ? value.updatedAt : new Date().toISOString(),
+  });
+}
+
+function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
+  return {
+    schemaVersion: 1,
+    updatedAt: now,
+  };
+}
+
+function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSettings {
+  const parsed = parseJsonObject(value);
+  const parsedTheme: WorkspaceSettings["theme"] =
+    parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system" ? parsed.theme : undefined;
+  return omitUndefined({
+    schemaVersion: 1 as const,
+    workspaceCwd: typeof parsed.workspaceCwd === "string" && parsed.workspaceCwd.trim() ? parsed.workspaceCwd : undefined,
+    theme: parsedTheme,
+    locale: typeof parsed.locale === "string" && parsed.locale.trim() ? parsed.locale : undefined,
+    channelNotifications: parseOptionalStringRecord(parsed.channelNotifications),
+    channelActivityViews: parseOptionalUnknownRecord(parsed.channelActivityViews),
+    updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim() ? parsed.updatedAt : updatedAt,
+  });
+}
+
+function parseOptionalStringRecord(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const result: Record<string, string> = {};
+  for (const [key, entryValue] of Object.entries(value)) {
+    if (typeof entryValue === "string") {
+      result[key] = entryValue;
+    }
+  }
+  return result;
+}
+
+function parseOptionalUnknownRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
 function parseRuntimeTimeoutPolicy(value: string): RuntimeTimeoutPolicy {
   try {
     const parsed = parseJsonObject(value);
@@ -14717,6 +15120,7 @@ function channelSelectSql(whereClause: string): string {
       auto_reply_mode,
       allowed_tools_json,
       runtime_policy_json,
+      workspace_binding_json,
       created_at,
       updated_at
     FROM channels
@@ -15150,6 +15554,32 @@ function teammateDirectMessageSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM teammate_direct_messages
+    ${whereClause}
+  `;
+}
+
+function teammateDirectReplyInterventionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      teammate_id,
+      thread_id,
+      source_message_id,
+      source_work_unit_id,
+      mode,
+      status,
+      instruction,
+      idempotency_key,
+      requested_by,
+      continuation_message_id,
+      continuation_work_unit_id,
+      created_at,
+      updated_at,
+      started_at,
+      completed_at,
+      failure_reason
+    FROM teammate_direct_reply_interventions
     ${whereClause}
   `;
 }

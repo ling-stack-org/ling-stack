@@ -5,6 +5,7 @@ import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
+import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 import { parseTeammateDirectMessageRequest } from "./schemas.js";
 
 export type CreateTeammateDirectAiReply = (input: {
@@ -14,6 +15,12 @@ export type CreateTeammateDirectAiReply = (input: {
   readonly sourceMessage: TeammateDirectMessage;
   readonly providerPresetId?: string;
   readonly signal?: AbortSignal;
+  readonly onWorkUnitStarted?: (handle: {
+    readonly workUnitId: string;
+    readonly messageId: string;
+    readonly teammateId: string;
+    readonly threadId: string;
+  }) => void;
   readonly stream?: {
     readonly onReady: (message: TeammateDirectMessage) => void;
     readonly onDelta: (message: TeammateDirectMessage, delta: string) => void;
@@ -140,6 +147,7 @@ export async function handleTeammateDirectMessageStream(
   storeRegistry: RunStoreRegistry,
   teammateId: string,
   createAiReply: CreateTeammateDirectAiReply,
+  activeDirectReplies?: ActiveDirectReplyRegistry,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -176,6 +184,7 @@ export async function handleTeammateDirectMessageStream(
       now,
     );
     const abortController = new AbortController();
+    let registeredWorkUnitId: string | undefined;
     let closed = false;
     response.on("close", () => {
       closed = true;
@@ -195,6 +204,10 @@ export async function handleTeammateDirectMessageStream(
         sourceMessage: message,
         providerPresetId: messageInput.providerPresetId,
         signal: abortController.signal,
+        onWorkUnitStarted: (handle) => {
+          registeredWorkUnitId = handle.workUnitId;
+          activeDirectReplies?.register({ ...handle, abortController });
+        },
         stream: {
           onReady: (aiReply) => safeWriteSse("ready", { message, aiReply }),
           onDelta: (aiReply, delta) => safeWriteSse("delta", { messageId: aiReply.id, delta, body: aiReply.body }),
@@ -205,6 +218,9 @@ export async function handleTeammateDirectMessageStream(
     } catch (error) {
       safeWriteSse("error", { message, error: error instanceof Error ? error.message : String(error) });
     } finally {
+      if (registeredWorkUnitId) {
+        activeDirectReplies?.delete(registeredWorkUnitId);
+      }
       if (!closed && !response.destroyed) {
         response.end();
       }

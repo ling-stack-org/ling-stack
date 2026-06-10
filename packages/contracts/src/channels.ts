@@ -8,6 +8,55 @@ export type ChannelExecutionMode = "serial" | "parallel";
 
 export type ChannelWriteLockScope = "channel" | "boundPath" | "workspace";
 
+export type ChannelWorkspaceMode = "local" | "managed_worktree" | "external_path";
+
+export type ChannelWorkspaceStatus = "ready" | "not_created" | "missing" | "unsupported" | "blocked";
+
+export interface ChannelWorkspaceBinding {
+  readonly mode: ChannelWorkspaceMode;
+  readonly status: ChannelWorkspaceStatus;
+  readonly executionPath?: string;
+  readonly worktreePath?: string;
+  readonly branchName?: string;
+  readonly baseBranch?: string;
+  readonly baseCommit?: string;
+  readonly errorMessage?: string;
+  readonly createdAt?: string;
+  readonly checkedAt?: string;
+  readonly updatedAt: string;
+}
+
+export interface ChannelWorkspaceSnapshot {
+  readonly mode: ChannelWorkspaceMode;
+  readonly status: ChannelWorkspaceStatus;
+  readonly workspaceCwd: string;
+  readonly executionCwd: string;
+  readonly boundPath?: string;
+  readonly worktreePath?: string;
+  readonly branchName?: string;
+  readonly baseBranch?: string;
+  readonly baseCommit?: string;
+  readonly checkedAt?: string;
+}
+
+export interface ChannelWorkspaceResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly binding: ChannelWorkspaceBinding;
+  readonly snapshot: ChannelWorkspaceSnapshot;
+}
+
+export interface ChannelWorkspaceCreateWorktreeRequest {
+  readonly baseBranch?: string;
+}
+
+export interface ChannelWorkspaceHandoffRequest {
+  readonly mode: ChannelWorkspaceMode;
+  readonly executionPath?: string;
+}
+
+export type ChannelWorkspaceMutationResponse = ChannelWorkspaceResponse;
+
 export interface ChannelRuntimePolicy {
   readonly maxConcurrentRuns: number;
   readonly executionMode: ChannelExecutionMode;
@@ -22,6 +71,7 @@ export interface Channel {
   readonly name: string;
   readonly status: ChannelStatus;
   readonly boundPath?: string;
+  readonly workspaceBinding?: ChannelWorkspaceBinding;
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly autoReplyMode: ChannelAutoReplyMode;
@@ -44,6 +94,7 @@ export interface CreateChannelRequest {
   readonly name: string;
   readonly status: ChannelStatus;
   readonly boundPath?: string;
+  readonly workspaceBinding?: ChannelWorkspaceBinding;
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly autoReplyMode?: ChannelAutoReplyMode;
@@ -55,6 +106,7 @@ export interface UpdateChannelRequest {
   readonly name?: string;
   readonly status?: ChannelStatus;
   readonly boundPath?: string | null;
+  readonly workspaceBinding?: ChannelWorkspaceBinding | null;
   readonly defaultProviderPresetId?: string | null;
   readonly defaultTeammateId?: string | null;
   readonly autoReplyMode?: ChannelAutoReplyMode | null;

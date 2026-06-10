@@ -405,6 +405,127 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
   }
 });
 
+test("sqlite persists teammate direct reply interventions with idempotency and cancellation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-direct-interventions-"));
+  const now = "2026-06-09T01:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  const teammateId = createBuiltinAiTeammateId("designer");
+  try {
+    const thread = store.getOrCreateTeammateDirectThread(teammateId, now);
+    const sourceMessage = store.createTeammateDirectMessage(
+      {
+        threadId: thread.id,
+        teammateId,
+        authorType: "local-user",
+        authorId: "local-user",
+        body: "继续优化私聊回复。",
+      },
+      now,
+    );
+    const pendingReply = store.createTeammateDirectMessage(
+      {
+        threadId: thread.id,
+        teammateId,
+        authorType: "ai-teammate",
+        authorId: teammateId,
+        body: "",
+        status: "pending",
+      },
+      "2026-06-09T01:00:01.000Z",
+    );
+    store.createWorkUnit({
+      id: "wu_direct_source",
+      workspaceId: "workspace_default",
+      kind: "teammate_direct_reply",
+      ownerType: "teammate_direct_message",
+      ownerId: sourceMessage.id,
+      teammateId,
+      linkedMessageId: pendingReply.id,
+      idempotencyKey: "direct-source",
+      status: "running",
+      createdByActor: "system",
+      request: { sourceMessageId: sourceMessage.id },
+      now: "2026-06-09T01:00:02.000Z",
+    });
+
+    const queued = store.createTeammateDirectReplyIntervention(
+      {
+        teammateId,
+        threadId: thread.id,
+        sourceMessageId: sourceMessage.id,
+        sourceWorkUnitId: "wu_direct_source",
+        mode: "queue_followup",
+        instruction: "回复完后补一版简短结论。",
+        idempotencyKey: "direct-guidance-1",
+        requestedBy: "local-user",
+      },
+      "2026-06-09T01:01:00.000Z",
+    );
+    const duplicate = store.createTeammateDirectReplyIntervention(
+      {
+        teammateId,
+        threadId: thread.id,
+        sourceMessageId: sourceMessage.id,
+        sourceWorkUnitId: "wu_direct_source",
+        mode: "queue_followup",
+        instruction: "重复请求不应创建第二条。",
+        idempotencyKey: "direct-guidance-1",
+        requestedBy: "local-user",
+      },
+      "2026-06-09T01:01:01.000Z",
+    );
+    const redirect = store.createTeammateDirectReplyIntervention(
+      {
+        teammateId,
+        threadId: thread.id,
+        sourceMessageId: sourceMessage.id,
+        sourceWorkUnitId: "wu_direct_source",
+        mode: "interrupt_redirect",
+        instruction: "停止当前回复，改为聚焦风险。",
+        idempotencyKey: "direct-guidance-2",
+        requestedBy: "local-user",
+      },
+      "2026-06-09T01:02:00.000Z",
+    );
+
+    assert.equal(duplicate.id, queued.id);
+    assert.deepEqual(
+      store.listTeammateDirectReplyInterventions({ teammateId, threadId: thread.id }).map((item) => item.id),
+      [queued.id, redirect.id],
+    );
+
+    const started = store.updateTeammateDirectReplyInterventionStatus({
+      interventionId: redirect.id,
+      status: "started",
+      continuationMessageId: "msg_continuation",
+      continuationWorkUnitId: "wu_continuation",
+      startedAt: "2026-06-09T01:03:00.000Z",
+      completedAt: "2026-06-09T01:03:00.000Z",
+      now: "2026-06-09T01:03:00.000Z",
+    });
+    assert.equal(started?.continuationMessageId, "msg_continuation");
+    assert.equal(started?.continuationWorkUnitId, "wu_continuation");
+
+    const cancelled = store.cancelTeammateDirectReplyIntervention(queued.id, "2026-06-09T01:04:00.000Z", "user_cancelled");
+    assert.equal(cancelled?.status, "cancelled");
+    assert.equal(cancelled?.failureReason, "user_cancelled");
+  } finally {
+    store.close();
+  }
+
+  store = createSqliteRunStore(cwd);
+  try {
+    const persisted = store.listTeammateDirectReplyInterventions({ teammateId });
+    assert.equal(persisted.length, 2);
+    assert.equal(persisted[0].status, "cancelled");
+    assert.equal(persisted[1].status, "started");
+    assert.equal(persisted[1].sourceWorkUnitId, "wu_direct_source");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite private attachments and hard delete remove private teammate data", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-hard-delete-"));
   const store = createSqliteRunStore(cwd);

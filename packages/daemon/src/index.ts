@@ -26,6 +26,8 @@ import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-wor
 import { ControlPlaneEventHub } from "./features/control-plane/events.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
+import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
+import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RegisteredRunner, type RunnerRegistry } from "./runtime/runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
@@ -49,6 +51,7 @@ export {
 } from "./runtime/runners.js";
 export type { RunnerFallbackReason } from "@ling-stack/core";
 export { ActiveRunRegistry } from "./runtime/active-runs.js";
+export { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 export { RunStoreRegistry } from "./runtime/store-registry.js";
 export { RuntimeSupervisor } from "./runtime/supervisor.js";
 export type { RunStoreFactory } from "./runtime/store-registry.js";
@@ -73,11 +76,16 @@ export function createDaemonServer(
   const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
   const externalWorkFetch = dependencies.externalWorkFetch;
   const mcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
-  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
+  const controlPlaneEvents = new ControlPlaneEventHub();
+  const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents });
+  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore, {
+    onStoreInitialized: (cwd, store) => {
+      void providerStartupRefresh.start(cwd, store);
+    },
+  });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
   const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig);
-  const controlPlaneEvents = new ControlPlaneEventHub();
   const automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -87,12 +95,14 @@ export function createDaemonServer(
     mcpBroker,
     controlPlaneEvents,
   );
+  const activeDirectReplies = new ActiveDirectReplyRegistry();
   const context: DaemonContext = {
     config: resolvedConfig,
     runnerRegistry,
     extensionRegistry,
     storeRegistry,
     activeRuns,
+    activeDirectReplies,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -101,6 +111,7 @@ export function createDaemonServer(
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
+    providerStartupRefresh,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -132,6 +143,7 @@ export function createDaemonServer(
     stop: () =>
       new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
+        activeDirectReplies.cancelAll();
         runtimeSupervisor.releaseAll();
         backgroundSchedulers.stopAll();
         automationSchedulers.stopAll();

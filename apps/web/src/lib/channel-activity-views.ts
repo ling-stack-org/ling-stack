@@ -104,13 +104,20 @@ export function readCustomChannelActivitySavedViews(cwd: string, channelId: stri
     if (!isRecord(parsed) || !Array.isArray(parsed.views)) {
       return [];
     }
-    return parsed.views
-      .map((view) => parseCustomView(view))
-      .filter((view): view is ChannelActivitySavedView => view !== undefined)
-      .slice(0, maxCustomChannelActivitySavedViews);
+    return parseCustomChannelActivitySavedViewsValue(parsed.views);
   } catch {
     return [];
   }
+}
+
+export function parseCustomChannelActivitySavedViewsValue(value: unknown): readonly ChannelActivitySavedView[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((view) => parseCustomView(view))
+    .filter((view): view is ChannelActivitySavedView => view !== undefined)
+    .slice(0, maxCustomChannelActivitySavedViews);
 }
 
 export function writeCustomChannelActivitySavedViews(
