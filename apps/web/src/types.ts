@@ -12,6 +12,7 @@ import type {
   PermissionPreset,
   ProviderApi,
   ProviderKind,
+  ProviderTransport,
   SessionPermissionMode,
   TaskStatus,
   ToolName,
@@ -44,6 +45,7 @@ export interface ProviderFormState {
   readonly providerId: string;
   readonly model: string;
   readonly api: ProviderApi;
+  readonly providerTransport: ProviderTransport | "";
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly apiKeyRef: string;

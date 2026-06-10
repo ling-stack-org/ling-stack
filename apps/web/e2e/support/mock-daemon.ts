@@ -2680,7 +2680,13 @@ export function createChannelFromBody(body: Record<string, unknown>, id: string,
         ? existing.status
         : "active",
     boundPath: typeof body.boundPath === "string" ? body.boundPath : typeof existing.boundPath === "string" ? existing.boundPath : cwd,
-    defaultProviderPresetId: typeof body.defaultProviderPresetId === "string" ? body.defaultProviderPresetId : typeof existing.defaultProviderPresetId === "string" ? existing.defaultProviderPresetId : undefined,
+    defaultProviderPresetId: body.defaultProviderPresetId === null || body.defaultProviderPresetId === ""
+      ? undefined
+      : typeof body.defaultProviderPresetId === "string"
+        ? body.defaultProviderPresetId
+        : typeof existing.defaultProviderPresetId === "string"
+          ? existing.defaultProviderPresetId
+          : undefined,
     defaultTeammateId: typeof body.defaultTeammateId === "string" ? body.defaultTeammateId : typeof existing.defaultTeammateId === "string" ? existing.defaultTeammateId : undefined,
     autoReplyMode: body.autoReplyMode === null
       ? "mentions_only"

@@ -27,6 +27,10 @@ export class RuntimeSupervisor {
     return this.config.runtimeTools;
   }
 
+  getTransportFeatures(): ResolvedDaemonConfig["transports"] {
+    return this.config.transports;
+  }
+
   getRuntime(cwd: string, store: RunStore): RuntimeInstance {
     const existing = this.runtimesByCwd.get(cwd);
     if (existing) {

@@ -211,7 +211,7 @@ function ReviewQueueLayout({
 
   if (items.length === 0) {
     return (
-      <div className="review-queue-layout empty">
+      <div className="review-queue-layout approval-list empty">
         <div className="empty-state compact-empty">
           {isLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
           <span>{isLoading ? t("Loading approvals...") : listEmptyCopy}</span>
@@ -234,7 +234,7 @@ function ReviewQueueLayout({
   }
 
   return (
-    <div className="review-queue-layout">
+    <div className="review-queue-layout approval-list">
       <div className="review-queue-list" aria-label={t("Review Queue")}>
         {items.map((item) => (
           <ReviewQueueRow

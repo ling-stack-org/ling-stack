@@ -51,6 +51,13 @@ export function controlPlaneStreamUrl(
   return url.toString();
 }
 
+export function controlPlaneRpcStreamUrl(baseUrl: string, cwd: string): string {
+  const url = new URL("/rpc/stream", normalizedBaseUrl(baseUrl));
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("cwd", cwd);
+  return url.toString();
+}
+
 export function parseControlPlaneEventMessage(data: string): ControlPlaneEvent | undefined {
   try {
     const parsed = JSON.parse(data) as Partial<ControlPlaneEvent>;
@@ -63,6 +70,25 @@ export function parseControlPlaneEventMessage(data: string): ControlPlaneEvent |
       return undefined;
     }
     return parsed as ControlPlaneEvent;
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseControlPlaneRpcEventMessage(data: string): ControlPlaneEvent | undefined {
+  try {
+    const parsed = JSON.parse(data) as {
+      readonly method?: unknown;
+      readonly params?: unknown;
+    };
+    if (parsed.method !== "$/control_plane_event" || !parsed.params || typeof parsed.params !== "object" || Array.isArray(parsed.params)) {
+      return undefined;
+    }
+    const event = (parsed.params as { readonly event?: unknown }).event;
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      return undefined;
+    }
+    return parseControlPlaneEventObject(event);
   } catch {
     return undefined;
   }
@@ -116,4 +142,17 @@ export function runnerItemsFromControlPlaneSnapshot(snapshot: RunnersDomainSnaps
 
 function normalizedBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+}
+
+function parseControlPlaneEventObject(value: unknown): ControlPlaneEvent | undefined {
+  const parsed = value as Partial<ControlPlaneEvent>;
+  if (
+    typeof parsed.seq !== "number" ||
+    typeof parsed.domain !== "string" ||
+    typeof parsed.action !== "string" ||
+    !controlPlaneSummaryDomains.includes(parsed.domain as ControlPlaneDomain)
+  ) {
+    return undefined;
+  }
+  return parsed as ControlPlaneEvent;
 }

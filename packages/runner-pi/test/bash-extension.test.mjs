@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { SUPPORTED_PROVIDER_APIS } from "../dist/constants.js";
 import { createLingStackApprovalExtension } from "../dist/extensions/approval.js";
 import { createLingStackBashToolExtension } from "../dist/extensions/bash.js";
+import { getPiRunnerExtension } from "../dist/index.js";
+
+test("runner-pi exposes OpenAI Codex Responses provider support", () => {
+  assert.ok(SUPPORTED_PROVIDER_APIS.includes("openai-codex-responses"));
+  assert.ok(getPiRunnerExtension().supportedProviderApis.includes("openai-codex-responses"));
+});
 
 test("unified exec bash extension returns daemon handled results", async () => {
   const registered = [];

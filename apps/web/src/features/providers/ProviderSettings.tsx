@@ -133,7 +133,7 @@ export function ProviderSettings({
   readonly onCheck: (providerId: string) => void;
   readonly onCheckBatch: () => void;
   readonly onUse: (provider: ProviderPreset) => void;
-  readonly onStopUse: () => void;
+  readonly onStopUse: (provider: ProviderPreset) => void;
   readonly onToggleEnabled: (provider: ProviderPreset, enabled: boolean) => void;
   readonly onRerun: (run: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
@@ -619,7 +619,7 @@ export function ProviderSettings({
                               disabled={providerIsMedia || (!providerSelectedForRun && !providerCanBeDefault)}
                               onClick={() => {
                                 if (providerSelectedForRun) {
-                                  onStopUse();
+                                  onStopUse(provider);
                                   return;
                                 }
                                 onUse(provider);
@@ -830,16 +830,35 @@ export function ProviderSettings({
             <select
               value={form.api}
               disabled={!canEditCustomProviderFields}
-              onChange={(event) => onFormChange({ ...form, api: event.target.value as ProviderFormState["api"] })}
+              onChange={(event) => {
+                const api = event.target.value as ProviderFormState["api"];
+                onFormChange({ ...form, api, providerTransport: api === "openai-codex-responses" ? form.providerTransport || "auto" : "" });
+              }}
             >
               <option value="openai-completions">{t("OpenAI completions")}</option>
               <option value="openai-responses">{t("OpenAI responses")}</option>
+              <option value="openai-codex-responses">{t("OpenAI Codex Responses")}</option>
               <option value="anthropic-messages">{t("Anthropic messages")}</option>
               <option value="google-generative-ai">{t("Google generative AI")}</option>
               <option value="mistral-conversations">{t("Mistral conversations")}</option>
               <option value="media-job">{t("Media job")}</option>
             </select>
           </label>
+          {form.api === "openai-codex-responses" ? (
+            <label className="field">
+              <span>{t("Transport")}</span>
+              <select
+                value={form.providerTransport || "auto"}
+                disabled={!canEditCustomProviderFields}
+                onChange={(event) => onFormChange({ ...form, providerTransport: event.target.value as ProviderFormState["providerTransport"] })}
+              >
+                <option value="auto">{t("Auto")}</option>
+                <option value="websocket">{t("WebSocket")}</option>
+                <option value="websocket-cached">{t("WebSocket cached")}</option>
+                <option value="sse">{t("SSE")}</option>
+              </select>
+            </label>
+          ) : null}
           <label className="field">
             <span>{t("Context")}</span>
             <input value={form.contextWindow} inputMode="numeric" onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />

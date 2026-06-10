@@ -132,6 +132,7 @@ function providerModelListInputToPreset(input: ProviderModelListRequest): Provid
     providerId: input.providerId,
     model: "model-probe",
     api: input.api,
+    providerTransport: input.providerTransport,
     baseUrl: input.baseUrl,
     apiKeyRef: input.apiKey ? "__request_api_key__" : input.apiKeyRef,
     headers: input.headers ?? {},

@@ -104,7 +104,7 @@ export function GlobalWorkBoardPage({
         <span className="work-board-heading">
           <Kanban size={18} />
           <span>
-            <h2 id="global-work-board-title">{t("Work Board")}</h2>
+            <h2 id="global-work-board-title">{t("Global Work Board")}</h2>
             <small>{t("Global work ledger")}</small>
           </span>
         </span>

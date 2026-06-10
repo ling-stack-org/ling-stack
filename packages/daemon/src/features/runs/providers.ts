@@ -1,6 +1,7 @@
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
 import {
   type ProviderPreset,
+  type ProviderTransport,
   type ResolvedSecret,
   type RunStore,
   type SecretResolver,
@@ -10,7 +11,12 @@ import { providerSecretStatus, resolveProviderSecret } from "../providers/secret
 import { removeUndefined } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
 
-export function resolveProviderForRun(store: RunStore, runRequest: RunRequest, secretResolver: SecretResolver): PiRunnerProviderConfig {
+export function resolveProviderForRun(
+  store: RunStore,
+  runRequest: RunRequest,
+  secretResolver: SecretResolver,
+  options: { readonly providerWebSocketFallbackEnabled?: boolean } = {},
+): PiRunnerProviderConfig {
   if (runRequest.providerPresetId && runRequest.provider) {
     throw new HttpError(400, "bad_request", "providerPresetId and inline provider cannot both be supplied");
   }
@@ -38,6 +44,11 @@ export function resolveProviderForRun(store: RunStore, runRequest: RunRequest, s
       apiKey: secret.value,
       baseUrl: preset.baseUrl,
       api: preset.api as PiRunnerProviderConfig["api"],
+      providerTransport: resolveEffectiveProviderTransport(
+        preset.api,
+        preset.providerTransport,
+        options.providerWebSocketFallbackEnabled === true,
+      ),
       headers: preset.headers,
       authHeader: preset.authHeader,
       reasoning: preset.reasoning,
@@ -52,7 +63,25 @@ export function resolveProviderForRun(store: RunStore, runRequest: RunRequest, s
     throw new HttpError(400, "bad_request", "Either providerPresetId or provider is required");
   }
 
-  return runRequest.provider;
+  return removeUndefined({
+    ...runRequest.provider,
+    providerTransport: resolveEffectiveProviderTransport(
+      runRequest.provider.api,
+      runRequest.provider.providerTransport,
+      options.providerWebSocketFallbackEnabled === true,
+    ),
+  }) as PiRunnerProviderConfig;
+}
+
+function resolveEffectiveProviderTransport(
+  api: PiRunnerProviderConfig["api"] | undefined,
+  configured: ProviderTransport | undefined,
+  providerWebSocketFallbackEnabled: boolean,
+): ProviderTransport | undefined {
+  if (api !== "openai-codex-responses") {
+    return undefined;
+  }
+  return providerWebSocketFallbackEnabled ? configured ?? "auto" : "sse";
 }
 
 function assertProviderRunPreflight(store: RunStore, preset: ProviderPreset, skipProviderPreflight: boolean, secretResolver: SecretResolver): void {

@@ -25,6 +25,7 @@ export function providerDraftInputToPreset(input: ProviderPresetInput, apiKey: s
     providerId: input.providerId,
     model: input.model,
     api: input.api,
+    providerTransport: input.providerTransport,
     baseUrl: input.baseUrl,
     apiKeyRef: apiKey ? draftProviderSecretRef : input.apiKeyRef,
     headers: input.headers ?? {},

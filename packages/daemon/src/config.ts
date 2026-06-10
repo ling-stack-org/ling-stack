@@ -7,6 +7,7 @@ export interface DaemonConfig {
   readonly defaultWorkspaceCwd?: string;
   readonly runners?: RunnerFeatureConfig;
   readonly runtimeTools?: RuntimeToolFeatureConfig;
+  readonly transports?: TransportFeatureConfig;
   readonly channels?: ChannelFeatureConfig;
 }
 
@@ -19,6 +20,11 @@ export interface RuntimeToolFeatureConfig {
   readonly requestPermissions?: boolean;
   readonly unifiedExec?: boolean;
   readonly shellSnapshot?: boolean;
+}
+
+export interface TransportFeatureConfig {
+  readonly providerWebSocketFallback?: boolean;
+  readonly localWebSocketRpc?: boolean;
 }
 
 export interface RunnerFeatureConfig {
@@ -47,6 +53,7 @@ export interface ResolvedDaemonConfig {
   readonly defaultWorkspaceCwd: string;
   readonly runners: RunnerFeatureConfig;
   readonly runtimeTools: RuntimeToolFeatureConfig;
+  readonly transports: Required<TransportFeatureConfig>;
   readonly channels: ChannelFeatureConfig;
 }
 
@@ -64,6 +71,12 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
     runners: config.runners ?? {},
     runtimeTools: config.runtimeTools ?? {},
+    transports: {
+      providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
+        readBooleanEnv(process.env.LING_STACK_PROVIDER_WS_FALLBACK, true),
+      localWebSocketRpc: config.transports?.localWebSocketRpc ??
+        readBooleanEnv(process.env.LING_STACK_LOCAL_WS_RPC, true),
+    },
     channels: {
       autoRoute: config.channels?.autoRoute ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_AUTO_ROUTE, false),
       intentSelector: config.channels?.intentSelector ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_INTENT_SELECTOR, false),

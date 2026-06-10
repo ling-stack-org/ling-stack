@@ -2,6 +2,7 @@ import {
   readOnlyRunTools,
   permissionModeForPreset,
   permissionPresets,
+  providerTransports,
   runContinuationReasons,
   sessionPermissionModes,
   type PermissionConfirmation,
@@ -163,6 +164,7 @@ function parseInlineProvider(provider: Record<string, unknown>): PiRunnerProvide
     apiKey: readOptionalString(provider, "apiKey"),
     baseUrl: readOptionalString(provider, "baseUrl"),
     api: readOptionalProviderApi(provider, "api"),
+    providerTransport: readOptionalProviderTransport(provider, "providerTransport"),
     headers: readOptionalStringRecord(provider, "headers"),
     authHeader: readOptionalBoolean(provider, "authHeader"),
     reasoning: readOptionalBoolean(provider, "reasoning"),
@@ -278,8 +280,20 @@ function readOptionalProviderApi(record: Record<string, unknown>, key: string): 
   return readOptionalStringArray({ [key]: record[key] === undefined ? undefined : [record[key]] }, key, [
     "openai-completions",
     "openai-responses",
+    "openai-codex-responses",
     "anthropic-messages",
     "google-generative-ai",
     "mistral-conversations",
   ])?.[0];
+}
+
+function readOptionalProviderTransport(record: Record<string, unknown>, key: string): PiRunnerProviderConfig["providerTransport"] {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!providerTransports.includes(value as NonNullable<PiRunnerProviderConfig["providerTransport"]>)) {
+    throw new Error(`${key} must be one of: ${providerTransports.join(", ")}`);
+  }
+  return value as PiRunnerProviderConfig["providerTransport"];
 }

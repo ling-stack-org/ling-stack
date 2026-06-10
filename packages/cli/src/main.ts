@@ -46,7 +46,8 @@ const VALID_TOOLS: ReadonlySet<string> = new Set(Object.keys(defaultApprovalTool
 const VALID_POLICY_DECISIONS: ReadonlySet<string> = new Set(approvalToolDecisions);
 const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
 const VALID_PROVIDER_KINDS = new Set(["openai", "anthropic", "openai-compatible", "doubao", "deepseek", "minimax", "glm", "jimeng", "seedream", "seedance"]);
-const VALID_PROVIDER_APIS = new Set(["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai", "mistral-conversations", "media-job"]);
+const VALID_PROVIDER_APIS = new Set(["openai-completions", "openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai", "mistral-conversations", "media-job"]);
+const VALID_PROVIDER_TRANSPORTS = new Set(["auto", "websocket", "websocket-cached", "sse"]);
 const VALID_PROVIDER_CAPABILITIES = new Set(["chat", "tool_call", "reasoning", "vision", "embedding", "image_generate", "image_edit", "video_generate", "tts", "asr"]);
 const VALID_PROVIDER_INPUTS = new Set(["text", "image"]);
 
@@ -3507,6 +3508,15 @@ async function streamRun(
   path = "/runs",
   query: Record<string, QueryValue> = {},
 ): Promise<void> {
+  try {
+    await streamRunRpc(options, body, handleRecord, path);
+    return;
+  } catch (error) {
+    if (!(error instanceof RpcFallbackError)) {
+      throw error;
+    }
+  }
+
   const url = buildUrl(options.daemonUrl, path, query);
   let response: Response;
   try {
@@ -3549,11 +3559,178 @@ async function streamRun(
   }
 }
 
+class RpcFallbackError extends Error {}
+
+type WebSocketLike = {
+  readonly CONNECTING: number;
+  readonly OPEN: number;
+  readonly readyState: number;
+  send(data: string): void;
+  close(): void;
+  addEventListener(event: "open" | "message" | "error" | "close", listener: (event: { readonly data?: unknown }) => void): void;
+};
+
+type WebSocketConstructorLike = {
+  readonly CONNECTING: number;
+  readonly OPEN: number;
+  new(url: string): WebSocketLike;
+};
+
+async function streamRunRpc(
+  options: GlobalOptions,
+  body: unknown,
+  handleRecord: (record: RunStreamRecord) => void,
+  path: string,
+): Promise<void> {
+  if (path !== "/runs") {
+    throw new RpcFallbackError("WebSocket RPC only supports the primary run endpoint.");
+  }
+  const cwd = readRunRequestCwd(body);
+  const WebSocketCtor = (globalThis as unknown as { readonly WebSocket?: WebSocketConstructorLike }).WebSocket;
+  if (!cwd || !WebSocketCtor) {
+    throw new RpcFallbackError("WebSocket RPC is not available.");
+  }
+  const ws = new WebSocketCtor(buildRpcStreamUrl(options.daemonUrl, cwd));
+  let accepted = false;
+  let startResponseSeen = false;
+  let settled = false;
+
+  return await new Promise<void>((resolve, reject) => {
+    const close = (): void => {
+      if (ws.readyState === WebSocketCtor.CONNECTING || ws.readyState === WebSocketCtor.OPEN) {
+        ws.close();
+      }
+    };
+    const settleResolve = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      close();
+      resolve();
+    };
+    const settleReject = (error: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      close();
+      reject(error);
+    };
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { cwd } }));
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "runs.start", params: body }));
+    });
+    ws.addEventListener("message", (message) => {
+      const envelope = parseRpcEnvelope(message.data);
+      if (!envelope) {
+        return;
+      }
+      if (envelope.id === 2) {
+        startResponseSeen = true;
+        if (envelope.error) {
+          const code = readRpcErrorCode(envelope.error);
+          settleReject(code === "method_not_found" || code === "not_initialized"
+            ? new RpcFallbackError(envelope.error.message)
+            : new CliError(4, code ?? "rpc_error", envelope.error.message));
+          return;
+        }
+        accepted = true;
+        return;
+      }
+      if (envelope.method !== "$/run_event") {
+        return;
+      }
+      const params = envelope.params;
+      if (!isRecord(params)) {
+        return;
+      }
+      if (params.kind === "ready") {
+        const data = params.data;
+        if (isRecord(data) && typeof data.runId === "string") {
+          handleRecord({ kind: "ready", runId: data.runId });
+        }
+        return;
+      }
+      if (params.kind === "event") {
+        if (!isRunEventEnvelope(params.data)) {
+          settleReject(new CliError(4, "bad_rpc_event", "RPC run_event did not contain a run event envelope."));
+          return;
+        }
+        handleRecord({ kind: "event", envelope: params.data });
+        return;
+      }
+      if (params.kind === "error") {
+        const bodyRecord = params.body;
+        const message = isRecord(bodyRecord) && typeof bodyRecord.message === "string"
+          ? bodyRecord.message
+          : "Run failed before the stream started.";
+        settleReject(accepted ? new CliError(4, "run_failed", message) : new RpcFallbackError(message));
+        return;
+      }
+      if (params.kind === "end") {
+        settleResolve();
+      }
+    });
+    ws.addEventListener("error", () => {
+      settleReject(accepted ? new CliError(4, "rpc_stream_failed", "WebSocket RPC stream failed.") : new RpcFallbackError("WebSocket RPC is unavailable."));
+    });
+    ws.addEventListener("close", () => {
+      if (settled) {
+        return;
+      }
+      settleReject(accepted || startResponseSeen
+        ? new CliError(4, "rpc_stream_closed", "WebSocket RPC stream closed.")
+        : new RpcFallbackError("WebSocket RPC closed before run start."));
+    });
+  });
+}
+
 function handleRunStreamBlock(block: string, handleRecord: (record: RunStreamRecord) => void): void {
   const record = parseRunStreamRecord(block);
   if (record) {
     handleRecord(record);
   }
+}
+
+function buildRpcStreamUrl(baseUrl: string, cwd: string): string {
+  const url = new URL("/rpc/stream", `${baseUrl}/`);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("cwd", cwd);
+  return url.toString();
+}
+
+function readRunRequestCwd(body: unknown): string | undefined {
+  if (!isRecord(body)) {
+    return undefined;
+  }
+  return typeof body.cwd === "string" && body.cwd.trim() ? body.cwd : undefined;
+}
+
+function parseRpcEnvelope(data: unknown): {
+  readonly id?: number | string | null;
+  readonly method?: string;
+  readonly params?: unknown;
+  readonly error?: { readonly message: string; readonly data?: unknown };
+} | undefined {
+  const text = typeof data === "string"
+    ? data
+    : data instanceof ArrayBuffer
+      ? Buffer.from(data).toString("utf8")
+      : undefined;
+  if (text === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return isRecord(parsed) ? parsed as ReturnType<typeof parseRpcEnvelope> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readRpcErrorCode(error: { readonly data?: unknown }): string | undefined {
+  return isRecord(error.data) && typeof error.data.code === "string" ? error.data.code : undefined;
 }
 
 function createCliRunOutput(options: GlobalOptions): RunOutput {
@@ -3622,6 +3799,7 @@ function providerCommandParserSpec(options: { readonly includeClearFlags?: boole
       "provider-id",
       "model",
       "api",
+      "provider-transport",
       "base-url",
       "api-key-ref",
       "context-window",
@@ -3638,7 +3816,7 @@ function providerCommandParserSpec(options: { readonly includeClearFlags?: boole
       "no-reasoning",
       "disabled",
       ...(options.includeClearFlags
-        ? ["clear-base-url", "clear-api-key-ref", "clear-auth-header", "clear-reasoning", "clear-context-window", "clear-max-tokens"]
+        ? ["clear-provider-transport", "clear-base-url", "clear-api-key-ref", "clear-auth-header", "clear-reasoning", "clear-context-window", "clear-max-tokens"]
         : []),
     ]),
   };
@@ -3819,6 +3997,7 @@ function buildProviderAddBody(parsed: ParsedCommandArgs, kind: string): Record<s
     providerId,
     model,
     api,
+    providerTransport: readAllowedOptionalFlag(parsed, "provider-transport", VALID_PROVIDER_TRANSPORTS),
     baseUrl: getFlag(parsed, "base-url"),
     apiKeyRef: getFlag(parsed, "api-key-ref"),
     headers: readHeaders(parsed),
@@ -3840,6 +4019,7 @@ function buildProviderUpdateBody(parsed: ParsedCommandArgs): Record<string, unkn
   setIfDefined(body, "providerId", getFlag(parsed, "provider-id"));
   setIfDefined(body, "model", getFlag(parsed, "model"));
   setIfDefined(body, "api", readAllowedOptionalFlag(parsed, "api", VALID_PROVIDER_APIS));
+  setIfDefinedOrCleared(body, "providerTransport", readAllowedOptionalFlag(parsed, "provider-transport", VALID_PROVIDER_TRANSPORTS), parsed.booleans.has("clear-provider-transport"));
   setIfDefinedOrCleared(body, "baseUrl", getFlag(parsed, "base-url"), parsed.booleans.has("clear-base-url"));
   setIfDefinedOrCleared(body, "apiKeyRef", getFlag(parsed, "api-key-ref"), parsed.booleans.has("clear-api-key-ref"));
   setIfDefined(body, "headers", readHeaders(parsed));
@@ -4234,7 +4414,7 @@ function printProvidersList(response: unknown): void {
     return;
   }
   printTable(
-    ["ID", "Kind", "Name", "Provider", "Model", "API", "Enabled", "Secret", "Check"],
+    ["ID", "Kind", "Name", "Provider", "Model", "API", "Transport", "Enabled", "Secret", "Check"],
     providers.map((provider) => [
       truncate(readString(provider, "id") ?? "", 32),
       truncate(readString(provider, "kind") ?? "", 18),
@@ -4242,6 +4422,7 @@ function printProvidersList(response: unknown): void {
       truncate(readString(provider, "providerId") ?? "", 18),
       truncate(readString(provider, "model") ?? "", 20),
       truncate(readString(provider, "api") ?? "", 20),
+      truncate(readString(provider, "providerTransport") ?? "default", 18),
       String(readBoolean(provider, "enabled") ?? false),
       providerSecretStatus(provider),
       truncate(providerCheckStatus(provider), 18),
@@ -4261,6 +4442,7 @@ function printProviderDetail(response: unknown): void {
   console.log(`Provider ID: ${readString(provider, "providerId") ?? ""}`);
   console.log(`Model: ${readString(provider, "model") ?? ""}`);
   console.log(`API: ${readString(provider, "api") ?? ""}`);
+  console.log(`Transport: ${readString(provider, "providerTransport") ?? "default"}`);
   const baseUrl = readString(provider, "baseUrl");
   if (baseUrl) {
     console.log(`Base URL: ${baseUrl}`);
@@ -5632,6 +5814,7 @@ Kinds:
 
 Common options:
   --api <api>                  Default: openai-completions, anthropic-messages for anthropic
+  --provider-transport <mode>  auto|websocket|websocket-cached|sse for openai-codex-responses
   --base-url <url>             Required for openai-compatible
   --api-key-ref env:NAME|keychain:NAME
                                Secret reference; raw API keys are not accepted
@@ -5647,7 +5830,7 @@ Common options:
   --compat-json <object>       OpenAI-compatible adapter options
 
 Update-only clear flags:
-  --clear-base-url --clear-api-key-ref --clear-auth-header --clear-reasoning --clear-context-window --clear-max-tokens
+  --clear-provider-transport --clear-base-url --clear-api-key-ref --clear-auth-header --clear-reasoning --clear-context-window --clear-max-tokens
 `);
 }
 

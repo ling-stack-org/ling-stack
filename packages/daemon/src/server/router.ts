@@ -305,6 +305,10 @@ export async function routeRequest(
           autoRoute: config.channels.autoRoute === true,
           intentSelector: config.channels.intentSelector === true,
         },
+        transports: {
+          providerWebSocketFallback: config.transports.providerWebSocketFallback === true,
+          localWebSocketRpc: config.transports.localWebSocketRpc === true,
+        },
       },
     });
     return;

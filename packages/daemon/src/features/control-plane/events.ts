@@ -20,6 +20,10 @@ export interface ControlPlaneStreamSubscription {
   close(): void;
 }
 
+export interface ControlPlaneEventListenerSubscription {
+  close(): void;
+}
+
 interface ControlPlaneStreamClient {
   readonly id: number;
   readonly workspaceId: string;
@@ -33,9 +37,19 @@ interface ControlPlaneStreamClient {
   closed: boolean;
 }
 
+interface ControlPlaneEventListenerClient {
+  readonly id: number;
+  readonly workspaceId: string;
+  readonly cwd: string;
+  readonly domains?: ReadonlySet<ControlPlaneDomain>;
+  readonly onEvent: (event: ControlPlaneEvent) => void;
+  closed: boolean;
+}
+
 export class ControlPlaneEventHub {
   private nextClientId = 1;
   private readonly clients = new Set<ControlPlaneStreamClient>();
+  private readonly listeners = new Set<ControlPlaneEventListenerClient>();
 
   subscribe(input: {
     readonly workspaceId: string;
@@ -75,6 +89,27 @@ export class ControlPlaneEventHub {
     };
   }
 
+  subscribeListener(input: {
+    readonly workspaceId: string;
+    readonly cwd: string;
+    readonly domains?: readonly ControlPlaneDomain[];
+    readonly onEvent: (event: ControlPlaneEvent) => void;
+  }): ControlPlaneEventListenerSubscription {
+    const client: ControlPlaneEventListenerClient = {
+      id: this.nextClientId,
+      workspaceId: input.workspaceId,
+      cwd: input.cwd,
+      domains: input.domains && input.domains.length > 0 ? new Set(input.domains) : undefined,
+      onEvent: input.onEvent,
+      closed: false,
+    };
+    this.nextClientId += 1;
+    this.listeners.add(client);
+    return {
+      close: () => this.closeListener(client),
+    };
+  }
+
   publish(event: ControlPlaneEvent): void {
     for (const client of this.clients) {
       if (!clientMatchesEvent(client, event)) {
@@ -82,11 +117,20 @@ export class ControlPlaneEventHub {
       }
       enqueueClientEvent(client, event, () => this.closeClient(client));
     }
+    for (const listener of this.listeners) {
+      if (!listenerMatchesEvent(listener, event)) {
+        continue;
+      }
+      listener.onEvent(trimOversizedEvent(event));
+    }
   }
 
   closeAll(): void {
     for (const client of [...this.clients]) {
       this.closeClient(client);
+    }
+    for (const listener of [...this.listeners]) {
+      this.closeListener(listener);
     }
   }
 
@@ -105,6 +149,14 @@ export class ControlPlaneEventHub {
     if (!client.response.writableEnded) {
       client.response.end();
     }
+  }
+
+  private closeListener(client: ControlPlaneEventListenerClient): void {
+    if (client.closed) {
+      return;
+    }
+    client.closed = true;
+    this.listeners.delete(client);
   }
 }
 
@@ -135,6 +187,14 @@ export function trimOversizedEvent(event: ControlPlaneEvent): ControlPlaneEvent 
 }
 
 function clientMatchesEvent(client: ControlPlaneStreamClient, event: ControlPlaneEvent): boolean {
+  return (
+    client.workspaceId === event.workspaceId &&
+    client.cwd === event.cwd &&
+    (!client.domains || client.domains.has(event.domain))
+  );
+}
+
+function listenerMatchesEvent(client: ControlPlaneEventListenerClient, event: ControlPlaneEvent): boolean {
   return (
     client.workspaceId === event.workspaceId &&
     client.cwd === event.cwd &&

@@ -104,8 +104,10 @@ import { claimWorkItem, heartbeatWorkItem, listWorkItems } from "../api/work-ite
 import { getWorkspaceSettings, updateWorkspaceSettings } from "../api/workspace-settings.js";
 import {
   controlPlaneStreamUrl,
+  controlPlaneRpcStreamUrl,
   controlPlaneSummaryDomains,
   parseControlPlaneEventMessage,
+  parseControlPlaneRpcEventMessage,
 } from "../lib/control-plane.js";
 import {
   readRunProviderPresetId,
@@ -198,7 +200,10 @@ export function AppShell(): JSX.Element {
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
-  const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({ channels: { autoRoute: false } });
+  const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({
+    channels: { autoRoute: false },
+    transports: { providerWebSocketFallback: false, localWebSocketRpc: false },
+  });
   const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, boolean>>>({});
   const channelSeenMessageAtRef = useRef<Record<string, string>>({});
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
@@ -382,6 +387,39 @@ export function AppShell(): JSX.Element {
     stopScheduler: stopAutomationSchedulerAction,
     resetForCwd: resetAutomationsForCwd,
   } = automationsDomain.actions;
+  async function clearProviderUsage(providerId: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (taskRunProviderId === providerId) {
+      setTaskRunProviderId("");
+    }
+    if (form.providerPresetId === providerId) {
+      setForm((current) => ({ ...current, providerPresetId: "" }));
+    }
+
+    const channelsUsingProvider = channels.filter((channel) => channel.defaultProviderPresetId === providerId);
+    if (!workspaceCwd || channelsUsingProvider.length === 0) {
+      return;
+    }
+
+    setChannels((current) =>
+      current.map((channel) =>
+        channel.defaultProviderPresetId === providerId ? { ...channel, defaultProviderPresetId: undefined } : channel,
+      ),
+    );
+    setChannelEditForm((current) =>
+      current.defaultProviderPresetId === providerId ? { ...current, defaultProviderPresetId: "" } : current,
+    );
+    await Promise.all(
+      channelsUsingProvider.map((channel) =>
+        updateChannel(workspaceCwd, channel.id, {
+          ...channelToForm(channel, workspaceCwd),
+          defaultProviderPresetId: "",
+        }),
+      ),
+    );
+    await refreshChannels(workspaceCwd);
+  }
+
   const providersDomain = useProvidersDomain({
     cwd: form.cwd.trim(),
     translate: t,
@@ -392,38 +430,7 @@ export function AppShell(): JSX.Element {
         setForm((current) => ({ ...current, providerPresetId: "" }));
       }
     },
-    clearProviderUsage: async (providerId) => {
-      const workspaceCwd = form.cwd.trim();
-      if (taskRunProviderId === providerId) {
-        setTaskRunProviderId("");
-      }
-      if (form.providerPresetId === providerId) {
-        setForm((current) => ({ ...current, providerPresetId: "" }));
-      }
-
-      const channelsUsingProvider = channels.filter((channel) => channel.defaultProviderPresetId === providerId);
-      if (!workspaceCwd || channelsUsingProvider.length === 0) {
-        return;
-      }
-
-      setChannels((current) =>
-        current.map((channel) =>
-          channel.defaultProviderPresetId === providerId ? { ...channel, defaultProviderPresetId: undefined } : channel,
-        ),
-      );
-      setChannelEditForm((current) =>
-        current.defaultProviderPresetId === providerId ? { ...current, defaultProviderPresetId: "" } : current,
-      );
-      await Promise.all(
-        channelsUsingProvider.map((channel) =>
-          updateChannel(workspaceCwd, channel.id, {
-            ...channelToForm(channel, workspaceCwd),
-            defaultProviderPresetId: "",
-          }),
-        ),
-      );
-      await refreshChannels(workspaceCwd);
-    },
+    clearProviderUsage,
   });
   const {
     providers,
@@ -942,6 +949,7 @@ export function AppShell(): JSX.Element {
     }
     let closed = false;
     let source: EventSource | undefined;
+    let ws: WebSocket | undefined;
     let retryTimer: number | undefined;
     let flushTimer: number | undefined;
     let latestSeq = 0;
@@ -962,12 +970,19 @@ export function AppShell(): JSX.Element {
       }
       flushTimer = window.setTimeout(flushDomains, 150);
     };
-    const openStream = async (): Promise<void> => {
-      const snapshot = await getControlPlaneSnapshot(workspaceCwd, ["runs"]).catch(() => undefined);
+    const scheduleRetry = (): void => {
+      if (closed || retryTimer !== undefined) {
+        return;
+      }
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void openStream();
+      }, 2_000);
+    };
+    const openSseStream = (): void => {
       if (closed) {
         return;
       }
-      latestSeq = snapshot?.latestEventSeq ?? 0;
       source = new EventSource(controlPlaneStreamUrl(daemonBaseUrl, workspaceCwd, {
         afterSeq: latestSeq,
         domains: controlPlaneSummaryDomains,
@@ -982,19 +997,86 @@ export function AppShell(): JSX.Element {
       });
       source.addEventListener("error", () => {
         source?.close();
-        if (closed || retryTimer !== undefined) {
+        scheduleRetry();
+      });
+    };
+    const openRpcStream = (): void => {
+      if (daemonFeatures.transports?.localWebSocketRpc !== true || typeof WebSocket === "undefined") {
+        openSseStream();
+        return;
+      }
+      let subscribed = false;
+      let fellBack = false;
+      const fallbackToSse = (): void => {
+        if (fellBack || subscribed || closed) {
           return;
         }
-        retryTimer = window.setTimeout(() => {
-          retryTimer = undefined;
-          void openStream();
-        }, 2_000);
+        fellBack = true;
+        openSseStream();
+      };
+      ws = new WebSocket(controlPlaneRpcStreamUrl(daemonBaseUrl, workspaceCwd));
+      ws.addEventListener("open", () => {
+        ws?.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { cwd: workspaceCwd } }));
+        ws?.send(JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "controlPlane.subscribe",
+          params: {
+            cwd: workspaceCwd,
+            afterSeq: latestSeq,
+            domains: controlPlaneSummaryDomains,
+          },
+        }));
       });
+      ws.addEventListener("message", (message) => {
+        const text = typeof message.data === "string" ? message.data : "";
+        if (text.includes("\"id\":2")) {
+          subscribed = !text.includes("\"error\"");
+          if (!subscribed) {
+            ws?.close();
+            fallbackToSse();
+          }
+          return;
+        }
+        const event = parseControlPlaneRpcEventMessage(text);
+        if (!event || event.seq <= latestSeq) {
+          return;
+        }
+        latestSeq = event.seq;
+        enqueueDomain(event.domain);
+      });
+      ws.addEventListener("error", () => {
+        ws?.close();
+        if (!subscribed) {
+          fallbackToSse();
+          return;
+        }
+        scheduleRetry();
+      });
+      ws.addEventListener("close", () => {
+        if (closed) {
+          return;
+        }
+        if (!subscribed) {
+          fallbackToSse();
+          return;
+        }
+        scheduleRetry();
+      });
+    };
+    const openStream = async (): Promise<void> => {
+      const snapshot = await getControlPlaneSnapshot(workspaceCwd, ["runs"]).catch(() => undefined);
+      if (closed) {
+        return;
+      }
+      latestSeq = snapshot?.latestEventSeq ?? 0;
+      openRpcStream();
     };
     void openStream();
     return () => {
       closed = true;
       source?.close();
+      ws?.close();
       if (retryTimer !== undefined) {
         window.clearTimeout(retryTimer);
       }
@@ -1002,7 +1084,7 @@ export function AppShell(): JSX.Element {
         window.clearTimeout(flushTimer);
       }
     };
-  }, [daemonBaseUrl, daemonHealthy, form.cwd]);
+  }, [daemonBaseUrl, daemonFeatures.transports?.localWebSocketRpc, daemonHealthy, form.cwd]);
 
   useEffect(() => {
     void refreshHealth();
@@ -1246,7 +1328,10 @@ export function AppShell(): JSX.Element {
     try {
       const health = await getDaemonHealth();
       setDaemonHealthy(health.ok);
-      setDaemonFeatures(health.features ?? { channels: { autoRoute: false } });
+      setDaemonFeatures(health.features ?? {
+        channels: { autoRoute: false },
+        transports: { providerWebSocketFallback: false, localWebSocketRpc: false },
+      });
       const viteDefaultWorkspaceCwd = getViteDefaultWorkspaceCwd();
       const defaultWorkspaceCwd = health.defaultWorkspaceCwd?.trim() || viteDefaultWorkspaceCwd;
       const canApplyDaemonDefault =
@@ -1279,7 +1364,10 @@ export function AppShell(): JSX.Element {
       }
     } catch {
       setDaemonHealthy(false);
-      setDaemonFeatures({ channels: { autoRoute: false } });
+      setDaemonFeatures({
+        channels: { autoRoute: false },
+        transports: { providerWebSocketFallback: false, localWebSocketRpc: false },
+      });
     }
   }
 
@@ -2435,13 +2523,17 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function clearProviderFromRun(): Promise<void> {
+  async function clearProviderFromRun(provider?: ProviderPreset): Promise<void> {
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
     setForm((current) => ({
       ...current,
       providerPresetId: "",
     }));
     setTaskRunProviderId("");
+    if (provider) {
+      await clearProviderUsage(provider.id);
+      return;
+    }
     if (!selectedChannel?.defaultProviderPresetId || !form.cwd.trim()) {
       return;
     }

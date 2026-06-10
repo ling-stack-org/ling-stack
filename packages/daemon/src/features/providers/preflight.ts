@@ -97,6 +97,15 @@ export async function checkProviderPreset(
     };
   }
 
+  if (preset.api === "openai-codex-responses") {
+    return {
+      ok: true,
+      code: "static_check",
+      message: "OpenAI Codex Responses configuration is valid. Provider check does not open a live WebSocket or send a model request.",
+      checkedAt,
+    };
+  }
+
   if (!["openai-completions", "openai-responses", "anthropic-messages"].includes(preset.api)) {
     return {
       ok: true,

@@ -99,6 +99,9 @@ export function mediaModelKind(modelId: string | undefined): ProviderAdapterMedi
 }
 
 function defaultProviderBaseUrl(input: Pick<ProviderAdapterInput, "api" | "kind">): string {
+  if (input.api === "openai-codex-responses") {
+    return "https://chatgpt.com/backend-api";
+  }
   if (input.api === "anthropic-messages" || input.kind === "anthropic") {
     return "https://api.anthropic.com/v1";
   }

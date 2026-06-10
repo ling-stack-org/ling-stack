@@ -18,6 +18,10 @@
     "@ling-stack/plugin-sdk": "workspace:*",
     "@ling-stack/providers": "workspace:*",
     "@ling-stack/runner-pi": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.25.2"
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13"
   }
 }

@@ -46,6 +46,24 @@ const mediaProvider = {
   capabilities: ["image_generate"],
   lastCheck: undefined,
 };
+const codexProvider = {
+  ...provider,
+  id: "provider_codex",
+  displayName: "OpenAI Codex Responses",
+  providerId: "openai-codex",
+  model: "gpt-5.5-codex",
+  api: "openai-codex-responses",
+  providerTransport: "websocket-cached",
+  baseUrl: "https://chatgpt.com/backend-api",
+  apiKeyRef: "env:OPENAI_CODEX_API_KEY",
+  enabled: false,
+  lastCheck: {
+    ok: true,
+    code: "static_check",
+    message: "OpenAI Codex Responses configuration is valid.",
+    checkedAt: "2026-06-10T00:00:00.000Z",
+  },
+};
 
 test("provider list and show include last check state", async () => {
   const daemon = await startProviderDaemon();
@@ -63,6 +81,86 @@ test("provider list and show include last check state", async () => {
     assert.match(showResult.stdout, /Last check: auth_failed/);
     assert.match(showResult.stdout, /Checked: 2026-05-21T00:00:00.000Z/);
     assert.match(showResult.stdout, /Check message: Provider authentication failed with HTTP 401\./);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
+test("provider list and show include provider transport", async () => {
+  const daemon = await startProviderDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-provider-transport-"));
+  try {
+    const listResult = await runCli(daemon.url, cwd, ["provider", "list"]);
+
+    assert.equal(listResult.code, 0, listResult.stderr);
+    assert.match(listResult.stdout, /Transport/);
+    assert.match(listResult.stdout, /websocket-cached/);
+
+    const showResult = await runCli(daemon.url, cwd, ["provider", "show", codexProvider.id]);
+
+    assert.equal(showResult.code, 0, showResult.stderr);
+    assert.match(showResult.stdout, /API: openai-codex-responses/);
+    assert.match(showResult.stdout, /Transport: websocket-cached/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
+test("provider add and update send provider transport fields", async () => {
+  const daemon = await startProviderDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-provider-transport-"));
+  try {
+    const addResult = await runCli(daemon.url, cwd, [
+      "provider",
+      "add",
+      "openai",
+      "--name",
+      "OpenAI Codex Responses",
+      "--provider-id",
+      "openai-codex",
+      "--model",
+      "gpt-5.5-codex",
+      "--api",
+      "openai-codex-responses",
+      "--provider-transport",
+      "websocket",
+      "--base-url",
+      "https://chatgpt.com/backend-api",
+      "--api-key-ref",
+      "env:OPENAI_CODEX_API_KEY",
+    ]);
+
+    assert.equal(addResult.code, 0, addResult.stderr);
+    assert.equal(daemon.providerRequests.length, 1);
+    assert.equal(daemon.providerRequests[0].method, "POST");
+    assert.equal(daemon.providerRequests[0].body.api, "openai-codex-responses");
+    assert.equal(daemon.providerRequests[0].body.providerTransport, "websocket");
+
+    const updateResult = await runCli(daemon.url, cwd, [
+      "provider",
+      "update",
+      codexProvider.id,
+      "--provider-transport",
+      "sse",
+    ]);
+
+    assert.equal(updateResult.code, 0, updateResult.stderr);
+    assert.equal(daemon.providerRequests.length, 2);
+    assert.equal(daemon.providerRequests[1].method, "PATCH");
+    assert.equal(daemon.providerRequests[1].body.providerTransport, "sse");
+
+    const clearResult = await runCli(daemon.url, cwd, [
+      "provider",
+      "update",
+      codexProvider.id,
+      "--clear-provider-transport",
+    ]);
+
+    assert.equal(clearResult.code, 0, clearResult.stderr);
+    assert.equal(daemon.providerRequests.length, 3);
+    assert.equal(daemon.providerRequests[2].body.providerTransport, null);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -168,6 +266,7 @@ function runCli(daemonUrl, cwd, args) {
 async function startProviderDaemon() {
   const checkRequests = [];
   const runRequests = [];
+  const providerRequests = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "POST" && url.pathname === "/runs") {
@@ -182,12 +281,31 @@ async function startProviderDaemon() {
     }
 
     if (request.method === "GET" && url.pathname === "/providers") {
-      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), providers: [provider, mediaProvider] });
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), providers: [provider, mediaProvider, codexProvider] });
       return;
     }
 
     if (request.method === "GET" && url.pathname === `/providers/${provider.id}`) {
       writeJson(response, 200, { provider });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === `/providers/${codexProvider.id}`) {
+      writeJson(response, 200, { provider: codexProvider });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/providers") {
+      const body = await readJsonBody(request);
+      providerRequests.push({ method: "POST", body });
+      writeJson(response, 200, { provider: { ...codexProvider, id: "provider_created", ...body } });
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname === `/providers/${codexProvider.id}`) {
+      const body = await readJsonBody(request);
+      providerRequests.push({ method: "PATCH", body });
+      writeJson(response, 200, { provider: { ...codexProvider, ...body } });
       return;
     }
 
@@ -242,6 +360,7 @@ async function startProviderDaemon() {
   return {
     checkRequests,
     runRequests,
+    providerRequests,
     url: `http://127.0.0.1:${address.port}`,
     close: () => new Promise((resolveClose, rejectClose) => {
       server.close((error) => {

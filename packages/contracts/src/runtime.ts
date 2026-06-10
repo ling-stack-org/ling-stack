@@ -80,6 +80,10 @@ export interface DaemonFeatureFlags {
     readonly autoRoute: boolean;
     readonly intentSelector?: boolean;
   };
+  readonly transports?: {
+    readonly providerWebSocketFallback: boolean;
+    readonly localWebSocketRpc: boolean;
+  };
 }
 
 export type RuntimeInstanceStatus = "healthy" | "starting" | "stopping" | "recovering";

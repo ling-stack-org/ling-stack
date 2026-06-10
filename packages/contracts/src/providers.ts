@@ -27,10 +27,13 @@ export type ProviderCapability =
 export type ProviderApi =
   | "openai-completions"
   | "openai-responses"
+  | "openai-codex-responses"
   | "anthropic-messages"
   | "google-generative-ai"
   | "mistral-conversations"
   | "media-job";
+
+export type ProviderTransport = "auto" | "websocket" | "websocket-cached" | "sse";
 
 export interface ProviderPreset {
   readonly id: string;
@@ -39,6 +42,7 @@ export interface ProviderPreset {
   readonly providerId: string;
   readonly model: string;
   readonly api: ProviderApi;
+  readonly providerTransport?: ProviderTransport;
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly apiKeyConfigured: boolean;
@@ -81,6 +85,7 @@ export interface ProviderTemplate {
   readonly providerId: string;
   readonly model: string;
   readonly api: ProviderApi;
+  readonly providerTransport?: ProviderTransport;
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly headers?: Record<string, string>;
@@ -109,6 +114,7 @@ export interface ProviderModelListRequest {
   readonly kind: ProviderKind;
   readonly providerId: string;
   readonly api: ProviderApi;
+  readonly providerTransport?: ProviderTransport;
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly apiKey?: string;
@@ -136,6 +142,7 @@ export interface ProviderMutationRequest {
   readonly providerId: string;
   readonly model: string;
   readonly api: ProviderApi;
+  readonly providerTransport?: ProviderTransport;
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly apiKey?: string;

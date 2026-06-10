@@ -47,6 +47,7 @@ export async function listProviderModels(cwd: string, form: ProviderFormState): 
     kind: form.kind,
     providerId: form.providerId,
     api: form.api,
+    providerTransport: form.providerTransport || undefined,
     baseUrl: form.baseUrl || undefined,
     apiKey: form.apiKey.trim() || undefined,
     apiKeyRef: form.apiKeyRef || undefined,
