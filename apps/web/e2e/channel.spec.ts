@@ -1073,15 +1073,18 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
       sourceMessageId: "msg_ai_proposal",
       proposedByTeammateId: "teammate_builtin_engineer",
       title: "Refine channel workspace copy",
-      prompt: "Refine the channel workspace copy and verify the visible chat flow.",
+      prompt: "The user message looks like a coordinated workflow request. Original request: 所有的队友，都回复我一下 Proposed collaboration: 1. QA: Validate the expected behavior and regression checks. 2. 产品策略: Clarify product scope and acceptance before execution. 3. Security: Review trust boundaries and approval-sensitive publication steps. Wait for explicit user confirmation before starting executable work.",
       assigneeTeammateId: "teammate_builtin_engineer",
-      acceptanceCriteria: ["Task is created only after confirmation", "Run uses the assignee provider"],
-      collaborationSteps: [
-        { teammateId: "teammate_builtin_engineer", action: "coordinated", summary: "Summarized discussion into one execution proposal." },
-        { teammateId: "teammate_builtin_designer", action: "reviewed", summary: "Checked visual hierarchy before execution." },
+      acceptanceCriteria: [
+        "Task is created only after confirmation, with every visible long acceptance criterion wrapping inside the proposal card.",
+        "Run uses the assignee provider and keeps selector, handoff, run, approval, and artifact evidence expandable.",
       ],
-      requiredTools: ["read", "grep"],
-      riskSummary: "Provider must be ready before execution.",
+      collaborationSteps: [
+        { teammateId: "teammate_builtin_engineer", action: "coordinated", summary: "Summarized discussion into one execution proposal. Preserved approval-sensitive context for the implementation path." },
+        { teammateId: "teammate_builtin_designer", action: "reviewed", summary: "Checked visual hierarchy before execution. Verified long collaboration summaries stay inside the card." },
+      ],
+      requiredTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+      riskSummary: "Provider must be ready before execution and approval-sensitive publication steps must stay explicitly gated.",
       status: "draft",
       createdAt: "2026-05-25T00:18:02.000Z",
       updatedAt: "2026-05-25T00:18:02.000Z",
@@ -1098,6 +1101,16 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(collaboration.locator("summary")).toContainText("Collaboration 2 records");
   await expect(collaboration.locator("summary")).toContainText("Ling Engineer Summarized discussion into one execution proposal.");
   await expect(collaboration.locator("summary")).toContainText("Ling Designer Checked visual hierarchy before execution.");
+  const overflowingProposalSections = await proposal.evaluate((element) => {
+    const proposalRect = element.getBoundingClientRect();
+    return Array.from(element.querySelectorAll(":scope > p, .channel-proposal-meta, .channel-proposal-criteria, .channel-proposal-risk, .channel-proposal-collaboration summary"))
+      .filter((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.left < proposalRect.left - 1 || rect.right > proposalRect.right + 1;
+      })
+      .map((node) => node.className || node.tagName.toLowerCase());
+  });
+  expect(overflowingProposalSections).toEqual([]);
   await expect(collaboration.locator("li").first()).not.toBeVisible();
   await collaboration.locator("summary").click();
   await expect(collaboration.locator("li").first()).toBeVisible();
