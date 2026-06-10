@@ -1,4 +1,4 @@
-import type { Api, ImageContent, Model, ModelThinkingLevel, OpenAICompletionsCompat, TextContent } from "@earendil-works/pi-ai";
+import type { Api, ImageContent, Model, ModelThinkingLevel, OpenAICompletionsCompat, TextContent, Transport } from "@earendil-works/pi-ai";
 import type { ToolDefaultApproval, ToolSideEffectLevel } from "@ling-stack/plugin-sdk";
 
 export type PiRunnerBuiltinToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
@@ -8,9 +8,12 @@ export type PiRunnerApprovalToolName = PiRunnerToolName;
 export type PiRunnerProviderApi =
   | "openai-completions"
   | "openai-responses"
+  | "openai-codex-responses"
   | "anthropic-messages"
   | "google-generative-ai"
   | "mistral-conversations";
+
+export type PiRunnerProviderTransport = Transport;
 
 export interface PiRunnerProviderConfig {
   readonly provider: string;
@@ -19,6 +22,7 @@ export interface PiRunnerProviderConfig {
   readonly apiKey?: string;
   readonly baseUrl?: string;
   readonly api?: PiRunnerProviderApi;
+  readonly providerTransport?: PiRunnerProviderTransport;
   readonly headers?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;

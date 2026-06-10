@@ -1862,12 +1862,21 @@ function readDaemonFeatureFlags(value: unknown): DaemonHealthResponse["features"
   }
   const features = value as Record<string, unknown>;
   const channels = features.channels;
-  if (typeof channels !== "object" || channels === null || Array.isArray(channels)) {
-    return { channels: { autoRoute: false } };
-  }
+  const transports = features.transports;
+  const channelRecord = typeof channels === "object" && channels !== null && !Array.isArray(channels)
+    ? channels as Record<string, unknown>
+    : {};
+  const transportRecord = typeof transports === "object" && transports !== null && !Array.isArray(transports)
+    ? transports as Record<string, unknown>
+    : {};
   return {
     channels: {
-      autoRoute: (channels as Record<string, unknown>).autoRoute === true,
+      autoRoute: channelRecord.autoRoute === true,
+      intentSelector: channelRecord.intentSelector === true,
+    },
+    transports: {
+      providerWebSocketFallback: transportRecord.providerWebSocketFallback === true,
+      localWebSocketRpc: transportRecord.localWebSocketRpc === true,
     },
   };
 }

@@ -33,6 +33,7 @@ import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type Regi
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { routeRequest } from "./server/router.js";
+import { attachRpcWebSocketServer } from "./server/rpc.js";
 import { writeJson } from "./shared/response.js";
 
 export { defaultDaemonConfig } from "./config.js";
@@ -127,6 +128,7 @@ export function createDaemonServer(
       }
     }
   });
+  attachRpcWebSocketServer(server, context);
 
   return {
     server,

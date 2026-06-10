@@ -24,6 +24,10 @@ test("official provider templates expose fixed default base URLs", () => {
   const byId = new Map(templates.map((template) => [template.templateId, template]));
 
   assert.equal(byId.get("openai-gpt")?.baseUrl, "https://api.openai.com/v1");
+  assert.equal(byId.get("openai-codex-responses")?.api, "openai-codex-responses");
+  assert.equal(byId.get("openai-codex-responses")?.providerTransport, "auto");
+  assert.equal(byId.get("openai-codex-responses")?.baseUrl, "https://chatgpt.com/backend-api");
+  assert.equal(byId.get("openai-codex-responses")?.apiKeyRef, "env:OPENAI_CODEX_API_KEY");
   assert.equal(byId.get("anthropic-claude")?.baseUrl, "https://api.anthropic.com/v1");
   assert.equal(byId.get("doubao-ark")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
   assert.equal(byId.get("deepseek-dpv4")?.baseUrl, "https://api.deepseek.com");
@@ -108,6 +112,68 @@ test("sqlite store persists provider check results", async () => {
     assert.equal(persisted?.lastCheck?.ok, true);
     assert.equal(persisted?.lastCheck?.code, "ready");
     assert.equal(persisted?.lastCheck?.checkedAt, checkedAt);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite store persists and validates provider transport", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-provider-transport-"));
+  let store = createSqliteRunStore(cwd);
+  let providerId = "";
+  try {
+    const provider = store.createProviderPreset(
+      {
+        kind: "openai",
+        displayName: "Codex Responses",
+        providerId: "openai-codex",
+        model: "gpt-5.5-codex",
+        api: "openai-codex-responses",
+        providerTransport: "websocket-cached",
+        baseUrl: "https://chatgpt.com/backend-api",
+        apiKeyRef: "env:OPENAI_CODEX_API_KEY",
+        capabilities: ["chat", "tool_call"],
+        enabled: true,
+      },
+      "2026-06-10T00:00:00.000Z",
+    );
+    providerId = provider.id;
+    assert.equal(provider.providerTransport, "websocket-cached");
+
+    const updated = store.updateProviderPreset(provider.id, { providerTransport: "sse" }, "2026-06-10T00:01:00.000Z");
+    assert.equal(updated?.providerTransport, "sse");
+
+    const cleared = store.updateProviderPreset(provider.id, { providerTransport: null }, "2026-06-10T00:02:00.000Z");
+    assert.equal(cleared?.providerTransport, undefined);
+
+    assert.throws(
+      () => store.createProviderPreset({
+        kind: "openai",
+        displayName: "Bad Transport",
+        providerId: "bad-transport",
+        model: "gpt-5.5-codex",
+        api: "openai-codex-responses",
+        providerTransport: "websocket-jsonrpc",
+        baseUrl: "https://chatgpt.com/backend-api",
+        apiKeyRef: "env:OPENAI_CODEX_API_KEY",
+        capabilities: ["chat"],
+      }, "2026-06-10T00:03:00.000Z"),
+      /providerTransport must be one of/,
+    );
+  } finally {
+    store.close();
+  }
+
+  store = createSqliteRunStore(cwd);
+  try {
+    assert.equal(store.getProviderPreset(providerId)?.providerTransport, undefined);
+    const updated = store.updateProviderPreset(providerId, { providerTransport: "auto" }, "2026-06-10T00:04:00.000Z");
+    assert.equal(updated?.providerTransport, "auto");
+    assert.throws(
+      () => store.updateProviderPreset(providerId, { providerTransport: "http2" }, "2026-06-10T00:05:00.000Z"),
+      /providerTransport must be one of/,
+    );
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

@@ -3,9 +3,11 @@ import {
   providerApis,
   providerCapabilities,
   providerKinds,
+  providerTransports,
   type ProviderApi,
   type ProviderCapability,
   type ProviderKind,
+  type ProviderTransport,
   type ProviderModelListRequest,
   type ProviderPreset,
   type ProviderPresetInput,
@@ -71,6 +73,7 @@ export function parseProviderModelListRequest(value: unknown): ProviderModelList
     kind: readProviderKind(value, "kind"),
     providerId: readString(value, "providerId"),
     api: readProviderApi(value, "api"),
+    providerTransport: readOptionalProviderTransport(value, "providerTransport"),
     baseUrl: readOptionalString(value, "baseUrl"),
     apiKeyRef: readOptionalApiKeyRef(value),
     apiKey: readOptionalApiKey(value),
@@ -112,6 +115,7 @@ function parseProviderPresetInput(value: unknown): ProviderPresetInput {
     providerId: readString(value, "providerId"),
     model: readString(value, "model"),
     api: readProviderApi(value, "api"),
+    providerTransport: readOptionalProviderTransport(value, "providerTransport"),
     baseUrl: readOptionalString(value, "baseUrl"),
     apiKeyRef: readOptionalApiKeyRef(value),
     headers: readOptionalStringRecord(value, "headers"),
@@ -137,6 +141,7 @@ function parseProviderPresetUpdateInput(value: unknown): ProviderPresetUpdateInp
     providerId: readOptionalString(value, "providerId"),
     model: readOptionalString(value, "model"),
     api: value.api === undefined ? undefined : readProviderApi(value, "api"),
+    providerTransport: value.providerTransport === undefined ? undefined : readNullableProviderTransport(value, "providerTransport"),
     baseUrl: readNullableString(value, "baseUrl"),
     apiKeyRef: readNullableApiKeyRef(value),
     headers: readOptionalStringRecord(value, "headers"),
@@ -251,6 +256,31 @@ function readProviderApi(record: Record<string, unknown>, key: string): Provider
     throw new Error(`${key} must be one of: ${providerApis.join(", ")}`);
   }
   return value as ProviderApi;
+}
+
+function readOptionalProviderTransport(record: Record<string, unknown>, key: string): ProviderTransport | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!providerTransports.includes(value as ProviderTransport)) {
+    throw new Error(`${key} must be one of: ${providerTransports.join(", ")}`);
+  }
+  return value as ProviderTransport;
+}
+
+function readNullableProviderTransport(record: Record<string, unknown>, key: string): ProviderTransport | null {
+  const value = readNullableString(record, key);
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined) {
+    return null;
+  }
+  if (!providerTransports.includes(value as ProviderTransport)) {
+    throw new Error(`${key} must be one of: ${providerTransports.join(", ")}`);
+  }
+  return value as ProviderTransport;
 }
 
 function readProviderCapabilities(record: Record<string, unknown>, key: string): ProviderCapability[] {

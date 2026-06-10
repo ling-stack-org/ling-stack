@@ -8,6 +8,7 @@ export function providerFormToPayload(form: ProviderFormState): ProviderMutation
     providerId: form.providerId,
     model: form.model,
     api: form.api,
+    providerTransport: form.providerTransport || undefined,
     baseUrl: form.baseUrl || undefined,
     apiKeyRef: form.apiKeyRef || undefined,
     apiKey: form.apiKey.trim() || undefined,

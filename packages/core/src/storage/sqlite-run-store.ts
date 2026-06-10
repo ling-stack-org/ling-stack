@@ -17,10 +17,12 @@ import {
 } from "../approval-types.js";
 import {
   createProviderPresetId,
+  providerTransports,
   type ListProviderPresetsOptions,
   type ProviderCheckResult,
   type ProviderPreset,
   type ProviderPresetInput,
+  type ProviderTransport,
   type ProviderPresetUpdateInput,
 } from "../provider-types.js";
 import {
@@ -588,6 +590,8 @@ const RESPONSE_LANGUAGE_CONTEXT_MIGRATION_VERSION = 55;
 const RESPONSE_LANGUAGE_CONTEXT_MIGRATION_NAME = "add_response_language_context";
 const CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION = 56;
 const CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_NAME = "add_channel_visible_multi_reply_intent";
+const PROVIDER_TRANSPORT_MIGRATION_VERSION = 57;
+const PROVIDER_TRANSPORT_MIGRATION_NAME = "add_provider_transport";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -8158,6 +8162,7 @@ export class SqliteRunStore implements RunStore {
       providerId: input.providerId,
       model: input.model,
       api: input.api,
+      providerTransport: normalizeProviderTransport(input.providerTransport),
       baseUrl: input.baseUrl,
       apiKeyRef: input.apiKeyRef,
       headers: input.headers ?? {},
@@ -8182,6 +8187,7 @@ export class SqliteRunStore implements RunStore {
           provider_id,
           model,
           api,
+          provider_transport,
           base_url,
           api_key_ref,
           headers_json,
@@ -8196,7 +8202,7 @@ export class SqliteRunStore implements RunStore {
           last_check_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         preset.id,
@@ -8205,6 +8211,7 @@ export class SqliteRunStore implements RunStore {
         preset.providerId,
         preset.model,
         preset.api,
+        preset.providerTransport ?? null,
         preset.baseUrl ?? null,
         preset.apiKeyRef ?? null,
         stringifyJson(preset.headers),
@@ -8253,6 +8260,7 @@ export class SqliteRunStore implements RunStore {
       providerId: input.providerId ?? existing.providerId,
       model: input.model ?? existing.model,
       api: input.api ?? existing.api,
+      providerTransport: normalizeProviderTransportUpdate(input.providerTransport, existing.providerTransport),
       baseUrl: nullableUpdate(input.baseUrl, existing.baseUrl),
       apiKeyRef: nullableUpdate(input.apiKeyRef, existing.apiKeyRef),
       headers: input.headers ?? existing.headers,
@@ -8277,6 +8285,7 @@ export class SqliteRunStore implements RunStore {
           provider_id = ?,
           model = ?,
           api = ?,
+          provider_transport = ?,
           base_url = ?,
           api_key_ref = ?,
           headers_json = ?,
@@ -8298,6 +8307,7 @@ export class SqliteRunStore implements RunStore {
         next.providerId,
         next.model,
         next.api,
+        next.providerTransport ?? null,
         next.baseUrl ?? null,
         next.apiKeyRef ?? null,
         stringifyJson(next.headers),
@@ -10010,6 +10020,7 @@ export class SqliteRunStore implements RunStore {
           provider_id TEXT NOT NULL,
           model TEXT NOT NULL,
           api TEXT NOT NULL,
+          provider_transport TEXT,
           base_url TEXT,
           api_key_ref TEXT,
           headers_json TEXT NOT NULL,
@@ -11277,6 +11288,16 @@ export class SqliteRunStore implements RunStore {
       }
       if (!hasResponseLanguageContextMigration) {
         this.recordMigration(RESPONSE_LANGUAGE_CONTEXT_MIGRATION_VERSION, RESPONSE_LANGUAGE_CONTEXT_MIGRATION_NAME);
+      }
+    }
+
+    const hasProviderTransportMigration = this.hasMigration(PROVIDER_TRANSPORT_MIGRATION_VERSION);
+    if (!hasProviderTransportMigration || !this.hasColumn("provider_presets", "provider_transport")) {
+      if (this.hasTable("provider_presets") && !this.hasColumn("provider_presets", "provider_transport")) {
+        this.database.exec("ALTER TABLE provider_presets ADD COLUMN provider_transport TEXT;");
+      }
+      if (!hasProviderTransportMigration) {
+        this.recordMigration(PROVIDER_TRANSPORT_MIGRATION_VERSION, PROVIDER_TRANSPORT_MIGRATION_NAME);
       }
     }
 
@@ -14494,6 +14515,7 @@ function mapProviderPreset(row: Record<string, SQLOutputValue>): ProviderPreset 
     providerId: readString(row, "provider_id"),
     model: readString(row, "model"),
     api: readString(row, "api") as ProviderPreset["api"],
+    providerTransport: readNullableString(row, "provider_transport") as ProviderPreset["providerTransport"],
     baseUrl: readNullableString(row, "base_url"),
     apiKeyRef: readNullableString(row, "api_key_ref"),
     headers: parseJsonStringRecord(readString(row, "headers_json")),
@@ -16046,6 +16068,7 @@ function providerPresetSelectSql(whereClause: string): string {
       provider_id,
       model,
       api,
+      provider_transport,
       base_url,
       api_key_ref,
       headers_json,
@@ -18077,6 +18100,26 @@ function nullableUpdate<T>(value: T | null | undefined, existing: T | undefined)
     return undefined;
   }
   return value;
+}
+
+function normalizeProviderTransport(value: ProviderTransport | null | undefined): ProviderTransport | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!providerTransports.includes(value)) {
+    throw new Error(`providerTransport must be one of: ${providerTransports.join(", ")}`);
+  }
+  return value;
+}
+
+function normalizeProviderTransportUpdate(
+  value: ProviderTransport | null | undefined,
+  existing: ProviderTransport | undefined,
+): ProviderTransport | undefined {
+  if (value === undefined) {
+    return existing;
+  }
+  return normalizeProviderTransport(value);
 }
 
 function appendNullableOwnerClause(clauses: string[], params: string[], column: string, value: string | undefined): void {

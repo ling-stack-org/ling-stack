@@ -19,6 +19,18 @@ export function defaultProviderTemplates(): readonly ProviderTemplate[] {
       apiKeyRef: "env:OPENAI_API_KEY",
     }),
     chatProviderTemplate({
+      templateId: "openai-codex-responses",
+      kind: "openai",
+      displayName: "OpenAI Codex Responses",
+      description: "OpenAI Codex/ChatGPT Responses transport with WebSocket-to-SSE fallback. Requires a Codex/ChatGPT-compatible bearer, not a standard OpenAI platform API key.",
+      providerId: "openai-codex",
+      model: "gpt-5.5-codex",
+      api: "openai-codex-responses",
+      providerTransport: "auto",
+      baseUrl: "https://chatgpt.com/backend-api",
+      apiKeyRef: "env:OPENAI_CODEX_API_KEY",
+    }),
+    chatProviderTemplate({
       templateId: "anthropic-claude",
       kind: "anthropic",
       displayName: "Claude",
@@ -128,6 +140,7 @@ function chatProviderTemplate(input: {
   readonly providerId: string;
   readonly model: string;
   readonly api: ProviderPresetInput["api"];
+  readonly providerTransport?: ProviderPresetInput["providerTransport"];
   readonly baseUrl?: string;
   readonly apiKeyRef: string;
 }): ProviderTemplate {

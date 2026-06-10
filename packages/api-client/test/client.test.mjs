@@ -88,6 +88,30 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[16].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
 });
 
+test("parses daemon health transport feature flags", async () => {
+  const mock = createFetchMock({
+    ok: true,
+    service: "ling-stack-daemon",
+    defaultWorkspaceCwd: "/repo",
+    features: {
+      channels: { autoRoute: true, intentSelector: true },
+      transports: { providerWebSocketFallback: true, localWebSocketRpc: true },
+    },
+  });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  assert.deepEqual(await client.getHealth(), {
+    ok: true,
+    service: "ling-stack-daemon",
+    defaultWorkspaceCwd: "/repo",
+    features: {
+      channels: { autoRoute: true, intentSelector: true },
+      transports: { providerWebSocketFallback: true, localWebSocketRpc: true },
+    },
+  });
+  assert.equal(mock.calls[0].url, "http://daemon.test/health");
+});
+
 test("builds control-plane snapshot, events, and stream endpoints", async () => {
   const responses = [
     { cwd: "/repo", workspaceId: "workspace_default", generatedAt: "2026-06-06T00:00:00.000Z", latestEventSeq: 2, domains: {} },

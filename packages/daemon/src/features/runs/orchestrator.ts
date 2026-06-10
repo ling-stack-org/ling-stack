@@ -204,7 +204,9 @@ export async function executeRunRequest(
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
-    resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver);
+    resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver, {
+      providerWebSocketFallbackEnabled: runtimeSupervisor.getTransportFeatures().providerWebSocketFallback,
+    });
     const skillChannel = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const skillTeammate = runRequest.teammateId ? resolveAiTeammateReference(store, runRequest.teammateId) : undefined;
     const skillProviderPreset = runRequest.providerPresetId ? store.getProviderPreset(runRequest.providerPresetId) : undefined;
@@ -502,6 +504,14 @@ export async function executeRunRequest(
       workflowStepId: runRequest.workflowStepId,
       providerName: run.providerName,
       providerModel: run.providerModel,
+      providerTransport: {
+        api: resolvedProvider.api,
+        configured: skillProviderPreset?.providerTransport ?? "default",
+        effective: resolvedProvider.providerTransport ?? "default",
+        providerWebSocketFallbackEnabled: runtimeSupervisor.getTransportFeatures().providerWebSocketFallback,
+        websocketFailures: 0,
+        sseFallbacks: 0,
+      },
       requestedRunnerId: runnerResolution.requestedRunnerId,
       effectiveRunnerId: runnerResolution.effectiveRunnerId,
       requestSource: runnerResolution.requestSource,

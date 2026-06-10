@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore } from "@ling-stack/core";
+import { WebSocket } from "ws";
 import { createDaemonServer } from "../dist/index.js";
+import { checkProviderPreset } from "../dist/features/providers/preflight.js";
+import { resolveProviderForRun } from "../dist/features/runs/providers.js";
 import { appendApprovalCreatedControlPlaneEvent } from "../dist/features/runs/approvals.js";
 
 test("control-plane snapshot returns requested redacted domains and isolates domain failures", async () => {
@@ -178,6 +182,231 @@ test("control-plane SSE stream replays events and emits heartbeat without using 
     assert.equal(heartbeat.event, "heartbeat");
     assert.equal(typeof heartbeat.data.latestEventSeq, "number");
     await reader.close();
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("provider check for OpenAI Codex Responses is static and redacted", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-codex-provider-check-"));
+  const store = createSqliteRunStore(cwd);
+  const originalFetch = globalThis.fetch;
+  try {
+    const provider = store.createProviderPreset(
+      {
+        kind: "openai",
+        displayName: "Codex Responses",
+        providerId: "openai-codex",
+        model: "gpt-5.5-codex",
+        api: "openai-codex-responses",
+        providerTransport: "auto",
+        baseUrl: "https://chatgpt.com/backend-api",
+        apiKeyRef: "env:OPENAI_CODEX_API_KEY",
+        capabilities: ["chat", "tool_call"],
+        enabled: true,
+      },
+      "2026-06-10T00:00:00.000Z",
+    );
+    globalThis.fetch = async () => {
+      throw new Error("provider preflight must not open a live WebSocket or HTTP model request");
+    };
+
+    const result = await checkProviderPreset(
+      store,
+      provider,
+      createCompositeSecretResolver({ env: { OPENAI_CODEX_API_KEY: "sk-codex-secret-value" } }),
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.code, "static_check");
+    assert.match(result.message, /does not open a live WebSocket/);
+    assertControlPlanePayloadRedacted(result, ["sk-codex-secret-value", "env:OPENAI_CODEX_API_KEY"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("provider resolution only enables WebSocket fallback for explicit Codex Responses", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-transport-resolution-"));
+  const store = createSqliteRunStore(cwd);
+  const secretResolver = createCompositeSecretResolver({ env: { OPENAI_CODEX_API_KEY: "sk-codex-secret-value" } });
+  try {
+    const codexProvider = store.createProviderPreset(
+      {
+        kind: "openai",
+        displayName: "Codex Responses",
+        providerId: "openai-codex",
+        model: "gpt-5.5-codex",
+        api: "openai-codex-responses",
+        providerTransport: "websocket-cached",
+        baseUrl: "https://chatgpt.com/backend-api",
+        apiKeyRef: "env:OPENAI_CODEX_API_KEY",
+        capabilities: ["chat", "tool_call"],
+        enabled: true,
+      },
+      "2026-06-10T00:00:00.000Z",
+    );
+    const responsesProvider = store.createProviderPreset(
+      {
+        kind: "openai",
+        displayName: "OpenAI Responses",
+        providerId: "openai",
+        model: "gpt-5.5",
+        api: "openai-responses",
+        providerTransport: "websocket",
+        baseUrl: "https://api.openai.com/v1",
+        apiKeyRef: "env:OPENAI_CODEX_API_KEY",
+        capabilities: ["chat", "tool_call"],
+        enabled: true,
+      },
+      "2026-06-10T00:01:00.000Z",
+    );
+    for (const provider of [codexProvider, responsesProvider]) {
+      store.recordProviderCheckResult(provider.id, {
+        ok: true,
+        code: "static_check",
+        message: "ready",
+        checkedAt: "2026-06-10T00:02:00.000Z",
+      });
+    }
+
+    const baseRunRequest = {
+      cwd,
+      task: { id: "task_provider_transport", title: "Provider transport", prompt: "Run" },
+      tools: ["read"],
+      skipProviderPreflight: false,
+    };
+    assert.equal(
+      resolveProviderForRun(store, { ...baseRunRequest, providerPresetId: codexProvider.id }, secretResolver, {
+        providerWebSocketFallbackEnabled: true,
+      }).providerTransport,
+      "websocket-cached",
+    );
+    assert.equal(
+      resolveProviderForRun(store, { ...baseRunRequest, providerPresetId: codexProvider.id }, secretResolver, {
+        providerWebSocketFallbackEnabled: false,
+      }).providerTransport,
+      "sse",
+    );
+    assert.equal(
+      resolveProviderForRun(store, { ...baseRunRequest, providerPresetId: responsesProvider.id }, secretResolver, {
+        providerWebSocketFallbackEnabled: true,
+      }).providerTransport,
+      undefined,
+    );
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("local WebSocket RPC gates initialize and validates methods", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-rpc-init-"));
+  const daemon = await startDaemonForTest();
+  const rpc = await openRpcClient(daemon.url, cwd);
+  try {
+    rpc.send(1, "daemon.health");
+    const notInitialized = await rpc.next((message) => message.id === 1);
+    assert.equal(notInitialized.error?.data?.code, "not_initialized");
+
+    rpc.send(2, "initialize", {});
+    const initialized = await rpc.next((message) => message.id === 2);
+    assert.equal(initialized.result.ok, true);
+    assert.equal(initialized.result.transport, "websocket");
+    assert.equal(initialized.result.cwd, cwd);
+    assert.equal(initialized.result.features.transports.localWebSocketRpc, true);
+
+    rpc.send(3, "unknown.method", {});
+    const unsupported = await rpc.next((message) => message.id === 3);
+    assert.equal(unsupported.error?.data?.code, "method_not_found");
+  } finally {
+    await rpc.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("local WebSocket RPC returns control-plane data and subscriptions", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-rpc-control-plane-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest({ stores });
+  const store = stores.get(cwd) ?? createStoreForCwd(stores, cwd);
+  store.appendControlPlaneEvent({
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "providers",
+    entityType: "provider",
+    entityId: "provider_replay",
+    action: "provider.updated",
+    data: { providerId: "provider_replay", apiKeyRef: "env:OPENAI_CODEX_API_KEY" },
+  }, "2026-06-10T00:00:00.000Z");
+  const rpc = await openRpcClient(daemon.url, cwd);
+  try {
+    rpc.send(1, "initialize", {});
+    await rpc.next((message) => message.id === 1);
+
+    rpc.send(2, "controlPlane.snapshot", { domains: ["providers"] });
+    const snapshot = await rpc.next((message) => message.id === 2);
+    assert.equal(snapshot.result.cwd, cwd);
+    assert.deepEqual(Object.keys(snapshot.result.domains), ["providers"]);
+
+    rpc.send(3, "controlPlane.events", { afterSeq: 0, limit: 10, domains: ["providers"] });
+    const events = await rpc.next((message) => message.id === 3);
+    assert.deepEqual(events.result.events.map((event) => event.action), ["provider.updated"]);
+    assertControlPlanePayloadRedacted(events.result, ["env:OPENAI_CODEX_API_KEY"]);
+
+    rpc.send(4, "controlPlane.subscribe", { afterSeq: 0, domains: ["providers"] });
+    const replay = await rpc.next((message) =>
+      message.method === "$/control_plane_event" &&
+      message.params?.event?.entityId === "provider_replay"
+    );
+    assert.equal(replay.params.event.action, "provider.updated");
+    assertControlPlanePayloadRedacted(replay, ["env:OPENAI_CODEX_API_KEY"]);
+    const subscribed = await rpc.next((message) => message.id === 4);
+    assert.match(subscribed.result.subscriptionId, /^cp_/);
+
+    const created = (await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai",
+      displayName: "Codex Responses Live",
+      providerId: "openai-codex-live",
+      model: "gpt-5.5-codex",
+      api: "openai-codex-responses",
+      providerTransport: "websocket",
+      baseUrl: "https://chatgpt.com/backend-api",
+      apiKeyRef: "env:OPENAI_CODEX_LIVE_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      input: ["text"],
+      enabled: true,
+    })).provider;
+    const live = await rpc.next((message) =>
+      message.method === "$/control_plane_event" &&
+      message.params?.event?.entityId === created.id
+    );
+    assert.equal(live.params.event.action, "provider.updated");
+    assert.equal(live.params.event.domain, "providers");
+    assertControlPlanePayloadRedacted(live, ["env:OPENAI_CODEX_LIVE_API_KEY"]);
+
+    rpc.send(5, "controlPlane.unsubscribe", { subscriptionId: subscribed.result.subscriptionId });
+    const unsubscribed = await rpc.next((message) => message.id === 5);
+    assert.equal(unsubscribed.result.ok, true);
+  } finally {
+    await rpc.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("local WebSocket RPC can be disabled by feature flag", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-rpc-disabled-"));
+  const daemon = await startDaemonForTest({ config: { transports: { localWebSocketRpc: false } } });
+  try {
+    await assert.rejects(
+      openRpcClient(daemon.url, cwd),
+      /Unexpected server response: 404|WebSocket was closed before the connection was established/,
+    );
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -429,6 +658,7 @@ async function startDaemonForTest(options = {}) {
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    ...(options.config ?? {}),
   }, {
     runner: options.runner,
     secretResolver: options.secretResolver,
@@ -444,6 +674,59 @@ async function startDaemonForTest(options = {}) {
   return {
     url: `http://127.0.0.1:${address.port}`,
     close: () => daemon.stop(),
+  };
+}
+
+async function openRpcClient(baseUrl, cwd) {
+  const url = `${baseUrl.replace(/^http/, "ws")}/rpc/stream?cwd=${encodeURIComponent(cwd)}`;
+  const socket = new WebSocket(url);
+  const messages = [];
+  const waiters = [];
+  socket.on("message", (data) => {
+    const text = Buffer.isBuffer(data) ? data.toString("utf8") : String(data);
+    const message = JSON.parse(text);
+    messages.push(message);
+    for (const waiter of [...waiters]) {
+      if (waiter.predicate(message)) {
+        waiter.resolve(message);
+        clearTimeout(waiter.timer);
+        waiters.splice(waiters.indexOf(waiter), 1);
+      }
+    }
+  });
+  await once(socket, "open");
+  return {
+    send: (id, method, params) => {
+      socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+    },
+    next: (predicate) => {
+      for (const message of messages) {
+        if (predicate(message)) {
+          return Promise.resolve(message);
+        }
+      }
+      return new Promise((resolveNext, rejectNext) => {
+        const waiter = {
+          predicate,
+          resolve: resolveNext,
+          timer: setTimeout(() => {
+            waiters.splice(waiters.indexOf(waiter), 1);
+            rejectNext(new Error("Timed out waiting for RPC message"));
+          }, 2_000),
+        };
+        waiters.push(waiter);
+      });
+    },
+    close: async () => {
+      if (socket.readyState === WebSocket.CLOSED) {
+        return;
+      }
+      socket.close();
+      await Promise.race([
+        once(socket, "close"),
+        new Promise((resolveTimeout) => setTimeout(resolveTimeout, 250)),
+      ]);
+    },
   };
 }
 

@@ -4,6 +4,7 @@ export const DEFAULT_TOOLS: readonly PiRunnerBuiltinToolName[] = ["read", "bash"
 export const SUPPORTED_PROVIDER_APIS: readonly PiRunnerProviderApi[] = [
   "openai-completions",
   "openai-responses",
+  "openai-codex-responses",
   "anthropic-messages",
   "google-generative-ai",
   "mistral-conversations",

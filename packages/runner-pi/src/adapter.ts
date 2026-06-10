@@ -34,6 +34,7 @@ export class PiRunnerAdapter {
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 1 },
+      transport: options.provider.providerTransport ?? "auto",
     });
     const resourceLoader = await createLingStackResourceLoader(options, agentDir, settingsManager);
     const activeTools = [

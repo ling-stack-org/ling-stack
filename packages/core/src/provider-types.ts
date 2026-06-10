@@ -28,10 +28,13 @@ export type ProviderCapability =
 export type ProviderApi =
   | "openai-completions"
   | "openai-responses"
+  | "openai-codex-responses"
   | "anthropic-messages"
   | "google-generative-ai"
   | "mistral-conversations"
   | "media-job";
+
+export type ProviderTransport = "auto" | "websocket" | "websocket-cached" | "sse";
 
 export interface ProviderPreset {
   readonly id: string;
@@ -40,6 +43,7 @@ export interface ProviderPreset {
   readonly providerId: string;
   readonly model: string;
   readonly api: ProviderApi;
+  readonly providerTransport?: ProviderTransport;
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly headers: Record<string, string>;
@@ -62,6 +66,7 @@ export interface ProviderPresetInput {
   readonly providerId: string;
   readonly model: string;
   readonly api: ProviderApi;
+  readonly providerTransport?: ProviderTransport;
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly headers?: Record<string, string>;
@@ -81,6 +86,7 @@ export interface ProviderPresetUpdateInput {
   readonly providerId?: string;
   readonly model?: string;
   readonly api?: ProviderApi;
+  readonly providerTransport?: ProviderTransport | null;
   readonly baseUrl?: string | null;
   readonly apiKeyRef?: string | null;
   readonly headers?: Record<string, string>;
@@ -117,6 +123,7 @@ export interface ProviderModelListRequest {
   readonly kind: ProviderKind;
   readonly providerId: string;
   readonly api: ProviderApi;
+  readonly providerTransport?: ProviderTransport;
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly apiKey?: string;
@@ -153,10 +160,18 @@ export const providerKinds: readonly ProviderKind[] = [
 export const providerApis: readonly ProviderApi[] = [
   "openai-completions",
   "openai-responses",
+  "openai-codex-responses",
   "anthropic-messages",
   "google-generative-ai",
   "mistral-conversations",
   "media-job",
+];
+
+export const providerTransports: readonly ProviderTransport[] = [
+  "auto",
+  "websocket",
+  "websocket-cached",
+  "sse",
 ];
 
 export const providerCapabilities: readonly ProviderCapability[] = [
