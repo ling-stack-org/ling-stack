@@ -3,6 +3,8 @@ import {
   channelContextSummaryAuthorTypes,
   channelContextSummaryTargetTypes,
   channelAutoReplyModes,
+  channelIntentDecisionActions,
+  channelIntentDecisionStatuses,
   channelMessageRouteDecisionStatuses,
   channelHandoffStatuses,
   channelWorkflowStatuses,
@@ -15,6 +17,8 @@ import {
   type ChannelExecutionProposalStep,
   type ChannelExecutionProposalStatus,
   type ChannelHandoffStatus,
+  type ChannelIntentDecisionAction,
+  type ChannelIntentDecisionStatus,
   type ChannelMention,
   type ChannelMessageAuthorType,
   type ChannelMessageIntent,
@@ -295,6 +299,7 @@ export function parseChannelExecutionProposalUpdateInput(value: unknown): Update
     status: readOptionalChannelExecutionProposalStatus(value, "status"),
     linkedTaskId: readNullableString(value, "linkedTaskId"),
     linkedRunId: readNullableString(value, "linkedRunId"),
+    linkedWorkflowId: readNullableString(value, "linkedWorkflowId"),
     errorMessage: readNullableString(value, "errorMessage"),
   };
   validateChannelExecutionProposalInput(input);
@@ -321,6 +326,28 @@ export function readOptionalChannelMessageRouteDecisionStatusQuery(url: URL): Ch
     throw new Error(`status must be one of: ${channelMessageRouteDecisionStatuses.join(", ")}`);
   }
   return value as ChannelMessageRouteDecisionStatus;
+}
+
+export function readOptionalChannelIntentDecisionActionQuery(url: URL): ChannelIntentDecisionAction | undefined {
+  const value = url.searchParams.get("action");
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelIntentDecisionActions.includes(value as ChannelIntentDecisionAction)) {
+    throw new Error(`action must be one of: ${channelIntentDecisionActions.join(", ")}`);
+  }
+  return value as ChannelIntentDecisionAction;
+}
+
+export function readOptionalChannelIntentDecisionStatusQuery(url: URL): ChannelIntentDecisionStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelIntentDecisionStatuses.includes(value as ChannelIntentDecisionStatus)) {
+    throw new Error(`status must be one of: ${channelIntentDecisionStatuses.join(", ")}`);
+  }
+  return value as ChannelIntentDecisionStatus;
 }
 
 export function parseChannelDecisionRequest(value: unknown): ChannelDecisionRequest {

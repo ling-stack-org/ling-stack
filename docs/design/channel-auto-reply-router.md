@@ -111,8 +111,9 @@ pattern: structured decision, validation, durable evidence, and safe fallback.
 The missing channel-to-workflow entry is specified separately in
 [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md). That layer
 decides whether an ordinary message should stay as `no_reply` / `single_reply` /
-`clarify`, become a confirmed workflow proposal, or enter a validated direct workflow
-path. Auto reply remains the single-teammate ordinary conversation path.
+`clarify`, become a confirmed workflow proposal, or enter a validated direct-workflow
+prefill that still requires confirmation. Auto reply remains the single-teammate
+ordinary conversation path.
 
 ## Terms
 

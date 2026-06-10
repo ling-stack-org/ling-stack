@@ -34,6 +34,7 @@ import type {
   ChannelDecisionStatus,
   ChannelExecutionProposalListResponse,
   ChannelExecutionProposalMutationResponse,
+  ChannelExecutionProposalWorkflowConfirmResponse,
   ChannelHandoffListResponse,
   ChannelHandoffMutationResponse,
   ChannelHandoffStatus,
@@ -42,6 +43,7 @@ import type {
   ChannelListResponse,
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
+  ChannelIntentDecisionListResponse,
   ChannelMessageRouteDecisionListResponse,
   ChannelMutationResponse,
   ChannelWorkflowListResponse,
@@ -880,6 +882,20 @@ export class LingDaemonClient {
     });
   }
 
+  async listChannelIntentDecisions(
+    cwd: string,
+    channelId: string,
+    options: { readonly sourceMessageId?: string; readonly action?: string; readonly status?: string; readonly limit?: number } = {},
+  ): Promise<ChannelIntentDecisionListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/intent-decisions`, {
+      cwd,
+      sourceMessageId: options.sourceMessageId,
+      action: options.action,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
   async listChannelExecutionProposals(cwd: string, channelId: string, limit = 100): Promise<ChannelExecutionProposalListResponse> {
     return this.get(`/channels/${encodeURIComponent(channelId)}/proposals`, { cwd, limit });
   }
@@ -898,6 +914,13 @@ export class LingDaemonClient {
     input: UpdateChannelExecutionProposalRequest,
   ): Promise<ChannelExecutionProposalMutationResponse> {
     return this.patch(`/channel-proposals/${encodeURIComponent(proposalId)}`, { cwd }, input);
+  }
+
+  async confirmChannelExecutionProposalWorkflow(
+    cwd: string,
+    proposalId: string,
+  ): Promise<ChannelExecutionProposalWorkflowConfirmResponse> {
+    return this.post(`/channel-proposals/${encodeURIComponent(proposalId)}/confirm-workflow`, { cwd }, {});
   }
 
   async listAiTeammates(

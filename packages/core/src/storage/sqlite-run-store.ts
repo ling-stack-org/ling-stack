@@ -44,6 +44,7 @@ import {
   createChannelExecutionProposalId,
   createChannelHandoffId,
   createChannelId,
+  createChannelIntentDecisionId,
   createChannelLinkPreviewId,
   createChannelMessageId,
   createChannelMessageRouteDecisionId,
@@ -62,6 +63,9 @@ import {
   channelAutoReplyModes,
   channelMessageRouteDecisionCreatedByValues,
   channelMessageRouteDecisionStatuses,
+  channelIntentDecisionActions,
+  channelIntentDecisionCreatedByValues,
+  channelIntentDecisionStatuses,
   normalizeChannelRuntimePolicy,
   type AiTeammate,
   type AiTeammateStatus,
@@ -79,6 +83,9 @@ import {
   type ChannelExecutionProposalStatus,
   type ChannelHandoff,
   type ChannelHandoffStatus,
+  type ChannelIntentDecision,
+  type ChannelIntentDecisionAction,
+  type ChannelIntentDecisionStatus,
   type ChannelLinkPreview,
   type ChannelLinkPreviewStatus,
   type ChannelMessage,
@@ -107,6 +114,7 @@ import {
   type CreateChannelExecutionProposalInput,
   type CreateChannelHandoffInput,
   type CreateChannelInput,
+  type CreateChannelIntentDecisionInput,
   type CreateChannelLinkPreviewInput,
   type CreateChannelMessageInput,
   type CreateChannelMessageRouteDecisionInput,
@@ -126,6 +134,7 @@ import {
   type ListChannelDecisionsOptions,
   type ListChannelExecutionProposalsOptions,
   type ListChannelHandoffsOptions,
+  type ListChannelIntentDecisionsOptions,
   type ListChannelsOptions,
   type ListChannelLinkPreviewsOptions,
   type ListChannelMessagesOptions,
@@ -568,6 +577,10 @@ const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION = 51;
 const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_NAME = "create_teammate_direct_reply_interventions";
 const WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION = 52;
 const WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_NAME = "create_workspace_settings_and_channel_binding";
+const CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_VERSION = 53;
+const CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_NAME = "add_channel_execution_proposal_workflow_link";
+const CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION = 54;
+const CHANNEL_INTENT_DECISIONS_MIGRATION_NAME = "create_channel_intent_decisions";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -5248,6 +5261,106 @@ export class SqliteRunStore implements RunStore {
     return this.getChannelMessageRouteDecision(id);
   }
 
+  createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision {
+    this.assertMessageInChannel(input.channelId, input.sourceMessageId);
+    this.assertChannelIntentDecisionRefsInChannel(input.channelId, input);
+    const decision: ChannelIntentDecision = {
+      schemaVersion: 1,
+      id: createChannelIntentDecisionId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      sourceMessageId: input.sourceMessageId,
+      action: input.action,
+      selectedTeammateId: input.selectedTeammateId,
+      proposalId: input.proposalId,
+      replyMessageId: input.replyMessageId,
+      workflowId: input.workflowId,
+      reason: input.reason,
+      status: input.status,
+      createdBy: input.createdBy,
+      errorMessage: input.errorMessage,
+      createdAt: now,
+      updatedAt: now,
+    };
+    validateChannelIntentDecisionInput(decision);
+    this.database
+      .prepare(`
+        INSERT INTO channel_intent_decisions (
+          id,
+          schema_version,
+          workspace_id,
+          channel_id,
+          source_message_id,
+          action,
+          selected_teammate_id,
+          proposal_id,
+          reply_message_id,
+          workflow_id,
+          reason,
+          status,
+          created_by,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        decision.id,
+        decision.schemaVersion,
+        decision.workspaceId,
+        decision.channelId,
+        decision.sourceMessageId,
+        decision.action,
+        decision.selectedTeammateId ?? null,
+        decision.proposalId ?? null,
+        decision.replyMessageId ?? null,
+        decision.workflowId ?? null,
+        decision.reason,
+        decision.status,
+        decision.createdBy,
+        decision.errorMessage ?? null,
+        decision.createdAt,
+        decision.updatedAt,
+      );
+    const created = this.getChannelIntentDecision(decision.id);
+    if (!created) {
+      throw new Error(`Failed to create channel intent decision: ${decision.id}`);
+    }
+    return created;
+  }
+
+  getChannelIntentDecision(id: string): ChannelIntentDecision | undefined {
+    const row = this.database.prepare(channelIntentDecisionSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelIntentDecision(row) : undefined;
+  }
+
+  listChannelIntentDecisions(options: ListChannelIntentDecisionsOptions = {}): ChannelIntentDecision[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.sourceMessageId) {
+      clauses.push("source_message_id = ?");
+      params.push(options.sourceMessageId);
+    }
+    if (options.action) {
+      clauses.push("action = ?");
+      params.push(options.action);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelIntentDecisionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelIntentDecision);
+  }
+
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal {
     if (!this.getChannel(input.channelId)) {
       throw new Error(`Channel not found: ${input.channelId}`);
@@ -5272,6 +5385,7 @@ export class SqliteRunStore implements RunStore {
       status: input.status ?? "draft",
       linkedTaskId: input.linkedTaskId,
       linkedRunId: input.linkedRunId,
+      linkedWorkflowId: input.linkedWorkflowId,
       errorMessage: input.errorMessage,
       createdAt: now,
       updatedAt: now,
@@ -5295,10 +5409,11 @@ export class SqliteRunStore implements RunStore {
           status,
           linked_task_id,
           linked_run_id,
+          linked_workflow_id,
           error_message,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         proposal.id,
@@ -5316,6 +5431,7 @@ export class SqliteRunStore implements RunStore {
         proposal.status,
         proposal.linkedTaskId ?? null,
         proposal.linkedRunId ?? null,
+        proposal.linkedWorkflowId ?? null,
         proposal.errorMessage ?? null,
         proposal.createdAt,
         proposal.updatedAt,
@@ -5373,6 +5489,7 @@ export class SqliteRunStore implements RunStore {
       status: input.status ?? existing.status,
       linkedTaskId: nullableUpdate(input.linkedTaskId, existing.linkedTaskId),
       linkedRunId: nullableUpdate(input.linkedRunId, existing.linkedRunId),
+      linkedWorkflowId: nullableUpdate(input.linkedWorkflowId, existing.linkedWorkflowId),
       errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
       updatedAt: now,
     };
@@ -5391,6 +5508,7 @@ export class SqliteRunStore implements RunStore {
           status = ?,
           linked_task_id = ?,
           linked_run_id = ?,
+          linked_workflow_id = ?,
           error_message = ?,
           updated_at = ?
         WHERE id = ?
@@ -5406,6 +5524,7 @@ export class SqliteRunStore implements RunStore {
         next.status,
         next.linkedTaskId ?? null,
         next.linkedRunId ?? null,
+        next.linkedWorkflowId ?? null,
         next.errorMessage ?? null,
         next.updatedAt,
         next.id,
@@ -11016,6 +11135,7 @@ export class SqliteRunStore implements RunStore {
           status TEXT NOT NULL,
           linked_task_id TEXT,
           linked_run_id TEXT,
+          linked_workflow_id TEXT,
           error_message TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -11038,6 +11158,61 @@ export class SqliteRunStore implements RunStore {
 
       if (!hasChannelExecutionProposalsMigration) {
         this.recordMigration(CHANNEL_EXECUTION_PROPOSALS_MIGRATION_VERSION, CHANNEL_EXECUTION_PROPOSALS_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelExecutionProposalWorkflowLinkMigration = this.hasMigration(CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_VERSION);
+    if (
+      !hasChannelExecutionProposalWorkflowLinkMigration ||
+      !this.hasColumn("channel_execution_proposals", "linked_workflow_id")
+    ) {
+      if (this.hasTable("channel_execution_proposals") && !this.hasColumn("channel_execution_proposals", "linked_workflow_id")) {
+        this.database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN linked_workflow_id TEXT;");
+      }
+      if (!hasChannelExecutionProposalWorkflowLinkMigration) {
+        this.recordMigration(CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_VERSION, CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelIntentDecisionsMigration = this.hasMigration(CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION);
+    if (!hasChannelIntentDecisionsMigration || !this.hasTable("channel_intent_decisions")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_intent_decisions (
+          id TEXT PRIMARY KEY,
+          schema_version INTEGER NOT NULL,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          source_message_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          selected_teammate_id TEXT,
+          proposal_id TEXT,
+          reply_message_id TEXT,
+          workflow_id TEXT,
+          reason TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_message_id) REFERENCES channel_messages(id) ON DELETE CASCADE,
+          FOREIGN KEY(proposal_id) REFERENCES channel_execution_proposals(id) ON DELETE SET NULL,
+          FOREIGN KEY(reply_message_id) REFERENCES channel_messages(id) ON DELETE SET NULL,
+          FOREIGN KEY(workflow_id) REFERENCES channel_workflows(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_intent_decisions_channel_created
+        ON channel_intent_decisions(workspace_id, channel_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_intent_decisions_source
+        ON channel_intent_decisions(workspace_id, source_message_id);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_intent_decisions_status
+        ON channel_intent_decisions(workspace_id, channel_id, status, updated_at);
+      `);
+      if (!hasChannelIntentDecisionsMigration) {
+        this.recordMigration(CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION, CHANNEL_INTENT_DECISIONS_MIGRATION_NAME);
       }
     }
 
@@ -12850,6 +13025,16 @@ export class SqliteRunStore implements RunStore {
     }
   }
 
+  private assertProposalInChannel(channelId: string, proposalId: string): void {
+    const proposal = this.getChannelExecutionProposal(proposalId);
+    if (!proposal) {
+      throw new Error(`Channel proposal not found: ${proposalId}`);
+    }
+    if (proposal.channelId !== channelId) {
+      throw new Error(`Proposal does not belong to channel: ${proposalId}`);
+    }
+  }
+
   private assertWorkflowStepInChannel(channelId: string, workflowStepId: string): void {
     const step = this.getChannelWorkflowStep(workflowStepId);
     if (!step) {
@@ -12897,6 +13082,24 @@ export class SqliteRunStore implements RunStore {
     }
     if (decision.channelId !== channelId) {
       throw new Error(`Workflow selector decision does not belong to channel: ${decisionId}`);
+    }
+  }
+
+  private assertChannelIntentDecisionRefsInChannel(
+    channelId: string,
+    input: Pick<CreateChannelIntentDecisionInput, "selectedTeammateId" | "proposalId" | "replyMessageId" | "workflowId">,
+  ): void {
+    if (input.selectedTeammateId && !this.getAiTeammate(input.selectedTeammateId)) {
+      throw new Error(`AI teammate not found: ${input.selectedTeammateId}`);
+    }
+    if (input.proposalId) {
+      this.assertProposalInChannel(channelId, input.proposalId);
+    }
+    if (input.replyMessageId) {
+      this.assertMessageInChannel(channelId, input.replyMessageId);
+    }
+    if (input.workflowId) {
+      this.assertWorkflowInChannel(channelId, input.workflowId);
     }
   }
 
@@ -13953,6 +14156,27 @@ function mapChannelMessageRouteDecision(row: Record<string, SQLOutputValue>): Ch
   });
 }
 
+function mapChannelIntentDecision(row: Record<string, SQLOutputValue>): ChannelIntentDecision {
+  return omitUndefined({
+    schemaVersion: readNumber(row, "schema_version") as 1,
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    sourceMessageId: readString(row, "source_message_id"),
+    action: readString(row, "action") as ChannelIntentDecisionAction,
+    selectedTeammateId: readNullableString(row, "selected_teammate_id"),
+    proposalId: readNullableString(row, "proposal_id"),
+    replyMessageId: readNullableString(row, "reply_message_id"),
+    workflowId: readNullableString(row, "workflow_id"),
+    reason: readString(row, "reason"),
+    status: readString(row, "status") as ChannelIntentDecisionStatus,
+    createdBy: readString(row, "created_by") as ChannelIntentDecision["createdBy"],
+    errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
 function mapChannelExecutionProposal(row: Record<string, SQLOutputValue>): ChannelExecutionProposal {
   return omitUndefined({
     id: readString(row, "id"),
@@ -13970,6 +14194,7 @@ function mapChannelExecutionProposal(row: Record<string, SQLOutputValue>): Chann
     status: readString(row, "status") as ChannelExecutionProposalStatus,
     linkedTaskId: readNullableString(row, "linked_task_id"),
     linkedRunId: readNullableString(row, "linked_run_id"),
+    linkedWorkflowId: readNullableString(row, "linked_workflow_id"),
     errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
@@ -15431,6 +15656,30 @@ function channelMessageRouteDecisionSelectSql(whereClause: string): string {
   `;
 }
 
+function channelIntentDecisionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      schema_version,
+      id,
+      workspace_id,
+      channel_id,
+      source_message_id,
+      action,
+      selected_teammate_id,
+      proposal_id,
+      reply_message_id,
+      workflow_id,
+      reason,
+      status,
+      created_by,
+      error_message,
+      created_at,
+      updated_at
+    FROM channel_intent_decisions
+    ${whereClause}
+  `;
+}
+
 function channelExecutionProposalSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -15449,6 +15698,7 @@ function channelExecutionProposalSelectSql(whereClause: string): string {
       status,
       linked_task_id,
       linked_run_id,
+      linked_workflow_id,
       error_message,
       created_at,
       updated_at
@@ -17148,6 +17398,21 @@ function validateChannelMessageRouteDecisionInput(
       throw new Error("channel message route alternative score must be between 0 and 1");
     }
   }
+}
+
+function validateChannelIntentDecisionInput(
+  decision: Pick<CreateChannelIntentDecisionInput, "action" | "reason" | "status" | "createdBy">,
+): void {
+  if (!channelIntentDecisionActions.includes(decision.action)) {
+    throw new Error("channel intent decision action is not supported");
+  }
+  if (!channelIntentDecisionStatuses.includes(decision.status)) {
+    throw new Error("channel intent decision status is not supported");
+  }
+  if (!channelIntentDecisionCreatedByValues.includes(decision.createdBy)) {
+    throw new Error("channel intent decision createdBy is not supported");
+  }
+  validateNonEmptyString(decision.reason, "channel intent decision reason");
 }
 
 function validateWorkflowPacketSourceRefs(sourceRefs: readonly WorkflowPacketSourceRef[]): void {

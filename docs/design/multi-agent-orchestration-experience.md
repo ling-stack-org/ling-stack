@@ -26,9 +26,11 @@ P4-P7 implementation status as of 2026-06-09:
   drilldown are implemented.
 - Model-assisted selector decisions remain a follow-up behind an explicit policy/feature
   flag; the current selector records deterministic routing evidence and alternatives.
-- Ordinary channel messages need a separate intent entry before they can propose or start
-  workflow-shaped collaboration; see
-  [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md).
+- Ordinary channel messages use a separate intent entry before they can propose or start
+  workflow-shaped collaboration. The staged plan is documented as P1-P6 in
+  [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md): proposal
+  to WorkflowGraph adapter, proposal edit, clarify, independent intent evidence,
+  confirmed direct-workflow prefill, and model-assisted intent selection.
 - Detailed design:
   [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md).
 

@@ -650,9 +650,9 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   await expect(proposal.getByRole("button", { name: "Start handling" })).toBeVisible();
   await expect(page.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
   await expect.poll(() => {
-    const decision = state.channelMessageRouteDecisions[0];
+    const decision = state.channelIntentDecisions[0];
     return isRecord(decision) ? [decision.action, decision.status, decision.createdBy].join("|") : "";
-  }).toBe("no_reply|suppressed|deterministic");
+  }).toBe("workflow_proposal|accepted|deterministic");
 });
 
 test("channel settings can add remove and set default teammates", async ({ page }) => {
@@ -967,7 +967,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(topicPanel).toContainText("Thread follow-up from the topic panel");
 });
 
-test("channel execution proposal confirms into a task run with the assignee provider", async ({ page }) => {
+test("channel execution proposal confirms into a multi-step workflow", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -994,6 +994,13 @@ test("channel execution proposal confirms into a task run with the assignee prov
       displayName: "Ling Designer",
       description: "Reviews visual flow and interaction risks.",
     }),
+    createMockTeammate({
+      id: "teammate_builtin_qa",
+      templateId: "qa",
+      roleKey: "qa",
+      displayName: "Ling QA",
+      description: "Validates regression checks.",
+    }),
   ];
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
@@ -1005,6 +1012,20 @@ test("channel execution proposal confirms into a task run with the assignee prov
       teammateId: "teammate_builtin_engineer",
       channelId: "channel_engineering",
       isDefault: true,
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:10:00.000Z",
+    },
+    {
+      teammateId: "teammate_builtin_designer",
+      channelId: "channel_engineering",
+      isDefault: false,
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:10:00.000Z",
+    },
+    {
+      teammateId: "teammate_builtin_qa",
+      channelId: "channel_engineering",
+      isDefault: false,
       createdAt: "2026-05-25T00:10:00.000Z",
       updatedAt: "2026-05-25T00:10:00.000Z",
     },
@@ -1082,26 +1103,44 @@ test("channel execution proposal confirms into a task run with the assignee prov
   await expect(collaboration.locator("li").first()).toBeVisible();
   await expect(collaboration).toContainText("Coordinated");
   await expect(collaboration).toContainText("Reviewed");
+  await proposal.getByRole("button", { name: "Edit" }).click();
+  const editForm = proposal.locator(".channel-proposal-edit-form");
+  await editForm.getByLabel("Scope").fill("Refine the channel workspace copy, then run focused QA checks.");
+  const editSteps = editForm.locator(".channel-proposal-edit-step");
+  await editSteps.nth(1).locator("select").first().selectOption("teammate_builtin_qa");
+  await editSteps.nth(1).locator("textarea").fill("Run focused regression checks before execution.");
+  await proposal.getByRole("button", { name: "Save" }).click();
+  await expect(editForm).toHaveCount(0);
+  await expect.poll(() => {
+    const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_1");
+    if (!isRecord(updated) || !Array.isArray(updated.collaborationSteps)) {
+      return "";
+    }
+    const secondStep = updated.collaborationSteps[1];
+    return isRecord(secondStep) ? `${updated.prompt}|${secondStep.teammateId}|${secondStep.summary}` : "";
+  }).toBe("Refine the channel workspace copy, then run focused QA checks.|teammate_builtin_qa|Run focused regression checks before execution.");
   await proposal.getByRole("button", { name: "Start handling" }).click();
 
   await expect.poll(() => {
-    const task = state.tasks.find((item) => isRecord(item) && item.title === "Refine channel workspace copy");
-    return isRecord(task) ? task.assigneeTeammateId : undefined;
-  }).toBe("teammate_builtin_engineer");
-  await expect.poll(() => state.runs[0]?.providerPresetId).toBe("provider_ready");
+    const workflow = state.channelWorkflows.find((item) => isRecord(item) && item.title === "Refine channel workspace copy");
+    return isRecord(workflow) ? workflow.status : undefined;
+  }).toBe("running");
+  await expect.poll(() => state.channelWorkflowSteps.filter((item) => isRecord(item) && item.workflowId === "workflow_1").length).toBe(2);
   await expect.poll(() => {
-    const snapshot = state.runs[0]?.requestSnapshot;
-    return isRecord(snapshot) && Array.isArray(snapshot.tools) ? snapshot.tools.join(",") : "";
-  }).toBe("read,bash");
+    const steps = state.channelWorkflowSteps.filter((item) => isRecord(item) && item.workflowId === "workflow_1");
+    return steps.map((step) => isRecord(step) ? step.toParticipantId : "").join("|");
+  }).toBe("teammate_builtin_engineer|teammate_builtin_qa");
   await expect.poll(() => {
-    const snapshot = state.runs[0]?.requestSnapshot;
-    return isRecord(snapshot) && isRecord(snapshot.approvalProfile) ? snapshot.approvalProfile.mode : "";
-  }).toBe("standard");
+    const secondStep = state.channelWorkflowSteps.find((item) => isRecord(item) && item.workflowId === "workflow_1" && item.position === 2);
+    return isRecord(secondStep) && isRecord(secondStep.metadata) && Array.isArray(secondStep.metadata.dependsOnStepIds)
+      ? secondStep.metadata.dependsOnStepIds.join(",")
+      : "";
+  }).toBe("workflow_step_1");
   await expect.poll(() => {
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_1");
-    return isRecord(updated) ? [updated.status, updated.linkedTaskId, updated.linkedRunId].join("|") : "";
-  }).toMatch(/^accepted\|task_\d+\|run_\d+$/);
-  await expect(proposal.getByRole("button", { name: "Open run" })).toBeVisible();
+    return isRecord(updated) ? [updated.status, updated.linkedWorkflowId].join("|") : "";
+  }).toBe("accepted|workflow_1");
+  await expect(proposal.getByRole("button", { name: "Open workflow" })).toBeVisible();
 });
 
 test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {

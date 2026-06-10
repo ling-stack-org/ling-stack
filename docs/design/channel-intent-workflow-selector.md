@@ -1,7 +1,7 @@
 # Channel Intent To Workflow Selector
 
-Status: deterministic workflow-proposal entry implemented; direct workflow and model intent selector remain future slices
-Date: 2026-06-09
+Status: P0-P6 implemented behind deterministic-first boundaries; model-assisted selection remains feature-gated
+Date: 2026-06-10
 
 Related docs:
 
@@ -40,17 +40,27 @@ does not let every teammate answer by default.
 
 ## Current Implementation
 
-The first implementation is deterministic and uses existing Ling-native persistence:
+The current implementation is deterministic by default and uses Ling-native persistence:
 
 - non-mentioned root channel messages pass through `selectChannelWorkflowIntent` before
   the ordinary auto reply router;
 - clear multi-role requests and all-teammates requests create one draft
   `ChannelExecutionProposal`;
-- the source message gets suppressed route evidence with reason
-  `Workflow proposal created from channel intent`;
+- proposal confirmation uses the daemon-owned
+  `POST /channel-proposals/:proposalId/confirm-workflow` adapter to create a real
+  `ChannelWorkflow` plus ordered `ChannelWorkflowStep[]`;
+- draft proposals can be edited in the conversation card before confirmation;
+- unclear work-shaped requests create one clarify `ai_reply`, not a proposal/task/run;
+- intent decisions are persisted in `channel_intent_decisions`, separate from ordinary
+  `channel_message_route_decisions`;
+- explicit workflow-start requests become validated prefilled proposals with
+  `direct_workflow` intent evidence, but still require the user to click Start;
+- model-assisted intent selection is available only behind
+  `channels.intentSelector` / `LING_STACK_CHANNEL_INTENT_SELECTOR`, requires strict JSON,
+  and falls back to deterministic routing on failure;
 - no `ai_reply` is created for that source message;
-- Web refreshes channel proposals after sending a message, so the proposal appears under
-  the sent message in the existing conversation surface.
+- Web refreshes channel proposals/workflows after sending or confirming, so visible work
+  stays in the existing conversation surface and progress rows.
 
 Implemented examples:
 
@@ -58,12 +68,20 @@ Implemented examples:
 - `所有队友都回复我一下` -> one draft execution proposal, not all visible teammate
   replies.
 
-Not implemented yet:
+Implemented slices:
 
-- separate `channel_intent_decisions` table;
-- `clarify` question generation;
-- validated `direct_workflow` start;
-- model-assisted intent selection.
+- P1 `workflow_proposal -> WorkflowGraph` adapter, so a proposal can start real
+  multi-step channel workflow execution instead of one task run;
+- P2 proposal edit before confirmation, including goal, roles, step order, assignee, and
+  acceptance criteria;
+- P3 `clarify`, so unclear work requests get one teammate question instead of an eager
+  proposal or silence;
+- P4 independent `channel_intent_decisions` persistence after the workflow adapter makes
+  intent evidence more important;
+- P5 `direct_workflow` as a validated, prefilled proposal-confirmation path. It must not
+  start execution without explicit user confirmation;
+- P6 model-assisted intent selector behind feature flag, strict JSON validation, and
+  deterministic fallback.
 
 ## Product Boundary
 
@@ -76,7 +94,8 @@ The intent selector may:
 - route ordinary questions to one selected teammate;
 - ask one clarifying question when the task boundary is unclear;
 - propose a multi-agent workflow when the user is asking for coordinated work;
-- start a workflow only when the user request is explicit, safe, and policy-valid;
+- prefill a direct workflow proposal only when the user request is explicit, safe, and
+  policy-valid, then wait for confirmation;
 - pass structured workflow intent into the existing workflow graph compiler and selector.
 
 It must not:
@@ -113,40 +132,23 @@ type ChannelIntentDecisionKind =
   | "workflow_proposal"
   | "direct_workflow";
 
-type ChannelIntentReasonCode =
-  | "explicit_teammate_mention"
-  | "acknowledgement_or_closure"
-  | "ordinary_question"
-  | "channel_state_question"
-  | "multi_role_request"
-  | "all_teammates_request"
-  | "ordered_work_request"
-  | "missing_execution_target"
-  | "explicit_workflow_start"
-  | "policy_or_provider_unavailable"
-  | "selector_validation_failed";
-
 interface ChannelIntentDecision {
+  readonly schemaVersion: 1;
   readonly id: string;
+  readonly workspaceId: string;
   readonly channelId: string;
   readonly sourceMessageId: string;
-  readonly kind: ChannelIntentDecisionKind;
+  readonly action: ChannelIntentDecisionKind;
+  readonly selectedTeammateId?: string;
+  readonly proposalId?: string;
+  readonly replyMessageId?: string;
+  readonly workflowId?: string;
+  readonly reason: string;
+  readonly status: "accepted" | "suppressed" | "failed";
   readonly createdBy: "deterministic" | "model";
-  readonly reasonCode: ChannelIntentReasonCode;
-  readonly userVisibleLabel?: string;
-  readonly selectedTeammateId?: string;
-  readonly clarifyQuestion?: string;
-  readonly workflowIntent?: ChannelWorkflowIntent;
-  readonly alternativesConsidered?: readonly ChannelIntentAlternative[];
-  readonly validationState: "accepted" | "suppressed" | "requires_confirmation" | "rejected";
+  readonly errorMessage?: string;
   readonly createdAt: string;
-}
-
-interface ChannelIntentAlternative {
-  readonly kind: ChannelIntentDecisionKind;
-  readonly selectedTeammateId?: string;
-  readonly workflowTemplateId?: string;
-  readonly reasonCode: ChannelIntentReasonCode;
+  readonly updatedAt: string;
 }
 
 interface ChannelWorkflowIntent {
@@ -170,10 +172,11 @@ interface ChannelWorkflowIntent {
 | `single_reply` | One teammate should answer as normal channel conversation. | Use `default_teammate` or `auto_route` to create one normal `ai_reply`. |
 | `clarify` | The request is likely work, but the scope is ambiguous. | One teammate asks one clarifying question. |
 | `workflow_proposal` | The message asks for coordinated work or multiple roles. | Show a compact proposal in the conversation; wait for confirmation. |
-| `direct_workflow` | The message explicitly asks to start a safe known workflow. | Create/start workflow through existing workflow routes, respecting approvals. |
+| `direct_workflow` | The message explicitly asks to start a safe known workflow. | Create a validated prefilled proposal or confirmation step; start only after explicit user confirmation. |
 
-`direct_workflow` is intentionally narrow. When in doubt, use `workflow_proposal` or
-`clarify`.
+`direct_workflow` is intentionally narrow. In Ling it does not mean hidden auto-start.
+It means the selector is allowed to prefill a known workflow start shape and present it
+for confirmation. When in doubt, use `workflow_proposal` or `clarify`.
 
 ## Routing Flow
 
@@ -195,6 +198,7 @@ persist local-user message
         -> workflow selector
      -> direct_workflow
         -> validate policy, participants, graph template, approvals
+        -> show prefilled confirmation proposal
         -> workflow graph compiler
         -> workflow selector
 ```
@@ -212,8 +216,8 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 | `谁能处理这个？` | `single_reply` or `workflow_proposal` | If context is simple, answer. If there is a concrete work artifact, propose workflow. |
 | `所有队友都回复我一下` | `workflow_proposal` | Do not make all teammates auto-speak. Convert to collaboration proposal or ask what decision the user wants. |
 | `Architect 先拆，Engineer 实现，QA 验证` | `workflow_proposal` | If the artifact/scope is clear enough, proposal can be prefilled. |
-| `开始让 Architect 拆这个 PR，然后 Engineer 改，QA 跑 e2e` | `direct_workflow` or `workflow_proposal` | Direct only if target artifact, permissions, and graph template are validated. |
-| `帮我 push 合并代码` | `direct_workflow` with approvals | May require ship workflow and approval gates; never bypass destructive checks. |
+| `开始让 Architect 拆这个 PR，然后 Engineer 改，QA 跑 e2e` | `direct_workflow` or `workflow_proposal` | Direct means prefilled confirmed-start proposal, not no-confirm execution. |
+| `帮我 push 合并代码` | `direct_workflow` with confirmation and approvals | May require ship workflow and approval gates; never bypass destructive checks. |
 
 ## Workflow Proposal UX
 
@@ -270,7 +274,213 @@ The workflow layer then:
 4. lets the existing workflow selector choose the next eligible step;
 5. records selector and handoff evidence through existing workflow evidence APIs.
 
-The channel intent selector never starts tools itself.
+The channel intent selector never starts tools itself. P1 moves proposal confirmation
+into daemon-owned workflow creation instead of the old Web-side `proposal -> task -> run`
+compatibility behavior.
+
+## P1 WorkflowGraph Adapter
+
+P1 replaced the old single-task confirmation path with a daemon-owned adapter:
+
+```text
+ChannelExecutionProposal(draft)
+  -> user clicks Start
+  -> daemon validates proposal, teammates, providers, channel runtime policy
+  -> compile ChannelWorkflow + ChannelWorkflowStep[]
+  -> mark proposal accepted and link workflow id
+  -> existing workflow orchestrator starts eligible first step
+```
+
+The adapter uses a side-effecting route rather than overloading PATCH:
+
+```text
+POST /channel-proposals/:proposalId/confirm-workflow?cwd=...
+```
+
+The response includes the updated proposal, workflow, steps, and optional blocker. Web
+then refreshes the channel workflow/proposal/runs surfaces and renders the existing
+active work cell.
+
+Compilation rules:
+
+- preserve proposal `title` as workflow title and proposal `prompt` as workflow goal;
+- convert each `collaborationSteps[]` item into one `ChannelWorkflowStep`;
+- preserve step order for ordered proposals such as `Architect -> Engineer -> QA`;
+- use the step teammate as the step assignee, not only the proposal assignee;
+- derive `dependencies` so each sequential step depends on the previous step;
+- use existing workflow graph compiler/orchestrator types, not a new mini-runner;
+- link proposal metadata to the workflow and source message for evidence drilldown;
+- never start tools until the existing workflow orchestrator validates the first step.
+
+Validation rules:
+
+- channel must be active;
+- proposal must be `draft`, `blocked`, or `run_failed`;
+- each step teammate must exist, be active, visible enough for the channel surface, and
+  be allowed in the channel or explicitly reported as missing;
+- each step provider must pass the same preflight used by task/run startup;
+- write/deploy/external-send authority still comes from existing approval policy;
+- if a role is unavailable, block the proposal with readable copy instead of silently
+  dropping the role. For example: `Architect is disabled or hidden. Enable it or edit the
+  proposal before starting.`
+
+Current behavior:
+
+- `confirmChannelExecutionProposal` in Web calls the daemon workflow confirmation route;
+- the daemon validates the proposal, compiles workflow steps, links the proposal to the
+  workflow, and lets the existing workflow orchestrator start eligible work.
+
+## P2 Proposal Edit UX
+
+Proposal editing belongs in the conversation proposal card, not the right drawer.
+
+The compact card keeps `Start` and `Cancel`, then adds `Edit` while status is `draft` or
+`blocked`.
+
+Editable fields:
+
+- goal/title;
+- prompt/scope;
+- assignee/coordinator;
+- ordered collaboration steps;
+- step teammate;
+- step action;
+- step summary;
+- acceptance criteria;
+- required tools only as derived/read-only unless the user has a stronger tool editing
+  surface later.
+
+Editing should use existing `PATCH /channel-proposals/:id` persistence first. It should
+not create workflow rows until `Start`.
+
+Role availability behavior:
+
+- active, visible, channel-eligible teammates are selectable;
+- disabled/hidden teammates can be shown as unavailable labels when they were detected
+  from the original message;
+- unavailable roles should not be silently removed from the draft;
+- Web may offer a link to AI teammate management, but it should not auto-enable teammates
+  from this card.
+
+Acceptance criteria:
+
+- editing a proposal updates the card without creating tasks, runs, workflows, or route
+  evidence;
+- edited steps preserve order and are what P1 compiles;
+- cancelling still leaves the original user message visible.
+
+## P3 Clarify
+
+`clarify` handles work-shaped messages that lack a concrete execution target.
+
+Examples:
+
+| User message | Clarify question |
+| --- | --- |
+| `让 Architect 拆一下，然后 Engineer 做` | `要拆解和实现的是哪个功能、文件、PR 或问题？` |
+| `帮我安排一下几个 agent` | `你希望他们围绕哪个目标协作？` |
+| `谁能处理这个？` with no visible artifact/context | `你说的“这个”具体指哪条消息、任务或文件？` |
+
+Clarify output should be one ordinary `ai_reply` authored by the selected default or
+coordinator teammate. It is not a proposal and does not create workflow rows.
+
+Clarify should be chosen when:
+
+- multiple roles are mentioned but no goal/artifact can be inferred;
+- the user asks to start work but omits target file/branch/PR/task;
+- the selector has competing interpretations and no safe default;
+- required participant roles are missing and the user's intent depends on those roles.
+
+Clarify must not ask multi-question forms. One concise question is enough.
+
+## P4 Channel Intent Decisions
+
+P0 reuses `channel_message_route_decisions` as suppressed evidence. That is acceptable
+for proving behavior, but it mixes ordinary reply routing with workflow-entry intent.
+
+P4 adds a separate intent evidence table:
+
+```sql
+CREATE TABLE IF NOT EXISTS channel_intent_decisions (
+  id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  source_message_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  selected_teammate_id TEXT,
+  proposal_id TEXT,
+  reply_message_id TEXT,
+  workflow_id TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+```
+
+Use it for:
+
+- `clarify`, `workflow_proposal`, and `direct_workflow` decisions;
+- linking source message -> proposal -> workflow;
+- accepted, suppressed, and failed selector outcomes;
+- idempotency by `source_message_id`.
+
+Keep ordinary auto-reply decisions in `channel_message_route_decisions`. UI should still
+show only accepted outcomes by default.
+
+## P5 Direct Workflow
+
+`direct_workflow` is a high-confidence confirmed-start proposal, not a hidden auto-run.
+
+Trigger examples:
+
+- `开始跑 Architect -> Engineer -> QA，目标是修复频道发送后闪烁`;
+- `用 Architect 拆、Engineer 实现、QA 验证这个 PR，开始`;
+- `帮我 push 合并代码` when the known ship workflow can be prefilled and approvals are
+  available.
+
+Behavior:
+
+1. validate that a known graph shape can be built;
+2. prefill proposal steps and target;
+3. show the proposal with a stronger CTA such as `Start workflow`;
+4. after user confirmation, call the P1 adapter;
+5. if validation is incomplete, downgrade to `workflow_proposal` or `clarify`.
+
+No message should directly start a workflow just because it says `开始`. The user
+confirmation click is still required.
+
+## P6 Model-Assisted Intent Selector
+
+P6 comes last because deterministic behavior must be proven first.
+
+Enable it only when:
+
+- daemon feature flag is enabled;
+- the message is eligible for channel intent selection;
+- provider preflight passes.
+
+Model contract:
+
+```ts
+interface ModelChannelIntentOutput {
+  readonly action: ChannelIntentDecisionKind;
+  readonly reason: string;
+}
+```
+
+Validation:
+
+- parse strict JSON only;
+- reject unknown ids, unknown roles, unsafe actions, unavailable teammates, and unsupported
+  templates;
+- strip confidence values from user-visible UI;
+- persist accepted/suppressed evidence;
+- fallback to deterministic `single_reply`, `workflow_proposal`, `clarify`, or `no_reply`
+  when validation fails.
 
 ## Deterministic First
 
@@ -284,35 +494,41 @@ The first implementation should be deterministic and conservative:
   `review`, `implement`, `QA` -> `workflow_proposal`;
 - asks all teammates to speak -> `workflow_proposal`, not multi-speaker chat;
 - missing artifact, branch, file, or acceptance target -> `clarify`;
-- explicit start command plus known safe template -> `direct_workflow`, after validation.
+- explicit start command plus known safe template -> `direct_workflow`, after validation
+  and user confirmation.
 
-Model-assisted intent selection can be added later behind policy/feature flag when
-deterministic rules produce multiple valid candidates.
+Model-assisted intent selection is available behind policy/feature flag when deterministic
+rules produce multiple valid candidates or the channel explicitly enables selector help.
 
 ## Evidence
 
 Evidence should be durable but lightweight.
 
-Suggested persistence:
+Current persistence:
 
 ```sql
 CREATE TABLE IF NOT EXISTS channel_intent_decisions (
   id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   source_message_id TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  created_by TEXT NOT NULL,
-  reason_code TEXT NOT NULL,
+  action TEXT NOT NULL,
   selected_teammate_id TEXT,
-  workflow_intent_json TEXT,
-  alternatives_json TEXT,
-  validation_state TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  proposal_id TEXT,
+  reply_message_id TEXT,
+  workflow_id TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 ```
 
-Default UI should show only the accepted outcome. Suppressed, rejected, alternatives, raw
-JSON, and prompt text are audit data, not normal conversation content.
+Default UI should show only the accepted outcome. Suppressed/failed outcomes, raw JSON,
+and prompt text are audit data, not normal conversation content.
 
 ## Safety Rules
 
@@ -322,8 +538,11 @@ JSON, and prompt text are audit data, not normal conversation content.
 - The selector cannot mutate approval policy, provider settings, teammate permissions,
   memory activation, tool scopes, secrets, branch state, or deploy state.
 - `workflow_proposal` requires user confirmation before workflow creation.
-- `direct_workflow` must downgrade to `workflow_proposal` when target artifact, graph
-  template, participant, provider, approval, or policy validation is incomplete.
+- `direct_workflow` must still require explicit user confirmation before workflow
+  creation.
+- `direct_workflow` must downgrade to `workflow_proposal` or `clarify` when target
+  artifact, graph template, participant, provider, approval, or policy validation is
+  incomplete.
 - Model-assisted decisions must be feature-gated and have deterministic fallback.
 - Selector evaluation must be idempotent for a source message.
 
@@ -331,12 +550,13 @@ JSON, and prompt text are audit data, not normal conversation content.
 
 | Slice | Scope | Runtime risk |
 | --- | --- | --- |
-| C0 | This design doc and cross-links. | None |
-| C1 | Deterministic `ChannelIntentSelector` contract, reason codes, and persistence. | Low |
-| C2 | Compact workflow proposal UI in the conversation surface. | Medium |
-| C3 | Workflow selector entry adapter to existing graph templates/compiler. | Medium |
-| C4 | Model-assisted intent selection behind daemon feature flag and policy validation. | Medium |
-| C5 | Evidence polish in existing expandable workflow evidence surfaces. | Low |
+| P0 | Deterministic workflow-proposal entry for clear multi-role channel messages. Implemented. | Low |
+| P1 | `workflow_proposal -> WorkflowGraph` adapter and daemon confirmation route. Implemented. | Medium |
+| P2 | Proposal `Edit` UI and validation before confirmation. Implemented. | Medium |
+| P3 | `clarify` decision with one coordinator question. Implemented. | Low |
+| P4 | Independent `channel_intent_decisions` persistence and source-message idempotency. Implemented. | Medium |
+| P5 | `direct_workflow` as validated prefilled proposal plus confirmation. Implemented. | Medium |
+| P6 | Model-assisted intent selector behind feature flag and deterministic fallback. Implemented. | Medium |
 
 ## Acceptance Criteria
 

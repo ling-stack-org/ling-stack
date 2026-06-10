@@ -4364,6 +4364,63 @@ code,
   overflow-wrap: anywhere;
 }
 
+.channel-proposal-edit-form {
+  display: grid;
+  gap: 10px;
+}
+
+.channel-proposal-edit-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.channel-proposal-edit-form label > span,
+.channel-proposal-edit-steps-head strong {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.channel-proposal-edit-form input,
+.channel-proposal-edit-form select,
+.channel-proposal-edit-form textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.channel-proposal-edit-steps {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-proposal-edit-steps-head,
+.channel-proposal-edit-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-proposal-edit-steps-head {
+  justify-content: space-between;
+}
+
+.channel-proposal-edit-step {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.8fr) minmax(110px, 0.7fr) minmax(180px, 1.5fr) auto;
+  align-items: start;
+}
+
+.channel-proposal-edit-step textarea {
+  resize: vertical;
+}
+
+@media (max-width: 760px) {
+  .channel-proposal-edit-step {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .task-list-panel.activity-tab-panel {
   grid-template-rows: minmax(0, 1fr);
 }

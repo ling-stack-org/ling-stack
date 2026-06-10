@@ -217,6 +217,42 @@ export interface ChannelMessageRouteDecisionListResponse {
   readonly decisions: readonly ChannelMessageRouteDecision[];
 }
 
+export type ChannelIntentDecisionAction =
+  | "no_reply"
+  | "single_reply"
+  | "clarify"
+  | "workflow_proposal"
+  | "direct_workflow";
+
+export type ChannelIntentDecisionStatus = "accepted" | "suppressed" | "failed";
+
+export type ChannelIntentDecisionCreatedBy = "deterministic" | "model";
+
+export interface ChannelIntentDecision {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId: string;
+  readonly action: ChannelIntentDecisionAction;
+  readonly selectedTeammateId?: string;
+  readonly proposalId?: string;
+  readonly replyMessageId?: string;
+  readonly workflowId?: string;
+  readonly reason: string;
+  readonly status: ChannelIntentDecisionStatus;
+  readonly createdBy: ChannelIntentDecisionCreatedBy;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ChannelIntentDecisionListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly decisions: readonly ChannelIntentDecision[];
+}
+
 export type ChannelExecutionProposalStatus = "draft" | "accepted" | "cancelled" | "superseded" | "blocked" | "run_failed";
 
 export type ChannelExecutionProposalStepAction = "coordinated" | "consulted" | "reviewed" | "flagged_risk";
@@ -243,6 +279,7 @@ export interface ChannelExecutionProposal {
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
+  readonly linkedWorkflowId?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -271,6 +308,7 @@ export interface UpdateChannelExecutionProposalRequest {
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;
   readonly linkedRunId?: string | null;
+  readonly linkedWorkflowId?: string | null;
   readonly errorMessage?: string | null;
 }
 
