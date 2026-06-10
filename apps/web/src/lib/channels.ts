@@ -8,6 +8,7 @@ export const defaultChannelForm: ChannelFormState = {
   defaultProviderPresetId: "",
   defaultTeammateId: "",
   autoReplyMode: "mentions_only",
+  responseLanguage: "workspace",
   allowedTools: defaultTools,
   runtimePolicy: {
     maxConcurrentRuns: 1,
@@ -25,6 +26,7 @@ export const defaultChannelEditForm: ChannelFormState = {
   defaultProviderPresetId: "",
   defaultTeammateId: "",
   autoReplyMode: "mentions_only",
+  responseLanguage: "workspace",
   allowedTools: defaultTools,
   runtimePolicy: defaultChannelForm.runtimePolicy,
 };
@@ -51,6 +53,7 @@ export function channelToForm(channel: Channel, fallbackCwd: string): ChannelFor
     defaultProviderPresetId: channel.defaultProviderPresetId ?? "",
     defaultTeammateId: channel.defaultTeammateId ?? "",
     autoReplyMode: channel.autoReplyMode ?? "mentions_only",
+    responseLanguage: channel.responseLanguage ?? "workspace",
     allowedTools: channel.allowedTools.length > 0 ? channel.allowedTools : defaultTools,
     runtimePolicy: effectiveChannelRuntimePolicy(channel),
   };

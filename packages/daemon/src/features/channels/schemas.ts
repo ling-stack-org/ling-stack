@@ -3,6 +3,7 @@ import {
   channelContextSummaryAuthorTypes,
   channelContextSummaryTargetTypes,
   channelAutoReplyModes,
+  channelResponseLanguages,
   channelIntentDecisionActions,
   channelIntentDecisionStatuses,
   channelMessageRouteDecisionStatuses,
@@ -31,6 +32,7 @@ import {
   type ChannelUpdateInput,
   type CreateChannelExecutionProposalInput,
   type CreateChannelInput,
+  type ResponseLanguage,
   type RunTool,
   type UpdateChannelExecutionProposalInput,
 } from "@ling-stack/core";
@@ -55,6 +57,7 @@ export interface ChannelExecutionProposalRequest {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly RunTool[];
   readonly riskSummary?: string;
+  readonly responseLanguage?: ResponseLanguage;
 }
 
 export interface ChannelDecisionRequest {
@@ -239,6 +242,7 @@ export function parseCreateChannelInput(value: unknown): CreateChannelInput {
     defaultProviderPresetId: readOptionalString(value, "defaultProviderPresetId"),
     defaultTeammateId: readOptionalString(value, "defaultTeammateId"),
     autoReplyMode: readOptionalChannelAutoReplyMode(value, "autoReplyMode"),
+    responseLanguage: readOptionalChannelResponseLanguage(value, "responseLanguage"),
     allowedTools: readOptionalRunTools(value, "allowedTools"),
     runtimePolicy: readOptionalChannelRuntimePolicy(value, "runtimePolicy"),
   };
@@ -258,6 +262,7 @@ export function parseChannelUpdateInput(value: unknown): ChannelUpdateInput {
     defaultProviderPresetId: readNullableString(value, "defaultProviderPresetId"),
     defaultTeammateId: readNullableString(value, "defaultTeammateId"),
     autoReplyMode: readNullableChannelAutoReplyMode(value, "autoReplyMode"),
+    responseLanguage: readNullableChannelResponseLanguage(value, "responseLanguage"),
     allowedTools: readOptionalRunTools(value, "allowedTools"),
     runtimePolicy: readOptionalChannelRuntimePolicy(value, "runtimePolicy"),
   };
@@ -279,6 +284,7 @@ export function parseChannelExecutionProposalRequest(value: unknown): ChannelExe
     collaborationSteps: readOptionalChannelExecutionProposalSteps(value, "collaborationSteps") ?? [],
     requiredTools: readOptionalRunTools(value, "requiredTools") ?? [],
     riskSummary: readOptionalString(value, "riskSummary"),
+    responseLanguage: readOptionalResponseLanguage(value, "responseLanguage"),
   };
   validateChannelExecutionProposalInput(input);
   return input;
@@ -296,6 +302,7 @@ export function parseChannelExecutionProposalUpdateInput(value: unknown): Update
     collaborationSteps: readOptionalChannelExecutionProposalSteps(value, "collaborationSteps"),
     requiredTools: readOptionalRunTools(value, "requiredTools"),
     riskSummary: readNullableString(value, "riskSummary"),
+    responseLanguage: readNullableResponseLanguage(value, "responseLanguage"),
     status: readOptionalChannelExecutionProposalStatus(value, "status"),
     linkedTaskId: readNullableString(value, "linkedTaskId"),
     linkedRunId: readNullableString(value, "linkedRunId"),
@@ -931,6 +938,56 @@ function readNullableChannelAutoReplyMode(record: Record<string, unknown>, key: 
     throw new Error(`${key} must be one of: ${channelAutoReplyModes.join(", ")}`);
   }
   return value as Channel["autoReplyMode"];
+}
+
+function readOptionalChannelResponseLanguage(record: Record<string, unknown>, key: string): Channel["responseLanguage"] | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelResponseLanguages.includes(value as NonNullable<Channel["responseLanguage"]>)) {
+    throw new Error(`${key} must be one of: ${channelResponseLanguages.join(", ")}`);
+  }
+  return value as NonNullable<Channel["responseLanguage"]>;
+}
+
+function readNullableChannelResponseLanguage(record: Record<string, unknown>, key: string): ChannelUpdateInput["responseLanguage"] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || !channelResponseLanguages.includes(value as NonNullable<Channel["responseLanguage"]>)) {
+    throw new Error(`${key} must be one of: ${channelResponseLanguages.join(", ")}`);
+  }
+  return value as NonNullable<Channel["responseLanguage"]>;
+}
+
+function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "zh-CN" && value !== "en-US") {
+    throw new Error(`${key} must be one of: zh-CN, en-US`);
+  }
+  return value;
+}
+
+function readNullableResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "zh-CN" && value !== "en-US") {
+    throw new Error(`${key} must be one of: zh-CN, en-US, or null`);
+  }
+  return value;
 }
 
 function readOptionalChannelRuntimePolicy(

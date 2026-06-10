@@ -48,6 +48,7 @@ function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSettingsIn
     workspaceCwd: readNullableString(record.workspaceCwd, "workspaceCwd"),
     theme: readNullableTheme(record.theme),
     locale: readNullableString(record.locale, "locale"),
+    responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
     channelNotifications: readNullableStringRecord(record.channelNotifications, "channelNotifications"),
     channelActivityViews: readNullableUnknownRecord(record.channelActivityViews, "channelActivityViews"),
   };
@@ -75,6 +76,19 @@ function readNullableTheme(value: unknown): UpdateWorkspaceSettingsInput["theme"
   }
   if (value !== "light" && value !== "dark" && value !== "system") {
     throw new Error("theme must be light, dark, system, or null");
+  }
+  return value;
+}
+
+function readNullableResponseLanguagePreference(value: unknown): UpdateWorkspaceSettingsInput["responseLanguage"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "follow_user" && value !== "zh-CN" && value !== "en-US") {
+    throw new Error("responseLanguage must be follow_user, zh-CN, en-US, or null");
   }
   return value;
 }

@@ -3,6 +3,7 @@ import type { RunArtifact } from "./artifacts.js";
 import type { ChannelExecutionProposal, ChannelHandoff } from "./channels.js";
 import type { MemoryObject } from "./memory.js";
 import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./runtime.js";
+import type { ResponseLanguage } from "./settings.js";
 import type { Task } from "./tasks.js";
 
 export type ChannelWorkflowStatus =
@@ -346,6 +347,7 @@ export interface ChannelWorkflowMetadata {
   readonly maxParallelSteps?: number;
   readonly sourceProposalId?: string;
   readonly sourceMessageId?: string;
+  readonly responseLanguage?: ResponseLanguage;
 }
 
 export interface ChannelWorkflow {

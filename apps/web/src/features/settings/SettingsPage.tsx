@@ -52,6 +52,7 @@ import type {
   ManagedPluginApplyPresetResponse,
   ManagedPluginRuntimePreviewResponse,
   ManagedPluginView,
+  ResponseLanguagePreference,
 } from "../../types.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
@@ -69,6 +70,7 @@ export function SettingsPage({
   runtimeSettings,
   runtimeSettingsForm,
   skillLibraryRefreshToken,
+  workspaceResponseLanguage,
   selectedChannel,
   externalWorkStatus,
   mcpServers,
@@ -98,6 +100,7 @@ export function SettingsPage({
   onPermissionModeChange,
   onRefresh,
   onSave,
+  onWorkspaceResponseLanguageChange,
   onRuntimeSettingsFormChange,
   onToggleAllowedRunner,
   onRefreshRuntimeSettings,
@@ -134,6 +137,7 @@ export function SettingsPage({
   readonly runtimeSettings: WorkspaceRuntimeSettings | undefined;
   readonly runtimeSettingsForm: RuntimeSettingsFormState;
   readonly skillLibraryRefreshToken: number;
+  readonly workspaceResponseLanguage: ResponseLanguagePreference;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
   readonly mcpServers: readonly McpServer[];
@@ -163,6 +167,7 @@ export function SettingsPage({
   readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
   readonly onRefresh: () => void;
   readonly onSave: () => void;
+  readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
   readonly onRuntimeSettingsFormChange: (form: RuntimeSettingsFormState) => void;
   readonly onToggleAllowedRunner: (runnerId: string, allowed: boolean) => void;
   readonly onRefreshRuntimeSettings: () => void;
@@ -357,6 +362,21 @@ export function SettingsPage({
               <strong>{t("Language")}</strong>
             </span>
             <LanguageSwitcher />
+          </div>
+          <div className="interface-preference-row">
+            <span>
+              <Bot size={16} />
+              <strong>{t("AI response language")}</strong>
+            </span>
+            <select
+              value={workspaceResponseLanguage}
+              onChange={(event) => onWorkspaceResponseLanguageChange(event.target.value as ResponseLanguagePreference)}
+              aria-label={t("AI response language")}
+            >
+              <option value="follow_user">{t("Follow user message")}</option>
+              <option value="zh-CN">{t("Chinese")}</option>
+              <option value="en-US">{t("English")}</option>
+            </select>
           </div>
         </div>
       </section>

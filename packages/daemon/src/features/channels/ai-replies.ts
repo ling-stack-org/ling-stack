@@ -10,6 +10,7 @@ import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { extractChannelExecutionProposal } from "./ai-proposals.js";
 import { formatChannelDiscussionPrompt } from "./ai-prompts.js";
+import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 
 export async function createAiChannelReply(input: {
   readonly runnerRegistry: RunnerRegistry;
@@ -129,9 +130,15 @@ async function completeAiChannelReply(input: {
       maxResults: 6,
     });
     const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
+    const responseLanguage = resolveChannelResponseLanguage({
+      store: input.store,
+      channel: input.channel,
+      sourceText: input.sourceMessage.body,
+    }).language;
     const systemPrompt = [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
+      responseLanguageInstruction(responseLanguage),
       "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
       "Do not perform tool use or side effects.",
       ...(input.proposalMode === "disabled"
@@ -238,6 +245,7 @@ async function completeAiChannelReply(input: {
           collaborationSteps: extractedProposal.collaborationSteps,
           requiredTools: extractedProposal.requiredTools,
           riskSummary: extractedProposal.riskSummary,
+          responseLanguage,
         },
         new Date().toISOString(),
       );

@@ -97,6 +97,7 @@ import {
   type ChannelMessageRouteDecision,
   type ChannelMessageRouteDecisionCreatedBy,
   type ChannelMessageRouteDecisionStatus,
+  type ChannelResponseLanguage,
   type ChannelRuntimePolicy,
   type ChannelStatus,
   type ChannelUpdateInput,
@@ -150,6 +151,8 @@ import {
   type ReplaceTeammateChannelMembershipInput,
   type ReplaceTeammateMemoryScopeInput,
   type ReplaceTeammateSkillBindingInput,
+  type ResponseLanguage,
+  type ResponseLanguagePreference,
   type Task,
   type TaskStatus,
   type TaskUpdateInput,
@@ -581,6 +584,8 @@ const CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_VERSION = 53;
 const CHANNEL_EXECUTION_PROPOSAL_WORKFLOW_LINK_MIGRATION_NAME = "add_channel_execution_proposal_workflow_link";
 const CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION = 54;
 const CHANNEL_INTENT_DECISIONS_MIGRATION_NAME = "create_channel_intent_decisions";
+const RESPONSE_LANGUAGE_CONTEXT_MIGRATION_VERSION = 55;
+const RESPONSE_LANGUAGE_CONTEXT_MIGRATION_NAME = "add_response_language_context";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -2829,6 +2834,7 @@ export class SqliteRunStore implements RunStore {
       workspaceCwd: nullableUpdate(input.workspaceCwd, current.workspaceCwd),
       theme: nullableUpdate(input.theme, current.theme),
       locale: nullableUpdate(input.locale, current.locale),
+      responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
       channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
       channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
       updatedAt: now,
@@ -2856,6 +2862,7 @@ export class SqliteRunStore implements RunStore {
       defaultProviderPresetId: input.defaultProviderPresetId,
       defaultTeammateId: input.defaultTeammateId,
       autoReplyMode: input.autoReplyMode ?? "mentions_only",
+      responseLanguage: input.responseLanguage,
       allowedTools: input.allowedTools ?? [...readOnlyRunTools],
       runtimePolicy: normalizeChannelRuntimePolicy(input.runtimePolicy),
       createdAt: now,
@@ -2873,12 +2880,13 @@ export class SqliteRunStore implements RunStore {
           default_provider_preset_id,
           default_teammate_id,
           auto_reply_mode,
+          response_language,
           allowed_tools_json,
           runtime_policy_json,
           workspace_binding_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         channel.id,
@@ -2889,6 +2897,7 @@ export class SqliteRunStore implements RunStore {
         channel.defaultProviderPresetId ?? null,
         channel.defaultTeammateId ?? null,
         channel.autoReplyMode,
+        channel.responseLanguage ?? null,
         stringifyJson(channel.allowedTools),
         stringifyJson(channel.runtimePolicy),
         channel.workspaceBinding ? stringifyJson(channel.workspaceBinding) : null,
@@ -2931,6 +2940,7 @@ export class SqliteRunStore implements RunStore {
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, existing.defaultProviderPresetId),
       defaultTeammateId: nullableUpdate(input.defaultTeammateId, existing.defaultTeammateId),
       autoReplyMode: input.autoReplyMode === null ? "mentions_only" : input.autoReplyMode ?? existing.autoReplyMode,
+      responseLanguage: nullableUpdate(input.responseLanguage, existing.responseLanguage),
       allowedTools: input.allowedTools ?? existing.allowedTools,
       runtimePolicy: input.runtimePolicy ? normalizeChannelRuntimePolicy({ ...existing.runtimePolicy, ...input.runtimePolicy }) : existing.runtimePolicy,
       updatedAt: now,
@@ -2946,6 +2956,7 @@ export class SqliteRunStore implements RunStore {
           default_provider_preset_id = ?,
           default_teammate_id = ?,
           auto_reply_mode = ?,
+          response_language = ?,
           allowed_tools_json = ?,
           runtime_policy_json = ?,
           workspace_binding_json = ?,
@@ -2959,6 +2970,7 @@ export class SqliteRunStore implements RunStore {
         next.defaultProviderPresetId ?? null,
         next.defaultTeammateId ?? null,
         next.autoReplyMode,
+        next.responseLanguage ?? null,
         stringifyJson(next.allowedTools),
         stringifyJson(next.runtimePolicy),
         next.workspaceBinding ? stringifyJson(next.workspaceBinding) : null,
@@ -5382,6 +5394,7 @@ export class SqliteRunStore implements RunStore {
       collaborationSteps: input.collaborationSteps ?? [],
       requiredTools: input.requiredTools ?? [],
       riskSummary: input.riskSummary,
+      responseLanguage: input.responseLanguage,
       status: input.status ?? "draft",
       linkedTaskId: input.linkedTaskId,
       linkedRunId: input.linkedRunId,
@@ -5406,6 +5419,7 @@ export class SqliteRunStore implements RunStore {
           collaboration_steps_json,
           required_tools_json,
           risk_summary,
+          response_language,
           status,
           linked_task_id,
           linked_run_id,
@@ -5413,7 +5427,7 @@ export class SqliteRunStore implements RunStore {
           error_message,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         proposal.id,
@@ -5428,6 +5442,7 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(proposal.collaborationSteps),
         stringifyJson(proposal.requiredTools),
         proposal.riskSummary ?? null,
+        proposal.responseLanguage ?? null,
         proposal.status,
         proposal.linkedTaskId ?? null,
         proposal.linkedRunId ?? null,
@@ -5486,6 +5501,7 @@ export class SqliteRunStore implements RunStore {
       collaborationSteps: input.collaborationSteps ?? existing.collaborationSteps,
       requiredTools: input.requiredTools ?? existing.requiredTools,
       riskSummary: nullableUpdate(input.riskSummary, existing.riskSummary),
+      responseLanguage: nullableUpdate(input.responseLanguage, existing.responseLanguage),
       status: input.status ?? existing.status,
       linkedTaskId: nullableUpdate(input.linkedTaskId, existing.linkedTaskId),
       linkedRunId: nullableUpdate(input.linkedRunId, existing.linkedRunId),
@@ -5505,6 +5521,7 @@ export class SqliteRunStore implements RunStore {
           collaboration_steps_json = ?,
           required_tools_json = ?,
           risk_summary = ?,
+          response_language = ?,
           status = ?,
           linked_task_id = ?,
           linked_run_id = ?,
@@ -5521,6 +5538,7 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(next.collaborationSteps),
         stringifyJson(next.requiredTools),
         next.riskSummary ?? null,
+        next.responseLanguage ?? null,
         next.status,
         next.linkedTaskId ?? null,
         next.linkedRunId ?? null,
@@ -10055,6 +10073,7 @@ export class SqliteRunStore implements RunStore {
           default_provider_preset_id TEXT,
           default_teammate_id TEXT,
           auto_reply_mode TEXT NOT NULL DEFAULT 'mentions_only',
+          response_language TEXT,
           allowed_tools_json TEXT NOT NULL,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -11132,6 +11151,7 @@ export class SqliteRunStore implements RunStore {
           collaboration_steps_json TEXT NOT NULL,
           required_tools_json TEXT NOT NULL,
           risk_summary TEXT,
+          response_language TEXT,
           status TEXT NOT NULL,
           linked_task_id TEXT,
           linked_run_id TEXT,
@@ -11213,6 +11233,23 @@ export class SqliteRunStore implements RunStore {
       `);
       if (!hasChannelIntentDecisionsMigration) {
         this.recordMigration(CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION, CHANNEL_INTENT_DECISIONS_MIGRATION_NAME);
+      }
+    }
+
+    const hasResponseLanguageContextMigration = this.hasMigration(RESPONSE_LANGUAGE_CONTEXT_MIGRATION_VERSION);
+    if (
+      !hasResponseLanguageContextMigration ||
+      !this.hasColumn("channels", "response_language") ||
+      !this.hasColumn("channel_execution_proposals", "response_language")
+    ) {
+      if (this.hasTable("channels") && !this.hasColumn("channels", "response_language")) {
+        this.database.exec("ALTER TABLE channels ADD COLUMN response_language TEXT;");
+      }
+      if (this.hasTable("channel_execution_proposals") && !this.hasColumn("channel_execution_proposals", "response_language")) {
+        this.database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN response_language TEXT;");
+      }
+      if (!hasResponseLanguageContextMigration) {
+        this.recordMigration(RESPONSE_LANGUAGE_CONTEXT_MIGRATION_VERSION, RESPONSE_LANGUAGE_CONTEXT_MIGRATION_NAME);
       }
     }
 
@@ -13803,6 +13840,7 @@ function mapChannel(row: Record<string, SQLOutputValue>): Channel {
     defaultProviderPresetId: readNullableString(row, "default_provider_preset_id"),
     defaultTeammateId: readNullableString(row, "default_teammate_id"),
     autoReplyMode: readString(row, "auto_reply_mode") as Channel["autoReplyMode"],
+    responseLanguage: parseOptionalChannelResponseLanguage(readNullableString(row, "response_language")),
     allowedTools: parseJsonStringArray(readString(row, "allowed_tools_json")) as RunTool[],
     runtimePolicy: parseChannelRuntimePolicy(readString(row, "runtime_policy_json")),
     createdAt: readString(row, "created_at"),
@@ -14191,6 +14229,7 @@ function mapChannelExecutionProposal(row: Record<string, SQLOutputValue>): Chann
     collaborationSteps: parseChannelExecutionProposalSteps(readString(row, "collaboration_steps_json")),
     requiredTools: parseJsonStringArray(readString(row, "required_tools_json")) as ChannelExecutionProposal["requiredTools"],
     riskSummary: readNullableString(row, "risk_summary"),
+    responseLanguage: parseOptionalResponseLanguage(readNullableString(row, "response_language")),
     status: readString(row, "status") as ChannelExecutionProposalStatus,
     linkedTaskId: readNullableString(row, "linked_task_id"),
     linkedRunId: readNullableString(row, "linked_run_id"),
@@ -15047,6 +15086,18 @@ function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
   };
 }
 
+function parseOptionalResponseLanguage(value: unknown): ResponseLanguage | undefined {
+  return value === "zh-CN" || value === "en-US" ? value : undefined;
+}
+
+function parseOptionalResponseLanguagePreference(value: unknown): ResponseLanguagePreference | undefined {
+  return value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
+}
+
+function parseOptionalChannelResponseLanguage(value: unknown): ChannelResponseLanguage | undefined {
+  return value === "workspace" || value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
+}
+
 function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSettings {
   const parsed = parseJsonObject(value);
   const parsedTheme: WorkspaceSettings["theme"] =
@@ -15056,6 +15107,7 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     workspaceCwd: typeof parsed.workspaceCwd === "string" && parsed.workspaceCwd.trim() ? parsed.workspaceCwd : undefined,
     theme: parsedTheme,
     locale: typeof parsed.locale === "string" && parsed.locale.trim() ? parsed.locale : undefined,
+    responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
     channelNotifications: parseOptionalStringRecord(parsed.channelNotifications),
     channelActivityViews: parseOptionalUnknownRecord(parsed.channelActivityViews),
     updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim() ? parsed.updatedAt : updatedAt,
@@ -15118,6 +15170,7 @@ function channelSelectSql(whereClause: string): string {
       default_provider_preset_id,
       default_teammate_id,
       auto_reply_mode,
+      response_language,
       allowed_tools_json,
       runtime_policy_json,
       workspace_binding_json,
@@ -15695,6 +15748,7 @@ function channelExecutionProposalSelectSql(whereClause: string): string {
       collaboration_steps_json,
       required_tools_json,
       risk_summary,
+      response_language,
       status,
       linked_task_id,
       linked_run_id,
@@ -16648,6 +16702,9 @@ function parseOptionalChannelWorkflowMetadata(value: string | undefined): Channe
     workflowGraphArtifactId: readOptionalStringValue(record.workflowGraphArtifactId),
     termination: parseOptionalWorkflowTerminationPolicyValue(record.termination),
     maxParallelSteps: readOptionalPositiveIntegerValue(record.maxParallelSteps),
+    sourceProposalId: readOptionalStringValue(record.sourceProposalId),
+    sourceMessageId: readOptionalStringValue(record.sourceMessageId),
+    responseLanguage: parseOptionalResponseLanguage(record.responseLanguage),
   });
 }
 

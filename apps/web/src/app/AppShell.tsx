@@ -1434,6 +1434,7 @@ export function AppShell(): JSX.Element {
       defaultProviderPresetId: input.defaultProviderPresetId,
       defaultTeammateId,
       autoReplyMode: input.autoReplyMode,
+      responseLanguage: input.responseLanguage,
       allowedTools: input.allowedTools,
       runtimePolicy: input.runtimePolicy,
     };
@@ -1508,6 +1509,7 @@ export function AppShell(): JSX.Element {
         defaultProviderPresetId: readyProvider?.id ?? channelForm.defaultProviderPresetId,
         defaultTeammateId: channelForm.defaultResponderTeammateId || channelForm.defaultTeammateId,
         autoReplyMode: channelForm.autoReplyMode,
+        responseLanguage: channelForm.responseLanguage,
         allowedTools: channelForm.allowedTools.length > 0 ? channelForm.allowedTools : defaultTools,
         runtimePolicy: channelForm.runtimePolicy,
       });
@@ -2946,6 +2948,7 @@ export function AppShell(): JSX.Element {
                     runtimeSettings={runtimeSettings}
                     runtimeSettingsForm={runtimeSettingsForm}
                     skillLibraryRefreshToken={skillLibraryRefreshToken}
+                    workspaceResponseLanguage={workspaceSettings?.responseLanguage ?? "follow_user"}
                     selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
                     externalWorkStatus={externalWorkStatus}
                     mcpServers={mcpServers}
@@ -2975,6 +2978,7 @@ export function AppShell(): JSX.Element {
                     onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode, permissionPreset: inferPermissionPreset(permissionMode) }))}
                     onRefresh={() => void refreshApprovalPolicy()}
                     onSave={() => void saveApprovalPolicy()}
+                    onWorkspaceResponseLanguageChange={(responseLanguage) => patchWorkspaceSettings({ responseLanguage })}
                     onRuntimeSettingsFormChange={setRuntimeSettingsForm}
                     onToggleAllowedRunner={toggleAllowedRunner}
                     onRefreshRuntimeSettings={() => void refreshRuntimeSettings()}
