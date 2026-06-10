@@ -128,9 +128,53 @@ output changes the user's decision:
 - architecture/design/security/QA disagreement;
 - blocker or risk that changes scope;
 - explicit user mention of a teammate;
+- explicit request for bounded visible opinions from several teammates, such as
+  `所有队友都回复我一下`, when the user is asking for discussion rather than execution;
 - execution proposal that needs user confirmation.
 
 These are conversation-level events and may be visible as teammate replies.
+
+`visible_multi_reply` belongs only to this shaping stage. It borrows the useful
+AutoGen/SelectorGroupChat interaction idea that multiple named agents can visibly
+contribute different perspectives, but Ling should keep it as a bounded one-round channel
+discussion. It must not become an autonomous shared-context selector group chat, create
+workflow steps, start tools, grant permissions, or feed hidden peer messages into a
+running workflow. If the user asks the same teammates to implement, verify, publish,
+merge, deploy, or otherwise execute work, the entry selector should create a
+`workflow_proposal` instead.
+
+### Collaboration Protocol Boundary
+
+Ling's multi-agent coordination surface is a set of explicit work records, not a shared
+long-context transcript. The durable protocol is:
+
+```text
+visible discussion
+  -> ChannelContextSummary / ChannelDecision
+  -> ChannelHandoff or WorkflowHandoffIntent
+  -> ChannelWorkflowStep packet
+  -> WorkflowPacketSourceRef evidence
+  -> review-gated memory candidate
+```
+
+Responsibilities:
+
+- `ChannelContextSummary` carries scoped working context, acceptance criteria, and open
+  questions.
+- `ChannelDecision` preserves decisions and alternatives.
+- `ChannelHandoff` is the user-visible handoff card: from, to, reason, required input,
+  expected output, and status.
+- `WorkflowHandoffIntent` is the runtime proposal form for a step-to-step or
+  participant-to-participant handoff; it must be validated before conversion.
+- Workflow packets and source refs carry step outputs and evidence without copying raw
+  conversation into every downstream prompt.
+- Memory fan-in may create candidates only; active shared memory and teammate persona
+  still require the normal review path.
+
+Raw teammate discussion can be cited as source evidence, but it should not become hidden
+peer context or implicit execution authority. If a later step needs discussion output, the
+workflow should depend on a context summary, decision, handoff, packet, artifact, or
+explicit source ref.
 
 ### Execution Stage
 
@@ -405,7 +449,8 @@ It is not graph mutation and not permission granting.
 
 ### Non-Goals
 
-- No shared selector group chat.
+- No shared selector group chat; bounded visible multi-reply is handled before workflow
+  execution by the channel intent selector.
 - No model-owned graph rewrite.
 - No hidden approval-policy change.
 - No side effects during selector evaluation.
