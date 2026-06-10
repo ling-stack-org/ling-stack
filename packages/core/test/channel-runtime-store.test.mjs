@@ -162,6 +162,77 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
   }
 });
 
+test("sqlite channel intent decisions round trip visible multi-reply ids", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-visible-multi-reply-intent-"));
+  const now = "2026-06-10T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel(
+      {
+        name: "Engineering",
+        boundPath: cwd,
+        defaultTeammateId: "teammate_builtin_engineer",
+      },
+      now,
+    );
+    const message = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        authorType: "local-user",
+        body: "所有队友都回复我一下",
+      },
+      "2026-06-10T00:01:00.000Z",
+    );
+    const architectReply = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: message.id,
+        kind: "ai_reply",
+        authorType: "ai-teammate",
+        authorId: "teammate_builtin_architect",
+        body: "Architect opinion",
+      },
+      "2026-06-10T00:02:00.000Z",
+    );
+    const engineerReply = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: message.id,
+        kind: "ai_reply",
+        authorType: "ai-teammate",
+        authorId: "teammate_builtin_engineer",
+        body: "Engineer opinion",
+      },
+      "2026-06-10T00:03:00.000Z",
+    );
+
+    const decision = store.createChannelIntentDecision(
+      {
+        channelId: channel.id,
+        sourceMessageId: message.id,
+        action: "visible_multi_reply",
+        selectedTeammateIds: ["teammate_builtin_architect", "teammate_builtin_engineer"],
+        replyMessageIds: [architectReply.id, engineerReply.id],
+        reason: "Visible multi-reply created for discussion.",
+        status: "accepted",
+        createdBy: "deterministic",
+      },
+      "2026-06-10T00:04:00.000Z",
+    );
+
+    assert.equal(decision.action, "visible_multi_reply");
+    assert.deepEqual(decision.selectedTeammateIds, ["teammate_builtin_architect", "teammate_builtin_engineer"]);
+    assert.deepEqual(decision.replyMessageIds, [architectReply.id, engineerReply.id]);
+    const [listed] = store.listChannelIntentDecisions({ channelId: channel.id, sourceMessageId: message.id });
+    assert.equal(listed.id, decision.id);
+    assert.deepEqual(listed.selectedTeammateIds, decision.selectedTeammateIds);
+    assert.deepEqual(listed.replyMessageIds, decision.replyMessageIds);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channels persist workspace binding and workspace settings", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workspace-binding-"));
   const now = "2026-06-09T00:00:00.000Z";

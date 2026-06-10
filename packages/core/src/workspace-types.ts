@@ -675,6 +675,7 @@ export interface ListChannelMessageRouteDecisionsOptions {
 export type ChannelIntentDecisionAction =
   | "no_reply"
   | "single_reply"
+  | "visible_multi_reply"
   | "clarify"
   | "workflow_proposal"
   | "direct_workflow";
@@ -682,6 +683,7 @@ export type ChannelIntentDecisionAction =
 export const channelIntentDecisionActions: readonly ChannelIntentDecisionAction[] = [
   "no_reply",
   "single_reply",
+  "visible_multi_reply",
   "clarify",
   "workflow_proposal",
   "direct_workflow",
@@ -703,8 +705,10 @@ export interface ChannelIntentDecision {
   readonly sourceMessageId: string;
   readonly action: ChannelIntentDecisionAction;
   readonly selectedTeammateId?: string;
+  readonly selectedTeammateIds?: readonly string[];
   readonly proposalId?: string;
   readonly replyMessageId?: string;
+  readonly replyMessageIds?: readonly string[];
   readonly workflowId?: string;
   readonly reason: string;
   readonly status: ChannelIntentDecisionStatus;
@@ -719,8 +723,10 @@ export interface CreateChannelIntentDecisionInput {
   readonly sourceMessageId: string;
   readonly action: ChannelIntentDecisionAction;
   readonly selectedTeammateId?: string;
+  readonly selectedTeammateIds?: readonly string[];
   readonly proposalId?: string;
   readonly replyMessageId?: string;
+  readonly replyMessageIds?: readonly string[];
   readonly workflowId?: string;
   readonly reason: string;
   readonly status: ChannelIntentDecisionStatus;

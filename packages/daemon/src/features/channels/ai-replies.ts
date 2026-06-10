@@ -20,6 +20,7 @@ export async function createAiChannelReply(input: {
   readonly providerPresetId?: string;
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
+  readonly channelParallelLimit?: number;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
 }): Promise<ChannelMessage> {
@@ -93,6 +94,7 @@ async function completeAiChannelReply(input: {
   readonly providerPresetId?: string;
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
+  readonly channelParallelLimit?: number;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly pending: ChannelMessage;
@@ -177,6 +179,7 @@ async function completeAiChannelReply(input: {
       workUnit: input.supervised.workUnit,
       attempt: input.supervised.attempt,
       channel: input.channel,
+      channelParallelLimit: input.channelParallelLimit,
       providerKey: input.providerPresetId,
       runnerId: input.runnerResolution.effectiveRunnerId,
       now: input.now,

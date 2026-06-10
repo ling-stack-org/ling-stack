@@ -1642,13 +1642,14 @@ export function AppShell(): JSX.Element {
         providerPresetId: providerPresetId || undefined,
         teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
       });
+      const aiReplies = response.aiReplies?.length ? response.aiReplies : response.aiReply ? [response.aiReply] : [];
       setChannelMessages((current) => [
         ...current,
         response.message,
-        ...(response.aiReply ? [response.aiReply] : []),
+        ...aiReplies,
       ]);
       await refreshChannelExecutionProposals(selectedChannelId);
-      if (response.aiReply) {
+      if (aiReplies.length > 0) {
         await refreshUsedMemoryAudit(form.cwd.trim());
       }
       await refreshChannelMessageRouteDecisions(selectedChannelId);
