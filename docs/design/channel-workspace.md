@@ -1814,12 +1814,17 @@ Current MVP implementation status:
   selector JSON in the normal channel UI,
 - the channel intent-to-workflow selector is now documented as the staged bridge from
   ordinary messages into workflow-shaped collaboration: `no_reply`, `single_reply`,
-  `clarify`, `workflow_proposal`, or validated `direct_workflow`. P0 creates one draft
-  execution proposal for clear multi-role requests and explicitly prevents requests like
-  `所有队友都回复我一下` from becoming all-agents-visible group chat. P1-P6 now cover
-  proposal-to-workflow graph execution, proposal edit, clarify, independent intent
-  persistence, confirmed direct-workflow prefill, and feature-gated model-assisted
-  intent selection,
+  `visible_multi_reply`, `clarify`, `workflow_proposal`, or validated
+  `direct_workflow`. The design now separates AutoGen-style visible team discussion
+  from workflow execution: pure requests like `所有队友都回复我一下` can create bounded
+  one-round teammate replies in the channel, while requests like `所有队友协作实现/验证`
+  still become user-confirmed workflow proposals. P1-P6 cover proposal-to-workflow graph
+  execution, proposal edit, clarify, independent intent persistence, confirmed
+  direct-workflow prefill, and feature-gated model-assisted intent selection; the bounded
+  visible multi-reply slice remains the next selector correction. Durable multi-agent
+  coordination uses explicit protocol records instead of shared long-context chat:
+  context summaries, decisions, handoff cards, workflow handoff intents, workflow packets,
+  source refs, and review-gated memory candidates,
 - response language for generated workflow text is a channel/workspace preference, not a
   global translation pass. The default should come from Workspace Settings, a channel may
   override it, `AGENTS.md` or equivalent project instructions may impose a clearer

@@ -1,6 +1,6 @@
 # Channel Intent To Workflow Selector
 
-Status: P0-P6 implemented behind deterministic-first boundaries; model-assisted selection remains feature-gated
+Status: P0-P6 implemented behind deterministic-first boundaries; bounded `visible_multi_reply` is the next selector correction; model-assisted selection remains feature-gated
 Date: 2026-06-10
 
 Related docs:
@@ -30,13 +30,14 @@ The missing layer is the entry selector between them:
 ```text
 ordinary channel message
   -> channel intent selector
-  -> no_reply | single_reply | clarify | workflow_proposal | direct_workflow
+  -> no_reply | single_reply | visible_multi_reply | clarify | workflow_proposal | direct_workflow
   -> channel auto reply router or workflow selector entry
 ```
 
 This layer decides whether a user message should stay as ordinary conversation or become
 a workflow-shaped collaboration request. It does not make the channel a group chat and
-does not let every teammate answer by default.
+does not let every teammate answer by default. A bounded `visible_multi_reply` is allowed
+only when the user explicitly asks for multiple teammate opinions in the shaping stage.
 
 ## Current Implementation
 
@@ -44,8 +45,10 @@ The current implementation is deterministic by default and uses Ling-native pers
 
 - non-mentioned root channel messages pass through `selectChannelWorkflowIntent` before
   the ordinary auto reply router;
-- clear multi-role requests and all-teammates requests create one draft
-  `ChannelExecutionProposal`;
+- clear multi-role requests create one draft `ChannelExecutionProposal`;
+- the current implementation still routes all-teammates requests into one draft
+  `ChannelExecutionProposal`; discussion-only all-teammate requests should move to
+  `visible_multi_reply` in the next selector correction;
 - proposal confirmation uses the daemon-owned
   `POST /channel-proposals/:proposalId/confirm-workflow` adapter to create a real
   `ChannelWorkflow` plus ordered `ChannelWorkflowStep[]`;
@@ -62,11 +65,20 @@ The current implementation is deterministic by default and uses Ling-native pers
 - Web refreshes channel proposals/workflows after sending or confirming, so visible work
   stays in the existing conversation surface and progress rows.
 
-Implemented examples:
+Current implemented examples:
 
 - `Architect 先拆，Engineer 实现，QA 验证` -> one draft execution proposal;
 - `所有队友都回复我一下` -> one draft execution proposal, not all visible teammate
-  replies.
+  replies. This is current behavior, not the desired final design for discussion-only
+  requests.
+
+Known design gap:
+
+- Pure discussion requests such as `所有队友都回复我一下`, `大家都说下看法`, or
+  `Architect/Engineer/QA 都给我一个角度` should become bounded
+  `visible_multi_reply`, not `workflow_proposal`, when the message asks for opinions
+  rather than execution. The current implementation should be corrected in the next
+  selector slice.
 
 Implemented slices:
 
@@ -92,6 +104,8 @@ The intent selector may:
 
 - suppress messages that do not need an AI response;
 - route ordinary questions to one selected teammate;
+- create a bounded visible multi-reply when the user explicitly asks multiple teammates
+  for opinions, critique, or brainstorming;
 - ask one clarifying question when the task boundary is unclear;
 - propose a multi-agent workflow when the user is asking for coordinated work;
 - prefill a direct workflow proposal only when the user request is explicit, safe, and
@@ -100,7 +114,7 @@ The intent selector may:
 
 It must not:
 
-- make all teammates speak in the channel;
+- make all teammates speak by default or during execution work;
 - create a shared long-context multi-agent transcript;
 - expose raw selector JSON, prompts, scoring, or confidence numbers in ordinary UI;
 - use the right drawer for ordinary route explanation or proposal explanation;
@@ -189,7 +203,7 @@ Ling should borrow the design pattern, not the runtime.
 
 | External pattern | What to borrow | What not to borrow |
 | --- | --- | --- |
-| SelectorGroupChat | A selector can choose a speaker or role from agent descriptions and context. | Do not put every agent in one shared long context and rotate visible speakers. |
+| SelectorGroupChat | A selector can choose a speaker or role from agent descriptions and context; Ling can also expose a bounded one-round team discussion when the user explicitly asks for visible opinions. | Do not put every agent in one shared long context and rotate visible speakers as an autonomous group chat. |
 | Swarm | Handoff should be structured: source, target, reason, payload, acceptance state. | Do not let free-form agent chatter decide authority or side effects. |
 | GraphFlow | Work should be graph-controlled: order, parallelism, branch conditions, joins, loops. | Do not let ordinary channel messages bypass Ling's workflow graph/state machines. |
 
@@ -201,6 +215,7 @@ The channel intent selector returns a validated structured decision:
 type ChannelIntentDecisionKind =
   | "no_reply"
   | "single_reply"
+  | "visible_multi_reply"
   | "clarify"
   | "workflow_proposal"
   | "direct_workflow";
@@ -213,8 +228,10 @@ interface ChannelIntentDecision {
   readonly sourceMessageId: string;
   readonly action: ChannelIntentDecisionKind;
   readonly selectedTeammateId?: string;
+  readonly selectedTeammateIds?: readonly string[];
   readonly proposalId?: string;
   readonly replyMessageId?: string;
+  readonly replyMessageIds?: readonly string[];
   readonly workflowId?: string;
   readonly reason: string;
   readonly status: "accepted" | "suppressed" | "failed";
@@ -243,6 +260,7 @@ interface ChannelWorkflowIntent {
 | --- | --- | --- |
 | `no_reply` | The message is an acknowledgement, social closure, or unrelated note. | Persist the user message; optionally persist suppressed evidence. |
 | `single_reply` | One teammate should answer as normal channel conversation. | Use `default_teammate` or `auto_route` to create one normal `ai_reply`. |
+| `visible_multi_reply` | The user explicitly asks multiple teammates for visible opinions or discussion before work is scoped. | Create bounded ordinary `ai_reply` messages, one per selected teammate; do not create a task, workflow, approval, or memory candidate. |
 | `clarify` | The request is likely work, but the scope is ambiguous. | One teammate asks one clarifying question. |
 | `workflow_proposal` | The message asks for coordinated work or multiple roles. | Show a compact proposal in the conversation; wait for confirmation. |
 | `direct_workflow` | The message explicitly asks to start a safe known workflow. | Create a validated prefilled proposal or confirmation step; start only after explicit user confirmation. |
@@ -262,6 +280,9 @@ persist local-user message
      -> single_reply
         -> channel auto reply router
         -> one ordinary ai_reply
+     -> visible_multi_reply
+        -> select bounded teammate set
+        -> ordinary ai_reply per selected teammate
      -> clarify
         -> one ordinary ai_reply with a question
      -> workflow_proposal
@@ -287,10 +308,85 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 | `频道里面都有谁？` | `single_reply` | One coordinator/default teammate can answer. |
 | `这个 auto_route 为什么没回复？` | `single_reply` | One teammate explains current channel behavior. |
 | `谁能处理这个？` | `single_reply` or `workflow_proposal` | If context is simple, answer. If there is a concrete work artifact, propose workflow. |
-| `所有队友都回复我一下` | `workflow_proposal` | Do not make all teammates auto-speak. Convert to collaboration proposal or ask what decision the user wants. |
+| `所有队友都回复我一下` | `visible_multi_reply` | Pure visible discussion request; bounded one-round replies, no workflow. |
+| `大家都说下这个设计的风险` | `visible_multi_reply` | Multiple role opinions change the user's decision, but no execution has started. |
+| `所有队友协作实现这个功能` | `workflow_proposal` | The user asks for coordinated work, not just visible opinions. |
 | `Architect 先拆，Engineer 实现，QA 验证` | `workflow_proposal` | If the artifact/scope is clear enough, proposal can be prefilled. |
 | `开始让 Architect 拆这个 PR，然后 Engineer 改，QA 跑 e2e` | `direct_workflow` or `workflow_proposal` | Direct means prefilled confirmed-start proposal, not no-confirm execution. |
 | `帮我 push 合并代码` | `direct_workflow` with confirmation and approvals | May require ship workflow and approval gates; never bypass destructive checks. |
+
+## Visible Multi-Reply UX
+
+`visible_multi_reply` is the Ling-native equivalent of an AutoGen-style visible team
+discussion, not an AutoGen-style autonomous shared-context group chat.
+
+Use it when:
+
+- the user asks several teammates to answer, critique, brainstorm, vote, or give
+  different angles;
+- the request is still in the shaping stage and does not ask Ling to implement, verify,
+  publish, merge, deploy, edit files, or run tools;
+- seeing multiple opinions in the channel changes the user's next decision.
+
+Do not use it when:
+
+- the user asks for ordered execution such as `先拆, 然后实现, 最后验证`;
+- the message includes concrete work verbs such as `实现`, `修复`, `验证`, `跑测试`,
+  `push`, `合并`, `发布`, or `部署`;
+- the channel is already in an accepted workflow execution stage;
+- the request would create tool, approval, credential, memory, branch, deploy, or external
+  send side effects.
+
+Runtime constraints:
+
+- select only eligible channel teammates with runnable providers;
+- cap visible replies to a small bounded set, with three as the default target and five
+  as the hard maximum unless the channel explicitly configures a lower cap;
+- each teammate answers once against the same source message and compact channel context;
+- replies are normal `ai_reply` messages and should preserve each teammate identity;
+- no teammate reply can create a hidden proposal block, task, workflow, approval, memory
+  candidate, or handoff by itself;
+- if the selector cannot find enough eligible teammates, downgrade to `single_reply` with
+  a short explanation or `clarify`.
+
+UI behavior:
+
+- the user's message appears immediately;
+- while replies are being generated, show the same lightweight pending/thinking treatment
+  used for ordinary AI replies;
+- render replies inline as normal teammate messages, not in the right drawer;
+- do not show selector confidence, raw JSON, prompt text, or a route-evidence panel;
+- after the discussion, the user may explicitly ask to convert the result into a
+  `workflow_proposal`.
+
+## Collaboration Protocol Boundary
+
+Ling does not coordinate multiple teammates by putting them into one shared long-context
+transcript. Visible multi-reply is a shaping-stage discussion surface only. Durable work
+coordination must move through explicit collaboration records:
+
+| Protocol record | Purpose |
+| --- | --- |
+| `ChannelContextSummary` | Compress discussion into scoped context, acceptance criteria, and open questions. |
+| `ChannelDecision` | Record a durable product, design, technical, or release decision with source refs. |
+| `ChannelHandoff` | Transfer responsibility from one participant to another with reason, required input, expected output, and status. |
+| `WorkflowHandoffIntent` | Let a running workflow step propose a validated handoff before it becomes a durable handoff or step. |
+| `WorkflowPacketSourceRef` | Carry evidence references across workflow steps without copying raw transcripts into every prompt. |
+| Memory candidate | Preserve reusable lessons only as review-gated candidates; never silently mutate active shared memory or teammate persona. |
+
+Allowed transition:
+
+```text
+visible teammate discussion
+  -> context summary / decision / handoff card
+  -> workflow proposal
+  -> workflow packets and source refs
+  -> review-gated memory candidates
+```
+
+Do not use `visible_multi_reply` output as hidden peer context for a later run unless it
+has first been captured through one of these durable records or explicitly selected as a
+source message by the user/workflow.
 
 ## Workflow Proposal UX
 
@@ -563,9 +659,12 @@ The first implementation should be deterministic and conservative:
 - acknowledgement / very short closure -> `no_reply`;
 - question about channel state, teammates, settings, files, context, or current work ->
   `single_reply`;
+- asks all/specific teammates for visible opinions, critique, brainstorming, or
+  discussion without execution verbs -> `visible_multi_reply`;
 - contains multiple role names or ordered work verbs such as `先`, `然后`, `验证`,
   `review`, `implement`, `QA` -> `workflow_proposal`;
-- asks all teammates to speak -> `workflow_proposal`, not multi-speaker chat;
+- asks all teammates to collaborate on implementation, verification, publish, merge, or
+  other execution work -> `workflow_proposal`;
 - missing artifact, branch, file, or acceptance target -> `clarify`;
 - explicit start command plus known safe template -> `direct_workflow`, after validation
   and user confirmation.
@@ -630,11 +729,14 @@ and prompt text are audit data, not normal conversation content.
 | P4 | Independent `channel_intent_decisions` persistence and source-message idempotency. Implemented. | Medium |
 | P5 | `direct_workflow` as validated prefilled proposal plus confirmation. Implemented. | Medium |
 | P6 | Model-assisted intent selector behind feature flag and deterministic fallback. Implemented. | Medium |
+| Next | Add bounded `visible_multi_reply` for explicit discussion-only all-teammate requests. Planned. | Medium |
 
 ## Acceptance Criteria
 
 - Ordinary questions still produce at most one teammate reply.
-- `所有队友都回复我一下` never creates multiple visible teammate replies by default.
+- `所有队友都回复我一下` creates bounded visible teammate replies only when the request is
+  discussion-only and explicitly asks multiple teammates to speak.
+- `所有队友协作实现/验证/发布` creates a proposal, not visible multi-reply.
 - Multi-role requests produce a compact proposal before multi-agent work starts.
 - Direct workflow starts only happen through validated existing workflow routes.
 - Active work uses existing progress rows and completed work collapses into a summary.
@@ -643,7 +745,7 @@ and prompt text are audit data, not normal conversation content.
 
 ## Non-Goals
 
-- Building a multi-agent group chat.
+- Building an autonomous shared-context multi-agent group chat.
 - Replacing `channel-auto-reply-router.md`.
 - Replacing the P5 workflow selector.
 - Adding model-assisted workflow selection before deterministic intent routing exists.
