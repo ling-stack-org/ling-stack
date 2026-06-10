@@ -4213,6 +4213,8 @@ code,
 
 .channel-execution-proposal {
   width: min(650px, 78%);
+  max-width: calc(100% - 40px);
+  min-width: 0;
   margin-left: 40px;
   padding: 14px 16px;
   border: 1px solid var(--border);
@@ -4220,6 +4222,19 @@ code,
   border-radius: 8px;
   background: var(--surface-panel);
   box-shadow: none;
+}
+
+.channel-execution-proposal > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.channel-execution-proposal > p,
+.channel-proposal-criteria li,
+.channel-proposal-risk span,
+.channel-proposal-error span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .channel-execution-proposal.blocked,
@@ -4255,10 +4270,12 @@ code,
 .channel-proposal-meta span {
   display: grid;
   gap: 3px;
+  min-width: 0;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 .channel-proposal-meta strong {
@@ -4277,6 +4294,7 @@ code,
   align-items: center;
   width: fit-content;
   max-width: 100%;
+  min-width: 0;
   min-height: 36px;
   padding: 0 12px;
   border: 1px solid var(--border);
@@ -4303,12 +4321,13 @@ code,
 }
 
 .channel-proposal-collaboration-summary {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .channel-proposal-collaboration-summary svg {
@@ -4323,13 +4342,15 @@ code,
 }
 
 .channel-proposal-collaboration-summary small {
+  flex: 1 1 220px;
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
   font-size: 13px;
   font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .channel-proposal-collaboration ol {
