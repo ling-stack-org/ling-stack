@@ -57,6 +57,28 @@ test("sqlite channels persist default and edited runtime policy", async () => {
   }
 });
 
+test("sqlite channel creation can use a preallocated channel id", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-preallocated-id-"));
+  const now = "2026-06-10T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel(
+      {
+        id: "channel_preallocated_for_worktree",
+        name: "Isolated Engineering",
+        boundPath: cwd,
+      },
+      now,
+    );
+
+    assert.equal(channel.id, "channel_preallocated_for_worktree");
+    assert.equal(store.getChannel("channel_preallocated_for_worktree")?.name, "Isolated Engineering");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel auto reply mode and route decisions round trip", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-reply-"));
   const now = "2026-06-09T00:00:00.000Z";

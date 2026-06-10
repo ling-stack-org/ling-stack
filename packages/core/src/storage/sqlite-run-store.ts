@@ -2853,7 +2853,7 @@ export class SqliteRunStore implements RunStore {
 
   createChannel(input: CreateChannelInput, now: string): Channel {
     const channel: Channel = {
-      id: createChannelId(),
+      id: input.id ?? createChannelId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
       name: input.name,
       status: input.status ?? "active",

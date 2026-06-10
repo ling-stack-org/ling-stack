@@ -276,6 +276,9 @@ export async function executeRunRequest(
       channelBoundPath: channelForPolicy?.boundPath || runRequest.cwd,
       approvalProfile: runtimeApprovalProfile,
     });
+    const channelWorkspaceSnapshot = channelForPolicy
+      ? createChannelWorkspaceSnapshot(channelForPolicy, workspaceCwd)
+      : undefined;
     approvalPolicy = sessionPolicy.approvalPolicy;
     effectivePolicySnapshot = sessionPolicy.snapshot;
     const runtimeToolFeatures = {
@@ -336,9 +339,7 @@ export async function executeRunRequest(
         effectivePolicySnapshot,
         workspaceCwd,
         executionCwd: runRequest.cwd,
-        channelWorkspaceBinding: preparedConcurrency.channel
-          ? createChannelWorkspaceSnapshot(preparedConcurrency.channel, workspaceCwd)
-          : undefined,
+        channelWorkspaceBinding: channelWorkspaceSnapshot,
         threadId: thread.id,
         turnId: turn.id,
         provider: resolvedProvider,
@@ -452,6 +453,8 @@ export async function executeRunRequest(
         permissionMode: effectivePolicySnapshot.mode,
         effectivePolicySnapshot,
         workspaceCwd,
+        executionCwd: runRequest.cwd,
+        channelWorkspaceBinding: channelWorkspaceSnapshot,
         threadId: thread.id,
         turnId: turn.id,
         provider: resolvedProvider,

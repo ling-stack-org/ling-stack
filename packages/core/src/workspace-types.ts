@@ -124,6 +124,8 @@ export interface Channel {
 }
 
 export interface CreateChannelInput {
+  /** Internal use: callers that must prepare external resources before persistence can preallocate the channel id. */
+  readonly id?: string;
   readonly name: string;
   readonly status?: ChannelStatus;
   readonly boundPath?: string;

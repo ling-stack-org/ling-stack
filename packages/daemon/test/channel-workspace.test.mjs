@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -7,6 +7,7 @@ import test from "node:test";
 import { createCompositeSecretResolver, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
+import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("health exposes channel auto_route capability", async () => {
   const disabledDaemon = await startDaemonForTest();
@@ -2610,9 +2611,12 @@ test("channel workspace API supports local and external path handoff", async () 
     await mkdir(externalPath, { recursive: true });
     const channel = await createChannel(daemon.url, cwd);
     const initial = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(initial.binding.mode, "local");
+    assert.equal(initial.binding.mode, "managed_worktree");
+    assert.equal(initial.binding.status, "ready");
+    assert.equal(initial.binding.branchName, `ling/channel-${channel.id}`);
     assert.equal(initial.snapshot.workspaceCwd, cwd);
-    assert.equal(initial.snapshot.executionCwd, cwd);
+    assert.match(initial.snapshot.executionCwd, /\.ling-stack\/worktrees\/channels\//);
+    await access(initial.snapshot.executionCwd);
 
     const external = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
       mode: "external_path",
@@ -2638,20 +2642,49 @@ test("channel workspace API supports local and external path handoff", async () 
   }
 });
 
-test("managed worktree creation returns a friendly error outside Git repositories", async () => {
+test("channel creation creates an isolated managed worktree by default", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-worktree-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const first = await createChannel(daemon.url, cwd);
+    const second = await createChannel(daemon.url, cwd);
+
+    assert.equal(first.workspaceBinding?.mode, "managed_worktree");
+    assert.equal(second.workspaceBinding?.mode, "managed_worktree");
+    assert.equal(first.workspaceBinding?.status, "ready");
+    assert.equal(second.workspaceBinding?.status, "ready");
+    assert.equal(first.workspaceBinding?.branchName, `ling/channel-${first.id}`);
+    assert.equal(second.workspaceBinding?.branchName, `ling/channel-${second.id}`);
+    assert.notEqual(first.workspaceBinding?.worktreePath, second.workspaceBinding?.worktreePath);
+    assert.match(first.workspaceBinding?.worktreePath ?? "", /\.ling-stack\/worktrees\/channels\//);
+    await access(first.workspaceBinding?.worktreePath ?? "");
+    await access(second.workspaceBinding?.worktreePath ?? "");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel creation fails without persisting when cwd is not a Git repository", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-worktree-nongit-"));
   const daemon = await startDaemonForTest();
   try {
-    const channel = await createChannel(daemon.url, cwd);
-    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {
+    const response = await fetch(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        name: "Engineering",
+        boundPath: cwd,
+        allowedTools: ["read"],
+      }),
     });
     assert.equal(response.status, 400);
     const body = await response.json();
     assert.equal(body.error, "not_git_repository");
-    assert.match(body.message, /Git 仓库/);
+    assert.match(body.message, /无法创建独立频道工作区/);
+
+    const listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(listed.channels, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -3759,6 +3792,7 @@ async function approveWorkflowStepGate(baseUrl, cwd, workflowId, templateStepId)
 }
 
 async function postJson(url, body) {
+  await ensureGitRepoForChannelPost(url, body);
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

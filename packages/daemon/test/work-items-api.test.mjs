@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { createSqliteRunStore } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("work item API lists, routes, claims, heartbeats, releases, completes, and fails durable items", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-work-items-"));
@@ -173,6 +174,7 @@ async function getJson(url) {
 }
 
 async function postJson(url, body) {
+  await ensureGitRepoForChannelPost(url, body);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },

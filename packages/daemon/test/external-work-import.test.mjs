@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { createDaemonServer } from "../dist/index.js";
+import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("GitHub external work import creates a workflow, step, and evidence artifacts without running an agent", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-"));
@@ -1063,6 +1064,7 @@ async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
 }
 
 async function postJson(url, body) {
+  await ensureGitRepoForChannelPost(url, body);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },

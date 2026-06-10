@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("health includes the configured default workspace cwd", async () => {
   const defaultWorkspaceCwd = await mkdtemp(resolve(tmpdir(), "ling-stack-health-cwd-"));
@@ -2493,7 +2494,7 @@ test("same idempotency key returns the original task run without starting a dupl
   }
 });
 
-test("write runs in channels sharing a bound path conflict through resource leases", async () => {
+test("write runs in newly created channels use isolated worktrees and do not conflict", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-bound-path-lock-"));
   const runner = new BlockingRunner();
   const daemon = await startDaemonForTest(runner);
@@ -2521,7 +2522,7 @@ test("write runs in channels sharing a bound path conflict through resource leas
     const secondTask = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
       channelId: secondChannel.channel.id,
       title: "Second writer",
-      prompt: "Wait for the path lock.",
+      prompt: "Write in the second channel worktree.",
     });
 
     const firstResponse = await postTaskRunStream(daemon.url, cwd, firstTask.task.id, {
@@ -2532,25 +2533,33 @@ test("write runs in channels sharing a bound path conflict through resource leas
     });
     const firstSse = createSseReader(firstResponse);
     const firstReady = await firstSse.nextEvent();
-    const runId = firstReady.data.runId;
+    const firstRunId = firstReady.data.runId;
     await runner.waitUntilStarted();
 
     const activeLeases = await getJson(`${daemon.url}/runtime/leases?cwd=${encodeURIComponent(cwd)}&status=active`);
-    assert.equal(activeLeases.leases.some((lease) => lease.ownerId === runId && lease.resourceType === "bound_path"), true);
-    assert.equal(activeLeases.leases.some((lease) => lease.ownerId === runId && lease.resourceType === "task"), true);
+    assert.equal(activeLeases.leases.some((lease) => lease.ownerId === firstRunId && lease.resourceType === "bound_path"), true);
+    assert.equal(activeLeases.leases.some((lease) => lease.ownerId === firstRunId && lease.resourceType === "task"), true);
+    const firstRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(firstRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(firstRun.requestSnapshot.workspaceCwd, cwd);
+    assert.equal(firstRun.requestSnapshot.executionCwd, firstRun.cwd);
+    assert.equal(firstRun.requestSnapshot.channelWorkspaceBinding.mode, "managed_worktree");
+    assert.equal(firstRun.requestSnapshot.channelWorkspaceBinding.executionCwd, firstRun.cwd);
 
-    const blocked = await postJsonExpectError(
-      `${daemon.url}/tasks/${encodeURIComponent(secondTask.task.id)}/run?cwd=${encodeURIComponent(cwd)}`,
-      {
-        providerPresetId: provider.provider.id,
-        skipProviderPreflight: true,
-        tools: ["write"],
-        idempotencyKey: "second-writer",
-      },
-    );
-    assert.equal(blocked.status, 409);
-    assert.equal(blocked.body.error, "resource_conflict");
-    assert.match(blocked.body.message, /bound_path/);
+    const secondResponse = await postTaskRunStream(daemon.url, cwd, secondTask.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["write"],
+      idempotencyKey: "second-writer",
+    });
+    const secondSse = createSseReader(secondResponse);
+    const secondReady = await secondSse.nextEvent();
+    assert.equal(secondReady.event, "ready");
+    assert.equal(secondReady.data.queued, undefined);
+    await runner.waitUntilStarted(2);
+    assert.equal(runner.runs.length, 2);
+    assert.notEqual(runner.runs[0].cwd, runner.runs[1].cwd);
+    assert.match(runner.runs[0].cwd, /\.ling-stack\/worktrees\/channels\//);
+    assert.match(runner.runs[1].cwd, /\.ling-stack\/worktrees\/channels\//);
 
     const transitions = await getJson(
       `${daemon.url}/state-transitions?cwd=${encodeURIComponent(cwd)}&entityType=task&entityId=${encodeURIComponent(firstTask.task.id)}`,
@@ -2559,17 +2568,18 @@ test("write runs in channels sharing a bound path conflict through resource leas
     assert.equal(transitions.transitions.some((event) => event.event === "start_run" && event.toStatus === "running"), true);
 
     runner.release();
-    await firstSse.collectRemaining();
+    await Promise.all([firstSse.collectRemaining(), secondSse.collectRemaining()]);
 
     const remainingLeases = await getJson(`${daemon.url}/runtime/leases?cwd=${encodeURIComponent(cwd)}&status=active`);
-    assert.equal(remainingLeases.leases.some((lease) => lease.ownerId === runId), false);
+    assert.equal(remainingLeases.leases.some((lease) => lease.ownerId === firstRunId), false);
+    assert.equal(remainingLeases.leases.some((lease) => lease.ownerId === secondReady.data.runId), false);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("queueOnConflict persists a queued run and work unit instead of starting another runner", async () => {
+test("queueOnConflict persists a queued run for channels explicitly handed off to Local", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-bound-path-queue-"));
   const runner = new BlockingRunner();
   const daemon = await startDaemonForTest(runner);
@@ -2588,6 +2598,12 @@ test("queueOnConflict persists a queued run and work unit instead of starting an
       allowedTools: ["read", "write"],
       defaultProviderPresetId: provider.provider.id,
       runtimePolicy: { queueOnConflict: true },
+    });
+    await postJson(`${daemon.url}/channels/${encodeURIComponent(firstChannel.channel.id)}/workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "local",
+    });
+    await postJson(`${daemon.url}/channels/${encodeURIComponent(secondChannel.channel.id)}/workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "local",
     });
     const firstTask = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
       channelId: firstChannel.channel.id,
@@ -3960,6 +3976,7 @@ async function patchJsonExpectError(url, body) {
 }
 
 async function postJson(url, body) {
+  await ensureGitRepoForChannelPost(url, body);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },

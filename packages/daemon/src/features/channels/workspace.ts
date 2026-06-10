@@ -9,7 +9,6 @@ import {
   resolveChannelExecutionCwd,
   type Channel,
   type ChannelWorkspaceBinding,
-  type ChannelWorkspaceMode,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -17,6 +16,8 @@ import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 
 const execFileAsync = promisify(execFile);
+
+type ChannelWorktreeTarget = Pick<Channel, "id" | "boundPath" | "workspaceBinding">;
 
 export function defaultChannelWorkspaceBinding(channel: Channel, workspaceCwd: string): ChannelWorkspaceBinding {
   return {
@@ -175,8 +176,8 @@ function readHandoffBinding(value: unknown, channel: Channel, workspaceCwd: stri
   return refreshChannelWorkspaceBinding({ ...channel, workspaceBinding: existing }, workspaceCwd, now);
 }
 
-async function createManagedWorktreeBinding(
-  channel: Channel,
+export async function createManagedWorktreeBinding(
+  channel: ChannelWorktreeTarget,
   workspaceCwd: string,
   requestedBaseBranch?: string,
 ): Promise<
@@ -186,7 +187,7 @@ async function createManagedWorktreeBinding(
   const root = channel.boundPath ?? workspaceCwd;
   const repo = await git(root, ["rev-parse", "--show-toplevel"]).catch(() => undefined);
   if (!repo?.stdout.trim()) {
-    return { ok: false, code: "not_git_repository", message: "当前频道路径不是 Git 仓库，不能创建受管理 worktree。" };
+    return { ok: false, code: "not_git_repository", message: "当前工作区不是 Git 仓库，无法创建独立频道工作区。" };
   }
   const repoRoot = repo.stdout.trim();
   const now = new Date().toISOString();
