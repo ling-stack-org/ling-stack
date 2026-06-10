@@ -586,6 +586,8 @@ const CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION = 54;
 const CHANNEL_INTENT_DECISIONS_MIGRATION_NAME = "create_channel_intent_decisions";
 const RESPONSE_LANGUAGE_CONTEXT_MIGRATION_VERSION = 55;
 const RESPONSE_LANGUAGE_CONTEXT_MIGRATION_NAME = "add_response_language_context";
+const CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION = 56;
+const CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_NAME = "add_channel_visible_multi_reply_intent";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -5284,8 +5286,10 @@ export class SqliteRunStore implements RunStore {
       sourceMessageId: input.sourceMessageId,
       action: input.action,
       selectedTeammateId: input.selectedTeammateId,
+      selectedTeammateIds: input.selectedTeammateIds,
       proposalId: input.proposalId,
       replyMessageId: input.replyMessageId,
+      replyMessageIds: input.replyMessageIds,
       workflowId: input.workflowId,
       reason: input.reason,
       status: input.status,
@@ -5305,8 +5309,10 @@ export class SqliteRunStore implements RunStore {
           source_message_id,
           action,
           selected_teammate_id,
+          selected_teammate_ids_json,
           proposal_id,
           reply_message_id,
+          reply_message_ids_json,
           workflow_id,
           reason,
           status,
@@ -5314,7 +5320,7 @@ export class SqliteRunStore implements RunStore {
           error_message,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         decision.id,
@@ -5324,8 +5330,10 @@ export class SqliteRunStore implements RunStore {
         decision.sourceMessageId,
         decision.action,
         decision.selectedTeammateId ?? null,
+        stringifyJson(decision.selectedTeammateIds ?? []),
         decision.proposalId ?? null,
         decision.replyMessageId ?? null,
+        stringifyJson(decision.replyMessageIds ?? []),
         decision.workflowId ?? null,
         decision.reason,
         decision.status,
@@ -11205,8 +11213,10 @@ export class SqliteRunStore implements RunStore {
           source_message_id TEXT NOT NULL,
           action TEXT NOT NULL,
           selected_teammate_id TEXT,
+          selected_teammate_ids_json TEXT,
           proposal_id TEXT,
           reply_message_id TEXT,
+          reply_message_ids_json TEXT,
           workflow_id TEXT,
           reason TEXT NOT NULL,
           status TEXT NOT NULL,
@@ -11233,6 +11243,23 @@ export class SqliteRunStore implements RunStore {
       `);
       if (!hasChannelIntentDecisionsMigration) {
         this.recordMigration(CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION, CHANNEL_INTENT_DECISIONS_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelVisibleMultiReplyIntentMigration = this.hasMigration(CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION);
+    if (
+      !hasChannelVisibleMultiReplyIntentMigration ||
+      !this.hasColumn("channel_intent_decisions", "selected_teammate_ids_json") ||
+      !this.hasColumn("channel_intent_decisions", "reply_message_ids_json")
+    ) {
+      if (this.hasTable("channel_intent_decisions") && !this.hasColumn("channel_intent_decisions", "selected_teammate_ids_json")) {
+        this.database.exec("ALTER TABLE channel_intent_decisions ADD COLUMN selected_teammate_ids_json TEXT;");
+      }
+      if (this.hasTable("channel_intent_decisions") && !this.hasColumn("channel_intent_decisions", "reply_message_ids_json")) {
+        this.database.exec("ALTER TABLE channel_intent_decisions ADD COLUMN reply_message_ids_json TEXT;");
+      }
+      if (!hasChannelVisibleMultiReplyIntentMigration) {
+        this.recordMigration(CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION, CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_NAME);
       }
     }
 
@@ -13124,16 +13151,24 @@ export class SqliteRunStore implements RunStore {
 
   private assertChannelIntentDecisionRefsInChannel(
     channelId: string,
-    input: Pick<CreateChannelIntentDecisionInput, "selectedTeammateId" | "proposalId" | "replyMessageId" | "workflowId">,
+    input: Pick<CreateChannelIntentDecisionInput, "selectedTeammateId" | "selectedTeammateIds" | "proposalId" | "replyMessageId" | "replyMessageIds" | "workflowId">,
   ): void {
     if (input.selectedTeammateId && !this.getAiTeammate(input.selectedTeammateId)) {
       throw new Error(`AI teammate not found: ${input.selectedTeammateId}`);
+    }
+    for (const teammateId of input.selectedTeammateIds ?? []) {
+      if (!this.getAiTeammate(teammateId)) {
+        throw new Error(`AI teammate not found: ${teammateId}`);
+      }
     }
     if (input.proposalId) {
       this.assertProposalInChannel(channelId, input.proposalId);
     }
     if (input.replyMessageId) {
       this.assertMessageInChannel(channelId, input.replyMessageId);
+    }
+    for (const replyMessageId of input.replyMessageIds ?? []) {
+      this.assertMessageInChannel(channelId, replyMessageId);
     }
     if (input.workflowId) {
       this.assertWorkflowInChannel(channelId, input.workflowId);
@@ -14203,8 +14238,10 @@ function mapChannelIntentDecision(row: Record<string, SQLOutputValue>): ChannelI
     sourceMessageId: readString(row, "source_message_id"),
     action: readString(row, "action") as ChannelIntentDecisionAction,
     selectedTeammateId: readNullableString(row, "selected_teammate_id"),
+    selectedTeammateIds: parseJsonStringArray(readNullableString(row, "selected_teammate_ids_json") ?? "[]"),
     proposalId: readNullableString(row, "proposal_id"),
     replyMessageId: readNullableString(row, "reply_message_id"),
+    replyMessageIds: parseJsonStringArray(readNullableString(row, "reply_message_ids_json") ?? "[]"),
     workflowId: readNullableString(row, "workflow_id"),
     reason: readString(row, "reason"),
     status: readString(row, "status") as ChannelIntentDecisionStatus,
@@ -15719,8 +15756,10 @@ function channelIntentDecisionSelectSql(whereClause: string): string {
       source_message_id,
       action,
       selected_teammate_id,
+      selected_teammate_ids_json,
       proposal_id,
       reply_message_id,
+      reply_message_ids_json,
       workflow_id,
       reason,
       status,

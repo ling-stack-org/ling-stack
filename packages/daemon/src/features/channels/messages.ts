@@ -21,6 +21,7 @@ export type CreateChannelAiReply = (input: {
   readonly providerPresetId?: string;
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
+  readonly channelParallelLimit?: number;
 }) => Promise<ChannelMessage>;
 
 export async function handleChannelMessagesCollection(
@@ -130,6 +131,31 @@ export async function handleChannelMessagesCollection(
         }
         if (workflowIntent.action === "workflow_proposal") {
           writeJson(response, 201, { message });
+          return;
+        }
+        if (workflowIntent.action === "visible_multi_reply") {
+          const aiReplies = workflowIntent.aiReplies ?? await Promise.all(workflowIntent.teammateIds.map((teammateId) => createAiReply({
+            store,
+            channel,
+            sourceMessage: message,
+            providerPresetId: input.providerPresetId,
+            teammateId,
+            proposalMode: "disabled",
+            channelParallelLimit: workflowIntent.teammateIds.length,
+          })));
+          if (!workflowIntent.intentDecisionId) {
+            store.createChannelIntentDecision({
+              channelId: channel.id,
+              sourceMessageId: message.id,
+              action: "visible_multi_reply",
+              selectedTeammateIds: workflowIntent.teammateIds,
+              replyMessageIds: aiReplies.map((reply) => reply.id),
+              reason: workflowIntent.reason,
+              status: "accepted",
+              createdBy: workflowIntent.createdBy,
+            }, new Date().toISOString());
+          }
+          writeJson(response, 201, { message, aiReply: aiReplies[0], aiReplies });
           return;
         }
         if (workflowIntent.action === "clarify") {

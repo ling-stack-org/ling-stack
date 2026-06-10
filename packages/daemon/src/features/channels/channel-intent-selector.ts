@@ -40,6 +40,14 @@ export type ChannelIntentSelectorResult =
       readonly intentDecisionId: string;
     }
   | {
+      readonly action: "visible_multi_reply";
+      readonly teammateIds: readonly string[];
+      readonly reason: string;
+      readonly createdBy: "deterministic" | "model";
+      readonly aiReplies?: readonly ChannelMessage[];
+      readonly intentDecisionId?: string;
+    }
+  | {
       readonly action: "workflow_proposal";
       readonly proposal: ChannelExecutionProposal;
       readonly intentDecisionId: string;
@@ -57,7 +65,7 @@ type ClarifyReasonCode =
   | "approval_sensitive_target";
 
 interface ChannelIntentModelOutput {
-  readonly action: "no_reply" | "single_reply" | "clarify" | "workflow_proposal" | "direct_workflow";
+  readonly action: "no_reply" | "single_reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "direct_workflow";
   readonly reason: string;
 }
 
@@ -136,6 +144,11 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
 }
 
 function selectDeterministicChannelWorkflowIntent(input: ChannelIntentSelectorInput): ChannelIntentSelectorResult {
+  const visibleMultiReply = selectVisibleMultiReply(input, "deterministic");
+  if (visibleMultiReply) {
+    return visibleMultiReply;
+  }
+
   const reasonCode = detectWorkflowIntentReason(input.sourceMessage);
   if (!reasonCode) {
     const clarifyReasonCode = detectClarifyIntentReason(input.sourceMessage);
@@ -201,6 +214,9 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
   }
   if (output.action === "clarify") {
     return createClarifyReply(input, clarifyReasonFromMessage(input.sourceMessage), "model", output.reason);
+  }
+  if (output.action === "visible_multi_reply") {
+    return selectVisibleMultiReply(input, "model", output.reason);
   }
 
   const reasonCode = output.action === "direct_workflow"
@@ -303,8 +319,9 @@ function buildModelIntentPrompt(input: ChannelIntentSelectorInput): string {
     .slice(0, 12);
   return [
     "Classify the latest user channel message into exactly one Ling intent.",
-    "Return strict JSON only: {\"action\":\"no_reply|single_reply|clarify|workflow_proposal|direct_workflow\",\"reason\":\"short reason\"}.",
+    "Return strict JSON only: {\"action\":\"no_reply|single_reply|visible_multi_reply|clarify|workflow_proposal|direct_workflow\",\"reason\":\"short reason\"}.",
     "Use single_reply for ordinary questions one teammate should answer.",
+    "Use visible_multi_reply only for explicit discussion-only requests asking multiple teammates for visible opinions; do not use it for implementation, validation, publishing, merge, deploy, or tool-running work.",
     "Use clarify for work-shaped requests missing target, scope, or acceptance checks.",
     "Use workflow_proposal for multi-role work that needs user confirmation before execution.",
     "Use direct_workflow only when the user explicitly asks to start/run a workflow; it still requires confirmation.",
@@ -327,6 +344,7 @@ function parseModelIntentOutput(text: string): ChannelIntentModelOutput {
   if (
     (action !== "no_reply" &&
       action !== "single_reply" &&
+      action !== "visible_multi_reply" &&
       action !== "clarify" &&
       action !== "workflow_proposal" &&
       action !== "direct_workflow") ||
@@ -344,6 +362,50 @@ function readStrictJsonObject(text: string): string {
     return trimmed;
   }
   throw new Error("Intent model output must be a strict JSON object.");
+}
+
+function selectVisibleMultiReply(
+  input: ChannelIntentSelectorInput,
+  createdBy: "deterministic" | "model",
+  modelReason?: string,
+): ChannelIntentSelectorResult | undefined {
+  if (!detectVisibleMultiReplyIntent(input.sourceMessage)) {
+    return undefined;
+  }
+
+  const existingDecision = input.store
+    .listChannelIntentDecisions({
+      channelId: input.channel.id,
+      sourceMessageId: input.sourceMessage.id,
+      action: "visible_multi_reply",
+      status: "accepted",
+      limit: 1,
+    })
+    [0];
+  if (existingDecision) {
+    const aiReplies = (existingDecision.replyMessageIds ?? [])
+      .map((replyMessageId) => input.store.getChannelMessage(replyMessageId))
+      .filter((message): message is ChannelMessage => Boolean(message && message.channelId === input.channel.id));
+    return {
+      action: "visible_multi_reply",
+      teammateIds: existingDecision.selectedTeammateIds ?? [],
+      reason: existingDecision.reason,
+      createdBy: existingDecision.createdBy,
+      aiReplies,
+      intentDecisionId: existingDecision.id,
+    };
+  }
+
+  const teammates = selectVisibleMultiReplyTeammates(input);
+  if (teammates.length < 2) {
+    return undefined;
+  }
+  return {
+    action: "visible_multi_reply",
+    teammateIds: teammates.map((teammate) => teammate.id),
+    reason: modelReason ?? "Visible multi-reply selected for explicit discussion-only multi-teammate request.",
+    createdBy,
+  };
 }
 
 function createWorkflowProposal(
@@ -490,7 +552,7 @@ function detectWorkflowIntentReason(message: ChannelMessage): IntentReasonCode |
   ) {
     return "explicit_workflow_start";
   }
-  if (/(所有|全部|全体|每个|每位).{0,8}(队友|agent|teammate|agents)/iu.test(text)) {
+  if (hasAllTeammatesAudience(text) && looksExecutionAllTeammatesRequest(text)) {
     return "all_teammates_request";
   }
   if (
@@ -505,6 +567,33 @@ function detectWorkflowIntentReason(message: ChannelMessage): IntentReasonCode |
     return "multi_role_request";
   }
   return undefined;
+}
+
+function detectVisibleMultiReplyIntent(message: ChannelMessage): boolean {
+  const text = normalizeWhitespace(message.body);
+  if (!text || looksExecutionAllTeammatesRequest(text)) {
+    return false;
+  }
+  const lower = text.toLowerCase();
+  if (
+    /(所有|全部|全体|每个|每位).{0,12}(队友|agent|teammate|agents).{0,28}(回复|回答|说|讲|看法|意见|评价|讨论|角度|怎么看)/iu.test(text) ||
+    /(所有|全部|全体|每个|每位).{0,12}(回复|回答|说|讲|看法|意见|评价|讨论|角度).{0,28}(队友|agent|teammate|agents)/iu.test(text)
+  ) {
+    return true;
+  }
+  if (/(大家|各位|所有人|全部人).{0,18}(都|分别|各自|一起)?.{0,18}(回复|回答|说|讲|看法|意见|评价|讨论|角度|怎么看)/iu.test(text)) {
+    return true;
+  }
+  const mentionedRoleCount = roleMatches.filter((role) => textMentionsRole(lower, role.roleKey)).length;
+  return mentionedRoleCount >= 2 && /(都|分别|各自|一起).{0,24}(回复|回答|说|讲|看法|意见|评价|讨论|角度|怎么看)/iu.test(text);
+}
+
+function hasAllTeammatesAudience(text: string): boolean {
+  return /(所有|全部|全体|每个|每位).{0,12}(队友|agent|teammate|agents)/iu.test(text);
+}
+
+function looksExecutionAllTeammatesRequest(text: string): boolean {
+  return /(开始|启动|执行|开跑|工作流|workflow|协作|实现|修复|验证|验收|测试|跑测试|e2e|push|合并|发布|部署|ship|release|deploy|改代码|写代码|处理)/iu.test(text);
 }
 
 function intentDecisionActionForReason(reasonCode: IntentReasonCode): "workflow_proposal" | "direct_workflow" {
@@ -568,6 +657,38 @@ function selectProposalParticipants(input: ChannelIntentSelectorInput, reasonCod
   });
 }
 
+function selectVisibleMultiReplyTeammates(input: ChannelIntentSelectorInput): readonly AiTeammate[] {
+  const activeTeammates = input.store.listAiTeammates({ status: "active", includeHidden: false, limit: 100 });
+  const channelTeammates = activeTeammates.filter((teammate) => teammateCanReplyInChannel(input.store, input.channel, teammate.id));
+  const byId = new Map(channelTeammates.map((teammate) => [teammate.id, teammate]));
+  const text = input.sourceMessage.body.toLowerCase();
+  const mentionedRoleKeys = roleMatches
+    .filter((role) => textMentionsRole(text, role.roleKey))
+    .map((role) => role.roleKey);
+  const roleOrder = mentionedRoleKeys.length > 0
+    ? mentionedRoleKeys
+    : ["architect", "engineer", "qa", "product", "designer", "security", "docs", "release", "custom"] satisfies readonly AiTeammate["roleKey"][];
+  const selected: AiTeammate[] = [];
+  const add = (teammate: AiTeammate | undefined): void => {
+    if (!teammate || !byId.has(teammate.id) || selected.some((existing) => existing.id === teammate.id)) {
+      return;
+    }
+    selected.push(teammate);
+  };
+
+  if (input.channel.defaultTeammateId) {
+    const defaultTeammate = activeTeammates.find((teammate) => teammate.id === input.channel.defaultTeammateId || teammate.templateId === input.channel.defaultTeammateId);
+    add(defaultTeammate);
+  }
+  for (const roleKey of roleOrder) {
+    add(channelTeammates.find((teammate) => teammate.roleKey === roleKey));
+  }
+  for (const teammate of channelTeammates) {
+    add(teammate);
+  }
+  return selected.slice(0, 3);
+}
+
 function chooseAssignee(
   input: ChannelIntentSelectorInput,
   participants: readonly ProposalParticipantSelection[],
@@ -604,7 +725,15 @@ function chooseClarifyingTeammate(input: ChannelIntentSelectorInput): AiTeammate
 }
 
 function teammateCanClarifyInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
+  return teammateCanReplyInChannel(store, channel, teammateId);
+}
+
+function teammateCanReplyInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
   if (channel.defaultTeammateId === teammateId) {
+    return true;
+  }
+  const defaultTeammate = channel.defaultTeammateId ? resolveAiTeammateReference(store, channel.defaultTeammateId) : undefined;
+  if (defaultTeammate?.id === teammateId) {
     return true;
   }
   return store.listTeammateChannelMemberships(teammateId).some((membership) => membership.channelId === channel.id);
@@ -729,8 +858,8 @@ function deriveRequiredTools(
 function buildRiskSummary(reasonCode: IntentReasonCode, responseLanguage: ResponseLanguage): string {
   if (reasonCode === "all_teammates_request") {
     return responseLanguage === "zh-CN"
-      ? "已把全员发言请求转换为一个工作流 proposal，而不是在频道里展开可见群聊。"
-      : "Converted an all-teammates request into one workflow proposal instead of visible group chat.";
+      ? "已把全员协作执行请求转换为一个工作流 proposal；纯讨论型全员发言会走可见多队友回复。"
+      : "Converted an all-teammates execution request into one workflow proposal; discussion-only all-teammate requests use visible multi-reply.";
   }
   if (reasonCode === "explicit_workflow_start") {
     return responseLanguage === "zh-CN"
@@ -751,15 +880,17 @@ function persistIntentDecision(
   decision: Pick<
     Parameters<RunStore["createChannelIntentDecision"]>[0],
     "action" | "reason" | "status" | "createdBy"
-  > & Partial<Pick<Parameters<RunStore["createChannelIntentDecision"]>[0], "selectedTeammateId" | "proposalId" | "replyMessageId" | "workflowId" | "errorMessage">>,
+  > & Partial<Pick<Parameters<RunStore["createChannelIntentDecision"]>[0], "selectedTeammateId" | "selectedTeammateIds" | "proposalId" | "replyMessageId" | "replyMessageIds" | "workflowId" | "errorMessage">>,
 ): ChannelIntentDecision {
   return input.store.createChannelIntentDecision({
     channelId: input.channel.id,
     sourceMessageId: input.sourceMessage.id,
     action: decision.action,
     selectedTeammateId: decision.selectedTeammateId,
+    selectedTeammateIds: decision.selectedTeammateIds,
     proposalId: decision.proposalId,
     replyMessageId: decision.replyMessageId,
+    replyMessageIds: decision.replyMessageIds,
     workflowId: decision.workflowId,
     reason: decision.reason,
     status: decision.status,

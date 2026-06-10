@@ -1,6 +1,6 @@
 # Channel Intent To Workflow Selector
 
-Status: P0-P6 implemented behind deterministic-first boundaries; bounded `visible_multi_reply` is the next selector correction; model-assisted selection remains feature-gated
+Status: P0-P6 and bounded `visible_multi_reply` implemented behind deterministic-first boundaries; model-assisted selection remains feature-gated
 Date: 2026-06-10
 
 Related docs:
@@ -46,9 +46,10 @@ The current implementation is deterministic by default and uses Ling-native pers
 - non-mentioned root channel messages pass through `selectChannelWorkflowIntent` before
   the ordinary auto reply router;
 - clear multi-role requests create one draft `ChannelExecutionProposal`;
-- the current implementation still routes all-teammates requests into one draft
-  `ChannelExecutionProposal`; discussion-only all-teammate requests should move to
-  `visible_multi_reply` in the next selector correction;
+- discussion-only all-teammate requests create bounded `visible_multi_reply` ordinary
+  `ai_reply` messages, with default cap 3 and no proposal/workflow/task side effects;
+- execution-shaped all-teammate requests still create one draft
+  `ChannelExecutionProposal`;
 - proposal confirmation uses the daemon-owned
   `POST /channel-proposals/:proposalId/confirm-workflow` adapter to create a real
   `ChannelWorkflow` plus ordered `ChannelWorkflowStep[]`;
@@ -61,24 +62,15 @@ The current implementation is deterministic by default and uses Ling-native pers
 - model-assisted intent selection is available only behind
   `channels.intentSelector` / `LING_STACK_CHANNEL_INTENT_SELECTOR`, requires strict JSON,
   and falls back to deterministic routing on failure;
-- no `ai_reply` is created for that source message;
+- no `ai_reply` is created for proposal/direct-workflow source messages;
 - Web refreshes channel proposals/workflows after sending or confirming, so visible work
   stays in the existing conversation surface and progress rows.
 
 Current implemented examples:
 
 - `Architect 先拆，Engineer 实现，QA 验证` -> one draft execution proposal;
-- `所有队友都回复我一下` -> one draft execution proposal, not all visible teammate
-  replies. This is current behavior, not the desired final design for discussion-only
-  requests.
-
-Known design gap:
-
-- Pure discussion requests such as `所有队友都回复我一下`, `大家都说下看法`, or
-  `Architect/Engineer/QA 都给我一个角度` should become bounded
-  `visible_multi_reply`, not `workflow_proposal`, when the message asks for opinions
-  rather than execution. The current implementation should be corrected in the next
-  selector slice.
+- `所有队友都回复我一下` -> bounded `visible_multi_reply` replies, not a proposal;
+- `所有队友协作实现/验证/发布` -> one draft execution proposal.
 
 Implemented slices:
 
@@ -94,6 +86,8 @@ Implemented slices:
   start execution without explicit user confirmation;
 - P6 model-assisted intent selector behind feature flag, strict JSON validation, and
   deterministic fallback.
+- Bounded `visible_multi_reply` for discussion-only all-teammate requests, including
+  multi-reply intent evidence and `aiReplies` message mutation response.
 
 ## Product Boundary
 
@@ -341,7 +335,8 @@ Runtime constraints:
 
 - select only eligible channel teammates with runnable providers;
 - cap visible replies to a small bounded set, with three as the default target and five
-  as the hard maximum unless the channel explicitly configures a lower cap;
+  as the hard maximum unless the channel explicitly configures a lower cap. The current
+  implementation uses the default cap of three;
 - each teammate answers once against the same source message and compact channel context;
 - replies are normal `ai_reply` messages and should preserve each teammate identity;
 - no teammate reply can create a hidden proposal block, task, workflow, approval, memory
@@ -729,7 +724,7 @@ and prompt text are audit data, not normal conversation content.
 | P4 | Independent `channel_intent_decisions` persistence and source-message idempotency. Implemented. | Medium |
 | P5 | `direct_workflow` as validated prefilled proposal plus confirmation. Implemented. | Medium |
 | P6 | Model-assisted intent selector behind feature flag and deterministic fallback. Implemented. | Medium |
-| Next | Add bounded `visible_multi_reply` for explicit discussion-only all-teammate requests. Planned. | Medium |
+| P7 | Bounded `visible_multi_reply` for explicit discussion-only all-teammate requests. Implemented. | Medium |
 
 ## Acceptance Criteria
 

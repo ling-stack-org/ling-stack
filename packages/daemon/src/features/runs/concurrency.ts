@@ -154,6 +154,7 @@ export function acquireRunRuntimeSemaphores(input: {
   readonly workUnit: WorkUnit;
   readonly attempt: WorkUnitAttempt;
   readonly channel?: Channel;
+  readonly channelParallelLimit?: number;
   readonly providerKey: string;
   readonly runnerId?: string;
   readonly now: string;
@@ -175,7 +176,7 @@ export function acquireRunRuntimeSemaphores(input: {
           {
             resourceType: "channel_parallel" as const,
             resourceKey: input.channel.id,
-            limit: Math.max(input.channel.runtimePolicy.maxConcurrentRuns, 1),
+            limit: Math.max(input.channelParallelLimit ?? input.channel.runtimePolicy.maxConcurrentRuns, 1),
           },
         ]
       : []),

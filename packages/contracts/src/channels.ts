@@ -181,6 +181,7 @@ export interface ChannelMessageListResponse {
 export interface ChannelMessageMutationResponse {
   readonly message: ChannelMessage;
   readonly aiReply?: ChannelMessage;
+  readonly aiReplies?: readonly ChannelMessage[];
 }
 
 export type ChannelMessageRouteAction = "reply" | "no_reply";
@@ -226,6 +227,7 @@ export interface ChannelMessageRouteDecisionListResponse {
 export type ChannelIntentDecisionAction =
   | "no_reply"
   | "single_reply"
+  | "visible_multi_reply"
   | "clarify"
   | "workflow_proposal"
   | "direct_workflow";
@@ -242,8 +244,10 @@ export interface ChannelIntentDecision {
   readonly sourceMessageId: string;
   readonly action: ChannelIntentDecisionAction;
   readonly selectedTeammateId?: string;
+  readonly selectedTeammateIds?: readonly string[];
   readonly proposalId?: string;
   readonly replyMessageId?: string;
+  readonly replyMessageIds?: readonly string[];
   readonly workflowId?: string;
   readonly reason: string;
   readonly status: ChannelIntentDecisionStatus;

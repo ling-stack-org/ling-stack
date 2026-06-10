@@ -1820,8 +1820,8 @@ Current MVP implementation status:
   one-round teammate replies in the channel, while requests like `所有队友协作实现/验证`
   still become user-confirmed workflow proposals. P1-P6 cover proposal-to-workflow graph
   execution, proposal edit, clarify, independent intent persistence, confirmed
-  direct-workflow prefill, and feature-gated model-assisted intent selection; the bounded
-  visible multi-reply slice remains the next selector correction. Durable multi-agent
+  direct-workflow prefill, feature-gated model-assisted intent selection, and bounded
+  visible multi-reply for discussion-only all-teammate requests. Durable multi-agent
   coordination uses explicit protocol records instead of shared long-context chat:
   context summaries, decisions, handoff cards, workflow handoff intents, workflow packets,
   source refs, and review-gated memory candidates,
