@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createChannelId } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -29,6 +30,7 @@ import {
   readOptionalChannelMessageRouteDecisionStatusQuery,
   readOptionalChannelHandoffStatusQuery,
 } from "./schemas.js";
+import { createManagedWorktreeBinding } from "./workspace.js";
 
 export async function handleChannelsCollection(
   request: IncomingMessage,
@@ -60,7 +62,27 @@ export async function handleChannelsCollection(
         writeJson(response, 400, { error: "auto_route_disabled", message: "Channel auto_route is disabled." });
         return;
       }
-      const channel = store.createChannel(input, new Date().toISOString());
+      const channelId = createChannelId();
+      const worktreeResult = await createManagedWorktreeBinding(
+        {
+          id: channelId,
+          boundPath: input.boundPath,
+          workspaceBinding: undefined,
+        },
+        cwd,
+      );
+      if (!worktreeResult.ok) {
+        writeJson(response, 400, { error: worktreeResult.code, message: worktreeResult.message });
+        return;
+      }
+      const channel = store.createChannel(
+        {
+          ...input,
+          id: channelId,
+          workspaceBinding: worktreeResult.binding,
+        },
+        new Date().toISOString(),
+      );
       writeJson(response, 201, { channel });
       return;
     }

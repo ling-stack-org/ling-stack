@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { createDaemonServer } from "../dist/index.js";
 import { computeNextRunAt } from "../dist/features/automations/scheduler.js";
+import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("automation API creates templates, previews context, runs once, deduplicates, and blocks disabled or archived definitions", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-automations-api-"));
@@ -409,6 +410,7 @@ async function getText(url) {
 }
 
 async function postJson(url, body) {
+  await ensureGitRepoForChannelPost(url, body);
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

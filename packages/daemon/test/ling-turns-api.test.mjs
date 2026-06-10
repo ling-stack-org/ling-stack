@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { createSqliteRunStore } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("daemon API exposes durable Ling turns and links runs to turns", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-ling-turns-"));
@@ -680,6 +681,7 @@ async function getJsonAllowError(url) {
 }
 
 async function postJson(url, body) {
+  await ensureGitRepoForChannelPost(url, body);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },

@@ -275,7 +275,8 @@ export async function routeRequest(
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const maybeContinueRunInterventions = (terminalRun: RunSession): void => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
-    const store = storeRegistry.findStoreForRun(sourceRunId, terminalRun.cwd) ?? storeRegistry.findStoreForRun(terminalRun.id, terminalRun.cwd);
+    const workspaceCwd = readRunWorkspaceCwd(terminalRun) ?? terminalRun.cwd;
+    const store = storeRegistry.findStoreForRun(sourceRunId, workspaceCwd) ?? storeRegistry.findStoreForRun(terminalRun.id, workspaceCwd);
     if (!store) {
       return;
     }
@@ -1583,6 +1584,15 @@ export async function routeRequest(
   }
 
   writeJson(response, 404, { error: "not_found", message: `No route for ${request.method} ${url.pathname}` });
+}
+
+function readRunWorkspaceCwd(run: RunSession): string | undefined {
+  const snapshot = run.requestSnapshot;
+  if (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot)) {
+    return undefined;
+  }
+  const workspaceCwd = (snapshot as { readonly workspaceCwd?: unknown }).workspaceCwd;
+  return typeof workspaceCwd === "string" && workspaceCwd.trim() ? workspaceCwd : undefined;
 }
 
 async function startDetachedRunAndResolveReady(

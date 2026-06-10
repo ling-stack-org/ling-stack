@@ -4353,7 +4353,11 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "POST" && path === "/channels") {
     const body = await request.postDataJSON() as Record<string, unknown>;
-    const channel = createChannelFromBody(body, `channel_created_${state.channels.length + 1}`);
+    const channelId = `channel_created_${state.channels.length + 1}`;
+    const channel = {
+      ...createChannelFromBody(body, channelId),
+      workspaceBinding: buildMockManagedChannelWorktreeBinding(channelId),
+    };
     state.channels.unshift(channel);
     await route.fulfill({ status: 201, json: { channel } });
     return;
@@ -4386,18 +4390,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (request.method() === "POST" && action === "create-worktree") {
-      const binding = {
-        mode: "managed_worktree",
-        status: "ready",
-        executionPath: `${cwd}/.ling-stack/worktrees/channels/${channelId}`,
-        worktreePath: `${cwd}/.ling-stack/worktrees/channels/${channelId}`,
-        branchName: `ling/channel-${channelId}`,
-        baseBranch: "main",
-        baseCommit: "mock-base-commit",
-        createdAt: "2026-05-25T00:18:00.000Z",
-        updatedAt: "2026-05-25T00:18:00.000Z",
-        checkedAt: "2026-05-25T00:18:00.000Z",
-      };
+      const binding = buildMockManagedChannelWorktreeBinding(channelId, "2026-05-25T00:18:00.000Z");
       const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
       state.channels[channelIndex] = updated;
       await route.fulfill({ status: 201, json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
@@ -6556,6 +6549,21 @@ function readMockChannelWorkspaceBinding(channel: Record<string, unknown>): Reco
     status: "ready",
     executionPath,
     updatedAt: typeof channel.updatedAt === "string" ? channel.updatedAt : "2026-05-22T00:00:00.000Z",
+  };
+}
+
+function buildMockManagedChannelWorktreeBinding(channelId: string, now = "2026-05-25T00:15:00.000Z"): Record<string, unknown> {
+  return {
+    mode: "managed_worktree",
+    status: "ready",
+    executionPath: `${cwd}/.ling-stack/worktrees/channels/${channelId}`,
+    worktreePath: `${cwd}/.ling-stack/worktrees/channels/${channelId}`,
+    branchName: `ling/channel-${channelId}`,
+    baseBranch: "main",
+    baseCommit: "mock-base-commit",
+    createdAt: now,
+    updatedAt: now,
+    checkedAt: now,
   };
 }
 

@@ -1477,6 +1477,7 @@ const dictionaries: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     "Save channel": "保存频道",
     "New channel": "新建频道",
     "Create channel": "创建频道",
+    "Creating isolated workspace...": "正在创建独立工作区...",
     "None selected": "未选择",
     "Delete": "删除",
     "Run provider": "运行模型预设",

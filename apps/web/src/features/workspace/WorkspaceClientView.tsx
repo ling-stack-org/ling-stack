@@ -4227,7 +4227,7 @@ export function WorkspaceClientView({
               <div className="channel-option-actions">
                 <button className="primary-button compact-button" type="button" onClick={onCreateChannel} disabled={channelsLoading}>
                   {channelsLoading ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-                  {t("Create channel")}
+                  {channelsLoading ? t("Creating isolated workspace...") : t("Create channel")}
                 </button>
                 <button className="secondary-button compact-button" type="button" onClick={() => onChannelCreateOpenChange(false)}>
                   {t("Cancel")}
