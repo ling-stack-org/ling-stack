@@ -145,6 +145,10 @@ export async function cancelRunIntervention(cwd: string, interventionId: string)
   return daemonClient.cancelRunIntervention(cwd, interventionId);
 }
 
+export async function promoteRunIntervention(cwd: string, interventionId: string): Promise<RunInterventionResponse> {
+  return daemonClient.promoteRunIntervention(cwd, interventionId);
+}
+
 export async function getRunEvents(runId: string, cwd?: string): Promise<RunEventsResponse> {
   return daemonClient.getRunEvents(runId, cwd);
 }

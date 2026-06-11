@@ -134,6 +134,7 @@ import { handleExecutionActionsCollection } from "../features/runs/execution-act
 import { createDetachedRunExecutionSink, createSseRunExecutionSink, executeRunRequest } from "../features/runs/orchestrator.js";
 import {
   handleRunInterventionItem,
+  handleRunInterventionPromote,
   handleRunInterventions,
   maybeStartNextRunInterventionContinuation,
 } from "../features/runs/interventions.js";
@@ -928,6 +929,22 @@ export async function routeRequest(
 
   const runInterventionRoute = parseRunInterventionRoute(url.pathname);
   if (runInterventionRoute) {
+    if (runInterventionRoute.kind === "promote") {
+      handleRunInterventionPromote(
+        request,
+        response,
+        url,
+        storeRegistry,
+        runnerRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+        controlPlaneEvents,
+        runInterventionRoute.interventionId,
+      );
+      return;
+    }
     handleRunInterventionItem(request, response, url, storeRegistry, runInterventionRoute);
     return;
   }

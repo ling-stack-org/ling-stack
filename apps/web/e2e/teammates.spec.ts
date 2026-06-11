@@ -752,7 +752,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await page.reload();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
   const resumedComposer = page.locator(".teammate-direct-composer");
-  const resumedInput = resumedComposer.getByPlaceholder("输入引导，回车加入队列");
+  const resumedInput = resumedComposer.locator("textarea");
   await resumedInput.fill("Keep this draft while stopping.");
   await expect(resumedComposer.getByRole("button", { name: "停止回复" })).toBeEnabled();
 

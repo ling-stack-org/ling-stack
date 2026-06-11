@@ -2972,6 +2972,74 @@ test("interrupt redirect cancels the source run and starts a linked continuation
   }
 });
 
+test("queued run guidance promote cancels the active run without duplicating the intervention", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-promote-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  let sse;
+  let sseDrained = false;
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const task = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      title: "Promote guidance task",
+      prompt: "Keep thinking until redirected.",
+    });
+
+    const response = await postTaskRunStream(daemon.url, cwd, task.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["read", "write"],
+      idempotencyKey: "promote-source",
+    });
+    sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const sourceRunId = ready.data.runId;
+    await runner.waitUntilStarted();
+
+    const queued = await postJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "queue_followup",
+      instruction: "Stop the current direction and inspect the shared guidance component.",
+      idempotencyKey: "promote-guidance-1",
+    });
+    assert.equal(queued.intervention.status, "queued");
+
+    const promoted = await postJson(`${daemon.url}/run-interventions/${encodeURIComponent(queued.intervention.id)}/promote?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(promoted.intervention.id, queued.intervention.id);
+    assert.ok(["cancelling_source", "starting_continuation", "started"].includes(promoted.intervention.status));
+    assert.equal(promoted.run.status, "cancelled");
+
+    runner.release();
+    await sse.collectRemaining();
+    sseDrained = true;
+    await runner.waitUntilStarted(2);
+
+    const listed = await getJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.interventions.filter((item) => item.id === queued.intervention.id).length, 1);
+
+    const intervention = await getJson(`${daemon.url}/run-interventions/${encodeURIComponent(queued.intervention.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(intervention.intervention.status, "started");
+    assert.ok(intervention.intervention.continuationRunId);
+    const continuation = await getJson(`${daemon.url}/runs/${encodeURIComponent(intervention.intervention.continuationRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(continuation.parentRunId, sourceRunId);
+    assert.equal(continuation.interventionId, queued.intervention.id);
+    assert.match(continuation.requestSnapshot.task.prompt, /inspect the shared guidance component/);
+  } finally {
+    runner.release();
+    if (sse && !sseDrained) {
+      await sse.collectRemaining().catch(() => {});
+    }
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("work unit retry and reconcile APIs operate on durable supervisor state", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-work-unit-controls-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({

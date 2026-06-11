@@ -184,6 +184,105 @@ export function handleRunInterventionItem(
   writeJson(response, 200, { cwd: resolved.cwd, intervention: cancelled ?? intervention });
 }
 
+export function handleRunInterventionPromote(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  runnerRegistry: RunnerRegistry,
+  activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
+  secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
+  controlPlaneEvents: ControlPlaneEventHub,
+  interventionId: string,
+): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  const intervention = resolved.store.getRunIntervention(interventionId);
+  if (!intervention) {
+    writeJson(response, 404, { error: "run_intervention_not_found", message: `Run intervention not found: ${interventionId}` });
+    return;
+  }
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for run intervention promote` });
+    return;
+  }
+  if (intervention.status !== "queued") {
+    writeJson(response, 409, {
+      error: "run_intervention_not_queued",
+      message: "只有排队中的引导可以立即执行。",
+      intervention,
+    });
+    return;
+  }
+
+  const sourceRun = resolved.store.getRun(intervention.sourceRunId);
+  if (!sourceRun) {
+    writeJson(response, 404, { error: "run_not_found", message: `Source run not found: ${intervention.sourceRunId}`, intervention });
+    return;
+  }
+
+  const currentRun = findCurrentRunForIntervention(resolved.store, sourceRun);
+  if (!currentRun || isTerminalRunStatus(currentRun.status)) {
+    maybeStartNextRunInterventionContinuation({
+      sourceRunId: intervention.sourceRunId,
+      store: resolved.store,
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      controlPlaneEvents,
+    });
+    writeJson(response, 202, {
+      cwd: resolved.cwd,
+      intervention: resolved.store.getRunIntervention(intervention.id) ?? intervention,
+      run: resolved.store.getRun(sourceRun.id) ?? sourceRun,
+      message: "当前运行已结束，这条引导会按排队顺序继续执行。",
+    });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const promoted = resolved.store.updateRunInterventionStatus({
+    interventionId: intervention.id,
+    status: "cancelling_source",
+    now,
+  }) ?? intervention;
+  streamRunEventIfPossible(resolved.store, activeRuns, intervention.sourceRunId, "run_interrupt_requested", {
+    interventionId: promoted.id,
+    instruction: promoted.instruction,
+  });
+
+  const cancellation = runControlService.cancelRunForRedirect({
+    store: resolved.store,
+    run: currentRun,
+    activeRun: activeRuns.get(currentRun.id),
+  });
+  maybeStartNextRunInterventionContinuation({
+    sourceRunId: intervention.sourceRunId,
+    store: resolved.store,
+    runnerRegistry,
+    storeRegistry,
+    activeRuns,
+    runtimeSupervisor,
+    secretResolver,
+    mcpBroker,
+    controlPlaneEvents,
+  });
+
+  writeJson(response, 200, {
+    cwd: resolved.cwd,
+    intervention: resolved.store.getRunIntervention(intervention.id) ?? promoted,
+    run: resolved.store.getRun(currentRun.id),
+    event: cancellation.event,
+  });
+}
+
 export function maybeStartNextRunInterventionContinuation(input: {
   readonly sourceRunId: string;
   readonly store: RunStore;
@@ -386,6 +485,18 @@ function streamRunEventIfPossible(
   } catch {
     // Intervention events are operational hints; the intervention row is authoritative.
   }
+}
+
+function findCurrentRunForIntervention(store: RunStore, sourceRun: RunSession): RunSession | undefined {
+  const candidates = [
+    sourceRun,
+    ...store.listRuns({ limit: 200 }).filter((run) => run.parentRunId === sourceRun.id),
+  ].filter((run) => !isTerminalRunStatus(run.status));
+  return candidates.sort((left, right) => readRunSortTime(right).localeCompare(readRunSortTime(left)))[0];
+}
+
+function readRunSortTime(run: RunSession): string {
+  return run.startedAt ?? run.createdAt;
 }
 
 function readRunInterventionMode(record: Record<string, unknown>, key: string): RunInterventionMode {

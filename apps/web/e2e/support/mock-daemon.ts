@@ -661,10 +661,15 @@ export async function readSidebarSelection(page: Page): Promise<{ readonly activ
     const navLabel = (element: Element): string => element.querySelector("span")?.textContent?.trim() ?? "";
     const rowLabel = (element: Element): string =>
       element.querySelector("span:not(.avatar-initial):not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
+    const channelRowLabel = (element: Element): string =>
+      element.querySelector(".sidebar-row-main span:not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
 
     return {
       activeNav: [...document.querySelectorAll(".nav-item.active")].map(navLabel),
-      selectedRows: [...document.querySelectorAll(".sidebar-row.selected")].map(rowLabel),
+      selectedRows: [
+        ...[...document.querySelectorAll(".sidebar-row.selected")].map(rowLabel),
+        ...[...document.querySelectorAll(".sidebar-channel-group > .sidebar-row-shell.selected")].map(channelRowLabel),
+      ].filter(Boolean),
     };
   });
 }

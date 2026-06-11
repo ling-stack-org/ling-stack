@@ -56,13 +56,20 @@ export function parseRunRoute(
 
 export function parseRunInterventionRoute(
   pathname: string,
-): { readonly kind: "detail"; readonly interventionId: string } | { readonly kind: "cancel"; readonly interventionId: string } | undefined {
+):
+  | { readonly kind: "detail"; readonly interventionId: string }
+  | { readonly kind: "cancel"; readonly interventionId: string }
+  | { readonly kind: "promote"; readonly interventionId: string }
+  | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "run-interventions") {
     return { kind: "detail", interventionId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "run-interventions" && segments[2] === "cancel") {
     return { kind: "cancel", interventionId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "run-interventions" && segments[2] === "promote") {
+    return { kind: "promote", interventionId: segments[1] };
   }
   return undefined;
 }

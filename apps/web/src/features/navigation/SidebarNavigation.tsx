@@ -140,7 +140,7 @@ export function SidebarNavigation({
 	            const branchListVisible = channelActive || draftOpen || branches.length > 0;
 	            return (
 	              <div key={channel.id} className="sidebar-channel-group">
-	                <div className="sidebar-row-shell">
+	                <div className={channelActive ? "sidebar-row-shell selected" : "sidebar-row-shell"}>
 	                  <button
 	                    className="sidebar-row-main"
 	                    type="button"
@@ -205,7 +205,7 @@ export function SidebarNavigation({
 	                  </form>
 	                ) : null}
 	                {branchListVisible ? (
-	                  <div className="sidebar-branch-list" role="list" aria-label={t("Channel branches")}>
+	                  <div className="sidebar-branch-list" role="list" aria-label={t("Sidebar channel branches")}>
 	                    <div className={mainBranchSelected ? "sidebar-branch-row-shell selected" : "sidebar-branch-row-shell"}>
 	                      <button
 	                        className="sidebar-branch-row"

@@ -819,7 +819,7 @@ test("empty channel branches can fork main branch without creating a task or run
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const branchTree = page.getByLabel("Channel branches");
+  const branchTree = page.locator(".channel-work-thread-tree");
   await expect(branchTree).toContainText("Conversation branches");
   await expect(branchTree).toContainText("Main branch");
   await expect(branchTree).toContainText("Default channel branch");

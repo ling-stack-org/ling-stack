@@ -648,6 +648,10 @@ export class LingDaemonClient {
     return this.post(`/run-interventions/${encodeURIComponent(interventionId)}/cancel`, { cwd }, {});
   }
 
+  async promoteRunIntervention(cwd: string, interventionId: string): Promise<RunInterventionResponse> {
+    return this.post(`/run-interventions/${encodeURIComponent(interventionId)}/promote`, { cwd }, {});
+  }
+
   async listMemoryObjects(
     cwd: string,
     options: {

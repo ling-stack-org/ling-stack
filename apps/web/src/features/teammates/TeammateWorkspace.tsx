@@ -1676,7 +1676,7 @@ export function TeammateWorkspace({
                         }}
                       />
                     ) : null}
-                    errorNode={message.errorMessage && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
+                    errorNode={message.errorMessage && message.status !== "cancelled" && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
                     action={(
                       <MessageFooterActions
                         className="teammate-message-actions"

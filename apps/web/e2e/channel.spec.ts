@@ -24,7 +24,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];
   await mockDaemon(page, state);
   await page.goto("/");
-  await expect(page.locator(".channel-left-drawer .sidebar-row.selected")).toContainText("Engineering");
+  await expect(page.locator(".channel-left-drawer .sidebar-channel-group > .sidebar-row-shell.selected")).toContainText("Engineering");
   await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
   await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
   await page.locator(".task-toolbar-attention").click();
@@ -54,7 +54,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const composer = document.querySelector(".channel-composer");
     const feed = document.querySelector(".message-feed");
     const emptyState = document.querySelector(".activity-shell .message-feed-empty-state");
-    const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-row.selected");
+    const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-channel-group > .sidebar-row-shell.selected");
     const selectedChannelBefore = selectedChannel ? getComputedStyle(selectedChannel, "::before") : undefined;
     const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
     const drawerSections = Array.from(document.querySelectorAll(".channel-left-drawer .sidebar-section"));
@@ -416,14 +416,14 @@ test("channel drawer uses unread dots instead of count badges and clears on chan
   await page.goto("/");
 
   const drawer = page.locator(".channel-left-drawer");
-  const engineering = drawer.locator(".sidebar-row").filter({ hasText: "Engineering" });
-  const research = drawer.locator(".sidebar-row").filter({ hasText: "Research" });
+  const engineering = drawer.locator(".sidebar-channel-group").filter({ hasText: "Engineering" }).locator(".sidebar-row-shell").first();
+  const research = drawer.locator(".sidebar-channel-group").filter({ hasText: "Research" }).locator(".sidebar-row-shell").first();
   await expect(engineering.locator(".channel-mention")).toHaveCount(0);
   await expect(engineering.locator(".channel-unread")).toHaveCount(0);
   await expect(research.locator(".channel-mention")).toHaveCount(0);
   await expect(research.locator(".channel-unread")).toBeVisible();
 
-  await research.click();
+  await research.locator(".sidebar-row-main").click();
   await expect(research).toHaveClass(/selected/);
   await expect(research.locator(".channel-unread")).toHaveCount(0);
 });

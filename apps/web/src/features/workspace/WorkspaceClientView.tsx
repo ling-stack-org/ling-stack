@@ -50,7 +50,7 @@ import {
 } from "lucide-react";
 import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
 import { createChannelWorktree, handoffChannelWorkspace, refreshChannelWorkspace } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
@@ -137,7 +137,7 @@ import {
   removeComposerInputRawToken,
   serializeComposerInputParts,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, MessageBodyRenderer, MessageBubble, MessageFooterActions, MessageRow, RightDrawer, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationGuidanceStrip, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, MessageBodyRenderer, MessageBubble, MessageFooterActions, MessageRow, RightDrawer, type ConversationGuidanceItem, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -682,6 +682,12 @@ export function WorkspaceClientView({
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
+  const [runGuidanceInterventions, setRunGuidanceInterventions] = useState<readonly RunIntervention[]>([]);
+  const [runGuidanceLoading, setRunGuidanceLoading] = useState(false);
+  const [runGuidanceSubmitting, setRunGuidanceSubmitting] = useState<RunIntervention["mode"] | "stop" | "">("");
+  const [runGuidanceCancelingId, setRunGuidanceCancelingId] = useState("");
+  const [runGuidancePromotingId, setRunGuidancePromotingId] = useState("");
+  const [runGuidanceError, setRunGuidanceError] = useState("");
   const [pendingChannelSendPreview, setPendingChannelSendPreview] = useState<PendingChannelSendPreview | undefined>();
   const [activeThreadId, setActiveThreadId] = useState("");
   const [activeWorkThreadId, setActiveWorkThreadId] = useState("");
@@ -805,6 +811,7 @@ export function WorkspaceClientView({
     isChannelDiscussionRootThread(thread, selectedChannelId)
   );
   const channelWorkThreadTreeVisible =
+    Boolean(selectedChannelId) ||
     visibleChannelWorkThreads.length > 0 ||
     channelWorkThreadSearchActive ||
     channelWorkThreadsLoading ||
@@ -1028,7 +1035,46 @@ export function WorkspaceClientView({
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
   const taskActionPending = activeTaskRunAction !== undefined;
   const activeConversationRun = activeRun && runCanBeStopped(activeRun) ? activeRun : channelRuns.find(runCanBeStopped);
+  const activeConversationSourceRunId = activeConversationRun ? activeConversationRun.parentRunId ?? activeConversationRun.id : "";
   const activeConversationTask = activeConversationRun?.taskId ? taskById.get(activeConversationRun.taskId) : undefined;
+  const visibleRunGuidanceInterventions = useMemo(
+    () => runGuidanceInterventions.filter((item) => item.sourceRunId === activeConversationSourceRunId),
+    [activeConversationSourceRunId, runGuidanceInterventions],
+  );
+  const openRunGuidanceInterventions = useMemo(
+    () => visibleRunGuidanceInterventions.filter((item) => item.status === "queued" || item.status === "cancelling_source" || item.status === "starting_continuation"),
+    [visibleRunGuidanceInterventions],
+  );
+  const runGuidanceItems = useMemo<readonly ConversationGuidanceItem[]>(
+    () =>
+      openRunGuidanceInterventions.map((intervention) => {
+        const isQueued = intervention.status === "queued";
+        const rowBusy = runGuidanceCancelingId === intervention.id || runGuidancePromotingId === intervention.id;
+        return {
+          id: intervention.id,
+          instruction: intervention.instruction,
+          statusLabel: channelRunInterventionStatusLabel(intervention.status, t),
+          meta: channelRunInterventionModeLabel(intervention.mode, t),
+          promoteLabel: t("Run this guidance now"),
+          promoteDisabled: rowBusy || Boolean(runGuidanceSubmitting) || !activeConversationRun,
+          promoteLoading: runGuidancePromotingId === intervention.id,
+          onPromote: isQueued && activeConversationRun ? () => void promoteChannelRunGuidance(intervention.id) : undefined,
+          deleteLabel: t("Delete queued guidance"),
+          deleteDisabled: rowBusy,
+          deleteLoading: runGuidanceCancelingId === intervention.id,
+          onDelete: isQueued ? () => void cancelChannelRunGuidance(intervention.id) : undefined,
+          moreLabel: t("More guidance actions"),
+          editLabel: t("Edit message"),
+          editDisabled: rowBusy,
+          onEdit: isQueued ? () => void editChannelRunGuidance(intervention) : undefined,
+          closeQueueLabel: t("Close queue"),
+          closeQueueDisabled: rowBusy,
+          closeQueueLoading: runGuidanceCancelingId === intervention.id,
+          onCloseQueue: isQueued ? () => void cancelChannelRunGuidance(intervention.id) : undefined,
+        };
+      }),
+    [activeConversationRun, openRunGuidanceInterventions, runGuidanceCancelingId, runGuidancePromotingId, runGuidanceSubmitting, t],
+  );
   const channelActiveStatusStrip = activeConversationRun ? (
     <ConversationStatusStrip
       className="channel-active-status-strip"
@@ -1115,6 +1161,36 @@ export function WorkspaceClientView({
       ]}
     />
   ) : null;
+
+  useEffect(() => {
+    if (!cwd || !activeConversationSourceRunId) {
+      setRunGuidanceInterventions([]);
+      setRunGuidanceError("");
+      return undefined;
+    }
+    let cancelled = false;
+    setRunGuidanceLoading(true);
+    setRunGuidanceError("");
+    void listRunInterventions(cwd, activeConversationSourceRunId, 100)
+      .then((response) => {
+        if (!cancelled) {
+          setRunGuidanceInterventions(response.interventions);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setRunGuidanceError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setRunGuidanceLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationSourceRunId, cwd]);
 
   useEffect(() => {
     if (!channelCreateOpen) {
@@ -1921,6 +1997,32 @@ export function WorkspaceClientView({
     }
   }
 
+  async function forkChannelMainBranch(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId || forkingWorkThreadId) {
+      return;
+    }
+    const pendingMainThreadId = `channel-main:${selectedChannelId}`;
+    setForkingWorkThreadId(pendingMainThreadId);
+    setChannelWorkThreadError("");
+    try {
+      const rootThread = channelDiscussionRootThread ?? (await createLingThread(workspaceCwd, {
+        kind: "channel_discussion",
+        channelId: selectedChannelId,
+        idempotencyKey: pendingMainThreadId,
+      })).thread;
+      const response = await forkLingThread(workspaceCwd, rootThread.id, {
+        idempotencyKey: `channel-fork:${rootThread.id}:${rootThread.updatedAt}`,
+      });
+      setChannelWorkThreads((current) => mergeLingThreads([response.childThread, response.sourceThread, rootThread], current));
+      setActiveWorkThreadId(response.childThread.id);
+    } catch (error) {
+      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setForkingWorkThreadId("");
+    }
+  }
+
   async function mutateChannelWorkThreadVisibility(thread: LingThread, action: "archive" | "pin" | "unpin"): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || workThreadVisibilityId) {
@@ -2519,6 +2621,10 @@ export function WorkspaceClientView({
     if (!mentionPicker || mentionPickerOptions.length === 0) {
       if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
         event.preventDefault();
+        if (activeConversationRun) {
+          void submitChannelRunGuidanceFromDraft();
+          return;
+        }
         void sendMessage();
         return;
       }
@@ -2677,6 +2783,109 @@ export function WorkspaceClientView({
     } finally {
       setComposerBusy(false);
     }
+  }
+
+  function refreshChannelRunGuidanceSurfaces(): void {
+    onRefreshChannelActivity();
+    onRefreshTasks();
+    onRefreshRuntime();
+    onRefreshRunApprovals();
+  }
+
+  async function refreshChannelRunGuidance(sourceRunId = activeConversationSourceRunId): Promise<void> {
+    if (!cwd || !sourceRunId) {
+      setRunGuidanceInterventions([]);
+      return;
+    }
+    try {
+      const response = await listRunInterventions(cwd, sourceRunId, 100);
+      setRunGuidanceInterventions(response.interventions);
+    } catch (error) {
+      setRunGuidanceError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function submitChannelRunGuidanceFromDraft(): Promise<boolean> {
+    const instruction = messageDraft.trim();
+    if (!activeConversationRun || !activeConversationSourceRunId || !instruction || runGuidanceSubmitting) {
+      if (!instruction) {
+        setRunGuidanceError(t("Please enter guidance first."));
+      }
+      return false;
+    }
+    setRunGuidanceSubmitting("queue_followup");
+    setRunGuidanceError("");
+    try {
+      const response = await createRunIntervention(cwd, activeConversationSourceRunId, {
+        mode: "queue_followup",
+        instruction,
+        idempotencyKey: `web-channel:${activeConversationRun.id}:queue_followup:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      });
+      setRunGuidanceInterventions((current) => [...current.filter((item) => item.id !== response.intervention.id), response.intervention]
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)));
+      setMessageDraft("");
+      setMentionPicker(undefined);
+      setMentionActiveIndex(0);
+      setSendState("idle");
+      setSendError("");
+      refreshChannelRunGuidanceSurfaces();
+      window.setTimeout(() => {
+        void refreshChannelRunGuidance(activeConversationSourceRunId);
+        refreshChannelRunGuidanceSurfaces();
+      }, 250);
+      return true;
+    } catch (error) {
+      setRunGuidanceError(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setRunGuidanceSubmitting("");
+    }
+  }
+
+  async function cancelChannelRunGuidance(interventionId: string): Promise<void> {
+    if (runGuidanceCancelingId) {
+      return;
+    }
+    setRunGuidanceCancelingId(interventionId);
+    setRunGuidanceError("");
+    try {
+      const response = await cancelRunIntervention(cwd, interventionId);
+      setRunGuidanceInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
+      refreshChannelRunGuidanceSurfaces();
+    } catch (error) {
+      setRunGuidanceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRunGuidanceCancelingId("");
+    }
+  }
+
+  async function promoteChannelRunGuidance(interventionId: string): Promise<void> {
+    if (runGuidancePromotingId) {
+      return;
+    }
+    setRunGuidancePromotingId(interventionId);
+    setRunGuidanceError("");
+    try {
+      const response = await promoteRunIntervention(cwd, interventionId);
+      setRunGuidanceInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
+      refreshChannelRunGuidanceSurfaces();
+      window.setTimeout(() => {
+        void refreshChannelRunGuidance(activeConversationSourceRunId);
+        refreshChannelRunGuidanceSurfaces();
+      }, 800);
+    } catch (error) {
+      setRunGuidanceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRunGuidancePromotingId("");
+    }
+  }
+
+  async function editChannelRunGuidance(intervention: RunIntervention): Promise<void> {
+    setMessageDraft(intervention.instruction);
+    setSendState("idle");
+    setSendError("");
+    await cancelChannelRunGuidance(intervention.id);
+    focusComposerAt(intervention.instruction.length);
   }
 
   async function sendMessage(): Promise<void> {
@@ -3431,18 +3640,27 @@ export function WorkspaceClientView({
   const channelComposer = (
     <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
       {channelActiveStatusStrip}
-      {activeConversationRun ? (
-        <ChannelRunGuidanceStrip
-          cwd={cwd}
-          run={activeConversationRun}
-          canRedirect={!isCancellingRun}
-          onChanged={() => {
-            onRefreshChannelActivity();
-            onRefreshTasks();
-            onRefreshRuntime();
-            onRefreshRunApprovals();
-          }}
-        />
+      {activeConversationRun || openRunGuidanceInterventions.length > 0 ? (
+        <>
+          <ConversationGuidanceStrip
+            title={activeConversationRun ? t("Run guidance") : t("Queued guidance")}
+            description={activeConversationRun ? t("Type guidance in the message box and press Enter to queue it.") : t("Guidance is queued.")}
+            submitting={runGuidanceSubmitting}
+            items={runGuidanceItems}
+          />
+          {runGuidanceError ? (
+            <div className="inline-error compact-inline-error">
+              <CircleAlert size={14} />
+              {runGuidanceError}
+            </div>
+          ) : null}
+          {runGuidanceLoading ? (
+            <div className="composer-status-row" aria-live="polite">
+              <Loader2 className="spin" size={13} />
+              <span>{t("Loading guidance...")}</span>
+            </div>
+          ) : null}
+        </>
       ) : null}
       <InlineApprovalStrip
         approvals={inlineApprovalViews}
@@ -3570,8 +3788,21 @@ export function WorkspaceClientView({
             <AtSign size={16} />
           </button>
         </div>
-        <button className="primary-button composer-send-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent} aria-label={sendState === "sending" ? t("Sending...") : t("Send")} title={sendState === "sending" ? t("Sending...") : t("Send")}>
-          {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+        <button
+          className="primary-button composer-send-button"
+          type="button"
+          onClick={() => {
+            if (activeConversationRun) {
+              onCancelActiveRun(activeConversationRun);
+              return;
+            }
+            void sendMessage();
+          }}
+          disabled={activeConversationRun ? !selectedChannelId || isCancellingRun : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}
+          aria-label={activeConversationRun ? isCancellingRun ? t("Stopping run...") : t("Stop run") : sendState === "sending" ? t("Sending...") : t("Send")}
+          title={activeConversationRun ? isCancellingRun ? t("Stopping run...") : t("Stop run") : sendState === "sending" ? t("Sending...") : t("Send")}
+        >
+          {activeConversationRun ? isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} /> : sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
         </button>
       </div>
       {sendState === "failed" ? (
@@ -4418,6 +4649,31 @@ export function WorkspaceClientView({
                         </div>
                       ) : null}
                       <div className="channel-work-thread-row-list">
+                        {!channelDiscussionRootThread && !channelWorkThreadSearchActive ? (
+                          <div className={!activeWorkThreadId ? "channel-work-thread-row-shell selected" : "channel-work-thread-row-shell"}>
+                            <button
+                              className="channel-work-thread-row"
+                              type="button"
+                              onClick={() => setActiveWorkThreadId("")}
+                            >
+                              <span className="sidebar-hash" aria-hidden="true">#</span>
+                              <span className="channel-work-thread-row-main">
+                                <strong>{t("Main branch")}</strong>
+                                <small>{t("Default channel branch")}</small>
+                              </span>
+                            </button>
+                            <button
+                              className="icon-button"
+                              type="button"
+                              aria-label={t("Fork branch")}
+                              title={t("Fork branch")}
+                              disabled={forkingWorkThreadId === `channel-main:${selectedChannelId}`}
+                              onClick={() => void forkChannelMainBranch()}
+                            >
+                              {forkingWorkThreadId === `channel-main:${selectedChannelId}` ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
+                            </button>
+                          </div>
+                        ) : null}
                         {visibleChannelWorkThreads.length > 0 || channelWorkThreadSearchActive ? (
                           <button
                             className={!activeWorkThreadId ? "channel-work-thread-row selected" : "channel-work-thread-row"}
@@ -6556,149 +6812,6 @@ function workflowIdFromWorkCellThreadId(value: string): string {
   return value.startsWith("workflow:") ? value.slice("workflow:".length) : value;
 }
 
-function ChannelRunGuidanceStrip({
-  cwd,
-  run,
-  canRedirect,
-  onChanged,
-}: {
-  readonly cwd: string;
-  readonly run: RunSession;
-  readonly canRedirect: boolean;
-  readonly onChanged: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const sourceRunId = run.parentRunId ?? run.id;
-  const [instruction, setInstruction] = useState("");
-  const [interventions, setInterventions] = useState<readonly RunIntervention[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [submittingMode, setSubmittingMode] = useState<RunIntervention["mode"] | "">("");
-  const [cancellingId, setCancellingId] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-
-  const loadInterventions = async (): Promise<void> => {
-    if (!cwd || !sourceRunId) {
-      setInterventions([]);
-      return;
-    }
-    setLoading(true);
-    setErrorMessage("");
-    try {
-      const response = await listRunInterventions(cwd, sourceRunId, 100);
-      setInterventions(response.interventions);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadInterventions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, sourceRunId]);
-
-  const submitGuidance = async (mode: RunIntervention["mode"]): Promise<void> => {
-    const trimmed = instruction.trim();
-    if (!trimmed) {
-      setErrorMessage(t("Please enter guidance first."));
-      return;
-    }
-    setSubmittingMode(mode);
-    setErrorMessage("");
-    try {
-      const response = await createRunIntervention(cwd, sourceRunId, {
-        mode,
-        instruction: trimmed,
-        idempotencyKey: `web-channel:${run.id}:${mode}:${Date.now()}`,
-      });
-      setInterventions((current) => [...current.filter((item) => item.id !== response.intervention.id), response.intervention]
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)));
-      setInstruction("");
-      onChanged();
-      window.setTimeout(() => {
-        void loadInterventions();
-        onChanged();
-      }, mode === "interrupt_redirect" ? 800 : 250);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSubmittingMode("");
-    }
-  };
-
-  const cancelGuidance = async (interventionId: string): Promise<void> => {
-    setCancellingId(interventionId);
-    setErrorMessage("");
-    try {
-      const response = await cancelRunIntervention(cwd, interventionId);
-      setInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
-      onChanged();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCancellingId("");
-    }
-  };
-
-  const visibleInterventions = interventions.filter((item) => item.sourceRunId === sourceRunId);
-
-  return (
-    <section className="channel-run-guidance-strip" aria-label={t("Run guidance")}>
-      <div className="channel-run-guidance-head">
-        <span>
-          <Workflow size={14} />
-          <strong>{t("Run guidance")}</strong>
-        </span>
-        {loading ? <Loader2 className="spin" size={13} /> : null}
-      </div>
-      <textarea
-        value={instruction}
-        rows={2}
-        onChange={(event) => setInstruction(event.currentTarget.value)}
-        placeholder={t("Tell this run what to do next...")}
-      />
-      <div className="channel-run-guidance-actions">
-        <button className="secondary-button compact-button" type="button" onClick={() => void submitGuidance("queue_followup")} disabled={Boolean(submittingMode) || !instruction.trim()}>
-          {submittingMode === "queue_followup" ? <Loader2 className="spin" size={13} /> : <Clock3 size={13} />}
-          {t("Queue guidance")}
-        </button>
-        <button className="secondary-button danger compact-button" type="button" onClick={() => void submitGuidance("interrupt_redirect")} disabled={Boolean(submittingMode) || !instruction.trim() || !canRedirect}>
-          {submittingMode === "interrupt_redirect" ? <Loader2 className="spin" size={13} /> : <Square size={13} />}
-          {t("Stop and redirect")}
-        </button>
-      </div>
-      {errorMessage ? (
-        <div className="inline-error compact-inline-error">
-          <CircleAlert size={14} />
-          {errorMessage}
-        </div>
-      ) : null}
-      {visibleInterventions.length > 0 ? (
-        <div className="channel-run-guidance-list">
-          {visibleInterventions.slice(0, 4).map((item) => (
-            <div key={item.id} className="channel-run-guidance-row">
-              <span className="channel-run-guidance-status" title={channelRunInterventionStatusLabel(item.status, t)}>
-                <StatusBadge status={item.status} />
-              </span>
-              <span>
-                <strong>{item.mode === "interrupt_redirect" ? t("Stop and redirect") : t("Queue guidance")}</strong>
-                <small>{item.instruction}</small>
-              </span>
-              {item.status === "queued" ? (
-                <button className="secondary-button compact-button" type="button" onClick={() => void cancelGuidance(item.id)} disabled={cancellingId === item.id}>
-                  {cancellingId === item.id ? <Loader2 className="spin" size={12} /> : null}
-                  {t("Cancel")}
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 function channelRunInterventionStatusLabel(
   status: RunIntervention["status"],
   t: (key: string, values?: Record<string, string | number>) => string,
@@ -6719,6 +6832,13 @@ function channelRunInterventionStatusLabel(
     return t("Failed");
   }
   return t("Queued");
+}
+
+function channelRunInterventionModeLabel(
+  mode: RunIntervention["mode"],
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  return mode === "interrupt_redirect" ? t("Stop and redirect") : t("Queue guidance");
 }
 
 function ChannelApprovalDetailPanel({
