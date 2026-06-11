@@ -692,6 +692,10 @@ export function prepareWorkflowStepStart(
   }
   const taskPrompt = renderWorkflowStepContextPackPrompt(contextPack);
   const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
+  const unavailableRequiredTools = workflowStepUnavailableRequiredTools(channel.allowedTools, step.metadata?.requiredTools);
+  if (unavailableRequiredTools.length > 0) {
+    return block(`Workflow step requires tools not allowed in this channel: ${unavailableRequiredTools.join(", ")}.`);
+  }
   const runRequestBase: WorkflowStepRunRequest = {
     workspaceCwd: cwd,
     cwd: workspace.executionCwd,
@@ -707,7 +711,7 @@ export function prepareWorkflowStepStart(
       prompt: taskPrompt,
       channelId: channel.id,
     },
-    tools: channel.allowedTools,
+    tools: workflowStepRunTools(channel.allowedTools, step.metadata?.requiredTools),
     thinkingLevel: "medium",
     contextPack: snapshotWorkflowStepContextPack(contextPack),
     contextCompactions: compacted.compactions,
@@ -749,6 +753,26 @@ export function prepareWorkflowStepStart(
       },
     },
   };
+}
+
+function workflowStepUnavailableRequiredTools(
+  channelAllowedTools: readonly RunTool[],
+  stepRequiredTools: readonly RunTool[] | undefined,
+): readonly RunTool[] {
+  if (!stepRequiredTools || stepRequiredTools.length === 0) {
+    return [];
+  }
+  return stepRequiredTools.filter((tool) => !channelAllowedTools.includes(tool));
+}
+
+function workflowStepRunTools(
+  channelAllowedTools: readonly RunTool[],
+  stepRequiredTools: readonly RunTool[] | undefined,
+): readonly RunTool[] {
+  if (!stepRequiredTools || stepRequiredTools.length === 0) {
+    return channelAllowedTools;
+  }
+  return [...new Set(stepRequiredTools)];
 }
 
 function ensureWorkflowRunning(

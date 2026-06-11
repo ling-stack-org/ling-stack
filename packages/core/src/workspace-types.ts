@@ -1654,6 +1654,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly requestedRunnerId?: string;
   readonly effectiveRunnerId?: string;
   readonly providerPresetId?: string;
+  readonly requiredTools?: readonly RunTool[];
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;

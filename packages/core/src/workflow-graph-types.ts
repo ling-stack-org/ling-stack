@@ -1,3 +1,4 @@
+import type { RunTool } from "./approval-policy.js";
 import type { WorkflowStepGate, WorkflowStepPolicy } from "./workspace-types.js";
 
 export type WorkflowGraphNodeKind = "step" | "join";
@@ -43,6 +44,7 @@ export interface WorkflowGraphNode {
   readonly joinGroupId?: string;
   readonly policy?: WorkflowStepPolicy;
   readonly gates?: readonly WorkflowStepGate[];
+  readonly requiredTools?: readonly RunTool[];
   readonly autoStart?: boolean;
 }
 

@@ -4,6 +4,7 @@ import type { ChannelExecutionProposal, ChannelHandoff } from "./channels.js";
 import type { MemoryObject } from "./memory.js";
 import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./runtime.js";
 import type { ResponseLanguage } from "./settings.js";
+import type { RunTool } from "./shared.js";
 import type { Task } from "./tasks.js";
 
 export type ChannelWorkflowStatus =
@@ -294,6 +295,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly requestedRunnerId?: string;
   readonly effectiveRunnerId?: string;
   readonly providerPresetId?: string;
+  readonly requiredTools?: readonly RunTool[];
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;
@@ -356,6 +358,7 @@ export interface WorkflowGraphNode {
   readonly joinGroupId?: string;
   readonly policy?: WorkflowStepPolicy;
   readonly gates?: readonly WorkflowStepGate[];
+  readonly requiredTools?: readonly RunTool[];
   readonly autoStart?: boolean;
 }
 
