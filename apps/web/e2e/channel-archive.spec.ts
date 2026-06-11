@@ -2,8 +2,30 @@ import { expect, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 
-test("channel branch and channel archive lifecycle is managed from sidebar and settings", async ({ page }) => {
+test("channel branch list shows real branches without default branch chrome", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
+  state.channelBranches = [
+    {
+      id: "channel_branch_restore",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      name: "API cleanup",
+      status: "archived",
+      createdAt: "2026-05-25T01:00:00.000Z",
+      updatedAt: "2026-05-25T01:05:00.000Z",
+      archivedAt: "2026-05-25T01:05:00.000Z",
+    },
+    {
+      id: "channel_branch_delete",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      name: "Legacy split",
+      status: "archived",
+      createdAt: "2026-05-25T01:10:00.000Z",
+      updatedAt: "2026-05-25T01:15:00.000Z",
+      archivedAt: "2026-05-25T01:15:00.000Z",
+    },
+  ];
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -13,44 +35,45 @@ test("channel branch and channel archive lifecycle is managed from sidebar and s
   await expect(engineeringRow).toBeVisible();
 
   await engineeringRow.click();
-  await expect(engineeringGroup.getByRole("button", { name: /Main branch/ })).toBeVisible();
-
+  await expect(engineeringGroup.getByRole("button", { name: /Main branch/ })).toHaveCount(0);
+  await expect(navigation.locator(".sidebar-branch-list")).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "API cleanup" })).toHaveCount(0);
+  await page.mouse.move(640, 120);
+  await expect.poll(async () => engineeringGroup.locator(".sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("none");
   await engineeringRow.hover();
-  await navigation.getByRole("button", { name: "Create branch" }).click();
-  await navigation.getByLabel("Branch name").fill("API cleanup");
-  await navigation.locator("form.sidebar-branch-create-form").getByRole("button", { name: "Create branch" }).click();
-
-  const branchRow = navigation.getByRole("button", { name: "API cleanup" });
-  const branchShell = navigation.locator(".sidebar-branch-row-shell").filter({ hasText: "API cleanup" });
-  await expect(branchRow).toBeVisible();
-  await branchShell.hover();
-  await branchShell.getByRole("button", { name: "Archive branch" }).click();
-  await expect.poll(() => mockBranchStatus(state, "API cleanup")).toBe("archived");
-  await expect(branchRow).toHaveCount(0);
+  await expect.poll(async () => engineeringGroup.locator(".sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("auto");
+  await expect(engineeringGroup.getByRole("button", { name: "Create branch" })).toBeVisible();
+  await engineeringGroup.getByRole("button", { name: "Create branch" }).click();
+  await engineeringGroup.getByLabel("Branch name").fill("Quick split");
+  await engineeringGroup.locator("form.sidebar-branch-create-form").getByRole("button", { name: "Create branch" }).click();
+  await expect.poll(() => mockBranchStatus(state, "Quick split")).toBe("active");
+  await expect(navigation.getByRole("button", { name: "Quick split" })).toBeVisible();
+  await expect(navigation.locator(".sidebar-branch-list")).toHaveCount(1);
+  await expect(engineeringGroup.getByRole("button", { name: /Main branch/ })).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
   const archivedPanel = page.getByRole("region", { name: "Archived channels and branches" });
   await expect(archivedPanel).toContainText("Engineering / API cleanup");
-  await expect(archivedPanel.getByRole("button", { name: "Restore" })).toBeVisible();
-  await expect(archivedPanel.getByRole("button", { name: "Delete" })).toBeVisible();
+  await expect(archivedPanel).toContainText("Engineering / Legacy split");
+  await expect(archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / API cleanup" }).getByRole("button", { name: "Restore" })).toBeVisible();
+  await expect(archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / Legacy split" }).getByRole("button", { name: "Delete" })).toBeVisible();
 
-  await archivedPanel.getByRole("button", { name: "Restore" }).click();
+  await archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / API cleanup" }).getByRole("button", { name: "Restore" }).click();
   await expect.poll(() => mockBranchStatus(state, "API cleanup")).toBe("active");
-  await expect(archivedPanel).toContainText("No archived branches");
+  await expect(archivedPanel).not.toContainText("Engineering / API cleanup");
+  await expect(archivedPanel).toContainText("Engineering / Legacy split");
+  await navigation.getByRole("button", { name: "Engineering" }).click();
   await expect(navigation.getByRole("button", { name: "API cleanup" })).toBeVisible();
+  await navigation.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
 
-  await branchShell.hover();
-  await branchShell.getByRole("button", { name: "Archive branch" }).click();
-  await expect.poll(() => mockBranchStatus(state, "API cleanup")).toBe("archived");
-  await archivedPanel.getByRole("button", { name: "Refresh" }).click();
-  await expect(archivedPanel).toContainText("Engineering / API cleanup");
   page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("Delete branch API cleanup?");
+    expect(dialog.message()).toContain("Delete branch Legacy split?");
     await dialog.accept();
   });
-  await archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / API cleanup" }).getByRole("button", { name: "Delete" }).click();
-  await expect.poll(() => mockBranchExists(state, "API cleanup")).toBe(false);
+  await archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / Legacy split" }).getByRole("button", { name: "Delete" }).click();
+  await expect.poll(() => mockBranchExists(state, "Legacy split")).toBe(false);
   await expect(archivedPanel).toContainText("No archived branches");
 
   await engineeringGroup.locator(".sidebar-row-main").click();

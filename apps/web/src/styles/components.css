@@ -9,7 +9,7 @@
 
 @media (min-width: 901px) {
   .app-shell.channel-drawer-shell.inspector-hidden {
-    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-columns: 272px minmax(0, 1fr);
   }
 
   .app-shell.channel-drawer-shell.channel-sidebar-collapsed.inspector-hidden {
@@ -2748,7 +2748,7 @@ code,
   display: none;
   align-items: center;
   justify-content: flex-start;
-  width: 232px;
+  width: 272px;
   height: 48px;
   padding: 0 9px;
   border-bottom: 1px solid var(--border);
@@ -2784,7 +2784,7 @@ code,
 
 .channel-left-drawer {
   gap: 14px;
-  width: 232px;
+  width: 272px;
   height: 100%;
   min-height: 0;
   padding: 60px 14px 18px;
@@ -3086,6 +3086,11 @@ code,
   padding-right: 6px;
 }
 
+.channel-left-drawer .sidebar-row-shell:focus-within:not(:hover) .sidebar-row-tools {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .channel-left-drawer .sidebar-mini-action {
   width: 28px;
   height: 28px;
@@ -3187,9 +3192,9 @@ code,
 
 .app-shell.channel-sidebar-collapsed .channel-left-drawer {
   z-index: 60;
-  width: 232px;
+  width: 272px;
   height: 100dvh;
-  transform: translateX(-184px);
+  transform: translateX(-224px);
   opacity: 0;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.16);
   overflow: visible;
@@ -3203,13 +3208,13 @@ code,
 }
 
 .app-shell.inspector-collapsed {
-  grid-template-columns: 232px minmax(0, 1fr) 44px;
+  grid-template-columns: 272px minmax(0, 1fr) 44px;
 }
 
 .app-shell.inspector-hidden {
   grid-template-areas:
     "nav workspace";
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: 272px minmax(0, 1fr);
 }
 
 .right-panel {
@@ -3440,8 +3445,8 @@ code,
 
 @media (min-width: 901px) {
   .task-workbench-window:has(.channel-side-panel) > .workbench-settings-panel.channel-teammate-dock {
-    left: calc((100% - min(380px, calc(100vw - 280px))) / 2);
-    width: min(640px, calc(100% - min(380px, calc(100vw - 280px)) - 108px));
+    left: calc((100% - min(340px, calc(100vw - 320px))) / 2);
+    width: min(640px, calc(100% - min(340px, calc(100vw - 320px)) - 108px));
     margin-right: 0;
   }
 }
@@ -3747,12 +3752,12 @@ code,
 }
 
 .task-workbench-main.with-channel-side-panel {
-  grid-template-columns: minmax(0, 1fr) min(380px, calc(100vw - 280px));
+  grid-template-columns: minmax(0, 1fr) min(340px, calc(100vw - 320px));
 }
 
 @media (min-width: 901px) and (max-width: 2055px) {
   .app-shell:not(.channel-sidebar-collapsed) .task-workbench-main.attention-open {
-    --channel-attention-popover-width: min(390px, calc(100vw - 380px));
+    --channel-attention-popover-width: min(340px, calc(100vw - 420px));
     padding-right: calc(var(--channel-attention-popover-width) + 24px);
   }
 
@@ -3760,7 +3765,7 @@ code,
 
 @media (min-width: 901px) and (max-width: 1871px) {
   .app-shell.channel-sidebar-collapsed .task-workbench-main.attention-open {
-    --channel-attention-popover-width: min(390px, calc(100vw - 380px));
+    --channel-attention-popover-width: min(340px, calc(100vw - 420px));
     padding-right: 0;
   }
 
@@ -3774,7 +3779,7 @@ code,
 @media (min-width: 2000px) {
   .app-shell.channel-sidebar-collapsed .task-workbench-main.attention-open .activity-chat-layout,
   .app-shell.channel-sidebar-collapsed .task-workbench-main.attention-open .activity-shell .channel-composer {
-    transform: translateX(32px);
+    transform: translateX(52px);
   }
 }
 
@@ -4312,22 +4317,22 @@ code,
 
 @media (min-width: 901px) {
   .task-workbench-window:has(.channel-side-panel) .task-workbench-header {
-    margin-right: min(380px, calc(100vw - 280px));
+    margin-right: min(340px, calc(100vw - 320px));
   }
 
   .task-workbench-window:has(.channel-side-panel) > .workbench-settings-panel {
-    margin-right: min(380px, calc(100vw - 280px));
+    margin-right: min(340px, calc(100vw - 320px));
   }
 
   .task-workbench-main.with-channel-side-panel {
     grid-template-columns: minmax(0, 1fr);
-    padding-right: min(380px, calc(100vw - 280px));
+    padding-right: min(340px, calc(100vw - 320px));
   }
 
   .task-workbench-main.with-channel-side-panel .channel-side-panel {
     position: absolute;
     inset: 0 0 0 auto;
-    width: min(380px, calc(100vw - 280px));
+    width: min(340px, calc(100vw - 320px));
   }
 }
 
@@ -5290,7 +5295,7 @@ code,
   top: 62px;
   right: 18px;
   z-index: 25;
-  width: min(390px, calc(100vw - 380px));
+  width: min(340px, calc(100vw - 420px));
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
