@@ -17326,6 +17326,7 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     requestedRunnerId: normalizeStoredRunnerId(readOptionalStringValue(record.requestedRunnerId)),
     effectiveRunnerId: normalizeStoredRunnerId(readOptionalStringValue(record.effectiveRunnerId)),
     providerPresetId: readOptionalStringValue(record.providerPresetId),
+    requiredTools: readOptionalRunToolListValue(record.requiredTools),
     autoStart: typeof record.autoStart === "boolean" ? record.autoStart : undefined,
     approvalGate: parseOptionalApprovalProfileValue(record.approvalGate),
     preStepApprovalId: readOptionalStringValue(record.preStepApprovalId),
@@ -17399,6 +17400,17 @@ function readOptionalStringValue(value: unknown): string | undefined {
 
 function readOptionalStringListValue(value: unknown): readonly string[] | undefined {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value as string[] : undefined;
+}
+
+function readOptionalRunToolListValue(value: unknown): readonly RunTool[] | undefined {
+  if (!Array.isArray(value) || !value.every((item): item is RunTool => typeof item === "string" && isRunToolValue(item))) {
+    return undefined;
+  }
+  return value;
+}
+
+function isRunToolValue(value: string): value is RunTool {
+  return value === "read" || value === "grep" || value === "find" || value === "ls" || value === "bash" || value === "edit" || value === "write";
 }
 
 function readNullableNonEmptyStringValue(value: unknown, label: string): string | null | undefined {

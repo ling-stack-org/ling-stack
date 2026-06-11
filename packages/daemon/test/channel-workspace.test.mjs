@@ -685,6 +685,149 @@ test("channel response language overrides follow-user inference for workflow pro
   }
 });
 
+test("single-step file creation becomes direct workflow with bounded write tools", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-file-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Docs execution",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_docs",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: `在 ${cwd} 下创建 README.md`,
+    });
+
+    assert.equal(created.aiReply, undefined);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].assigneeTeammateId, "teammate_builtin_docs");
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
+    assert.match(proposals.proposals[0].riskSummary, /write/);
+    assert.match(proposals.proposals[0].prompt, /权限边界/);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.equal(decisions.decisions[0].status, "accepted");
+
+    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(confirmed.workflowSteps.length, 1);
+    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.equal(runner.runs.length, 1);
+    assert.deepEqual(runner.runs[0].tools, ["write"]);
+    assert.match(runner.runs[0].task.prompt, /Confirmed task-scoped tools:\nwrite/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("single-step file creation is blocked when channel lacks write tool", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-file-blocked-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Read only docs",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_docs",
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: `在 ${cwd} 下创建 README.md`,
+    });
+
+    assert.equal(created.aiReply, undefined);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "blocked");
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
+    assert.match(proposals.proposals[0].errorMessage, /write/);
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("file creation how-to question remains ordinary chat intent", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-howto-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "How-to docs",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "如何创建 README.md？",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(proposals.proposals, []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(decisions.decisions, []);
+
+    const whyQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "为什么不能创建 README.md？",
+    });
+    const whyProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(whyQuestion.message.id)}`);
+    assert.deepEqual(whyProposals.proposals, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("single-step test request becomes direct workflow with bounded bash tools", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-test-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "QA execution",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_qa",
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "bash"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "开始执行测试",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].assigneeTeammateId, "teammate_builtin_qa");
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
+    assert.match(proposals.proposals[0].riskSummary, /bash/);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions[0].action, "direct_workflow");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("model-assisted channel intent selector can suppress ordinary auto replies", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-no-reply-"));
   const runner = new ScriptedRunner([JSON.stringify({ action: "no_reply", reason: "User is only acknowledging prior context." })]);

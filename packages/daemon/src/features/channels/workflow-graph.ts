@@ -82,6 +82,7 @@ export function compileWorkflowGraph(
       skillId: node.skillId,
       requestedRunnerId: node.requestedRunnerId ?? input.runnerId,
       providerPresetId: node.providerPresetId ?? input.providerPresetId,
+      requiredTools: node.requiredTools,
       autoStart: node.autoStart ?? input.autoStart ?? false,
       branchGroupId: node.branchGroupId,
       joinGroupId: node.joinGroupId,
@@ -251,6 +252,7 @@ function readWorkflowGraphNode(value: unknown, location: string): WorkflowGraphN
     joinGroupId: readOptionalString(value, "joinGroupId"),
     policy: readOptionalWorkflowStepPolicy(value, "policy"),
     gates: readOptionalWorkflowStepGates(value, "gates"),
+    requiredTools: readOptionalStringArray(value, "requiredTools", ["read", "grep", "find", "ls", "bash", "edit", "write"] satisfies readonly RunTool[]),
     autoStart: readOptionalBoolean(value, "autoStart"),
   };
 }

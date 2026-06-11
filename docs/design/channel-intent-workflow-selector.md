@@ -103,6 +103,8 @@ The intent selector may:
   for opinions, critique, or brainstorming;
 - ask one clarifying question when the task boundary is unclear;
 - propose a multi-agent workflow when the user is asking for coordinated work;
+- prefill a single-step executable workflow when the user asks for a concrete local file,
+  code, command, or documentation write action;
 - prefill a direct workflow proposal only when the user request is explicit, safe, and
   policy-valid, then wait for confirmation;
 - pass structured workflow intent into the existing workflow graph compiler and selector.
@@ -305,6 +307,9 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 | `谁能处理这个？` | `single_reply` or `workflow_proposal` | If context is simple, answer. If there is a concrete work artifact, propose workflow. |
 | `所有队友都回复我一下` | `visible_multi_reply` | Pure visible discussion request; bounded one-round replies, no workflow. |
 | `大家都说下这个设计的风险` | `visible_multi_reply` | Multiple role opinions change the user's decision, but no execution has started. |
+| `在 /Users/tianxiao/ling-stack-test 下创建 README.md` | `direct_workflow` or blocked proposal | If target and action are clear, prefill one file-write workflow; if `write` is not allowed by channel/teammate policy, create a blocked proposal with remediation. |
+| `把这个 README 写进去，内容是 ...` | `direct_workflow` | Concrete file-write request; do not answer with a shell snippet as ordinary `ai_reply`. |
+| `帮我跑测试看一下` | `direct_workflow` or `clarify` | If the target test command or project context is known, prefill an approved command workflow; otherwise ask for the target. |
 | `所有队友协作实现这个功能` | `workflow_proposal` | The user asks for coordinated work, not just visible opinions. |
 | `Architect 先拆，Engineer 实现，QA 验证` | `workflow_proposal` | If the artifact/scope is clear enough, proposal can be prefilled. |
 | `开始让 Architect 拆这个 PR，然后 Engineer 改，QA 跑 e2e` | `direct_workflow` or `workflow_proposal` | Direct means prefilled confirmed-start proposal, not no-confirm execution. |
@@ -465,6 +470,67 @@ The workflow layer then:
 The channel intent selector never starts tools itself. P1 moves proposal confirmation
 into daemon-owned workflow creation instead of the old Web-side `proposal -> task -> run`
 compatibility behavior.
+
+## Single-Step Executable Intent
+
+Some requests are executable even when they do not mention multiple teammates or an
+ordered workflow. The selector must keep these out of ordinary `ai_reply` because a
+normal channel reply has no tools and should not pretend it can create files, edit code,
+or run commands.
+
+Single-step executable intents include:
+
+- creating, editing, deleting, moving, or renaming a local file;
+- writing generated content into a concrete path, such as a README, config, or doc file;
+- modifying code in a named file, module, branch, PR, or visible work item;
+- running a shell command, test command, build, lint, formatter, or local smoke check;
+- generating an artifact that must be persisted to the workspace rather than pasted into
+  chat;
+- using an MCP or external action with side effects.
+
+Decision rules:
+
+- if the target path or command and the intended content/action are clear, choose
+  `direct_workflow` and prefill one executable step;
+- if a file-create request has a clear target but no content, still choose
+  `direct_workflow`; the generated task must not invent content beyond the file creation
+  requested by the user;
+- if the target path, command, file name, or intended action is missing, choose `clarify`
+  and ask one question;
+- if the request needs multiple roles, phases, review, QA, release, or security checks,
+  choose `workflow_proposal` instead of a single-step direct workflow;
+- if the user only asks how to do something or asks for an example command, choose
+  `single_reply`;
+- if the required tool is unavailable because channel, teammate, provider, runner, or
+  workspace policy blocks it, create a blocked proposal with readable remediation instead
+  of falling back to a shell snippet.
+
+Required-tool derivation:
+
+- file create/write -> `write`;
+- file edit/patch -> `edit`;
+- command/test/build/lint/formatter -> `bash`;
+- file inspection before execution -> include read-only tools such as `read`, `grep`,
+  `find`, or `ls` as needed;
+- external or MCP side effects -> use the existing MCP binding and approval surfaces.
+
+Confirmation UI requirements:
+
+- the conversation should render an executable task card, not an ordinary teammate answer;
+- the card must name the concrete action, target path or command, and derived required
+  tools before the user confirms;
+- the primary confirmation copy should be permission-oriented, for example:
+  `需要 write 权限在 /path 创建 README.md，是否授权本次任务？` or
+  `需要 bash 权限运行测试，是否授权本次任务？`;
+- if both file content and path are missing, ask one clarify question instead of creating
+  an empty task card;
+- if generated content is long, the card may show a compact preview plus editable draft,
+  but confirmation still authorizes the workflow/task/run path, not a raw chat reply.
+
+The selector may compute required tools and write-path intent, but it must not grant those
+tools. Confirmation starts the existing workflow/task/run path, where approval policy,
+write scopes, runtime permission requests, and provider/tool capability checks remain the
+source of truth.
 
 ## P1 WorkflowGraph Adapter
 
@@ -684,6 +750,10 @@ The first implementation should be deterministic and conservative:
   `review`, `implement`, `QA` -> `workflow_proposal`;
 - asks all teammates to collaborate on implementation, verification, publish, merge, or
   other execution work -> `workflow_proposal`;
+- concrete single-step execution verbs such as create/write/edit/delete file, modify code,
+  run command, run tests, build, lint, or format with a clear target -> `direct_workflow`;
+- single-step execution request with missing path, command, content, or target ->
+  `clarify`;
 - missing artifact, branch, file, or acceptance target -> `clarify`;
 - explicit start command plus known safe template -> `direct_workflow`, after validation
   and user confirmation.
@@ -750,6 +820,7 @@ and prompt text are audit data, not normal conversation content.
 | P6 | Model-assisted intent selector behind feature flag and deterministic fallback. Implemented. | Medium |
 | P7 | Bounded `visible_multi_reply` for explicit discussion-only all-teammate requests. Implemented. | Medium |
 | P8 | Compact roster/visible participants context for `visible_multi_reply`. Implemented as the P1/P2 prompt-context slice; full Context Budget Manager remains future work. | Low |
+| P9 | Single-step executable intent for file writes, code edits, command/test runs, artifact writes, bounded required-tools metadata, and blocked proposals when channel/teammate tools are missing. Implemented. | Medium |
 
 ## Acceptance Criteria
 
@@ -760,6 +831,13 @@ and prompt text are audit data, not normal conversation content.
   channel roster, but does not claim online/presence visibility or unseen peer content.
 - `所有队友协作实现/验证/发布` creates a proposal, not visible multi-reply.
 - Multi-role requests produce a compact proposal before multi-agent work starts.
+- `在 /path 下创建 README.md` does not create an ordinary `ai_reply` that only prints a
+  shell snippet; it creates a direct-workflow prefill, or a blocked proposal if the
+  required `write` tool is unavailable.
+- Single-step executable proposals surface required tools such as `write`, `edit`, or
+  `bash` before confirmation and rely on existing approval policy at run time.
+- Confirmed single-step workflow steps pass only the bounded required tools to the runner,
+  not the full channel tool set.
 - Direct workflow starts only happen through validated existing workflow routes.
 - Active work uses existing progress rows and completed work collapses into a summary.
 - No right-drawer route explanation, tuning dashboard, confidence display, or raw JSON is
@@ -768,6 +846,9 @@ and prompt text are audit data, not normal conversation content.
 ## Non-Goals
 
 - Building an autonomous shared-context multi-agent group chat.
+- Making the channel composer a Codex-like default executable agent session.
+- Letting ordinary `ai_reply` directly call file, shell, MCP, deploy, or external-send
+  tools.
 - Replacing `channel-auto-reply-router.md`.
 - Replacing the P5 workflow selector.
 - Adding model-assisted workflow selection before deterministic intent routing exists.

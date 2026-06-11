@@ -83,6 +83,7 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
   }
 
   const participants = resolveProposalParticipants(input.store, channel, proposal);
+  validateProposalRequiredTools(channel, proposal, participants);
   for (const participant of participants) {
     input.validateRunRequest(buildValidationRunRequest(input.cwd, channel, proposal, participant));
   }
@@ -223,6 +224,7 @@ function buildProposalWorkflowGraph(
   proposal: ChannelExecutionProposal,
   participants: readonly ProposalParticipant[],
 ): WorkflowGraph {
+  const boundedRequiredTools = isSingleStepBoundedToolsProposal(proposal) ? proposal.requiredTools : [];
   const nodes = participants.map((participant, index): WorkflowGraphNode => ({
     id: `proposal_step_${index + 1}`,
     kind: "step" as const,
@@ -231,6 +233,7 @@ function buildProposalWorkflowGraph(
     teammateId: participant.teammate.id,
     ...(participant.providerPresetId ? { providerPresetId: participant.providerPresetId } : {}),
     ...(participant.teammate.runnerId ? { requestedRunnerId: participant.teammate.runnerId } : {}),
+    ...(boundedRequiredTools.length > 0 ? { requiredTools: boundedRequiredTools } : {}),
     autoStart: true,
   }));
   return {
@@ -253,6 +256,38 @@ function buildProposalWorkflowGraph(
     },
     maxParallelSteps: 1,
   };
+}
+
+function isSingleStepBoundedToolsProposal(proposal: ChannelExecutionProposal): boolean {
+  return proposal.collaborationSteps.length === 1;
+}
+
+function validateProposalRequiredTools(
+  channel: Channel,
+  proposal: ChannelExecutionProposal,
+  participants: readonly ProposalParticipant[],
+): void {
+  if (!isSingleStepBoundedToolsProposal(proposal) || proposal.requiredTools.length === 0) {
+    return;
+  }
+  const missingChannelTools = proposal.requiredTools.filter((tool) => !channel.allowedTools.includes(tool));
+  if (missingChannelTools.length > 0) {
+    throw new HttpError(
+      400,
+      "proposal_required_tools_not_allowed",
+      `Proposal requires tools not allowed in this channel: ${missingChannelTools.join(", ")}.`,
+    );
+  }
+  for (const participant of participants) {
+    const missingTeammateTools = proposal.requiredTools.filter((tool) => !participant.teammate.allowedTools.includes(tool));
+    if (missingTeammateTools.length > 0) {
+      throw new HttpError(
+        400,
+        "proposal_required_tools_not_available",
+        `${participant.teammate.displayName} is missing required tools: ${missingTeammateTools.join(", ")}.`,
+      );
+    }
+  }
 }
 
 
@@ -282,9 +317,13 @@ function stepPrompt(
     proposal.acceptanceCriteria.length > 0
       ? `Acceptance criteria:\n${proposal.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`
       : undefined,
+    isSingleStepBoundedToolsProposal(proposal) && proposal.requiredTools.length > 0
+      ? `Confirmed task-scoped tools:\n${proposal.requiredTools.join(", ")}`
+      : undefined,
     proposal.riskSummary ? `Risk summary:\n${proposal.riskSummary}` : undefined,
     responseLanguageInstruction(responseLanguage),
     "Complete only this step. Do not start or approve later workflow steps.",
+    "Do not use tools, write paths, commands, MCP actions, or external side effects beyond the confirmed task scope; request runtime permission if the work needs an undeclared escalation.",
     "Return a concise terminal summary and any artifacts or decisions needed by later steps.",
   ].filter((part): part is string => Boolean(part)).join("\n\n");
 }
