@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CheckCircle2, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
-import { useI18n } from "../../i18n.js";
+import { useI18n, type Translate } from "../../i18n.js";
 import type { ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
@@ -30,6 +30,7 @@ export function ConversationWorkCell({
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const active = model.mode === "active";
+  const statusLabel = workCellStatusLabel(model.status, active, t);
   const rootClassName = [
     "conversation-work-cell",
     active ? "active" : "completed",
@@ -50,14 +51,14 @@ export function ConversationWorkCell({
   }
 
   return (
-    <article className={rootClassName} data-thread-id={model.threadId} aria-label={t("Work result")}>
+    <article className={rootClassName} data-thread-id={model.threadId} aria-label={statusLabel}>
       <div className="conversation-work-cell-rail" aria-hidden="true">
         <WorkCellStatusIcon status={model.status} active={active} />
       </div>
       <div className="conversation-work-cell-body">
         <header className="conversation-work-cell-head">
           <div>
-            <span className="conversation-work-cell-kicker">{active ? t("Work in progress") : t("Work result")}</span>
+            <span className="conversation-work-cell-kicker">{statusLabel}</span>
             <strong>{model.title}</strong>
           </div>
           <span className={`status-badge ${model.status}`}>{t(model.status)}</span>
@@ -108,6 +109,29 @@ export function ConversationWorkCell({
       </div>
     </article>
   );
+}
+
+function workCellStatusLabel(
+  status: ConversationWorkCellViewModel["status"],
+  active: boolean,
+  t: Translate,
+): string {
+  if (status === "succeeded") {
+    return t("Task completed");
+  }
+  if (status === "failed") {
+    return t("Task failed");
+  }
+  if (status === "cancelled" || status === "superseded") {
+    return t("Task cancelled");
+  }
+  if (status === "blocked") {
+    return t("Task blocked");
+  }
+  if (status === "waiting_for_approval") {
+    return t("Task waiting for approval");
+  }
+  return active ? t("Task in progress") : t("Work result");
 }
 
 function WorkCellDetails({

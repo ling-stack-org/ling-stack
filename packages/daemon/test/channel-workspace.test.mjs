@@ -732,14 +732,18 @@ test("single-step file creation becomes direct workflow with bounded write tools
   }
 });
 
-test("single-step file creation is blocked when channel lacks write tool", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-file-blocked-"));
-  const daemon = await startDaemonForTest();
+test("single-step file creation starts with task-scoped write when channel lacks static write tool", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-file-channel-readonly-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
   try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Read only docs",
       status: "active",
       boundPath: cwd,
+      defaultProviderPresetId: provider.id,
       defaultTeammateId: "teammate_builtin_docs",
       autoReplyMode: "mentions_only",
       allowedTools: ["read", "grep", "find", "ls"],
@@ -752,11 +756,21 @@ test("single-step file creation is blocked when channel lacks write tool", async
     assert.equal(created.aiReply, undefined);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].status, "blocked");
+    assert.equal(proposals.proposals[0].status, "draft");
     assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
-    assert.match(proposals.proposals[0].errorMessage, /write/);
+    assert.equal(proposals.proposals[0].errorMessage, undefined);
+    assert.match(proposals.proposals[0].riskSummary, /write/);
+    assert.doesNotMatch(proposals.proposals[0].riskSummary, /频道缺少所需工具/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
+
+    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(confirmed.proposal.status, "accepted");
+    assert.equal(confirmed.orchestration.status, "started", confirmed.orchestration.blocker);
+    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.equal(confirmed.workflowSteps[0].metadata.sourceProposalId, proposals.proposals[0].id);
+    assert.equal(runner.runs.length, 1);
+    assert.deepEqual(runner.runs[0].tools, ["write"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

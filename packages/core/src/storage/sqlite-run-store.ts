@@ -17340,6 +17340,8 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     outputArtifactIds: readOptionalStringListValue(record.outputArtifactIds),
     selectorDecisionIds: readOptionalStringListValue(record.selectorDecisionIds),
     handoffIntentIds: readOptionalStringListValue(record.handoffIntentIds),
+    sourceProposalId: readOptionalStringValue(record.sourceProposalId),
+    sourceMessageId: readOptionalStringValue(record.sourceMessageId),
     fanInSummaryArtifactId: readOptionalStringValue(record.fanInSummaryArtifactId),
     memoryCandidateIds: readOptionalStringListValue(record.memoryCandidateIds),
   });

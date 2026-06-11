@@ -761,7 +761,7 @@ export function WorkspaceClientView({
     () => deriveWorkspaceThreadsFromRuns(channelRuns),
     [channelRuns],
   );
-  const visibleChannelWorkThreads = useMemo(
+  const channelWorkThreadCandidates = useMemo(
     () => mergeLingThreads(channelWorkThreads, channelWorkThreadsFallbackFromRuns ? derivedChannelWorkThreads : [])
       .filter((thread) => !thread.channelId || thread.channelId === selectedChannelId)
       .filter((thread) => !archivedChannelWorkThreadIds.has(thread.id) && thread.status !== "archived" && !thread.archivedAt)
@@ -772,6 +772,10 @@ export function WorkspaceClientView({
         left.id.localeCompare(right.id)
       ),
     [archivedChannelWorkThreadIds, channelWorkThreads, channelWorkThreadsFallbackFromRuns, derivedChannelWorkThreads, selectedChannelId],
+  );
+  const visibleChannelWorkThreads = useMemo(
+    () => filterChannelBranchThreads(channelWorkThreadCandidates, activeWorkThreadId),
+    [activeWorkThreadId, channelWorkThreadCandidates],
   );
   const searchedChannelWorkThreads = useMemo(() => {
     const query = channelWorkThreadSearch.trim().replace(/\s+/g, " ").toLowerCase();
@@ -2867,7 +2871,8 @@ export function WorkspaceClientView({
       const message = item.record;
       const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
       const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
-      const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
+      const executionProposals = (executionProposalsByMessageId.get(message.id) ?? [])
+        .filter((proposal) => auditActivityVisible || !proposalHasTerminalWorkflow(proposal, channelWorkflows));
       const acceptedRouteDecision = routeDecisionByReplyMessageId.get(message.id);
       const sourceRouteDecision = routeDecisionBySourceMessageId.get(message.id);
       const sourceIntentDecision = message.authorType === "local-user" ? intentDecisionBySourceMessageId.get(message.id) : undefined;
@@ -9396,6 +9401,35 @@ function isChannelDiscussionRootThread(thread: LingThread, channelId: string | u
     !thread.workflowId &&
     !thread.workflowStepId &&
     !thread.externalWorkId;
+}
+
+function filterChannelBranchThreads(threads: readonly LingThread[], activeThreadId: string): readonly LingThread[] {
+  const lineageParentThreadIds = new Set<string>();
+  for (const thread of threads) {
+    if (thread.parentThreadId) {
+      lineageParentThreadIds.add(thread.parentThreadId);
+    }
+  }
+  return threads.filter((thread) =>
+    thread.kind === "channel_discussion" ||
+    thread.kind === "task" ||
+    Boolean(thread.parentThreadId) ||
+    lineageParentThreadIds.has(thread.id) ||
+    Boolean(thread.pinnedAt) ||
+    (Boolean(activeThreadId) && thread.id === activeThreadId)
+  );
+}
+
+function proposalHasTerminalWorkflow(proposal: ChannelExecutionProposal, workflows: readonly ChannelWorkflow[]): boolean {
+  if (!proposal.linkedWorkflowId) {
+    return false;
+  }
+  const workflow = workflows.find((candidate) => candidate.id === proposal.linkedWorkflowId);
+  return Boolean(workflow && workflowIsTerminal(workflow.status));
+}
+
+function workflowIsTerminal(status: ChannelWorkflow["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function buildChannelWorkThreadTree(threads: readonly LingThread[]): ReadonlyArray<{

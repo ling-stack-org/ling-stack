@@ -1218,6 +1218,153 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(proposal.getByRole("button", { name: "Open workflow" })).toBeVisible();
 });
 
+test("completed workflow hides accepted proposal and leaves final result in default chat", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const completedAt = "2026-05-25T00:31:00.000Z";
+  const workflowRun = {
+    ...state.runs[0],
+    id: "run_completed_workflow",
+    status: "succeeded",
+    threadId: "thread_completed_workflow_step",
+    taskId: "task_completed_workflow",
+    workflowStepId: "workflow_step_completed",
+    taskSnapshot: {
+      id: "task_completed_workflow",
+      title: "Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      workflowStepId: "workflow_step_completed",
+      task: {
+        id: "task_completed_workflow",
+        title: "Create README.md",
+        prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+        channelId: "channel_engineering",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_completed_workflow.jsonl",
+    errorMessage: undefined,
+    createdAt: "2026-05-25T00:30:00.000Z",
+    startedAt: "2026-05-25T00:30:05.000Z",
+    endedAt: completedAt,
+    updatedAt: completedAt,
+  };
+  state.channelMessages = [
+    {
+      id: "msg_create_readme",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "/Users/tianxiao/ling-stack-test 下面，帮我创建一个 README.md",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:29:00.000Z",
+      updatedAt: "2026-05-25T00:29:00.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_completed_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_create_readme",
+      proposedByTeammateId: "docs",
+      title: "Create /Users/tianxiao/ling-stack-test/README.md",
+      prompt: "Create the requested README file with the declared file tool scope.",
+      assigneeTeammateId: "docs",
+      acceptanceCriteria: ["Target file is created."],
+      collaborationSteps: [{ teammateId: "docs", action: "coordinated", summary: "Created the requested file." }],
+      requiredTools: ["write"],
+      status: "accepted",
+      linkedWorkflowId: "workflow_completed",
+      createdAt: "2026-05-25T00:29:01.000Z",
+      updatedAt: "2026-05-25T00:29:05.000Z",
+    },
+  ];
+  state.tasks = [
+    {
+      id: "task_completed_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      status: "done",
+      currentRunId: workflowRun.id,
+      createdAt: "2026-05-25T00:30:00.000Z",
+      updatedAt: completedAt,
+    },
+  ];
+  state.runs = [workflowRun];
+  state.channelWorkflows = [
+    {
+      id: "workflow_completed",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Create /Users/tianxiao/ling-stack-test/README.md",
+      objective: "Create the requested README file with the declared file tool scope.",
+      status: "succeeded",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:29:05.000Z",
+      updatedAt: completedAt,
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_completed",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_completed",
+      taskId: "task_completed_workflow",
+      runId: workflowRun.id,
+      position: 1,
+      title: "Docs: Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      toParticipantId: "docs",
+      toParticipantLabel: "Docs",
+      status: "succeeded",
+      resultSummary: "Created the requested README file.",
+      createdAt: "2026-05-25T00:29:05.000Z",
+      updatedAt: completedAt,
+    },
+  ];
+  state.artifactsByRun[workflowRun.id] = [
+    {
+      id: "artifact_completed_readme",
+      runId: workflowRun.id,
+      type: "file",
+      path: "/Users/tianxiao/ling-stack-test/README.md",
+      title: "README.md",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 0,
+      createdAt: completedAt,
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByLabel("Execution proposal")).toHaveCount(0);
+  const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create /Users/tianxiao/ling-stack-test/README.md" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toContainText("Task completed");
+  await expect(workCell).toContainText("Task completed: Created the requested README file.");
+  await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
+
+  await openChannelChatTools(page);
+  await expect(feed.getByLabel("Execution proposal")).toContainText("Create /Users/tianxiao/ling-stack-test/README.md");
+});
+
 test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -1934,7 +2081,7 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
 
   const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell").filter({ hasText: "Inspect workspace" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Work result");
+  await expect(workCell).toContainText("Task completed");
   await expect(workCell).toContainText("Completed 1 attempts with 1 evidence items.");
   await expect(workCell).toContainText("Attempts");
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
@@ -2042,7 +2189,7 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Durable inspect turn" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Work result");
+  await expect(workCell).toContainText("Task completed");
   await expect(workCell).toContainText("Completed 2 attempts with 1 evidence items.");
   await expect(workCell.getByLabel("Work summary")).toContainText("Attempts");
   await expect(workCell.getByLabel("Work summary")).toContainText("2");
@@ -2095,7 +2242,7 @@ test("active conversation work cell renders sparse rows while runtime approvals 
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Inspect workspace" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Work in progress");
+  await expect(workCell).toContainText("Task waiting for approval");
   await expect(workCell).toContainText("Waiting for 1 approvals before continuing.");
   await expect(workCell.getByLabel("Active work stream")).toContainText("Waiting for approval");
   await expect(workCell.getByLabel("Active work stream")).toContainText("Approve shell command");

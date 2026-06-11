@@ -1030,12 +1030,6 @@ function singleStepExecutableBlocker(
       ? `${teammate.displayName} 当前不在这个频道可执行名单里；请把该队友加入频道或编辑 proposal 的执行人。`
       : `${teammate.displayName} is not available in this channel; add the teammate to the channel or edit the proposal assignee.`);
   }
-  const missingChannelTools = executableIntent.requiredTools.filter((tool) => !input.channel.allowedTools.includes(tool));
-  if (missingChannelTools.length > 0) {
-    blockers.push(responseLanguage === "zh-CN"
-      ? `频道缺少所需工具: ${missingChannelTools.join(", ")}；请在频道工具范围里授权后再开始。`
-      : `Channel is missing required tools: ${missingChannelTools.join(", ")}. Authorize them in channel tool scope before starting.`);
-  }
   const missingTeammateTools = executableIntent.requiredTools.filter((tool) => !teammate.allowedTools.includes(tool));
   if (missingTeammateTools.length > 0) {
     blockers.push(responseLanguage === "zh-CN"

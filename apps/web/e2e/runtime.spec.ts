@@ -794,7 +794,7 @@ test("fork lineage creates child thread and surfaces it in work history and chan
   await expect(detail).toContainText("turn_fork_source");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  const branchTree = page.getByLabel("Channel branches");
+  const branchTree = page.locator(".channel-work-thread-tree");
   await expect(branchTree).toContainText("Conversation branches");
   await expect(branchTree.getByRole("button", { name: "New task" })).toHaveCount(0);
   await expect(branchTree).toContainText("Fork lineage source");
@@ -844,6 +844,80 @@ test("empty channel branches can fork main branch without creating a task or run
   await expect(branchTree).toContainText(childThread?.title ?? "Fork: Main branch");
   await branchTree.getByRole("button", { name: new RegExp(childThread?.title ?? "Fork: Main branch") }).click();
   await expect(page.getByText("No work recorded in this branch yet")).toBeVisible();
+});
+
+test("channel branches hide ordinary workflow step execution threads", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const workflowRun: MockRun = {
+    ...state.runs[0],
+    id: "run_workflow_step_review",
+    status: "succeeded",
+    threadId: "thread_workflow_step_review",
+    taskId: "task_workflow_step_review",
+    workflowStepId: "workflow_step_review",
+    taskSnapshot: {
+      id: "task_workflow_step_review",
+      title: "Docs: Review",
+      prompt: "Review generated documentation.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      workflowStepId: "workflow_step_review",
+      task: {
+        id: "task_workflow_step_review",
+        title: "Docs: Review",
+        prompt: "Review generated documentation.",
+        channelId: "channel_engineering",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_workflow_step_review.jsonl",
+    errorMessage: undefined,
+    createdAt: "2026-05-25T01:25:00.000Z",
+    updatedAt: "2026-05-25T01:26:00.000Z",
+    endedAt: "2026-05-25T01:26:00.000Z",
+  };
+  state.tasks = [
+    {
+      id: "task_workflow_step_review",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Docs: Review",
+      prompt: "Review generated documentation.",
+      status: "succeeded",
+      currentRunId: workflowRun.id,
+      createdAt: "2026-05-25T01:25:00.000Z",
+      updatedAt: "2026-05-25T01:26:00.000Z",
+    },
+  ];
+  state.runs = [workflowRun];
+  state.threads = [
+    {
+      id: "thread_workflow_step_review",
+      workspaceId: "workspace_default",
+      kind: "workflow_step",
+      channelId: "channel_engineering",
+      taskId: "task_workflow_step_review",
+      teammateId: "docs",
+      workflowId: "workflow_docs_review",
+      workflowStepId: "workflow_step_review",
+      title: "Docs: Review",
+      objective: "Review generated documentation.",
+      status: "succeeded",
+      lastRunId: workflowRun.id,
+      createdAt: "2026-05-25T01:25:00.000Z",
+      updatedAt: "2026-05-25T01:26:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
+  await expect(page.locator(".channel-work-thread-tree", { hasText: "Docs: Review" })).toHaveCount(0);
 });
 
 test("fork and run starts an explicit child branch run from work history", async ({ page }) => {
@@ -943,10 +1017,10 @@ test("fork and run starts an explicit child branch run from work history", async
   await expect(detail).toContainText("Forked from");
   await expect(detail).toContainText("thread_fork_run_source");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  const branchTree = page.getByLabel("Channel branches");
+  const branchTree = page.locator(".channel-work-thread-tree");
   await expect(branchTree).toContainText(childThread?.title ?? "Fork");
   await branchTree.getByRole("button", { name: new RegExp(childThread?.title ?? "Fork") }).click();
-  const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Work in progress" });
+  const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Task in progress" });
   await expect(workCell).toBeVisible();
   await expect(workCell).toContainText("Implement child branch immediately.");
 });
@@ -1086,7 +1160,7 @@ test("run history archives restores pins and filters channel branches", async ({
   await expect(workList).toContainText("Visibility archived branch");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  const branchTree = page.getByLabel("Channel branches");
+  const branchTree = page.locator(".channel-work-thread-tree");
   await expect(branchTree.getByRole("button", { name: "New task" })).toHaveCount(0);
   await expect(branchTree).toContainText("Visibility active branch");
   await expect(branchTree).not.toContainText("Visibility archived branch");

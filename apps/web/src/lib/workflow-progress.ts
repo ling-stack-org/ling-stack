@@ -62,6 +62,7 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const queuedStep = orderedSteps.find((step) => step.status === "queued");
   const failedStep = orderedSteps.find((step) => step.status === "failed");
   const currentStep = blockedStep ?? waitingStep ?? runningStep ?? queuedStep ?? failedStep ?? orderedSteps[completedSteps] ?? orderedSteps.at(-1);
+  const finalResultSummary = readWorkflowFinalResultSummary(orderedSteps, input.workflow.status);
   const attention: WorkflowProgressAttention = blockedStep
     ? "blocked"
     : failedStep || input.workflow.status === "failed"
@@ -97,6 +98,7 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
       totalSteps: orderedSteps.length,
       artifactCount: artifacts.length,
       pendingApprovalCount: pendingApprovals.length,
+      finalResultSummary,
     }),
     currentRows: buildCurrentRows({
       t: input.t,
@@ -427,14 +429,17 @@ function buildWorkflowProgressSummary(input: {
   readonly totalSteps: number;
   readonly artifactCount: number;
   readonly pendingApprovalCount: number;
+  readonly finalResultSummary?: string;
 }): string {
   if (input.workflow.status === "succeeded") {
-    return input.t("Done: {steps} steps complete, {artifacts} artifacts captured.", {
-      steps: input.completedSteps,
-      artifacts: input.artifactCount,
-    });
+    return input.finalResultSummary
+      ? input.t("Task completed: {summary}", { summary: input.finalResultSummary })
+      : input.t("Task completed.");
   }
   if (input.workflow.status === "failed" || input.workflow.status === "cancelled") {
+    if (input.finalResultSummary) {
+      return input.t("Task did not complete: {summary}", { summary: input.finalResultSummary });
+    }
     return input.t("Stopped at {step}: {status}.", {
       step: input.currentStep?.title ?? input.workflow.title,
       status: input.workflow.status,
@@ -458,6 +463,23 @@ function buildWorkflowProgressSummary(input: {
     done: input.completedSteps,
     total: input.totalSteps,
   });
+}
+
+function readWorkflowFinalResultSummary(
+  steps: readonly ChannelWorkflowStep[],
+  workflowStatus: ChannelWorkflow["status"],
+): string | undefined {
+  const terminalStatuses = workflowStatus === "succeeded"
+    ? new Set<ChannelWorkflowStep["status"]>(["succeeded", "skipped"])
+    : new Set<ChannelWorkflowStep["status"]>(["failed", "cancelled", "blocked", "succeeded"]);
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index];
+    const summary = step.resultSummary?.trim();
+    if (summary && terminalStatuses.has(step.status)) {
+      return summary;
+    }
+  }
+  return undefined;
 }
 
 function buildCurrentRows(input: {
@@ -501,7 +523,7 @@ function buildCurrentRows(input: {
     rows.push({
       id: "artifacts",
       title: input.t("Evidence captured"),
-      description: input.t("{count} artifacts", { count: input.artifactCount }),
+      description: input.t("{count} evidence items", { count: input.artifactCount }),
       tone: "success",
     });
   }

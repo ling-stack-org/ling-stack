@@ -65,7 +65,15 @@ The current implementation is deterministic by default and uses Ling-native pers
   and falls back to deterministic routing on failure;
 - no `ai_reply` is created for proposal/direct-workflow source messages;
 - Web refreshes channel proposals/workflows after sending or confirming, so visible work
-  stays in the existing conversation surface and progress rows.
+  stays in the existing conversation surface and progress rows;
+- workflow-step Ling threads remain durable Work History/evidence containers. They are
+  not shown in the channel conversation-branch strip unless the user explicitly turns
+  them into a visible branch through fork lineage, pinning, or current selection;
+- after a confirmed proposal's linked workflow reaches a terminal state, the default
+  chat surface collapses process UI and shows the final work result summary, preferring
+  the terminal workflow step `resultSummary` over internal step/evidence counts. The
+  accepted proposal, workflow steps, runs, and transition records remain available in the
+  audit tools/evidence surfaces, but they should not crowd the ordinary conversation path.
 
 Current implemented examples:
 
@@ -307,7 +315,7 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 | `谁能处理这个？` | `single_reply` or `workflow_proposal` | If context is simple, answer. If there is a concrete work artifact, propose workflow. |
 | `所有队友都回复我一下` | `visible_multi_reply` | Pure visible discussion request; bounded one-round replies, no workflow. |
 | `大家都说下这个设计的风险` | `visible_multi_reply` | Multiple role opinions change the user's decision, but no execution has started. |
-| `在 /Users/tianxiao/ling-stack-test 下创建 README.md` | `direct_workflow` or blocked proposal | If target and action are clear, prefill one file-write workflow; if `write` is not allowed by channel/teammate policy, create a blocked proposal with remediation. |
+| `在 /Users/tianxiao/ling-stack-test 下创建 README.md` | `direct_workflow` or blocked proposal | If target and action are clear, prefill one file-write workflow. A read-only channel may still start it with task-scoped `write`; block only when the assignee, provider, runner, or workspace policy cannot support it. |
 | `把这个 README 写进去，内容是 ...` | `direct_workflow` | Concrete file-write request; do not answer with a shell snippet as ordinary `ai_reply`. |
 | `帮我跑测试看一下` | `direct_workflow` or `clarify` | If the target test command or project context is known, prefill an approved command workflow; otherwise ask for the target. |
 | `所有队友协作实现这个功能` | `workflow_proposal` | The user asks for coordinated work, not just visible opinions. |
@@ -501,9 +509,13 @@ Decision rules:
   choose `workflow_proposal` instead of a single-step direct workflow;
 - if the user only asks how to do something or asks for an example command, choose
   `single_reply`;
-- if the required tool is unavailable because channel, teammate, provider, runner, or
+- if the required tool is unavailable because the selected teammate, provider, runner, or
   workspace policy blocks it, create a blocked proposal with readable remediation instead
   of falling back to a shell snippet.
+- do not require the channel's static allowed-tools list to already include `write`,
+  `edit`, or `bash` for a single-step bounded proposal; the confirmed proposal carries
+  those task-scoped required tools into the workflow/run path, where runtime permission
+  requests remain the source of truth.
 
 Required-tool derivation:
 
@@ -832,8 +844,9 @@ and prompt text are audit data, not normal conversation content.
 - `所有队友协作实现/验证/发布` creates a proposal, not visible multi-reply.
 - Multi-role requests produce a compact proposal before multi-agent work starts.
 - `在 /path 下创建 README.md` does not create an ordinary `ai_reply` that only prints a
-  shell snippet; it creates a direct-workflow prefill, or a blocked proposal if the
-  required `write` tool is unavailable.
+  shell snippet; it creates a direct-workflow prefill even when the channel is otherwise
+  read-only, unless the selected teammate/provider/runner/workspace policy cannot support
+  the required `write` tool.
 - Single-step executable proposals surface required tools such as `write`, `edit`, or
   `bash` before confirmation and rely on existing approval policy at run time.
 - Confirmed single-step workflow steps pass only the bounded required tools to the runner,

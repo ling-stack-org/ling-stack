@@ -270,14 +270,6 @@ function validateProposalRequiredTools(
   if (!isSingleStepBoundedToolsProposal(proposal) || proposal.requiredTools.length === 0) {
     return;
   }
-  const missingChannelTools = proposal.requiredTools.filter((tool) => !channel.allowedTools.includes(tool));
-  if (missingChannelTools.length > 0) {
-    throw new HttpError(
-      400,
-      "proposal_required_tools_not_allowed",
-      `Proposal requires tools not allowed in this channel: ${missingChannelTools.join(", ")}.`,
-    );
-  }
   for (const participant of participants) {
     const missingTeammateTools = proposal.requiredTools.filter((tool) => !participant.teammate.allowedTools.includes(tool));
     if (missingTeammateTools.length > 0) {

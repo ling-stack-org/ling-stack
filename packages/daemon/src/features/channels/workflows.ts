@@ -692,7 +692,7 @@ export function prepareWorkflowStepStart(
   }
   const taskPrompt = renderWorkflowStepContextPackPrompt(contextPack);
   const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
-  const unavailableRequiredTools = workflowStepUnavailableRequiredTools(channel.allowedTools, step.metadata?.requiredTools);
+  const unavailableRequiredTools = workflowStepUnavailableRequiredTools(channel.allowedTools, step.metadata);
   if (unavailableRequiredTools.length > 0) {
     return block(`Workflow step requires tools not allowed in this channel: ${unavailableRequiredTools.join(", ")}.`);
   }
@@ -757,9 +757,13 @@ export function prepareWorkflowStepStart(
 
 function workflowStepUnavailableRequiredTools(
   channelAllowedTools: readonly RunTool[],
-  stepRequiredTools: readonly RunTool[] | undefined,
+  stepMetadata: ChannelWorkflowStep["metadata"] | undefined,
 ): readonly RunTool[] {
+  const stepRequiredTools = stepMetadata?.requiredTools;
   if (!stepRequiredTools || stepRequiredTools.length === 0) {
+    return [];
+  }
+  if (stepMetadata?.sourceProposalId) {
     return [];
   }
   return stepRequiredTools.filter((tool) => !channelAllowedTools.includes(tool));
