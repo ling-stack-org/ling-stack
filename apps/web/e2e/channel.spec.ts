@@ -518,25 +518,18 @@ test("channel runtime policy and default teammate are visible and used when crea
   await expect(page.getByText("active channel")).toHaveCount(0);
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
   const currentManagement = page.getByLabel("Channel management");
-  await expect(currentManagement.getByLabel("Default AI teammate")).toHaveValue("engineer");
-  await expect(currentManagement.getByLabel("Auto reply")).toHaveValue("mentions_only");
-  await expect(currentManagement.getByLabel("Auto reply").locator('option[value="auto_route"]')).toHaveAttribute("disabled", "");
-  await currentManagement.getByLabel("Auto reply").selectOption("default_teammate");
+  await expect(currentManagement.getByLabel("Preferred specialist")).toHaveValue("engineer");
+  await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
   await currentManagement.getByRole("button", { name: "Save channel" }).click();
-  await expect.poll(() => {
-    const updated = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_engineering");
-    return isRecord(updated) ? updated.autoReplyMode : undefined;
-  }).toBe("default_teammate");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
   await expect(createChannelPanel).toBeVisible();
   await expect(createChannelPanel.getByLabel("Execution path")).toHaveCount(0);
-  await expect(createChannelPanel.getByLabel("Auto reply").locator('option[value="auto_route"]')).toHaveAttribute("disabled", "");
+  await expect(createChannelPanel.getByLabel("Ling reply")).toHaveCount(0);
   await createChannelPanel.getByLabel("Name").fill("Release");
   await createChannelPanel.getByLabel("Status").selectOption("paused");
-  await createChannelPanel.getByLabel("Default AI teammate").selectOption("designer");
-  await createChannelPanel.getByLabel("Auto reply").selectOption("default_teammate");
+  await createChannelPanel.getByLabel("Preferred specialist").selectOption("designer");
   await createChannelPanel.getByLabel("Execution mode").selectOption("parallel");
   await createChannelPanel.getByLabel("Write lock").selectOption("workspace");
   await createChannelPanel.getByLabel("Max runs").fill("2");
@@ -548,7 +541,6 @@ test("channel runtime policy and default teammate are visible and used when crea
   expect(created).toBeTruthy();
   expect(isRecord(created) ? created.status : undefined).toBe("paused");
   expect(isRecord(created) ? created.defaultTeammateId : undefined).toBe("designer");
-  expect(isRecord(created) ? created.autoReplyMode : undefined).toBe("default_teammate");
   const runtimePolicy = isRecord(created) && isRecord(created.runtimePolicy) ? created.runtimePolicy : {};
   expect(runtimePolicy.executionMode).toBe("parallel");
   expect(runtimePolicy.writeLockScope).toBe("workspace");
@@ -558,8 +550,8 @@ test("channel runtime policy and default teammate are visible and used when crea
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Release" })).toBeVisible();
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
   const details = page.getByLabel("Channel management");
-  await expect(details.getByLabel("Default AI teammate")).toHaveValue("designer");
-  await expect(details.getByLabel("Auto reply")).toHaveValue("default_teammate");
+  await expect(details.getByLabel("Preferred specialist")).toHaveValue("designer");
+  await expect(details.getByLabel("Ling reply")).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create channel" })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create default" })).toHaveCount(0);
   await details.getByLabel("Name").fill("Release QA");
@@ -570,7 +562,7 @@ test("channel runtime policy and default teammate are visible and used when crea
   }).toBe("Release QA");
 });
 
-test("channel auto route becomes selectable when daemon capability is enabled", async ({ page }) => {
+test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
@@ -582,28 +574,19 @@ test("channel auto route becomes selectable when daemon capability is enabled", 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
   const currentManagement = page.getByLabel("Channel management");
-  const editAutoReply = currentManagement.getByLabel("Auto reply");
-  await expect(editAutoReply.locator('option[value="auto_route"]')).not.toHaveAttribute("disabled", "");
-  await editAutoReply.selectOption("auto_route");
-  await currentManagement.getByRole("button", { name: "Save channel" }).click();
-  await expect.poll(() => {
-    const updated = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_engineering");
-    return isRecord(updated) ? updated.autoReplyMode : undefined;
-  }).toBe("auto_route");
+  await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
+  await expect(currentManagement.getByText("Auto route")).toHaveCount(0);
+  await expect(currentManagement.getByText("Ling Agent decides")).toHaveCount(0);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
-  const createAutoReply = createChannelPanel.getByLabel("Auto reply");
-  await expect(createAutoReply.locator('option[value="auto_route"]')).not.toHaveAttribute("disabled", "");
+  await expect(createChannelPanel.getByLabel("Ling reply")).toHaveCount(0);
+  await expect(createChannelPanel.getByText("Auto route")).toHaveCount(0);
+  await expect(createChannelPanel.getByText("Ling Agent decides")).toHaveCount(0);
   await createChannelPanel.getByLabel("Name").fill("Auto Route");
-  await createChannelPanel.getByLabel("Default AI teammate").selectOption("designer");
-  await createAutoReply.selectOption("auto_route");
+  await createChannelPanel.getByLabel("Preferred specialist").selectOption("designer");
   await createChannelPanel.getByRole("button", { name: "Create channel" }).click();
-
-  await expect.poll(() => {
-    const created = state.channels.find((channel) => isRecord(channel) && channel.name === "Auto Route");
-    return isRecord(created) ? created.autoReplyMode : undefined;
-  }).toBe("auto_route");
+  await expect.poll(() => state.channels.some((channel) => isRecord(channel) && channel.name === "Auto Route")).toBe(true);
 });
 
 test("multi-role channel messages create workflow proposals instead of AI replies", async ({ page }) => {
@@ -779,7 +762,7 @@ test("Ling Agent session acceptance matrix routes executable messages to task co
   await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
-  const feed = page.getByLabel("Channel message feed");
+  const feed = page.locator(".activity-shell");
   const createCard = feed.getByLabel("Task confirmation").filter({ hasText: "Create /tmp/example/README.md" });
   await expect(createCard).toBeVisible();
   await expect(createCard).toContainText("Need write permission to create /tmp/example/README.md for this task.");
@@ -829,9 +812,122 @@ test("Ling Agent session keeps ordinary questions on chat routing", async ({ pag
     const decision = state.channelMessageRouteDecisions[0];
     return isRecord(decision) ? [decision.action, decision.status, decision.createdBy, decision.selectedTeammateId].join("|") : "";
   }).toBe("reply|accepted|deterministic|teammate_builtin_engineer");
-  const feed = page.getByLabel("Channel message feed");
+  const feed = page.locator(".activity-shell");
   await expect(feed.getByText("收到，我会按频道上下文推进。")).toBeVisible();
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
+});
+
+test("ordinary channel feed hides routing and intent decision internals", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent", allowedTools: ["read", "grep", "find", "ls", "edit", "write"] })];
+  state.channelMessages = [
+    {
+      id: "msg_suppressed_greeting",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "晚上好",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:10:00.000Z",
+    },
+    {
+      id: "msg_direct_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "在 README.md 中添加一句测试语句",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:11:00.000Z",
+      updatedAt: "2026-05-25T00:11:00.000Z",
+    },
+  ];
+  state.channelMessageRouteDecisions = [
+    {
+      schemaVersion: 1,
+      id: "route_suppressed_greeting",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_suppressed_greeting",
+      mode: "auto_route",
+      action: "no_reply",
+      reason: "Mock suppressed greeting.",
+      alternativesConsidered: [],
+      status: "suppressed",
+      createdBy: "model",
+      createdAt: "2026-05-25T00:10:00.500Z",
+      updatedAt: "2026-05-25T00:10:00.500Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_direct_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_direct_workflow",
+      proposedByTeammateId: "ling_agent",
+      title: "Edit README.md",
+      prompt: "Edit README.md with one test sentence.",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["README.md is updated."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Edit the requested file." }],
+      requiredTools: ["edit"],
+      riskSummary: "Need edit permission for README.md.",
+      responseLanguage: "zh-CN",
+      status: "draft",
+      createdAt: "2026-05-25T00:11:01.000Z",
+      updatedAt: "2026-05-25T00:11:01.000Z",
+    },
+  ];
+  state.channelIntentDecisions = [
+    {
+      schemaVersion: 1,
+      id: "intent_direct_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_direct_workflow",
+      action: "direct_workflow",
+      proposalId: "proposal_direct_workflow",
+      reason: "Direct workflow proposal created by mock intent selector.",
+      status: "accepted",
+      createdBy: "deterministic",
+      createdAt: "2026-05-25T00:11:00.500Z",
+      updatedAt: "2026-05-25T00:11:00.500Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.locator(".activity-shell");
+  await expect(feed.getByText("晚上好")).toBeVisible();
+  await expect(feed.locator(".channel-execution-proposal").filter({ hasText: "Edit README.md" })).toBeVisible();
+  await expect(feed.getByText("未自动回复")).toHaveCount(0);
+  await expect(feed.getByText("为什么没回复")).toHaveCount(0);
+  await expect(feed.getByText("Ling 未回复")).toHaveCount(0);
+  await expect(feed.getByText("Ling did not reply")).toHaveCount(0);
+  await expect(feed.getByText("Why no reply?")).toHaveCount(0);
+  await expect(feed.getByText("直接工作流提案")).toHaveCount(0);
+  await expect(feed.getByText("Direct workflow proposal")).toHaveCount(0);
+  await expect(feed.getByText("为什么这样处理")).toHaveCount(0);
+  await expect(feed.getByText("Why this handling?")).toHaveCount(0);
+  expect(state.channelMessageRouteDecisions).toHaveLength(1);
+  expect(state.channelIntentDecisions).toHaveLength(1);
 });
 
 test("channel settings can add remove and set default teammates", async ({ page }) => {

@@ -23,6 +23,7 @@ import {
   type ChannelAutoRouteCandidateContext,
   type ContextPack,
 } from "./context-packs.js";
+import { createLingAgentExecutor } from "./ling-agent-executor.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -105,40 +106,31 @@ export async function routeChannelMessageReply(input: ChannelMessageRouteInput):
     store: input.store,
     channel: input.channel,
   });
-  if (protocol.protocol.autoReplyMode === "mentions_only") {
-    const decision = persistRouteDecision(input, {
-      action: "no_reply",
-      reason: "Channel auto reply mode is mentions_only.",
-      status: "suppressed",
-      createdBy: "deterministic",
-    });
-    return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
-  }
-
   const candidates = buildRouteCandidates(input, protocol.protocol.defaultTeammateId);
   if (candidates.length === 0) {
     const decision = persistRouteDecision(input, {
-      action: "no_reply",
-      reason: "No active teammate candidate has a runnable provider.",
-      status: "suppressed",
+      action: "reply",
+      teammateId: "ling_agent",
+      reason: "Ling Agent attempted to reply but no runnable provider is configured.",
+      status: "failed",
       createdBy: "deterministic",
+      errorMessage: "No active teammate candidate has a runnable provider.",
     });
-    return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
+    return {
+      action: "reply",
+      decisionId: decision.id,
+      teammateId: "ling_agent",
+      reason: decision.reason,
+      createdBy: "deterministic",
+    };
   }
 
-  if (protocol.protocol.autoReplyMode === "default_teammate") {
+  if (protocol.protocol.autoReplyMode === "default_teammate" || protocol.protocol.autoReplyMode === "mentions_only") {
     return routeDefaultTeammate(input, candidates);
   }
 
   if (!input.config.channels.autoRoute) {
-    const decision = persistRouteDecision(input, {
-      action: "no_reply",
-      reason: "Channel auto_route feature flag is disabled.",
-      status: "suppressed",
-      createdBy: "deterministic",
-      alternativesConsidered: candidatesToAlternatives(candidates),
-    });
-    return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
+    return routeDefaultTeammate(input, candidates, "Ling Agent used an available reply path because automatic teammate selection is disabled.");
   }
 
   return routeWithModel(input, candidates);
@@ -167,14 +159,19 @@ export function routeExplicitChannelMention(input: ChannelMessageRouteInput): Ch
   };
 }
 
-function routeDefaultTeammate(input: ChannelMessageRouteInput, candidates: readonly RouteCandidate[]): ChannelMessageRouteResult {
-  const defaultCandidate = candidates.find((candidate) => candidate.preferred);
+function routeDefaultTeammate(
+  input: ChannelMessageRouteInput,
+  candidates: readonly RouteCandidate[],
+  fallbackReason?: string,
+  createdBy: ChannelMessageRouteDecisionCreatedBy = "deterministic",
+): ChannelMessageRouteResult {
+  const defaultCandidate = candidates.find((candidate) => candidate.preferred) ?? candidates[0];
   if (!defaultCandidate) {
     const decision = persistRouteDecision(input, {
       action: "no_reply",
       reason: "Channel default teammate is missing, inactive, or not runnable.",
       status: "suppressed",
-      createdBy: "deterministic",
+      createdBy,
       alternativesConsidered: candidatesToAlternatives(candidates),
     });
     return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
@@ -184,7 +181,7 @@ function routeDefaultTeammate(input: ChannelMessageRouteInput, candidates: reado
       action: "no_reply",
       reason: "An AI reply already exists for this source message.",
       status: "suppressed",
-      createdBy: "deterministic",
+      createdBy,
       alternativesConsidered: candidatesToAlternatives(candidates),
     });
     return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
@@ -194,9 +191,11 @@ function routeDefaultTeammate(input: ChannelMessageRouteInput, candidates: reado
     teammateId: defaultCandidate.teammate.id,
     providerPresetId: defaultCandidate.providerPresetId,
     confidence: 1,
-    reason: "Default teammate answered a reply-worthy channel question.",
+    reason: fallbackReason ?? (defaultCandidate.preferred
+      ? "Default teammate answered a reply-worthy channel question."
+      : "Ling Agent chose an available teammate for this reply."),
     status: "accepted",
-    createdBy: "deterministic",
+    createdBy,
     alternativesConsidered: candidatesToAlternatives(candidates),
   });
   return {
@@ -205,7 +204,7 @@ function routeDefaultTeammate(input: ChannelMessageRouteInput, candidates: reado
     teammateId: defaultCandidate.teammate.id,
     providerPresetId: defaultCandidate.providerPresetId,
     reason: decision.reason,
-    createdBy: "deterministic",
+    createdBy,
   };
 }
 
@@ -215,16 +214,7 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
     const output = route.output;
     const validated = validateModelRouteOutput(output, candidates);
     if (validated.action === "no_reply") {
-      const decision = persistRouteDecision(input, {
-        action: "no_reply",
-        confidence: validated.confidence,
-        reason: validated.reason,
-        status: "suppressed",
-        createdBy: "model",
-        alternativesConsidered: validated.alternativesConsidered,
-        contextPack: route.contextPack,
-      });
-      return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
+      return routeDefaultTeammate(input, candidates, `Ling Agent fallback replied after teammate selection skipped the message: ${validated.reason}`, "model");
     }
     if (hasExistingReplyForSource(input, validated.teammateId)) {
       const decision = persistRouteDecision(input, {
@@ -257,19 +247,8 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
       reason: decision.reason,
       createdBy: "model",
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const contextPack = error instanceof ChannelAutoRouteModelError ? error.contextPack : undefined;
-    const decision = persistRouteDecision(input, {
-      action: "no_reply",
-      reason: "Model route failed closed.",
-      status: "failed",
-      createdBy: "model",
-      alternativesConsidered: candidatesToAlternatives(candidates),
-      contextPack,
-      errorMessage: message,
-    });
-    return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
+  } catch {
+    return routeDefaultTeammate(input, candidates, "Ling Agent fallback replied after automatic teammate selection failed.", "model");
   }
 }
 
@@ -293,79 +272,7 @@ function deterministicNoReplyReason(input: ChannelMessageRouteInput): string | u
   if (!message.body.trim() && message.attachmentIds.length === 0 && message.linkPreviewIds.length === 0) {
     return "Message is empty.";
   }
-  if (!isReplyWorthy(message, input.store)) {
-    return "Message is not reply-worthy.";
-  }
-  if (isRepeatedShortGreeting(input)) {
-    return "Repeated short greeting was suppressed.";
-  }
   return undefined;
-}
-
-function isReplyWorthy(message: ChannelMessage, store: RunStore): boolean {
-  const text = message.body.trim();
-  const lower = text.toLowerCase();
-  const compact = lower.replace(/\s+/g, " ");
-  const noReply = new Set(["ok", "okay", "k", "yes", "no", "thanks", "done", "收到", "好的", "嗯", "好", "可以", "行", "谢谢"]);
-  if (noReply.has(compact)) {
-    return false;
-  }
-  if (message.attachmentIds.length > 0 || message.linkPreviewIds.length > 0) {
-    return hasQuestionMarker(text) || text.length >= 12;
-  }
-  if (normalizeGreeting(text)) {
-    return true;
-  }
-  if (hasQuestionMarker(text)) {
-    return true;
-  }
-  if (/^(what|how|why|can|should|is|do|help|explain|define|summarize)\b/i.test(text)) {
-    return true;
-  }
-  if (/(什么|怎么|为什么|是否|能不能|可以吗|是什么|怎么做|有多少|多少个|几个|几位|有没有|吗|呢|谁|哪里|哪儿|何时|如何)/u.test(text)) {
-    return true;
-  }
-  if (text.length >= 48 && !looksLikePathOrId(text)) {
-    return true;
-  }
-  return false;
-}
-
-function hasQuestionMarker(text: string): boolean {
-  return text.includes("?") || text.includes("？");
-}
-
-function looksLikePathOrId(text: string): boolean {
-  return /^[./~\w-]+(?:\/[./~\w-]+)+$/.test(text) || /^[a-zA-Z0-9_-]{12,}$/.test(text);
-}
-
-function isRepeatedShortGreeting(input: ChannelMessageRouteInput): boolean {
-  const normalized = normalizeGreeting(input.sourceMessage.body);
-  if (!normalized) {
-    return false;
-  }
-  const recent = input.store
-    .listChannelMessages({ channelId: input.channel.id, limit: 12 })
-    .filter((message) => message.id !== input.sourceMessage.id);
-  const matchingGreetingIds = new Set(
-    recent
-      .filter((message) => message.authorType === "local-user" && normalizeGreeting(message.body) === normalized)
-      .map((message) => message.id),
-  );
-  return recent.some((message) =>
-    message.kind === "ai_reply" &&
-    message.status !== "failed" &&
-    message.threadId !== undefined &&
-    matchingGreetingIds.has(message.threadId)
-  );
-}
-
-function normalizeGreeting(text: string): string | undefined {
-  const normalized = text.toLowerCase().replace(/[?!？！，,.\s]/g, "").trim();
-  if (!normalized || normalized.length > 12) {
-    return undefined;
-  }
-  return ["hi", "hello", "hey", "你好", "您好", "哈喽"].includes(normalized) ? normalized : undefined;
 }
 
 function buildRouteCandidates(input: ChannelMessageRouteInput, defaultTeammateId: string | undefined): RouteCandidate[] {
@@ -393,6 +300,16 @@ function buildRouteCandidates(input: ChannelMessageRouteInput, defaultTeammateId
     }
     if (candidates.length >= 8) {
       break;
+    }
+  }
+  if (!candidates.some((candidate) => candidate.teammate.id === "ling_agent")) {
+    const providerPresetId = resolveRunnableProviderPresetId(input, undefined);
+    if (providerPresetId) {
+      candidates.push({
+        teammate: createLingAgentExecutor(new Date().toISOString()),
+        providerPresetId,
+        preferred: candidates.length === 0,
+      });
     }
   }
   return candidates;

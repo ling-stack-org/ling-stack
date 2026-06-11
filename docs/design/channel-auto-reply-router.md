@@ -64,9 +64,10 @@ message:
 
 - `@ProductStrategy hello` creates an explicit AI reply and records route evidence with
   `createdBy: "explicit_mention"`;
-- `hello` and short acknowledgements create only a local-user channel message plus
-  suppressed route evidence;
-- `What is the acceptance scope?` creates no AI reply in `mentions_only`;
+- `hello`, short acknowledgements, and punctuation fragments create a visible Ling reply
+  or a visible blocked Ling reply if the channel has no runnable provider;
+- `What is the acceptance scope?` creates one ordinary `ai_reply` even in legacy
+  `mentions_only`; the storage enum no longer means root user turns are ignored;
 - the same question creates one ordinary `ai_reply` from the channel default teammate in
   `default_teammate`, if that teammate has a runnable provider;
 - the same question can create one ordinary `ai_reply` from the model-selected teammate in
@@ -168,6 +169,21 @@ Semantics:
 Default must be `mentions_only` for existing channels and new channels unless the user
 changes the setting.
 
+These enum names are storage/API names, not product copy. The ordinary channel settings
+UI should not expose this mode. If a developer diagnostic or evidence detail needs to
+render the value, describe it through the Ling Agent model:
+
+| Storage value | User-facing copy |
+| --- | --- |
+| `mentions_only` | Only when mentioned / 仅 @ 时交给 Ling |
+| `default_teammate` | Preferred teammate reply / 首选队友回复 |
+| `auto_route` | Ling Agent decides / Ling Agent 自动判断 |
+
+Do not show "auto route", "selector", "router", "not auto-replied", "why no reply",
+"direct workflow proposal", or "why this handling" as ordinary user-facing configuration
+or message chrome. Those terms are allowed only in developer diagnostics and evidence
+details.
+
 Implementation priority:
 
 - implement `auto_route` first because it is the desired channel behavior;
@@ -242,13 +258,14 @@ user sends ordinary root channel question
 Rules:
 
 - explicit AI teammate mentions still win in every mode;
-- no explicit mention plus `mentions_only` creates no reply;
+- no explicit mention plus `mentions_only` uses the same visible Ling reply contract as
+  ordinary root channel messages;
 - no explicit mention plus `default_teammate` routes only to `channel.defaultTeammateId`;
 - if `channel.defaultTeammateId` is missing, disabled, hidden, not a channel member, or has
-  no runnable provider, suppress the reply and record route evidence;
-- use the same reply-worthy heuristic as `auto_route`;
-- suppress short acknowledgements, repeated greetings, AI/system messages, thread replies
-  outside P0 scope, and non-active channels;
+  no runnable provider, fall back to Ling Agent or show a visible blocked Ling reply;
+- do not use reply-worthiness heuristics to suppress root local-user messages;
+- suppress only AI/system messages, thread replies outside P0 scope, empty messages with
+  no assets, and non-active channels;
 - create at most one AI reply for the source message;
 - use `proposalMode: "disabled"` unless the user explicitly mentioned a teammate and the
   existing explicit-reply path owns the behavior;
@@ -317,13 +334,15 @@ Reply-worthy:
 - message has attachments or links plus a question marker;
 - message length is above a small threshold and is not a status fragment.
 
-Not reply-worthy:
+Legacy not-reply-worthy examples are no longer valid for root local-user messages:
 
 - `ok`, `okay`, `k`, `yes`, `no`, `thanks`, `done`, `收到`, `好的`, `嗯`, `好`,
-  `可以`, `行`, `谢谢`;
+  `可以`, `行`, `谢谢` should receive a concise visible Ling reply;
 - greetings shorter than a threshold, such as `hi`, `hello`, `你好`, `你好?`, when the
-  same user has sent a similar greeting recently;
-- messages that are only file paths, raw ids, or status fragments.
+  same user has sent a similar greeting recently, should receive a concise visible Ling
+  reply;
+- messages that are only file paths, raw ids, or status fragments should receive a
+  clarification or a concise visible Ling reply.
 
 The goal is not perfect natural language understanding. It is to avoid silence for clear
 questions while preventing noisy bot behavior.
@@ -389,8 +408,9 @@ interface ChannelAutoRouteModelOutput {
 
 Required behavior:
 
-- choose `no_reply` for acknowledgements, repeated greetings, ambiguous status fragments,
-  or messages that do not need AI;
+- choose `reply` for root local-user acknowledgements, repeated greetings, punctuation
+  fragments, and ambiguous status fragments; keep the reply concise;
+- choose `no_reply` only for inputs that are not eligible user turns;
 - choose exactly one teammate when replying;
 - explain the reason in one short sentence;
 - include alternatives considered without chain-of-thought;
@@ -828,12 +848,13 @@ Files:
 Implemented:
 
 - keep explicit mentions behavior unchanged;
-- suppress obvious `no_reply` messages before model calls;
+- do not suppress root local-user messages before model calls merely because they are
+  short, confirmatory, or repeated greetings;
 - build and validate teammate candidates for `auto_route`;
 - route non-mention questions to `defaultTeammateId` when mode is `default_teammate`,
   if that mode is included in the same slice;
-- suppress short acknowledgements, repeated greetings, AI/system messages, and invalid
-  teammates;
+- suppress AI/system messages and invalid teammates only; root local-user messages still
+  need a visible Ling outcome;
 - avoid duplicate replies for the same source message.
 - return a route result without calling the model while P0-C evidence storage is being
   wired; this makes the deterministic layer independently testable.
@@ -841,11 +862,11 @@ Implemented:
 Validation:
 
 - explicit mention still replies;
-- ordinary question does not reply in `mentions_only`;
+- ordinary root user message replies in `mentions_only`;
 - ordinary question enters auto-route only in `auto_route`;
 - ordinary question replies through `default_teammate` only when that mode is enabled;
-- short acknowledgement does not call the model;
-- repeated greeting does not call the model or create repeated AI replies;
+- short acknowledgement creates a concise visible Ling reply;
+- repeated greeting creates a concise visible Ling reply;
 - AI reply message does not trigger another reply.
 
 ### P0-C Route Decision Store
@@ -895,17 +916,17 @@ Implemented:
 - request strict JSON output;
 - validate structured output;
 - create one AI reply only after validation;
-- fail closed to `no_reply` on invalid output unless fallback policy explicitly allows a
-  valid default teammate fallback.
+- fall back to a valid default teammate or visible blocked Ling reply on invalid output
+  instead of silently ending a root user turn.
 
 Validation:
 
 - model-selected teammate creates one AI reply;
-- `no_reply` model output creates no AI reply;
-- invalid JSON creates no AI reply and records evidence;
-- low confidence creates no AI reply;
-- unknown teammate creates no AI reply;
-- selected teammate without runnable provider creates no AI reply.
+- `no_reply` model output falls back to an ordinary visible Ling reply;
+- invalid JSON falls back to an ordinary visible Ling reply and records evidence;
+- low confidence falls back to an ordinary visible Ling reply;
+- unknown teammate falls back to an ordinary visible Ling reply;
+- selected teammate without runnable provider creates a visible blocked Ling reply.
 - auto-routed reply body containing a proposal block does not create a
   `ChannelExecutionProposal`.
 
@@ -939,13 +960,13 @@ Validation:
 
 Add coverage around the screenshot scenario:
 
-- channel with default teammate and `mentions_only`: ordinary question does not create
-  AI reply;
+- channel with default teammate and `mentions_only`: ordinary root user message creates
+  a visible Ling reply;
 - channel with multiple active teammates and `auto_route`: ordinary question creates one
   AI reply from the model-selected teammate;
-- model `no_reply` creates no AI reply;
-- invalid model output creates no AI reply and records failure/suppression evidence;
-- repeated `hello?` does not call the model or spam several AI replies;
+- model `no_reply` creates a fallback visible Ling reply;
+- invalid model output creates a fallback visible Ling reply and records evidence;
+- repeated `hello?` creates a concise visible Ling reply;
 - explicit `@teammate` still replies in every mode.
 - auto-routed reply does not create a channel execution proposal, task, run, workflow step,
   or channel branch.
@@ -956,8 +977,8 @@ The `default_teammate` design is defined above as a deterministic router mode. I
 implemented with P0 if cheap, but it is not the first product target. If deferred, keep
 the remaining work as a follow-up:
 
-- ordinary question replies only in `default_teammate`;
-- ordinary question does not reply in `mentions_only`;
+- ordinary root user message replies in both `default_teammate` and legacy
+  `mentions_only`;
 - show a blocker when `default_teammate` has no default teammate;
 - changing mode persists after refresh;
 - channel with default teammate and `default_teammate`: ordinary question creates one AI
