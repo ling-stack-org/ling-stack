@@ -1144,6 +1144,11 @@ button.artifact-action-link {
   font-size: 12px;
 }
 
+.channel-message-row > .teammate-avatar-image.compact {
+  width: 30px;
+  height: 30px;
+}
+
 .channel-message-row > div {
   position: relative;
   display: grid;
@@ -3581,6 +3586,13 @@ code,
   height: 24px;
   font-size: 12px;
   font-weight: 750;
+}
+
+.channel-teammate-chip .teammate-avatar-image.compact,
+.channel-create-teammate .teammate-avatar-image.compact {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
 }
 
 .channel-teammate-chip strong {

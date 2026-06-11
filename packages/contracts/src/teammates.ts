@@ -49,6 +49,7 @@ export interface AiTeammate {
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
   readonly providerPresetId?: string;
+  readonly runnerId?: string;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt: readonly string[];
   readonly allowedTools: readonly ToolName[];
@@ -68,6 +69,7 @@ export interface CreateAiTeammateRequest {
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
   readonly providerPresetId?: string;
+  readonly runnerId?: string;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
   readonly allowedTools?: readonly ToolName[];
@@ -85,6 +87,7 @@ export interface UpdateAiTeammateRequest {
   readonly avatarTone?: string | null;
   readonly avatarImageAttachmentId?: string | null;
   readonly providerPresetId?: string | null;
+  readonly runnerId?: string | null;
   readonly systemPrompt?: string | null;
   readonly appendSystemPrompt?: readonly string[];
   readonly allowedTools?: readonly ToolName[];

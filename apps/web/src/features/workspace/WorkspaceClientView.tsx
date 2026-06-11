@@ -122,6 +122,7 @@ import {
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
 import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
+import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import {
   ArtifactRow,
   AvatarInitial,
@@ -2413,6 +2414,10 @@ export function WorkspaceClientView({
     () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
     [activeLocalTeammates],
   );
+  const allLocalTeammateById = useMemo(
+    () => new Map(localTeammates.map((teammate) => [teammate.id, teammate])),
+    [localTeammates],
+  );
   const channelTeammates = useMemo(
     () => {
       const selectedChannelDefaultTeammateId = selectedChannel?.defaultTeammateId;
@@ -2844,6 +2849,19 @@ export function WorkspaceClientView({
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
   const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0;
 
+  function renderChannelMessageAvatar(message: ChannelMessage): ReactNode {
+    if (message.authorType === "ai-teammate") {
+      const teammate = allLocalTeammateById.get(message.authorId ?? "");
+      return teammate
+        ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
+        : <AvatarInitial label="A" tone="teal" />;
+    }
+    if (message.authorType === "system") {
+      return <AvatarInitial label="S" tone="violet" />;
+    }
+    return <AvatarInitial label="T" />;
+  }
+
   function renderMessageFeedActivityItem(item: ChannelActivityItem): ReactNode {
     if (item.kind === "message") {
       const message = item.record;
@@ -2869,8 +2887,8 @@ export function WorkspaceClientView({
             <MessageRow
               className={message.status === "blocked" ? "channel-message-row blocked" : "channel-message-row"}
               authorType={message.authorType}
-              avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
-              authorName={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"))}
+              avatar={renderChannelMessageAvatar(message)}
+              authorName={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), allLocalTeammateById)}
               createdAtLabel={formatDateTime(message.createdAt)}
               statusNode={message.kind === "ai_reply" ? <small className="conversation-message-tag">AI</small> : null}
               bodyNode={(
@@ -2990,8 +3008,8 @@ export function WorkspaceClientView({
           <MessageBubble
             tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
             side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
-            avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
-            author={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"))}
+            avatar={renderChannelMessageAvatar(message)}
+            author={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), allLocalTeammateById)}
             tag={message.kind === "task_link" ? "Task" : undefined}
             time={formatDateTime(message.createdAt)}
             body={pendingAiReply ? t("AI teammate is replying...") : message.body}
@@ -3609,7 +3627,7 @@ export function WorkspaceClientView({
                   }}
                   disabled={saving}
                 >
-                  <AvatarInitial label={teammate.displayName.slice(0, 1).toUpperCase() || "A"} tone={isDefault ? "teal" : "gray"} />
+                  <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
                   <strong>{teammate.displayName}</strong>
                 </button>
                 <button className="channel-teammate-remove-button" type="button" aria-label={t("Remove from channel")} title={t("Remove from channel")} onClick={() => void onRemoveChannelTeammate(teammate.id)} disabled={saving}>
@@ -4227,7 +4245,7 @@ export function WorkspaceClientView({
                           aria-pressed={selected}
                           onClick={() => toggleCreateChannelTeammate(teammate.id)}
                         >
-                          <AvatarInitial label={teammate.displayName.slice(0, 1).toUpperCase() || "A"} tone={isDefault ? "teal" : "gray"} />
+                          <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
                           <span>
                             <strong>{teammate.displayName}</strong>
                             <small>{isDefault ? t("Default teammate") : selected ? t("Joined channel") : t("Not joined")}</small>
@@ -4555,6 +4573,7 @@ export function WorkspaceClientView({
                     rootMessage={activeThreadRoot}
                     replies={activeThreadMessages}
                     teammates={teammateOptions}
+                    teammateById={allLocalTeammateById}
                     memoryById={memoryById}
                     usedMemoryEvents={usedMemoryEvents}
                     draft={threadReplyDraft}
@@ -7494,6 +7513,7 @@ function ThreadReplyPanel({
   rootMessage,
   replies,
   teammates,
+  teammateById,
   memoryById,
   usedMemoryEvents,
   draft,
@@ -7507,6 +7527,7 @@ function ThreadReplyPanel({
   readonly rootMessage: ChannelMessage;
   readonly replies: readonly ChannelMessage[];
   readonly teammates: readonly ChannelMention[];
+  readonly teammateById: ReadonlyMap<string, { readonly displayName: string }>;
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly draft: string;
@@ -7532,7 +7553,7 @@ function ThreadReplyPanel({
       </div>
       <div className="thread-root-message">
         {rootMessageIsOwn ? null : (
-          <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates, t("Deleted teammate")) })}</small>
+          <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates, t("Deleted teammate"), teammateById) })}</small>
         )}
         <MessageBodyRenderer text={rootMessage.body} cwd={cwd} compact />
         <UsedMemorySummary
@@ -7550,7 +7571,7 @@ function ThreadReplyPanel({
             <article key={reply.id} className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}>
               {replyIsOwn ? null : (
                 <div className="thread-reply-meta">
-                  <strong>{messageAuthorLabel(reply, teammates, t("Deleted teammate"))}</strong>
+                  <strong>{messageAuthorLabel(reply, teammates, t("Deleted teammate"), teammateById)}</strong>
                   {reply.kind === "ai_reply" ? <small>AI</small> : null}
                 </div>
               )}
@@ -8913,19 +8934,33 @@ function channelRouteDecisionUserReason(decision: ChannelMessageRouteDecision, t
   }
 }
 
-function messageAuthorLabel(message: ChannelMessage, teammates: readonly ChannelMention[], deletedTeammateLabel = "Deleted teammate"): string {
+function messageAuthorLabel(
+  message: ChannelMessage,
+  teammates: readonly ChannelMention[],
+  deletedTeammateLabel = "Deleted teammate",
+  teammateById?: ReadonlyMap<string, { readonly displayName: string }>,
+): string {
   if (message.authorType === "system") {
     return "Ling Stack";
   }
   if (message.authorType === "ai-teammate") {
-    return teammateLabel(message.authorId, teammates, deletedTeammateLabel);
+    return teammateLabel(message.authorId, teammates, deletedTeammateLabel, teammateById);
   }
   return message.authorId ?? "Tian";
 }
 
-function teammateLabel(teammateId: string | undefined, teammates: readonly ChannelMention[], fallback = "AI teammate"): string {
+function teammateLabel(
+  teammateId: string | undefined,
+  teammates: readonly ChannelMention[],
+  fallback = "AI teammate",
+  teammateById?: ReadonlyMap<string, { readonly displayName: string }>,
+): string {
   if (!teammateId) {
     return fallback;
+  }
+  const teammate = teammateById?.get(teammateId);
+  if (teammate) {
+    return teammate.displayName;
   }
   return teammates.find((teammate) => teammate.id === teammateId)?.label ?? fallback;
 }

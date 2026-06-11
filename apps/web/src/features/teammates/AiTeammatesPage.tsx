@@ -40,11 +40,10 @@ import {
   approvalProfileText,
   roleAvatarTone,
   roleLabel,
-  teammateInitial,
-  teammateInitialFromName,
   teammateTemplateMatchesFilter,
   workflowPhaseLabel,
 } from "./helpers.js";
+import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
@@ -69,6 +68,7 @@ const teammateMemorySources: readonly { readonly id: string; readonly label: str
 ];
 
 export function AiTeammatesPage({
+  cwd,
   skillPack,
   providers,
   channels,
@@ -79,6 +79,7 @@ export function AiTeammatesPage({
   onToggleTeammateHidden,
   onOpenProviders,
 }: {
+  readonly cwd: string;
   readonly skillPack: SkillPack | undefined;
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
@@ -398,7 +399,7 @@ export function AiTeammatesPage({
                 const ready = provider ? providerPreflightReady(provider) : false;
                 return (
                   <article key={draft.id} className={draft.hidden ? "teammate-draft-row hidden-row" : "teammate-draft-row"}>
-                    <AvatarInitial label={template ? teammateInitial(template) : teammateInitialFromName(draft.displayName)} tone={template ? roleAvatarTone(template.roleKey) : "gray"} />
+                    <TeammateAvatarView teammate={draft} cwd={cwd} compact />
                     <span className="teammate-draft-copy">
                       <strong>{draft.displayName}</strong>
                       <small>{draft.modelLabel} · {draftChannels.length ? draftChannels.join(", ") : t("No channel")}</small>

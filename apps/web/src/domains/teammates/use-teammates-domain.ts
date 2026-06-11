@@ -59,7 +59,8 @@ export interface TeammatesActions {
   readonly addAiTeammate: (input: TeammateCreateInput) => Promise<void>;
   readonly removeAiTeammate: (teammateId: string) => Promise<void>;
   readonly hardDeleteAiTeammateAndRefresh: (teammateId: string, reason?: string) => Promise<void>;
-  readonly updateAiTeammateSettings: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<void>;
+  readonly updateAiTeammateSettings: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<AiTeammate>;
+  readonly upsertAiTeammate: (teammate: AiTeammate) => void;
   readonly toggleAiTeammatePinned: (teammateId: string) => Promise<void>;
   readonly toggleAiTeammateHidden: (teammateId: string) => Promise<void>;
   readonly addChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
@@ -193,18 +194,20 @@ export function useTeammatesDomain(input: {
     }
   }
 
-  async function updateAiTeammateSettings(teammateId: string, updateInput: UpdateAiTeammateRequest): Promise<void> {
+  async function updateAiTeammateSettings(teammateId: string, updateInput: UpdateAiTeammateRequest): Promise<AiTeammate> {
     const cwd = input.cwd.trim();
     if (!cwd) {
       input.setErrorMessage("本地工作区未就绪");
-      return;
+      throw new Error("本地工作区未就绪");
     }
     setAiTeammatesLoading(true);
     try {
       input.setErrorMessage("");
       setError(undefined);
-      await updateAiTeammate(cwd, teammateId, updateInput);
-      await refreshAiTeammates(cwd);
+      const response = await updateAiTeammate(cwd, teammateId, updateInput);
+      setAiTeammates((current) => upsertAiTeammate(current, response.teammate));
+      void refreshAiTeammates(cwd);
+      return response.teammate;
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "mutation", message });
@@ -227,6 +230,10 @@ export function useTeammatesDomain(input: {
     if (teammate) {
       await updateAiTeammateSettings(teammateId, { hidden: !teammate.hidden });
     }
+  }
+
+  function upsertAiTeammateAction(teammate: AiTeammate): void {
+    setAiTeammates((current) => upsertAiTeammate(current, teammate));
   }
 
   async function refreshAiTeammates(cwd = input.cwd.trim()): Promise<void> {
@@ -376,6 +383,7 @@ export function useTeammatesDomain(input: {
       removeAiTeammate,
       hardDeleteAiTeammateAndRefresh,
       updateAiTeammateSettings,
+      upsertAiTeammate: upsertAiTeammateAction,
       toggleAiTeammatePinned,
       toggleAiTeammateHidden,
       addChannelTeammate,
@@ -409,6 +417,14 @@ function buildMemoryScopesForTeammate(
     }
   }
   return scopes;
+}
+
+function upsertAiTeammate(current: readonly AiTeammate[], teammate: AiTeammate): readonly AiTeammate[] {
+  const existingIndex = current.findIndex((item) => item.id === teammate.id);
+  if (existingIndex < 0) {
+    return [...current, teammate];
+  }
+  return current.map((item, index) => index === existingIndex ? teammate : item);
 }
 
 function toContractApprovalProfile(

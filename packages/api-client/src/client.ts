@@ -1182,7 +1182,7 @@ export class LingDaemonClient {
   }
 
   async deleteTeammateAvatar(cwd: string, teammateId: string): Promise<AiTeammateMutationResponse> {
-    return this.request("DELETE", `/teammates/${encodeURIComponent(teammateId)}/avatar`, { cwd });
+    return this.requestJson("DELETE", `/teammates/${encodeURIComponent(teammateId)}/avatar`, { cwd });
   }
 
   async listTeammateTasks(cwd: string, teammateId: string, limit = 100): Promise<TaskListResponse> {

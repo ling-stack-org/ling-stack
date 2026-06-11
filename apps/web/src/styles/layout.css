@@ -278,6 +278,12 @@ textarea {
   white-space: nowrap;
 }
 
+.sidebar-row .teammate-avatar-image.compact {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
 .sidebar-row small {
   padding: 1px 4px;
   border: 1px solid var(--warning-border);
@@ -548,6 +554,11 @@ textarea {
   width: 30px;
   height: 30px;
   font-size: 12px;
+}
+
+.message-bubble .teammate-avatar-image.compact {
+  width: 30px;
+  height: 30px;
 }
 
 .message-bubble-inline {

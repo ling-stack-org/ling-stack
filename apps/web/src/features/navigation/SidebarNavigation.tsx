@@ -23,8 +23,8 @@ import {
   type ViewId,
 } from "../../app/view-types.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import { AvatarInitial } from "../../shared/components/index.js";
 import type { AiTeammate, ApprovalRequest, Channel, ChannelBranch } from "../../types.js";
+import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 
 export interface SidebarNotification {
   readonly count?: number;
@@ -38,6 +38,7 @@ export function SidebarNavigation({
   selectedChannelBranchId = "",
   teammates,
   approvals,
+  cwd,
   channelNotifications = {},
   teammateNotifications = {},
   onOpenView,
@@ -58,6 +59,7 @@ export function SidebarNavigation({
   readonly selectedChannelBranchId?: string;
   readonly teammates: readonly AiTeammate[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly cwd: string;
   readonly channelNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly teammateNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly onOpenView: (view: ViewId) => void;
@@ -269,7 +271,7 @@ export function SidebarNavigation({
               type="button"
               onClick={() => onSelectTeammate(teammate.id)}
             >
-              <AvatarInitial label={teammateInitial(teammate.displayName)} tone="gray" />
+              <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
               <span>{teammate.displayName}</span>
               {renderSidebarNotification(teammateNotifications[teammate.id])}
             </button>
@@ -293,10 +295,6 @@ export function SidebarNavigation({
       </aside>
     </>
   );
-}
-
-function teammateInitial(name: string): string {
-  return name.trim().slice(0, 1).toUpperCase() || "A";
 }
 
 function renderSidebarNotification(notification: SidebarNotification | undefined): JSX.Element | null {
