@@ -925,6 +925,11 @@ button.artifact-action-link {
 }
 
 .channel-run-guidance-row-actions .icon-button {
+  display: inline-grid;
+  align-items: center;
+  justify-content: center;
+  place-items: center;
+  padding: 0;
   width: 26px;
   height: 26px;
   border-color: color-mix(in srgb, var(--border) 74%, transparent);

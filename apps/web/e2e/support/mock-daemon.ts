@@ -4097,13 +4097,20 @@ export async function handleDaemonRoute(
       isActiveMockWorkUnit(unit.status)
     );
     if (activeWorkUnitIndex < 0) {
+      const intervention = {
+        ...current,
+        status: "starting_continuation",
+        startedAt: current.startedAt ?? "2026-06-04T00:32:30.000Z",
+        updatedAt: "2026-06-04T00:32:30.000Z",
+      } satisfies MockTeammateDirectIntervention;
+      state.teammateDirectInterventions[interventionIndex] = intervention;
       await route.fulfill({
         json: {
           cwd,
-          teammateId: current.teammateId,
-          intervention: current,
-          runtime: buildMockTeammateDirectRuntime(state, current.teammateId, thread),
-          message: "当前回复已结束，这条引导会按排队顺序继续执行。",
+          teammateId: intervention.teammateId,
+          intervention,
+          runtime: buildMockTeammateDirectRuntime(state, intervention.teammateId, thread),
+          message: "当前回复已结束，已开始执行这条引导。",
         },
       });
       return;

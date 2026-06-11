@@ -3405,6 +3405,123 @@ test("teammate direct queued guidance can promote to immediate continuation", as
   }
 });
 
+test("teammate direct queued guidance starts automatically after source reply completes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-queued-guidance-"));
+  const runner = new AbortableDelayedRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const streamResponse = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Start and then follow queued guidance.", providerPresetId: provider.id }),
+    });
+    assert.equal(streamResponse.status, 200);
+    await waitForCondition(() => runner.runs.length === 1, "source private reply to start");
+
+    const runtime = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-runtime?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(runtime.activeReply?.workUnitId);
+    const queued = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "queue_followup",
+      instruction: "Continue from the queued guidance.",
+      idempotencyKey: "test-auto-queued-guidance",
+    });
+    assert.equal(queued.intervention.status, "queued");
+
+    runner.resolve("Initial private reply");
+    await waitForCondition(() => runner.runs.length === 2, "queued continuation to start");
+    assert.equal(runner.runs[1].task.prompt.includes("Continue from the queued guidance."), true);
+    assert.equal(runner.runs[1].task.prompt.includes("排队引导"), true);
+    runner.resolve("Queued continuation reply");
+    await streamResponse.text();
+
+    const listedInterventions = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listedInterventions.interventions.some((item) => item.id === queued.intervention.id), false);
+    const messages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(messages.messages.some((message) => message.authorType === "system" && message.body.includes("Continue from the queued guidance.")), true);
+    assert.equal(messages.messages.at(-1).body, "Queued continuation reply");
+  } finally {
+    runner.resolve("cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate direct queued guidance drains multiple queued items in thread FIFO order", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-queued-guidance-fifo-"));
+  const runner = new AbortableDelayedRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const streamResponse = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Start and then drain queued guidance.", providerPresetId: provider.id }),
+    });
+    assert.equal(streamResponse.status, 200);
+    await waitForCondition(() => runner.runs.length === 1, "source private reply to start");
+
+    const runtime = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-runtime?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(runtime.activeReply?.workUnitId);
+    const queuedInstructions = [
+      "Queued guidance one.",
+      "Queued guidance two.",
+      "Queued guidance three.",
+    ];
+    const queued = [];
+    for (const [index, instruction] of queuedInstructions.entries()) {
+      const response = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`, {
+        mode: "queue_followup",
+        instruction,
+        idempotencyKey: `test-auto-queued-guidance-fifo-${index}`,
+      });
+      assert.equal(response.intervention.status, "queued");
+      queued.push(response.intervention);
+    }
+
+    runner.resolve("Initial private reply");
+    await waitForCondition(() => runner.runs.length === 2, "first queued continuation to start");
+    assert.equal(runner.runs[1].task.prompt.includes(queuedInstructions[0]), true);
+
+    runner.resolve("First queued continuation reply");
+    await waitForCondition(() => runner.runs.length === 3, "second queued continuation to start");
+    assert.equal(runner.runs[2].task.prompt.includes(queuedInstructions[1]), true);
+
+    runner.resolve("Second queued continuation reply");
+    await waitForCondition(() => runner.runs.length === 4, "third queued continuation to start");
+    assert.equal(runner.runs[3].task.prompt.includes(queuedInstructions[2]), true);
+
+    runner.resolve("Third queued continuation reply");
+    await streamResponse.text();
+    const queuedIds = new Set(queued.map((item) => item.id));
+    await waitForCondition(async () => {
+      const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`);
+      return !listed.interventions.some((item) => queuedIds.has(item.id));
+    }, "queued guidance chain to close");
+    const messages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    for (const instruction of queuedInstructions) {
+      assert.equal(messages.messages.some((message) => message.authorType === "system" && message.body.includes(instruction)), true);
+    }
+    assert.equal(messages.messages.at(-1).body, "Third queued continuation reply");
+  } finally {
+    runner.resolve("cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("private attachments avatar and hard delete stay scoped to teammate private data", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachments-hard-delete-"));
   const daemon = await startDaemonForTest();
@@ -3873,7 +3990,7 @@ async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, s
 async function waitForCondition(predicate, label) {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));

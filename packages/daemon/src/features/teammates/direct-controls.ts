@@ -153,9 +153,24 @@ export class DirectReplyControlService {
     const thread = input.store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
     const active = this.findActiveReply(input.store, teammate.id, intervention.threadId);
     if (!active) {
+      const now = new Date().toISOString();
+      const starting = input.store.updateTeammateDirectReplyInterventionStatus({
+        interventionId: intervention.id,
+        status: "starting_continuation",
+        startedAt: intervention.startedAt ?? now,
+        now,
+      }) ?? intervention;
+      queueMicrotask(() => {
+        void this.startContinuation({
+          store: input.store,
+          teammate,
+          thread,
+          intervention: starting,
+        });
+      });
       return {
-        intervention,
-        message: "当前回复已结束，这条引导会按排队顺序继续执行。",
+        intervention: input.store.getTeammateDirectReplyIntervention(intervention.id) ?? starting,
+        message: "当前回复已结束，已开始执行这条引导。",
       };
     }
     const now = new Date().toISOString();
@@ -184,6 +199,9 @@ export class DirectReplyControlService {
   }
 
   async maybeStartNextQueuedContinuation(input: { readonly store: RunStore; readonly teammateId: string; readonly threadId: string; readonly sourceWorkUnitId?: string }): Promise<void> {
+    if (this.findActiveReply(input.store, input.teammateId, input.threadId)) {
+      return;
+    }
     const candidates = input.store
       .listTeammateDirectReplyInterventions({
         teammateId: input.teammateId,
@@ -191,7 +209,7 @@ export class DirectReplyControlService {
         status: "queued",
         limit: 100,
       })
-      .filter((intervention) => intervention.mode === "queue_followup" && (!input.sourceWorkUnitId || intervention.sourceWorkUnitId === input.sourceWorkUnitId));
+      .filter((intervention) => intervention.mode === "queue_followup");
     const next = candidates[0];
     if (!next) {
       return;
@@ -265,6 +283,11 @@ export class DirectReplyControlService {
       if (workUnit) {
         this.dependencies.activeDirectReplies.delete(workUnit.id);
       }
+      await this.maybeStartNextQueuedContinuation({
+        store: input.store,
+        teammateId: input.teammate.id,
+        threadId: input.thread.id,
+      });
     } catch (error) {
       input.store.updateTeammateDirectReplyInterventionStatus({
         interventionId: starting.id,
@@ -363,7 +386,13 @@ export async function handleTeammateDirectRuntime(
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
-      writeJson(response, 200, { cwd, ...service.getRuntime({ store, teammateId }) });
+      const runtime = service.getRuntime({ store, teammateId });
+      if (!runtime.activeReply && runtime.interventions.some((intervention) => intervention.mode === "queue_followup" && intervention.status === "queued")) {
+        queueMicrotask(() => {
+          void service.maybeStartNextQueuedContinuation({ store, teammateId, threadId: runtime.thread.id }).catch(() => undefined);
+        });
+      }
+      writeJson(response, 200, { cwd, ...runtime });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct-runtime` });

@@ -12,6 +12,9 @@ export interface MessageComposerProps {
   readonly sending?: boolean;
   readonly sendLabel: string;
   readonly sendingLabel: string;
+  readonly sendIcon?: ReactNode;
+  readonly sendingIcon?: ReactNode;
+  readonly sendButtonClassName?: string;
   readonly attachLabel?: string;
   readonly accept?: string;
   readonly multiple?: boolean;
@@ -36,6 +39,9 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
     sending = false,
     sendLabel,
     sendingLabel,
+    sendIcon,
+    sendingIcon,
+    sendButtonClassName,
     attachLabel,
     accept,
     multiple = true,
@@ -52,6 +58,7 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
   const rootClassName = ["composer-panel", "channel-composer", "message-composer", className].filter(Boolean).join(" ");
   const effectiveSendDisabled = disabled || sendDisabled || sending;
   const currentSendLabel = sending ? sendingLabel : sendLabel;
+  const currentSendIcon = sending ? (sendingIcon ?? <Loader2 className="spin" size={15} />) : (sendIcon ?? <Send size={15} />);
 
   return (
     <section className={rootClassName} aria-label={label}>
@@ -93,14 +100,14 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
           {toolContent}
         </div>
         <button
-          className="primary-button composer-send-button"
+          className={["primary-button", "composer-send-button", sendButtonClassName].filter(Boolean).join(" ")}
           type="button"
           onClick={() => void onSend()}
           disabled={effectiveSendDisabled}
           aria-label={currentSendLabel}
           title={currentSendLabel}
         >
-          {sending ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+          {currentSendIcon}
         </button>
       </div>
     </section>

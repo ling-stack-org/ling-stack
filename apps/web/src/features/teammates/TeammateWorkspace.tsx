@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -21,6 +21,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Square,
   SquareTerminal,
   Trash2,
   Upload,
@@ -209,11 +210,10 @@ export function TeammateWorkspace({
   const [thread, setThread] = useState<TeammateDirectThread | undefined>();
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
-  const [directGuidanceInstruction, setDirectGuidanceInstruction] = useState("");
+  const [directReplyOptimisticActive, setDirectReplyOptimisticActive] = useState(false);
   const [directGuidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "stop" | "">("");
   const [directGuidanceCancelingId, setDirectGuidanceCancelingId] = useState("");
   const [directGuidancePromotingId, setDirectGuidancePromotingId] = useState("");
-  const [directGuidanceClosingQueue, setDirectGuidanceClosingQueue] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
@@ -275,6 +275,7 @@ export function TeammateWorkspace({
   const [workspaceError, setWorkspaceError] = useState("");
   const privateFeedRef = useRef<HTMLDivElement | null>(null);
   const privateFeedPinnedToLatestRef = useRef(true);
+  const directGuidanceOperationSeqRef = useRef(0);
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const skillDefinitions = useMemo(() => {
     if (skillRegistryEntries.length > 0) {
@@ -411,9 +412,21 @@ export function TeammateWorkspace({
   );
   const providerReady = Boolean(provider && providerPreflightReady(provider));
   const providerRecovered = providerReady && Boolean(provider);
-  const hasPendingDirectReply = messages.some((message) => message.authorType === "ai-teammate" && message.status === "pending");
   const openDirectInterventions = directRuntime?.interventions ?? [];
-  const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || hasPendingDirectReply || openDirectInterventions.length > 0);
+  const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
+  const directReplyActive = Boolean(directRuntime?.activeReply || directReplyOptimisticActive);
+  const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || directReplyOptimisticActive || openDirectInterventions.length > 0);
+  const privateComposerSendDisabled = directReplyActive
+    ? Boolean(directGuidanceSubmitting)
+    : hasQueuedDirectGuidance || (!messageDraft.trim() && pendingAttachmentIds.length === 0);
+  const privateComposerSending = directReplyActive ? directGuidanceSubmitting === "stop" : sending;
+  const privateComposerSendLabel = directReplyActive ? t("Stop reply") : t("Send");
+  const privateComposerSendingLabel = directReplyActive ? t("Stop reply") : t("Sending...");
+  const privateComposerPlaceholder = directReplyActive
+    ? t("Type guidance, then press Enter to queue it")
+    : hasQueuedDirectGuidance
+      ? t("Guidance is queued. Wait for it to run, or run it now.")
+      : t("Message this AI teammate privately");
 
   useEffect(() => {
     setSettingsForm(teammateToSettingsForm(teammate));
@@ -439,7 +452,7 @@ export function TeammateWorkspace({
     setMessageSearchQuery("");
     setPendingAttachmentIds([]);
     setDirectRuntime(undefined);
-    setDirectGuidanceInstruction("");
+    setDirectReplyOptimisticActive(false);
     setDirectGuidanceSubmitting("");
     setDirectGuidanceCancelingId("");
     setDirectGuidancePromotingId("");
@@ -615,6 +628,17 @@ export function TeammateWorkspace({
     setThread(directResponse.thread);
     setMessages(directResponse.messages);
     setDirectRuntime(runtimeResponse);
+    setDirectReplyOptimisticActive(Boolean(runtimeResponse.activeReply));
+  }
+
+  async function resolveActiveDirectReply() {
+    if (directRuntime?.activeReply) {
+      return directRuntime.activeReply;
+    }
+    const runtimeResponse = await getTeammateDirectRuntime(cwd.trim(), teammate.id);
+    setDirectRuntime(runtimeResponse);
+    setDirectReplyOptimisticActive(Boolean(runtimeResponse.activeReply));
+    return runtimeResponse.activeReply;
   }
 
   async function sendPrivateMessage(): Promise<void> {
@@ -638,6 +662,9 @@ export function TeammateWorkspace({
         if (event.event === "ready") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamReadyEvent;
           setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
+          setDirectReplyOptimisticActive(true);
+          setSending(false);
+          void refreshDirectRuntime();
           return;
         }
         if (event.event === "delta") {
@@ -648,11 +675,14 @@ export function TeammateWorkspace({
         if (event.event === "done") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamDoneEvent;
           setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
+          setDirectReplyOptimisticActive(false);
           return;
         }
         if (event.event === "blocked") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamBlockedEvent;
           setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
+          setDirectReplyOptimisticActive(false);
+          setSending(false);
           return;
         }
         if (event.event === "error") {
@@ -664,6 +694,8 @@ export function TeammateWorkspace({
           if (data.error) {
             setWorkspaceError(data.error);
           }
+          setDirectReplyOptimisticActive(false);
+          setSending(false);
         }
       });
       const [activityResponse, usedMemoryResponse, memoryObjectsResponse, memoryHealthResponse, memoryReviewPolicyResponse, memoryPromotionInboxResponse] = await Promise.all([
@@ -689,17 +721,23 @@ export function TeammateWorkspace({
   }
 
   async function stopDirectReply(): Promise<void> {
-    const activeReply = directRuntime?.activeReply;
-    if (!activeReply || directGuidanceSubmitting) {
+    if (directGuidanceSubmitting) {
       return;
     }
     setDirectGuidanceSubmitting("stop");
     try {
       setWorkspaceError("");
+      const activeReply = await resolveActiveDirectReply();
+      if (!activeReply) {
+        setDirectReplyOptimisticActive(false);
+        setWorkspaceError(t("There is no active private reply right now."));
+        return;
+      }
       const response = await cancelTeammateDirectReply(cwd.trim(), activeReply.workUnitId, { reason: "user_requested" });
       if (response.message) {
         setMessages((current) => upsertDirectMessages(current, [response.message!]));
       }
+      setDirectReplyOptimisticActive(false);
       await refreshDirectRuntime();
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
@@ -708,24 +746,34 @@ export function TeammateWorkspace({
     }
   }
 
-  async function submitDirectGuidance(mode: "queue_followup" | "interrupt_redirect"): Promise<void> {
-    const instruction = directGuidanceInstruction.trim();
-    if (!instruction || !directRuntime?.activeReply || directGuidanceSubmitting) {
-      return;
+  async function submitDirectGuidance(mode: "queue_followup" | "interrupt_redirect", instructionInput = messageDraft): Promise<boolean> {
+    const instruction = instructionInput.trim();
+    if (!instruction || directGuidanceSubmitting) {
+      return false;
     }
     setDirectGuidanceSubmitting(mode);
     try {
       setWorkspaceError("");
+      const activeReply = await resolveActiveDirectReply();
+      if (!activeReply) {
+        setDirectReplyOptimisticActive(false);
+        setWorkspaceError(t("There is no active private reply right now."));
+        return false;
+      }
+      const operationId = directGuidanceOperationSeqRef.current + 1;
+      directGuidanceOperationSeqRef.current = operationId;
       const response = await createTeammateDirectIntervention(cwd.trim(), teammate.id, {
         mode,
         instruction,
-        idempotencyKey: `direct-guidance:${directRuntime.activeReply.workUnitId}:${mode}:${instruction}`,
+        idempotencyKey: `direct-guidance:${activeReply.workUnitId}:${mode}:${operationId}:${instruction}`,
       });
       setDirectRuntime(response.runtime);
-      setDirectGuidanceInstruction("");
+      setMessageDraft("");
       await refreshDirectRuntime();
+      return true;
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       setDirectGuidanceSubmitting("");
     }
@@ -748,32 +796,11 @@ export function TeammateWorkspace({
   }
 
   async function editDirectGuidance(intervention: TeammateDirectReplyIntervention): Promise<void> {
-    if (intervention.status !== "queued" || directGuidanceCancelingId || directGuidanceClosingQueue) {
+    if (intervention.status !== "queued" || directGuidanceCancelingId) {
       return;
     }
-    setDirectGuidanceInstruction(intervention.instruction);
+    setMessageDraft(intervention.instruction);
     await cancelDirectGuidance(intervention.id);
-  }
-
-  async function closeDirectGuidanceQueue(): Promise<void> {
-    const queuedInterventions = openDirectInterventions.filter((intervention) => intervention.status === "queued");
-    if (directGuidanceClosingQueue || queuedInterventions.length === 0) {
-      return;
-    }
-    setDirectGuidanceClosingQueue(true);
-    try {
-      setWorkspaceError("");
-      await Promise.all(
-        queuedInterventions.map((intervention) =>
-          cancelTeammateDirectIntervention(cwd.trim(), intervention.id, { reason: "queue_closed_by_user" }),
-        ),
-      );
-      await refreshDirectRuntime();
-    } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setDirectGuidanceClosingQueue(false);
-    }
   }
 
   async function promoteDirectGuidance(interventionId: string): Promise<void> {
@@ -797,6 +824,30 @@ export function TeammateWorkspace({
     } finally {
       setDirectGuidancePromotingId("");
     }
+  }
+
+  function handlePrivateComposerSubmit(): void {
+    if (directReplyActive) {
+      void stopDirectReply();
+      return;
+    }
+    void sendPrivateMessage();
+  }
+
+  function handlePrivateComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    if (directReplyActive) {
+      void submitDirectGuidance("queue_followup", messageDraft);
+      return;
+    }
+    if (hasQueuedDirectGuidance) {
+      setWorkspaceError(t("Guidance is already queued. Run or delete the queued message first."));
+      return;
+    }
+    void sendPrivateMessage();
   }
 
   async function refreshMemoryReviewData(): Promise<void> {
@@ -1663,47 +1714,37 @@ export function TeammateWorkspace({
             <>
               {hasDirectRuntimeActivity ? (
                 <ConversationGuidanceStrip
-                  title={directRuntime?.activeReply ? t("正在回复") : t("私聊引导")}
-                  description={directRuntime?.activeReply ? t("可以停止当前回复，或把新引导排队。") : t("已有排队引导。")}
-                  instruction={directGuidanceInstruction}
-                  instructionPlaceholder={t("输入新的引导，例如：先停一下，改为只列风险和下一步")}
-                  queueLabel={t("排队引导")}
-                  redirectLabel={t("停止并继续")}
-                  stopLabel={t("停止回复")}
+                  title={directReplyActive ? t("Replying") : t("Private guidance")}
+                  description={directReplyActive ? t("Stop the current reply or queue new guidance.") : t("Guidance is queued.")}
                   submitting={directGuidanceSubmitting}
-                  stopDisabled={!directRuntime?.activeReply}
-                  submitDisabled={!directRuntime?.activeReply || !directGuidanceInstruction.trim()}
+                  stopDisabled={!directReplyActive}
                   items={openDirectInterventions.map((intervention) => {
                     const isQueued = intervention.status === "queued";
-                    const rowBusy = directGuidanceCancelingId === intervention.id || directGuidancePromotingId === intervention.id || directGuidanceClosingQueue;
+                    const rowBusy = directGuidanceCancelingId === intervention.id || directGuidancePromotingId === intervention.id;
 
                     return {
                       id: intervention.id,
                       instruction: intervention.instruction,
                       statusLabel: teammateDirectInterventionStatusLabel(intervention.status, t),
                       meta: teammateDirectInterventionModeLabel(intervention.mode, t),
-                      promoteLabel: t("立即执行这条引导"),
+                      promoteLabel: t("Run this guidance now"),
                       promoteDisabled: rowBusy || Boolean(directGuidanceSubmitting),
                       promoteLoading: directGuidancePromotingId === intervention.id,
-                      onPromote: isQueued && directRuntime?.activeReply ? () => void promoteDirectGuidance(intervention.id) : undefined,
-                      deleteLabel: t("删除排队引导"),
+                      onPromote: isQueued ? () => void promoteDirectGuidance(intervention.id) : undefined,
+                      deleteLabel: t("Delete queued guidance"),
                       deleteDisabled: rowBusy,
                       deleteLoading: directGuidanceCancelingId === intervention.id,
                       onDelete: isQueued ? () => void cancelDirectGuidance(intervention.id) : undefined,
-                      moreLabel: t("更多引导操作"),
-                      editLabel: t("编辑消息"),
+                      moreLabel: t("More guidance actions"),
+                      editLabel: t("Edit message"),
                       editDisabled: rowBusy,
                       onEdit: isQueued ? () => void editDirectGuidance(intervention) : undefined,
-                      closeQueueLabel: t("关闭排队"),
-                      closeQueueDisabled: directGuidanceClosingQueue || !openDirectInterventions.some((item) => item.status === "queued"),
-                      closeQueueLoading: directGuidanceClosingQueue,
-                      onCloseQueue: isQueued ? () => void closeDirectGuidanceQueue() : undefined,
+                      closeQueueLabel: t("Close queue"),
+                      closeQueueDisabled: rowBusy,
+                      closeQueueLoading: directGuidanceCancelingId === intervention.id,
+                      onCloseQueue: isQueued ? () => void cancelDirectGuidance(intervention.id) : undefined,
                     };
                   })}
-                  onInstructionChange={setDirectGuidanceInstruction}
-                  onQueue={() => void submitDirectGuidance("queue_followup")}
-                  onRedirect={() => void submitDirectGuidance("interrupt_redirect")}
-                  onStop={() => void stopDirectReply()}
                 />
               ) : null}
               <MessageComposer
@@ -1711,15 +1752,17 @@ export function TeammateWorkspace({
                 label={t("Private chat composer")}
                 value={messageDraft}
                 rows={3}
-                sending={sending}
-                sendDisabled={!messageDraft.trim() && pendingAttachmentIds.length === 0}
-                sendLabel={t("Send")}
-                sendingLabel={t("Sending...")}
+                sending={privateComposerSending}
+                sendDisabled={privateComposerSendDisabled}
+                sendLabel={privateComposerSendLabel}
+                sendingLabel={privateComposerSendingLabel}
+                sendIcon={directReplyActive ? <Square size={15} /> : undefined}
                 attachLabel={uploadingAttachments ? t("Uploading...") : t("Attach files")}
                 accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-                placeholder={t("Message this AI teammate privately")}
+                placeholder={privateComposerPlaceholder}
                 onChange={setMessageDraft}
-                onSend={sendPrivateMessage}
+                onSend={handlePrivateComposerSubmit}
+                onKeyDown={handlePrivateComposerKeyDown}
                 onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
                 previewContent={pendingAttachments.length > 0 || composerFileReferenceParts.length > 0 ? (
                   <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
@@ -3218,17 +3261,17 @@ function teammateDirectInterventionStatusLabel(
 ): string {
   switch (status) {
     case "queued":
-      return t("已排队");
+      return t("Queued");
     case "cancelling_source":
-      return t("正在停止");
+      return t("Stopping");
     case "starting_continuation":
-      return t("正在继续");
+      return t("Continuing");
     case "started":
-      return t("已按新引导继续");
+      return t("Continued with new guidance");
     case "cancelled":
-      return t("已取消");
+      return t("Cancelled");
     case "failed":
-      return t("引导失败");
+      return t("Guidance failed");
   }
 }
 
@@ -3238,9 +3281,9 @@ function teammateDirectInterventionModeLabel(
 ): string {
   switch (mode) {
     case "queue_followup":
-      return t("回复后继续");
+      return t("Continue after reply");
     case "interrupt_redirect":
-      return t("停止并继续");
+      return t("Stop and continue");
   }
 }
 

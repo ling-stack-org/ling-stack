@@ -286,7 +286,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect.poll(() => state.teammatePrivateAttachments.length).toBe(1);
 
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
   await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
   const privateMessageRow = page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." });
@@ -538,7 +538,7 @@ test("AI teammate private chat demotes recovered provider preflight history", as
 
 test("AI teammate private chat exposes direct reply guidance and stop controls", async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.locale", "zh-CN");
   });
   const state = createBaseState({ approvalStatus: "expired" });
   const teammateId = "teammate_builtin_engineer";
@@ -585,47 +585,71 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
-  const guidance = page.getByLabel("Replying");
+  const guidance = page.getByLabel("正在回复");
+  const privateComposer = page.locator(".teammate-direct-composer");
+  const privateInput = privateComposer.getByPlaceholder("输入引导，回车加入队列");
   await expect(guidance).toBeVisible();
-  await expect(guidance.getByRole("button", { name: "Stop reply" })).toBeEnabled();
-  await expect(guidance.getByRole("button", { name: "Queue guidance" })).toBeDisabled();
+  await expect(guidance.locator("textarea")).toHaveCount(0);
+  await expect(privateComposer.getByRole("button", { name: "停止回复" })).toBeEnabled();
 
-  await guidance.getByPlaceholder("Add guidance").fill("Continue with only risks after this reply.");
-  await guidance.getByRole("button", { name: "Queue guidance" }).click();
+  await privateInput.fill("Continue with only risks after this reply.");
+  await privateInput.press("Enter");
   await expect.poll(() => state.teammateDirectInterventions.map((item) => [item.mode, item.status, item.instruction])).toEqual([
     ["queue_followup", "queued", "Continue with only risks after this reply."],
   ]);
-  await expect(guidance).toContainText("Queued");
-  await expect(guidance.getByRole("button", { name: "Run this guidance now" })).toBeEnabled();
-  await expect(guidance.getByRole("button", { name: "Delete queued guidance" })).toBeEnabled();
-  await guidance.getByRole("button", { name: "More guidance actions" }).click();
-  await expect(guidance.getByRole("menuitem", { name: "Edit message" })).toBeVisible();
-  await expect(guidance.getByRole("menuitem", { name: "Close queue" })).toBeVisible();
-  await guidance.getByRole("menuitem", { name: "Edit message" }).click();
-  await expect(guidance.getByPlaceholder("Add guidance")).toHaveValue("Continue with only risks after this reply.");
+  await expect(privateInput).toHaveValue("");
+  await expect(guidance).toContainText("已排队");
+  await expect(guidance.getByRole("button", { name: "立即执行这条引导" })).toBeEnabled();
+  await expect(guidance.getByRole("button", { name: "删除排队引导" })).toBeEnabled();
+  await guidance.getByRole("button", { name: "更多引导操作" }).click();
+  await expect(guidance.getByRole("menuitem", { name: "编辑消息" })).toBeVisible();
+  await expect(guidance.getByRole("menuitem", { name: "关闭排队" })).toBeVisible();
+  await guidance.getByRole("menuitem", { name: "编辑消息" }).click();
+  await expect(privateInput).toHaveValue("Continue with only risks after this reply.");
   await expect.poll(() => state.teammateDirectInterventions[0]?.status).toBe("cancelled");
 
-  const guidanceAfterCancel = page.getByLabel("Replying");
-  await guidanceAfterCancel.getByPlaceholder("Add guidance").fill("Delete this queued guidance.");
-  await guidanceAfterCancel.getByRole("button", { name: "Queue guidance" }).click();
-  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");
-  await guidanceAfterCancel.getByRole("button", { name: "Delete queued guidance" }).click();
-  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("cancelled");
+  const guidanceAfterCancel = page.getByLabel("正在回复");
+  await privateInput.fill("Line one");
+  await privateInput.press("Shift+Enter");
+  await expect(privateInput).toHaveValue("Line one\n");
+  await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").length).toBe(0);
 
-  await guidanceAfterCancel.getByPlaceholder("Add guidance").fill("Close the whole guidance queue.");
-  await guidanceAfterCancel.getByRole("button", { name: "Queue guidance" }).click();
-  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");
-  await guidanceAfterCancel.getByRole("button", { name: "More guidance actions" }).click();
-  await guidanceAfterCancel.getByRole("menuitem", { name: "Close queue" }).click();
-  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("cancelled");
+  await privateInput.fill("Close only this queued guidance.");
+  await privateInput.press("Enter");
+  await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").map((item) => item.instruction)).toEqual([
+    "Close only this queued guidance.",
+  ]);
+  await expect(privateInput).toHaveValue("");
+  await privateInput.fill("Keep this queued guidance.");
+  await privateInput.press("Enter");
+  await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").map((item) => item.instruction)).toEqual([
+    "Close only this queued guidance.",
+    "Keep this queued guidance.",
+  ]);
+  const closeOnlyRow = guidanceAfterCancel.locator(".channel-run-guidance-row").filter({ hasText: "Close only this queued guidance." });
+  await closeOnlyRow.getByRole("button", { name: "更多引导操作" }).click();
+  await closeOnlyRow.getByRole("menuitem", { name: "关闭排队" }).click();
+  await expect.poll(() => {
+    const closed = state.teammateDirectInterventions.find((item) => item.instruction === "Close only this queued guidance.");
+    const kept = state.teammateDirectInterventions.find((item) => item.instruction === "Keep this queued guidance.");
+    return [closed?.status, kept?.status];
+  }).toEqual(["cancelled", "queued"]);
+  const keptRow = guidanceAfterCancel.locator(".channel-run-guidance-row").filter({ hasText: "Keep this queued guidance." });
+  await expect(keptRow).toBeVisible();
+  await expect(keptRow.getByRole("button", { name: "立即执行这条引导" })).toBeVisible();
+  await keptRow.getByRole("button", { name: "删除排队引导" }).click();
+  await expect.poll(() => {
+    const kept = state.teammateDirectInterventions.find((item) => item.instruction === "Keep this queued guidance.");
+    return kept?.status;
+  }).toBe("cancelled");
 
-  await guidanceAfterCancel.getByPlaceholder("Add guidance").fill("Run this queued guidance immediately.");
-  await guidanceAfterCancel.getByRole("button", { name: "Queue guidance" }).click();
+  await privateInput.fill("Run this queued guidance immediately.");
+  await privateInput.press("Enter");
   await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");
-  await guidanceAfterCancel.getByRole("button", { name: "Run this guidance now" }).click();
+  await guidanceAfterCancel.locator(".channel-run-guidance-row").filter({ hasText: "Run this queued guidance immediately." }).getByRole("button", { name: "立即执行这条引导" }).click();
   await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("cancelling_source");
   await expect.poll(() => state.workUnits[0]?.status).toBe("cancelled");
-  await expect(page.getByLabel("Private guidance")).toContainText("Stopping");
+  await expect(page.getByLabel("私聊引导")).toContainText("正在停止");
 
   state.workUnits[0] = {
     ...state.workUnits[0],
@@ -633,18 +657,70 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     endedAt: undefined,
     updatedAt: "2026-06-04T00:33:00.000Z",
   };
-  const resumedGuidance = page.getByLabel("Replying");
-  await resumedGuidance.getByPlaceholder("Add guidance").fill("Stop and continue with blockers only.");
-  await expect(resumedGuidance.getByRole("button", { name: "Stop and continue" })).toBeEnabled();
-  await resumedGuidance.getByRole("button", { name: "Stop and continue" }).click();
-  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.mode).toBe("interrupt_redirect");
-  await expect(resumedGuidance).toContainText("Stopping");
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  const resumedComposer = page.locator(".teammate-direct-composer");
+  const resumedInput = resumedComposer.getByPlaceholder("输入引导，回车加入队列");
+  await resumedInput.fill("Keep this draft while stopping.");
+  await expect(resumedComposer.getByRole("button", { name: "停止回复" })).toBeEnabled();
 
-  await resumedGuidance.getByRole("button", { name: "Stop reply" }).click();
+  await resumedComposer.getByRole("button", { name: "停止回复" }).click();
   await expect.poll(() => state.workUnits[0]?.status).toBe("cancelled");
   await expect.poll(() => {
     const message = state.teammateDirectMessages.find((item) => isRecord(item) && item.id === "tdmsg_pending_reply");
     return isRecord(message) ? message.status : undefined;
   }).toBe("cancelled");
-  await expect(page.getByLabel("Private message feed").getByText("Reply stopped").first()).toBeVisible();
+  await expect(resumedInput).toHaveValue("Keep this draft while stopping.");
+  await expect(page.getByLabel("Private message feed").getByText("回复已停止").first()).toBeVisible();
+});
+
+test("AI teammate private chat keeps queued guidance from bypassing into a new message", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_builtin_engineer";
+  const threadId = `tdthread_${teammateId}`;
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
+  state.teammateDirectThreads[teammateId] = {
+    id: threadId,
+    workspaceId: "workspace_default",
+    teammateId,
+    title: "Ling Engineer",
+    createdAt: "2026-06-04T00:40:00.000Z",
+    updatedAt: "2026-06-04T00:40:00.000Z",
+  };
+  state.teammateDirectInterventions = [
+    {
+      id: "tdint_orphaned_queue",
+      workspaceId: "workspace_default",
+      teammateId,
+      threadId,
+      sourceMessageId: "tdmsg_old_source",
+      sourceWorkUnitId: "wu_old_direct_reply",
+      mode: "queue_followup",
+      status: "queued",
+      instruction: "Use the queued guidance before any new message.",
+      idempotencyKey: "orphaned-queue",
+      requestedBy: "local-user",
+      createdAt: "2026-06-04T00:40:01.000Z",
+      updatedAt: "2026-06-04T00:40:01.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  const guidance = page.getByLabel("私聊引导");
+  const queuedRow = guidance.locator(".channel-run-guidance-row").filter({ hasText: "Use the queued guidance before any new message." });
+  await expect(queuedRow).toBeVisible();
+  await expect(queuedRow.getByRole("button", { name: "立即执行这条引导" })).toBeVisible();
+
+  const privateComposer = page.locator(".teammate-direct-composer");
+  await expect(privateComposer.getByPlaceholder("已有排队引导，等待执行或点击立即执行")).toBeVisible();
+  await expect(privateComposer.getByRole("button", { name: "发送" })).toBeDisabled();
+  await privateComposer.getByPlaceholder("已有排队引导，等待执行或点击立即执行").fill("This should not bypass the queued row.");
+  await privateComposer.getByPlaceholder("已有排队引导，等待执行或点击立即执行").press("Enter");
+  await expect.poll(() => state.teammateDirectMessages.length).toBe(0);
+  await expect(page.getByText("已有排队引导，先执行或删除队列消息。")).toBeVisible();
 });
