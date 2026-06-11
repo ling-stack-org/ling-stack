@@ -1439,7 +1439,38 @@ export interface ChannelWorkflowStepContextPacket {
   readonly effectiveRunnerId?: string;
   readonly providerPresetId?: string;
   readonly approvalGate?: SkillApprovalProfile;
+  readonly contextPack?: WorkflowStepContextPackSnapshot;
   readonly generatedAt: string;
+}
+
+export interface WorkflowStepContextPackSnapshot {
+  readonly kind: string;
+  readonly providerPresetId?: string;
+  readonly modelId?: string;
+  readonly budget: {
+    readonly mode: string;
+    readonly contextWindowTokens: number;
+    readonly reservedOutputTokens: number;
+    readonly reservedRuntimeOverheadTokens: number;
+    readonly inputBudgetTokens: number;
+    readonly tokenizer?: string;
+  };
+  readonly estimatedInputTokens: number;
+  readonly overBudget: boolean;
+  readonly droppedSectionIds: readonly string[];
+  readonly compactionIds: readonly string[];
+  readonly sections: readonly {
+    readonly id: string;
+    readonly role: string;
+    readonly priority: string;
+    readonly estimatedTokens?: number;
+    readonly sourceRefIds?: readonly string[];
+  }[];
+  readonly sourceRefs: readonly {
+    readonly type: string;
+    readonly id: string;
+    readonly label?: string;
+  }[];
 }
 
 export interface ChannelWorkflowStepOutputPacket {

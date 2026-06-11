@@ -22,6 +22,7 @@ export type CreateChannelAiReply = (input: {
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
   readonly channelParallelLimit?: number;
+  readonly visibleParticipantTeammateIds?: readonly string[];
 }) => Promise<ChannelMessage>;
 
 export async function handleChannelMessagesCollection(
@@ -142,6 +143,7 @@ export async function handleChannelMessagesCollection(
             teammateId,
             proposalMode: "disabled",
             channelParallelLimit: workflowIntent.teammateIds.length,
+            visibleParticipantTeammateIds: workflowIntent.teammateIds,
           })));
           if (!workflowIntent.intentDecisionId) {
             store.createChannelIntentDecision({

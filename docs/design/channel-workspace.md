@@ -36,6 +36,7 @@ Related docs:
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
+- [Channel Context Budget Manager](channel-context-budget-manager.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
@@ -716,6 +717,53 @@ MVP roster:
 - default AI teammate,
 - built-in teammate templates,
 - local teammate drafts as UI-only rows.
+
+### Channel Collaboration Protocol
+
+Each channel should have a thin collaboration protocol. It is similar in spirit to a
+project instruction file, but scoped to one channel and generated from structured channel
+settings plus optional user-edited rules.
+
+The protocol may include:
+
+- channel purpose and stable collaboration preferences;
+- default teammate and `autoReplyMode`;
+- response-language preference;
+- visible multi-reply cap and participation rules;
+- workflow preference, such as `Architect -> Engineer -> QA`;
+- privacy rules, such as not sharing private teammate chat unless the user promotes it;
+- review expectations that are stable for this channel.
+
+The protocol must stay thin:
+
+- ordinary chat does not append to it;
+- workflow execution does not append logs or step summaries to it;
+- AI-discovered rules can become candidates, but cannot silently rewrite it;
+- user edits or explicit confirmation are required before durable protocol changes;
+- current tasks, decisions, handoffs, summaries, and memory candidates live in their own
+  records.
+
+This keeps the protocol from becoming an unbounded shared memory file. Long discussion
+history is compressed through `ChannelContextSummary`, `ChannelDecision`, `ChannelHandoff`,
+workflow packets, source refs, and review-gated memory candidates instead.
+
+### Context Pack and Budget
+
+Each teammate reply or workflow step should receive a bounded Context Pack, not the whole
+channel transcript.
+
+Context Pack levels:
+
+| Level | Used by | Notes |
+| --- | --- | --- |
+| `minimal` | ordinary single teammate replies | current message, current teammate, channel name, scoped memory recall |
+| `roster_compact` | visible multi-reply and roster questions | compact channel roster, selected visible participants, no online/presence claim |
+| `capability_routing` | selector/proposal routing | eligible teammates, roles, runnable provider state, skill summaries |
+| `workflow_packet` | workflow step execution | objective, step metadata, decisions, handoffs, summaries, source refs |
+
+The [Channel Context Budget Manager](channel-context-budget-manager.md) owns provider-aware
+budgeting and compaction. It may automatically compact runtime context, but it must not
+silently edit channel protocol or activate shared memory.
 
 ### Collaboration Stages
 
@@ -1825,6 +1873,12 @@ Current MVP implementation status:
   coordination uses explicit protocol records instead of shared long-context chat:
   context summaries, decisions, handoff cards, workflow handoff intents, workflow packets,
   source refs, and review-gated memory candidates,
+- the channel context model now separates thin channel collaboration protocol, bounded
+  Context Packs, automatic compaction, and review-gated memory. The protocol is generated
+  from defaults plus structured channel settings and only changes through user edits or
+  explicit confirmation. Runtime context is assembled by the future Context Budget Manager
+  so custom provider APIs can use known, estimated, or conservative unknown-model budgets
+  without turning the channel into a shared long-context transcript,
 - response language for generated workflow text is a channel/workspace preference, not a
   global translation pass. The default should come from Workspace Settings, a channel may
   override it, `AGENTS.md` or equivalent project instructions may impose a clearer
@@ -2308,6 +2362,22 @@ Current MVP implementation status:
   override, proposal/workflow persistence, and evidence-original-language instruction.
 - [ ] Add browser coverage for channel override controls and proposal edit language
   override when proposal edit lands.
+
+### Phase 36: Channel Context Budget Manager
+
+- [x] Define the context protocol, budget manager, compaction boundary, and implementation
+  slices in `docs/design/channel-context-budget-manager.md`.
+- [x] Add compact roster/visible participant context to `visible_multi_reply` prompts.
+- [x] Add provider budget metadata and conservative estimation for custom provider APIs
+  using existing provider preset context fields.
+- [x] Add minimal internal prompt context assembly for channel replies, including current
+  teammate identity and roster-question detection.
+- [x] Add internal Context Pack assembly for ordinary channel replies and selectors.
+- [ ] Route workflow-step prompt assembly through Context Pack without changing the
+  orchestrator state machine.
+- [ ] Add automatic compaction into auditable summaries/packets, not into channel protocol
+  or active memory.
+- [ ] Add protocol editing/confirmation UX in the Context or Settings drilldown.
 
 ## Validation Plan
 

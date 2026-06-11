@@ -10,6 +10,7 @@ Related docs:
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
+- [Channel Context Budget Manager](channel-context-budget-manager.md)
 
 ## Purpose
 
@@ -338,6 +339,13 @@ Runtime constraints:
   as the hard maximum unless the channel explicitly configures a lower cap. The current
   implementation uses the default cap of three;
 - each teammate answers once against the same source message and compact channel context;
+- each selected teammate receives `roster_compact` context: its own teammate identity, the
+  compact channel roster, and the selected visible participants for this reply batch;
+- `roster_compact` does not include online/presence state, hidden peer replies, private
+  teammate chat, or other teammates' not-yet-generated replies;
+- when asked whether it can see teammates, a selected teammate should distinguish roster
+  visibility from presence visibility: it can know configured channel teammates and this
+  batch's visible participants, but not who is online;
 - replies are normal `ai_reply` messages and should preserve each teammate identity;
 - no teammate reply can create a hidden proposal block, task, workflow, approval, memory
   candidate, or handoff by itself;
@@ -353,6 +361,22 @@ UI behavior:
 - do not show selector confidence, raw JSON, prompt text, or a route-evidence panel;
 - after the discussion, the user may explicitly ask to convert the result into a
   `workflow_proposal`.
+
+## Context Injection Boundary
+
+The selector decides intent; the Context Budget Manager decides what context is safe and
+small enough to inject.
+
+| Intent | Context level | Boundary |
+| --- | --- | --- |
+| `single_reply` | `minimal` by default | Do not include full roster unless the user asks about teammates or routing. |
+| `visible_multi_reply` | `roster_compact` | Include compact roster and selected participants; exclude presence and hidden peer content. |
+| `clarify` | `minimal` plus relevant protocol rules | Ask one question; do not create workflow context. |
+| `workflow_proposal` | `capability_routing` | Use teammate roles/capabilities for proposal drafting, not as shared chat context. |
+| `direct_workflow` | `capability_routing` then `workflow_packet` after confirmation | Prefill only; execution still waits for user confirmation. |
+
+This boundary lets Ling answer "who is in this channel?" without treating every
+teammate reply as part of one autonomous shared transcript.
 
 ## Collaboration Protocol Boundary
 
@@ -725,12 +749,15 @@ and prompt text are audit data, not normal conversation content.
 | P5 | `direct_workflow` as validated prefilled proposal plus confirmation. Implemented. | Medium |
 | P6 | Model-assisted intent selector behind feature flag and deterministic fallback. Implemented. | Medium |
 | P7 | Bounded `visible_multi_reply` for explicit discussion-only all-teammate requests. Implemented. | Medium |
+| P8 | Compact roster/visible participants context for `visible_multi_reply`. Implemented as the P1/P2 prompt-context slice; full Context Budget Manager remains future work. | Low |
 
 ## Acceptance Criteria
 
 - Ordinary questions still produce at most one teammate reply.
 - `所有队友都回复我一下` creates bounded visible teammate replies only when the request is
   discussion-only and explicitly asks multiple teammates to speak.
+- Each visible multi-reply teammate knows the selected visible participants and compact
+  channel roster, but does not claim online/presence visibility or unseen peer content.
 - `所有队友协作实现/验证/发布` creates a proposal, not visible multi-reply.
 - Multi-role requests produce a compact proposal before multi-agent work starts.
 - Direct workflow starts only happen through validated existing workflow routes.
