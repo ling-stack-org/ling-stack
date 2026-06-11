@@ -510,6 +510,7 @@ export function AppShell(): JSX.Element {
     removeAiTeammate,
     hardDeleteAiTeammateAndRefresh,
     updateAiTeammateSettings,
+    upsertAiTeammate,
     toggleAiTeammatePinned,
     toggleAiTeammateHidden,
     addChannelTeammate,
@@ -2787,6 +2788,7 @@ export function AppShell(): JSX.Element {
         selectedChannelBranchId={selectedChannelBranchId}
         teammates={aiTeammates}
         approvals={approvals}
+        cwd={form.cwd}
         channelNotifications={sidebarChannelNotifications}
         teammateNotifications={sidebarTeammateNotifications}
         onOpenView={openPlainView}
@@ -2998,6 +3000,7 @@ export function AppShell(): JSX.Element {
                 channels={channels}
                 skillPack={builtinSkillPack}
                 onUpdateTeammate={updateAiTeammateSettings}
+                onTeammateUpdated={upsertAiTeammate}
                 onDisableTeammate={removeAiTeammate}
                 onHardDeleteTeammate={hardDeleteAiTeammateAndRefresh}
                 onOpenProviders={() => openPlainView("providers")}
@@ -3007,6 +3010,7 @@ export function AppShell(): JSX.Element {
                   />
                 ) : activeView === "teammates" ? (
                   <AiTeammatesPage
+                cwd={form.cwd}
                 skillPack={builtinSkillPack}
                 providers={providers}
                 channels={channels}
@@ -3399,10 +3403,20 @@ function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly Provid
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   return {
     id: teammate.id,
+    workspaceId: teammate.workspaceId,
     templateId: teammate.templateId,
+    roleKey: teammate.roleKey,
     displayName: teammate.displayName,
     description: teammate.description,
+    avatarTone: teammate.avatarTone,
+    avatarImageAttachmentId: teammate.avatarImageAttachmentId,
     providerPresetId: teammate.providerPresetId,
+    runnerId: teammate.runnerId,
+    systemPrompt: teammate.systemPrompt,
+    appendSystemPrompt: teammate.appendSystemPrompt,
+    allowedTools: teammate.allowedTools,
+    approvalProfile: teammate.approvalProfile,
+    status: teammate.status,
     modelLabel: provider ? `${provider.displayName} / ${provider.model}` : "No model selected",
     channelIds: [],
     memorySources: [],
@@ -3410,6 +3424,7 @@ function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly Provid
     hidden: teammate.hidden,
     disabled: teammate.status === "disabled",
     createdAt: teammate.createdAt,
+    updatedAt: teammate.updatedAt,
   };
 }
 

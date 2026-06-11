@@ -961,6 +961,12 @@
   font-size: 12px;
 }
 
+.teammate-draft-row .teammate-avatar-image.compact {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+}
+
 .teammate-template-row span,
 .teammate-draft-row span {
   display: grid;

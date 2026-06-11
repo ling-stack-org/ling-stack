@@ -33,7 +33,6 @@ import type { SkillDefinition, SkillPack } from "@ling-stack/core/skill-types";
 import {
   archiveSkill,
   attachmentContentUrl,
-  attachmentContentUrlById,
   cancelTeammateDirectIntervention,
   cancelTeammateDirectReply,
   createSkillImportDraft,
@@ -90,6 +89,7 @@ import {
   serializeComposerInputParts,
 } from "../../shared/components/index.js";
 import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationGuidanceStrip, ConversationShell, ConversationStatusStrip, ConversationVirtualFeed, MessageBubble, MessageFooterActions } from "../../shared/conversation/index.js";
+import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import type {
   AiTeammate,
   Channel,
@@ -126,7 +126,7 @@ import type {
   UpdateAiTeammateRequest,
   UsedMemoryEvent,
 } from "../../types.js";
-import { approvalProfileText, teammateInitialFromName, workflowPhaseLabel } from "./helpers.js";
+import { approvalProfileText, workflowPhaseLabel } from "./helpers.js";
 
 type TeammateWorkspaceView = "chat" | "settings";
 type TeammateWorkspaceTab = "profile" | "model" | "permissions" | "channels" | "skills" | "memory" | "mcp" | "danger" | "tasks" | "activity";
@@ -184,6 +184,7 @@ export function TeammateWorkspace({
   channels,
   skillPack,
   onUpdateTeammate,
+  onTeammateUpdated,
   onDisableTeammate,
   onHardDeleteTeammate,
   onOpenProviders,
@@ -196,7 +197,8 @@ export function TeammateWorkspace({
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
   readonly skillPack: SkillPack | undefined;
-  readonly onUpdateTeammate: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<void>;
+  readonly onUpdateTeammate: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<AiTeammate>;
+  readonly onTeammateUpdated?: (teammate: AiTeammate) => void;
   readonly onDisableTeammate: (teammateId: string) => Promise<void>;
   readonly onHardDeleteTeammate?: (teammateId: string, reason?: string) => Promise<void>;
   readonly onOpenProviders: () => void;
@@ -277,6 +279,7 @@ export function TeammateWorkspace({
   const privateFeedPinnedToLatestRef = useRef(true);
   const directGuidanceOperationSeqRef = useRef(0);
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
+  const settingsProvider = settingsForm.providerPresetId ? providers.find((item) => item.id === settingsForm.providerPresetId) : undefined;
   const skillDefinitions = useMemo(() => {
     if (skillRegistryEntries.length > 0) {
       return skillRegistryEntries.map((entry) => entry.definition);
@@ -412,6 +415,7 @@ export function TeammateWorkspace({
   );
   const providerReady = Boolean(provider && providerPreflightReady(provider));
   const providerRecovered = providerReady && Boolean(provider);
+  const settingsProviderReady = Boolean(settingsProvider && providerPreflightReady(settingsProvider));
   const openDirectInterventions = directRuntime?.interventions ?? [];
   const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
   const directReplyActive = Boolean(directRuntime?.activeReply || directReplyOptimisticActive);
@@ -1006,8 +1010,9 @@ export function TeammateWorkspace({
     setUploadingAvatar(true);
     try {
       setWorkspaceError("");
-      await uploadTeammateAvatar(cwd.trim(), teammate.id, file);
-      await onRefreshTeammates?.();
+      const response = await uploadTeammateAvatar(cwd.trim(), teammate.id, file);
+      onTeammateUpdated?.(response.teammate);
+      void onRefreshTeammates?.();
       setSaveMessage(t("Saved"));
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
@@ -1023,8 +1028,9 @@ export function TeammateWorkspace({
     setUploadingAvatar(true);
     try {
       setWorkspaceError("");
-      await deleteTeammateAvatar(cwd.trim(), teammate.id);
-      await onRefreshTeammates?.();
+      const response = await deleteTeammateAvatar(cwd.trim(), teammate.id);
+      onTeammateUpdated?.(response?.teammate ?? { ...teammate, avatarImageAttachmentId: undefined });
+      void onRefreshTeammates?.();
       setSaveMessage(t("Saved"));
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
@@ -1137,7 +1143,8 @@ export function TeammateWorkspace({
     setSaving(true);
     try {
       setWorkspaceError("");
-      await onUpdateTeammate(teammate.id, {
+      setSaveMessage("");
+      const updatedTeammate = await onUpdateTeammate(teammate.id, {
         displayName: settingsForm.displayName.trim() || teammate.displayName,
         description: settingsForm.description.trim(),
         providerPresetId: settingsForm.providerPresetId || null,
@@ -1146,7 +1153,9 @@ export function TeammateWorkspace({
         hidden: settingsForm.hidden,
         systemPrompt: settingsForm.systemPrompt.trim() || null,
       });
+      setSettingsForm(teammateToSettingsForm(updatedTeammate));
       setSaveMessage(t("Saved"));
+      void refreshDirectRuntime().catch(() => undefined);
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1183,18 +1192,14 @@ export function TeammateWorkspace({
     setImportingPersona(true);
     try {
       setWorkspaceError("");
-      await onUpdateTeammate(teammate.id, {
+      setSaveMessage("");
+      const updatedTeammate = await onUpdateTeammate(teammate.id, {
         displayName: personaDraft.displayName.trim() || teammate.displayName,
         description: personaDraft.description.trim(),
         systemPrompt: personaDraft.systemPrompt.trim() || null,
         appendSystemPrompt: personaDraft.appendSystemPrompt,
       });
-      setSettingsForm((current) => ({
-        ...current,
-        displayName: personaDraft.displayName.trim() || current.displayName,
-        description: personaDraft.description.trim(),
-        systemPrompt: personaDraft.systemPrompt.trim(),
-      }));
+      setSettingsForm(teammateToSettingsForm(updatedTeammate));
       setPersonaDraft(undefined);
       setPersonaImportForm({ sourcePath: "", content: "" });
       setSaveMessage(t("Saved"));
@@ -1471,7 +1476,7 @@ export function TeammateWorkspace({
       {workspaceView === "chat" ? (
         <section className={messageSearchOpen ? "teammate-chat-header searching" : "teammate-chat-header"} aria-label={t("AI teammate private chat")}>
           <div className="teammate-workspace-identity">
-            <TeammateAvatar teammate={teammate} cwd={cwd} />
+            <TeammateAvatarView teammate={teammate} cwd={cwd} />
             <div>
               <span className="teammate-pack-label">{t(`role.${teammate.roleKey}`)}</span>
               <h1>{teammate.displayName}</h1>
@@ -1621,7 +1626,7 @@ export function TeammateWorkspace({
                     side={message.authorType === "local-user" ? "end" : "start"}
                     avatar={
                       message.authorType === "ai-teammate"
-                        ? <TeammateAvatar teammate={teammate} cwd={cwd} compact />
+                        ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
                         : <AvatarInitial label={message.authorType === "system" ? "S" : "U"} tone={message.authorType === "system" ? "violet" : "gray"} />
                     }
                     author={authorName}
@@ -1964,7 +1969,7 @@ export function TeammateWorkspace({
               <ShieldCheck size={16} />
               <h2>{t("Model")}</h2>
             </span>
-            <StatusBadge status={providerReady ? "ready" : "blocked"} />
+            <StatusBadge status={settingsProviderReady ? "ready" : "blocked"} />
           </div>
           <div className="teammate-settings-grid">
             <label className="field wide">
@@ -1980,21 +1985,22 @@ export function TeammateWorkspace({
             </label>
           </div>
           <div className="teammate-config-card">
-            <MetaRow label={t("Provider")} value={provider ? provider.displayName : t("None")} compact />
-            <MetaRow label={t("Model")} value={provider?.model ?? "-"} compact />
-            <MetaRow label={t("Status")} value={providerReady ? t("Ready") : t("Needs setup")} compact />
+            <MetaRow label={t("Provider")} value={settingsProvider ? settingsProvider.displayName : t("None")} compact />
+            <MetaRow label={t("Model")} value={settingsProvider?.model ?? "-"} compact />
+            <MetaRow label={t("Status")} value={settingsProviderReady ? t("Ready") : t("Needs setup")} compact />
           </div>
-          {provider && !providerReady ? (
+          {settingsProvider && !settingsProviderReady ? (
             <div className="provider-run-notice">
               <ShieldCheck size={16} />
               <span>{t("Provider needs a successful check before reliable AI replies.")}</span>
             </div>
-          ) : !provider ? (
+          ) : !settingsProvider ? (
             <div className="provider-run-notice neutral">
               <ShieldCheck size={16} />
               <span>{t("No provider is bound. Private chat will record messages but AI replies may be blocked.")}</span>
             </div>
           ) : null}
+          {saveMessage ? <small>{saveMessage}</small> : null}
           <div className="teammate-settings-actions">
             <button className="secondary-button" type="button" onClick={onOpenProviders}>
               <ShieldCheck size={15} />
@@ -2556,7 +2562,7 @@ export function TeammateWorkspace({
           </div>
           <section className="teammate-avatar-settings" aria-label={t("Avatar")}>
             <div className="teammate-avatar-preview compact-preview">
-              <TeammateAvatar teammate={teammate} cwd={cwd} />
+              <TeammateAvatarView teammate={teammate} cwd={cwd} />
               <span>{teammate.displayName}</span>
             </div>
             <div className="teammate-avatar-actions">
@@ -2864,8 +2870,8 @@ export function TeammateWorkspace({
               </span>
             </div>
             <div className="teammate-summary-list">
-              <MetaRow label={t("Provider")} value={provider ? provider.displayName : t("None")} compact />
-              <MetaRow label={t("Model")} value={provider?.model ?? "-"} compact />
+              <MetaRow label={t("Provider")} value={settingsProvider ? settingsProvider.displayName : t("None")} compact />
+              <MetaRow label={t("Model")} value={settingsProvider?.model ?? "-"} compact />
               <MetaRow label={t("Approval")} value={approvalProfileText(teammate.approvalProfile, t)} compact />
               <MetaRow label={t("Channels")} value={String(effectiveMemberships.length)} compact />
               <MetaRow label={t("Skills")} value={t("{count} executable", { count: skillStats.executable })} compact />
@@ -3298,47 +3304,4 @@ function isHistoricalProviderPreflightMessage(message: TeammateDirectMessage): b
       text.includes("provider has not been checked")) &&
     (text.includes("network_failed") || text.includes("timeout") || text.includes("aborted"))
   );
-}
-
-function TeammateAvatar({ teammate, cwd, compact = false }: { readonly teammate: AiTeammate; readonly cwd: string; readonly compact?: boolean }): JSX.Element {
-  if (teammate.avatarImageAttachmentId) {
-    return (
-      <img
-        className={`teammate-avatar-image ${compact ? "compact" : ""}`}
-        src={attachmentContentUrlById(teammate.avatarImageAttachmentId, cwd.trim())}
-        alt=""
-      />
-    );
-  }
-  return <AvatarInitial label={teammateInitialFromName(teammate.displayName)} tone={teammateAvatarTone(teammate)} />;
-}
-
-function teammateAvatarTone(teammate: AiTeammate): "default" | "orange" | "teal" | "violet" | "blue" | "rose" | "gray" {
-  if (
-    teammate.avatarTone === "default" ||
-    teammate.avatarTone === "orange" ||
-    teammate.avatarTone === "teal" ||
-    teammate.avatarTone === "violet" ||
-    teammate.avatarTone === "blue" ||
-    teammate.avatarTone === "rose" ||
-    teammate.avatarTone === "gray"
-  ) {
-    return teammate.avatarTone;
-  }
-  if (teammate.roleKey === "product" || teammate.roleKey === "release") {
-    return "orange";
-  }
-  if (teammate.roleKey === "engineer" || teammate.roleKey === "architect") {
-    return "teal";
-  }
-  if (teammate.roleKey === "designer" || teammate.roleKey === "docs") {
-    return "violet";
-  }
-  if (teammate.roleKey === "qa") {
-    return "blue";
-  }
-  if (teammate.roleKey === "security") {
-    return "rose";
-  }
-  return "default";
 }

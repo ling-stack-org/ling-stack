@@ -733,6 +733,68 @@ test("channel settings can add remove and set default teammates", async ({ page 
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBe("muted");
 });
 
+test("channel message feed renders AI teammate avatar images", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.aiTeammates = [
+    createMockTeammate({
+      id: "teammate_builtin_designer",
+      templateId: "designer",
+      roleKey: "designer",
+      displayName: "Ling Designer",
+      avatarImageAttachmentId: "tpatt_designer_avatar",
+    }),
+  ];
+  state.teammatePrivateAttachments = [
+    {
+      id: "tpatt_designer_avatar",
+      workspaceId: "workspace_default",
+      teammateId: "teammate_builtin_designer",
+      scope: "teammate_profile_avatar",
+      kind: "image",
+      fileName: "designer.png",
+      contentType: "image/png",
+      sizeBytes: 67,
+      path: "teammates/teammate_builtin_designer/avatar/mock",
+      createdAt: "2026-06-04T00:11:00.000Z",
+    },
+  ];
+  state.teammateChannelMemberships = [
+    {
+      teammateId: "teammate_builtin_designer",
+      channelId: "channel_engineering",
+      isDefault: true,
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:10:00.000Z",
+    },
+  ];
+  state.channelMessages = [
+    {
+      id: "msg_designer_avatar_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "teammate_builtin_designer",
+      body: "Designer reply with profile avatar.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:18:01.000Z",
+      updatedAt: "2026-05-25T00:18:01.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const designerReply = page.getByLabel("Channel message feed").locator(".channel-message-row").filter({ hasText: "Designer reply with profile avatar." });
+  await expect(designerReply).toBeVisible();
+  await expect(designerReply.locator(".teammate-avatar-image")).toBeVisible();
+  await expect(designerReply.locator(".avatar-initial")).toHaveCount(0);
+  await expect(designerReply.locator(".teammate-avatar-image")).toHaveAttribute("src", /\/attachments\/tpatt_designer_avatar\/content/);
+});
+
 test("channel settings manage workspace binding and header badge", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

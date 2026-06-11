@@ -111,6 +111,20 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   });
   const state = createBaseState({ approvalStatus: "expired" });
   const teammateId = "teammate_builtin_engineer";
+  state.providers = [
+    createChatProvider({
+      id: "provider_local",
+      displayName: "Local Relay",
+      model: "dpv4",
+      lastCheck: { ok: true, code: "ready", message: "Provider is reachable.", checkedAt: "2026-05-29T00:00:00.000Z" },
+    }),
+    createChatProvider({
+      id: "provider_alt",
+      displayName: "Model Shuttle",
+      model: "qwen-plus",
+      lastCheck: { ok: true, code: "ready", message: "Provider is reachable.", checkedAt: "2026-05-29T00:00:00.000Z" },
+    }),
+  ];
   state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
@@ -425,13 +439,50 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByText("Private chat summary")).toBeVisible();
 
   await settingsSections.getByRole("button", { name: /Profile/ }).click();
-  await page.getByLabel("Teammate name").fill("Renamed Engineer");
+  const profilePanel = page.getByLabel("Teammate settings");
+  await profilePanel.getByLabel("Teammate name").fill("Renamed Engineer");
+  await profilePanel.getByLabel("Description").fill("Updated teammate description from settings.");
+  await profilePanel.getByLabel("System prompt").fill("Updated teammate system prompt from settings.");
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Renamed Engineer settings", level: 2 })).toBeVisible();
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return isRecord(teammate)
+      ? {
+          displayName: teammate.displayName,
+          description: teammate.description,
+          systemPrompt: teammate.systemPrompt,
+        }
+      : undefined;
+  }).toEqual({
+    displayName: "Renamed Engineer",
+    description: "Updated teammate description from settings.",
+    systemPrompt: "Updated teammate system prompt from settings.",
+  });
+
+  await settingsSections.getByRole("button", { name: /Model/ }).click();
+  const modelPanel = page.locator(".teammate-model-panel");
+  await modelPanel.getByLabel("Provider").selectOption("provider_alt");
+  await expect(modelPanel.locator(".teammate-config-card")).toContainText("Model Shuttle");
+  await expect(modelPanel.locator(".teammate-config-card")).toContainText("qwen-plus");
+  await modelPanel.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved")).toBeVisible();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
-    return isRecord(teammate) ? teammate.displayName : "";
-  }).toBe("Renamed Engineer");
+    return isRecord(teammate) ? teammate.providerPresetId : undefined;
+  }).toBe("provider_alt");
+
+  await page.getByRole("button", { name: "Back to private chat" }).click();
+  await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
+  await page.getByPlaceholder("Message this AI teammate privately").fill("Use the newly saved model.");
+  await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
+  await expect(page.getByLabel("Private chat", { exact: true }).getByText("Private reply: I will refine this into a scoped task.")).toBeVisible();
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
+  await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
+  const channelTeammateManager = page.getByLabel("Channel teammates");
+  await expect(channelTeammateManager.locator(".channel-teammate-chip.default")).toContainText("Renamed Engineer");
 
   await page.reload();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Engineer" }).click();
@@ -452,8 +503,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await personaPanel.getByRole("button", { name: "Apply persona draft" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
-    return isRecord(teammate) ? [teammate.displayName, teammate.allowedTools, teammate.approvalProfile] : undefined;
-  }).toEqual(["Imported QA Persona", ["read", "grep", "find", "ls"], { mode: "standard", risk: "medium" }]);
+    return isRecord(teammate) ? [teammate.displayName, teammate.appendSystemPrompt, teammate.allowedTools, teammate.approvalProfile] : undefined;
+  }).toEqual(["Imported QA Persona", [], ["read", "grep", "find", "ls"], { mode: "standard", risk: "medium" }]);
   await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Imported QA Persona settings", level: 2 })).toBeVisible();
 
   await page.getByLabel("Avatar").locator("input[type=file]").setInputFiles({
@@ -466,6 +517,19 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : undefined;
   }).toBe("tpatt_2");
   await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row.selected .teammate-avatar-image")).toBeVisible();
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).click();
+  const rosterRowWithAvatar = page.locator(".teammate-draft-row").filter({ hasText: "Imported QA Persona" });
+  await expect(rosterRowWithAvatar.locator(".teammate-avatar-image")).toBeVisible();
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
+  await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
+  const channelChipWithAvatar = page.getByLabel("Channel teammates").locator(".channel-teammate-chip.default").filter({ hasText: "Imported QA Persona" });
+  await expect(channelChipWithAvatar.locator(".teammate-avatar-image")).toBeVisible();
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Imported QA Persona" }).click();
+  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
 
   await page.getByRole("button", { name: "Remove avatar" }).click();
   await expect.poll(() => {
@@ -473,6 +537,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : "missing";
   }).toBeUndefined();
   await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toHaveCount(0);
+  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row.selected .teammate-avatar-image")).toHaveCount(0);
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Danger zone" }).click();
   await page.getByPlaceholder("Reason").fill("owner request");
@@ -490,6 +555,33 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const deletedHistoryMessage = page.locator(".message-group").filter({ hasText: "Historical channel reply from a teammate that will be deleted." });
   await expect(deletedHistoryMessage).toContainText("Deleted teammate");
   await expect(deletedHistoryMessage).not.toContainText(teammateId);
+});
+
+test("AI teammate settings save status and visibility fields", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  const teammateId = "teammate_builtin_engineer";
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Profile/ }).click();
+  const profilePanel = page.getByLabel("Teammate settings");
+  await profilePanel.getByLabel("Status").selectOption("paused");
+  await profilePanel.getByLabel("Pinned in sidebar").setChecked(false);
+  await profilePanel.getByLabel("Hidden from sidebar").setChecked(true);
+  await page.getByLabel("Single agent settings").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved")).toBeVisible();
+
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return isRecord(teammate) ? [teammate.status, teammate.pinned, teammate.hidden] : undefined;
+  }).toEqual(["paused", false, true]);
+  await expect(page.getByRole("heading", { name: "Ling Engineer settings", level: 2 })).toBeVisible();
 });
 
 test("AI teammate private chat demotes recovered provider preflight history", async ({ page }) => {
