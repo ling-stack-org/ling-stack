@@ -20,6 +20,7 @@ export interface MockState {
   mcpTools: MockMcpTool[];
   teammateMcpBindings: MockTeammateMcpBinding[];
   channels: unknown[];
+  channelBranches: unknown[];
   channelMessages: unknown[];
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
@@ -804,6 +805,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
         updatedAt: "2026-05-22T00:00:00.000Z",
       },
     ],
+    channelBranches: [],
     channelMessages: [],
     channelMessageRouteDecisions: [],
     channelIntentDecisions: [],
@@ -2711,6 +2713,32 @@ export function createChannelFromBody(body: Record<string, unknown>, id: string,
   };
 }
 
+export function createChannelBranchFromBody(
+  body: Record<string, unknown>,
+  id: string,
+  channelId: string,
+  existing: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const status = body.status === "archived" || body.status === "active"
+    ? body.status
+    : existing.status === "archived" || existing.status === "active"
+      ? existing.status
+      : "active";
+  const archivedAt = status === "archived"
+    ? typeof existing.archivedAt === "string" ? existing.archivedAt : "2026-05-25T00:17:00.000Z"
+    : undefined;
+  return {
+    id,
+    workspaceId: typeof existing.workspaceId === "string" ? existing.workspaceId : "workspace_default",
+    channelId,
+    name: typeof body.name === "string" ? body.name : typeof existing.name === "string" ? existing.name : "New branch",
+    status,
+    createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-25T00:17:00.000Z",
+    updatedAt: "2026-05-25T00:17:00.000Z",
+    archivedAt,
+  };
+}
+
 function readChannelAutoReplyMode(value: unknown): string {
   return value === "default_teammate" || value === "auto_route" ? value : "mentions_only";
 }
@@ -4355,7 +4383,17 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/channels") {
-    await route.fulfill({ json: { cwd, channels: state.channels } });
+    const archived = url.searchParams.get("archived") === "true";
+    const channels = state.channels.filter((channel) =>
+      isRecord(channel) && (archived ? channel.status === "archived" : channel.status !== "archived")
+    );
+    const channelIds = new Set(channels.filter(isRecord).map((channel) => channel.id).filter((id): id is string => typeof id === "string"));
+    const branches = state.channelBranches.filter((branch) =>
+      isRecord(branch) &&
+      channelIds.has(typeof branch.channelId === "string" ? branch.channelId : "") &&
+      (archived ? branch.status === "archived" : branch.status !== "archived")
+    );
+    await route.fulfill({ json: { cwd, channels, branches } });
     return;
   }
   if (request.method() === "POST" && path === "/channels") {
@@ -4368,6 +4406,59 @@ export async function handleDaemonRoute(
     state.channels.unshift(channel);
     await route.fulfill({ status: 201, json: { channel } });
     return;
+  }
+  const channelBranchesMatch = /^\/channels\/([^/]+)\/branches(?:\/([^/]+))?$/.exec(path);
+  if (channelBranchesMatch) {
+    const channelId = decodeURIComponent(channelBranchesMatch[1]);
+    const branchId = channelBranchesMatch[2] ? decodeURIComponent(channelBranchesMatch[2]) : "";
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    if (request.method() === "GET" && !branchId) {
+      const archived = url.searchParams.get("archived") === "true";
+      const branches = state.channelBranches.filter((branch) =>
+        isRecord(branch) &&
+        branch.channelId === channelId &&
+        (archived ? branch.status === "archived" : branch.status !== "archived")
+      );
+      await route.fulfill({ json: { cwd, channelId, branches } });
+      return;
+    }
+    if (request.method() === "POST" && !branchId) {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const branch = createChannelBranchFromBody(body, `channel_branch_${state.channelBranches.length + 1}`, channelId);
+      state.channelBranches.unshift(branch);
+      await route.fulfill({ status: 201, json: { branch } });
+      return;
+    }
+    const branchIndex = state.channelBranches.findIndex((item) => isRecord(item) && item.channelId === channelId && item.id === branchId);
+    if (branchIndex === -1 || !isRecord(state.channelBranches[branchIndex])) {
+      await route.fulfill({ status: 404, json: { error: "channel_branch_not_found", message: `Channel branch not found: ${branchId}` } });
+      return;
+    }
+    const existingBranch = state.channelBranches[branchIndex] as Record<string, unknown>;
+    if (request.method() === "GET") {
+      await route.fulfill({ json: { branch: existingBranch } });
+      return;
+    }
+    if (request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const branch = createChannelBranchFromBody(body, branchId, channelId, existingBranch);
+      state.channelBranches[branchIndex] = branch;
+      await route.fulfill({ json: { branch } });
+      return;
+    }
+    if (request.method() === "DELETE") {
+      if (existingBranch.status !== "archived") {
+        await route.fulfill({ status: 409, json: { error: "channel_branch_active", message: "Archive branch before deleting it." } });
+        return;
+      }
+      state.channelBranches = state.channelBranches.filter((item) => !isRecord(item) || item.id !== branchId);
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
   }
   const channelWorkspaceMatch = /^\/channels\/([^/]+)\/workspace(?:\/([^/]+))?$/.exec(path);
   if (channelWorkspaceMatch) {
@@ -4578,6 +4669,20 @@ export async function handleDaemonRoute(
       confidence: shouldAutoReply ? 1 : undefined,
       reason: shouldAutoReply ? "Mock route accepted." : "Mock route suppressed.",
       alternativesConsidered: [],
+      contextPack: shouldAutoReply
+        ? {
+            schemaVersion: 1,
+            kind: autoReplyMode === "auto_route" ? "auto_route_selector" : "channel_reply",
+            providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : undefined,
+            modelId: "mock-model",
+            sectionIds: autoReplyMode === "auto_route"
+              ? ["auto_route_instructions", "channel_collaboration_protocol", "auto_route_source_message", "auto_route_recent_context", "auto_route_candidates"]
+              : ["channel_collaboration_protocol", "channel_discussion"],
+            droppedSectionIds: [],
+            sourceRefCounts: { channel: 1, message: 1 },
+            compactionIds: [],
+          }
+        : undefined,
       status: shouldAutoReply && routedTeammateId ? "accepted" : "suppressed",
       createdBy: body.requestAiReply === true ? "explicit_mention" : autoReplyMode === "auto_route" ? "model" : "deterministic",
       createdAt: "2026-05-25T00:18:00.500Z",
@@ -5227,6 +5332,18 @@ export async function handleDaemonRoute(
       : createChannelFromBody(body, channelId);
     state.channels[channelIndex] = channel;
     await route.fulfill({ json: { channel } });
+    return;
+  }
+  if (channelMatch && request.method() === "DELETE") {
+    const channelId = decodeURIComponent(channelMatch[1]);
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found" } });
+      return;
+    }
+    state.channels = state.channels.filter((item) => !isRecord(item) || item.id !== channelId);
+    state.channelBranches = state.channelBranches.filter((item) => !isRecord(item) || item.channelId !== channelId);
+    await route.fulfill({ status: 204, body: "" });
     return;
   }
   if (request.method() === "GET" && path === "/runtime/leases") {

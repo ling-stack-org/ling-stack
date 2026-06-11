@@ -3,6 +3,7 @@ import {
   channelContextSummaryAuthorTypes,
   channelContextSummaryTargetTypes,
   channelAutoReplyModes,
+  channelBranchStatuses,
   channelResponseLanguages,
   channelIntentDecisionActions,
   channelIntentDecisionStatuses,
@@ -12,6 +13,8 @@ import {
   channelWorkflowStepStatuses,
   readOnlyRunTools,
   type Channel,
+  type ChannelBranchStatus,
+  type ChannelBranchUpdateInput,
   type ChannelContextSummaryAuthorType,
   type ChannelContextSummaryTargetType,
   type ChannelDecisionStatus,
@@ -31,6 +34,7 @@ import {
   type ChannelWorkflowStepStatus,
   type ChannelUpdateInput,
   type CreateChannelExecutionProposalInput,
+  type CreateChannelBranchInput,
   type CreateChannelInput,
   type ResponseLanguage,
   type RunTool,
@@ -267,6 +271,30 @@ export function parseChannelUpdateInput(value: unknown): ChannelUpdateInput {
     runtimePolicy: readOptionalChannelRuntimePolicy(value, "runtimePolicy"),
   };
   validateChannelInput(input);
+  return input;
+}
+
+export function parseCreateChannelBranchInput(value: unknown): Omit<CreateChannelBranchInput, "channelId"> {
+  if (!isRecord(value)) {
+    throw new Error("Channel branch request must be a JSON object");
+  }
+  const input: Omit<CreateChannelBranchInput, "channelId"> = {
+    name: readString(value, "name"),
+    status: readOptionalChannelBranchStatus(value, "status"),
+  };
+  validateChannelBranchInput(input);
+  return input;
+}
+
+export function parseChannelBranchUpdateInput(value: unknown): ChannelBranchUpdateInput {
+  if (!isRecord(value)) {
+    throw new Error("Channel branch update must be a JSON object");
+  }
+  const input: ChannelBranchUpdateInput = {
+    name: readOptionalString(value, "name"),
+    status: readOptionalChannelBranchStatus(value, "status"),
+  };
+  validateChannelBranchInput(input);
   return input;
 }
 
@@ -688,6 +716,12 @@ function validateChannelInput(input: ChannelUpdateInput): void {
   }
 }
 
+function validateChannelBranchInput(input: Partial<Pick<CreateChannelBranchInput, "name">>): void {
+  if (input.name !== undefined && input.name.trim().length === 0) {
+    throw new Error("name must be a non-empty string");
+  }
+}
+
 function validateChannelExecutionProposalInput(
   input: Partial<Pick<CreateChannelExecutionProposalInput, "title" | "prompt" | "assigneeTeammateId" | "acceptanceCriteria" | "collaborationSteps">>,
 ): void {
@@ -913,6 +947,17 @@ function readOptionalChannelStatus(record: Record<string, unknown>, key: string)
     throw new Error(`${key} must be one of: active, paused, archived`);
   }
   return value;
+}
+
+function readOptionalChannelBranchStatus(record: Record<string, unknown>, key: string): ChannelBranchStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelBranchStatuses.includes(value as ChannelBranchStatus)) {
+    throw new Error(`${key} must be one of: ${channelBranchStatuses.join(", ")}`);
+  }
+  return value as ChannelBranchStatus;
 }
 
 function readOptionalChannelAutoReplyMode(record: Record<string, unknown>, key: string): Channel["autoReplyMode"] | undefined {

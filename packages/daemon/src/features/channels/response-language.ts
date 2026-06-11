@@ -7,6 +7,7 @@ import {
   type ResponseLanguagePreference,
   type RunStore,
 } from "@ling-stack/core";
+import { resolveEffectiveChannelCollaborationProtocol, type ChannelProtocolFieldSource } from "./collaboration-protocol.js";
 
 export type ResponseLanguageResolutionSource =
   | "message"
@@ -38,17 +39,11 @@ export function resolveChannelResponseLanguage(input: ResolveChannelResponseLang
     return { language: projectInstructionLanguage, source: "project_instructions" };
   }
 
-  const channelPreference = input.channel.responseLanguage;
-  if (channelPreference && channelPreference !== "workspace") {
-    return resolvePreference(channelPreference, input.sourceText, "channel");
-  }
-
-  const workspacePreference = input.store.getWorkspaceSettings().responseLanguage;
-  if (workspacePreference) {
-    return resolvePreference(workspacePreference, input.sourceText, "workspace");
-  }
-
-  return { language: inferUserLanguage(input.sourceText), source: "follow_user" };
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
+  return resolveProtocolPreference(protocol.protocol.responseLanguage, input.sourceText, protocol.sources.responseLanguage.source);
 }
 
 export function responseLanguageInstruction(language: ResponseLanguage): string {
@@ -57,15 +52,25 @@ export function responseLanguageInstruction(language: ResponseLanguage): string 
     : "Use English for user-visible output; keep code, logs, command output, errors, file names, API fields, and evidence excerpts in their original language.";
 }
 
-function resolvePreference(
-  preference: ResponseLanguagePreference,
+function resolveProtocolPreference(
+  preference: ResponseLanguagePreference | "workspace",
   sourceText: string,
-  source: Exclude<ResponseLanguageResolutionSource, "message" | "project_instructions" | "follow_user">,
+  source: ChannelProtocolFieldSource,
 ): ResponseLanguageResolution {
-  if (preference === "follow_user") {
-    return { language: inferUserLanguage(sourceText), source };
+  if (preference === "workspace" || preference === "follow_user") {
+    return {
+      language: inferUserLanguage(sourceText),
+      source: source === "channel_setting"
+        ? "channel"
+        : source === "workspace_setting"
+          ? "workspace"
+          : "follow_user",
+    };
   }
-  return { language: preference, source };
+  return {
+    language: preference,
+    source: source === "workspace_setting" ? "workspace" : "channel",
+  };
 }
 
 function inferUserLanguage(text: string): ResponseLanguage {

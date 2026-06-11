@@ -34,6 +34,8 @@ Related docs:
 - [Channel Workspace v1.22 Long Conversation Virtual Feed](channel-workspace-v1.22.md)
 - [Channel Workspace v1.23 Explicit Task Selection](channel-workspace-v1.23.md)
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
+- [Channel Workspace v1.25 Codex-Inspired Attention Popover](channel-workspace-v1.25.md)
+- [Channel Workspace v1.26 Channel Branches](channel-workspace-v1.26.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
@@ -183,6 +185,12 @@ Section header actions are icon-only; empty or loading sections must not flash l
 the accepted HTML bottom-group treatment: a divider above them and ordinary drawer rows, not legacy
 warning-card or icon-only sidebar styling. Long AI teammate lists scroll inside the
 teammate section so the bottom group remains visible.
+Channel rows may own one level of channel branches. A channel branch is a product work
+lane under the parent channel, not a Git branch. The section header `+` creates a
+top-level channel; a hovered or focused channel row exposes row actions for `Create
+branch` and `Archive channel`; a hovered or focused branch row exposes only `Archive
+branch`. Branches render as an indented tree continuation below the parent channel, not as
+nested cards or separate top-level channels.
 
 When the right details drawer is hidden, the chat body and composer expand back into the
 available channel content area. If the attention queue is visible, wide viewports keep
@@ -199,6 +207,29 @@ The attention popover keeps the accepted HTML typography scale: 14px/600 section
 compact 11px/600 status/meta chips. Progress status icons are 18px with 2.4px stroke so
 check and waiting states have the same visual weight. It should not use heavier 760/780
 text weights that make the popover read larger than the chat workspace.
+
+### Channel Branches
+
+Channel branches are a left-drawer organization model for splitting one channel into
+focused work lanes without creating another full channel.
+
+Rules:
+
+- branches belong to exactly one parent channel,
+- branches are one level deep,
+- branches do not override provider, teammate, bound path, or runtime policy in the first
+  implementation,
+- creating a branch is a channel-row action,
+- archiving a channel and archiving a branch are separate actions,
+- archived branches are hidden from the default drawer and should be restorable from
+  Settings archived-items management,
+- archived channels and branches should be managed from Settings with `Restore` and
+  `Delete` actions,
+- delete is a separate irreversible operation and must not appear in the normal left
+  drawer hover actions.
+
+Do not use Git vocabulary for this feature. `Branch` in this context means a Ling channel
+work lane, not repository state.
 
 ## External Pattern Benchmark
 
@@ -1844,6 +1875,13 @@ Current MVP implementation status:
   counts and top actionable items third. It borrows Codex's glanceable floating status
   model without copying its single-agent repo assumptions, dark panel styling, or raw
   execution detail surface,
+- v1.26 now defines channel branches as one-level product work lanes under a parent
+  channel. A hovered or focused top-level channel row exposes `Create branch` and
+  `Archive channel`; a hovered or focused branch row exposes only `Archive branch`.
+  Branches do not override provider, teammate, path, or runtime policy in the first
+  implementation. Archived channels and branches are recovered or permanently deleted from
+  a Settings management surface, while the normal drawer only exposes reversible archive.
+  The UI must not imply Git checkout, merge, push, or delete-branch operations,
 - the multi-agent orchestration experience now keeps v1.21/v1.25 as the compatibility
   boundary: shaping-stage specialist input can be visible in chat, live execution appears
   as mutable progress rows and popover state, terminal work folds into compact summaries,
@@ -2373,11 +2411,67 @@ Current MVP implementation status:
 - [x] Add minimal internal prompt context assembly for channel replies, including current
   teammate identity and roster-question detection.
 - [x] Add internal Context Pack assembly for ordinary channel replies and selectors.
-- [ ] Route workflow-step prompt assembly through Context Pack without changing the
+- [x] Route workflow-step prompt assembly through Context Pack without changing the
   orchestrator state machine.
+- [x] Detail P6 automatic compaction design for demand-driven summaries, workflow packet
+  summaries, and no-tools context-length retry.
 - [ ] Add automatic compaction into auditable summaries/packets, not into channel protocol
   or active memory.
-- [ ] Add protocol editing/confirmation UX in the Context or Settings drilldown.
+- [x] Detail P7 protocol editing design for effective protocol resolution, API, UI
+  boundary, and Context Pack consumption.
+- [x] Detail P7 implementation checklist for resolver-first API, storage boundary, UI
+  placement, and Context Pack consumption.
+- [x] Implement P7A/P7B1 channel protocol resolver API for existing channel fields,
+  validation, unsupported-field rejection, and revert.
+- [x] Detail P7B2 deferred boundary for AI drafts, protocol-only field storage,
+  versioning, apply, and rollback.
+- [x] Detail P7C Context surface editor behavior, field controls, validation, reset, and
+  default-chat boundary.
+- [x] Detail P7D resolver-backed Context Pack consumption for replies, selectors,
+  auto-route, and workflow steps.
+- [x] Add protocol editing/confirmation UX in the Context surface for existing channel
+  protocol fields.
+- [x] Route reply, selector, auto-route, and workflow-step Context Pack builders through
+  the P7 resolver without allowing builders to mutate protocol.
+- [ ] Add Settings deep-link to the Context protocol editor.
+- [x] Detail P8A workflow-step Context Pack evidence drilldown design, including entry
+  points, persisted artifact source, safe fields, failure states, and boundaries.
+- [x] Add P8A workflow-step Context Pack evidence drilldown in the existing workflow
+  evidence/detail surface.
+- [x] Detail P8B reply/selector inspect action design, including explicit entry points,
+  minimal metadata persistence, rendering rules, and safety boundaries.
+- [x] Add P8B1 explicit inspect action for auto-replied and suppressed channel messages
+  using existing route/intent evidence where available.
+- [x] Add P8B2 safe reply/selector route metadata persistence for Context Pack kind,
+  provider/model ids, section ids, dropped ids, source-ref counts, and compaction ids
+  without storing ordinary reply prompts.
+- [x] Add P8B3 Context surface `Routing` index for recent reply-route and
+  intent-selector decisions, opened on demand without a permanent evidence drawer.
+- [x] Add P8B4 safety tests and rendering boundary for intent inspect metadata: safe ids,
+  outcome/action/teammate/proposal/workflow/reason only; no raw prompts, hidden prompts,
+  private chat, provider secrets, raw artifact bodies, confidence badges, or tuning
+  sample sets.
+- [x] Add P8C workflow-step Budget diagnostics inside the existing Context Pack evidence
+  detail: collapsed by default, provider/token budget fields and section estimates only,
+  no normal-chat token counters, raw prompts, hidden prompts, or confidence badges.
+
+### Phase 37: Channel Branches
+
+- [x] Define v1.26 Channel Branches in `docs/design/channel-workspace-v1.26.md`.
+- [x] Add daemon storage and API for channel-owned branch records with active/archived
+  state.
+- [x] Add left drawer rendering for one-level branch lists under parent channels.
+- [x] Add row hover/focus actions: create branch and archive channel for parent channels,
+  archive branch for branch rows.
+- [x] Add branch archive confirmation and restore path without conflating branch archive
+  with channel archive.
+- [x] Add Settings archived-items management for archived channels and branches with
+  restore and delete actions.
+- [x] Add destructive delete confirmations for archived channels and archived branches,
+  including linked-work counts when available.
+- [ ] Add targeted browser coverage for default, hover, keyboard focus, branch creation,
+  branch archive, channel archive, restore, delete confirmation, and archived-hidden
+  states.
 
 ## Validation Plan
 

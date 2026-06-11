@@ -136,6 +136,16 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
             reason: "Default teammate candidate.",
           },
         ],
+        contextPack: {
+          schemaVersion: 1,
+          kind: "channel_reply",
+          providerPresetId: "provider_static",
+          modelId: "static-chat",
+          sectionIds: ["channel_collaboration_protocol", "channel_discussion"],
+          droppedSectionIds: [],
+          sourceRefCounts: { channel: 1, message: 1 },
+          compactionIds: [],
+        },
         status: "accepted",
         createdBy: "deterministic",
       },
@@ -143,6 +153,16 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
     );
 
     assert.equal(store.getChannelMessageRouteDecision(decision.id).replyMessageId, reply.id);
+    assert.deepEqual(store.getChannelMessageRouteDecision(decision.id).contextPack, {
+      schemaVersion: 1,
+      kind: "channel_reply",
+      providerPresetId: "provider_static",
+      modelId: "static-chat",
+      sectionIds: ["channel_collaboration_protocol", "channel_discussion"],
+      droppedSectionIds: [],
+      sourceRefCounts: { channel: 1, message: 1 },
+      compactionIds: [],
+    });
     assert.deepEqual(store.listChannelMessageRouteDecisions({ channelId: channel.id, sourceMessageId: message.id }).map((item) => item.id), [decision.id]);
     const failed = store.updateChannelMessageRouteDecision(
       decision.id,
@@ -156,6 +176,7 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
     assert.equal(failed.status, "failed");
     assert.equal(failed.errorMessage, "selector failed");
     assert.equal(failed.confidence, 0.2);
+    assert.equal(failed.contextPack.kind, "channel_reply");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

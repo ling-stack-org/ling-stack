@@ -9,6 +9,7 @@ import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { extractChannelExecutionProposal } from "./ai-proposals.js";
+import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 
@@ -25,10 +26,14 @@ export async function createAiChannelReply(input: {
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
 }): Promise<ChannelMessage> {
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
   const teammateId =
     input.teammateId ??
     input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
-    input.channel.defaultTeammateId ??
+    protocol.protocol.defaultTeammateId ??
     "ai-teammate";
   const teammate = resolveAiTeammateReference(input.store, teammateId);
   const canonicalTeammateId = teammate?.id ?? teammateId;

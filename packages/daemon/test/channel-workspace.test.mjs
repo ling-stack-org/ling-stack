@@ -30,6 +30,70 @@ test("health exposes channel auto_route capability", async () => {
   }
 });
 
+test("channel branches follow archive restore and delete lifecycle", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-branches-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const branch = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Model routing fix",
+    })).branch;
+
+    let listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.channels.some((item) => item.id === channel.id), true);
+    assert.deepEqual(listed.branches.map((item) => item.id), [branch.id]);
+
+    const archivedBranch = (await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      status: "archived",
+    })).branch;
+    assert.equal(archivedBranch.status, "archived");
+    assert.ok(archivedBranch.archivedAt);
+
+    listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.branches.some((item) => item.id === branch.id), false);
+
+    let archivedBranches = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}&archived=true`);
+    assert.deepEqual(archivedBranches.branches.map((item) => item.id), [branch.id]);
+
+    const restoredBranch = (await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      status: "active",
+    })).branch;
+    assert.equal(restoredBranch.status, "active");
+    assert.equal(restoredBranch.archivedAt, undefined);
+
+    const activeDelete = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "DELETE",
+    });
+    assert.equal(activeDelete.status, 409);
+
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      status: "archived",
+    });
+    await deleteJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`);
+    archivedBranches = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}&archived=true`);
+    assert.deepEqual(archivedBranches.branches, []);
+
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      status: "archived",
+    });
+    listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.channels.some((item) => item.id === channel.id), false);
+
+    const archivedChannels = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}&archived=true`);
+    assert.deepEqual(archivedChannels.channels.map((item) => item.id), [channel.id]);
+
+    const restoredChannel = (await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      status: "active",
+    })).channel;
+    assert.equal(restoredChannel.status, "active");
+    listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.channels.some((item) => item.id === channel.id), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("context budget manager resolves provider modes and trims lower priority sections", () => {
   const providerBase = {
     id: "provider_context_test",
@@ -140,6 +204,8 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.equal(finalReply.body, "Designer reply");
     assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Channel collaboration protocol:/);
+    assert.match(runner.runs[0].task.prompt, /Response language: follow_user \(source=default\)/);
     assert.match(runner.runs[0].task.prompt, /Current teammate: Designer \(id: teammate_builtin_designer, role: designer\)/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /Channel teammates \(configured roster/);
   } finally {
@@ -300,6 +366,7 @@ test("channel intent selector creates visible multi-replies for discussion-only 
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
+    assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "visible_multi_reply");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
@@ -380,6 +447,7 @@ test("channel intent selector creates workflow proposals for execution-shaped al
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
+    assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "workflow_proposal");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
@@ -434,6 +502,7 @@ test("channel intent selector asks one clarify question for underspecified work 
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
+    assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
@@ -491,6 +560,7 @@ test("channel intent selector records direct workflow as a confirmed-start propo
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
+    assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "direct_workflow");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
@@ -655,6 +725,7 @@ test("model-assisted channel intent selector falls back to deterministic workflo
     assert.equal(proposals.proposals.length, 1);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
+    assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "workflow_proposal");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
   } finally {
@@ -856,7 +927,7 @@ test("explicit mentions still reply and keep proposal extraction enabled", async
 
 test("auto_route is rejected by channel create and update while the feature flag is disabled", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-disabled-"));
-  const daemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false } });
+  const daemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false, intentSelector: false } });
   try {
     const createUrl = `${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`;
     const createBody = {
@@ -937,6 +1008,8 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel message router/i);
     assert.match(runner.runs[0].task.prompt, /Decide whether one AI teammate should reply/);
+    assert.match(runner.runs[0].task.prompt, /Channel collaboration protocol:/);
+    assert.match(runner.runs[0].task.prompt, /Auto reply mode: auto_route \(source=channel_setting\)/);
     assert.match(runner.runs[0].task.prompt, /Candidates JSON/);
     assert.match(runner.runs[1].systemPrompt, /Do not include hidden proposal blocks/);
 
@@ -948,6 +1021,16 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.equal(decisions.decisions[0].selectedTeammateId, teammateId);
     assert.equal(decisions.decisions[0].confidence, 0.9);
     assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
+    assert.equal(decisions.decisions[0].contextPack.kind, "auto_route_selector");
+    assert.deepEqual(decisions.decisions[0].contextPack.sectionIds, [
+      "auto_route_instructions",
+      "channel_collaboration_protocol",
+      "auto_route_source_message",
+      "auto_route_recent_context",
+      "auto_route_candidates",
+    ]);
+    assert.deepEqual(decisions.decisions[0].contextPack.sourceRefCounts, { channel: 1, message: 1 });
+    assert.equal(decisions.decisions[0].contextPack.providerPresetId, provider.id);
     assert.deepEqual((await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`)).proposals, []);
     assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
     assert.deepEqual((await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`)).runs, []);
@@ -1145,6 +1228,88 @@ test("channel asset references must stay within the same channel", async () => {
     });
     assert.equal(crossMessage.status, 400);
     assert.equal((await crossMessage.json()).error, "attachment_channel_mismatch");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel collaboration protocol resolver API patches existing channel fields and reverts to defaults", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-settings-"));
+  const daemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false } });
+  try {
+    await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      responseLanguage: "zh-CN",
+    });
+    const channel = await createChannel(daemon.url, cwd);
+
+    const initial = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(initial.protocol.schemaVersion, 1);
+    assert.equal(initial.protocol.channelId, channel.id);
+    assert.equal(initial.protocol.responseLanguage, "zh-CN");
+    assert.equal(initial.sources.responseLanguage.source, "workspace_setting");
+    assert.equal(initial.sources.responseLanguage.channelValue, "workspace");
+    assert.equal(initial.sources.responseLanguage.workspaceValue, "zh-CN");
+    assert.equal(initial.protocol.autoReplyMode, "mentions_only");
+    assert.equal(initial.sources.autoReplyMode.source, "default");
+    assert.equal(initial.protocol.defaultTeammateId, undefined);
+    assert.equal(initial.sources.defaultTeammateId.source, "default");
+    assert.deepEqual(initial.storage.editableFields, ["responseLanguage", "autoReplyMode", "defaultTeammateId"]);
+    assert.ok(initial.storage.unsupportedFields.includes("privacyRules"));
+
+    const patched = await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol?cwd=${encodeURIComponent(cwd)}`, {
+      responseLanguage: "en-US",
+      autoReplyMode: "default_teammate",
+      defaultTeammateId: "teammate_builtin_engineer",
+    });
+    assert.equal(patched.protocol.responseLanguage, "en-US");
+    assert.equal(patched.sources.responseLanguage.source, "channel_setting");
+    assert.equal(patched.protocol.autoReplyMode, "default_teammate");
+    assert.equal(patched.sources.autoReplyMode.source, "channel_setting");
+    assert.equal(patched.protocol.defaultTeammateId, "teammate_builtin_engineer");
+    assert.equal(patched.sources.defaultTeammateId.source, "channel_setting");
+    const channelAfterPatch = (await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`)).channel;
+    assert.equal(channelAfterPatch.responseLanguage, "en-US");
+    assert.equal(channelAfterPatch.autoReplyMode, "default_teammate");
+    assert.equal(channelAfterPatch.defaultTeammateId, "teammate_builtin_engineer");
+
+    const unsupported = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ privacyRules: ["Do not expose private teammate chat."] }),
+    });
+    assert.equal(unsupported.status, 400);
+    const unsupportedBody = await unsupported.json();
+    assert.equal(unsupportedBody.error, "unsupported_protocol_field");
+    assert.equal(unsupportedBody.field, "privacyRules");
+
+    const autoRoute = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoReplyMode: "auto_route" }),
+    });
+    assert.equal(autoRoute.status, 400);
+    assert.equal((await autoRoute.json()).error, "auto_route_disabled");
+
+    const missingTeammate = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultTeammateId: "missing_teammate" }),
+    });
+    assert.equal(missingTeammate.status, 400);
+    assert.equal((await missingTeammate.json()).error, "default_teammate_not_found");
+
+    const reverted = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol/revert?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.deepEqual(reverted.revertedFields, ["responseLanguage", "autoReplyMode", "defaultTeammateId"]);
+    assert.equal(reverted.protocol.responseLanguage, "zh-CN");
+    assert.equal(reverted.sources.responseLanguage.source, "workspace_setting");
+    assert.equal(reverted.protocol.autoReplyMode, "mentions_only");
+    assert.equal(reverted.sources.autoReplyMode.source, "default");
+    assert.equal(reverted.protocol.defaultTeammateId, undefined);
+    const channelAfterRevert = (await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`)).channel;
+    assert.equal(channelAfterRevert.responseLanguage, undefined);
+    assert.equal(channelAfterRevert.autoReplyMode, "mentions_only");
+    assert.equal(channelAfterRevert.defaultTeammateId, undefined);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1636,6 +1801,117 @@ test("workflow graph compiles into durable steps and emits standardized packets"
     assert.equal(reviewContext.dependencies.length, 1);
     assert.equal(reviewContext.dependencies[0].workflowStepId, planStep.id);
     assert.equal(reviewContext.dependencies[0].outputArtifactId, planStep.metadata.outputArtifactId);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow step context compacts dependency output before blocking on provider budget", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-context-compaction-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+      contextWindow: 1800,
+      maxTokens: 512,
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Context compaction workflow",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      allowedTools: ["read"],
+      runtimePolicy: {
+        maxConcurrentRuns: 1,
+        executionMode: "serial",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const now = new Date().toISOString();
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Dependency compaction",
+      objective: "Verify dependency output compaction before the downstream step starts.",
+      status: "ready",
+      createdBy: "local-user",
+    }, now);
+    const hugeDependencySummary = `Important dependency summary. ${"research finding detail ".repeat(80)}`;
+    const upstreamSteps = Array.from({ length: 7 }, (_, index) => {
+      const step = createParallelWorkflowStep(store, workflow.id, `Research Findings ${index + 1}`, {
+        branchGroupId: `research-${index + 1}`,
+        providerPresetId: provider.id,
+        status: "succeeded",
+      });
+      store.updateChannelWorkflowStep(
+        step.id,
+        { resultSummary: hugeDependencySummary },
+        now,
+      );
+      return step;
+    });
+    const downstream = createParallelWorkflowStep(store, workflow.id, "Implementation From Research", {
+      branchGroupId: "implementation",
+      providerPresetId: provider.id,
+      dependsOnStepIds: upstreamSteps.map((step) => step.id),
+      dependencyMode: "all_succeeded",
+    });
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "started");
+    assert.equal(tick.workflowStep.id, downstream.id);
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Compacted workflow dependency summary/);
+    assert.match(runner.runs[0].task.prompt, /Compaction id: workflow_packet_summary_/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail/);
+
+    const startedStep = await waitForWorkflowStepStatus(daemon.url, cwd, workflow.id, downstream.id, "succeeded");
+    assert.ok(startedStep.metadata.contextArtifactId);
+    const contextPacket = await getArtifactJson(daemon.url, cwd, startedStep.metadata.contextArtifactId);
+    assert.equal(contextPacket.contextPack.kind, "workflow_step");
+    assert.equal(contextPacket.contextPack.budget.mode, "model_known");
+    assert.equal(contextPacket.contextPack.budget.contextWindowTokens, 1800);
+    assert.equal(contextPacket.contextPack.budget.reservedOutputTokens, 512);
+    assert.equal(contextPacket.contextPack.budget.reservedRuntimeOverheadTokens, 512);
+    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, 1024);
+    assert.equal(contextPacket.contextPack.budget.tokenizer, "openai-compatible");
+    assert.equal(typeof contextPacket.contextPack.estimatedInputTokens, "number");
+    assert.equal(contextPacket.contextPack.overBudget, false);
+    assert.equal(contextPacket.contextPack.sections.some((section) => section.id === "workflow_dependency_summary"), true);
+    assert.equal(contextPacket.contextPack.sections.some((section) => section.id === "workflow_dependency_1"), false);
+    assert.equal(contextPacket.contextPack.sections.every((section) => typeof section.estimatedTokens === "number"), true);
+    const protocolSection = contextPacket.contextPack.sections.find((section) => section.id === "channel_collaboration_protocol");
+    assert.ok(protocolSection);
+    assert.equal(protocolSection.metadata.autoReplyMode, "mentions_only");
+    assert.equal(protocolSection.metadata.autoReplyModeSource, "default");
+    assert.equal(contextPacket.contextPack.droppedSectionIds.includes("workflow_dependency_summary"), false);
+    assert.equal(contextPacket.contextPack.compactionIds.length, 1);
+    const compactionArtifactId = contextPacket.contextPack.compactionIds[0];
+    assert.equal(contextPacket.contextPack.sourceRefs.some((ref) => ref.type === "artifact" && ref.id === compactionArtifactId), true);
+
+    const compactionPacket = await getArtifactJson(daemon.url, cwd, compactionArtifactId);
+    assert.equal(compactionPacket.schemaVersion, 1);
+    assert.equal(compactionPacket.kind, "workflow_packet_summary");
+    assert.equal(compactionPacket.workflowId, workflow.id);
+    assert.equal(compactionPacket.workflowStepId, downstream.id);
+    assert.equal(compactionPacket.dependencyOutputRefs.length, upstreamSteps.length);
+    assert.deepEqual(compactionPacket.dependencyOutputRefs.map((ref) => ref.workflowStepId), upstreamSteps.map((step) => step.id));
+    assert.equal(compactionPacket.droppedSectionIds.some((id) => id.startsWith("workflow_dependency_")), true);
+    assert.equal(compactionPacket.sourceRefs.some((ref) => ref.type === "workflow_step" && ref.id === upstreamSteps[0].id), true);
+    assert.ok(compactionPacket.summary.includes(`Dependency count: ${upstreamSteps.length}.`));
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -3856,6 +4132,56 @@ async function getArtifactJson(baseUrl, cwd, artifactId) {
   return await response.json();
 }
 
+function assertIntentDecisionInspectPayloadIsSafe(decision) {
+  const allowedKeys = new Set([
+    "schemaVersion",
+    "id",
+    "workspaceId",
+    "channelId",
+    "sourceMessageId",
+    "action",
+    "selectedTeammateId",
+    "selectedTeammateIds",
+    "proposalId",
+    "replyMessageId",
+    "replyMessageIds",
+    "workflowId",
+    "reason",
+    "status",
+    "createdBy",
+    "errorMessage",
+    "createdAt",
+    "updatedAt",
+  ]);
+  const forbiddenKeys = [
+    "prompt",
+    "body",
+    "messages",
+    "contextPack",
+    "systemPrompt",
+    "taskPrompt",
+    "proposal",
+    "rawPrompt",
+    "hiddenPrompt",
+    "privateMessages",
+    "artifactBody",
+    "providerSecret",
+    "providerSecrets",
+    "apiKey",
+    "apiKeyRef",
+    "secretRef",
+    "providerApiKey",
+    "confidence",
+    "score",
+  ];
+  for (const key of Object.keys(decision)) {
+    assert.equal(allowedKeys.has(key), true, `unexpected intent inspect field: ${key}`);
+  }
+  for (const key of forbiddenKeys) {
+    assert.equal(Object.hasOwn(decision, key), false, `unsafe intent inspect field exposed: ${key}`);
+  }
+}
+
 async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, status) {
   const deadline = Date.now() + 2_000;
   let latest;
@@ -3972,4 +4298,14 @@ async function patchJson(url, body) {
     assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
   return await response.json();
+}
+
+async function deleteJson(url) {
+  const response = await fetch(url, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+  }
+  return response;
 }

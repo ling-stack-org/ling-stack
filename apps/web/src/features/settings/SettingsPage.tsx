@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
+  Archive,
   Bot,
   CircleAlert,
   Database,
@@ -20,6 +21,14 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
+import {
+  deleteChannel,
+  deleteChannelBranch,
+  listChannelBranches,
+  listChannels,
+  patchChannel,
+  updateChannelBranch,
+} from "../../api/channels.js";
 import { LanguageSwitcher, useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
@@ -41,6 +50,7 @@ import type {
   ApprovalPolicyFormState,
   ApprovalToolDecision,
   Channel,
+  ChannelBranch,
   ExternalWorkStatusResponse,
   PermissionPreset,
   RunnerListItem,
@@ -60,7 +70,7 @@ import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins
 import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 
-type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library" | "mcp" | "plugins" | "developer";
+type SettingsSection = "external-work" | "interface" | "archived-items" | "runtime" | "approval-policy" | "skill-library" | "mcp" | "plugins" | "developer";
 
 export function SettingsPage({
   cwd,
@@ -124,6 +134,7 @@ export function SettingsPage({
   onOpenExternalWorkTriage,
   onOpenRunDiagnostics,
   onRefreshMcp,
+  onArchivedItemsChanged,
   onCreateMcpServer,
   onUpdateMcpServer,
   onDeleteMcpServer,
@@ -195,6 +206,7 @@ export function SettingsPage({
   readonly onOpenExternalWorkTriage: () => void;
   readonly onOpenRunDiagnostics: () => void;
   readonly onRefreshMcp: () => void;
+  readonly onArchivedItemsChanged?: () => void | Promise<void>;
   readonly onCreateMcpServer: (form: McpServerFormState) => Promise<void>;
   readonly onUpdateMcpServer: (serverId: string, form: McpServerFormState) => Promise<void>;
   readonly onDeleteMcpServer: (serverId: string) => void;
@@ -207,6 +219,12 @@ export function SettingsPage({
   const [workflowSourceKind, setWorkflowSourceKind] = useState<"github" | "linear">("github");
   const [workflowRepository, setWorkflowRepository] = useState("");
   const [workflowProjectSlug, setWorkflowProjectSlug] = useState("");
+  const [archivedChannels, setArchivedChannels] = useState<readonly Channel[]>([]);
+  const [archiveParentChannels, setArchiveParentChannels] = useState<readonly Channel[]>([]);
+  const [archivedBranches, setArchivedBranches] = useState<readonly ChannelBranch[]>([]);
+  const [archivedItemsLoading, setArchivedItemsLoading] = useState(false);
+  const [archivedItemsError, setArchivedItemsError] = useState("");
+  const [archivedItemAction, setArchivedItemAction] = useState("");
   const secretRef = externalWorkStatus?.secret.ref ?? externalWorkStatus?.workflow.secretRef;
   const canConfigureSecret = Boolean(externalWorkStatus?.workflow.valid && externalWorkStatus.workflow.sourceKind !== "unknown");
   const canRemoveSecret = Boolean(secretRef?.startsWith("keychain:"));
@@ -248,6 +266,99 @@ export function SettingsPage({
     externalWorkStatus?.workflow.projectSlug,
   ]);
 
+  useEffect(() => {
+    if (activeSection === "archived-items") {
+      void refreshArchivedItems();
+    }
+  }, [activeSection, cwd]);
+
+  async function refreshArchivedItems(): Promise<void> {
+    if (!cwd.trim()) {
+      setArchivedChannels([]);
+      setArchiveParentChannels([]);
+      setArchivedBranches([]);
+      return;
+    }
+    setArchivedItemsLoading(true);
+    setArchivedItemsError("");
+    try {
+      const [activeChannelsResponse, archivedChannelsResponse] = await Promise.all([
+        listChannels(cwd, { archived: false, limit: 500 }),
+        listChannels(cwd, { archived: true, limit: 500 }),
+      ]);
+      const parentChannels = [...activeChannelsResponse.channels, ...archivedChannelsResponse.channels];
+      const branchResponses = await Promise.all(
+        parentChannels.map((channel) =>
+          listChannelBranches(cwd, channel.id, { archived: true, limit: 500 })
+            .catch(() => ({ cwd, channelId: channel.id, branches: [] as ChannelBranch[] })),
+        ),
+      );
+      setArchivedChannels(archivedChannelsResponse.channels);
+      setArchiveParentChannels(parentChannels);
+      setArchivedBranches(branchResponses.flatMap((response) => response.branches));
+    } catch (caught) {
+      setArchivedItemsError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setArchivedItemsLoading(false);
+    }
+  }
+
+  async function restoreArchivedChannel(channelId: string): Promise<void> {
+    await runArchivedItemAction(`channel:${channelId}:restore`, async () => {
+      await patchChannel(cwd, channelId, { status: "active" });
+      await refreshArchivedItems();
+      await onArchivedItemsChanged?.();
+    });
+  }
+
+  async function deleteArchivedChannel(channel: Channel): Promise<void> {
+    if (!window.confirm(`${t("Delete channel")} ${channel.name}?\n${t("This cannot be undone")}`)) {
+      return;
+    }
+    await runArchivedItemAction(`channel:${channel.id}:delete`, async () => {
+      await deleteChannel(cwd, channel.id);
+      await refreshArchivedItems();
+      await onArchivedItemsChanged?.();
+    });
+  }
+
+  async function restoreArchivedBranch(branch: ChannelBranch): Promise<void> {
+    const parent = archiveParentChannels.find((channel) => channel.id === branch.channelId);
+    await runArchivedItemAction(`branch:${branch.id}:restore`, async () => {
+      if (parent?.status === "archived") {
+        await patchChannel(cwd, branch.channelId, { status: "active" });
+      }
+      await updateChannelBranch(cwd, branch.channelId, branch.id, { status: "active" });
+      await refreshArchivedItems();
+      await onArchivedItemsChanged?.();
+    });
+  }
+
+  async function deleteArchivedBranch(branch: ChannelBranch): Promise<void> {
+    if (!window.confirm(`${t("Delete branch")} ${branch.name}?\n${t("This cannot be undone")}`)) {
+      return;
+    }
+    await runArchivedItemAction(`branch:${branch.id}:delete`, async () => {
+      await deleteChannelBranch(cwd, branch.channelId, branch.id);
+      await refreshArchivedItems();
+      await onArchivedItemsChanged?.();
+    });
+  }
+
+  async function runArchivedItemAction(actionId: string, action: () => Promise<void>): Promise<void> {
+    setArchivedItemAction(actionId);
+    setArchivedItemsError("");
+    try {
+      await action();
+    } catch (caught) {
+      setArchivedItemsError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setArchivedItemAction("");
+    }
+  }
+
+  const archiveParentChannelById = new Map(archiveParentChannels.map((channel) => [channel.id, channel]));
+
   return (
     <div className="settings-layout">
       <nav className="settings-section-nav" aria-label={t("Settings sections")}>
@@ -271,6 +382,17 @@ export function SettingsPage({
           <span>
             <strong>{t("Interface preferences")}</strong>
             <small>{t("Theme and language")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "archived-items" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("archived-items")}
+        >
+          <span className="settings-section-icon"><Archive size={16} /></span>
+          <span>
+            <strong>{t("Archived items")}</strong>
+            <small>{t("{count} recoverable", { count: archivedChannels.length + archivedBranches.length })}</small>
           </span>
         </button>
         <button
@@ -379,6 +501,106 @@ export function SettingsPage({
             </select>
           </div>
         </div>
+      </section>
+      ) : null}
+
+      {activeSection === "archived-items" ? (
+      <section className="panel settings-panel archived-items-settings-panel" aria-labelledby="archived-items-settings-title">
+        <div className="panel-title split">
+          <span>
+            <Archive size={18} />
+            <h2 id="archived-items-settings-title">{t("Archived channels and branches")}</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={() => void refreshArchivedItems()} disabled={archivedItemsLoading}>
+            {archivedItemsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+            {t("Refresh")}
+          </button>
+        </div>
+
+        {archivedItemsError ? (
+          <div className="inline-error">
+            <CircleAlert size={17} />
+            {archivedItemsError}
+          </div>
+        ) : null}
+
+        <div className="archived-items-copy">
+          {t("Restore returns an item to the channel drawer. Delete is permanent and requires confirmation.")}
+        </div>
+
+        <ArchivedItemGroup
+          title={t("Channels")}
+          countLabel={t("{count} archived", { count: archivedChannels.length })}
+          emptyLabel={archivedItemsLoading ? t("Loading archived channels...") : t("No archived channels")}
+        >
+          {archivedChannels.map((channel) => (
+            <div key={channel.id} className="archived-item-row">
+              <div className="archived-item-main">
+                <strong>{channel.name}</strong>
+                <small>{t("Archived")} · {formatDateTime(channel.updatedAt)}</small>
+              </div>
+              <div className="archived-item-actions">
+                <button
+                  className="secondary-button compact-button"
+                  type="button"
+                  onClick={() => void restoreArchivedChannel(channel.id)}
+                  disabled={archivedItemAction !== ""}
+                >
+                  {archivedItemAction === `channel:${channel.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                  {t("Restore")}
+                </button>
+                <button
+                  className="ghost-button danger-ghost-button compact-button"
+                  type="button"
+                  onClick={() => void deleteArchivedChannel(channel)}
+                  disabled={archivedItemAction !== ""}
+                >
+                  {archivedItemAction === `channel:${channel.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
+                  {t("Delete")}
+                </button>
+              </div>
+            </div>
+          ))}
+        </ArchivedItemGroup>
+
+        <ArchivedItemGroup
+          title={t("Branches")}
+          countLabel={t("{count} archived", { count: archivedBranches.length })}
+          emptyLabel={archivedItemsLoading ? t("Loading archived branches...") : t("No archived branches")}
+        >
+          {archivedBranches.map((branch) => {
+            const parent = archiveParentChannelById.get(branch.channelId);
+            const parentArchived = parent?.status === "archived";
+            return (
+              <div key={branch.id} className="archived-item-row">
+                <div className="archived-item-main">
+                  <strong>{parent ? `${parent.name} / ${branch.name}` : branch.name}</strong>
+                  <small>{parentArchived ? t("Parent channel archived") : t("Parent channel active")} · {formatDateTime(branch.archivedAt ?? branch.updatedAt)}</small>
+                </div>
+                <div className="archived-item-actions">
+                  <button
+                    className="secondary-button compact-button"
+                    type="button"
+                    onClick={() => void restoreArchivedBranch(branch)}
+                    disabled={archivedItemAction !== ""}
+                  >
+                    {archivedItemAction === `branch:${branch.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                    {parentArchived ? t("Restore both") : t("Restore")}
+                  </button>
+                  <button
+                    className="ghost-button danger-ghost-button compact-button"
+                    type="button"
+                    onClick={() => void deleteArchivedBranch(branch)}
+                    disabled={archivedItemAction !== ""}
+                  >
+                    {archivedItemAction === `branch:${branch.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
+                    {t("Delete")}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </ArchivedItemGroup>
       </section>
       ) : null}
 
@@ -887,6 +1109,36 @@ function workflowStatusLabel(status: ExternalWorkStatusResponse | undefined): st
     return "missing";
   }
   return status.workflow.valid ? "valid" : "invalid";
+}
+
+function ArchivedItemGroup({
+  title,
+  countLabel,
+  emptyLabel,
+  children,
+}: {
+  readonly title: string;
+  readonly countLabel: string;
+  readonly emptyLabel: string;
+  readonly children: ReactNode;
+}): JSX.Element {
+  const hasItems = Array.isArray(children) ? children.length > 0 : Boolean(children);
+  return (
+    <section className="archived-item-group">
+      <div className="archived-item-group-head">
+        <strong>{title}</strong>
+        <small>{countLabel}</small>
+      </div>
+      <div className="archived-item-list">
+        {hasItems ? children : (
+          <div className="empty-state compact-empty archived-item-empty">
+            <Archive />
+            <span>{emptyLabel}</span>
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function externalWorkTargetLabel(status: ExternalWorkStatusResponse | undefined): string {

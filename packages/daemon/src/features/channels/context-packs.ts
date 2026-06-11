@@ -1,6 +1,11 @@
-import type { AiTeammate, Channel, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ProviderPreset, RunStore, SkillApprovalProfile } from "@ling-stack/core";
+import type { AiTeammate, Channel, ChannelAutoReplyMode, ChannelMessage, ChannelResponseLanguage, ChannelWorkflow, ChannelWorkflowStep, ProviderPreset, RunStore, SkillApprovalProfile } from "@ling-stack/core";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { formatChannelDiscussionPrompt, type ChannelDiscussionPromptContext, type ChannelDiscussionPromptTeammate } from "./ai-prompts.js";
+import {
+  resolveEffectiveChannelCollaborationProtocol,
+  type ChannelProtocolFieldSource,
+  type EffectiveChannelCollaborationProtocolResult,
+} from "./collaboration-protocol.js";
 
 export type ContextPackKind =
   | "channel_reply"
@@ -46,7 +51,8 @@ export interface ContextSourceRef {
     | "workflow_step"
     | "workflow_selector_decision"
     | "workflow_handoff_intent"
-    | "context_summary";
+    | "context_summary"
+    | "workflow_packet_summary";
   readonly id: string;
   readonly label?: string;
 }
@@ -58,6 +64,7 @@ export interface ContextSection {
   readonly text: string;
   readonly sourceRefIds?: readonly string[];
   readonly estimatedTokens?: number;
+  readonly metadata?: Record<string, unknown>;
 }
 
 export interface ContextPack {
@@ -78,6 +85,7 @@ interface BuildContextPackInput {
   readonly providerPreset?: ProviderPreset;
   readonly sections: readonly ContextSection[];
   readonly sourceRefs?: readonly ContextSourceRef[];
+  readonly compactionIds?: readonly string[];
 }
 
 interface ChannelReplyContextPackInput {
@@ -109,7 +117,7 @@ interface ChannelAutoRouteContextPackInput extends ChannelIntentSelectorContextP
   readonly candidates: readonly ChannelAutoRouteCandidateContext[];
 }
 
-interface WorkflowStepContextPackInput {
+export interface WorkflowStepContextPackInput {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly workflow: ChannelWorkflow;
@@ -117,6 +125,14 @@ interface WorkflowStepContextPackInput {
   readonly prompt: string;
   readonly providerPresetId?: string;
   readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly compactedDependencySummary?: WorkflowStepCompactedDependencySummary;
+}
+
+export interface WorkflowStepCompactedDependencySummary {
+  readonly id: string;
+  readonly text: string;
+  readonly sourceRefs: readonly ContextSourceRef[];
+  readonly sourceRefIds: readonly string[];
 }
 
 const MODEL_UNKNOWN_CONTEXT_WINDOW_TOKENS = 8_192;
@@ -191,7 +207,7 @@ export function buildContextPack(input: BuildContextPackInput): ContextPack {
     sections: keptSections,
     sourceRefs: input.sourceRefs ?? [],
     droppedSectionIds,
-    compactionIds: [],
+    compactionIds: input.compactionIds ?? [],
     estimatedInputTokens,
     overBudget: estimatedInputTokens > budget.inputBudgetTokens,
   };
@@ -219,6 +235,7 @@ export function estimateTextTokens(text: string): number {
 
 export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput): ContextPack {
   const discussionPromptContext = buildChannelDiscussionPromptContext(input);
+  const protocolSection = buildChannelProtocolContextSection(input);
   const kind: ContextPackKind = (input.visibleParticipantTeammateIds?.length ?? 0) > 0
     ? "visible_multi_reply"
     : "channel_reply";
@@ -226,6 +243,7 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
     kind,
     providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
     sections: [
+      protocolSection,
       {
         id: "channel_discussion",
         role: "user",
@@ -242,6 +260,7 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
 }
 
 export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelectorContextPackInput): ContextPack {
+  const protocolSection = buildChannelProtocolContextSection(input);
   const recentMessages = input.store
     .listChannelMessages({ channelId: input.channel.id, limit: 8 })
     .filter((message) => message.id !== input.sourceMessage.id)
@@ -270,6 +289,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
           "Use no_reply for acknowledgements, notes, or messages that do not need AI.",
         ].join("\n"),
       },
+      protocolSection,
       {
         id: "selector_source_message",
         role: "user",
@@ -298,6 +318,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
 }
 
 export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextPackInput): ContextPack {
+  const protocolSection = buildChannelProtocolContextSection(input);
   const recentMessages = input.store
     .listChannelMessages({ channelId: input.channel.id, limit: 8 })
     .filter((message) => message.id !== input.sourceMessage.id)
@@ -318,6 +339,7 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
           "Never create tasks, runs, workflows, approvals, memory activation, or multiple replies.",
         ].join("\n"),
       },
+      protocolSection,
       {
         id: "auto_route_source_message",
         role: "user",
@@ -347,14 +369,20 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
 
 export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput): ContextPack {
   const sourceRefs = buildWorkflowStepContextSourceRefs(input);
-  const dependencySections = buildWorkflowStepDependencySections(input);
+  const protocolSection = buildChannelProtocolContextSection(input);
+  const dependencySections = input.compactedDependencySummary
+    ? [buildCompactedWorkflowDependencySection(input.compactedDependencySummary)]
+    : buildWorkflowStepDependencySections(input);
   const contextSummary = input.step.contextSummaryId
     ? input.store.getChannelContextSummary(input.step.contextSummaryId)
     : undefined;
   return buildContextPack({
     kind: "workflow_step",
     providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
-    sourceRefs,
+    sourceRefs: input.compactedDependencySummary
+      ? uniqueContextSourceRefs([...sourceRefs, ...input.compactedDependencySummary.sourceRefs])
+      : sourceRefs,
+    compactionIds: input.compactedDependencySummary ? [input.compactedDependencySummary.id] : undefined,
     sections: [
       {
         id: "workflow_runtime_boundary",
@@ -427,21 +455,63 @@ export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput
             sourceRefIds: [contextSummary.id],
           }]
         : []),
-      {
-        id: "workflow_channel_protocol_excerpt",
-        role: "instruction",
-        priority: "medium",
-        text: [
-          "Channel protocol excerpt:",
-          `Auto reply mode: ${input.channel.autoReplyMode}`,
-          input.channel.responseLanguage ? `Response language preference: ${input.channel.responseLanguage}` : "Response language preference: workspace/default",
-          input.channel.defaultTeammateId ? `Default teammate: ${input.channel.defaultTeammateId}` : "Default teammate: none",
-          "Private teammate chat is excluded unless explicitly promoted by a future approved flow.",
-        ].join("\n"),
-        sourceRefIds: [input.channel.id],
-      },
+      protocolSection,
     ],
   });
+}
+
+export function buildChannelProtocolContextSection(input: {
+  readonly store: RunStore;
+  readonly channel: Channel;
+}): ContextSection {
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
+  return {
+    id: "channel_collaboration_protocol",
+    role: "instruction",
+    priority: "high",
+    text: renderChannelProtocolContext(protocol),
+    sourceRefIds: [input.channel.id],
+    metadata: {
+      responseLanguage: protocol.protocol.responseLanguage,
+      responseLanguageSource: protocol.sources.responseLanguage.source,
+      autoReplyMode: protocol.protocol.autoReplyMode,
+      autoReplyModeSource: protocol.sources.autoReplyMode.source,
+      defaultTeammateId: protocol.protocol.defaultTeammateId,
+      defaultTeammateSource: protocol.sources.defaultTeammateId.source,
+    } satisfies {
+      responseLanguage: ChannelResponseLanguage;
+      responseLanguageSource: ChannelProtocolFieldSource;
+      autoReplyMode: ChannelAutoReplyMode;
+      autoReplyModeSource: ChannelProtocolFieldSource;
+      defaultTeammateId?: string;
+      defaultTeammateSource: ChannelProtocolFieldSource;
+    },
+  };
+}
+
+function renderChannelProtocolContext(protocol: EffectiveChannelCollaborationProtocolResult): string {
+  return [
+    "Channel collaboration protocol:",
+    `- Response language: ${protocol.protocol.responseLanguage} (source=${protocol.sources.responseLanguage.source})`,
+    `- Auto reply mode: ${protocol.protocol.autoReplyMode} (source=${protocol.sources.autoReplyMode.source})`,
+    `- Default teammate: ${protocol.protocol.defaultTeammateId ?? "none"} (source=${protocol.sources.defaultTeammateId.source})`,
+    `- Default workflow preference: ${protocol.protocol.defaultWorkflowPreference} (source=${protocol.sources.defaultWorkflowPreference.source})`,
+    `- Visible multi-reply max participants: ${protocol.protocol.visibleMultiReplyMaxParticipants} (source=${protocol.sources.visibleMultiReplyMaxParticipants.source})`,
+    "- Private teammate chat, hidden prompts, provider secrets, and unreviewed memory are excluded unless an explicit future approved flow promotes them.",
+  ].join("\n");
+}
+
+function buildCompactedWorkflowDependencySection(summary: WorkflowStepCompactedDependencySummary): ContextSection {
+  return {
+    id: "workflow_dependency_summary",
+    role: "evidence",
+    priority: "high",
+    text: summary.text,
+    sourceRefIds: summary.sourceRefIds,
+  };
 }
 
 function buildChannelDiscussionPromptContext(input: {
@@ -482,10 +552,14 @@ function buildCompactChannelRoster(input: {
   readonly visibleParticipantTeammateIds: readonly string[];
 }): readonly ChannelDiscussionPromptTeammate[] {
   const visibleParticipantIds = new Set(input.visibleParticipantTeammateIds);
-  const defaultTeammate = input.channel.defaultTeammateId
-    ? resolveAiTeammateReference(input.store, input.channel.defaultTeammateId)
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
+  const defaultTeammate = protocol.protocol.defaultTeammateId
+    ? resolveAiTeammateReference(input.store, protocol.protocol.defaultTeammateId)
     : undefined;
-  const defaultTeammateId = defaultTeammate?.id ?? input.channel.defaultTeammateId;
+  const defaultTeammateId = defaultTeammate?.id ?? protocol.protocol.defaultTeammateId;
   const roster = new Map<string, AiTeammate>();
 
   for (const teammate of input.store.listAiTeammates({ status: "active", includeHidden: false, limit: 100 })) {

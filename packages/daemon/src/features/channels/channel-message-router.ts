@@ -3,6 +3,7 @@ import type {
   Channel,
   ChannelMessage,
   ChannelMessageRouteAlternative,
+  ChannelMessageRouteContextPackMetadata,
   ChannelMessageRouteDecisionCreatedBy,
   ChannelMessageRouteDecisionStatus,
   RunStore,
@@ -13,7 +14,14 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
-import { buildChannelAutoRouteContextPack, renderContextPack, type ChannelAutoRouteCandidateContext } from "./context-packs.js";
+import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
+import {
+  buildChannelAutoRouteContextPack,
+  buildChannelReplyContextPack,
+  renderContextPack,
+  type ChannelAutoRouteCandidateContext,
+  type ContextPack,
+} from "./context-packs.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -56,6 +64,7 @@ interface RouteDecisionDraft {
   readonly confidence?: number;
   readonly reason: string;
   readonly alternativesConsidered?: readonly ChannelMessageRouteAlternative[];
+  readonly contextPack?: ChannelMessageRouteContextPackMetadata;
   readonly status: ChannelMessageRouteDecisionStatus;
   readonly createdBy: ChannelMessageRouteDecisionCreatedBy;
   readonly errorMessage?: string;
@@ -67,6 +76,16 @@ interface ChannelAutoRouteModelOutput {
   readonly confidence: number;
   readonly reason: string;
   readonly alternativesConsidered?: readonly ChannelMessageRouteAlternative[];
+}
+
+class ChannelAutoRouteModelError extends Error {
+  constructor(
+    message: string,
+    readonly contextPack: ChannelMessageRouteContextPackMetadata | undefined,
+  ) {
+    super(message);
+    this.name = "ChannelAutoRouteModelError";
+  }
 }
 
 export async function routeChannelMessageReply(input: ChannelMessageRouteInput): Promise<ChannelMessageRouteResult> {
@@ -81,7 +100,11 @@ export async function routeChannelMessageReply(input: ChannelMessageRouteInput):
     return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
   }
 
-  if (input.channel.autoReplyMode === "mentions_only") {
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
+  if (protocol.protocol.autoReplyMode === "mentions_only") {
     const decision = persistRouteDecision(input, {
       action: "no_reply",
       reason: "Channel auto reply mode is mentions_only.",
@@ -91,7 +114,7 @@ export async function routeChannelMessageReply(input: ChannelMessageRouteInput):
     return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
   }
 
-  const candidates = buildRouteCandidates(input);
+  const candidates = buildRouteCandidates(input, protocol.protocol.defaultTeammateId);
   if (candidates.length === 0) {
     const decision = persistRouteDecision(input, {
       action: "no_reply",
@@ -102,7 +125,7 @@ export async function routeChannelMessageReply(input: ChannelMessageRouteInput):
     return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
   }
 
-  if (input.channel.autoReplyMode === "default_teammate") {
+  if (protocol.protocol.autoReplyMode === "default_teammate") {
     return routeDefaultTeammate(input, candidates);
   }
 
@@ -187,7 +210,8 @@ function routeDefaultTeammate(input: ChannelMessageRouteInput, candidates: reado
 
 async function routeWithModel(input: ChannelMessageRouteInput, candidates: readonly RouteCandidate[]): Promise<ChannelMessageRouteResult> {
   try {
-    const output = await requestModelRoute(input, candidates);
+    const route = await requestModelRoute(input, candidates);
+    const output = route.output;
     const validated = validateModelRouteOutput(output, candidates);
     if (validated.action === "no_reply") {
       const decision = persistRouteDecision(input, {
@@ -197,6 +221,7 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
         status: "suppressed",
         createdBy: "model",
         alternativesConsidered: validated.alternativesConsidered,
+        contextPack: route.contextPack,
       });
       return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
     }
@@ -208,6 +233,7 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
         status: "suppressed",
         createdBy: "model",
         alternativesConsidered: validated.alternativesConsidered,
+        contextPack: route.contextPack,
       });
       return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
     }
@@ -220,6 +246,7 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
       status: "accepted",
       createdBy: "model",
       alternativesConsidered: validated.alternativesConsidered,
+      contextPack: route.contextPack,
     });
     return {
       action: "reply",
@@ -231,12 +258,14 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const contextPack = error instanceof ChannelAutoRouteModelError ? error.contextPack : undefined;
     const decision = persistRouteDecision(input, {
       action: "no_reply",
       reason: "Model route failed closed.",
       status: "failed",
       createdBy: "model",
       alternativesConsidered: candidatesToAlternatives(candidates),
+      contextPack,
       errorMessage: message,
     });
     return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
@@ -338,10 +367,10 @@ function normalizeGreeting(text: string): string | undefined {
   return ["hi", "hello", "hey", "你好", "您好", "哈喽"].includes(normalized) ? normalized : undefined;
 }
 
-function buildRouteCandidates(input: ChannelMessageRouteInput): RouteCandidate[] {
+function buildRouteCandidates(input: ChannelMessageRouteInput, defaultTeammateId: string | undefined): RouteCandidate[] {
   const candidates: RouteCandidate[] = [];
-  const defaultTeammate = input.channel.defaultTeammateId
-    ? resolveAiTeammateReference(input.store, input.channel.defaultTeammateId)
+  const defaultTeammate = defaultTeammateId
+    ? resolveAiTeammateReference(input.store, defaultTeammateId)
     : undefined;
   if (defaultTeammate) {
     const providerPresetId = resolveRunnableProviderPresetId(input, defaultTeammate);
@@ -404,18 +433,23 @@ function resolveRunnableProviderPresetId(input: ChannelMessageRouteInput, teamma
   return undefined;
 }
 
-async function requestModelRoute(input: ChannelMessageRouteInput, candidates: readonly RouteCandidate[]): Promise<ChannelAutoRouteModelOutput> {
+async function requestModelRoute(input: ChannelMessageRouteInput, candidates: readonly RouteCandidate[]): Promise<{
+  readonly output: ChannelAutoRouteModelOutput;
+  readonly contextPack: ChannelMessageRouteContextPackMetadata;
+}> {
   const providerPresetId = resolveRunnableProviderPresetId(input, undefined);
   if (!providerPresetId) {
     throw new Error("No runnable provider is available for channel auto_route.");
   }
-  const prompt = renderContextPack(buildChannelAutoRouteContextPack({
+  const contextPack = buildChannelAutoRouteContextPack({
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     providerPresetId,
     candidates: candidatesToRouteContext(candidates),
-  }));
+  });
+  const contextPackMetadata = summarizeContextPack(contextPack);
+  const prompt = renderContextPack(contextPack);
   const provider = resolveProviderForRun(input.store, {
     cwd: input.store.paths.cwd,
     workspaceCwd: input.store.paths.cwd,
@@ -451,7 +485,14 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
     },
   });
   const text = textDeltas.join("").trim() || extractAssistantText(result.messages) || "";
-  return parseModelRouteOutput(text);
+  try {
+    return {
+      output: parseModelRouteOutput(text),
+      contextPack: contextPackMetadata,
+    };
+  } catch (error) {
+    throw new ChannelAutoRouteModelError(error instanceof Error ? error.message : String(error), contextPackMetadata);
+  }
 }
 
 function candidatesToRouteContext(candidates: readonly RouteCandidate[]): readonly ChannelAutoRouteCandidateContext[] {
@@ -576,20 +617,62 @@ function hasExistingReplyForSource(input: ChannelMessageRouteInput, teammateId: 
 }
 
 function persistRouteDecision(input: ChannelMessageRouteInput, draft: RouteDecisionDraft) {
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
+  const contextPack = draft.contextPack ?? buildReplyRouteContextPackMetadata(input, draft);
   return input.store.createChannelMessageRouteDecision({
     channelId: input.channel.id,
     sourceMessageId: input.sourceMessage.id,
-    mode: input.channel.autoReplyMode,
+    mode: protocol.protocol.autoReplyMode,
     action: draft.action,
     selectedTeammateId: draft.teammateId,
     selectedProviderPresetId: draft.providerPresetId,
     confidence: draft.confidence,
     reason: draft.reason,
     alternativesConsidered: draft.alternativesConsidered,
+    contextPack,
     status: draft.status,
     createdBy: draft.createdBy,
     errorMessage: draft.errorMessage,
   }, new Date().toISOString());
+}
+
+function buildReplyRouteContextPackMetadata(
+  input: ChannelMessageRouteInput,
+  draft: RouteDecisionDraft,
+): ChannelMessageRouteContextPackMetadata | undefined {
+  if (draft.action !== "reply" || !draft.teammateId) {
+    return undefined;
+  }
+  const teammate = resolveAiTeammateReference(input.store, draft.teammateId);
+  const contextPack = buildChannelReplyContextPack({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    providerPresetId: draft.providerPresetId,
+    teammate,
+    canonicalTeammateId: teammate?.id ?? draft.teammateId,
+  });
+  return summarizeContextPack(contextPack);
+}
+
+function summarizeContextPack(pack: ContextPack): ChannelMessageRouteContextPackMetadata {
+  const sourceRefCounts: Record<string, number> = {};
+  for (const sourceRef of pack.sourceRefs) {
+    sourceRefCounts[sourceRef.type] = (sourceRefCounts[sourceRef.type] ?? 0) + 1;
+  }
+  return {
+    schemaVersion: 1,
+    kind: pack.kind,
+    providerPresetId: pack.providerPresetId,
+    modelId: pack.modelId,
+    sectionIds: pack.sections.map((section) => section.id),
+    droppedSectionIds: pack.droppedSectionIds,
+    sourceRefCounts,
+    compactionIds: pack.compactionIds,
+  };
 }
 
 function candidatesToAlternatives(candidates: readonly RouteCandidate[]): readonly ChannelMessageRouteAlternative[] {

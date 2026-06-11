@@ -31,6 +31,10 @@ export type ChannelStatus = "active" | "paused" | "archived";
 
 export const channelStatuses: readonly ChannelStatus[] = ["active", "paused", "archived"];
 
+export type ChannelBranchStatus = "active" | "archived";
+
+export const channelBranchStatuses: readonly ChannelBranchStatus[] = ["active", "archived"];
+
 export type ChannelAutoReplyMode = "mentions_only" | "default_teammate" | "auto_route";
 
 export const channelAutoReplyModes: readonly ChannelAutoReplyMode[] = ["mentions_only", "default_teammate", "auto_route"];
@@ -123,6 +127,18 @@ export interface Channel {
   readonly updatedAt: string;
 }
 
+export interface ChannelBranch {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly name: string;
+  readonly status: ChannelBranchStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt?: string;
+  readonly deletedAt?: string;
+}
+
 export interface CreateChannelInput {
   /** Internal use: callers that must prepare external resources before persistence can preallocate the channel id. */
   readonly id?: string;
@@ -138,6 +154,15 @@ export interface CreateChannelInput {
   readonly runtimePolicy?: Partial<ChannelRuntimePolicy>;
 }
 
+export interface CreateChannelBranchInput {
+  readonly id?: string;
+  readonly channelId: string;
+  readonly name: string;
+  readonly status?: ChannelBranchStatus;
+  readonly archivedAt?: string;
+  readonly deletedAt?: string;
+}
+
 export interface ChannelUpdateInput {
   readonly name?: string;
   readonly status?: ChannelStatus;
@@ -151,7 +176,22 @@ export interface ChannelUpdateInput {
   readonly runtimePolicy?: Partial<ChannelRuntimePolicy>;
 }
 
+export interface ChannelBranchUpdateInput {
+  readonly name?: string;
+  readonly status?: ChannelBranchStatus;
+  readonly archivedAt?: string | null;
+  readonly deletedAt?: string | null;
+}
+
 export interface ListChannelsOptions {
+  readonly archived?: boolean;
+  readonly limit?: number;
+}
+
+export interface ListChannelBranchesOptions {
+  readonly channelId?: string;
+  readonly archived?: boolean;
+  readonly status?: ChannelBranchStatus;
   readonly limit?: number;
 }
 
@@ -618,6 +658,17 @@ export interface ChannelMessageRouteAlternative {
   readonly reason: string;
 }
 
+export interface ChannelMessageRouteContextPackMetadata {
+  readonly schemaVersion: 1;
+  readonly kind: string;
+  readonly providerPresetId?: string;
+  readonly modelId?: string;
+  readonly sectionIds: readonly string[];
+  readonly droppedSectionIds: readonly string[];
+  readonly sourceRefCounts: Readonly<Record<string, number>>;
+  readonly compactionIds: readonly string[];
+}
+
 export interface ChannelMessageRouteDecision {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -632,6 +683,7 @@ export interface ChannelMessageRouteDecision {
   readonly confidence?: number;
   readonly reason: string;
   readonly alternativesConsidered: readonly ChannelMessageRouteAlternative[];
+  readonly contextPack?: ChannelMessageRouteContextPackMetadata;
   readonly status: ChannelMessageRouteDecisionStatus;
   readonly createdBy: ChannelMessageRouteDecisionCreatedBy;
   readonly errorMessage?: string;
@@ -650,6 +702,7 @@ export interface CreateChannelMessageRouteDecisionInput {
   readonly confidence?: number;
   readonly reason: string;
   readonly alternativesConsidered?: readonly ChannelMessageRouteAlternative[];
+  readonly contextPack?: ChannelMessageRouteContextPackMetadata;
   readonly status: ChannelMessageRouteDecisionStatus;
   readonly createdBy: ChannelMessageRouteDecisionCreatedBy;
   readonly errorMessage?: string;
@@ -661,6 +714,7 @@ export interface UpdateChannelMessageRouteDecisionInput {
   readonly confidence?: number | null;
   readonly reason?: string;
   readonly alternativesConsidered?: readonly ChannelMessageRouteAlternative[];
+  readonly contextPack?: ChannelMessageRouteContextPackMetadata | null;
   readonly status?: ChannelMessageRouteDecisionStatus;
   readonly errorMessage?: string | null;
 }
@@ -1465,6 +1519,7 @@ export interface WorkflowStepContextPackSnapshot {
     readonly priority: string;
     readonly estimatedTokens?: number;
     readonly sourceRefIds?: readonly string[];
+    readonly metadata?: Record<string, unknown>;
   }[];
   readonly sourceRefs: readonly {
     readonly type: string;
@@ -1637,6 +1692,10 @@ export interface ListChannelWorkflowStepsOptions {
 
 export function createChannelId(): string {
   return `channel_${randomUUID()}`;
+}
+
+export function createChannelBranchId(): string {
+  return `channel_branch_${randomUUID()}`;
 }
 
 export function createTaskId(): string {

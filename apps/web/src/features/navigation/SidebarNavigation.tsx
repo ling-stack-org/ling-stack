@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import {
+  Archive,
   Bot,
   Database,
   Hash,
@@ -23,7 +24,7 @@ import {
 } from "../../app/view-types.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { AvatarInitial } from "../../shared/components/index.js";
-import type { AiTeammate, ApprovalRequest, Channel } from "../../types.js";
+import type { AiTeammate, ApprovalRequest, Channel, ChannelBranch } from "../../types.js";
 
 export interface SidebarNotification {
   readonly count?: number;
@@ -33,13 +34,19 @@ export interface SidebarNotification {
 export function SidebarNavigation({
   activeSidebarTarget,
   channels,
+  channelBranches = [],
+  selectedChannelBranchId = "",
   teammates,
   approvals,
   channelNotifications = {},
   teammateNotifications = {},
   onOpenView,
   onCreateChannel,
+  onCreateChannelBranch,
+  onArchiveChannel,
+  onArchiveChannelBranch,
   onSelectChannel,
+  onSelectChannelBranch,
   onSelectTeammate,
   channelDrawer = false,
   channelDrawerOpen = true,
@@ -47,21 +54,49 @@ export function SidebarNavigation({
 }: {
   readonly activeSidebarTarget: SidebarTarget;
   readonly channels: readonly Channel[];
+  readonly channelBranches?: readonly ChannelBranch[];
+  readonly selectedChannelBranchId?: string;
   readonly teammates: readonly AiTeammate[];
   readonly approvals: readonly ApprovalRequest[];
   readonly channelNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly teammateNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly onOpenView: (view: ViewId) => void;
   readonly onCreateChannel: () => void;
+  readonly onCreateChannelBranch?: (channelId: string, name: string) => void | Promise<void>;
+  readonly onArchiveChannel?: (channelId: string) => void | Promise<void>;
+  readonly onArchiveChannelBranch?: (channelId: string, branchId: string) => void | Promise<void>;
   readonly onSelectChannel: (channelId: string) => void;
+  readonly onSelectChannelBranch?: (channelId: string, branchId: string) => void;
   readonly onSelectTeammate: (teammateId: string) => void;
   readonly channelDrawer?: boolean;
   readonly channelDrawerOpen?: boolean;
   readonly onChannelDrawerOpenChange?: (open: boolean) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [branchDraftChannelId, setBranchDraftChannelId] = useState("");
+  const [branchDraftName, setBranchDraftName] = useState("");
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const visibleTeammates = teammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
+  const branchesByChannel = new Map<string, readonly ChannelBranch[]>();
+  for (const channel of channels) {
+    branchesByChannel.set(channel.id, channelBranches.filter((branch) => branch.channelId === channel.id && branch.status !== "archived"));
+  }
+
+  function openBranchDraft(channelId: string): void {
+    setBranchDraftChannelId(channelId);
+    setBranchDraftName("");
+  }
+
+  async function submitBranchDraft(event: FormEvent<HTMLFormElement>, channelId: string): Promise<void> {
+    event.preventDefault();
+    const name = branchDraftName.trim();
+    if (!name || !onCreateChannelBranch) {
+      return;
+    }
+    await onCreateChannelBranch(channelId, name);
+    setBranchDraftChannelId("");
+    setBranchDraftName("");
+  }
 
   return (
     <>
@@ -95,18 +130,128 @@ export function SidebarNavigation({
             <span>{t("No channel yet")}</span>
           </button>
         ) : (
-          channels.map((channel) => (
-            <button
-              key={channel.id}
-              className={activeSidebarTarget === channelSidebarTarget(channel.id) ? "sidebar-row selected" : "sidebar-row"}
-              type="button"
-              onClick={() => onSelectChannel(channel.id)}
-            >
-              <span className="sidebar-hash" aria-hidden="true">#</span>
-              <span>{channel.name}</span>
-              {renderSidebarNotification(channelNotifications[channel.id])}
-            </button>
-          ))
+	          channels.map((channel) => {
+	            const branches = branchesByChannel.get(channel.id) ?? [];
+	            const channelActive = activeSidebarTarget === channelSidebarTarget(channel.id);
+	            const mainBranchSelected = channelActive && selectedChannelBranchId === "";
+	            const draftOpen = branchDraftChannelId === channel.id;
+	            const branchListVisible = channelActive || draftOpen || branches.length > 0;
+	            return (
+	              <div key={channel.id} className="sidebar-channel-group">
+	                <div className="sidebar-row-shell">
+	                  <button
+	                    className="sidebar-row-main"
+	                    type="button"
+                    onClick={() => {
+                      setBranchDraftChannelId("");
+                      onSelectChannel(channel.id);
+                    }}
+                  >
+                    <span className="sidebar-hash" aria-hidden="true">#</span>
+                    <span>{channel.name}</span>
+                    {renderSidebarNotification(channelNotifications[channel.id])}
+                  </button>
+                  <span className="sidebar-row-tools" aria-label={t("Channel actions")}>
+                    {onCreateChannelBranch ? (
+                      <button
+                        className="sidebar-mini-action"
+                        type="button"
+                        aria-label={t("Create branch")}
+                        title={t("Create branch")}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openBranchDraft(channel.id);
+                        }}
+                      >
+                        <Plus size={13} />
+                      </button>
+                    ) : null}
+                    {onArchiveChannel ? (
+                      <button
+                        className="sidebar-mini-action danger"
+                        type="button"
+                        aria-label={t("Archive channel")}
+                        title={t("Archive channel")}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onArchiveChannel(channel.id);
+                        }}
+                      >
+                        <Archive size={13} />
+                      </button>
+                    ) : null}
+                  </span>
+                </div>
+                {draftOpen ? (
+                  <form className="sidebar-branch-create-form" onSubmit={(event) => void submitBranchDraft(event, channel.id)}>
+                    <input
+                      autoFocus
+                      value={branchDraftName}
+                      onChange={(event) => setBranchDraftName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          setBranchDraftChannelId("");
+                          setBranchDraftName("");
+                        }
+                      }}
+                      aria-label={t("Branch name")}
+                      placeholder={t("Branch name")}
+                    />
+                    <button type="submit" aria-label={t("Create branch")} title={t("Create branch")}>
+                      <Plus size={13} />
+	                    </button>
+	                  </form>
+	                ) : null}
+	                {branchListVisible ? (
+	                  <div className="sidebar-branch-list" role="list" aria-label={t("Channel branches")}>
+	                    <div className={mainBranchSelected ? "sidebar-branch-row-shell selected" : "sidebar-branch-row-shell"}>
+	                      <button
+	                        className="sidebar-branch-row"
+	                        type="button"
+	                        onClick={() => {
+	                          setBranchDraftChannelId("");
+	                          onSelectChannel(channel.id);
+	                        }}
+	                      >
+	                        <span>{t("Main branch")}</span>
+	                        <small>{t("Default channel branch")}</small>
+	                      </button>
+	                    </div>
+	                    {branches.map((branch) => (
+	                      <div key={branch.id} className={selectedChannelBranchId === branch.id ? "sidebar-branch-row-shell selected" : "sidebar-branch-row-shell"}>
+	                        <button
+                          className="sidebar-branch-row"
+                          type="button"
+                          onClick={() => {
+                            setBranchDraftChannelId("");
+                            onSelectChannelBranch?.(channel.id, branch.id);
+                          }}
+                        >
+                          <span>{branch.name}</span>
+                        </button>
+                        {onArchiveChannelBranch ? (
+                          <span className="sidebar-row-tools">
+                            <button
+                              className="sidebar-mini-action danger"
+                              type="button"
+                              aria-label={t("Archive branch")}
+                              title={t("Archive branch")}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void onArchiveChannelBranch(channel.id, branch.id);
+                              }}
+                            >
+                              <Archive size={13} />
+                            </button>
+                          </span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })
         )}
       </SidebarSection>
 

@@ -3,6 +3,8 @@ import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js
 
 export type ChannelStatus = "active" | "paused" | "archived";
 
+export type ChannelBranchStatus = "active" | "archived";
+
 export type ChannelAutoReplyMode = "mentions_only" | "default_teammate" | "auto_route";
 
 export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
@@ -85,13 +87,93 @@ export interface Channel {
   readonly updatedAt: string;
 }
 
+export interface ChannelBranch {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly name: string;
+  readonly status: ChannelBranchStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt?: string;
+  readonly deletedAt?: string;
+}
+
 export interface ChannelListResponse {
   readonly cwd: string;
   readonly channels: readonly Channel[];
+  readonly branches: readonly ChannelBranch[];
 }
 
 export interface ChannelMutationResponse {
   readonly channel: Channel;
+}
+
+export interface ChannelBranchListResponse {
+  readonly cwd: string;
+  readonly channelId?: string;
+  readonly branches: readonly ChannelBranch[];
+}
+
+export interface ChannelBranchMutationResponse {
+  readonly branch: ChannelBranch;
+}
+
+export type ChannelProtocolFieldSource =
+  | "current_message"
+  | "channel_setting"
+  | "workspace_setting"
+  | "default"
+  | "teammate_instruction";
+
+export interface ChannelProtocolFieldResolution<T> {
+  readonly value: T;
+  readonly source: ChannelProtocolFieldSource;
+  readonly channelValue?: T;
+  readonly workspaceValue?: T;
+}
+
+export interface ChannelCollaborationProtocol {
+  readonly schemaVersion: 1;
+  readonly channelId: string;
+  readonly responseLanguage: ChannelResponseLanguage;
+  readonly autoReplyMode: ChannelAutoReplyMode;
+  readonly defaultTeammateId?: string;
+  readonly defaultWorkflowPreference: "manual";
+  readonly visibleMultiReplyMaxParticipants: number;
+  readonly privacyRules: readonly string[];
+  readonly reviewRules: readonly string[];
+  readonly updatedBy: "local-user" | "system_template";
+  readonly updatedAt: string;
+}
+
+export interface ChannelCollaborationProtocolResponse {
+  readonly cwd: string;
+  readonly protocol: ChannelCollaborationProtocol;
+  readonly sources: {
+    readonly responseLanguage: ChannelProtocolFieldResolution<ChannelResponseLanguage>;
+    readonly autoReplyMode: ChannelProtocolFieldResolution<ChannelAutoReplyMode>;
+    readonly defaultTeammateId: ChannelProtocolFieldResolution<string | undefined>;
+    readonly defaultWorkflowPreference: ChannelProtocolFieldResolution<"manual">;
+    readonly visibleMultiReplyMaxParticipants: ChannelProtocolFieldResolution<number>;
+    readonly privacyRules: ChannelProtocolFieldResolution<readonly string[]>;
+    readonly reviewRules: ChannelProtocolFieldResolution<readonly string[]>;
+  };
+  readonly storage: {
+    readonly mode: "channel_fields";
+    readonly editableFields: readonly string[];
+    readonly unsupportedFields: readonly string[];
+  };
+}
+
+export interface UpdateChannelCollaborationProtocolRequest {
+  readonly responseLanguage?: ChannelResponseLanguage | null;
+  readonly autoReplyMode?: ChannelAutoReplyMode | null;
+  readonly defaultTeammateId?: string | null;
+}
+
+export interface ChannelCollaborationProtocolMutationResponse extends ChannelCollaborationProtocolResponse {
+  readonly revertedFields?: readonly string[];
 }
 
 export interface CreateChannelRequest {
@@ -107,6 +189,11 @@ export interface CreateChannelRequest {
   readonly runtimePolicy: ChannelRuntimePolicy;
 }
 
+export interface CreateChannelBranchRequest {
+  readonly name: string;
+  readonly status?: ChannelBranchStatus;
+}
+
 export interface UpdateChannelRequest {
   readonly name?: string;
   readonly status?: ChannelStatus;
@@ -118,6 +205,11 @@ export interface UpdateChannelRequest {
   readonly responseLanguage?: ChannelResponseLanguage | null;
   readonly allowedTools?: readonly ToolName[];
   readonly runtimePolicy?: ChannelRuntimePolicy;
+}
+
+export interface UpdateChannelBranchRequest {
+  readonly name?: string;
+  readonly status?: ChannelBranchStatus;
 }
 
 export type ChannelMessageKind = "message" | "ai_reply" | "system" | "task_link";
@@ -197,6 +289,17 @@ export interface ChannelMessageRouteAlternative {
   readonly reason: string;
 }
 
+export interface ChannelMessageRouteContextPackMetadata {
+  readonly schemaVersion: 1;
+  readonly kind: string;
+  readonly providerPresetId?: string;
+  readonly modelId?: string;
+  readonly sectionIds: readonly string[];
+  readonly droppedSectionIds: readonly string[];
+  readonly sourceRefCounts: Readonly<Record<string, number>>;
+  readonly compactionIds: readonly string[];
+}
+
 export interface ChannelMessageRouteDecision {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -211,6 +314,7 @@ export interface ChannelMessageRouteDecision {
   readonly confidence?: number;
   readonly reason: string;
   readonly alternativesConsidered: readonly ChannelMessageRouteAlternative[];
+  readonly contextPack?: ChannelMessageRouteContextPackMetadata;
   readonly status: ChannelMessageRouteDecisionStatus;
   readonly createdBy: ChannelMessageRouteDecisionCreatedBy;
   readonly errorMessage?: string;

@@ -15,6 +15,8 @@ import type {
   AiTeammate,
   ChannelAttachment,
   Channel,
+  ChannelBranch,
+  ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
   ChannelCreateFormState,
   ChannelDecision,
@@ -46,6 +48,7 @@ import type {
   TaskFormState,
   TaskRunActionState,
   UpdateChannelBriefRequest,
+  UpdateChannelCollaborationProtocolRequest,
   UpdateWorkspaceSettingsRequest,
   WorkItemView,
   WorkspaceSettings,
@@ -199,6 +202,7 @@ export function AppShell(): JSX.Element {
   const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
+  const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
   const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({
     channels: { autoRoute: false },
@@ -238,6 +242,7 @@ export function AppShell(): JSX.Element {
     channelAttachmentContentUrl,
     confirmChannelExecutionProposalWorkflow,
     createChannel,
+    createChannelBranch,
     createChannelContextSummary,
     createChannelDecision,
     createChannelHandoff,
@@ -247,13 +252,17 @@ export function AppShell(): JSX.Element {
     createChannelWorkflowFromTemplate,
     createTask,
     deleteChannel,
+    deleteChannelBranch,
     deleteChannelAttachment,
     deleteTask,
     orchestrateChannelWorkflow,
+    patchChannel,
     retryChannelWorkflowStep,
     startChannelWorkflowStep,
     updateChannel,
+    updateChannelBranch,
     updateChannelBrief,
+    updateChannelCollaborationProtocol,
     updateChannelContextSummary,
     updateChannelDecision,
     updateChannelExecutionProposal,
@@ -262,6 +271,7 @@ export function AppShell(): JSX.Element {
     updateTask,
     updateTaskStatus,
     uploadChannelAttachment,
+    revertChannelCollaborationProtocol,
   } = useWorkspaceCommandController();
   const workspaceDomain = useWorkspaceDomain({
     cwd: form.cwd.trim(),
@@ -272,6 +282,7 @@ export function AppShell(): JSX.Element {
   });
   const {
     channels,
+    channelBranches,
     channelsLoading,
     selectedChannelId,
     channelForm,
@@ -294,7 +305,9 @@ export function AppShell(): JSX.Element {
     channelArtifactsByRun,
     channelArtifactErrorsByRun,
     channelBrief,
+    channelCollaborationProtocol,
     channelDecisions,
+    channelIntentDecisions,
     channelMessageRouteDecisions,
     channelHandoffs,
     channelContextSummaries,
@@ -310,6 +323,7 @@ export function AppShell(): JSX.Element {
   } = workspaceDomain.state;
   const {
     setChannels,
+    setChannelBranches,
     setSelectedChannelId,
     setChannelForm,
     setChannelCreateOpen,
@@ -325,6 +339,7 @@ export function AppShell(): JSX.Element {
     setChannelLinkPreviews,
     setChannelFilesLoading,
     setChannelBrief,
+    setChannelCollaborationProtocol,
     setChannelDecisions,
     setChannelHandoffs,
     setChannelContextSummaries,
@@ -340,6 +355,7 @@ export function AppShell(): JSX.Element {
     refreshChannelRunArtifacts,
     refreshChannelActivityTransitions,
     refreshChannelMessageRouteDecisions,
+    refreshChannelIntentDecisions,
     refreshChannelProtocol,
     refreshUsedMemoryAudit,
     resetSelectedChannelActivity,
@@ -710,6 +726,7 @@ export function AppShell(): JSX.Element {
     }
     setThreadPageTargetId("");
     setChannelCreateOpen(false);
+    setSelectedChannelBranchId("");
     setActiveView(view);
     setActiveSidebarTarget(view);
   }
@@ -723,6 +740,17 @@ export function AppShell(): JSX.Element {
 
   function selectWorkspaceChannel(channelId: string): void {
     setChannelCreateOpen(false);
+    setSelectedChannelBranchId("");
+    markChannelRead(channelId);
+    setSelectedChannelId(channelId);
+    setTaskRunProviderId("");
+    setActiveView("workspace");
+    setActiveSidebarTarget(channelSidebarTarget(channelId));
+  }
+
+  function selectWorkspaceChannelBranch(channelId: string, branchId: string): void {
+    setChannelCreateOpen(false);
+    setSelectedChannelBranchId(branchId);
     markChannelRead(channelId);
     setSelectedChannelId(channelId);
     setTaskRunProviderId("");
@@ -732,6 +760,7 @@ export function AppShell(): JSX.Element {
 
   function selectAiTeammate(teammateId: string): void {
     setChannelCreateOpen(false);
+    setSelectedChannelBranchId("");
     setActiveView("teammates");
     setActiveSidebarTarget(teammateSidebarTarget(teammateId));
   }
@@ -1161,6 +1190,15 @@ export function AppShell(): JSX.Element {
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (!selectedChannelBranchId) {
+      return;
+    }
+    if (!channelBranches.some((branch) => branch.id === selectedChannelBranchId && branch.status !== "archived")) {
+      setSelectedChannelBranchId("");
+    }
+  }, [channelBranches, selectedChannelBranchId]);
 
   useEffect(() => {
     if (activeView !== "workspace") {
@@ -1659,6 +1697,66 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function saveChannelBranch(channelId: string, name: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage("本地工作区未就绪");
+      return;
+    }
+    try {
+      setErrorMessage("");
+      const response = await createChannelBranch(workspaceCwd, channelId, { name, status: "active" });
+      setSelectedChannelId(channelId);
+      setSelectedChannelBranchId(response.branch.id);
+      setActiveView("workspace");
+      setActiveSidebarTarget(channelSidebarTarget(channelId));
+      await refreshChannels(workspaceCwd);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  async function archiveSidebarChannel(channelId: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    const channel = channels.find((item) => item.id === channelId);
+    if (!workspaceCwd || !channel) {
+      return;
+    }
+    try {
+      setErrorMessage("");
+      await patchChannel(workspaceCwd, channelId, { status: "archived" });
+      setChannels((current) => current.filter((item) => item.id !== channelId));
+      setChannelBranches((current) => current.filter((branch) => branch.channelId !== channelId));
+      if (selectedChannelId === channelId) {
+        setSelectedChannelId("");
+        setSelectedChannelBranchId("");
+        setActiveSidebarTarget("workspace");
+      }
+      await refreshChannels(workspaceCwd);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function archiveSidebarChannelBranch(channelId: string, branchId: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      return;
+    }
+    try {
+      setErrorMessage("");
+      await updateChannelBranch(workspaceCwd, channelId, branchId, { status: "archived" });
+      setChannelBranches((current) => current.filter((branch) => branch.id !== branchId));
+      if (selectedChannelBranchId === branchId) {
+        setSelectedChannelBranchId("");
+      }
+      await refreshChannels(workspaceCwd);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function removeChannel(channelId: string): Promise<void> {
     try {
       setErrorMessage("");
@@ -1737,6 +1835,7 @@ export function AppShell(): JSX.Element {
         ...aiReplies,
       ]);
       await refreshChannelExecutionProposals(selectedChannelId);
+      await refreshChannelIntentDecisions(selectedChannelId);
       if (aiReplies.length > 0) {
         await refreshUsedMemoryAudit(form.cwd.trim());
       }
@@ -1812,6 +1911,42 @@ export function AppShell(): JSX.Element {
       setChannelBrief(response.brief);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function saveChannelProtocolPatch(input: UpdateChannelCollaborationProtocolRequest): Promise<ChannelCollaborationProtocolResponse | undefined> {
+    if (!selectedChannelId) {
+      const error = new Error("请先选择 channel");
+      setErrorMessage(error.message);
+      throw error;
+    }
+    try {
+      setErrorMessage("");
+      const response = await updateChannelCollaborationProtocol(form.cwd.trim(), selectedChannelId, input);
+      setChannelCollaborationProtocol(response);
+      await refreshChannels();
+      return response;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  async function revertChannelProtocolSettings(): Promise<ChannelCollaborationProtocolResponse | undefined> {
+    if (!selectedChannelId) {
+      const error = new Error("请先选择 channel");
+      setErrorMessage(error.message);
+      throw error;
+    }
+    try {
+      setErrorMessage("");
+      const response = await revertChannelCollaborationProtocol(form.cwd.trim(), selectedChannelId);
+      setChannelCollaborationProtocol(response);
+      await refreshChannels();
+      return response;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -2635,13 +2770,19 @@ export function AppShell(): JSX.Element {
       <SidebarNavigation
         activeSidebarTarget={navigationActiveSidebarTarget}
         channels={channels}
+        channelBranches={channelBranches}
+        selectedChannelBranchId={selectedChannelBranchId}
         teammates={aiTeammates}
         approvals={approvals}
         channelNotifications={sidebarChannelNotifications}
         teammateNotifications={sidebarTeammateNotifications}
         onOpenView={openPlainView}
         onCreateChannel={openChannelCreatePanel}
+        onCreateChannelBranch={(channelId, name) => void saveChannelBranch(channelId, name)}
+        onArchiveChannel={(channelId) => void archiveSidebarChannel(channelId)}
+        onArchiveChannelBranch={(channelId, branchId) => void archiveSidebarChannelBranch(channelId, branchId)}
         onSelectChannel={selectWorkspaceChannel}
+        onSelectChannelBranch={selectWorkspaceChannelBranch}
         onSelectTeammate={selectAiTeammate}
         channelDrawer
         channelDrawerOpen={channelSidebarOpen}
@@ -2688,7 +2829,9 @@ export function AppShell(): JSX.Element {
             channelArtifactsByRun={channelArtifactsByRun}
             channelArtifactErrorsByRun={channelArtifactErrorsByRun}
             channelBrief={channelBrief}
+            channelCollaborationProtocol={channelCollaborationProtocol}
             channelDecisions={channelDecisions}
+            channelIntentDecisions={channelIntentDecisions}
             channelMessageRouteDecisions={channelMessageRouteDecisions}
             channelHandoffs={channelHandoffs}
             channelContextSummaries={channelContextSummaries}
@@ -2768,6 +2911,8 @@ export function AppShell(): JSX.Element {
             onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
             onDeleteAttachment={(attachmentId) => void removeChannelAttachment(attachmentId)}
             onSaveBrief={(input) => void saveChannelBrief(input)}
+            onSaveChannelProtocol={(input) => saveChannelProtocolPatch(input)}
+            onRevertChannelProtocol={() => revertChannelProtocolSettings()}
             onSupersedeDecision={(decision) => void supersedeChannelDecision(decision)}
             onRejectDecision={(decision) => void rejectChannelDecision(decision)}
             onCreateHandoffFromTask={createHandoffFromTask}
@@ -2785,6 +2930,7 @@ export function AppShell(): JSX.Element {
             onRefreshChannelMessages={() => void Promise.all([
               refreshChannelMessages(),
               refreshChannelMessageRouteDecisions(),
+              refreshChannelIntentDecisions(),
               refreshChannelExecutionProposals(),
               refreshUsedMemoryAudit(form.cwd.trim()),
             ])}
@@ -3095,6 +3241,7 @@ export function AppShell(): JSX.Element {
                       openRunDiagnosticsView();
                     }}
                     onRefreshMcp={() => void refreshMcp()}
+                    onArchivedItemsChanged={() => refreshChannels()}
                     onCreateMcpServer={addMcpServer}
                     onUpdateMcpServer={saveMcpServer}
                     onDeleteMcpServer={(serverId) => void removeMcpServer(serverId)}
