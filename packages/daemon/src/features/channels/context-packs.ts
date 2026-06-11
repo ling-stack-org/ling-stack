@@ -306,7 +306,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
           "Use clarify for work-shaped requests missing target, scope, or acceptance checks.",
           "Use workflow_proposal for multi-role work that needs user confirmation before execution.",
           "Use direct_workflow only when the user explicitly asks to start/run a workflow; it still requires confirmation.",
-          "Use no_reply for acknowledgements, notes, or messages that do not need AI.",
+          "Use no_reply only to mean the message is not executable or collaborative work; Ling Agent still falls through to ordinary reply handling.",
         ].join("\n"),
       },
       protocolSection,
@@ -361,7 +361,8 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
         text: [
           "Decide whether one AI teammate should reply to the latest user channel message.",
           "Return strict JSON only with fields: action, teammateId, confidence, reason, alternativesConsidered.",
-          "Use action no_reply for acknowledgements, repeated greetings, ambiguous fragments, or messages that do not need AI.",
+          "Root local-user messages should produce a visible Ling outcome. Choose reply for acknowledgements, greetings, punctuation fragments, and short status messages; keep the reply concise.",
+          "Use action no_reply only for messages that are not a local-user root turn or cannot be handled as channel discussion.",
           "Never create tasks, runs, workflows, approvals, memory activation, or multiple replies.",
         ].join("\n"),
       },

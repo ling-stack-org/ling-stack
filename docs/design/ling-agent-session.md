@@ -85,6 +85,51 @@ The user should not need to understand:
 
 Those names can remain in developer docs, logs, diagnostics, and evidence drawers.
 
+## Default Channel Message Handling
+
+Every root channel message should enter one Ling Agent coordinator path. The coordinator
+may reuse selector and router modules internally, but their intermediate labels are not
+user-facing product modes.
+
+The required order is:
+
+```text
+persist user message
+-> active session handling
+-> executable or collaboration intent detection
+-> ordinary Ling reply handling
+-> no reply
+```
+
+`ChannelIntentDecision.action = "no_reply"` must not be treated as a terminal channel
+message result. It means only "this message is not executable work or collaboration."
+After that decision, Ling Agent still decides whether the message deserves an ordinary
+reply. For example:
+
+- "在 README.md 里添加一句测试语句" becomes a confirmable task proposal before chat
+  routing.
+- "晚上好" can receive a normal Ling reply when the channel reply mode allows it.
+- "好的", "。。", and repeated greetings receive concise visible Ling replies instead of
+  being suppressed by reply-worthiness heuristics.
+- If Ling Agent cannot reply because no runnable provider is configured, the user should
+  see a blocked Ling reply with the configuration reason, not a silent `no_reply`.
+
+This keeps the product model simple: users talk to Ling Agent; Ling decides whether to
+chat, prepare work, continue a run, request approval, or stay silent.
+
+When a message does not produce a visible reply because it is a duplicate greeting,
+empty input, an acknowledgement, or a hard runtime blocker, the ordinary feed must not
+show "not auto-replied" or "why no reply" badges. Those are implementation diagnostics
+from the pre-session auto-reply model. The default feed should show only user messages,
+Ling replies, task confirmations, active work, approvals, final reports, and real
+blocked/error states. It must not attach route or intent explanations such as "not
+auto-replied", "why no reply", "direct workflow proposal", or "why this handling" under
+ordinary messages.
+
+Route and intent decisions may still be stored for audit and debugging, but suppressed
+routes, direct-workflow classifications, and other selector/router outputs are not
+user-facing conversation artifacts.
+
 ## Non-Goals
 
 - Do not remove workflow, run, approval, thread, evidence, or route-decision primitives.

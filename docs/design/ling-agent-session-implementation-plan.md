@@ -184,6 +184,11 @@ corepack pnpm --filter @ling-stack/daemon exec node --test --test-name-pattern "
 
 ## P2: Coordinator Entry Order
 
+Status: implementation corrected. Ling Agent now treats intent-selector `no_reply` as
+"not executable work" and continues into ordinary reply handling instead of ending the
+channel message. Suppressed ordinary-route and intent-selector evidence is retained for
+diagnostics but no longer renders as route/intent chrome in the default feed.
+
 ### Goal
 
 Make channel message handling look like one Ling Agent Coordinator entry point, while
@@ -247,6 +252,10 @@ Implemented initial behavior:
 ### Guardrails
 
 - Auto-route must not run before executable intent detection.
+- Intent-selector `no_reply` is not terminal; it falls through to ordinary chat routing.
+- Suppressed/no-reply route decisions and intent-selector decisions must not render under
+  ordinary user messages.
+- Missing runnable providers produce a visible blocked Ling reply, not silent no-reply.
 - `ChannelMessageRouteDecision` remains ordinary-chat evidence only.
 - `ChannelIntentDecision` remains executable/collaboration evidence only.
 - No selector or router output can grant tools or start side effects directly.
@@ -258,7 +267,7 @@ Add daemon tests for:
 - file create request creates proposal, no ordinary route decision;
 - README follow-up resolves recent target before ordinary route;
 - ordinary question still creates one reply when auto-route/default teammate allows it;
-- acknowledgement still creates no reply;
+- acknowledgement, punctuation, and repeated greeting still create a visible Ling outcome;
 - active run follow-up creates or previews intervention instead of ordinary reply.
 
 ## P3: Terminal Final Report

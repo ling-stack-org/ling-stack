@@ -199,7 +199,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     config: input.config,
     runnerRegistry: input.routeDependencies.runnerRegistry,
   });
-  if (workflowIntent.action === "no_reply" || workflowIntent.action === "workflow_proposal") {
+  if (workflowIntent.action === "workflow_proposal") {
     return {};
   }
   if (workflowIntent.action === "visible_multi_reply") {

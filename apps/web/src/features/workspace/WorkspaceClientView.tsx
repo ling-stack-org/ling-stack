@@ -661,7 +661,6 @@ export function WorkspaceClientView({
   const [activityFiltersExpanded, setActivityFiltersExpanded] = useState(false);
   const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
-  const [openRouteExplanationDecisionId, setOpenRouteExplanationDecisionId] = useState("");
   const [inspectorMode, setInspectorMode] = useState<ChannelInspectorMode>("brief");
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   const [teammateManagerOpen, setTeammateManagerOpen] = useState(false);
@@ -732,33 +731,6 @@ export function WorkspaceClientView({
     () => new Map(channelAttachments.map((attachment) => [attachment.id, attachment])),
     [channelAttachments],
   );
-  const routeDecisionByReplyMessageId = useMemo(() => {
-    const decisions = new Map<string, ChannelMessageRouteDecision>();
-    for (const decision of channelMessageRouteDecisions) {
-      if (decision.status === "accepted" && decision.replyMessageId && decision.createdBy !== "explicit_mention") {
-        decisions.set(decision.replyMessageId, decision);
-      }
-    }
-    return decisions;
-  }, [channelMessageRouteDecisions]);
-  const routeDecisionBySourceMessageId = useMemo(() => {
-    const decisions = new Map<string, ChannelMessageRouteDecision>();
-    for (const decision of channelMessageRouteDecisions) {
-      if ((decision.status === "suppressed" || decision.status === "failed") && decision.mode !== "mentions_only") {
-        decisions.set(decision.sourceMessageId, decision);
-      }
-    }
-    return decisions;
-  }, [channelMessageRouteDecisions]);
-  const intentDecisionBySourceMessageId = useMemo(() => {
-    const decisions = new Map<string, ChannelIntentDecision>();
-    for (const decision of channelIntentDecisions) {
-      if (decision.action !== "single_reply") {
-        decisions.set(decision.sourceMessageId, decision);
-      }
-    }
-    return decisions;
-  }, [channelIntentDecisions]);
   const channelRuns = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
@@ -1697,7 +1669,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setSelectedApprovalId("");
     setSelectedWorkflowEvidenceWorkflowId("");
-    setOpenRouteExplanationDecisionId("");
     setCreateTaskOpen(false);
     setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
     messageFeedPinnedToLatestRef.current = true;
@@ -3077,9 +3048,6 @@ export function WorkspaceClientView({
       const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
       const executionProposals = (executionProposalsByMessageId.get(message.id) ?? [])
         .filter((proposal) => auditActivityVisible || !proposalHasTerminalWorkflow(proposal, channelWorkflows));
-      const acceptedRouteDecision = routeDecisionByReplyMessageId.get(message.id);
-      const sourceRouteDecision = routeDecisionBySourceMessageId.get(message.id);
-      const sourceIntentDecision = message.authorType === "local-user" ? intentDecisionBySourceMessageId.get(message.id) : undefined;
       const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
       const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
         <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
@@ -3144,33 +3112,6 @@ export function WorkspaceClientView({
               ) : null}
               actionsNode={(
                 <div className="channel-message-row-footer-stack">
-                  {acceptedRouteDecision ? (
-                    <ChannelRouteExplanation
-                      decision={acceptedRouteDecision}
-                      open={openRouteExplanationDecisionId === `route:${acceptedRouteDecision.id}`}
-                      onToggle={() => setOpenRouteExplanationDecisionId((current) => current === `route:${acceptedRouteDecision.id}` ? "" : `route:${acceptedRouteDecision.id}`)}
-                      teammates={teammateOptions}
-                      t={t}
-                    />
-                  ) : null}
-                  {sourceRouteDecision ? (
-                    <ChannelRouteExplanation
-                      decision={sourceRouteDecision}
-                      open={openRouteExplanationDecisionId === `route:${sourceRouteDecision.id}`}
-                      onToggle={() => setOpenRouteExplanationDecisionId((current) => current === `route:${sourceRouteDecision.id}` ? "" : `route:${sourceRouteDecision.id}`)}
-                      teammates={teammateOptions}
-                      t={t}
-                    />
-                  ) : null}
-                  {sourceIntentDecision ? (
-                    <ChannelIntentExplanation
-                      decision={sourceIntentDecision}
-                      open={openRouteExplanationDecisionId === `intent:${sourceIntentDecision.id}`}
-                      onToggle={() => setOpenRouteExplanationDecisionId((current) => current === `intent:${sourceIntentDecision.id}` ? "" : `intent:${sourceIntentDecision.id}`)}
-                      teammates={teammateOptions}
-                      t={t}
-                    />
-                  ) : null}
                   <MessageFooterActions
                     className="channel-message-row-actions"
                     actions={[
@@ -4123,19 +4064,6 @@ export function WorkspaceClientView({
           </select>
         </label>
         <label className="field wide">
-          <span>{t("Auto reply")}</span>
-          <select
-            value={channelEditForm.autoReplyMode}
-            onChange={(event) => onChannelEditFormChange({ ...channelEditForm, autoReplyMode: event.target.value as ChannelFormState["autoReplyMode"] })}
-            disabled={!selectedChannelId}
-          >
-            <option value="mentions_only">{t("Mentions only")}</option>
-            <option value="default_teammate">{t("Default teammate")}</option>
-            <option value="auto_route" disabled={!channelAutoRouteEnabled}>{t("Auto route")}</option>
-          </select>
-          {!channelAutoRouteEnabled ? <small>{t("Auto route is disabled by daemon configuration.")}</small> : null}
-        </label>
-        <label className="field wide">
           <span>{t("AI response language")}</span>
           <select
             value={channelEditForm.responseLanguage}
@@ -4496,18 +4424,6 @@ export function WorkspaceClientView({
                     <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
                   ))}
                 </select>
-              </label>
-              <label className="field wide">
-                <span>{t("Auto reply")}</span>
-                <select
-                  value={channelForm.autoReplyMode}
-                  onChange={(event) => onChannelFormChange({ ...channelForm, autoReplyMode: event.target.value as ChannelFormState["autoReplyMode"] })}
-                >
-                  <option value="mentions_only">{t("Mentions only")}</option>
-                  <option value="default_teammate">{t("Default teammate")}</option>
-                  <option value="auto_route" disabled={!channelAutoRouteEnabled}>{t("Auto route")}</option>
-                </select>
-                {!channelAutoRouteEnabled ? <small>{t("Auto route is disabled by daemon configuration.")}</small> : null}
               </label>
               <label className="field wide">
                 <span>{t("AI response language")}</span>
@@ -5415,19 +5331,6 @@ function ChannelProtocolEditor({
               <option value="zh-CN">{t("Chinese")}</option>
               <option value="en-US">{t("English")}</option>
             </select>
-          </label>
-          <label className="field wide">
-            <span>{t("Auto reply")}</span>
-            <select
-              value={draft.autoReplyMode}
-              onChange={(event) => setDraft({ ...draft, autoReplyMode: event.target.value as ChannelProtocolDraft["autoReplyMode"] })}
-              disabled={!channel || saving}
-            >
-              <option value="mentions_only">{t("Mentions only")}</option>
-              <option value="default_teammate">{t("Default teammate")}</option>
-              <option value="auto_route" disabled={!autoRouteEnabled}>{t("Auto route")}</option>
-            </select>
-            <small>{t("Source")}: {protocolSourceLabel(protocol.sources.autoReplyMode.source, t)}</small>
           </label>
           <label className="field wide">
             <span>{t("Default AI teammate")}</span>
@@ -8643,86 +8546,6 @@ function ChannelFiles({
         )}
       </div>
     </section>
-  );
-}
-
-function ChannelRouteExplanation({
-  decision,
-  open,
-  onToggle,
-  teammates,
-  t,
-}: {
-  readonly decision: ChannelMessageRouteDecision;
-  readonly open: boolean;
-  readonly onToggle: () => void;
-  readonly teammates: readonly ChannelMention[];
-  readonly t: Translate;
-}): JSX.Element {
-  const accepted = decision.status === "accepted";
-  const failed = decision.status === "failed";
-  const label = channelRouteDecisionSummaryLabel(decision, t);
-  const title = channelRouteDecisionInspectTitle(decision, t);
-  const inspectLabel = accepted ? t("Why this reply?") : t("Why no reply?");
-  return (
-    <div className={["channel-route-explanation", accepted ? "accepted" : "", failed ? "failed" : ""].filter(Boolean).join(" ")}>
-      <button
-        className="channel-route-explanation-toggle"
-        type="button"
-        aria-expanded={open}
-        title={title}
-        onClick={onToggle}
-      >
-        <Info size={11} />
-        <span>{label}</span>
-        <small>{inspectLabel}</small>
-      </button>
-      {open ? (
-        <div className="channel-route-explanation-popover" role="status">
-          <strong>{title}</strong>
-          <ChannelRouteInspectContent decision={decision} teammates={teammates} t={t} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ChannelIntentExplanation({
-  decision,
-  open,
-  onToggle,
-  teammates,
-  t,
-}: {
-  readonly decision: ChannelIntentDecision;
-  readonly open: boolean;
-  readonly onToggle: () => void;
-  readonly teammates: readonly ChannelMention[];
-  readonly t: Translate;
-}): JSX.Element {
-  const failed = decision.status === "failed";
-  const accepted = decision.status === "accepted";
-  const title = channelIntentDecisionInspectTitle(decision, t);
-  return (
-    <div className={["channel-route-explanation", "intent", accepted ? "accepted" : "", failed ? "failed" : ""].filter(Boolean).join(" ")}>
-      <button
-        className="channel-route-explanation-toggle"
-        type="button"
-        aria-expanded={open}
-        title={title}
-        onClick={onToggle}
-      >
-        <Info size={11} />
-        <span>{channelIntentDecisionSummaryLabel(decision, t)}</span>
-        <small>{t("Why this handling?")}</small>
-      </button>
-      {open ? (
-        <div className="channel-route-explanation-popover" role="status">
-          <strong>{title}</strong>
-          <ChannelIntentInspectContent decision={decision} teammates={teammates} t={t} />
-        </div>
-      ) : null}
-    </div>
   );
 }
 

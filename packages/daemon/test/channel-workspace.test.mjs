@@ -688,7 +688,7 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
   }
 });
 
-test("mentions_only records suppressed route evidence without running an AI reply", async () => {
+test("mentions_only creates a blocked Ling Agent reply when the channel has no runnable provider", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-mentions-only-route-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
@@ -699,14 +699,20 @@ test("mentions_only records suppressed route evidence without running an AI repl
       body: "这个频道自动回复怎么设计？",
     });
 
-    assert.equal(created.aiReply, undefined);
+    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.authorId, "ling_agent");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked");
+    const blockedReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(blockedReply.body, "AI teammate is not configured for this channel.");
+    assert.equal(blockedReply.errorMessage, "No provider preset is selected for this channel discussion.");
     assert.equal(runner.runs.length, 0);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].mode, "mentions_only");
-    assert.equal(decisions.decisions[0].action, "no_reply");
-    assert.equal(decisions.decisions[0].status, "suppressed");
+    assert.equal(decisions.decisions[0].action, "reply");
+    assert.equal(decisions.decisions[0].status, "failed");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
+    assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -736,7 +742,6 @@ test("default_teammate routes reply-worthy messages to the channel default witho
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个实现边界怎么处理？",
     });
-
     assert.equal(created.aiReply.status, "pending");
     assert.equal(created.aiReply.authorId, "teammate_builtin_engineer");
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
@@ -795,7 +800,7 @@ test("channel intent selector creates visible multi-replies for discussion-only 
       status: "active",
       boundPath: cwd,
       defaultProviderPresetId: provider.id,
-      defaultTeammateId: "teammate_builtin_engineer",
+      defaultTeammateId: "engineer",
       autoReplyMode: "default_teammate",
       allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
     })).channel;
@@ -1452,9 +1457,12 @@ test("single-step test request becomes direct workflow with bounded bash tools",
   }
 });
 
-test("model-assisted channel intent selector can suppress ordinary auto replies", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-no-reply-"));
-  const runner = new ScriptedRunner([JSON.stringify({ action: "no_reply", reason: "User is only acknowledging prior context." })]);
+test("model-assisted channel intent no_reply falls through to ordinary Ling replies", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-no-reply-fallthrough-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({ action: "no_reply", reason: "Not an executable task." }),
+    "这个问题应该由首选队友回复。",
+  ]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
@@ -1476,16 +1484,25 @@ test("model-assisted channel intent selector can suppress ordinary auto replies"
     });
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      body: "这个需要回复吗？",
+      body: "这个实现边界怎么处理？",
     });
 
-    assert.equal(created.aiReply, undefined);
-    assert.equal(runner.runs.length, 1);
+    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.authorId, "teammate_builtin_engineer");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "这个问题应该由首选队友回复。");
+    assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
     assert.match(runner.runs[0].task.prompt, /Classify the latest user channel message into exactly one Ling intent/);
     assert.match(runner.runs[0].task.prompt, /Available teammate roles JSON/);
+    assert.match(runner.runs[1].systemPrompt, /Do not include hidden proposal blocks/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(routeDecisions.decisions, []);
+    assert.equal(routeDecisions.decisions.length, 1);
+    assert.equal(routeDecisions.decisions[0].mode, "default_teammate");
+    assert.equal(routeDecisions.decisions[0].action, "reply");
+    assert.equal(routeDecisions.decisions[0].status, "accepted");
+    assert.equal(routeDecisions.decisions[0].replyMessageId, created.aiReply.id);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "no_reply");
@@ -1617,10 +1634,14 @@ test("default_teammate route suppresses duplicate replies for the same source me
   }
 });
 
-test("default_teammate answers the first greeting after mode is enabled and suppresses answered repeats", async () => {
+test("Ling Agent replies to greetings, repeated greetings, punctuation, and acknowledgements", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-greeting-"));
   const runner = new ScriptedRunner([
     "你好，我在。可以继续说你的问题。",
+    "我在，继续说。",
+    "晚上好，我在。",
+    "看到了，继续说。",
+    "收到，继续。",
   ]);
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1639,33 +1660,56 @@ test("default_teammate answers the first greeting after mode is enabled and supp
     const preConfigGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "你好？",
     });
-    assert.equal(preConfigGreeting.aiReply, undefined);
+    assert.equal(preConfigGreeting.aiReply.status, "pending");
+    const preConfigListed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, preConfigGreeting.aiReply.id, "ready");
+    const preConfigReply = preConfigListed.messages.find((message) => message.id === preConfigGreeting.aiReply.id);
+    assert.equal(preConfigReply.body, "你好，我在。可以继续说你的问题。");
     await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
       autoReplyMode: "default_teammate",
     });
 
-    const firstGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      body: "你好？",
-    });
-    assert.equal(firstGreeting.aiReply.status, "pending");
-    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, firstGreeting.aiReply.id, "ready");
-    const finalReply = listed.messages.find((message) => message.id === firstGreeting.aiReply.id);
-    assert.equal(finalReply.body, "你好，我在。可以继续说你的问题。");
-
     const repeatedGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "你好？",
     });
-    assert.equal(repeatedGreeting.aiReply, undefined);
+    assert.equal(repeatedGreeting.aiReply.status, "pending");
+    const repeatedListed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, repeatedGreeting.aiReply.id, "ready");
+    const repeatedReply = repeatedListed.messages.find((message) => message.id === repeatedGreeting.aiReply.id);
+    assert.equal(repeatedReply.body, "我在，继续说。");
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(repeatedGreeting.message.id)}`);
-    assert.equal(decisions.decisions[0].status, "suppressed");
-    assert.equal(decisions.decisions[0].reason, "Repeated short greeting was suppressed.");
+    assert.equal(decisions.decisions[0].action, "reply");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions[0].replyMessageId, repeatedGreeting.aiReply.id);
+
+    const eveningGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "晚上好",
+    });
+    assert.equal(eveningGreeting.aiReply.status, "pending");
+    const eveningListed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, eveningGreeting.aiReply.id, "ready");
+    const eveningReply = eveningListed.messages.find((message) => message.id === eveningGreeting.aiReply.id);
+    assert.equal(eveningReply.body, "晚上好，我在。");
+
+    const punctuation = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "。。",
+    });
+    assert.equal(punctuation.aiReply.status, "pending");
+    const punctuationListed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, punctuation.aiReply.id, "ready");
+    const punctuationReply = punctuationListed.messages.find((message) => message.id === punctuation.aiReply.id);
+    assert.equal(punctuationReply.body, "看到了，继续说。");
+
+    const acknowledgement = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "好的",
+    });
+    assert.equal(acknowledgement.aiReply.status, "pending");
+    const acknowledgementListed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, acknowledgement.aiReply.id, "ready");
+    const acknowledgementReply = acknowledgementListed.messages.find((message) => message.id === acknowledgement.aiReply.id);
+    assert.equal(acknowledgementReply.body, "收到，继续。");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("default_teammate suppresses when the channel has no runnable default teammate", async () => {
+test("default_teammate creates a blocked Ling Agent reply when the channel has no runnable provider", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-suppressed-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
@@ -1682,13 +1726,19 @@ test("default_teammate suppresses when the channel has no runnable default teamm
       body: "这个问题谁来回复？",
     });
 
-    assert.equal(created.aiReply, undefined);
+    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.authorId, "ling_agent");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked");
+    const blockedReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(blockedReply.body, "AI teammate is not configured for this channel.");
+    assert.equal(blockedReply.errorMessage, "No provider preset is selected for this channel discussion.");
     assert.equal(runner.runs.length, 0);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].mode, "default_teammate");
-    assert.equal(decisions.decisions[0].action, "no_reply");
-    assert.equal(decisions.decisions[0].status, "suppressed");
+    assert.equal(decisions.decisions[0].action, "reply");
+    assert.equal(decisions.decisions[0].status, "failed");
+    assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1815,6 +1865,7 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel message router/i);
     assert.match(runner.runs[0].task.prompt, /Decide whether one AI teammate should reply/);
+    assert.match(runner.runs[0].task.prompt, /Root local-user messages should produce a visible Ling outcome/);
     assert.match(runner.runs[0].task.prompt, /Channel collaboration protocol:/);
     assert.match(runner.runs[0].task.prompt, /Auto reply mode: auto_route \(source=channel_setting\)/);
     assert.match(runner.runs[0].task.prompt, /Candidates JSON/);
@@ -1847,8 +1898,8 @@ test("auto_route uses the model selector and records accepted route evidence", a
   }
 });
 
-test("auto_route fails closed on invalid or low-confidence selector output", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-fail-closed-"));
+test("auto_route falls back to Ling Agent replies on selector failure", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-fallback-"));
   const runner = new ScriptedRunner(["not json"]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { autoRoute: true } });
   try {
@@ -1858,11 +1909,13 @@ test("auto_route fails closed on invalid or low-confidence selector output", asy
       body: "这个交给谁回复？",
     });
 
-    assert.equal(created.aiReply, undefined);
-    assert.equal(runner.runs.length, 1);
+    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.authorId, "teammate_builtin_designer");
+    assert.equal(runner.runs.length, 2);
     let decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions[0].status, "failed");
+    assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].createdBy, "model");
+    assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");
 
     runner.responses.push(JSON.stringify({
       action: "reply",
@@ -1874,10 +1927,11 @@ test("auto_route fails closed on invalid or low-confidence selector output", asy
     const lowConfidence = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个 UI 问题可以自动判断吗？",
     });
-    assert.equal(lowConfidence.aiReply, undefined);
+    assert.equal(lowConfidence.aiReply.status, "pending");
+    assert.equal(lowConfidence.aiReply.authorId, "teammate_builtin_designer");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(lowConfidence.message.id)}`);
-    assert.equal(decisions.decisions[0].status, "suppressed");
-    assert.equal(decisions.decisions[0].reason, "Route model confidence was below threshold.");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.match(decisions.decisions[0].reason, /Route model confidence was below threshold/);
 
     runner.responses.push(`Here is the decision: ${JSON.stringify({
       action: "reply",
@@ -1889,10 +1943,11 @@ test("auto_route fails closed on invalid or low-confidence selector output", asy
     const wrappedJson = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个带解释的模型输出应该失败吗？",
     });
-    assert.equal(wrappedJson.aiReply, undefined);
+    assert.equal(wrappedJson.aiReply.status, "pending");
+    assert.equal(wrappedJson.aiReply.authorId, "teammate_builtin_designer");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(wrappedJson.message.id)}`);
-    assert.equal(decisions.decisions[0].status, "failed");
-    assert.match(decisions.decisions[0].errorMessage, /strict JSON object/);
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");
 
     runner.responses.push(JSON.stringify({
       action: "reply",
@@ -1904,10 +1959,11 @@ test("auto_route fails closed on invalid or low-confidence selector output", asy
     const unknownTeammate = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个未知 teammate 应该失败吗？",
     });
-    assert.equal(unknownTeammate.aiReply, undefined);
+    assert.equal(unknownTeammate.aiReply.status, "pending");
+    assert.equal(unknownTeammate.aiReply.authorId, "teammate_builtin_designer");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(unknownTeammate.message.id)}`);
-    assert.equal(decisions.decisions[0].status, "failed");
-    assert.match(decisions.decisions[0].errorMessage, /unknown teammate/);
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

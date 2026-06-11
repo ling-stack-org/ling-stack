@@ -284,7 +284,7 @@ interface ChannelWorkflowIntent {
 
 | Kind | Meaning | Allowed side effect |
 | --- | --- | --- |
-| `no_reply` | The message is an acknowledgement, social closure, or unrelated note. | Persist the user message; optionally persist suppressed evidence. |
+| `no_reply` | The message is not executable or collaborative work. | Persist selector evidence, then fall through to ordinary Ling reply handling for root user turns. |
 | `single_reply` | One teammate should answer as normal channel conversation. | Use `default_teammate` or `auto_route` to create one normal `ai_reply`. |
 | `visible_multi_reply` | The user explicitly asks multiple teammates for visible opinions or discussion before work is scoped. | Create bounded ordinary `ai_reply` messages, one per selected teammate; do not create a task, workflow, approval, or memory candidate. |
 | `clarify` | The request is likely work, but the scope is ambiguous. | One teammate asks one clarifying question. |
@@ -330,7 +330,7 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 
 | User message | Decision | Notes |
 | --- | --- | --- |
-| `好的` / `收到` / `谢谢` | `no_reply` | Do not spend model tokens or create teammate noise. |
+| `好的` / `收到` / `谢谢` | `no_reply` then ordinary reply fallback | Not executable work, but the root user turn still gets a concise visible Ling reply. |
 | `频道里面都有谁？` | `single_reply` | One coordinator/default teammate can answer. |
 | `这个 auto_route 为什么没回复？` | `single_reply` | One teammate explains current channel behavior. |
 | `谁能处理这个？` | `single_reply` or `workflow_proposal` | If context is simple, answer. If there is a concrete work artifact, propose workflow. |
@@ -774,7 +774,8 @@ Validation:
 The first implementation should be deterministic and conservative:
 
 - explicit AI mention -> `single_reply` to mentioned teammate;
-- acknowledgement / very short closure -> `no_reply`;
+- acknowledgement / very short closure -> `no_reply` for executable-intent classification,
+  then ordinary Ling reply fallback;
 - question about channel state, teammates, settings, files, context, or current work ->
   `single_reply`;
 - asks all/specific teammates for visible opinions, critique, brainstorming, or
