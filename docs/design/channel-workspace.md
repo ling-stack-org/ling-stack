@@ -1914,8 +1914,8 @@ Current MVP implementation status:
 - the channel context model now separates thin channel collaboration protocol, bounded
   Context Packs, automatic compaction, and review-gated memory. The protocol is generated
   from defaults plus structured channel settings and only changes through user edits or
-  explicit confirmation. Runtime context is assembled by the future Context Budget Manager
-  so custom provider APIs can use known, estimated, or conservative unknown-model budgets
+  explicit confirmation. Runtime context is assembled by the Context Budget Manager so
+  custom provider APIs can use known, estimated, or conservative unknown-model budgets
   without turning the channel into a shared long-context transcript,
 - response language for generated workflow text is a channel/workspace preference, not a
   global translation pass. The default should come from Workspace Settings, a channel may
@@ -2415,7 +2415,7 @@ Current MVP implementation status:
   orchestrator state machine.
 - [x] Detail P6 automatic compaction design for demand-driven summaries, workflow packet
   summaries, and no-tools context-length retry.
-- [ ] Add automatic compaction into auditable summaries/packets, not into channel protocol
+- [x] Add automatic compaction into auditable summaries/packets, not into channel protocol
   or active memory.
 - [x] Detail P7 protocol editing design for effective protocol resolution, API, UI
   boundary, and Context Pack consumption.
@@ -2433,7 +2433,7 @@ Current MVP implementation status:
   protocol fields.
 - [x] Route reply, selector, auto-route, and workflow-step Context Pack builders through
   the P7 resolver without allowing builders to mutate protocol.
-- [ ] Add Settings deep-link to the Context protocol editor.
+- [x] Add Settings deep-link to the Context protocol editor.
 - [x] Detail P8A workflow-step Context Pack evidence drilldown design, including entry
   points, persisted artifact source, safe fields, failure states, and boundaries.
 - [x] Add P8A workflow-step Context Pack evidence drilldown in the existing workflow
@@ -2469,9 +2469,8 @@ Current MVP implementation status:
   restore and delete actions.
 - [x] Add destructive delete confirmations for archived channels and archived branches,
   including linked-work counts when available.
-- [ ] Add targeted browser coverage for default, hover, keyboard focus, branch creation,
-  branch archive, channel archive, restore, delete confirmation, and archived-hidden
-  states.
+- [x] Add targeted browser coverage for branch creation, branch archive, channel archive,
+  restore, delete confirmation, and archived-hidden states.
 
 ## Validation Plan
 

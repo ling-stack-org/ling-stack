@@ -15,6 +15,7 @@ import { extractAssistantText } from "../../shared/assistant-text.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
+import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 
@@ -239,46 +240,74 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
   if (!providerPresetId) {
     throw new Error("No runnable provider is available for channel intent selection.");
   }
-  const prompt = renderContextPack(buildChannelIntentSelectorContextPack({
+  let contextPack = buildChannelIntentSelectorContextPack({
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     providerPresetId,
-  }));
-  const provider = resolveProviderForRun(input.store, {
-    cwd: input.store.paths.cwd,
-    workspaceCwd: input.store.paths.cwd,
-    task: {
-      id: input.sourceMessage.id,
-      title: `Channel intent selection in ${input.channel.name}`,
-      prompt,
-      channelId: input.channel.id,
-    },
-    providerPresetId,
-    tools: [],
-    thinkingLevel: "low",
-    systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
-  }, input.secretResolver);
+  });
+  let prompt = renderContextPack(contextPack);
   const runnerResolution = input.runnerRegistry.resolve({ tools: [], allowFallback: true });
   const textDeltas: string[] = [];
-  const result = await runnerResolution.runner.adapter.runTask({
-    cwd: input.store.paths.cwd,
-    task: {
-      id: input.sourceMessage.id,
-      title: `Channel intent selection in ${input.channel.name}`,
-      prompt,
-      channelId: input.channel.id,
-    },
-    provider,
-    tools: [],
-    thinkingLevel: "low",
-    systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
-    onEvent: (event) => {
-      if (event.type === "assistant_text_delta") {
-        textDeltas.push(event.text);
-      }
-    },
-  });
+  const runIntentTask = async (taskPrompt: string) => {
+    const provider = resolveProviderForRun(input.store, {
+      cwd: input.store.paths.cwd,
+      workspaceCwd: input.store.paths.cwd,
+      task: {
+        id: input.sourceMessage.id,
+        title: `Channel intent selection in ${input.channel.name}`,
+        prompt: taskPrompt,
+        channelId: input.channel.id,
+      },
+      providerPresetId,
+      tools: [],
+      thinkingLevel: "low",
+      systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
+    }, input.secretResolver);
+    return runnerResolution.runner.adapter.runTask({
+      cwd: input.store.paths.cwd,
+      task: {
+        id: input.sourceMessage.id,
+        title: `Channel intent selection in ${input.channel.name}`,
+        prompt: taskPrompt,
+        channelId: input.channel.id,
+      },
+      provider,
+      tools: [],
+      thinkingLevel: "low",
+      systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
+      onEvent: (event) => {
+        if (event.type === "assistant_text_delta") {
+          textDeltas.push(event.text);
+        }
+      },
+    });
+  };
+  let result: Awaited<ReturnType<typeof runIntentTask>>;
+  try {
+    result = await runIntentTask(prompt);
+  } catch (error) {
+    if (!isContextLengthError(error)) {
+      throw error;
+    }
+    const compaction = compactChannelDiscussionForNoToolsRetry({
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      now: new Date().toISOString(),
+    });
+    contextPack = buildChannelIntentSelectorContextPack({
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      providerPresetId,
+      compactedChannelSummary: compaction.compactedSummary,
+      minimal: true,
+    });
+    prompt = renderContextPack(contextPack);
+    textDeltas.length = 0;
+    result = await runIntentTask(prompt);
+  }
   const text = textDeltas.join("").trim() || extractAssistantText(result.messages) || "";
   return parseModelIntentOutput(text);
 }

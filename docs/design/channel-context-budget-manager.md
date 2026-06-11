@@ -1,10 +1,10 @@
 # Channel Context Budget Manager
 
-Status: P1-P5 foundation, P6A/P6D workflow compaction, P7A/P7B1/P7C/P7D protocol
-resolver/API/editor/Context Pack consumption, P8A workflow-step evidence drilldown,
-P8B reply/selector inspect surfaces, and P8C workflow-step budget diagnostics
-implemented; channel summary compaction, no-tools retry, and P7B2 AI drafts/storage
-remain future slices
+Status: P1-P5 foundation, P6A/P6D workflow compaction, P6B channel summary
+compaction, P6C no-tools context-length retry, P7A/P7B1/P7B2/P7C/P7D protocol
+resolver/API/draft storage/editor/Context Pack consumption, P8A workflow-step
+evidence drilldown, P8B reply/selector inspect surfaces, and P8C workflow-step
+budget diagnostics implemented
 Date: 2026-06-10
 
 Related docs:
@@ -504,6 +504,8 @@ P6B rules:
 - `authorType="system"` for automatic compaction.
 - The summary is visible in Context surfaces and can be edited or superseded through
   existing context-summary flows later.
+- Implementation status: implemented for no-tools reply/selector retry paths through
+  demand-driven `ChannelContextSummary` creation; no background summarizer is added.
 
 P6C no-tools retry flow:
 
@@ -522,6 +524,9 @@ P6C rules:
 - Does not retry tool-running work, write actions, approvals, deploys, or external sends.
 - The retry should persist or log compacted decision metadata only if that path already
   persists route/selector evidence.
+- Implementation status: implemented as a single retry after a provider context-length
+  error, with a smaller/minimal Context Pack and compaction ids recorded only in existing
+  route/selector evidence metadata.
 
 Compaction model call:
 
@@ -718,13 +723,13 @@ P7 implementation checklist:
      for fields that already have storage on `Channel` or workspace settings.
    - P7B1 must not accept protocol-only fields that have no durable storage yet; return
      a validation error instead of silently dropping them.
-   - P7B2: add AI draft/apply endpoints and protocol-only storage only when the product
-     needs editable `privacyRules`, `reviewRules`, `defaultWorkflowPreference`, or
+   - P7B2: add AI draft/apply endpoints and protocol-only storage for
+     `privacyRules`, `reviewRules`, `defaultWorkflowPreference`, and
      `visibleMultiReplyMaxParticipants`.
-   - If P7B2 stores protocol-only fields, add a narrow
-     `channel_collaboration_protocols` table with version, source refs, updated-by, and
-     rollback support. Do not invent a generic channel metadata bag unless the core
-     channel model already has one.
+   - P7B2 stores protocol-only fields in a narrow
+     `channel_collaboration_protocols` table with version/source metadata and
+     `channel_collaboration_protocol_drafts` for staged proposals. It must not invent a
+     generic channel metadata bag.
 
 3. P7C UI surface:
    - Put the editor in the existing Channel `Context` surface.
@@ -745,13 +750,14 @@ P7 implementation checklist:
      teammate chat, hidden prompts, provider secrets, raw artifacts, or unreviewed
      memory candidates.
 
-P7B2 deferred boundary:
+P7B2 storage/apply boundary:
 
-P7B2 should not be implemented until a product slice needs protocol-only fields. P7B1
-already covers the fields that have durable storage on `Channel`; adding drafts or
-protocol-only fields earlier would create two sources of truth for channel behavior.
+P7B2 adds protocol-only storage and AI draft/apply endpoints while preserving the P7B1
+direct-editor boundary. Fields already backed by `Channel` can still be edited directly;
+protocol-only fields are written only by applying a draft, so ordinary messages,
+summaries, workflow output, and Context Pack assembly cannot silently mutate protocol.
 
-P7B2 should add all of these together, or none of them:
+P7B2 adds all of these together:
 
 - a narrow `channel_collaboration_protocols` store/table, keyed by channel id and
   version;
@@ -783,7 +789,7 @@ Recommended layout:
 | --- | --- | --- |
 | Header | "Collaboration protocol", last updated time, reset action | Keep compact; do not use hero or marketing copy. |
 | Editable fields | Response language, auto-reply mode, default teammate | These map to P7B1 API fields. |
-| Read-only future fields | Workflow preference, visible multi-reply cap, privacy rules, review rules | Show as read-only defaults until P7B2 adds storage. |
+| Read-only direct-editor fields | Workflow preference, visible multi-reply cap, privacy rules, review rules | Direct editor shows the effective values; changes to these fields come through draft/apply, not normal `PATCH`. |
 | Field source | `channel_setting`, `workspace_setting`, `default`, `current_message`, `teammate_instruction` | Source labels come from the resolver response. |
 | Review strip | Pending diff, validation errors, Save, Cancel | Show only after the user changes a value. |
 
@@ -897,16 +903,17 @@ P7 implementation status:
   `POST /channels/:channelId/protocol/revert` cover existing `Channel` fields only.
 - P7B1 daemon tests cover source precedence, validation, unsupported protocol fields,
   `auto_route` feature gating, teammate availability, and revert.
-- P7B2 detailed design added, but implementation remains deferred until protocol-only
-  fields need durable storage.
+- P7B2 implemented: protocol-only overrides are stored separately from channel fields,
+  AI/local drafts are persisted with source refs/base version/reason/status, and applying
+  a draft is the only write path for protocol-only fields.
 - P7C implemented: the channel Context surface includes a protocol editor for
   response language, auto-reply mode, and default teammate; protocol-only fields remain
   read-only defaults.
 - P7D implemented: ordinary replies, visible multi-replies, intent selector,
   `auto_route`, and workflow-step Context Packs include resolver-backed protocol
   sections; workflow context artifacts preserve protocol section metadata.
-- P7B2 remains future: AI drafts, apply flow, rollback, and protocol-only field storage.
-- Settings deep-link to the protocol editor remains future UI polish.
+- Settings deep-link to the protocol editor implemented: Settings opens the existing
+  channel Context/Protocol surface instead of creating a duplicate editor.
 
 P7 acceptance checks:
 
@@ -1253,10 +1260,10 @@ details:
 | P2 | Wire `visible_multi_reply` to `roster_compact`. Implemented. | Fixes teammate answers such as "I cannot see channel members" when the roster is known. |
 | P3 | Add provider budget capability metadata and conservative estimator. Implemented. | Uses existing provider preset `contextWindow` and `maxTokens` fields plus fallback estimates for custom APIs. |
 | P4 | Introduce internal `ContextPack` assembly for channel replies and selectors. Implemented. | Covers channel replies, `visible_multi_reply`, channel intent selector, and `auto_route` selector. |
-| P5 | Route workflow-step prompt assembly through Context Pack. | Preserve existing orchestrator state machine and task/run coordinator. |
-| P6 | Add automatic compaction into `ChannelContextSummary` and workflow packet summaries. | Keep source refs and visible audit records. |
-| P7 | Add protocol editing/confirmation UX. | User-confirmed changes only; no silent growth. |
-| P8 | Add context evidence drilldown and budget diagnostics for developers. | Keep out of default chat. |
+| P5 | Route workflow-step prompt assembly through Context Pack. Implemented. | Preserves existing orchestrator state machine and task/run coordinator. |
+| P6 | Add automatic compaction into `ChannelContextSummary` and workflow packet summaries. Implemented. | Keeps source refs and visible audit records. |
+| P7 | Add protocol editing/confirmation UX. Implemented. | User-confirmed changes only; no silent growth. |
+| P8 | Add context evidence drilldown and budget diagnostics for developers. Implemented. | Kept out of default chat. |
 
 Recommended order:
 

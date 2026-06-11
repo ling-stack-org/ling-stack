@@ -214,6 +214,46 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
   }
 });
 
+test("channel no-tools AI reply retries once with compacted channel summary after context-length error", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-context-retry-"));
+  const runner = new ScriptedRunner([
+    new Error("context_length exceeded by test provider"),
+    "Retry reply",
+  ]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer 请根据频道上下文回复",
+      mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const reply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(reply.body, "Retry reply");
+    assert.equal(runner.runs.length, 2);
+    assert.match(runner.runs[1].task.prompt, /Compacted channel discussion summary for a no-tools retry/);
+    assert.match(runner.runs[1].task.prompt, /channel_discussion_summary|Compacted visible message count/i);
+
+    const summaries = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/context-summaries?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(summaries.contextSummaries.length, 1);
+    assert.equal(summaries.contextSummaries[0].authorType, "system");
+    assert.deepEqual(summaries.contextSummaries[0].sourceMessageIds, [created.message.id]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("mentions_only records suppressed route evidence without running an AI reply", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-mentions-only-route-"));
   const runner = new RecordingRunner();
@@ -1254,8 +1294,9 @@ test("channel collaboration protocol resolver API patches existing channel field
     assert.equal(initial.sources.autoReplyMode.source, "default");
     assert.equal(initial.protocol.defaultTeammateId, undefined);
     assert.equal(initial.sources.defaultTeammateId.source, "default");
-    assert.deepEqual(initial.storage.editableFields, ["responseLanguage", "autoReplyMode", "defaultTeammateId"]);
-    assert.ok(initial.storage.unsupportedFields.includes("privacyRules"));
+    assert.equal(initial.storage.mode, "channel_fields_and_protocol_overrides");
+    assert.deepEqual(initial.storage.editableFields, ["responseLanguage", "autoReplyMode", "defaultTeammateId", "defaultWorkflowPreference", "visibleMultiReplyMaxParticipants", "privacyRules", "reviewRules"]);
+    assert.equal(initial.storage.unsupportedFields.length, 0);
 
     const patched = await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol?cwd=${encodeURIComponent(cwd)}`, {
       responseLanguage: "en-US",
@@ -1300,7 +1341,7 @@ test("channel collaboration protocol resolver API patches existing channel field
     assert.equal((await missingTeammate.json()).error, "default_teammate_not_found");
 
     const reverted = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol/revert?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.deepEqual(reverted.revertedFields, ["responseLanguage", "autoReplyMode", "defaultTeammateId"]);
+    assert.deepEqual(reverted.revertedFields, ["responseLanguage", "autoReplyMode", "defaultTeammateId", "defaultWorkflowPreference", "visibleMultiReplyMaxParticipants", "privacyRules", "reviewRules"]);
     assert.equal(reverted.protocol.responseLanguage, "zh-CN");
     assert.equal(reverted.sources.responseLanguage.source, "workspace_setting");
     assert.equal(reverted.protocol.autoReplyMode, "mentions_only");
@@ -1310,6 +1351,86 @@ test("channel collaboration protocol resolver API patches existing channel field
     assert.equal(channelAfterRevert.responseLanguage, undefined);
     assert.equal(channelAfterRevert.autoReplyMode, "mentions_only");
     assert.equal(channelAfterRevert.defaultTeammateId, undefined);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel collaboration protocol drafts apply protocol-only overrides with source refs", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-drafts-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const first = await createChannel(daemon.url, cwd);
+    const second = await createChannel(daemon.url, cwd);
+    const message = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Draft a protocol update.",
+    });
+    const otherMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(second.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Wrong channel source.",
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/drafts?cwd=${encodeURIComponent(cwd)}`, {
+      baseVersion: 0,
+      proposedPatch: {
+        defaultWorkflowPreference: "architect_engineer_qa",
+        visibleMultiReplyMaxParticipants: 2,
+        privacyRules: ["Do not expose private teammate chat."],
+        reviewRules: ["Require QA evidence before Done."],
+      },
+      reason: "AI suggested a tighter channel protocol.",
+      createdBy: "ai-draft",
+      sourceRefs: [{ type: "message", id: message.message.id, label: "Source request" }],
+    });
+    assert.equal(created.draft.status, "draft");
+    assert.equal(created.draft.baseVersion, 0);
+    assert.equal(created.protocol.defaultWorkflowPreference, "manual");
+    assert.equal(created.sources.defaultWorkflowPreference.source, "default");
+
+    let drafts = await getJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/drafts?cwd=${encodeURIComponent(cwd)}&status=draft`);
+    assert.deepEqual(drafts.drafts.map((draft) => draft.id), [created.draft.id]);
+
+    const applied = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/drafts/${encodeURIComponent(created.draft.id)}/apply?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(applied.draft.status, "applied");
+    assert.equal(applied.draft.appliedProtocolVersion, 1);
+    assert.equal(applied.protocol.protocolVersion, 1);
+    assert.equal(applied.protocol.defaultWorkflowPreference, "architect_engineer_qa");
+    assert.equal(applied.sources.defaultWorkflowPreference.source, "protocol_override");
+    assert.equal(applied.protocol.visibleMultiReplyMaxParticipants, 2);
+    assert.deepEqual(applied.protocol.privacyRules, ["Do not expose private teammate chat."]);
+    assert.deepEqual(applied.protocol.reviewRules, ["Require QA evidence before Done."]);
+
+    const stale = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/drafts?cwd=${encodeURIComponent(cwd)}`, {
+      baseVersion: 0,
+      proposedPatch: { visibleMultiReplyMaxParticipants: 3 },
+      reason: "Stale update.",
+    });
+    const staleApply = await fetch(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/drafts/${encodeURIComponent(stale.draft.id)}/apply?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+    });
+    assert.equal(staleApply.status, 409);
+    const staleBody = await staleApply.json();
+    assert.equal(staleBody.error, "draft_base_version_mismatch");
+    assert.equal(staleBody.draft.status, "stale");
+
+    const crossRef = await fetch(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/drafts?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        proposedPatch: { visibleMultiReplyMaxParticipants: 4 },
+        reason: "Cross-channel source should fail.",
+        sourceRefs: [{ type: "message", id: otherMessage.message.id }],
+      }),
+    });
+    assert.equal(crossRef.status, 400);
+    assert.match((await crossRef.json()).message, /channel/i);
+
+    const reverted = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/revert?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(reverted.protocol.protocolVersion, undefined);
+    assert.equal(reverted.protocol.defaultWorkflowPreference, "manual");
+    assert.equal(reverted.sources.defaultWorkflowPreference.source, "default");
+    drafts = await getJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/drafts?cwd=${encodeURIComponent(cwd)}&status=applied`);
+    assert.equal(drafts.drafts.some((draft) => draft.id === created.draft.id), true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

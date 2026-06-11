@@ -51,6 +51,94 @@ export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
 
 export const channelResponseLanguages: readonly ChannelResponseLanguage[] = ["workspace", "follow_user", "zh-CN", "en-US"];
 
+export type ChannelWorkflowPreference = "manual" | "architect_engineer_qa";
+
+export const channelWorkflowPreferences: readonly ChannelWorkflowPreference[] = ["manual", "architect_engineer_qa"];
+
+export type ChannelProtocolSourceRefType =
+  | "message"
+  | "channel_decision"
+  | "context_summary"
+  | "task"
+  | "run"
+  | "workflow"
+  | "workflow_step";
+
+export interface ChannelProtocolSourceRef {
+  readonly type: ChannelProtocolSourceRefType;
+  readonly id: string;
+  readonly label?: string;
+}
+
+export type ChannelProtocolDraftStatus = "draft" | "applied" | "cancelled" | "stale";
+
+export const channelProtocolDraftStatuses: readonly ChannelProtocolDraftStatus[] = ["draft", "applied", "cancelled", "stale"];
+
+export type ChannelProtocolDraftCreatedBy = "local-user" | "ai-draft";
+
+export const channelProtocolDraftCreatedByValues: readonly ChannelProtocolDraftCreatedBy[] = ["local-user", "ai-draft"];
+
+export interface ChannelCollaborationProtocolOverride {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly version: number;
+  readonly defaultWorkflowPreference: ChannelWorkflowPreference;
+  readonly visibleMultiReplyMaxParticipants: number;
+  readonly privacyRules: readonly string[];
+  readonly reviewRules: readonly string[];
+  readonly sourceRefs: readonly ChannelProtocolSourceRef[];
+  readonly updatedBy: ChannelProtocolDraftCreatedBy;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ChannelCollaborationProtocolPatch {
+  readonly responseLanguage?: ChannelResponseLanguage | null;
+  readonly autoReplyMode?: ChannelAutoReplyMode | null;
+  readonly defaultTeammateId?: string | null;
+  readonly defaultWorkflowPreference?: ChannelWorkflowPreference;
+  readonly visibleMultiReplyMaxParticipants?: number;
+  readonly privacyRules?: readonly string[];
+  readonly reviewRules?: readonly string[];
+}
+
+export interface ChannelCollaborationProtocolDraft {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly baseVersion?: number;
+  readonly proposedPatch: ChannelCollaborationProtocolPatch;
+  readonly reason: string;
+  readonly createdBy: ChannelProtocolDraftCreatedBy;
+  readonly sourceRefs: readonly ChannelProtocolSourceRef[];
+  readonly status: ChannelProtocolDraftStatus;
+  readonly appliedProtocolVersion?: number;
+  readonly expiresAt?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelCollaborationProtocolDraftInput {
+  readonly channelId: string;
+  readonly baseVersion?: number;
+  readonly proposedPatch: ChannelCollaborationProtocolPatch;
+  readonly reason: string;
+  readonly createdBy: ChannelProtocolDraftCreatedBy;
+  readonly sourceRefs?: readonly ChannelProtocolSourceRef[];
+  readonly expiresAt?: string;
+}
+
+export interface UpsertChannelCollaborationProtocolOverrideInput {
+  readonly channelId: string;
+  readonly defaultWorkflowPreference?: ChannelWorkflowPreference;
+  readonly visibleMultiReplyMaxParticipants?: number;
+  readonly privacyRules?: readonly string[];
+  readonly reviewRules?: readonly string[];
+  readonly sourceRefs?: readonly ChannelProtocolSourceRef[];
+  readonly updatedBy: ChannelProtocolDraftCreatedBy;
+}
+
 export type ChannelExecutionMode = "serial" | "parallel";
 
 export type ChannelWriteLockScope = "channel" | "boundPath" | "workspace";
@@ -1780,6 +1868,14 @@ export function createWorkflowSelectorDecisionId(): string {
 
 export function createChannelContextSummaryId(): string {
   return `summary_${randomUUID()}`;
+}
+
+export function createChannelCollaborationProtocolOverrideId(): string {
+  return `channel_protocol_${randomUUID()}`;
+}
+
+export function createChannelCollaborationProtocolDraftId(): string {
+  return `channel_protocol_draft_${randomUUID()}`;
 }
 
 export function createChannelWorkflowId(): string {

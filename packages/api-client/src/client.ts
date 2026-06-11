@@ -29,6 +29,8 @@ import type {
   ChannelBranchListResponse,
   ChannelBranchMutationResponse,
   ChannelCollaborationProtocolMutationResponse,
+  ChannelCollaborationProtocolDraftListResponse,
+  ChannelCollaborationProtocolDraftMutationResponse,
   ChannelCollaborationProtocolResponse,
   ChannelContextSummaryListResponse,
   ChannelContextSummaryMutationResponse,
@@ -47,6 +49,7 @@ import type {
   ChannelListResponse,
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
+  ChannelProtocolDraftStatus,
   ChannelIntentDecisionListResponse,
   ChannelMessageRouteDecisionListResponse,
   ChannelMutationResponse,
@@ -68,6 +71,7 @@ import type {
   WorkflowEvidenceResponse,
   CreateChannelAttachmentRequest,
   CreateChannelBranchRequest,
+  CreateChannelCollaborationProtocolDraftRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelExecutionProposalRequest,
@@ -866,6 +870,30 @@ export class LingDaemonClient {
     input: UpdateChannelCollaborationProtocolRequest,
   ): Promise<ChannelCollaborationProtocolMutationResponse> {
     return this.patch(`/channels/${encodeURIComponent(channelId)}/protocol`, { cwd }, input);
+  }
+
+  async listChannelCollaborationProtocolDrafts(
+    cwd: string,
+    channelId: string,
+    options: { readonly status?: ChannelProtocolDraftStatus; readonly limit?: number } = {},
+  ): Promise<ChannelCollaborationProtocolDraftListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/protocol/drafts`, { cwd, status: options.status, limit: options.limit });
+  }
+
+  async createChannelCollaborationProtocolDraft(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelCollaborationProtocolDraftRequest,
+  ): Promise<ChannelCollaborationProtocolDraftMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/protocol/drafts`, { cwd }, input);
+  }
+
+  async applyChannelCollaborationProtocolDraft(
+    cwd: string,
+    channelId: string,
+    draftId: string,
+  ): Promise<ChannelCollaborationProtocolDraftMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/protocol/drafts/${encodeURIComponent(draftId)}/apply`, { cwd });
   }
 
   async revertChannelCollaborationProtocol(cwd: string, channelId: string): Promise<ChannelCollaborationProtocolMutationResponse> {

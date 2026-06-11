@@ -2695,6 +2695,11 @@ export function createChannelFromBody(body: Record<string, unknown>, id: string,
       : body.autoReplyMode !== undefined
         ? readChannelAutoReplyMode(body.autoReplyMode)
         : readChannelAutoReplyMode(existing.autoReplyMode),
+    responseLanguage: body.responseLanguage === null
+      ? undefined
+      : body.responseLanguage !== undefined
+        ? readChannelResponseLanguage(body.responseLanguage)
+        : readChannelResponseLanguage(existing.responseLanguage),
     allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : Array.isArray(existing.allowedTools) ? existing.allowedTools : ["read", "grep", "find", "ls"],
     runtimePolicy: isRecord(body.runtimePolicy)
       ? { ...defaultRuntimePolicy, ...(isRecord(existing.runtimePolicy) ? existing.runtimePolicy : {}), ...body.runtimePolicy }
@@ -2710,6 +2715,71 @@ export function createChannelFromBody(body: Record<string, unknown>, id: string,
           : undefined,
     createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-25T00:15:00.000Z",
     updatedAt: "2026-05-25T00:15:00.000Z",
+  };
+}
+
+function buildMockChannelCollaborationProtocolResponse(channelId: string, channel: Record<string, unknown>): Record<string, unknown> {
+  const responseLanguageChannelValue = readChannelResponseLanguage(channel.responseLanguage);
+  const responseLanguage = responseLanguageChannelValue === undefined ? "follow_user" : responseLanguageChannelValue === "workspace" ? "follow_user" : responseLanguageChannelValue;
+  const autoReplyMode = readChannelAutoReplyMode(channel.autoReplyMode);
+  const defaultTeammateId = typeof channel.defaultTeammateId === "string" && channel.defaultTeammateId.trim()
+    ? channel.defaultTeammateId
+    : undefined;
+  const updatedAt = typeof channel.updatedAt === "string" ? channel.updatedAt : "2026-05-25T00:15:00.000Z";
+  return {
+    cwd,
+    protocol: {
+      schemaVersion: 1,
+      channelId,
+      responseLanguage,
+      autoReplyMode,
+      defaultTeammateId,
+      defaultWorkflowPreference: "manual",
+      visibleMultiReplyMaxParticipants: 3,
+      privacyRules: [],
+      reviewRules: [],
+      updatedBy: responseLanguageChannelValue || autoReplyMode !== "mentions_only" || defaultTeammateId ? "local-user" : "system_template",
+      updatedAt,
+    },
+    sources: {
+      responseLanguage: {
+        value: responseLanguage,
+        source: responseLanguageChannelValue ? "channel_setting" : "workspace_setting",
+        channelValue: responseLanguageChannelValue,
+        workspaceValue: "follow_user",
+      },
+      autoReplyMode: {
+        value: autoReplyMode,
+        source: autoReplyMode === "mentions_only" ? "default" : "channel_setting",
+        channelValue: autoReplyMode === "mentions_only" ? undefined : autoReplyMode,
+      },
+      defaultTeammateId: {
+        value: defaultTeammateId,
+        source: defaultTeammateId ? "channel_setting" : "default",
+        channelValue: defaultTeammateId,
+      },
+      defaultWorkflowPreference: {
+        value: "manual",
+        source: "default",
+      },
+      visibleMultiReplyMaxParticipants: {
+        value: 3,
+        source: "default",
+      },
+      privacyRules: {
+        value: [],
+        source: "default",
+      },
+      reviewRules: {
+        value: [],
+        source: "default",
+      },
+    },
+    storage: {
+      mode: "channel_fields_and_protocol_overrides",
+      editableFields: ["responseLanguage", "autoReplyMode", "defaultTeammateId", "defaultWorkflowPreference", "visibleMultiReplyMaxParticipants", "privacyRules", "reviewRules"],
+      unsupportedFields: [],
+    },
   };
 }
 
@@ -2741,6 +2811,10 @@ export function createChannelBranchFromBody(
 
 function readChannelAutoReplyMode(value: unknown): string {
   return value === "default_teammate" || value === "auto_route" ? value : "mentions_only";
+}
+
+function readChannelResponseLanguage(value: unknown): "workspace" | "follow_user" | "zh-CN" | "en-US" | undefined {
+  return value === "workspace" || value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
 }
 
 export function createMockTeammate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -4413,6 +4487,40 @@ export async function handleDaemonRoute(
     state.channels.unshift(channel);
     await route.fulfill({ status: 201, json: { channel } });
     return;
+  }
+  const channelProtocolMatch = /^\/channels\/([^/]+)\/protocol(?:\/([^/]+))?$/.exec(path);
+  if (channelProtocolMatch) {
+    const channelId = decodeURIComponent(channelProtocolMatch[1]);
+    const action = channelProtocolMatch[2] ? decodeURIComponent(channelProtocolMatch[2]) : "";
+    const channelIndex = state.channels.findIndex((item) => isRecord(item) && item.id === channelId);
+    if (channelIndex === -1 || !isRecord(state.channels[channelIndex])) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const channel = state.channels[channelIndex] as Record<string, unknown>;
+    if (request.method() === "GET" && !action) {
+      await route.fulfill({ json: buildMockChannelCollaborationProtocolResponse(channelId, channel) });
+      return;
+    }
+    if (request.method() === "PATCH" && !action) {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const updated = createChannelFromBody(body, channelId, channel);
+      state.channels[channelIndex] = updated;
+      await route.fulfill({ json: buildMockChannelCollaborationProtocolResponse(channelId, updated) });
+      return;
+    }
+    if (request.method() === "POST" && action === "revert") {
+      const updated = {
+        ...channel,
+        autoReplyMode: "mentions_only",
+        defaultTeammateId: undefined,
+        responseLanguage: undefined,
+        updatedAt: "2026-05-25T00:15:00.000Z",
+      };
+      state.channels[channelIndex] = updated;
+      await route.fulfill({ json: { ...buildMockChannelCollaborationProtocolResponse(channelId, updated), revertedFields: ["responseLanguage", "autoReplyMode", "defaultTeammateId"] } });
+      return;
+    }
   }
   const channelBranchesMatch = /^\/channels\/([^/]+)\/branches(?:\/([^/]+))?$/.exec(path);
   if (channelBranchesMatch) {

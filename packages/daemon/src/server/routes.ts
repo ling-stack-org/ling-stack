@@ -226,7 +226,8 @@ export function parseChannelRoute(
   readonly channelId: string;
   readonly action?: "brief" | "messages" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "workspace" | "protocol" | "branches";
   readonly branchId?: string;
-  readonly protocolAction?: "revert";
+  readonly protocolAction?: "revert" | "drafts" | "apply-draft";
+  readonly protocolDraftId?: string;
   readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
@@ -247,6 +248,12 @@ export function parseChannelRoute(
   }
   if (segments.length === 4 && segments[0] === "channels" && segments[2] === "protocol" && segments[3] === "revert") {
     return { channelId: segments[1], action: "protocol", protocolAction: "revert" };
+  }
+  if (segments.length === 4 && segments[0] === "channels" && segments[2] === "protocol" && segments[3] === "drafts") {
+    return { channelId: segments[1], action: "protocol", protocolAction: "drafts" };
+  }
+  if (segments.length === 6 && segments[0] === "channels" && segments[2] === "protocol" && segments[3] === "drafts" && segments[5] === "apply") {
+    return { channelId: segments[1], action: "protocol", protocolAction: "apply-draft", protocolDraftId: segments[4] };
   }
   if (
     segments.length === 4 &&

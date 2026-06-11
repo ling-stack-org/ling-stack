@@ -15,6 +15,7 @@ import { extractAssistantText } from "../../shared/assistant-text.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
+import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import {
   buildChannelAutoRouteContextPack,
   buildChannelReplyContextPack,
@@ -441,49 +442,78 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   if (!providerPresetId) {
     throw new Error("No runnable provider is available for channel auto_route.");
   }
-  const contextPack = buildChannelAutoRouteContextPack({
+  let contextPack = buildChannelAutoRouteContextPack({
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     providerPresetId,
     candidates: candidatesToRouteContext(candidates),
   });
-  const contextPackMetadata = summarizeContextPack(contextPack);
-  const prompt = renderContextPack(contextPack);
-  const provider = resolveProviderForRun(input.store, {
-    cwd: input.store.paths.cwd,
-    workspaceCwd: input.store.paths.cwd,
-    task: {
-      id: input.sourceMessage.id,
-      title: `Channel auto route in ${input.channel.name}`,
-      prompt,
-      channelId: input.channel.id,
-    },
-    providerPresetId,
-    tools: [],
-    thinkingLevel: "low",
-    systemPrompt: "You are Ling's channel message router. Return strict JSON only.",
-  }, input.secretResolver);
+  let contextPackMetadata = summarizeContextPack(contextPack);
+  let prompt = renderContextPack(contextPack);
   const runnerResolution = input.runnerRegistry.resolve({ tools: [], allowFallback: true });
   const textDeltas: string[] = [];
-  const result = await runnerResolution.runner.adapter.runTask({
-    cwd: input.store.paths.cwd,
-    task: {
-      id: input.sourceMessage.id,
-      title: `Channel auto route in ${input.channel.name}`,
-      prompt,
-      channelId: input.channel.id,
-    },
-    provider,
-    tools: [],
-    thinkingLevel: "low",
-    systemPrompt: "You are Ling's channel message router. Return strict JSON only.",
-    onEvent: (event) => {
-      if (event.type === "assistant_text_delta") {
-        textDeltas.push(event.text);
-      }
-    },
-  });
+  const runRouteTask = async (taskPrompt: string) => {
+    const provider = resolveProviderForRun(input.store, {
+      cwd: input.store.paths.cwd,
+      workspaceCwd: input.store.paths.cwd,
+      task: {
+        id: input.sourceMessage.id,
+        title: `Channel auto route in ${input.channel.name}`,
+        prompt: taskPrompt,
+        channelId: input.channel.id,
+      },
+      providerPresetId,
+      tools: [],
+      thinkingLevel: "low",
+      systemPrompt: "You are Ling's channel message router. Return strict JSON only.",
+    }, input.secretResolver);
+    return runnerResolution.runner.adapter.runTask({
+      cwd: input.store.paths.cwd,
+      task: {
+        id: input.sourceMessage.id,
+        title: `Channel auto route in ${input.channel.name}`,
+        prompt: taskPrompt,
+        channelId: input.channel.id,
+      },
+      provider,
+      tools: [],
+      thinkingLevel: "low",
+      systemPrompt: "You are Ling's channel message router. Return strict JSON only.",
+      onEvent: (event) => {
+        if (event.type === "assistant_text_delta") {
+          textDeltas.push(event.text);
+        }
+      },
+    });
+  };
+  let result: Awaited<ReturnType<typeof runRouteTask>>;
+  try {
+    result = await runRouteTask(prompt);
+  } catch (error) {
+    if (!isContextLengthError(error)) {
+      throw error;
+    }
+    const compaction = compactChannelDiscussionForNoToolsRetry({
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      now: new Date().toISOString(),
+    });
+    contextPack = buildChannelAutoRouteContextPack({
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      providerPresetId,
+      candidates: candidatesToRouteContext(candidates),
+      compactedChannelSummary: compaction.compactedSummary,
+      minimal: true,
+    });
+    contextPackMetadata = summarizeContextPack(contextPack);
+    prompt = renderContextPack(contextPack);
+    textDeltas.length = 0;
+    result = await runRouteTask(prompt);
+  }
   const text = textDeltas.join("").trim() || extractAssistantText(result.messages) || "";
   try {
     return {
