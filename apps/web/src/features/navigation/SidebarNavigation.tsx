@@ -3,6 +3,7 @@ import {
   Archive,
   Bot,
   Database,
+  GitBranch,
   Hash,
   Inbox,
   Kanban,
@@ -133,21 +134,16 @@ export function SidebarNavigation({
           </button>
         ) : (
 	          channels.map((channel) => {
-	            const branches = branchesByChannel.get(channel.id) ?? [];
 	            const channelActive = activeSidebarTarget === channelSidebarTarget(channel.id);
-	            const mainBranchSelected = channelActive && selectedChannelBranchId === "";
 	            const draftOpen = branchDraftChannelId === channel.id;
-	            const branchListVisible = channelActive || draftOpen || branches.length > 0;
+	            const branches = branchesByChannel.get(channel.id) ?? [];
 	            return (
 	              <div key={channel.id} className="sidebar-channel-group">
 	                <div className={channelActive ? "sidebar-row-shell selected" : "sidebar-row-shell"}>
 	                  <button
 	                    className="sidebar-row-main"
 	                    type="button"
-                    onClick={() => {
-                      setBranchDraftChannelId("");
-                      onSelectChannel(channel.id);
-                    }}
+                    onClick={() => onSelectChannel(channel.id)}
                   >
                     <span className="sidebar-hash" aria-hidden="true">#</span>
                     <span>{channel.name}</span>
@@ -165,7 +161,7 @@ export function SidebarNavigation({
                           openBranchDraft(channel.id);
                         }}
                       >
-                        <Plus size={13} />
+                        <GitBranch size={13} />
                       </button>
                     ) : null}
                     {onArchiveChannel ? (
@@ -201,27 +197,14 @@ export function SidebarNavigation({
                     />
                     <button type="submit" aria-label={t("Create branch")} title={t("Create branch")}>
                       <Plus size={13} />
-	                    </button>
-	                  </form>
-	                ) : null}
-	                {branchListVisible ? (
-	                  <div className="sidebar-branch-list" role="list" aria-label={t("Sidebar channel branches")}>
-	                    <div className={mainBranchSelected ? "sidebar-branch-row-shell selected" : "sidebar-branch-row-shell"}>
-	                      <button
-	                        className="sidebar-branch-row"
-	                        type="button"
-	                        onClick={() => {
-	                          setBranchDraftChannelId("");
-	                          onSelectChannel(channel.id);
-	                        }}
-	                      >
-	                        <span>{t("Main branch")}</span>
-	                        <small>{t("Default channel branch")}</small>
-	                      </button>
-	                    </div>
-	                    {branches.map((branch) => (
-	                      <div key={branch.id} className={selectedChannelBranchId === branch.id ? "sidebar-branch-row-shell selected" : "sidebar-branch-row-shell"}>
-	                        <button
+                    </button>
+                  </form>
+                ) : null}
+                {branches.length > 0 ? (
+                  <div className="sidebar-branch-list" role="list" aria-label={t("Sidebar channel branches")}>
+                    {branches.map((branch) => (
+                      <div key={branch.id} className={selectedChannelBranchId === branch.id ? "sidebar-branch-row-shell selected" : "sidebar-branch-row-shell"}>
+                        <button
                           className="sidebar-branch-row"
                           type="button"
                           onClick={() => {

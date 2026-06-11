@@ -142,6 +142,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
         )
       ).length,
       rightY: Math.round(rightDrawer?.getBoundingClientRect().y ?? -1),
+      rightWidth: Math.round(rightDrawer?.getBoundingClientRect().width ?? 0),
       rightHeight: Math.round(rightDrawer?.getBoundingClientRect().height ?? 0),
       viewportHeight: window.innerHeight,
       headerRight: Math.round(header?.getBoundingClientRect().right ?? 0),
@@ -182,9 +183,9 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       globalRightPanels: document.querySelectorAll(".right-panel").length,
     };
   });
-  expect(expanded.columns.startsWith("232px ")).toBe(true);
-  expect(expanded.leftWidth).toBe(232);
-  expect(expanded.leftToolbarWidth).toBe(232);
+  expect(expanded.columns.startsWith("272px ")).toBe(true);
+  expect(expanded.leftWidth).toBe(272);
+  expect(expanded.leftToolbarWidth).toBe(272);
   expect(expanded.selectedChannelText).toContain("Engineering");
   expect(expanded.selectedChannelBackground).toBe("rgb(245, 245, 245)");
   expect(expanded.selectedChannelBeforeContent).toBe("none");
@@ -228,6 +229,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(expanded.teammateAvatarCount).toBeGreaterThan(0);
   expect(expanded.teammateNotificationCount).toBe(0);
   expect(expanded.rightY).toBe(0);
+  expect(expanded.rightWidth).toBe(340);
   expect(expanded.rightHeight).toBe(expanded.viewportHeight);
   expect(expanded.headerRight).toBeLessThanOrEqual(expanded.rightLeft);
   expect(expanded.sidePanelActions).toBe(2);
@@ -241,10 +243,10 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(expanded.emptyStateIconCount).toBe(1);
   expect(Math.abs(expanded.emptyStateCenterDelta)).toBeLessThanOrEqual(2);
   expect(expanded.composerBottomGap).toBeLessThanOrEqual(18);
-  if (expanded.branchTreeText) {
-    expect(expanded.branchTreeText).toContain("Conversation branches");
-    expect(expanded.branchTreeHeight).toBeGreaterThan(40);
-  }
+  expect(expanded.branchTreeText).toBe("");
+  expect(expanded.branchTreeHeight).toBe(0);
+  await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
+  await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
   expect(expanded.feedHeight).toBeGreaterThan(240);
   expect(expanded.feedBottomComposerGap).toBe(0);
   expect(expanded.sidebarBottomDisplay).toBe("grid");
@@ -280,7 +282,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     };
   });
   expect(leftCollapsed.columns.startsWith("48px ")).toBe(true);
-  expect(leftCollapsed.leftX).toBe(-184);
+  expect(leftCollapsed.leftX).toBe(-224);
   expect(leftCollapsed.leftOpacity).toBe("0");
   expect(leftCollapsed.toolbarWidth).toBe(48);
   expect(Math.abs(leftCollapsed.chatCenterDelta)).toBeLessThanOrEqual(1);
@@ -362,8 +364,8 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       attentionCount: document.querySelectorAll(".channel-attention-popover").length,
     };
   });
-  expect(restored.columns.startsWith("232px ")).toBe(true);
-  expect(restored.leftWidth).toBe(232);
+  expect(restored.columns.startsWith("272px ")).toBe(true);
+  expect(restored.leftWidth).toBe(272);
   expect(restored.sidePanelCount).toBe(1);
   expect(Math.abs(restored.chatCenterDelta)).toBeLessThanOrEqual(1);
   expect(restored.attentionCount).toBe(0);
@@ -480,7 +482,7 @@ test("wide channel attention popover keeps the accepted HTML spacing", async ({ 
   expect(spacing.mainPaddingRight).toBe("0px");
   expect(spacing.chatWidth).toBe(960);
   expect(spacing.composerWidth).toBe(960);
-  expect(spacing.attentionWidth).toBe(390);
+  expect(spacing.attentionWidth).toBe(340);
   expect(spacing.chatTransform).not.toBe("none");
   expect(spacing.composerTransform).not.toBe("none");
   expect(spacing.gap).toBeGreaterThanOrEqual(48);

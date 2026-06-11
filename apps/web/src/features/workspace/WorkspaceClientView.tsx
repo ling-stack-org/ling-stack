@@ -810,12 +810,7 @@ export function WorkspaceClientView({
   const channelDiscussionRootThread = visibleChannelWorkThreads.find((thread) =>
     isChannelDiscussionRootThread(thread, selectedChannelId)
   );
-  const channelWorkThreadTreeVisible =
-    Boolean(selectedChannelId) ||
-    visibleChannelWorkThreads.length > 0 ||
-    channelWorkThreadSearchActive ||
-    channelWorkThreadsLoading ||
-    Boolean(channelWorkThreadError);
+  const channelWorkThreadTreeVisible = false;
   const channelRunsByThreadId = useMemo(() => groupRunsByThreadId(channelRuns), [channelRuns]);
   const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
   const visibleConversationThreadRunSignatures = useMemo(() => {

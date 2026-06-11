@@ -2612,6 +2612,12 @@ After fork succeeds:
 
 Channel tree display:
 
+2026-06-11 product update: this display is no longer rendered in the normal channel
+workspace. Work History / Run Diagnostics is the canonical surface for thread lineage,
+fork, pin, archive, search, and filter controls; the channel chat view hides branch
+chrome so `Main branch` / child branch navigation does not duplicate the conversation
+surface.
+
 ```text
 Channel
   Source branch

@@ -165,7 +165,7 @@ share the same icon color and 18px glyph size. The attention queue icon should n
 an overlaid numeric badge; progress and attention counts belong in the popover or detail
 surfaces.
 The left navigation is also a shared app drawer in the accepted channel chat direction:
-expanded at 232px, collapsed to a 48px toolbar rail, and recoverable by hover/focus. It
+expanded at 272px, collapsed to a 48px toolbar rail, and recoverable by hover/focus. It
 does not switch back to the older global sidebar styling when the user opens model
 workbench, runs, inbox, media jobs, AI teammates, or settings; those pages change the
 center surface while preserving the same drawer geometry, row treatment, notification
@@ -210,8 +210,16 @@ text weights that make the popover read larger than the chat workspace.
 
 ### Channel Branches
 
-Channel branches are a left-drawer organization model for splitting one channel into
-focused work lanes without creating another full channel.
+Channel branches are a work-lane data model for splitting one channel into focused
+execution history without creating another full channel.
+
+Current product boundary: the normal channel workspace renders only real channel branches
+under their parent channel. It must not render a synthetic `Main branch` /
+`Default channel branch` row, and it must not render the conversation branch tree above
+the feed. A hovered or focused channel row exposes `Create branch` for quick branch
+creation. Work History / Run Diagnostics owns thread lineage, fork, pin, archive, search,
+and filter controls. This keeps the collaboration surface focused on the current channel
+instead of showing duplicate `Main branch` navigation in the chat view.
 
 Rules:
 
@@ -219,10 +227,12 @@ Rules:
 - branches are one level deep,
 - branches do not override provider, teammate, bound path, or runtime policy in the first
   implementation,
-- creating a branch is a channel-row action,
-- archiving a channel and archiving a branch are separate actions,
-- archived branches are hidden from the default drawer and should be restorable from
-  Settings archived-items management,
+- creating a channel branch is available from the parent channel row,
+- forking, pinning, archiving, and filtering work branches happens in Work History / Run
+  Diagnostics, not the normal channel drawer,
+- archiving a channel and archiving a branch remain separate actions,
+- active branches render under their parent channel; archived branches are hidden from the
+  default drawer and should be restorable from Settings archived-items management,
 - archived channels and branches should be managed from Settings with `Restore` and
   `Delete` actions,
 - delete is a separate irreversible operation and must not appear in the normal left
@@ -1875,13 +1885,18 @@ Current MVP implementation status:
   counts and top actionable items third. It borrows Codex's glanceable floating status
   model without copying its single-agent repo assumptions, dark panel styling, or raw
   execution detail surface,
-- v1.26 now defines channel branches as one-level product work lanes under a parent
+- v1.26 introduced channel branches as one-level product work lanes under a parent
   channel. A hovered or focused top-level channel row exposes `Create branch` and
   `Archive channel`; a hovered or focused branch row exposes only `Archive branch`.
   Branches do not override provider, teammate, path, or runtime policy in the first
   implementation. Archived channels and branches are recovered or permanently deleted from
   a Settings management surface, while the normal drawer only exposes reversible archive.
   The UI must not imply Git checkout, merge, push, or delete-branch operations,
+- the 2026-06-11 channel boundary hides synthetic normal-channel branch chrome introduced
+  by v1.26. The left drawer shows real branches only after they exist, the channel-row
+  `Create branch` action stays hover/focus scoped, the conversation surface no longer
+  renders `Conversation branches`, and Work History / Run Diagnostics owns visible thread
+  lineage and branch operations,
 - the multi-agent orchestration experience now keeps v1.21/v1.25 as the compatibility
   boundary: shaping-stage specialist input can be visible in chat, live execution appears
   as mutable progress rows and popover state, terminal work folds into compact summaries,
