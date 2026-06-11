@@ -50,7 +50,7 @@ import {
 } from "lucide-react";
 import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
 import { createChannelWorktree, handoffChannelWorkspace, refreshChannelWorkspace } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
@@ -143,12 +143,14 @@ import type {
   Channel,
   ChannelAttachment,
   ChannelBrief,
+  ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
   ChannelCreateFormState,
   ChannelDecision,
   ChannelFormState,
   ChannelHandoff,
   ChannelHandoffStatus,
+  ChannelIntentDecision,
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
@@ -157,6 +159,7 @@ import type {
   UpdateChannelExecutionProposalRequest,
   ChannelWorkflow,
   ChannelWorkflowStep,
+  ChannelWorkflowStepContextPacket,
   ChannelWorkflowStepStartMode,
   ChannelWorkspaceBinding,
   ChannelWorkspaceMode,
@@ -179,8 +182,10 @@ import type {
   TaskFormState,
   TaskRunActionState,
   TeammateChannelMembership,
+  UpdateChannelCollaborationProtocolRequest,
   UpdateChannelBriefRequest,
   UsedMemoryEvent,
+  WorkflowEvidenceDiagnostic,
   WorkItemView,
   WorkUnit,
   WorkspaceSettings,
@@ -359,7 +364,9 @@ export function WorkspaceClientView({
   channelArtifactsByRun,
   channelArtifactErrorsByRun,
   channelBrief,
+  channelCollaborationProtocol,
   channelDecisions,
+  channelIntentDecisions,
   channelMessageRouteDecisions,
   channelHandoffs,
   channelContextSummaries,
@@ -433,6 +440,8 @@ export function WorkspaceClientView({
   onCreateLinkPreview,
   onDeleteAttachment,
   onSaveBrief,
+  onSaveChannelProtocol,
+  onRevertChannelProtocol,
   onSupersedeDecision,
   onRejectDecision,
   onCreateHandoffFromTask,
@@ -495,7 +504,9 @@ export function WorkspaceClientView({
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly channelArtifactErrorsByRun: Readonly<Record<string, string>>;
   readonly channelBrief: ChannelBrief | undefined;
+  readonly channelCollaborationProtocol: ChannelCollaborationProtocolResponse | undefined;
   readonly channelDecisions: readonly ChannelDecision[];
+  readonly channelIntentDecisions: readonly ChannelIntentDecision[];
   readonly channelMessageRouteDecisions: readonly ChannelMessageRouteDecision[];
   readonly channelHandoffs: readonly ChannelHandoff[];
   readonly channelContextSummaries: readonly ChannelContextSummary[];
@@ -579,6 +590,8 @@ export function WorkspaceClientView({
   readonly onCreateLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
   readonly onDeleteAttachment: (attachmentId: string) => void;
   readonly onSaveBrief: (input: UpdateChannelBriefRequest) => void;
+  readonly onSaveChannelProtocol: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
+  readonly onRevertChannelProtocol: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
   readonly onSupersedeDecision: (decision: ChannelDecision) => void;
   readonly onRejectDecision: (decision: ChannelDecision) => void;
   readonly onCreateHandoffFromTask: (task: Task) => Promise<ChannelHandoff | undefined>;
@@ -646,7 +659,7 @@ export function WorkspaceClientView({
   const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
   const [openRouteExplanationDecisionId, setOpenRouteExplanationDecisionId] = useState("");
-  const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
+  const [inspectorMode, setInspectorMode] = useState<ChannelInspectorMode>("brief");
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   const [teammateManagerOpen, setTeammateManagerOpen] = useState(false);
   const [briefDraft, setBriefDraft] = useState({
@@ -728,6 +741,15 @@ export function WorkspaceClientView({
     }
     return decisions;
   }, [channelMessageRouteDecisions]);
+  const intentDecisionBySourceMessageId = useMemo(() => {
+    const decisions = new Map<string, ChannelIntentDecision>();
+    for (const decision of channelIntentDecisions) {
+      if (decision.action !== "single_reply") {
+        decisions.set(decision.sourceMessageId, decision);
+      }
+    }
+    return decisions;
+  }, [channelIntentDecisions]);
   const channelRuns = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
@@ -772,11 +794,14 @@ export function WorkspaceClientView({
   const activeWorkThread = activeWorkThreadId
     ? visibleChannelWorkThreads.find((thread) => thread.id === activeWorkThreadId)
     : undefined;
-  const channelMainBranchActionId = selectedChannelId ? `channel-main:${selectedChannelId}` : "channel-main";
-  const channelMainBranchActionPending = forkingWorkThreadId === channelMainBranchActionId;
   const channelDiscussionRootThread = visibleChannelWorkThreads.find((thread) =>
     isChannelDiscussionRootThread(thread, selectedChannelId)
   );
+  const channelWorkThreadTreeVisible =
+    visibleChannelWorkThreads.length > 0 ||
+    channelWorkThreadSearchActive ||
+    channelWorkThreadsLoading ||
+    Boolean(channelWorkThreadError);
   const channelRunsByThreadId = useMemo(() => groupRunsByThreadId(channelRuns), [channelRuns]);
   const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
   const visibleConversationThreadRunSignatures = useMemo(() => {
@@ -1695,7 +1720,7 @@ export function WorkspaceClientView({
     onOpenRun(runId);
   }
 
-  function openProtocolFromActivity(mode: "brief" | "decisions" | "handoffs" | "runtime" = "runtime"): void {
+  function openProtocolFromActivity(mode: ChannelInspectorMode = "runtime"): void {
     setActivityToolsOpen(false);
     setChannelMoreOpen(false);
     setInspectorMode(mode);
@@ -1855,73 +1880,6 @@ export function WorkspaceClientView({
       .finally(() => {
         conversationWorkCellEvidenceLoadsRef.current.delete(cacheKey);
       });
-  }
-
-  async function materializeChannelMainBranch(workspaceCwd: string): Promise<LingThread | undefined> {
-    if (!selectedChannelId) {
-      return undefined;
-    }
-    const existing = channelDiscussionRootThread ?? visibleChannelWorkThreads.find((thread) =>
-      isChannelDiscussionRootThread(thread, selectedChannelId)
-    );
-    if (existing) {
-      return existing;
-    }
-
-    const response = await createLingThread(workspaceCwd, {
-      kind: "channel_discussion",
-      channelId: selectedChannelId,
-      title: t("Main branch"),
-      objective: selectedChannel
-        ? t("Main conversation branch for {channel}", { channel: selectedChannel.name })
-        : t("Main conversation branch"),
-      idempotencyKey: `channel-main:${selectedChannelId}`,
-    });
-    setChannelWorkThreads((current) => mergeLingThreads([response.thread], current));
-    return response.thread;
-  }
-
-  async function selectChannelMainBranch(): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || forkingWorkThreadId) {
-      return;
-    }
-    setForkingWorkThreadId(channelMainBranchActionId);
-    setChannelWorkThreadError("");
-    try {
-      const thread = await materializeChannelMainBranch(workspaceCwd);
-      if (thread) {
-        setActiveWorkThreadId(thread.id);
-      }
-    } catch (error) {
-      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setForkingWorkThreadId((current) => current === channelMainBranchActionId ? "" : current);
-    }
-  }
-
-  async function forkChannelMainBranch(): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || forkingWorkThreadId) {
-      return;
-    }
-    setForkingWorkThreadId(channelMainBranchActionId);
-    setChannelWorkThreadError("");
-    try {
-      const sourceThread = await materializeChannelMainBranch(workspaceCwd);
-      if (!sourceThread) {
-        return;
-      }
-      const response = await forkLingThread(workspaceCwd, sourceThread.id, {
-        idempotencyKey: `channel-main-fork:${sourceThread.id}:${sourceThread.updatedAt}`,
-      });
-      setChannelWorkThreads((current) => mergeLingThreads([response.childThread, response.sourceThread], current));
-      setActiveWorkThreadId(response.childThread.id);
-    } catch (error) {
-      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setForkingWorkThreadId((current) => current === channelMainBranchActionId ? "" : current);
-    }
   }
 
   async function forkChannelWorkThread(thread: LingThread): Promise<void> {
@@ -2880,6 +2838,7 @@ export function WorkspaceClientView({
       const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
       const acceptedRouteDecision = routeDecisionByReplyMessageId.get(message.id);
       const sourceRouteDecision = routeDecisionBySourceMessageId.get(message.id);
+      const sourceIntentDecision = message.authorType === "local-user" ? intentDecisionBySourceMessageId.get(message.id) : undefined;
       const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
       const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
         <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
@@ -2944,12 +2903,30 @@ export function WorkspaceClientView({
               ) : null}
               actionsNode={(
                 <div className="channel-message-row-footer-stack">
-                  {acceptedRouteDecision ? <ChannelRouteDecisionPill decision={acceptedRouteDecision} t={t} /> : null}
+                  {acceptedRouteDecision ? (
+                    <ChannelRouteExplanation
+                      decision={acceptedRouteDecision}
+                      open={openRouteExplanationDecisionId === `route:${acceptedRouteDecision.id}`}
+                      onToggle={() => setOpenRouteExplanationDecisionId((current) => current === `route:${acceptedRouteDecision.id}` ? "" : `route:${acceptedRouteDecision.id}`)}
+                      teammates={teammateOptions}
+                      t={t}
+                    />
+                  ) : null}
                   {sourceRouteDecision ? (
                     <ChannelRouteExplanation
                       decision={sourceRouteDecision}
-                      open={openRouteExplanationDecisionId === sourceRouteDecision.id}
-                      onToggle={() => setOpenRouteExplanationDecisionId((current) => current === sourceRouteDecision.id ? "" : sourceRouteDecision.id)}
+                      open={openRouteExplanationDecisionId === `route:${sourceRouteDecision.id}`}
+                      onToggle={() => setOpenRouteExplanationDecisionId((current) => current === `route:${sourceRouteDecision.id}` ? "" : `route:${sourceRouteDecision.id}`)}
+                      teammates={teammateOptions}
+                      t={t}
+                    />
+                  ) : null}
+                  {sourceIntentDecision ? (
+                    <ChannelIntentExplanation
+                      decision={sourceIntentDecision}
+                      open={openRouteExplanationDecisionId === `intent:${sourceIntentDecision.id}`}
+                      onToggle={() => setOpenRouteExplanationDecisionId((current) => current === `intent:${sourceIntentDecision.id}` ? "" : `intent:${sourceIntentDecision.id}`)}
+                      teammates={teammateOptions}
                       t={t}
                     />
                   ) : null}
@@ -3968,10 +3945,18 @@ export function WorkspaceClientView({
         cwd={cwd}
         mode={inspectorMode}
         onModeChange={setInspectorMode}
+        channel={selectedChannel}
+        protocol={channelCollaborationProtocol}
+        teammates={teammateOptions}
+        autoRouteEnabled={channelAutoRouteEnabled}
         brief={channelBrief}
         briefDraft={briefDraft}
         onBriefDraftChange={setBriefDraft}
         onSaveBrief={saveBrief}
+        onSaveProtocol={onSaveChannelProtocol}
+        onRevertProtocol={onRevertChannelProtocol}
+        routeDecisions={channelMessageRouteDecisions}
+        intentDecisions={channelIntentDecisions}
         decisions={channelDecisions}
         handoffs={channelHandoffs}
         contextSummaries={channelContextSummaries}
@@ -4366,8 +4351,8 @@ export function WorkspaceClientView({
                       />
                     </div>
                   ) : null}
-                  {selectedChannelId ? (
-                    <div className="channel-work-thread-tree" aria-label={t("Channel branches")}>
+	                  {selectedChannelId && channelWorkThreadTreeVisible ? (
+	                    <div className="channel-work-thread-tree" aria-label={t("Channel branches")}>
                       <div className="channel-work-thread-tree-head">
                         <span>
                           <GitBranch size={14} />
@@ -4492,33 +4477,7 @@ export function WorkspaceClientView({
                             <span>{t("No active branches match")}</span>
                           </div>
                         ) : null}
-                        {!channelWorkThreadsLoading && !channelWorkThreadError && visibleChannelWorkThreads.length === 0 && !channelWorkThreadSearchActive ? (
-                          <div className={channelMainBranchActionPending ? "channel-work-thread-row-shell channel-branch-empty selected" : "channel-work-thread-row-shell channel-branch-empty"}>
-                            <button
-                              className="channel-work-thread-row"
-                              type="button"
-                              disabled={channelMainBranchActionPending}
-                              onClick={() => void selectChannelMainBranch()}
-                            >
-                              <span className="status-dot open" />
-                              <span className="channel-work-thread-row-main">
-                                <strong>{t("Main branch")}</strong>
-                                <small>{t("Default channel branch")}</small>
-                              </span>
-                            </button>
-                            <button
-                              className="icon-button"
-                              type="button"
-                              aria-label={t("Fork branch")}
-                              title={t("Fork branch")}
-                              disabled={channelMainBranchActionPending}
-                              onClick={() => void forkChannelMainBranch()}
-                            >
-                              {channelMainBranchActionPending ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
+	                      </div>
                     </div>
                   ) : null}
                   <ConversationVirtualFeed
@@ -4655,16 +4614,24 @@ export function WorkspaceClientView({
   );
 }
 
-type ChannelInspectorMode = "brief" | "decisions" | "handoffs" | "runtime";
+type ChannelInspectorMode = "protocol" | "brief" | "routing" | "decisions" | "handoffs" | "runtime";
 
 function ChannelInspector({
   cwd,
   mode,
   onModeChange,
+  channel,
+  protocol,
+  teammates,
+  autoRouteEnabled,
   brief,
   briefDraft,
   onBriefDraftChange,
   onSaveBrief,
+  onSaveProtocol,
+  onRevertProtocol,
+  routeDecisions,
+  intentDecisions,
   decisions,
   handoffs,
   contextSummaries,
@@ -4700,6 +4667,10 @@ function ChannelInspector({
   readonly cwd: string;
   readonly mode: ChannelInspectorMode;
   readonly onModeChange: (mode: ChannelInspectorMode) => void;
+  readonly channel: Channel | undefined;
+  readonly protocol: ChannelCollaborationProtocolResponse | undefined;
+  readonly teammates: readonly ChannelMention[];
+  readonly autoRouteEnabled: boolean;
   readonly brief: ChannelBrief | undefined;
   readonly briefDraft: {
     readonly objective: string;
@@ -4716,6 +4687,10 @@ function ChannelInspector({
     readonly risks: string;
   }) => void;
   readonly onSaveBrief: () => void;
+  readonly onSaveProtocol: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
+  readonly onRevertProtocol: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
+  readonly routeDecisions: readonly ChannelMessageRouteDecision[];
+  readonly intentDecisions: readonly ChannelIntentDecision[];
   readonly decisions: readonly ChannelDecision[];
   readonly handoffs: readonly ChannelHandoff[];
   readonly contextSummaries: readonly ChannelContextSummary[];
@@ -4752,12 +4727,17 @@ function ChannelInspector({
   const activeDecisions = decisions.filter((decision) => decision.status === "active");
   const taskSummaries = selectedTask ? contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === selectedTask.id) : [];
   const activeWorkflows = workflows.filter((workflow) => workflow.status !== "succeeded" && workflow.status !== "cancelled" && workflow.status !== "failed");
+  const [openRoutingDecisionId, setOpenRoutingDecisionId] = useState("");
+  const recentRoutingEvidence = useMemo(
+    () => buildRecentRoutingEvidence(routeDecisions, intentDecisions),
+    [intentDecisions, routeDecisions],
+  );
   return (
     <section className="channel-inspector" aria-label={t("Channel inspector")}>
       <div className="channel-inspector-tabs" role="tablist" aria-label={t("Channel inspector modes")}>
-        {(["brief", "decisions", "handoffs", "runtime"] as const).map((item) => (
+        {(["protocol", "brief", "routing", "decisions", "handoffs", "runtime"] as const).map((item) => (
           <button key={item} type="button" className={mode === item ? "active" : ""} onClick={() => onModeChange(item)}>
-            {item === "brief" ? t("Brief") : item === "decisions" ? t("Decisions") : item === "handoffs" ? t("Handoffs") : t("Runtime")}
+            {item === "protocol" ? t("Protocol") : item === "brief" ? t("Brief") : item === "routing" ? t("Routing") : item === "decisions" ? t("Decisions") : item === "handoffs" ? t("Handoffs") : t("Runtime")}
           </button>
         ))}
       </div>
@@ -4766,6 +4746,16 @@ function ChannelInspector({
           <Loader2 className="spin" />
           <span>{mode === "runtime" ? t("Loading runtime...") : t("Loading protocol...")}</span>
         </div>
+      ) : null}
+      {mode === "protocol" ? (
+        <ChannelProtocolEditor
+          channel={channel}
+          protocol={protocol}
+          teammates={teammates}
+          autoRouteEnabled={autoRouteEnabled}
+          onSave={onSaveProtocol}
+          onRevert={onRevertProtocol}
+        />
       ) : null}
       {mode === "brief" ? (
         <div className="brief-editor">
@@ -4794,6 +4784,14 @@ function ChannelInspector({
             {t("Save brief")}
           </button>
         </div>
+      ) : null}
+      {mode === "routing" ? (
+        <RoutingEvidenceIndex
+          items={recentRoutingEvidence}
+          teammates={teammates}
+          openDecisionId={openRoutingDecisionId}
+          onToggle={setOpenRoutingDecisionId}
+        />
       ) : null}
       {mode === "decisions" ? (
         <ProtocolList
@@ -4920,6 +4918,335 @@ function ChannelInspector({
       ) : null}
     </section>
   );
+}
+
+type RoutingEvidenceItem =
+  | {
+      readonly kind: "route";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly decision: ChannelMessageRouteDecision;
+    }
+  | {
+      readonly kind: "intent";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly decision: ChannelIntentDecision;
+    };
+
+function RoutingEvidenceIndex({
+  items,
+  teammates,
+  openDecisionId,
+  onToggle,
+}: {
+  readonly items: readonly RoutingEvidenceItem[];
+  readonly teammates: readonly ChannelMention[];
+  readonly openDecisionId: string;
+  readonly onToggle: (id: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="routing-evidence-index">
+      <div className="task-strip-head">
+        <span><Info size={15} /><strong>{t("Routing evidence")}</strong></span>
+        <small>{t("{count} decisions", { count: items.length })}</small>
+      </div>
+      <ProtocolList
+        emptyLabel={t("No routing evidence recorded")}
+        items={items}
+        renderItem={(item) => {
+          const open = openDecisionId === item.id;
+          const label = item.kind === "route"
+            ? channelRouteDecisionSummaryLabel(item.decision, t)
+            : channelIntentDecisionSummaryLabel(item.decision, t);
+          return (
+            <div className="protocol-row routing-evidence-row" key={item.id}>
+              <span>
+                <strong>{label}</strong>
+                <small>{item.kind === "route" ? t("Reply route") : t("Intent selector")} · {formatDateTime(item.createdAt)}</small>
+              </span>
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                aria-expanded={open}
+                onClick={() => onToggle(open ? "" : item.id)}
+              >
+                {open ? t("Hide details") : t("Inspect")}
+              </button>
+              {open ? (
+                <div className="routing-evidence-detail">
+                  {item.kind === "route" ? (
+                    <ChannelRouteInspectContent decision={item.decision} teammates={teammates} t={t} />
+                  ) : (
+                    <ChannelIntentInspectContent decision={item.decision} teammates={teammates} t={t} />
+                  )}
+                </div>
+              ) : null}
+            </div>
+          );
+        }}
+      />
+    </div>
+  );
+}
+
+function buildRecentRoutingEvidence(
+  routeDecisions: readonly ChannelMessageRouteDecision[],
+  intentDecisions: readonly ChannelIntentDecision[],
+): readonly RoutingEvidenceItem[] {
+  return [
+    ...routeDecisions.map((decision) => ({
+      kind: "route" as const,
+      id: `route:${decision.id}`,
+      createdAt: decision.createdAt,
+      decision,
+    })),
+    ...intentDecisions.map((decision) => ({
+      kind: "intent" as const,
+      id: `intent:${decision.id}`,
+      createdAt: decision.createdAt,
+      decision,
+    })),
+  ]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 20);
+}
+
+interface ChannelProtocolDraft {
+  readonly responseLanguage: NonNullable<Channel["responseLanguage"]>;
+  readonly autoReplyMode: Channel["autoReplyMode"];
+  readonly defaultTeammateId: string;
+}
+
+function ChannelProtocolEditor({
+  channel,
+  protocol,
+  teammates,
+  autoRouteEnabled,
+  onSave,
+  onRevert,
+}: {
+  readonly channel: Channel | undefined;
+  readonly protocol: ChannelCollaborationProtocolResponse | undefined;
+  readonly teammates: readonly { readonly id: string; readonly label: string }[];
+  readonly autoRouteEnabled: boolean;
+  readonly onSave: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
+  readonly onRevert: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState<ChannelProtocolDraft>(() => protocolDraftFromState(channel, protocol));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const baseDraft = useMemo(() => protocolDraftFromState(channel, protocol), [channel, protocol]);
+  const changed =
+    draft.responseLanguage !== baseDraft.responseLanguage ||
+    draft.autoReplyMode !== baseDraft.autoReplyMode ||
+    draft.defaultTeammateId !== baseDraft.defaultTeammateId;
+
+  useEffect(() => {
+    setDraft(baseDraft);
+    setError("");
+    setNotice("");
+  }, [baseDraft]);
+
+  async function save(): Promise<void> {
+    const patch: {
+      responseLanguage?: UpdateChannelCollaborationProtocolRequest["responseLanguage"];
+      autoReplyMode?: UpdateChannelCollaborationProtocolRequest["autoReplyMode"];
+      defaultTeammateId?: UpdateChannelCollaborationProtocolRequest["defaultTeammateId"];
+    } = {};
+    if (draft.responseLanguage !== baseDraft.responseLanguage) {
+      patch.responseLanguage = draft.responseLanguage;
+    }
+    if (draft.autoReplyMode !== baseDraft.autoReplyMode) {
+      patch.autoReplyMode = draft.autoReplyMode;
+    }
+    if (draft.defaultTeammateId !== baseDraft.defaultTeammateId) {
+      patch.defaultTeammateId = draft.defaultTeammateId || null;
+    }
+    if (Object.keys(patch).length === 0) {
+      setNotice(t("No protocol changes"));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await onSave(patch);
+      setNotice(t("Protocol updated"));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function revert(): Promise<void> {
+    if (!window.confirm(t("Reset channel protocol?"))) {
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await onRevert();
+      setNotice(t("Protocol reset"));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="channel-protocol-editor">
+      <div className="task-strip-head">
+        <span><ShieldCheck size={15} /><strong>{t("Channel protocol")}</strong></span>
+        <small>{protocol ? t("Updated {time}", { time: formatDateTime(protocol.protocol.updatedAt) }) : t("Not loaded")}</small>
+      </div>
+      {protocol ? (
+        <div className="protocol-list">
+          <div className="protocol-row compact">
+            <span>
+              <strong>{t("Effective response language")}</strong>
+              <small>{responseLanguageLabel(protocol.protocol.responseLanguage, t)} · {protocolSourceLabel(protocol.sources.responseLanguage.source, t)}</small>
+            </span>
+          </div>
+          <label className="field wide">
+            <span>{t("AI response language")}</span>
+            <select
+              value={draft.responseLanguage}
+              onChange={(event) => setDraft({ ...draft, responseLanguage: event.target.value as ChannelProtocolDraft["responseLanguage"] })}
+              disabled={!channel || saving}
+            >
+              <option value="workspace">{t("Workspace default")}</option>
+              <option value="follow_user">{t("Follow user")}</option>
+              <option value="zh-CN">{t("Chinese")}</option>
+              <option value="en-US">{t("English")}</option>
+            </select>
+          </label>
+          <label className="field wide">
+            <span>{t("Auto reply")}</span>
+            <select
+              value={draft.autoReplyMode}
+              onChange={(event) => setDraft({ ...draft, autoReplyMode: event.target.value as ChannelProtocolDraft["autoReplyMode"] })}
+              disabled={!channel || saving}
+            >
+              <option value="mentions_only">{t("Mentions only")}</option>
+              <option value="default_teammate">{t("Default teammate")}</option>
+              <option value="auto_route" disabled={!autoRouteEnabled}>{t("Auto route")}</option>
+            </select>
+            <small>{t("Source")}: {protocolSourceLabel(protocol.sources.autoReplyMode.source, t)}</small>
+          </label>
+          <label className="field wide">
+            <span>{t("Default AI teammate")}</span>
+            <select
+              value={draft.defaultTeammateId}
+              onChange={(event) => setDraft({ ...draft, defaultTeammateId: event.target.value })}
+              disabled={!channel || saving}
+            >
+              <option value="">{t("No default teammate")}</option>
+              {teammates.map((teammate) => (
+                <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
+              ))}
+            </select>
+            <small>{t("Source")}: {protocolSourceLabel(protocol.sources.defaultTeammateId.source, t)}</small>
+          </label>
+          <div className="task-strip-head">
+            <span><Info size={15} /><strong>{t("Read-only protocol defaults")}</strong></span>
+          </div>
+          <ProtocolList
+            emptyLabel={t("No read-only protocol fields")}
+            items={[
+              { id: "defaultWorkflowPreference", label: t("Workflow preference"), value: protocol.protocol.defaultWorkflowPreference, source: protocol.sources.defaultWorkflowPreference.source },
+              { id: "visibleMultiReplyMaxParticipants", label: t("Visible multi-reply cap"), value: String(protocol.protocol.visibleMultiReplyMaxParticipants), source: protocol.sources.visibleMultiReplyMaxParticipants.source },
+              { id: "privacyRules", label: t("Privacy rules"), value: protocol.protocol.privacyRules.length > 0 ? protocol.protocol.privacyRules.join("; ") : t("Default only"), source: protocol.sources.privacyRules.source },
+              { id: "reviewRules", label: t("Review rules"), value: protocol.protocol.reviewRules.length > 0 ? protocol.protocol.reviewRules.join("; ") : t("Default only"), source: protocol.sources.reviewRules.source },
+            ]}
+            renderItem={(item) => (
+              <div className="protocol-row compact" key={item.id}>
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.value} · {protocolSourceLabel(item.source, t)} · {t("Not editable yet")}</small>
+                </span>
+              </div>
+            )}
+          />
+          {changed ? (
+            <div className="provider-run-notice neutral">
+              <Info size={16} />
+              <span>{t("Review protocol changes before saving.")}</span>
+            </div>
+          ) : null}
+          {error ? (
+            <div className="inline-error compact">
+              <CircleAlert size={14} />
+              {error}
+            </div>
+          ) : null}
+          {notice ? <div className="inline-success compact">{notice}</div> : null}
+          <div className="activity-action-row">
+            <button className="primary-button compact-button" type="button" onClick={() => void save()} disabled={!channel || saving || !changed}>
+              {saving ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+              {t("Save protocol")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={() => setDraft(baseDraft)} disabled={saving || !changed}>{t("Cancel")}</button>
+            <button className="secondary-button compact-button danger" type="button" onClick={() => void revert()} disabled={!channel || saving}>{t("Reset")}</button>
+          </div>
+        </div>
+      ) : (
+        <div className="client-empty-state compact">
+          <Loader2 className="spin" />
+          <span>{t("Loading protocol...")}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function protocolDraftFromState(
+  channel: Channel | undefined,
+  protocol: ChannelCollaborationProtocolResponse | undefined,
+): ChannelProtocolDraft {
+  return {
+    responseLanguage: protocol?.sources.responseLanguage.channelValue ?? channel?.responseLanguage ?? "workspace",
+    autoReplyMode: channel?.autoReplyMode ?? protocol?.protocol.autoReplyMode ?? "mentions_only",
+    defaultTeammateId: channel?.defaultTeammateId ?? protocol?.protocol.defaultTeammateId ?? "",
+  };
+}
+
+function protocolSourceLabel(source: ChannelCollaborationProtocolResponse["sources"]["responseLanguage"]["source"], t: Translate): string {
+  if (source === "channel_setting") {
+    return t("Channel setting");
+  }
+  if (source === "workspace_setting") {
+    return t("Workspace setting");
+  }
+  if (source === "current_message") {
+    return t("Current message");
+  }
+  if (source === "teammate_instruction") {
+    return t("Teammate instruction");
+  }
+  return t("Default");
+}
+
+function responseLanguageLabel(value: NonNullable<Channel["responseLanguage"]>, t: Translate): string {
+  if (value === "workspace") {
+    return t("Workspace default");
+  }
+  if (value === "follow_user") {
+    return t("Follow user");
+  }
+  if (value === "zh-CN") {
+    return t("Chinese");
+  }
+  if (value === "en-US") {
+    return t("English");
+  }
+  return t("Follow user");
 }
 
 function RuntimeDiagnosticsPanel({
@@ -5358,6 +5685,9 @@ function WorkflowStepCard({
           {runArtifacts.length > packetArtifactIds.length ? <span>{t("{count} artifacts", { count: runArtifacts.length })}</span> : null}
         </div>
       ) : null}
+      {metadata?.contextArtifactId ? (
+        <WorkflowStepContextEvidencePanel cwd={cwd} step={step} />
+      ) : null}
       {metadata?.policy ? (
         <div className="context-packet muted" aria-label={t("Workflow policy")}>
           <span>{t("Workflow policy")}</span>
@@ -5432,6 +5762,432 @@ function WorkflowArtifactChip({
       {text}
     </a>
   );
+}
+
+type WorkflowStepContextEvidenceState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading" }
+  | {
+    readonly status: "loaded";
+    readonly packet?: ChannelWorkflowStepContextPacket;
+    readonly diagnostics: readonly WorkflowEvidenceDiagnostic[];
+  }
+  | { readonly status: "error"; readonly errorMessage: string };
+
+type WorkflowContextPackSnapshot = NonNullable<ChannelWorkflowStepContextPacket["contextPack"]>;
+type WorkflowContextPackSectionSnapshot = WorkflowContextPackSnapshot["sections"][number];
+type WorkflowContextPackSourceRefSnapshot = WorkflowContextPackSnapshot["sourceRefs"][number];
+
+function WorkflowStepContextEvidencePanel({
+  cwd,
+  step,
+}: {
+  readonly cwd: string;
+  readonly step: ChannelWorkflowStep;
+}): JSX.Element | null {
+  const { t } = useI18n();
+  const contextArtifactId = step.metadata?.contextArtifactId;
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<WorkflowStepContextEvidenceState>({ status: "idle" });
+
+  if (!contextArtifactId) {
+    return null;
+  }
+
+  function toggleOpen(): void {
+    const nextOpen = !open;
+    setOpen(nextOpen);
+    if (nextOpen && (state.status === "idle" || state.status === "error")) {
+      void loadContextEvidence();
+    }
+  }
+
+  async function loadContextEvidence(): Promise<void> {
+    setState({ status: "loading" });
+    try {
+      const evidence = await getChannelWorkflowEvidence(cwd.trim(), step.workflowId);
+      const evidenceStep = evidence.steps.find((item) => item.step.id === step.id);
+      setState({
+        status: "loaded",
+        packet: evidenceStep?.contextPacket,
+        diagnostics: evidenceStep?.diagnostics ?? [],
+      });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setState({ status: "error", errorMessage: message || t("Context evidence failed to load.") });
+    }
+  }
+
+  return (
+    <section className="workflow-context-evidence-panel" aria-label={t("Context Pack evidence")}>
+      <button className="secondary-button compact-button" type="button" onClick={toggleOpen} aria-expanded={open}>
+        {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        <FileText size={13} />
+        {t("Inspect context")}
+      </button>
+      {open ? (
+        <WorkflowStepContextEvidenceBody
+          artifactId={contextArtifactId}
+          state={state}
+          onRetry={loadContextEvidence}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function WorkflowStepContextEvidenceBody({
+  artifactId,
+  state,
+  onRetry,
+}: {
+  readonly artifactId: string;
+  readonly state: WorkflowStepContextEvidenceState;
+  readonly onRetry: () => Promise<void>;
+}): JSX.Element {
+  const { t } = useI18n();
+  if (state.status === "idle" || state.status === "loading") {
+    return (
+      <div className="workflow-context-evidence-body">
+        <div className="workflow-context-evidence-state">
+          <Loader2 className="spin" size={13} />
+          <span>{t("Loading context evidence...")}</span>
+        </div>
+      </div>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <div className="workflow-context-evidence-body">
+        <div className="workflow-context-evidence-state failed">
+          <CircleAlert size={13} />
+          <span>{t("Artifact load failed")}: {artifactId}</span>
+          <small>{state.errorMessage}</small>
+          <button className="secondary-button compact-button" type="button" onClick={() => void onRetry()}>
+            <RefreshCw size={13} />
+            {t("Retry details")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (!state.packet) {
+    const diagnostic = state.diagnostics.find((item) => item.kind === "bad_packet" || item.kind === "missing_context_packet");
+    return (
+      <div className="workflow-context-evidence-body">
+        <div className="workflow-context-evidence-state">
+          <FileText size={13} />
+          <span>{diagnostic?.message ?? t("No persisted context snapshot for this step.")}</span>
+          <small>{artifactId}</small>
+        </div>
+      </div>
+    );
+  }
+  if (!state.packet.contextPack) {
+    return (
+      <div className="workflow-context-evidence-body">
+        <div className="workflow-context-evidence-state">
+          <FileText size={13} />
+          <span>{t("Context artifact exists, but no Context Pack snapshot was recorded.")}</span>
+          <small>{artifactId}</small>
+        </div>
+      </div>
+    );
+  }
+  return <WorkflowContextPackEvidence packet={state.packet} artifactId={artifactId} />;
+}
+
+function WorkflowContextPackEvidence({
+  packet,
+  artifactId,
+}: {
+  readonly packet: ChannelWorkflowStepContextPacket;
+  readonly artifactId: string;
+}): JSX.Element {
+  const { t } = useI18n();
+  const pack = packet.contextPack;
+  if (!pack) {
+    return (
+      <div className="workflow-context-evidence-body">
+        <div className="workflow-context-evidence-state">
+          <FileText size={13} />
+          <span>{t("Context artifact exists, but no Context Pack snapshot was recorded.")}</span>
+          <small>{artifactId}</small>
+        </div>
+      </div>
+    );
+  }
+  const protocolMetadata = workflowContextProtocolMetadata(pack);
+  return (
+    <div className="workflow-context-evidence-body">
+      <div className="context-packet muted" aria-label={t("Context Pack summary")}>
+        <span>{t("Kind")}: {pack.kind}</span>
+        <span>{t("Provider")}: {pack.providerPresetId ?? packet.providerPresetId ?? "unknown"}</span>
+        <span>{t("Model")}: {pack.modelId ?? "unknown"}</span>
+        <span>{t("Budget")}: {pack.budget.mode}</span>
+        <span>{pack.estimatedInputTokens}/{pack.budget.inputBudgetTokens} tokens</span>
+        {pack.overBudget ? <span>{t("Over budget")}</span> : null}
+      </div>
+
+      <div className="workflow-context-evidence-grid">
+        <WorkflowContextBudgetDiagnostics pack={pack} t={t} />
+
+        <WorkflowContextEvidenceSection
+          title={t("Kept sections")}
+          summary={t("{count} sections", { count: pack.sections.length })}
+        >
+          {pack.sections.length > 0 ? (
+            <ul>
+              {pack.sections.map((section) => (
+                <li key={section.id}>
+                  <strong>{section.id}</strong>
+                  <small>{workflowContextSectionMeta(section)}</small>
+                </li>
+              ))}
+            </ul>
+          ) : <small>{t("No kept sections recorded.")}</small>}
+        </WorkflowContextEvidenceSection>
+
+        <WorkflowContextEvidenceSection
+          title={t("Dropped sections")}
+          summary={t("{count} sections", { count: pack.droppedSectionIds.length })}
+        >
+          {pack.droppedSectionIds.length > 0 ? (
+            <div className="workflow-context-chip-list">
+              {pack.droppedSectionIds.map((sectionId) => <code key={sectionId}>{sectionId}</code>)}
+            </div>
+          ) : <small>{t("No sections dropped.")}</small>}
+        </WorkflowContextEvidenceSection>
+
+        <WorkflowContextEvidenceSection
+          title={t("Source refs")}
+          summary={t("{count} refs", { count: pack.sourceRefs.length })}
+        >
+          {pack.sourceRefs.length > 0 ? (
+            <ul>
+              {pack.sourceRefs.slice(0, 18).map((ref) => (
+                <li key={`${ref.type}:${ref.id}`}>
+                  <strong>{ref.type}</strong>
+                  <small>{workflowContextSourceRefLabel(ref)}</small>
+                </li>
+              ))}
+            </ul>
+          ) : <small>{t("No source refs recorded.")}</small>}
+          {pack.sourceRefs.length > 18 ? <small>{t("+{count} more refs", { count: pack.sourceRefs.length - 18 })}</small> : null}
+        </WorkflowContextEvidenceSection>
+
+        {pack.compactionIds.length > 0 ? (
+          <WorkflowContextEvidenceSection
+            title={t("Compactions")}
+            summary={t("{count} compactions", { count: pack.compactionIds.length })}
+          >
+            <div className="workflow-context-chip-list">
+              {pack.compactionIds.map((compactionId) => <code key={compactionId}>{compactionId}</code>)}
+            </div>
+          </WorkflowContextEvidenceSection>
+        ) : null}
+
+        {protocolMetadata.length > 0 ? (
+          <WorkflowContextEvidenceSection
+            title={t("Collaboration protocol")}
+            summary="channel_collaboration_protocol"
+          >
+            <ul>
+              {protocolMetadata.map((item) => (
+                <li key={item.label}>
+                  <strong>{item.label}</strong>
+                  <small>{item.value}</small>
+                </li>
+              ))}
+            </ul>
+          </WorkflowContextEvidenceSection>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function WorkflowContextBudgetDiagnostics({
+  pack,
+  t,
+}: {
+  readonly pack: WorkflowContextPackSnapshot;
+  readonly t: Translate;
+}): JSX.Element {
+  const sectionEstimateCount = pack.sections.filter((section) => typeof section.estimatedTokens === "number").length;
+  return (
+    <details className="workflow-context-budget-diagnostics">
+      <summary>
+        <span>{t("Budget diagnostics")}</span>
+        <small>{t("Developer diagnostics")}</small>
+      </summary>
+      <WorkflowContextEvidenceSection
+        title={t("Token budget")}
+        summary={workflowContextBudgetUsageLabel(pack, t)}
+      >
+        <dl className="workflow-context-diagnostics-grid">
+          <div>
+            <dt>{t("Budget mode")}</dt>
+            <dd>{pack.budget.mode || t("Not recorded")}</dd>
+          </div>
+          <div>
+            <dt>{t("Tokenizer")}</dt>
+            <dd>{pack.budget.tokenizer || t("Not recorded")}</dd>
+          </div>
+          <div>
+            <dt>{t("Context window")}</dt>
+            <dd>{formatWorkflowTokenCount(pack.budget.contextWindowTokens, t)}</dd>
+          </div>
+          <div>
+            <dt>{t("Reserved output")}</dt>
+            <dd>{formatWorkflowTokenCount(pack.budget.reservedOutputTokens, t)}</dd>
+          </div>
+          <div>
+            <dt>{t("Runtime overhead")}</dt>
+            <dd>{formatWorkflowTokenCount(pack.budget.reservedRuntimeOverheadTokens, t)}</dd>
+          </div>
+          <div>
+            <dt>{t("Input budget")}</dt>
+            <dd>{formatWorkflowTokenCount(pack.budget.inputBudgetTokens, t)}</dd>
+          </div>
+          <div>
+            <dt>{t("Estimated input")}</dt>
+            <dd>{formatWorkflowTokenCount(pack.estimatedInputTokens, t)}</dd>
+          </div>
+          <div>
+            <dt>{t("Over budget")}</dt>
+            <dd>{pack.overBudget ? t("Yes") : t("No")}</dd>
+          </div>
+        </dl>
+      </WorkflowContextEvidenceSection>
+
+      <WorkflowContextEvidenceSection
+        title={t("Section token estimates")}
+        summary={t("{count} sections", { count: sectionEstimateCount })}
+      >
+        {pack.sections.length > 0 ? (
+          <ul>
+            {pack.sections.map((section) => (
+              <li key={section.id}>
+                <strong>{section.id}</strong>
+                <small>{workflowContextSectionDiagnosticMeta(section, t)}</small>
+              </li>
+            ))}
+          </ul>
+        ) : <small>{t("No kept sections recorded.")}</small>}
+      </WorkflowContextEvidenceSection>
+
+      <WorkflowContextEvidenceSection
+        title={t("Dropped section ids")}
+        summary={t("{count} sections", { count: pack.droppedSectionIds.length })}
+      >
+        {pack.droppedSectionIds.length > 0 ? (
+          <div className="workflow-context-chip-list">
+            {pack.droppedSectionIds.map((sectionId) => <code key={sectionId}>{sectionId}</code>)}
+          </div>
+        ) : <small>{t("No sections dropped.")}</small>}
+      </WorkflowContextEvidenceSection>
+
+      <WorkflowContextEvidenceSection
+        title={t("Compaction ids")}
+        summary={t("{count} compactions", { count: pack.compactionIds.length })}
+      >
+        {pack.compactionIds.length > 0 ? (
+          <div className="workflow-context-chip-list">
+            {pack.compactionIds.map((compactionId) => <code key={compactionId}>{compactionId}</code>)}
+          </div>
+        ) : <small>{t("No compactions recorded.")}</small>}
+      </WorkflowContextEvidenceSection>
+    </details>
+  );
+}
+
+function WorkflowContextEvidenceSection({
+  title,
+  summary,
+  children,
+}: {
+  readonly title: string;
+  readonly summary: string;
+  readonly children: ReactNode;
+}): JSX.Element {
+  return (
+    <section className="workflow-context-evidence-section">
+      <header>
+        <strong>{title}</strong>
+        <small>{summary}</small>
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function workflowContextSectionMeta(section: WorkflowContextPackSectionSnapshot): string {
+  return [
+    section.role,
+    section.priority,
+    typeof section.estimatedTokens === "number" ? `${section.estimatedTokens} tokens` : undefined,
+    `${section.sourceRefIds?.length ?? 0} refs`,
+  ].filter(Boolean).join(" · ");
+}
+
+function workflowContextSectionDiagnosticMeta(section: WorkflowContextPackSectionSnapshot, t: Translate): string {
+  return [
+    section.role,
+    section.priority,
+    formatWorkflowTokenCount(section.estimatedTokens, t),
+    t("{count} refs", { count: section.sourceRefIds?.length ?? 0 }),
+  ].join(" · ");
+}
+
+function workflowContextBudgetUsageLabel(pack: WorkflowContextPackSnapshot, t: Translate): string {
+  const estimated = pack.estimatedInputTokens;
+  const budget = pack.budget.inputBudgetTokens;
+  if (!Number.isFinite(estimated) || !Number.isFinite(budget) || budget <= 0) {
+    return t("Not recorded");
+  }
+  return `${formatWorkflowTokenCount(estimated, t)} / ${formatWorkflowTokenCount(budget, t)} (${Math.round((estimated / budget) * 100)}%)`;
+}
+
+function formatWorkflowTokenCount(value: number | undefined, t: Translate): string {
+  return typeof value === "number" && Number.isFinite(value) ? t("{count} tokens", { count: value }) : t("Not recorded");
+}
+
+function workflowContextSourceRefLabel(ref: WorkflowContextPackSourceRefSnapshot): string {
+  return ref.label ? `${ref.label} [${ref.id}]` : ref.id;
+}
+
+function workflowContextProtocolMetadata(pack: WorkflowContextPackSnapshot): readonly { readonly label: string; readonly value: string }[] {
+  const metadata = pack.sections.find((section) => section.id === "channel_collaboration_protocol")?.metadata;
+  if (!metadata) {
+    return [];
+  }
+  return [
+    workflowContextProtocolField(metadata, "responseLanguage", "responseLanguageSource"),
+    workflowContextProtocolField(metadata, "autoReplyMode", "autoReplyModeSource"),
+    workflowContextProtocolField(metadata, "defaultTeammateId", "defaultTeammateSource"),
+  ].filter((item): item is { readonly label: string; readonly value: string } => Boolean(item));
+}
+
+function workflowContextProtocolField(
+  metadata: Record<string, unknown>,
+  valueKey: string,
+  sourceKey: string,
+): { readonly label: string; readonly value: string } | undefined {
+  const value = workflowContextMetadataString(metadata, valueKey);
+  if (!value) {
+    return undefined;
+  }
+  const source = workflowContextMetadataString(metadata, sourceKey);
+  return {
+    label: valueKey,
+    value: source ? `${value} (${source})` : value,
+  };
+}
+
+function workflowContextMetadataString(metadata: Record<string, unknown>, key: string): string | undefined {
+  const value = metadata[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function workflowStepFailurePolicyLabel(policy: string, t: Translate): string {
@@ -7710,59 +8466,262 @@ function ChannelFiles({
   );
 }
 
-function ChannelRouteDecisionPill({
-  decision,
-  t,
-}: {
-  readonly decision: ChannelMessageRouteDecision;
-  readonly t: Translate;
-}): JSX.Element | null {
-  const label = channelRouteDecisionModeLabel(decision, t);
-  if (!label) {
-    return null;
-  }
-  return (
-    <span className="channel-route-pill" title={channelRouteDecisionAcceptedTitle(decision, t)}>
-      <Info size={11} />
-      <span>{label}</span>
-    </span>
-  );
-}
-
 function ChannelRouteExplanation({
   decision,
   open,
   onToggle,
+  teammates,
   t,
 }: {
   readonly decision: ChannelMessageRouteDecision;
   readonly open: boolean;
   readonly onToggle: () => void;
+  readonly teammates: readonly ChannelMention[];
   readonly t: Translate;
 }): JSX.Element {
+  const accepted = decision.status === "accepted";
   const failed = decision.status === "failed";
-  const label = failed ? t("Auto reply failed") : t("Not auto-replied");
-  const reason = channelRouteDecisionUserReason(decision, t);
+  const label = channelRouteDecisionSummaryLabel(decision, t);
+  const title = channelRouteDecisionInspectTitle(decision, t);
+  const inspectLabel = accepted ? t("Why this reply?") : t("Why no reply?");
   return (
-    <div className={failed ? "channel-route-explanation failed" : "channel-route-explanation"}>
+    <div className={["channel-route-explanation", accepted ? "accepted" : "", failed ? "failed" : ""].filter(Boolean).join(" ")}>
       <button
         className="channel-route-explanation-toggle"
         type="button"
         aria-expanded={open}
+        title={title}
         onClick={onToggle}
       >
         <Info size={11} />
         <span>{label}</span>
-        <small>{t("Why no reply?")}</small>
+        <small>{inspectLabel}</small>
       </button>
       {open ? (
         <div className="channel-route-explanation-popover" role="status">
-          <strong>{failed ? t("Auto reply failed") : t("Not auto-replied")}</strong>
-          <p>{reason}</p>
+          <strong>{title}</strong>
+          <ChannelRouteInspectContent decision={decision} teammates={teammates} t={t} />
         </div>
       ) : null}
     </div>
   );
+}
+
+function ChannelIntentExplanation({
+  decision,
+  open,
+  onToggle,
+  teammates,
+  t,
+}: {
+  readonly decision: ChannelIntentDecision;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly teammates: readonly ChannelMention[];
+  readonly t: Translate;
+}): JSX.Element {
+  const failed = decision.status === "failed";
+  const accepted = decision.status === "accepted";
+  const title = channelIntentDecisionInspectTitle(decision, t);
+  return (
+    <div className={["channel-route-explanation", "intent", accepted ? "accepted" : "", failed ? "failed" : ""].filter(Boolean).join(" ")}>
+      <button
+        className="channel-route-explanation-toggle"
+        type="button"
+        aria-expanded={open}
+        title={title}
+        onClick={onToggle}
+      >
+        <Info size={11} />
+        <span>{channelIntentDecisionSummaryLabel(decision, t)}</span>
+        <small>{t("Why this handling?")}</small>
+      </button>
+      {open ? (
+        <div className="channel-route-explanation-popover" role="status">
+          <strong>{title}</strong>
+          <ChannelIntentInspectContent decision={decision} teammates={teammates} t={t} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChannelRouteInspectContent({
+  decision,
+  teammates,
+  t,
+}: {
+  readonly decision: ChannelMessageRouteDecision;
+  readonly teammates: readonly ChannelMention[];
+  readonly t: Translate;
+}): JSX.Element {
+  const contextPack = decision.contextPack;
+  return (
+    <>
+      <p>{channelRouteDecisionUserReason(decision, t)}</p>
+      <dl className="channel-route-inspect-grid">
+        <div>
+          <dt>{t("Outcome")}</dt>
+          <dd>{channelRouteDecisionOutcomeLabel(decision, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("Route mode")}</dt>
+          <dd>{channelRouteDecisionModeLabel(decision, t) || decision.mode}</dd>
+        </div>
+        <div>
+          <dt>{t("Selected teammate")}</dt>
+          <dd>{formatSelectedTeammate(decision.selectedTeammateId, teammates, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("Provider preset")}</dt>
+          <dd>{decision.selectedProviderPresetId || contextPack?.providerPresetId || t("Not recorded")}</dd>
+        </div>
+        <div>
+          <dt>{t("Model")}</dt>
+          <dd>{contextPack?.modelId || t("Not recorded")}</dd>
+        </div>
+        <div>
+          <dt>{t("Created by")}</dt>
+          <dd>{channelRouteDecisionCreatedByLabel(decision, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("Source message")}</dt>
+          <dd>{decision.sourceMessageId}</dd>
+        </div>
+        <div>
+          <dt>{t("Reply message")}</dt>
+          <dd>{decision.replyMessageId || t("None")}</dd>
+        </div>
+        {decision.errorMessage ? (
+          <div>
+            <dt>{t("Error")}</dt>
+            <dd>{decision.errorMessage}</dd>
+          </div>
+        ) : null}
+      </dl>
+      {decision.alternativesConsidered.length > 0 ? (
+        <div className="channel-route-inspect-section">
+          <span>{t("Alternatives considered")}</span>
+          <ul>
+            {decision.alternativesConsidered.map((alternative, index) => (
+              <li key={`${alternative.teammateId ?? alternative.label}:${index}`}>
+                <strong>
+                  {alternative.teammateId
+                    ? `${teammateLabel(alternative.teammateId, teammates, t("Deleted teammate"))} (${alternative.teammateId})`
+                    : alternative.label}
+                </strong>
+                <small>{alternative.reason}</small>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {contextPack ? (
+        <div className="channel-route-inspect-section">
+          <span>{t("Context Pack metadata")}</span>
+          <dl className="channel-route-inspect-grid">
+            <div>
+              <dt>{t("Pack kind")}</dt>
+              <dd>{contextPack.kind}</dd>
+            </div>
+            <div>
+              <dt>{t("Provider preset")}</dt>
+              <dd>{contextPack.providerPresetId || t("Not recorded")}</dd>
+            </div>
+            <div>
+              <dt>{t("Model")}</dt>
+              <dd>{contextPack.modelId || t("Not recorded")}</dd>
+            </div>
+            <div>
+              <dt>{t("Context sections")}</dt>
+              <dd>{formatOptionalIdList(contextPack.sectionIds, t)}</dd>
+            </div>
+            <div>
+              <dt>{t("Dropped sections")}</dt>
+              <dd>{formatOptionalIdList(contextPack.droppedSectionIds, t)}</dd>
+            </div>
+            <div>
+              <dt>{t("Source refs")}</dt>
+              <dd>{formatRouteSourceRefCounts(contextPack.sourceRefCounts) || t("None")}</dd>
+            </div>
+            <div>
+              <dt>{t("Compactions")}</dt>
+              <dd>{formatOptionalIdList(contextPack.compactionIds, t)}</dd>
+            </div>
+          </dl>
+        </div>
+      ) : (
+        <p>{t("No inspectable Context Pack metadata was recorded for this route decision.")}</p>
+      )}
+    </>
+  );
+}
+
+function ChannelIntentInspectContent({
+  decision,
+  teammates,
+  t,
+}: {
+  readonly decision: ChannelIntentDecision;
+  readonly teammates: readonly ChannelMention[];
+  readonly t: Translate;
+}): JSX.Element {
+  const replyMessageIds = uniqueStrings([decision.replyMessageId, ...(decision.replyMessageIds ?? [])].filter((id): id is string => Boolean(id)));
+  return (
+    <>
+      <p>{channelIntentDecisionUserReason(decision, t)}</p>
+      <dl className="channel-route-inspect-grid">
+        <div>
+          <dt>{t("Outcome")}</dt>
+          <dd>{channelIntentDecisionOutcomeLabel(decision, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("Intent action")}</dt>
+          <dd>{channelIntentDecisionActionLabel(decision.action, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("Selected teammate")}</dt>
+          <dd>{formatIntentDecisionTeammates(decision, teammates, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("Created by")}</dt>
+          <dd>{channelIntentDecisionCreatedByLabel(decision, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("Source message")}</dt>
+          <dd>{decision.sourceMessageId}</dd>
+        </div>
+        <div>
+          <dt>{t("Reply messages")}</dt>
+          <dd>{formatOptionalIdList(replyMessageIds, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("Proposal")}</dt>
+          <dd>{decision.proposalId || t("None")}</dd>
+        </div>
+        <div>
+          <dt>{t("Workflow")}</dt>
+          <dd>{decision.workflowId || t("None")}</dd>
+        </div>
+        {decision.errorMessage ? (
+          <div>
+            <dt>{t("Error")}</dt>
+            <dd>{decision.errorMessage}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </>
+  );
+}
+
+function channelRouteDecisionSummaryLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
+  if (decision.status === "failed") {
+    return t("Auto reply failed");
+  }
+  if (decision.status === "accepted") {
+    return channelRouteDecisionModeLabel(decision, t) || t("Reply created");
+  }
+  return t("Not auto-replied");
 }
 
 function channelRouteDecisionModeLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
@@ -7775,18 +8734,133 @@ function channelRouteDecisionModeLabel(decision: ChannelMessageRouteDecision, t:
   return "";
 }
 
-function channelRouteDecisionAcceptedTitle(decision: ChannelMessageRouteDecision, t: Translate): string {
+function channelRouteDecisionInspectTitle(decision: ChannelMessageRouteDecision, t: Translate): string {
+  if (decision.status === "failed") {
+    return t("Auto reply failed");
+  }
+  if (decision.status === "suppressed") {
+    return t("Not auto-replied");
+  }
   if (decision.mode === "default_teammate") {
     return t("The channel default teammate answered this message.");
   }
   if (decision.mode === "auto_route") {
     return t("Ling selected this teammate for the reply.");
   }
-  return "";
+  return t("Reply created");
+}
+
+function channelRouteDecisionOutcomeLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
+  if (decision.status === "accepted") {
+    return t("Reply created");
+  }
+  if (decision.status === "failed") {
+    return t("Failed closed");
+  }
+  return t("Suppressed");
+}
+
+function channelRouteDecisionCreatedByLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
+  switch (decision.createdBy) {
+    case "explicit_mention":
+      return t("Explicit mention");
+    case "deterministic":
+      return t("Deterministic rule");
+    case "model":
+      return t("Model selector");
+  }
+}
+
+function formatRouteSourceRefCounts(counts: Readonly<Record<string, number>> | undefined): string {
+  if (!counts) {
+    return "";
+  }
+  return Object.entries(counts)
+    .filter(([, count]) => count > 0)
+    .map(([type, count]) => `${type}: ${count}`)
+    .join(", ");
+}
+
+function channelIntentDecisionSummaryLabel(decision: ChannelIntentDecision, t: Translate): string {
+  if (decision.status === "failed") {
+    return t("Intent failed");
+  }
+  return channelIntentDecisionActionLabel(decision.action, t);
+}
+
+function channelIntentDecisionInspectTitle(decision: ChannelIntentDecision, t: Translate): string {
+  if (decision.status === "failed") {
+    return t("Intent failed");
+  }
+  return t("Why Ling handled this message this way");
+}
+
+function channelIntentDecisionOutcomeLabel(decision: ChannelIntentDecision, t: Translate): string {
+  if (decision.status === "accepted") {
+    return t("Accepted");
+  }
+  if (decision.status === "failed") {
+    return t("Failed closed");
+  }
+  return t("Suppressed");
+}
+
+function channelIntentDecisionActionLabel(action: ChannelIntentDecision["action"], t: Translate): string {
+  switch (action) {
+    case "no_reply":
+      return t("No reply");
+    case "single_reply":
+      return t("Single reply");
+    case "visible_multi_reply":
+      return t("Visible multi-reply");
+    case "clarify":
+      return t("Clarify");
+    case "workflow_proposal":
+      return t("Workflow proposal");
+    case "direct_workflow":
+      return t("Direct workflow proposal");
+  }
+}
+
+function channelIntentDecisionCreatedByLabel(decision: ChannelIntentDecision, t: Translate): string {
+  return decision.createdBy === "model" ? t("Model selector") : t("Deterministic rule");
+}
+
+function channelIntentDecisionUserReason(decision: ChannelIntentDecision, t: Translate): string {
+  if (decision.errorMessage) {
+    return t("Ling could not safely handle this channel intent.");
+  }
+  return decision.reason || channelIntentDecisionActionLabel(decision.action, t);
+}
+
+function formatSelectedTeammate(teammateId: string | undefined, teammates: readonly ChannelMention[], t: Translate): string {
+  if (!teammateId) {
+    return t("None");
+  }
+  return `${teammateLabel(teammateId, teammates, t("Deleted teammate"))} (${teammateId})`;
+}
+
+function formatIntentDecisionTeammates(
+  decision: ChannelIntentDecision,
+  teammates: readonly ChannelMention[],
+  t: Translate,
+): string {
+  const ids = uniqueStrings([decision.selectedTeammateId, ...(decision.selectedTeammateIds ?? [])].filter((id): id is string => Boolean(id)));
+  if (ids.length === 0) {
+    return t("None");
+  }
+  return ids.map((id) => `${teammateLabel(id, teammates, t("Deleted teammate"))} (${id})`).join(", ");
+}
+
+function formatOptionalIdList(ids: readonly string[], t: Translate): string {
+  return ids.length > 0 ? ids.join(", ") : t("None");
 }
 
 function channelRouteDecisionUserReason(decision: ChannelMessageRouteDecision, t: Translate): string {
   const errorText = decision.errorMessage?.trim();
+  if (decision.status === "accepted") {
+    return decision.reason || channelRouteDecisionInspectTitle(decision, t);
+  }
   if (decision.status === "failed") {
     if (errorText?.includes("strict JSON object") || errorText?.includes("JSON object") || errorText?.includes("schema")) {
       return t("The route selector returned invalid output, so Ling did not create an automatic reply.");

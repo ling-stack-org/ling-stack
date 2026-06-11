@@ -224,7 +224,9 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "workspace";
+  readonly action?: "brief" | "messages" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "workspace" | "protocol" | "branches";
+  readonly branchId?: string;
+  readonly protocolAction?: "revert";
   readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
@@ -233,6 +235,18 @@ export function parseChannelRoute(
   }
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "workspace") {
     return { channelId: segments[1], action: "workspace" };
+  }
+  if (segments.length === 3 && segments[0] === "channels" && segments[2] === "protocol") {
+    return { channelId: segments[1], action: "protocol" };
+  }
+  if (segments.length === 3 && segments[0] === "channels" && segments[2] === "branches") {
+    return { channelId: segments[1], action: "branches" };
+  }
+  if (segments.length === 4 && segments[0] === "channels" && segments[2] === "branches") {
+    return { channelId: segments[1], action: "branches", branchId: segments[3] };
+  }
+  if (segments.length === 4 && segments[0] === "channels" && segments[2] === "protocol" && segments[3] === "revert") {
+    return { channelId: segments[1], action: "protocol", protocolAction: "revert" };
   }
   if (
     segments.length === 4 &&
@@ -256,7 +270,8 @@ export function parseChannelRoute(
       segments[2] === "decisions" ||
       segments[2] === "handoffs" ||
       segments[2] === "context-summaries" ||
-      segments[2] === "workflows"
+      segments[2] === "workflows" ||
+      segments[2] === "protocol"
     )
   ) {
     return { channelId: segments[1], action: segments[2] };

@@ -14,6 +14,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 
@@ -638,6 +639,10 @@ function selectProposalParticipants(input: ChannelIntentSelectorInput, reasonCod
 }
 
 function selectVisibleMultiReplyTeammates(input: ChannelIntentSelectorInput): readonly AiTeammate[] {
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
   const activeTeammates = input.store.listAiTeammates({ status: "active", includeHidden: false, limit: 100 });
   const channelTeammates = activeTeammates.filter((teammate) => teammateCanReplyInChannel(input.store, input.channel, teammate.id));
   const byId = new Map(channelTeammates.map((teammate) => [teammate.id, teammate]));
@@ -656,8 +661,8 @@ function selectVisibleMultiReplyTeammates(input: ChannelIntentSelectorInput): re
     selected.push(teammate);
   };
 
-  if (input.channel.defaultTeammateId) {
-    const defaultTeammate = activeTeammates.find((teammate) => teammate.id === input.channel.defaultTeammateId || teammate.templateId === input.channel.defaultTeammateId);
+  if (protocol.protocol.defaultTeammateId) {
+    const defaultTeammate = activeTeammates.find((teammate) => teammate.id === protocol.protocol.defaultTeammateId || teammate.templateId === protocol.protocol.defaultTeammateId);
     add(defaultTeammate);
   }
   for (const roleKey of roleOrder) {
@@ -666,15 +671,19 @@ function selectVisibleMultiReplyTeammates(input: ChannelIntentSelectorInput): re
   for (const teammate of channelTeammates) {
     add(teammate);
   }
-  return selected.slice(0, 3);
+  return selected.slice(0, protocol.protocol.visibleMultiReplyMaxParticipants);
 }
 
 function chooseAssignee(
   input: ChannelIntentSelectorInput,
   participants: readonly ProposalParticipantSelection[],
 ): AiTeammate {
-  const defaultTeammate = input.channel.defaultTeammateId
-    ? resolveAiTeammateReference(input.store, input.channel.defaultTeammateId)
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
+  const defaultTeammate = protocol.protocol.defaultTeammateId
+    ? resolveAiTeammateReference(input.store, protocol.protocol.defaultTeammateId)
     : undefined;
   if (defaultTeammate && participants.some((participant) => participant.teammate.id === defaultTeammate.id)) {
     return defaultTeammate;
@@ -683,16 +692,24 @@ function chooseAssignee(
 }
 
 function chooseProposedBy(input: ChannelIntentSelectorInput, assignee: AiTeammate): AiTeammate {
-  const defaultTeammate = input.channel.defaultTeammateId
-    ? resolveAiTeammateReference(input.store, input.channel.defaultTeammateId)
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
+  const defaultTeammate = protocol.protocol.defaultTeammateId
+    ? resolveAiTeammateReference(input.store, protocol.protocol.defaultTeammateId)
     : undefined;
   return defaultTeammate ?? assignee;
 }
 
 function chooseClarifyingTeammate(input: ChannelIntentSelectorInput): AiTeammate | undefined {
+  const protocol = resolveEffectiveChannelCollaborationProtocol({
+    store: input.store,
+    channel: input.channel,
+  });
   const activeTeammates = input.store.listAiTeammates({ status: "active", includeHidden: false, limit: 100 });
-  const defaultTeammate = input.channel.defaultTeammateId
-    ? activeTeammates.find((teammate) => teammate.id === input.channel.defaultTeammateId || teammate.templateId === input.channel.defaultTeammateId)
+  const defaultTeammate = protocol.protocol.defaultTeammateId
+    ? activeTeammates.find((teammate) => teammate.id === protocol.protocol.defaultTeammateId || teammate.templateId === protocol.protocol.defaultTeammateId)
     : undefined;
   const candidates = [
     defaultTeammate,
@@ -709,10 +726,11 @@ function teammateCanClarifyInChannel(store: RunStore, channel: Channel, teammate
 }
 
 function teammateCanReplyInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
-  if (channel.defaultTeammateId === teammateId) {
+  const protocol = resolveEffectiveChannelCollaborationProtocol({ store, channel });
+  if (protocol.protocol.defaultTeammateId === teammateId) {
     return true;
   }
-  const defaultTeammate = channel.defaultTeammateId ? resolveAiTeammateReference(store, channel.defaultTeammateId) : undefined;
+  const defaultTeammate = protocol.protocol.defaultTeammateId ? resolveAiTeammateReference(store, protocol.protocol.defaultTeammateId) : undefined;
   if (defaultTeammate?.id === teammateId) {
     return true;
   }

@@ -14,6 +14,7 @@ import {
 } from "@ling-stack/core";
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { isRecord } from "../../shared/validation.js";
+import type { WorkflowStepContextCompactionSummary } from "./context-compaction.js";
 import type { WorkflowStepRunRequest } from "./workflows.js";
 
 export function createWorkflowStepContextArtifact(input: {
@@ -28,6 +29,8 @@ export function createWorkflowStepContextArtifact(input: {
   if (existing) {
     return existing;
   }
+  const compactionArtifacts = createWorkflowStepCompactionArtifacts(input);
+  const runRequest = withCompactionArtifactIds(input.runRequest, compactionArtifacts);
   return writeWorkflowStepPacketArtifact({
     store: input.store,
     run: input.run,
@@ -35,7 +38,7 @@ export function createWorkflowStepContextArtifact(input: {
     workflowStepId: input.step.id,
     kind: "context",
     title: `Workflow step context: ${input.step.title}`,
-    packet: buildWorkflowStepContextPacket(input),
+    packet: buildWorkflowStepContextPacket({ ...input, runRequest }),
     now: input.now,
   });
 }
@@ -266,6 +269,114 @@ function writeWorkflowStepPacketArtifact(input: {
     sizeBytes: Number(stats.size),
     createdAt: input.now,
   });
+}
+
+function createWorkflowStepCompactionArtifacts(input: {
+  readonly store: RunStore;
+  readonly workflow: ChannelWorkflow;
+  readonly step: ChannelWorkflowStep;
+  readonly run: RunSession;
+  readonly runRequest: WorkflowStepRunRequest;
+  readonly now: string;
+}): readonly RunArtifact[] {
+  const summaries = input.runRequest.contextCompactions ?? [];
+  if (summaries.length === 0) {
+    return [];
+  }
+  return summaries.map((summary) => writeWorkflowStepCompactionArtifact({
+    store: input.store,
+    run: input.run,
+    workflow: input.workflow,
+    step: input.step,
+    summary,
+    now: input.now,
+  }));
+}
+
+function writeWorkflowStepCompactionArtifact(input: {
+  readonly store: RunStore;
+  readonly run: RunSession;
+  readonly workflow: ChannelWorkflow;
+  readonly step: ChannelWorkflowStep;
+  readonly summary: WorkflowStepContextCompactionSummary;
+  readonly now: string;
+}): RunArtifact {
+  const artifactDir = resolvePath(
+    input.store.paths.artifactsDir,
+    input.run.id,
+    "workflows",
+    input.workflow.id,
+    "steps",
+    input.step.id,
+    "compactions",
+  );
+  mkdirSync(artifactDir, { recursive: true });
+  const artifactPath = resolvePath(artifactDir, `${input.summary.id}.json`);
+  const content = `${JSON.stringify(input.summary, null, 2)}\n`;
+  writeFileSync(artifactPath, content, "utf8");
+  const stats = statSync(artifactPath);
+
+  return input.store.createArtifact({
+    runId: input.run.id,
+    type: "json",
+    path: normalizeArtifactPath(relative(input.store.paths.artifactsDir, artifactPath)),
+    title: `Workflow packet summary: ${input.step.title}`,
+    contentType: "application/json; charset=utf-8",
+    sizeBytes: Number(stats.size),
+    createdAt: input.now,
+  });
+}
+
+function withCompactionArtifactIds(
+  runRequest: WorkflowStepRunRequest,
+  artifacts: readonly RunArtifact[],
+): WorkflowStepRunRequest {
+  if (artifacts.length === 0 || !runRequest.contextPack) {
+    return runRequest;
+  }
+  return {
+    ...runRequest,
+    contextPack: {
+      ...runRequest.contextPack,
+      compactionIds: artifacts.map((artifact) => artifact.id),
+      sourceRefs: uniqueContextPackSourceRefs([
+        ...runRequest.contextPack.sourceRefs,
+        ...artifacts.map((artifact) => ({
+          type: "artifact" as const,
+          id: artifact.id,
+          label: artifact.title ?? artifact.path,
+        })),
+      ]),
+    },
+  };
+}
+
+function uniqueContextPackSourceRefs(
+  refs: WorkflowStepRunRequest["contextPack"] extends infer Pack
+    ? Pack extends { readonly sourceRefs: infer Refs }
+      ? Refs
+      : never
+    : never,
+): WorkflowStepRunRequest["contextPack"] extends infer Pack
+  ? Pack extends { readonly sourceRefs: infer Refs }
+    ? Refs
+    : never
+  : never {
+  const seen = new Set<string>();
+  const unique: { readonly type: string; readonly id: string; readonly label?: string }[] = [];
+  for (const ref of refs as readonly { readonly type: string; readonly id: string; readonly label?: string }[]) {
+    const key = `${ref.type}:${ref.id}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(ref);
+  }
+  return unique as WorkflowStepRunRequest["contextPack"] extends infer Pack
+    ? Pack extends { readonly sourceRefs: infer Refs }
+      ? Refs
+      : never
+    : never;
 }
 
 function existingPacketArtifact(store: RunStore, artifactId: string): RunArtifact | undefined {

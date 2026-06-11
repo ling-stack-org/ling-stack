@@ -29,6 +29,8 @@ import type {
   AiTeammate,
   AiTeammateUpdateInput,
   Channel,
+  ChannelBranch,
+  ChannelBranchUpdateInput,
   ChannelAttachment,
   ChannelBrief,
   ChannelContextSummary,
@@ -44,6 +46,7 @@ import type {
   ChannelMessageListPage,
   ChannelUpdateInput,
   CreateChannelAttachmentInput,
+  CreateChannelBranchInput,
   CreateChannelContextSummaryInput,
   CreateChannelDecisionInput,
   CreateChannelExecutionProposalInput,
@@ -66,6 +69,7 @@ import type {
   HardDeleteAiTeammateResult,
   ListAiTeammatesOptions,
   ListChannelAttachmentsOptions,
+  ListChannelBranchesOptions,
   ListChannelContextSummariesOptions,
   ListChannelDecisionsOptions,
   ListChannelExecutionProposalsOptions,
@@ -927,6 +931,11 @@ export interface RunStore {
   listChannels(options?: ListChannelsOptions): Channel[];
   updateChannel(id: string, input: ChannelUpdateInput, now: string): Channel | undefined;
   deleteChannel(id: string): boolean;
+  createChannelBranch(input: CreateChannelBranchInput, now: string): ChannelBranch;
+  getChannelBranch(id: string): ChannelBranch | undefined;
+  listChannelBranches(options?: ListChannelBranchesOptions): ChannelBranch[];
+  updateChannelBranch(id: string, input: ChannelBranchUpdateInput, now: string): ChannelBranch | undefined;
+  deleteChannelBranch(id: string): boolean;
   createTask(input: CreateTaskInput, now: string): Task;
   getTask(id: string): Task | undefined;
   listTasks(options?: ListTasksOptions): Task[];

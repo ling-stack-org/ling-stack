@@ -22,6 +22,7 @@ import {
   handleChannelAttachmentsCollection,
 } from "../features/channels/attachments.js";
 import { createAiChannelReply } from "../features/channels/ai-replies.js";
+import { handleChannelCollaborationProtocol } from "../features/channels/collaboration-protocol.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
 import { handleChannelMessagesCollection } from "../features/channels/messages.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
@@ -41,6 +42,8 @@ import {
 } from "../features/channels/orchestrator.js";
 import {
   handleChannelBrief,
+  handleChannelBranchItem,
+  handleChannelBranchesCollection,
   handleChannelContextSummariesCollection,
   handleChannelContextSummaryItem,
   handleChannelDecisionItem,
@@ -1249,8 +1252,20 @@ export async function routeRequest(
       await handleChannelWorkspace(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.workspaceAction);
       return;
     }
+    if (channelRoute.action === "protocol") {
+      await handleChannelCollaborationProtocol(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.protocolAction);
+      return;
+    }
     if (channelRoute.action === "brief") {
       await handleChannelBrief(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "branches") {
+      if (channelRoute.branchId) {
+        await handleChannelBranchItem(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.branchId);
+        return;
+      }
+      await handleChannelBranchesCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "messages") {

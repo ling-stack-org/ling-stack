@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createChannelId } from "@ling-stack/core";
+import { createChannelBranchId, createChannelId } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -14,6 +14,7 @@ import {
 } from "./protocol.js";
 import {
   parseChannelBriefRequest,
+  parseChannelBranchUpdateInput,
   parseChannelContextSummaryRequest,
   parseChannelContextSummaryUpdateRequest,
   parseChannelDecisionRequest,
@@ -23,6 +24,7 @@ import {
   parseChannelHandoffRequest,
   parseChannelHandoffUpdateRequest,
   parseChannelUpdateInput,
+  parseCreateChannelBranchInput,
   parseCreateChannelInput,
   readOptionalChannelDecisionStatusQuery,
   readOptionalChannelContextSummaryTargetTypeQuery,
@@ -50,9 +52,17 @@ export async function handleChannelsCollection(
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
+      const archived = readOptionalArchivedQuery(url);
+      const channels = store.listChannels({ archived, limit: readOptionalIntegerQuery(url, "limit", 1) });
       writeJson(response, 200, {
         cwd,
-        channels: store.listChannels({ limit: readOptionalIntegerQuery(url, "limit", 1) }),
+        channels,
+        branches: archived === true
+          ? []
+          : store.listChannelBranches({
+            limit: 1000,
+            archived: false,
+          }).filter((branch) => channels.some((channel) => channel.id === branch.channelId)),
       });
       return;
     }
@@ -157,6 +167,131 @@ export async function handleChannelItem(
   }
 }
 
+export async function handleChannelBranchesCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        branches: store.listChannelBranches({
+          channelId,
+          archived: readOptionalArchivedQuery(url),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      if (channel.status === "archived") {
+        writeJson(response, 409, { error: "channel_archived", message: `Archived channel cannot create branches: ${channelId}` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseCreateChannelBranchInput(body);
+      const now = new Date().toISOString();
+      const branch = store.createChannelBranch({
+        ...input,
+        id: createChannelBranchId(),
+        channelId,
+      }, now);
+      writeJson(response, 201, { branch });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel branches` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleChannelBranchItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+  branchId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+    const branch = store.getChannelBranch(branchId);
+    if (!branch || branch.channelId !== channelId) {
+      writeJson(response, 404, { error: "channel_branch_not_found", message: `Channel branch not found: ${branchId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, { branch });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelBranchUpdateInput(body);
+      const now = new Date().toISOString();
+      const updated = store.updateChannelBranch(branchId, {
+        ...input,
+        archivedAt: input.status === "archived" ? now : input.status === "active" ? null : undefined,
+      }, now);
+      writeJson(response, 200, { branch: updated });
+      return;
+    }
+
+    if (request.method === "DELETE") {
+      if (branch.status !== "archived") {
+        writeJson(response, 409, { error: "channel_branch_not_archived", message: `Channel branch must be archived before delete: ${branchId}` });
+        return;
+      }
+      store.deleteChannelBranch(branchId);
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel branch` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function handleChannelExecutionProposalsCollection(
   request: IncomingMessage,
   response: ServerResponse,
@@ -216,6 +351,20 @@ export async function handleChannelExecutionProposalsCollection(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function readOptionalArchivedQuery(url: URL): boolean | undefined {
+  const value = url.searchParams.get("archived");
+  if (value === null) {
+    return undefined;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error("archived must be true or false");
 }
 
 export async function handleChannelExecutionProposalItem(

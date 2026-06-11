@@ -41,6 +41,7 @@ import {
   createBuiltinAiTeammateId,
   createChannelAttachmentId,
   createChannelBriefId,
+  createChannelBranchId,
   createChannelContextSummaryId,
   createChannelDecisionId,
   createChannelExecutionProposalId,
@@ -62,6 +63,7 @@ import {
   createTeammatePrivateAttachmentId,
   createTaskId,
   channelWorkflowStepStatuses,
+  channelBranchStatuses,
   channelAutoReplyModes,
   channelMessageRouteDecisionCreatedByValues,
   channelMessageRouteDecisionStatuses,
@@ -76,6 +78,9 @@ import {
   type ChannelAttachment,
   type ChannelAttachmentKind,
   type ChannelBrief,
+  type ChannelBranch,
+  type ChannelBranchStatus,
+  type ChannelBranchUpdateInput,
   type ChannelContextSummary,
   type ChannelContextSummaryAuthorType,
   type ChannelContextSummaryTargetType,
@@ -96,6 +101,7 @@ import {
   type ChannelMessageKind,
   type ChannelMessageListPage,
   type ChannelMessageRouteAlternative,
+  type ChannelMessageRouteContextPackMetadata,
   type ChannelMessageRouteDecision,
   type ChannelMessageRouteDecisionCreatedBy,
   type ChannelMessageRouteDecisionStatus,
@@ -112,6 +118,7 @@ import {
   type ChannelWorkflowStatus,
   type CreateAiTeammateInput,
   type CreateChannelAttachmentInput,
+  type CreateChannelBranchInput,
   type CreateChannelContextSummaryInput,
   type CreateChannelDecisionInput,
   type CreateChannelExecutionProposalInput,
@@ -133,6 +140,7 @@ import {
   type HardDeleteAiTeammateResult,
   type ListAiTeammatesOptions,
   type ListChannelAttachmentsOptions,
+  type ListChannelBranchesOptions,
   type ListChannelContextSummariesOptions,
   type ListChannelDecisionsOptions,
   type ListChannelExecutionProposalsOptions,
@@ -592,6 +600,10 @@ const CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION = 56;
 const CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_NAME = "add_channel_visible_multi_reply_intent";
 const PROVIDER_TRANSPORT_MIGRATION_VERSION = 57;
 const PROVIDER_TRANSPORT_MIGRATION_NAME = "add_provider_transport";
+const CHANNEL_BRANCHES_MIGRATION_VERSION = 58;
+const CHANNEL_BRANCHES_MIGRATION_NAME = "create_channel_branches";
+const CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_VERSION = 59;
+const CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_NAME = "add_channel_route_inspect_metadata";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -2925,9 +2937,16 @@ export class SqliteRunStore implements RunStore {
 
   listChannels(options: ListChannelsOptions = {}): Channel[] {
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    const whereParts = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.archived === true) {
+      whereParts.push("status = 'archived'");
+    } else {
+      whereParts.push("status <> 'archived'");
+    }
     return this.database
-      .prepare(`${channelSelectSql("WHERE workspace_id = ?")} ORDER BY created_at DESC LIMIT ?`)
-      .all(DEFAULT_WORKSPACE_ID, limit)
+      .prepare(`${channelSelectSql(`WHERE ${whereParts.join(" AND ")}`)} ORDER BY created_at DESC LIMIT ?`)
+      .all(...params, limit)
       .map(mapChannel);
   }
 
@@ -2989,6 +3008,128 @@ export class SqliteRunStore implements RunStore {
 
   deleteChannel(id: string): boolean {
     const result = this.database.prepare("DELETE FROM channels WHERE id = ?").run(id);
+    return Number(result.changes) > 0;
+  }
+
+  createChannelBranch(input: CreateChannelBranchInput, now: string): ChannelBranch {
+    const branch: ChannelBranch = omitUndefined({
+      id: input.id ?? createChannelBranchId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      name: input.name,
+      status: input.status ?? "active",
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: input.status === "archived" ? input.archivedAt ?? now : input.archivedAt,
+      deletedAt: input.deletedAt,
+    });
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_branches (
+          id,
+          workspace_id,
+          channel_id,
+          name,
+          status,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        branch.id,
+        branch.workspaceId,
+        branch.channelId,
+        branch.name,
+        branch.status,
+        branch.createdAt,
+        branch.updatedAt,
+        branch.archivedAt ?? null,
+        branch.deletedAt ?? null,
+      );
+
+    const created = this.getChannelBranch(branch.id);
+    if (!created) {
+      throw new Error(`Failed to create channel branch: ${branch.id}`);
+    }
+    return created;
+  }
+
+  getChannelBranch(id: string): ChannelBranch | undefined {
+    const row = this.database.prepare(channelBranchSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelBranch(row) : undefined;
+  }
+
+  listChannelBranches(options: ListChannelBranchesOptions = {}): ChannelBranch[] {
+    const limit = Math.min(Math.max(options.limit ?? 500, 1), 1000);
+    const whereParts = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      whereParts.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.status) {
+      whereParts.push("status = ?");
+      params.push(options.status);
+    } else if (options.archived === true) {
+      whereParts.push("status = 'archived'");
+    } else {
+      whereParts.push("status <> 'archived'");
+    }
+
+    return this.database
+      .prepare(`${channelBranchSelectSql(`WHERE ${whereParts.join(" AND ")}`)} ORDER BY created_at ASC LIMIT ?`)
+      .all(...params, limit)
+      .map(mapChannelBranch);
+  }
+
+  updateChannelBranch(id: string, input: ChannelBranchUpdateInput, now: string): ChannelBranch | undefined {
+    const existing = this.getChannelBranch(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    const status = input.status ?? existing.status;
+    const archivedAt = input.archivedAt === null
+      ? undefined
+      : input.archivedAt ?? (status === "archived" ? existing.archivedAt ?? now : existing.archivedAt);
+    const deletedAt = nullableUpdate(input.deletedAt, existing.deletedAt);
+    const next: ChannelBranch = omitUndefined({
+      ...existing,
+      name: input.name ?? existing.name,
+      status,
+      archivedAt: status === "archived" ? archivedAt : undefined,
+      deletedAt,
+      updatedAt: now,
+    });
+
+    this.database
+      .prepare(`
+        UPDATE channel_branches
+        SET
+          name = ?,
+          status = ?,
+          updated_at = ?,
+          archived_at = ?,
+          deleted_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.name,
+        next.status,
+        next.updatedAt,
+        next.archivedAt ?? null,
+        next.deletedAt ?? null,
+        id,
+      );
+
+    return this.getChannelBranch(id);
+  }
+
+  deleteChannelBranch(id: string): boolean {
+    const result = this.database.prepare("DELETE FROM channel_branches WHERE id = ?").run(id);
     return Number(result.changes) > 0;
   }
 
@@ -5136,6 +5277,7 @@ export class SqliteRunStore implements RunStore {
       confidence: input.confidence,
       reason: input.reason,
       alternativesConsidered: input.alternativesConsidered ?? [],
+      contextPack: input.contextPack,
       status: input.status,
       createdBy: input.createdBy,
       errorMessage: input.errorMessage,
@@ -5159,12 +5301,13 @@ export class SqliteRunStore implements RunStore {
           confidence,
           reason,
           alternatives_json,
+          context_pack_json,
           status,
           created_by,
           error_message,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         decision.id,
@@ -5180,6 +5323,7 @@ export class SqliteRunStore implements RunStore {
         decision.confidence ?? null,
         decision.reason,
         stringifyJson(decision.alternativesConsidered),
+        decision.contextPack ? stringifyJson(decision.contextPack) : null,
         decision.status,
         decision.createdBy,
         decision.errorMessage ?? null,
@@ -5238,6 +5382,7 @@ export class SqliteRunStore implements RunStore {
       confidence: nullableUpdate(input.confidence, existing.confidence),
       reason: input.reason ?? existing.reason,
       alternativesConsidered: input.alternativesConsidered ?? existing.alternativesConsidered,
+      contextPack: nullableUpdate(input.contextPack, existing.contextPack),
       status: input.status ?? existing.status,
       errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
       updatedAt: now,
@@ -5259,6 +5404,7 @@ export class SqliteRunStore implements RunStore {
           confidence = ?,
           reason = ?,
           alternatives_json = ?,
+          context_pack_json = ?,
           status = ?,
           error_message = ?,
           updated_at = ?
@@ -5270,6 +5416,7 @@ export class SqliteRunStore implements RunStore {
         next.confidence ?? null,
         next.reason,
         stringifyJson(next.alternativesConsidered),
+        next.contextPack ? stringifyJson(next.contextPack) : null,
         next.status,
         next.errorMessage ?? null,
         next.updatedAt,
@@ -12778,6 +12925,7 @@ export class SqliteRunStore implements RunStore {
           confidence REAL,
           reason TEXT NOT NULL,
           alternatives_json TEXT NOT NULL,
+          context_pack_json TEXT,
           status TEXT NOT NULL,
           created_by TEXT NOT NULL,
           error_message TEXT,
@@ -12864,6 +13012,52 @@ export class SqliteRunStore implements RunStore {
       `);
       if (!hasWorkspaceSettingsAndChannelBindingMigration) {
         this.recordMigration(WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION, WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelBranchesMigration = this.hasMigration(CHANNEL_BRANCHES_MIGRATION_VERSION);
+    if (
+      !hasChannelBranchesMigration ||
+      !this.hasTable("channel_branches") ||
+      !this.hasColumn("channel_branches", "archived_at") ||
+      !this.hasColumn("channel_branches", "deleted_at")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_branches (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          archived_at TEXT,
+          deleted_at TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_branches_channel_status
+        ON channel_branches(channel_id, status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_branches_workspace_status
+        ON channel_branches(workspace_id, status, updated_at);
+      `);
+      if (!hasChannelBranchesMigration) {
+        this.recordMigration(CHANNEL_BRANCHES_MIGRATION_VERSION, CHANNEL_BRANCHES_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelRouteInspectMetadataMigration = this.hasMigration(CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_VERSION);
+    if (
+      !hasChannelRouteInspectMetadataMigration ||
+      (this.hasTable("channel_message_route_decisions") && !this.hasColumn("channel_message_route_decisions", "context_pack_json"))
+    ) {
+      if (this.hasTable("channel_message_route_decisions") && !this.hasColumn("channel_message_route_decisions", "context_pack_json")) {
+        this.database.exec("ALTER TABLE channel_message_route_decisions ADD COLUMN context_pack_json TEXT;");
+      }
+      if (!hasChannelRouteInspectMetadataMigration) {
+        this.recordMigration(CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_VERSION, CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_NAME);
       }
     }
   }
@@ -13904,6 +14098,24 @@ function mapChannel(row: Record<string, SQLOutputValue>): Channel {
   });
 }
 
+function mapChannelBranch(row: Record<string, SQLOutputValue>): ChannelBranch {
+  const status = readString(row, "status");
+  if (!channelBranchStatuses.includes(status as ChannelBranchStatus)) {
+    throw new Error(`Invalid channel branch status: ${status}`);
+  }
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    name: readString(row, "name"),
+    status: status as ChannelBranchStatus,
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    archivedAt: readNullableString(row, "archived_at"),
+    deletedAt: readNullableString(row, "deleted_at"),
+  });
+}
+
 function mapTask(row: Record<string, SQLOutputValue>): Task {
   return omitUndefined({
     id: readString(row, "id"),
@@ -14242,6 +14454,7 @@ function mapChannelMessageRouteDecision(row: Record<string, SQLOutputValue>): Ch
     confidence: readNullableNumber(row, "confidence"),
     reason: readString(row, "reason"),
     alternativesConsidered: parseChannelMessageRouteAlternatives(readString(row, "alternatives_json")),
+    contextPack: parseOptionalChannelMessageRouteContextPackMetadata(readNullableString(row, "context_pack_json")),
     status: readString(row, "status") as ChannelMessageRouteDecisionStatus,
     createdBy: readString(row, "created_by") as ChannelMessageRouteDecisionCreatedBy,
     errorMessage: readNullableString(row, "error_message"),
@@ -15240,6 +15453,23 @@ function channelSelectSql(whereClause: string): string {
   `;
 }
 
+function channelBranchSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      name,
+      status,
+      created_at,
+      updated_at,
+      archived_at,
+      deleted_at
+    FROM channel_branches
+    ${whereClause}
+  `;
+}
+
 function stateTransitionSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -15758,6 +15988,7 @@ function channelMessageRouteDecisionSelectSql(whereClause: string): string {
       confidence,
       reason,
       alternatives_json,
+      context_pack_json,
       status,
       created_by,
       error_message,
@@ -17042,6 +17273,57 @@ function parseChannelMessageRouteAlternatives(value: string): ChannelMessageRout
   });
 }
 
+function parseOptionalChannelMessageRouteContextPackMetadata(
+  value: string | undefined,
+): ChannelMessageRouteContextPackMetadata | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const parsed = parseJson(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const record = parsed as Record<string, unknown>;
+    if (
+      record.schemaVersion !== 1 ||
+      typeof record.kind !== "string" ||
+      !Array.isArray(record.sectionIds) ||
+      record.sectionIds.some((item) => typeof item !== "string") ||
+      !Array.isArray(record.droppedSectionIds) ||
+      record.droppedSectionIds.some((item) => typeof item !== "string") ||
+      !Array.isArray(record.compactionIds) ||
+      record.compactionIds.some((item) => typeof item !== "string")
+    ) {
+      return undefined;
+    }
+    const sourceRefCounts =
+      typeof record.sourceRefCounts === "object" &&
+      record.sourceRefCounts !== null &&
+      !Array.isArray(record.sourceRefCounts)
+        ? record.sourceRefCounts as Record<string, unknown>
+        : {};
+    const normalizedSourceRefCounts: Record<string, number> = {};
+    for (const [key, count] of Object.entries(sourceRefCounts)) {
+      if (typeof count === "number" && Number.isFinite(count) && count >= 0) {
+        normalizedSourceRefCounts[key] = count;
+      }
+    }
+    return omitUndefined({
+      schemaVersion: 1 as const,
+      kind: record.kind,
+      providerPresetId: readOptionalStringValue(record.providerPresetId),
+      modelId: readOptionalStringValue(record.modelId),
+      sectionIds: record.sectionIds,
+      droppedSectionIds: record.droppedSectionIds,
+      sourceRefCounts: normalizedSourceRefCounts,
+      compactionIds: record.compactionIds,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 function parseOptionalWorkflowHandoffValidation(value: string | undefined): WorkflowHandoffValidation | undefined {
   if (!value) {
     return undefined;
@@ -17491,7 +17773,7 @@ function validateWorkflowSelectorDecision(decision: WorkflowSelectorDecision): v
 function validateChannelMessageRouteDecisionInput(
   decision: Pick<
     CreateChannelMessageRouteDecisionInput,
-    "mode" | "action" | "confidence" | "reason" | "alternativesConsidered" | "status" | "createdBy"
+    "mode" | "action" | "confidence" | "reason" | "alternativesConsidered" | "contextPack" | "status" | "createdBy"
   >,
 ): void {
   if (!channelAutoReplyModes.includes(decision.mode)) {
@@ -17515,6 +17797,34 @@ function validateChannelMessageRouteDecisionInput(
     validateNonEmptyString(alternative.reason, "channel message route alternative reason");
     if (alternative.score !== undefined && (alternative.score < 0 || alternative.score > 1)) {
       throw new Error("channel message route alternative score must be between 0 and 1");
+    }
+  }
+  validateChannelMessageRouteContextPackMetadata(decision.contextPack);
+}
+
+function validateChannelMessageRouteContextPackMetadata(
+  metadata: ChannelMessageRouteContextPackMetadata | undefined,
+): void {
+  if (!metadata) {
+    return;
+  }
+  if (metadata.schemaVersion !== 1) {
+    throw new Error("channel message route context pack schemaVersion is not supported");
+  }
+  validateNonEmptyString(metadata.kind, "channel message route context pack kind");
+  for (const sectionId of metadata.sectionIds) {
+    validateNonEmptyString(sectionId, "channel message route context pack section id");
+  }
+  for (const sectionId of metadata.droppedSectionIds) {
+    validateNonEmptyString(sectionId, "channel message route context pack dropped section id");
+  }
+  for (const compactionId of metadata.compactionIds) {
+    validateNonEmptyString(compactionId, "channel message route context pack compaction id");
+  }
+  for (const [sourceType, count] of Object.entries(metadata.sourceRefCounts)) {
+    validateNonEmptyString(sourceType, "channel message route context pack source ref type");
+    if (!Number.isFinite(count) || count < 0) {
+      throw new Error("channel message route context pack source ref count must be a non-negative number");
     }
   }
 }

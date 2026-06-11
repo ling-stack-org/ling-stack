@@ -1,6 +1,10 @@
 import type {
   ChannelBriefMutationResponse,
   ChannelBriefResponse,
+  ChannelBranchListResponse,
+  ChannelBranchMutationResponse,
+  ChannelCollaborationProtocolMutationResponse,
+  ChannelCollaborationProtocolResponse,
   ChannelContextSummaryListResponse,
   ChannelContextSummaryMutationResponse,
   ChannelContextSummaryTargetType,
@@ -34,6 +38,7 @@ import type {
   ChannelWorkspaceMutationResponse,
   ChannelWorkspaceResponse,
   WorkflowEvidenceResponse,
+  CreateChannelBranchRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelExecutionProposalRequest,
@@ -51,18 +56,21 @@ import type {
   TaskListResponse,
   TaskMutationResponse,
   UpdateChannelBriefRequest,
+  UpdateChannelBranchRequest,
+  UpdateChannelCollaborationProtocolRequest,
   UpdateChannelContextSummaryRequest,
   UpdateChannelDecisionRequest,
   UpdateChannelExecutionProposalRequest,
   UpdateChannelHandoffRequest,
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
+  UpdateChannelRequest,
 } from "../types.js";
 import { channelFormToPayload, channelFormToUpdatePayload, taskEditFormToPayload } from "./channel-payloads.js";
 import { daemonClient } from "./client.js";
 
-export async function listChannels(cwd: string): Promise<ChannelListResponse> {
-  return daemonClient.listChannels(cwd);
+export async function listChannels(cwd: string, options: { readonly archived?: boolean; readonly limit?: number } = {}): Promise<ChannelListResponse> {
+  return daemonClient.listChannels(cwd, options);
 }
 
 export async function createChannel(cwd: string, form: ChannelFormState): Promise<ChannelMutationResponse> {
@@ -71,6 +79,55 @@ export async function createChannel(cwd: string, form: ChannelFormState): Promis
 
 export async function updateChannel(cwd: string, channelId: string, form: ChannelFormState): Promise<ChannelMutationResponse> {
   return daemonClient.updateChannel(cwd, channelId, channelFormToUpdatePayload(form));
+}
+
+export async function patchChannel(cwd: string, channelId: string, input: UpdateChannelRequest): Promise<ChannelMutationResponse> {
+  return daemonClient.updateChannel(cwd, channelId, input);
+}
+
+export async function listChannelBranches(
+  cwd: string,
+  channelId: string,
+  options: { readonly archived?: boolean; readonly limit?: number } = {},
+): Promise<ChannelBranchListResponse> {
+  return daemonClient.listChannelBranches(cwd, channelId, options);
+}
+
+export async function createChannelBranch(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelBranchRequest,
+): Promise<ChannelBranchMutationResponse> {
+  return daemonClient.createChannelBranch(cwd, channelId, input);
+}
+
+export async function updateChannelBranch(
+  cwd: string,
+  channelId: string,
+  branchId: string,
+  input: UpdateChannelBranchRequest,
+): Promise<ChannelBranchMutationResponse> {
+  return daemonClient.updateChannelBranch(cwd, channelId, branchId, input);
+}
+
+export async function deleteChannelBranch(cwd: string, channelId: string, branchId: string): Promise<void> {
+  await daemonClient.deleteChannelBranch(cwd, channelId, branchId);
+}
+
+export async function getChannelCollaborationProtocol(cwd: string, channelId: string): Promise<ChannelCollaborationProtocolResponse> {
+  return daemonClient.getChannelCollaborationProtocol(cwd, channelId);
+}
+
+export async function updateChannelCollaborationProtocol(
+  cwd: string,
+  channelId: string,
+  input: UpdateChannelCollaborationProtocolRequest,
+): Promise<ChannelCollaborationProtocolMutationResponse> {
+  return daemonClient.updateChannelCollaborationProtocol(cwd, channelId, input);
+}
+
+export async function revertChannelCollaborationProtocol(cwd: string, channelId: string): Promise<ChannelCollaborationProtocolMutationResponse> {
+  return daemonClient.revertChannelCollaborationProtocol(cwd, channelId);
 }
 
 export async function deleteChannel(cwd: string, channelId: string): Promise<void> {

@@ -5,7 +5,7 @@ import { truncatePreview } from "./data.js";
 
 export type ConversationWorkCellMode = "active" | "completed";
 export type ConversationWorkCellStatus = RunSession["status"] | LingTurn["status"] | ChannelWorkflow["status"];
-export type ConversationWorkCellGroupKind = "changed" | "checked" | "evidence" | "attention";
+export type ConversationWorkCellGroupKind = "changed" | "checked" | "context" | "evidence" | "attention";
 export type ConversationWorkCellRowTone = "neutral" | "running" | "waiting" | "success" | "failed";
 
 export interface ConversationWorkCellStat {

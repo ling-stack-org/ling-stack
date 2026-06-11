@@ -30,6 +30,10 @@ import {
   type ContextPack,
 } from "./context-packs.js";
 import {
+  maybeCompactWorkflowStepContext,
+  type WorkflowStepContextCompactionSummary,
+} from "./context-compaction.js";
+import {
   readWorkflowStepContextPacketArtifact,
   readWorkflowStepOutputPacketArtifact,
 } from "./workflow-step-packets.js";
@@ -80,6 +84,7 @@ export interface WorkflowStepRunRequest {
   readonly tools?: readonly RunTool[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   readonly contextPack?: WorkflowStepRunContextPackSnapshot;
+  readonly contextCompactions?: readonly WorkflowStepContextCompactionSummary[];
 }
 
 export interface WorkflowStepRunContextPackSnapshot {
@@ -97,6 +102,7 @@ export interface WorkflowStepRunContextPackSnapshot {
     readonly priority: string;
     readonly estimatedTokens?: number;
     readonly sourceRefIds?: readonly string[];
+    readonly metadata?: Record<string, unknown>;
   }[];
   readonly sourceRefs: ContextPack["sourceRefs"];
 }
@@ -665,7 +671,7 @@ export function prepareWorkflowStepStart(
   const runnerId = input.runnerId;
   const taskTitle = input.taskTitle ?? step.title;
   const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
-  const contextPack = buildWorkflowStepContextPack({
+  const contextPackInput = {
     store,
     channel,
     workflow,
@@ -673,7 +679,14 @@ export function prepareWorkflowStepStart(
     prompt: input.taskPrompt ?? step.prompt,
     providerPresetId,
     workflowSteps,
+  };
+  const initialContextPack = buildWorkflowStepContextPack(contextPackInput);
+  const compacted = maybeCompactWorkflowStepContext({
+    packInput: contextPackInput,
+    contextPack: initialContextPack,
+    now,
   });
+  const contextPack = compacted.contextPack;
   if (contextPack.overBudget) {
     return block(`Workflow step context exceeds provider budget (${contextPack.estimatedInputTokens}/${contextPack.budget.inputBudgetTokens} estimated input tokens).`);
   }
@@ -697,6 +710,7 @@ export function prepareWorkflowStepStart(
     tools: channel.allowedTools,
     thinkingLevel: "medium",
     contextPack: snapshotWorkflowStepContextPack(contextPack),
+    contextCompactions: compacted.compactions,
   };
 
   if (input.mode === "create_and_run_task") {
@@ -1023,6 +1037,7 @@ function snapshotWorkflowStepContextPack(pack: ContextPack): WorkflowStepRunCont
       priority: section.priority,
       estimatedTokens: section.estimatedTokens,
       sourceRefIds: section.sourceRefIds,
+      metadata: section.metadata,
     })),
     sourceRefs: pack.sourceRefs,
   };

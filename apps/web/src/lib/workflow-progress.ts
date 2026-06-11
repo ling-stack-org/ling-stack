@@ -165,6 +165,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     meta: diagnostics.length > 0 ? `${step.status} · ${diagnostics.length} diagnostics` : step.status,
     tone: workflowStepTone(step.status),
   }));
+  const contextRows = input.evidence.steps.flatMap((stepEvidence) => buildWorkflowContextPackRows(stepEvidence, t));
   const evidenceRows: ConversationWorkCellRow[] = [
     ...artifacts.slice(0, 10).map((artifact) => ({
       id: `artifact:${artifact.id}`,
@@ -247,6 +248,12 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
         rows: checkedRows,
       },
       {
+        id: "context",
+        label: t("Context Pack"),
+        summary: contextRows.length > 0 ? t("{count} context items", { count: contextRows.length }) : t("No context evidence captured"),
+        rows: contextRows,
+      },
+      {
         id: "evidence",
         label: t("Evidence"),
         summary: t("{count} evidence items", { count: evidenceRows.length }),
@@ -261,6 +268,155 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     ],
     evidenceLinks,
   };
+}
+
+type WorkflowEvidenceStepModel = WorkflowEvidenceResponse["steps"][number];
+type WorkflowContextPackSnapshot = NonNullable<NonNullable<WorkflowEvidenceStepModel["contextPacket"]>["contextPack"]>;
+type WorkflowContextSectionSnapshot = WorkflowContextPackSnapshot["sections"][number];
+type WorkflowContextSourceRefSnapshot = WorkflowContextPackSnapshot["sourceRefs"][number];
+
+function buildWorkflowContextPackRows(
+  stepEvidence: WorkflowEvidenceStepModel,
+  t: Translate,
+): ConversationWorkCellRow[] {
+  const { step, contextPacket, diagnostics } = stepEvidence;
+  const stepTitle = `${step.toParticipantLabel}: ${step.title}`;
+  const artifactId = step.metadata?.contextArtifactId;
+  if (!artifactId && !contextPacket) {
+    return [];
+  }
+  if (!contextPacket) {
+    const diagnostic = diagnostics.find((item) => item.kind === "bad_packet" || item.kind === "missing_context_packet");
+    return [{
+      id: `context-missing:${step.id}`,
+      title: stepTitle,
+      description: diagnostic?.message ?? t("No persisted context snapshot for this step."),
+      meta: artifactId ? `artifact:${artifactId}` : t("missing"),
+      tone: "waiting",
+    }];
+  }
+  const pack = contextPacket.contextPack;
+  if (!pack) {
+    return [{
+      id: `context-no-pack:${step.id}`,
+      title: stepTitle,
+      description: t("Context artifact exists, but no Context Pack snapshot was recorded."),
+      meta: artifactId ? `artifact:${artifactId}` : contextPacket.generatedAt,
+      tone: "waiting",
+    }];
+  }
+
+  const rows: ConversationWorkCellRow[] = [{
+    id: `context-pack:${step.id}`,
+    title: stepTitle,
+    description: [
+      `${t("Kind")}: ${pack.kind}`,
+      `${t("Provider")}: ${pack.providerPresetId ?? "unknown"}`,
+      `${t("Model")}: ${pack.modelId ?? "unknown"}`,
+      `${t("Budget")}: ${pack.budget.mode}`,
+    ].join(" · "),
+    meta: `${pack.estimatedInputTokens}/${pack.budget.inputBudgetTokens} tokens`,
+    tone: pack.overBudget ? "waiting" : "neutral",
+  }];
+
+  rows.push({
+    id: `context-sections:${step.id}`,
+    title: t("Kept sections"),
+    description: pack.sections.length > 0
+      ? truncatePreview(pack.sections.map(formatContextPackSection).join(", "), 220)
+      : t("No kept sections recorded."),
+    meta: String(pack.sections.length),
+    tone: "neutral",
+  });
+
+  rows.push({
+    id: `context-dropped:${step.id}`,
+    title: t("Dropped sections"),
+    description: pack.droppedSectionIds.length > 0
+      ? truncatePreview(pack.droppedSectionIds.join(", "), 220)
+      : t("No sections dropped."),
+    meta: String(pack.droppedSectionIds.length),
+    tone: pack.droppedSectionIds.length > 0 ? "waiting" : "success",
+  });
+
+  rows.push({
+    id: `context-source-refs:${step.id}`,
+    title: t("Source refs"),
+    description: pack.sourceRefs.length > 0
+      ? truncatePreview(summarizeContextPackSourceRefs(pack.sourceRefs), 220)
+      : t("No source refs recorded."),
+    meta: String(pack.sourceRefs.length),
+    tone: "neutral",
+  });
+
+  if (pack.compactionIds.length > 0) {
+    rows.push({
+      id: `context-compactions:${step.id}`,
+      title: t("Compactions"),
+      description: truncatePreview(pack.compactionIds.join(", "), 220),
+      meta: String(pack.compactionIds.length),
+      tone: "neutral",
+    });
+  }
+
+  const protocolSummary = summarizeProtocolMetadata(pack);
+  if (protocolSummary) {
+    rows.push({
+      id: `context-protocol:${step.id}`,
+      title: t("Collaboration protocol"),
+      description: protocolSummary,
+      meta: "channel_collaboration_protocol",
+      tone: "neutral",
+    });
+  }
+
+  return rows;
+}
+
+function formatContextPackSection(section: WorkflowContextSectionSnapshot): string {
+  const sourceCount = section.sourceRefIds?.length ?? 0;
+  const tokens = section.estimatedTokens !== undefined ? `, ${section.estimatedTokens}t` : "";
+  return `${section.id}(${section.role}/${section.priority}, refs:${sourceCount}${tokens})`;
+}
+
+function summarizeContextPackSourceRefs(refs: readonly WorkflowContextSourceRefSnapshot[]): string {
+  const groups = new Map<string, string[]>();
+  for (const ref of refs) {
+    const values = groups.get(ref.type) ?? [];
+    values.push(ref.label ? `${ref.label} [${ref.id}]` : ref.id);
+    groups.set(ref.type, values);
+  }
+  return [...groups.entries()]
+    .map(([type, values]) => `${type}: ${values.slice(0, 4).join(", ")}${values.length > 4 ? ` +${values.length - 4}` : ""}`)
+    .join("; ");
+}
+
+function summarizeProtocolMetadata(pack: WorkflowContextPackSnapshot): string | undefined {
+  const protocolSection = pack.sections.find((section) => section.id === "channel_collaboration_protocol");
+  const metadata = protocolSection?.metadata;
+  if (!metadata) {
+    return undefined;
+  }
+  const values = [
+    protocolField(metadata, "responseLanguage", "responseLanguageSource"),
+    protocolField(metadata, "autoReplyMode", "autoReplyModeSource"),
+    protocolField(metadata, "defaultTeammateId", "defaultTeammateSource"),
+  ].filter((value): value is string => Boolean(value));
+  return values.length > 0 ? values.join(" · ") : undefined;
+}
+
+function protocolField(metadata: Record<string, unknown>, valueKey: string, sourceKey: string): string | undefined {
+  const value = readMetadataString(metadata, valueKey);
+  if (!value) {
+    return undefined;
+  }
+  const source = readMetadataString(metadata, sourceKey);
+  return source ? `${valueKey}: ${value} (${source})` : `${valueKey}: ${value}`;
+}
+
+function readMetadataString(metadata: Record<string, unknown>, key: string): string | undefined {
+  const value = metadata[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function buildWorkflowProgressSummary(input: {

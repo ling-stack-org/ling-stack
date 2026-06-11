@@ -1,5 +1,6 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import {
+  getChannelCollaborationProtocol,
   getChannelBrief,
   listChannelAttachments,
   listChannelContextSummaries,
@@ -9,6 +10,7 @@ import {
   listChannelLinkPreviews,
   listChannelMessages,
   listChannelMessageRouteDecisions,
+  listChannelIntentDecisions,
   listChannelWorkflowSteps,
   listChannelWorkflows,
   listChannels,
@@ -27,8 +29,10 @@ import {
 import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
 import type {
   Channel,
+  ChannelBranch,
   ChannelAttachment,
   ChannelBrief,
+  ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
   ChannelCreateFormState,
   ChannelDecision,
@@ -37,6 +41,7 @@ import type {
   ChannelHandoff,
   ChannelLinkPreview,
   ChannelMessage,
+  ChannelIntentDecision,
   ChannelMessageRouteDecision,
   ChannelWorkflow,
   ChannelWorkflowStep,
@@ -54,6 +59,7 @@ import type {
 const channelMessageInitialLimit = 200;
 const channelMessageOlderLimit = 100;
 const channelMessageRouteDecisionLimit = 200;
+const channelIntentDecisionLimit = 200;
 
 export const defaultTaskForm: TaskFormState = {
   title: "Inspect workspace",
@@ -68,6 +74,7 @@ export const defaultTaskEditForm: TaskEditFormState = {
 
 export interface WorkspaceState {
   readonly channels: readonly Channel[];
+  readonly channelBranches: readonly ChannelBranch[];
   readonly channelsLoading: boolean;
   readonly selectedChannelId: string;
   readonly channelForm: ChannelCreateFormState;
@@ -90,7 +97,9 @@ export interface WorkspaceState {
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly channelArtifactErrorsByRun: Readonly<Record<string, string>>;
   readonly channelBrief: ChannelBrief | undefined;
+  readonly channelCollaborationProtocol: ChannelCollaborationProtocolResponse | undefined;
   readonly channelDecisions: readonly ChannelDecision[];
+  readonly channelIntentDecisions: readonly ChannelIntentDecision[];
   readonly channelMessageRouteDecisions: readonly ChannelMessageRouteDecision[];
   readonly channelHandoffs: readonly ChannelHandoff[];
   readonly channelContextSummaries: readonly ChannelContextSummary[];
@@ -107,6 +116,7 @@ export interface WorkspaceState {
 
 export interface WorkspaceActions {
   readonly setChannels: Dispatch<SetStateAction<readonly Channel[]>>;
+  readonly setChannelBranches: Dispatch<SetStateAction<readonly ChannelBranch[]>>;
   readonly setSelectedChannelId: Dispatch<SetStateAction<string>>;
   readonly setChannelForm: Dispatch<SetStateAction<ChannelCreateFormState>>;
   readonly setChannelCreateOpen: Dispatch<SetStateAction<boolean>>;
@@ -122,7 +132,9 @@ export interface WorkspaceActions {
   readonly setChannelLinkPreviews: Dispatch<SetStateAction<readonly ChannelLinkPreview[]>>;
   readonly setChannelFilesLoading: Dispatch<SetStateAction<boolean>>;
   readonly setChannelBrief: Dispatch<SetStateAction<ChannelBrief | undefined>>;
+  readonly setChannelCollaborationProtocol: Dispatch<SetStateAction<ChannelCollaborationProtocolResponse | undefined>>;
   readonly setChannelDecisions: Dispatch<SetStateAction<readonly ChannelDecision[]>>;
+  readonly setChannelIntentDecisions: Dispatch<SetStateAction<readonly ChannelIntentDecision[]>>;
   readonly setChannelMessageRouteDecisions: Dispatch<SetStateAction<readonly ChannelMessageRouteDecision[]>>;
   readonly setChannelHandoffs: Dispatch<SetStateAction<readonly ChannelHandoff[]>>;
   readonly setChannelContextSummaries: Dispatch<SetStateAction<readonly ChannelContextSummary[]>>;
@@ -138,6 +150,7 @@ export interface WorkspaceActions {
   readonly refreshChannelRunArtifacts: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelActivityTransitions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelMessageRouteDecisions: (channelId?: string) => Promise<void>;
+  readonly refreshChannelIntentDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelProtocol: (channelId?: string) => Promise<void>;
   readonly refreshUsedMemoryAudit: (cwd?: string) => Promise<void>;
   readonly resetSelectedChannelActivity: () => void;
@@ -154,6 +167,7 @@ export function useWorkspaceDomain(input: {
   readonly onChannelMessagesLoaded?: (channelId: string, messages: readonly ChannelMessage[]) => void;
 }): WorkspaceController {
   const [channels, setChannels] = useState<readonly Channel[]>([]);
+  const [channelBranches, setChannelBranches] = useState<readonly ChannelBranch[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
   const [selectedChannelId, setSelectedChannelId] = useState("");
   const [channelForm, setChannelForm] = useState<ChannelCreateFormState>(() => ({
@@ -183,7 +197,9 @@ export function useWorkspaceDomain(input: {
   const [channelArtifactsByRun, setChannelArtifactsByRun] = useState<Record<string, readonly RunArtifact[]>>({});
   const [channelArtifactErrorsByRun, setChannelArtifactErrorsByRun] = useState<Record<string, string>>({});
   const [channelBrief, setChannelBrief] = useState<ChannelBrief | undefined>();
+  const [channelCollaborationProtocol, setChannelCollaborationProtocol] = useState<ChannelCollaborationProtocolResponse | undefined>();
   const [channelDecisions, setChannelDecisions] = useState<readonly ChannelDecision[]>([]);
+  const [channelIntentDecisions, setChannelIntentDecisions] = useState<readonly ChannelIntentDecision[]>([]);
   const [channelMessageRouteDecisions, setChannelMessageRouteDecisions] = useState<readonly ChannelMessageRouteDecision[]>([]);
   const [channelHandoffs, setChannelHandoffs] = useState<readonly ChannelHandoff[]>([]);
   const [channelContextSummaries, setChannelContextSummaries] = useState<readonly ChannelContextSummary[]>([]);
@@ -202,6 +218,7 @@ export function useWorkspaceDomain(input: {
   async function refreshChannels(cwd = input.cwd): Promise<void> {
     if (!cwd) {
       setChannels([]);
+      setChannelBranches([]);
       setSelectedChannelId("");
       return;
     }
@@ -216,6 +233,7 @@ export function useWorkspaceDomain(input: {
         return;
       }
       setChannels(response.channels);
+      setChannelBranches(response.branches ?? []);
       setSelectedChannelId((current) => {
         if (response.channels.some((channel) => channel.id === current)) {
           return current;
@@ -520,6 +538,29 @@ export function useWorkspaceDomain(input: {
     }
   }
 
+  async function refreshChannelIntentDecisions(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId) {
+      setChannelIntentDecisions([]);
+      return;
+    }
+
+    const token = loadGuard.next(`intentDecisions:${cwd}:${channelId}`);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const response = await listChannelIntentDecisions(cwd, channelId, { limit: channelIntentDecisionLimit });
+      if (!loadGuard.isCurrent(`intentDecisions:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelIntentDecisions(response.decisions);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    }
+  }
+
   async function refreshChannelProtocol(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
     if (!cwd || !channelId) {
@@ -532,10 +573,12 @@ export function useWorkspaceDomain(input: {
     try {
       input.setErrorMessage("");
       setError(undefined);
-      const [briefResponse, decisionsResponse, routeDecisionsResponse, handoffsResponse, summariesResponse, workflowsResponse] = await Promise.all([
+      const [briefResponse, protocolResponse, decisionsResponse, routeDecisionsResponse, intentDecisionsResponse, handoffsResponse, summariesResponse, workflowsResponse] = await Promise.all([
         getChannelBrief(cwd, channelId),
+        getChannelCollaborationProtocol(cwd, channelId),
         listChannelDecisions(cwd, channelId),
         listChannelMessageRouteDecisions(cwd, channelId, { limit: channelMessageRouteDecisionLimit }),
+        listChannelIntentDecisions(cwd, channelId, { limit: channelIntentDecisionLimit }),
         listChannelHandoffs(cwd, channelId),
         listChannelContextSummaries(cwd, channelId),
         listChannelWorkflows(cwd, channelId),
@@ -545,8 +588,10 @@ export function useWorkspaceDomain(input: {
         return;
       }
       setChannelBrief(briefResponse.brief);
+      setChannelCollaborationProtocol(protocolResponse);
       setChannelDecisions(decisionsResponse.decisions);
       setChannelMessageRouteDecisions(routeDecisionsResponse.decisions);
+      setChannelIntentDecisions(intentDecisionsResponse.decisions);
       setChannelHandoffs(handoffsResponse.handoffs);
       setChannelContextSummaries(summariesResponse.contextSummaries);
       setChannelWorkflows(workflowsResponse.workflows);
@@ -599,8 +644,10 @@ export function useWorkspaceDomain(input: {
 
   function resetChannelProtocol(): void {
     setChannelBrief(undefined);
+    setChannelCollaborationProtocol(undefined);
     setChannelDecisions([]);
     setChannelMessageRouteDecisions([]);
+    setChannelIntentDecisions([]);
     setChannelHandoffs([]);
     setChannelContextSummaries([]);
     setChannelWorkflows([]);
@@ -627,6 +674,7 @@ export function useWorkspaceDomain(input: {
   function resetForCwd(cwd: string): void {
     loadGuard.reset();
     setChannels([]);
+    setChannelBranches([]);
     setSelectedChannelId("");
     setChannelForm((current) => ({
       ...defaultChannelCreateForm,
@@ -669,6 +717,7 @@ export function useWorkspaceDomain(input: {
   return {
     state: {
       channels,
+      channelBranches,
       channelsLoading,
       selectedChannelId,
       channelForm,
@@ -691,7 +740,9 @@ export function useWorkspaceDomain(input: {
       channelArtifactsByRun,
       channelArtifactErrorsByRun,
       channelBrief,
+      channelCollaborationProtocol,
       channelDecisions,
+      channelIntentDecisions,
       channelMessageRouteDecisions,
       channelHandoffs,
       channelContextSummaries,
@@ -707,6 +758,7 @@ export function useWorkspaceDomain(input: {
     },
     actions: {
       setChannels,
+      setChannelBranches,
       setSelectedChannelId,
       setChannelForm,
       setChannelCreateOpen,
@@ -722,7 +774,9 @@ export function useWorkspaceDomain(input: {
       setChannelLinkPreviews,
       setChannelFilesLoading,
       setChannelBrief,
+      setChannelCollaborationProtocol,
       setChannelDecisions,
+      setChannelIntentDecisions,
       setChannelMessageRouteDecisions,
       setChannelHandoffs,
       setChannelContextSummaries,
@@ -738,6 +792,7 @@ export function useWorkspaceDomain(input: {
       refreshChannelRunArtifacts,
       refreshChannelActivityTransitions,
       refreshChannelMessageRouteDecisions,
+      refreshChannelIntentDecisions,
       refreshChannelProtocol,
       refreshUsedMemoryAudit,
       resetSelectedChannelActivity,

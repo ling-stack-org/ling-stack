@@ -26,6 +26,10 @@ import type {
   ChannelAttachmentMutationResponse,
   ChannelBriefMutationResponse,
   ChannelBriefResponse,
+  ChannelBranchListResponse,
+  ChannelBranchMutationResponse,
+  ChannelCollaborationProtocolMutationResponse,
+  ChannelCollaborationProtocolResponse,
   ChannelContextSummaryListResponse,
   ChannelContextSummaryMutationResponse,
   ChannelContextSummaryTargetType,
@@ -63,6 +67,7 @@ import type {
   ChannelWorkspaceResponse,
   WorkflowEvidenceResponse,
   CreateChannelAttachmentRequest,
+  CreateChannelBranchRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelExecutionProposalRequest,
@@ -231,6 +236,8 @@ import type {
   TaskMutationResponse,
   UpdateApprovalPolicyRequest,
   UpdateChannelBriefRequest,
+  UpdateChannelBranchRequest,
+  UpdateChannelCollaborationProtocolRequest,
   UpdateChannelContextSummaryRequest,
   UpdateChannelDecisionRequest,
   UpdateChannelExecutionProposalRequest,
@@ -808,8 +815,8 @@ export class LingDaemonClient {
     return this.post(`/work-units/${encodeURIComponent(workUnitId)}/reconcile`, { cwd });
   }
 
-  async listChannels(cwd: string): Promise<ChannelListResponse> {
-    return this.get("/channels", { cwd });
+  async listChannels(cwd: string, options: { readonly archived?: boolean; readonly limit?: number } = {}): Promise<ChannelListResponse> {
+    return this.get("/channels", { cwd, archived: options.archived, limit: options.limit });
   }
 
   async createChannel(cwd: string, input: CreateChannelRequest): Promise<ChannelMutationResponse> {
@@ -818,6 +825,51 @@ export class LingDaemonClient {
 
   async updateChannel(cwd: string, channelId: string, input: UpdateChannelRequest): Promise<ChannelMutationResponse> {
     return this.patch(`/channels/${encodeURIComponent(channelId)}`, { cwd }, input);
+  }
+
+  async listChannelBranches(
+    cwd: string,
+    channelId: string,
+    options: { readonly archived?: boolean; readonly limit?: number } = {},
+  ): Promise<ChannelBranchListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/branches`, { cwd, archived: options.archived, limit: options.limit });
+  }
+
+  async createChannelBranch(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelBranchRequest,
+  ): Promise<ChannelBranchMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/branches`, { cwd }, input);
+  }
+
+  async updateChannelBranch(
+    cwd: string,
+    channelId: string,
+    branchId: string,
+    input: UpdateChannelBranchRequest,
+  ): Promise<ChannelBranchMutationResponse> {
+    return this.patch(`/channels/${encodeURIComponent(channelId)}/branches/${encodeURIComponent(branchId)}`, { cwd }, input);
+  }
+
+  async deleteChannelBranch(cwd: string, channelId: string, branchId: string): Promise<void> {
+    await this.request("DELETE", `/channels/${encodeURIComponent(channelId)}/branches/${encodeURIComponent(branchId)}`, { cwd });
+  }
+
+  async getChannelCollaborationProtocol(cwd: string, channelId: string): Promise<ChannelCollaborationProtocolResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/protocol`, { cwd });
+  }
+
+  async updateChannelCollaborationProtocol(
+    cwd: string,
+    channelId: string,
+    input: UpdateChannelCollaborationProtocolRequest,
+  ): Promise<ChannelCollaborationProtocolMutationResponse> {
+    return this.patch(`/channels/${encodeURIComponent(channelId)}/protocol`, { cwd }, input);
+  }
+
+  async revertChannelCollaborationProtocol(cwd: string, channelId: string): Promise<ChannelCollaborationProtocolMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/protocol/revert`, { cwd });
   }
 
   async deleteChannel(cwd: string, channelId: string): Promise<void> {
