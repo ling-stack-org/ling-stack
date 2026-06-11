@@ -18,6 +18,7 @@ import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
+import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 
 export interface ChannelIntentSelectorInput {
@@ -83,6 +84,7 @@ interface RoleMatch {
 type ProposalParticipantSelection = {
   readonly teammate: AiTeammate;
   readonly role: RoleMatch;
+  readonly fallbackSpecialistRoleKey?: AiTeammate["roleKey"];
 };
 
 interface SingleStepExecutableIntent {
@@ -169,7 +171,7 @@ function selectDeterministicChannelWorkflowIntent(input: ChannelIntentSelectorIn
   if (reasonCode && reasonCode !== "explicit_workflow_start") {
     return createWorkflowIntentResult(input, reasonCode, "deterministic");
   }
-  const executableIntent = detectSingleStepExecutableIntent(input.sourceMessage);
+  const executableIntent = detectSingleStepExecutableIntent(input);
   if (executableIntent) {
     return createSingleStepExecutableProposal(input, executableIntent, "deterministic");
   }
@@ -250,7 +252,7 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
     return selectVisibleMultiReply(input, "model", output.reason);
   }
   if (output.action === "direct_workflow") {
-    const executableIntent = detectSingleStepExecutableIntent(input.sourceMessage);
+    const executableIntent = detectSingleStepExecutableIntent(input);
     if (executableIntent) {
       return createSingleStepExecutableProposal(input, executableIntent, "model", output.reason);
     }
@@ -547,7 +549,9 @@ function createSingleStepExecutableProposal(
   const now = new Date().toISOString();
   const riskSummary = blocker
     ? `${executableIntent.riskSummary}\n\n${blocker}`
-    : executableIntent.riskSummary;
+    : participant.fallbackSpecialistRoleKey
+      ? `${executableIntent.riskSummary}\n\n${lingAgentFallbackRecommendation(participant.fallbackSpecialistRoleKey, responseLanguage)}`
+      : executableIntent.riskSummary;
   const proposal = input.store.createChannelExecutionProposal(
     {
       channelId: input.channel.id,
@@ -680,20 +684,20 @@ function detectWorkflowIntentReason(message: ChannelMessage): IntentReasonCode |
   return undefined;
 }
 
-function detectSingleStepExecutableIntent(message: ChannelMessage): SingleStepExecutableIntent | undefined {
-  const text = normalizeWhitespace(message.body);
+function detectSingleStepExecutableIntent(input: ChannelIntentSelectorInput): SingleStepExecutableIntent | undefined {
+  const text = normalizeWhitespace(input.sourceMessage.body);
   if (!text || asksForInstructionsOnly(text)) {
     return undefined;
   }
-  return detectFileExecutableIntent(text) ?? detectCommandExecutableIntent(text);
+  return detectFileExecutableIntent(input, text) ?? detectCommandExecutableIntent(text);
 }
 
-function detectFileExecutableIntent(text: string): SingleStepExecutableIntent | undefined {
+function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: string): SingleStepExecutableIntent | undefined {
   const fileAction = detectFileAction(text);
   if (!fileAction) {
     return undefined;
   }
-  const target = extractFileTarget(text);
+  const target = resolveExecutableFileTarget(input, extractFileTarget(text));
   if (!target) {
     return undefined;
   }
@@ -765,10 +769,10 @@ function asksForInstructionsOnly(text: string): boolean {
 }
 
 function detectFileAction(text: string): "file_create" | "file_edit" | undefined {
-  if (/(修改|编辑|更新|替换|改一下|改成|patch|edit|update|replace)/iu.test(text) && looksLikeFileTarget(text)) {
+  if (/(修改|编辑|更新|替换|改一下|改成|添加|追加|插入|补充|补一句|加上|patch|edit|update|replace|append|insert|add)/iu.test(text) && looksLikeFileTarget(text)) {
     return "file_edit";
   }
-  if (/(创建|新建|生成|写入|写到|保存|落盘|create|write|add|save)/iu.test(text) && looksLikeFileTarget(text)) {
+  if (/(创建|新建|生成|写入|写到|保存|落盘|create|write|save)/iu.test(text) && looksLikeFileTarget(text)) {
     return "file_create";
   }
   return undefined;
@@ -790,13 +794,102 @@ function extractFileTarget(text: string): string | undefined {
   return fileName;
 }
 
+function resolveExecutableFileTarget(input: ChannelIntentSelectorInput, target: string | undefined): string | undefined {
+  if (!target) {
+    return undefined;
+  }
+  const normalizedTarget = normalizeExecutablePathCandidate(stripTrailingPunctuation(target));
+  if (isPathLikeFileTarget(normalizedTarget)) {
+    return normalizedTarget;
+  }
+  return resolveRecentChannelFileTarget(input, normalizedTarget) ?? normalizedTarget;
+}
+
+function resolveRecentChannelFileTarget(input: ChannelIntentSelectorInput, fileName: string): string | undefined {
+  const wanted = fileBasename(fileName).toLowerCase();
+  if (!wanted) {
+    return undefined;
+  }
+  for (const candidate of recentChannelFileTargetCandidates(input)) {
+    if (fileBasename(candidate).toLowerCase() === wanted) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function recentChannelFileTargetCandidates(input: ChannelIntentSelectorInput): readonly string[] {
+  const textSources: string[] = [];
+  const sourceCreatedAt = input.sourceMessage.createdAt;
+  const workflows = input.store
+    .listChannelWorkflows({ channelId: input.channel.id, limit: 20 })
+    .filter((workflow) => workflow.createdAt <= sourceCreatedAt);
+  for (const workflow of workflows) {
+    textSources.push(workflow.title, workflow.objective);
+    for (const step of input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 50 })) {
+      textSources.push(step.title, step.prompt);
+      if (step.resultSummary) {
+        textSources.push(step.resultSummary);
+      }
+    }
+  }
+  const proposals = input.store
+    .listChannelExecutionProposals({ channelId: input.channel.id, limit: 20 })
+    .filter((proposal) => proposal.createdAt <= sourceCreatedAt);
+  for (const proposal of proposals) {
+    textSources.push(proposal.title, proposal.prompt);
+    if (proposal.riskSummary) {
+      textSources.push(proposal.riskSummary);
+    }
+    textSources.push(...proposal.acceptanceCriteria);
+    textSources.push(...proposal.collaborationSteps.map((step) => step.summary));
+  }
+  return uniqueStrings(textSources.flatMap(extractFilePathCandidates));
+}
+
+function extractFilePathCandidates(text: string): readonly string[] {
+  const paths: string[] = [];
+  const pattern = /(?:^|[\s"'`([{（，。:：])((?:\/(?!\/)|\.{1,2}\/|Users\/)[^\s"'`，。；;：:!?！？)）\]}]*?[\w.-]+\.(?:md|txt|json|jsonl|yaml|yml|toml|ts|tsx|js|jsx|mjs|cjs|py|go|rs|swift|kt|sql|css|scss|html|xml|csv|env|example))/giu;
+  for (const match of text.matchAll(pattern)) {
+    const candidate = match[1];
+    if (candidate) {
+      paths.push(normalizeExecutablePathCandidate(stripTrailingPunctuation(candidate)));
+    }
+  }
+  return paths;
+}
+
+function isPathLikeFileTarget(value: string): boolean {
+  return value.includes("/") || value.startsWith(".");
+}
+
+function fileBasename(value: string): string {
+  return stripTrailingPunctuation(value).split("/").filter(Boolean).at(-1) ?? "";
+}
+
 function extractAbsoluteOrRelativePath(text: string): string | undefined {
-  const matches = text.match(/(?:^|[\s"'`([{（，。:：])((?:\/(?!\/)|\.{1,2}\/)[^\s"'`，。；;：:!?！？)）\]}]+)/u);
+  const matches = text.match(/(?:^|[\s"'`([{（，。:：])((?:\/(?!\/)|\.{1,2}\/|Users\/)[^\s"'`，。；;：:!?！？)）\]}]+)/u);
   const candidate = matches?.[1];
   if (!candidate || candidate.startsWith("//")) {
     return undefined;
   }
-  return stripTrailingPunctuation(candidate);
+  return normalizeExecutablePathCandidate(stripTrailingPunctuation(candidate));
+}
+
+function normalizeExecutablePathCandidate(value: string): string {
+  return value.replace(/^Users\//u, "/Users/");
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      unique.push(value);
+    }
+  }
+  return unique;
 }
 
 function extractFileName(text: string): string | undefined {
@@ -993,18 +1086,27 @@ function selectSingleStepExecutableParticipant(
   const inChannel = activeTeammates.filter((teammate) => teammateCanReplyInChannel(input.store, input.channel, teammate.id));
   const supportsTools = (teammate: AiTeammate): boolean =>
     executableIntent.requiredTools.every((tool) => teammate.allowedTools.includes(tool));
-  const preferredSupporting = rolePreferred.find((teammate) => supportsTools(teammate) && teammateCanReplyInChannel(input.store, input.channel, teammate.id))
-    ?? rolePreferred.find(supportsTools)
-    ?? inChannel.find(supportsTools)
-    ?? rolePreferred[0]
-    ?? inChannel[0]
-    ?? activeTeammates[0];
-  if (!preferredSupporting) {
-    return undefined;
+  const preferredSupporting = rolePreferred.find((teammate) => supportsTools(teammate) && teammateCanReplyInChannel(input.store, input.channel, teammate.id));
+  if (preferredSupporting) {
+    return {
+      teammate: preferredSupporting,
+      role: roleMatchForTeammate(preferredSupporting, executableIntent.rolePreferences[0]),
+    };
   }
+  const channelSupporting = inChannel.find(supportsTools);
+  if (channelSupporting) {
+    return {
+      teammate: channelSupporting,
+      role: roleMatchForTeammate(channelSupporting, executableIntent.rolePreferences[0]),
+    };
+  }
+
+  const lingAgent = createLingAgentExecutor();
+  const fallbackRoleKey = executableIntent.rolePreferences[0];
   return {
-    teammate: preferredSupporting,
-    role: roleMatchForTeammate(preferredSupporting, executableIntent.rolePreferences[0]),
+    teammate: lingAgent,
+    role: roleMatchForTeammate(lingAgent, fallbackRoleKey),
+    fallbackSpecialistRoleKey: fallbackRoleKey,
   };
 }
 
@@ -1100,6 +1202,9 @@ function teammateCanClarifyInChannel(store: RunStore, channel: Channel, teammate
 }
 
 function teammateCanReplyInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
+  if (isLingAgentExecutorId(teammateId)) {
+    return true;
+  }
   const protocol = resolveEffectiveChannelCollaborationProtocol({ store, channel });
   if (protocol.protocol.defaultTeammateId === teammateId) {
     return true;
@@ -1109,6 +1214,68 @@ function teammateCanReplyInChannel(store: RunStore, channel: Channel, teammateId
     return true;
   }
   return store.listTeammateChannelMemberships(teammateId).some((membership) => membership.channelId === channel.id);
+}
+
+function lingAgentFallbackRecommendation(roleKey: AiTeammate["roleKey"], responseLanguage: ResponseLanguage): string {
+  const roleLabel = specialistRoleLabel(roleKey, responseLanguage);
+  return responseLanguage === "zh-CN"
+    ? `没有配置可用的专门 ${roleLabel} 队友；Ling Agent 可以先处理这个有边界的任务，之后也可以添加 ${roleLabel} 队友用于未来任务。`
+    : `No dedicated ${roleLabel} teammate is configured. Ling Agent can handle this bounded task now, or you can add a ${roleLabel} teammate for future runs.`;
+}
+
+function specialistRoleLabel(roleKey: AiTeammate["roleKey"], responseLanguage: ResponseLanguage): string {
+  if (responseLanguage === "zh-CN") {
+    if (roleKey === "docs") {
+      return "Docs";
+    }
+    if (roleKey === "engineer") {
+      return "Engineer";
+    }
+    if (roleKey === "qa") {
+      return "QA";
+    }
+    if (roleKey === "architect") {
+      return "Architect";
+    }
+    if (roleKey === "designer") {
+      return "Designer";
+    }
+    if (roleKey === "security") {
+      return "Security";
+    }
+    if (roleKey === "product") {
+      return "Product";
+    }
+    if (roleKey === "release") {
+      return "Release";
+    }
+    return "Specialist";
+  }
+  if (roleKey === "docs") {
+    return "Docs";
+  }
+  if (roleKey === "engineer") {
+    return "Engineer";
+  }
+  if (roleKey === "qa") {
+    return "QA";
+  }
+  if (roleKey === "architect") {
+    return "Architect";
+  }
+  if (roleKey === "designer") {
+    return "Designer";
+  }
+  if (roleKey === "security") {
+    return "Security";
+  }
+  if (roleKey === "product") {
+    return "Product";
+  }
+  if (roleKey === "release") {
+    return "Release";
+  }
+  return "specialist";
 }
 
 function textMentionsRole(text: string, roleKey: AiTeammate["roleKey"]): boolean {

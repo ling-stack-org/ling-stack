@@ -52,9 +52,8 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const runById = new Map(input.runs.map((run) => [run.id, run]));
   const workflowRuns = stepRunIds.map((runId) => runById.get(runId)).filter((run): run is RunSession => Boolean(run));
   const artifacts = stepRunIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
-  const pendingApprovals = input.approvals.filter((approval) =>
-    approval.status === "pending" && orderedSteps.some((step) => step.id === approval.workflowStepId || step.runId === approval.runId),
-  );
+  const workflowApprovals = input.approvals.filter((approval) => approvalBelongsToWorkflow(approval, orderedSteps, workflowRuns));
+  const pendingApprovals = workflowApprovals.filter((approval) => approval.status === "pending");
   const completedSteps = orderedSteps.filter((step) => step.status === "succeeded" || step.status === "skipped").length;
   const blockedStep = orderedSteps.find((step) => step.status === "blocked");
   const waitingStep = orderedSteps.find((step) => step.status === "waiting_for_approval");
@@ -62,7 +61,9 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const queuedStep = orderedSteps.find((step) => step.status === "queued");
   const failedStep = orderedSteps.find((step) => step.status === "failed");
   const currentStep = blockedStep ?? waitingStep ?? runningStep ?? queuedStep ?? failedStep ?? orderedSteps[completedSteps] ?? orderedSteps.at(-1);
-  const finalResultSummary = readWorkflowFinalResultSummary(orderedSteps, input.workflow.status);
+  const finalResultSummary =
+    readWorkflowFinalResultSummary(orderedSteps, input.workflow.status) ??
+    readWorkflowApprovalFinalResultSummary(workflowApprovals, input.workflow.status);
   const attention: WorkflowProgressAttention = blockedStep
     ? "blocked"
     : failedStep || input.workflow.status === "failed"
@@ -115,9 +116,9 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     stats: [
       { id: "steps", label: input.t("Steps"), value: `${completedSteps}/${orderedSteps.length}` },
       { id: "evidence", label: input.t("Evidence"), value: String(artifacts.length) },
-      { id: "approvals", label: input.t("Approvals"), value: String(pendingApprovals.length) },
+      { id: "approvals", label: input.t("Approvals"), value: String(mode === "completed" ? workflowApprovals.length : pendingApprovals.length) },
     ],
-    groups: buildWorkflowProgressGroups({ t: input.t, steps: orderedSteps, artifacts, pendingApprovals }),
+    groups: buildWorkflowProgressGroups({ t: input.t, steps: orderedSteps, artifacts, approvals: workflowApprovals }),
     evidenceLinks,
     attention,
     updatedAt: input.workflow.updatedAt,
@@ -208,14 +209,13 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     })),
   );
   const approvalRows: ConversationWorkCellRow[] = input.evidence.approvals
-    .filter((approval) => approval.status === "pending")
     .slice(0, 8)
     .map((approval) => ({
       id: `approval:${approval.id}`,
       title: approval.title,
       description: approval.description,
-      meta: t("Waiting for approval"),
-      tone: "waiting" as const,
+      meta: approval.status === "pending" ? t("Waiting for approval") : t(approval.status),
+      tone: approvalStatusTone(approval.status),
     }));
   const blockedRows: ConversationWorkCellRow[] = input.evidence.steps
     .filter(({ step }) => step.status === "blocked" || step.status === "failed")
@@ -446,7 +446,7 @@ function buildWorkflowProgressSummary(input: {
     });
   }
   if (input.workflow.status === "blocked" || input.currentStep?.status === "blocked") {
-    return input.t("Blocked: {reason}", { reason: input.currentStep?.blocker ?? input.t("waiting for user input") });
+    return input.t("Blocked: {reason}", { reason: input.currentStep?.blocker ?? input.finalResultSummary ?? input.t("waiting for user input") });
   }
   if (input.pendingApprovalCount > 0 || input.workflow.status === "waiting_for_approval" || input.currentStep?.status === "waiting_for_approval") {
     return input.t("{teammate} is waiting for approval.", { teammate: input.currentStep?.toParticipantLabel ?? input.t("Workflow") });
@@ -480,6 +480,25 @@ function readWorkflowFinalResultSummary(
     }
   }
   return undefined;
+}
+
+function readWorkflowApprovalFinalResultSummary(
+  approvals: readonly ApprovalRequest[],
+  workflowStatus: ChannelWorkflow["status"],
+): string | undefined {
+  if (workflowStatus !== "blocked" && workflowStatus !== "failed" && workflowStatus !== "cancelled") {
+    return undefined;
+  }
+  const denied = approvals.find((approval) => approval.status === "denied");
+  if (denied) {
+    return `Approval denied: ${denied.title}.`;
+  }
+  const expired = approvals.find((approval) => approval.status === "expired");
+  if (expired) {
+    return `Approval expired: ${expired.title}.`;
+  }
+  const cancelled = approvals.find((approval) => approval.status === "cancelled");
+  return cancelled ? `Approval cancelled: ${cancelled.title}.` : undefined;
 }
 
 function buildCurrentRows(input: {
@@ -534,7 +553,7 @@ function buildWorkflowProgressGroups(input: {
   readonly t: Translate;
   readonly steps: readonly ChannelWorkflowStep[];
   readonly artifacts: readonly RunArtifact[];
-  readonly pendingApprovals: readonly ApprovalRequest[];
+  readonly approvals: readonly ApprovalRequest[];
 }): readonly ConversationWorkCellGroup[] {
   const changedArtifacts = input.artifacts.filter((artifact) => artifact.type === "diff" || artifact.type === "file");
   const changedRows = uniqueBy(changedArtifacts, (artifact) => artifact.path || artifact.id).slice(0, 8).map((artifact) => ({
@@ -558,6 +577,13 @@ function buildWorkflowProgressGroups(input: {
     meta: artifact.type,
     tone: "neutral" as const,
   }));
+  evidenceRows.push(...input.approvals.slice(0, 8).map((approval) => ({
+    id: `approval-evidence:${approval.id}`,
+    title: approval.title,
+    description: approval.description,
+    meta: approval.status,
+    tone: approvalStatusTone(approval.status),
+  })));
   for (const step of input.steps) {
     if (step.metadata?.contextArtifactId) {
       evidenceRows.push({
@@ -579,12 +605,15 @@ function buildWorkflowProgressGroups(input: {
     }
   }
   const attentionRows: ConversationWorkCellRow[] = [
-    ...input.pendingApprovals.slice(0, 5).map((approval) => ({
+    ...input.approvals
+      .filter((approval) => approval.status !== "approved")
+      .slice(0, 5)
+      .map((approval) => ({
       id: `approval:${approval.id}`,
       title: approval.title,
       description: approval.description,
-      meta: input.t("Waiting for approval"),
-      tone: "waiting" as const,
+      meta: approval.status === "pending" ? input.t("Waiting for approval") : input.t(approval.status),
+      tone: approval.status === "pending" ? "waiting" as const : "failed" as const,
     })),
     ...input.steps.filter((step) => step.status === "blocked" || step.status === "failed").slice(0, 5).map((step) => ({
       id: `attention-step:${step.id}`,
@@ -622,6 +651,20 @@ function buildWorkflowProgressGroups(input: {
   ];
 }
 
+function approvalBelongsToWorkflow(
+  approval: ApprovalRequest,
+  steps: readonly ChannelWorkflowStep[],
+  runs: readonly RunSession[],
+): boolean {
+  const stepIds = new Set(steps.map((step) => step.id));
+  const runIds = new Set([
+    ...steps.map((step) => step.runId).filter((runId): runId is string => Boolean(runId)),
+    ...runs.map((run) => run.id),
+  ]);
+  return Boolean(approval.workflowStepId && stepIds.has(approval.workflowStepId)) ||
+    Boolean(approval.runId && runIds.has(approval.runId));
+}
+
 function workflowStepProgressTitle(step: ChannelWorkflowStep, t: Translate): string {
   if (step.status === "blocked") {
     return t("{teammate} is blocked", { teammate: step.toParticipantLabel });
@@ -650,6 +693,19 @@ function workflowStepTone(status: ChannelWorkflowStep["status"]): ConversationWo
   }
   if (status === "running" || status === "claimed" || status === "queued") {
     return "running";
+  }
+  return "neutral";
+}
+
+function approvalStatusTone(status: ApprovalRequest["status"]): ConversationWorkCellRowTone {
+  if (status === "approved") {
+    return "success";
+  }
+  if (status === "pending") {
+    return "waiting";
+  }
+  if (status === "denied" || status === "expired" || status === "cancelled") {
+    return "failed";
   }
   return "neutral";
 }

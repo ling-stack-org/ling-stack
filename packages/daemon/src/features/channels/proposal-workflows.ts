@@ -13,6 +13,7 @@ import {
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { responseLanguageInstruction } from "./response-language.js";
+import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
 import { compileWorkflowGraph } from "./workflow-graph.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
 
@@ -166,7 +167,9 @@ function resolveProposalParticipants(
     ? proposal.collaborationSteps
     : [{ teammateId: proposal.assigneeTeammateId, action: "coordinated", summary: "Complete the confirmed execution proposal." } satisfies ChannelExecutionProposalStep];
   return sourceSteps.map((step) => {
-    const teammate = store.getAiTeammate(step.teammateId);
+    const teammate = isLingAgentExecutorId(step.teammateId)
+      ? createLingAgentExecutor()
+      : store.getAiTeammate(step.teammateId);
     if (!teammate) {
       throw new HttpError(400, "proposal_teammate_not_found", `Proposal teammate not found: ${step.teammateId}`);
     }
@@ -190,6 +193,9 @@ function resolveProposalParticipants(
 }
 
 function teammateCanRunInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
+  if (isLingAgentExecutorId(teammateId)) {
+    return true;
+  }
   if (channel.defaultTeammateId === teammateId) {
     return true;
   }

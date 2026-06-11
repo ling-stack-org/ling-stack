@@ -5,6 +5,7 @@ import {
   type WorkflowSelectorAlternative,
   type WorkflowSelectorDecision,
 } from "@ling-stack/core";
+import { isLingAgentExecutorId } from "./ling-agent-executor.js";
 
 export function ensureDeterministicWorkflowSelectorDecision(input: {
   readonly store: RunStore;
@@ -37,7 +38,7 @@ export function ensureDeterministicWorkflowSelectorDecision(input: {
       targetKind: "workflow_step",
       selectedWorkflowStepId: input.selectedStep.id,
       selectedGraphNodeId: input.selectedStep.metadata?.graphNodeId,
-      selectedTeammateId: input.selectedStep.toParticipantId,
+      ...(isLingAgentExecutorId(input.selectedStep.toParticipantId) ? {} : { selectedTeammateId: input.selectedStep.toParticipantId }),
       selectedSkillId: input.selectedStep.metadata?.skillId,
       reason: alternatives.length === 0
         ? `Only eligible step: ${input.selectedStep.title}.`

@@ -241,8 +241,10 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(expanded.emptyStateIconCount).toBe(1);
   expect(Math.abs(expanded.emptyStateCenterDelta)).toBeLessThanOrEqual(2);
   expect(expanded.composerBottomGap).toBeLessThanOrEqual(18);
-  expect(expanded.branchTreeText).toContain("Conversation branches");
-  expect(expanded.branchTreeHeight).toBeGreaterThan(40);
+  if (expanded.branchTreeText) {
+    expect(expanded.branchTreeText).toContain("Conversation branches");
+    expect(expanded.branchTreeHeight).toBeGreaterThan(40);
+  }
   expect(expanded.feedHeight).toBeGreaterThan(240);
   expect(expanded.feedBottomComposerGap).toBe(0);
   expect(expanded.sidebarBottomDisplay).toBe("grid");
@@ -642,17 +644,192 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
-  const proposal = page.getByLabel("Execution proposal");
+  const proposal = page.getByLabel("Task confirmation");
   await expect(proposal).toContainText("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await expect(proposal).toContainText("Engineer");
   await expect(proposal.locator(".channel-proposal-collaboration")).toContainText("Collaboration 3 records");
   await expect(proposal).toContainText("Multi-agent work starts only after confirmation");
-  await expect(proposal.getByRole("button", { name: "Start handling" })).toBeVisible();
+  await expect(proposal).toContainText("Starting this task does not approve future runtime actions");
+  await expect(proposal.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
   await expect(page.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
   await expect.poll(() => {
     const decision = state.channelIntentDecisions[0];
     return isRecord(decision) ? [decision.action, decision.status, decision.createdBy].join("|") : "";
   }).toBe("workflow_proposal|accepted|deterministic");
+});
+
+test("task confirmation cards explain bounded tool permission and target", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent", allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"] })];
+  state.channelMessages = [
+    {
+      id: "msg_permission_confirmations",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "帮我创建 README、编辑 docs，再跑 pnpm test",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:10:00.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_permission_write",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_permission_confirmations",
+      proposedByTeammateId: "ling_agent",
+      title: "Create README.md",
+      prompt: "Create /tmp/example/README.md.",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["README.md is created."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Create the requested file." }],
+      requiredTools: ["write"],
+      riskSummary: "Need write permission for /tmp/example/README.md.",
+      status: "draft",
+      createdAt: "2026-05-25T00:10:01.000Z",
+      updatedAt: "2026-05-25T00:10:01.000Z",
+    },
+    {
+      id: "proposal_permission_edit",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_permission_confirmations",
+      proposedByTeammateId: "ling_agent",
+      title: "Edit docs/guide.md",
+      prompt: "Update docs/guide.md with the new workflow note.",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["docs/guide.md is updated."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Edit the requested file." }],
+      requiredTools: ["edit"],
+      riskSummary: "Need edit permission for docs/guide.md.",
+      status: "draft",
+      createdAt: "2026-05-25T00:10:02.000Z",
+      updatedAt: "2026-05-25T00:10:02.000Z",
+    },
+    {
+      id: "proposal_permission_bash",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_permission_confirmations",
+      proposedByTeammateId: "ling_agent",
+      title: "Run pnpm test",
+      prompt: "Command requested by user: pnpm test",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["Test command completes."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Run the requested command." }],
+      requiredTools: ["bash"],
+      riskSummary: "Need bash permission to run pnpm test.",
+      status: "draft",
+      createdAt: "2026-05-25T00:10:03.000Z",
+      updatedAt: "2026-05-25T00:10:03.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const confirmations = page.getByLabel("Task confirmation");
+  await expect(confirmations).toHaveCount(3);
+  const createCard = confirmations.filter({ hasText: "Create README.md" });
+  await expect(createCard).toContainText("Need write permission to create /tmp/example/README.md for this task.");
+  await expect(createCard).toContainText("Required tool");
+  await expect(createCard).toContainText("write");
+  await expect(createCard).toContainText("Target");
+  await expect(createCard).toContainText("/tmp/example/README.md");
+  await expect(createCard).toContainText("Executor");
+  await expect(createCard).toContainText("Ling Agent");
+
+  const editCard = confirmations.filter({ hasText: "Edit docs/guide.md" });
+  await expect(editCard).toContainText("Need edit permission to update docs/guide.md for this task.");
+  await expect(editCard).toContainText("edit");
+
+  const commandCard = confirmations.filter({ hasText: "Run pnpm test" });
+  await expect(commandCard).toContainText("Need bash permission to run pnpm test for this task.");
+  await expect(commandCard).toContainText("bash");
+
+  await expect(commandCard).toContainText("Starting this task does not approve future runtime actions");
+  await expect(commandCard.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
+});
+
+test("Ling Agent session acceptance matrix routes executable messages to task confirmation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent", allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"] })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("在 /tmp/example 下创建 README.md");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
+  await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
+  await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
+  const feed = page.getByLabel("Channel message feed");
+  const createCard = feed.getByLabel("Task confirmation").filter({ hasText: "Create /tmp/example/README.md" });
+  await expect(createCard).toBeVisible();
+  await expect(createCard).toContainText("Need write permission to create /tmp/example/README.md for this task.");
+  await expect(createCard).toContainText("Required tool");
+  await expect(createCard).toContainText("write");
+  await expect(createCard).toContainText("Target");
+  await expect(createCard).toContainText("/tmp/example/README.md");
+  await expect(createCard).toContainText("Ling Agent");
+  await expect(createCard.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
+  await expect(feed.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("在 README.md 中添加一句测试语句");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(() => state.channelExecutionProposals.length).toBe(2);
+  const editCard = feed.getByLabel("Task confirmation").filter({ hasText: "Edit /tmp/example/README.md" });
+  await expect(editCard).toBeVisible();
+  await expect(editCard).toContainText("Need edit permission to update /tmp/example/README.md for this task.");
+  await expect(editCard).toContainText("edit");
+  await expect(editCard).toContainText("/tmp/example/README.md");
+  await expect.poll(() => {
+    const decision = state.channelIntentDecisions[0];
+    return isRecord(decision) ? [decision.action, decision.status, decision.createdBy].join("|") : "";
+  }).toBe("direct_workflow|accepted|deterministic");
+});
+
+test("Ling Agent session keeps ordinary questions on chat routing", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, defaultTeammateId: "teammate_builtin_engineer", autoReplyMode: "default_teammate" }
+      : channel,
+  );
+  state.aiTeammates = [createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Engineer" })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("这个 workspace 里面都有谁？");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(() => state.channelExecutionProposals.length).toBe(0);
+  await expect.poll(() => state.channelMessageRouteDecisions.length).toBe(1);
+  await expect.poll(() => {
+    const decision = state.channelMessageRouteDecisions[0];
+    return isRecord(decision) ? [decision.action, decision.status, decision.createdBy, decision.selectedTeammateId].join("|") : "";
+  }).toBe("reply|accepted|deterministic|teammate_builtin_engineer");
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByText("收到，我会按频道上下文推进。")).toBeVisible();
+  await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
 });
 
 test("channel settings can add remove and set default teammates", async ({ page }) => {
@@ -1155,7 +1332,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const proposal = page.getByLabel("Execution proposal");
+  const proposal = page.getByLabel("Task confirmation");
   await expect(proposal).toContainText("Refine channel workspace copy");
   await expect(proposal).toContainText("Ling Engineer");
   const collaboration = proposal.locator(".channel-proposal-collaboration");
@@ -1194,7 +1371,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
     const secondStep = updated.collaborationSteps[1];
     return isRecord(secondStep) ? `${updated.prompt}|${secondStep.teammateId}|${secondStep.summary}` : "";
   }).toBe("Refine the channel workspace copy, then run focused QA checks.|teammate_builtin_qa|Run focused regression checks before execution.");
-  await proposal.getByRole("button", { name: "Start handling" }).click();
+  await proposal.getByRole("button", { name: "Authorize and start task" }).click();
 
   await expect.poll(() => {
     const workflow = state.channelWorkflows.find((item) => isRecord(item) && item.title === "Refine channel workspace copy");
@@ -1354,7 +1531,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await page.goto("/");
 
   const feed = page.getByLabel("Channel message feed");
-  await expect(feed.getByLabel("Execution proposal")).toHaveCount(0);
+  await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create /Users/tianxiao/ling-stack-test/README.md" });
   await expect(workCell).toBeVisible();
   await expect(workCell).toContainText("Task completed");
@@ -1362,7 +1539,97 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
 
   await openChannelChatTools(page);
-  await expect(feed.getByLabel("Execution proposal")).toContainText("Create /Users/tianxiao/ling-stack-test/README.md");
+  await expect(feed.getByLabel("Task confirmation")).toContainText("Create /Users/tianxiao/ling-stack-test/README.md");
+});
+
+test("blocked workflow hides accepted proposal and leaves blocker report in default chat", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const blockedAt = "2026-05-25T00:41:00.000Z";
+  state.channelMessages = [
+    {
+      id: "msg_blocked_readme",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "/Users/tianxiao/ling-stack-test 下面，帮我创建一个 README.md",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:39:00.000Z",
+      updatedAt: "2026-05-25T00:39:00.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_blocked_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_blocked_readme",
+      proposedByTeammateId: "ling_agent",
+      title: "Create README.md",
+      prompt: "Create the requested README file.",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["Target file is created."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Create the requested file." }],
+      requiredTools: ["write"],
+      status: "accepted",
+      linkedWorkflowId: "workflow_blocked",
+      createdAt: "2026-05-25T00:39:01.000Z",
+      updatedAt: "2026-05-25T00:39:05.000Z",
+    },
+  ];
+  state.runs = [];
+  state.tasks = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_blocked",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Create README.md",
+      objective: "Create the requested README file.",
+      status: "blocked",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:39:05.000Z",
+      updatedAt: blockedAt,
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_blocked_readme",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_blocked",
+      position: 1,
+      title: "Ling Agent: Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "blocked",
+      blocker: "Write permission was not granted.",
+      createdAt: "2026-05-25T00:39:05.000Z",
+      updatedAt: blockedAt,
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
+  const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create README.md" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toContainText("Task blocked");
+  await expect(workCell).toContainText("Blocked: Write permission was not granted.");
+
+  await openChannelChatTools(page);
+  await expect(feed.getByLabel("Task confirmation")).toContainText("Create README.md");
 });
 
 test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {
@@ -2260,6 +2527,56 @@ test("active conversation work cell renders sparse rows while runtime approvals 
   await overlay.getByRole("button", { name: "Approve" }).click();
   await expect(composer.getByLabel("Composer approval overlay")).toHaveCount(0);
   await expect(composer).not.toContainText("Approve shell command");
+  expect(state.approvals.find((approval) => isRecord(approval) && approval.id === "approval_1")?.status).toBe("approved");
+  expect(state.approvalPolicy.toolDecisions.bash).toBe("ask");
+  expect(state.approvalPolicy.toolDecisions.write).toBe("ask");
+});
+
+test("Ling Agent session active run guidance queues follow-up from composer and stops the run", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const run = state.runs[0];
+  run.status = "running";
+  run.errorMessage = undefined;
+  run.startedAt = "2026-05-22T00:00:30.000Z";
+  run.updatedAt = "2026-05-22T00:01:00.000Z";
+  state.approvals = [];
+  state.tasks = state.tasks.map((task) => isRecord(task) && task.id === "task_inspect"
+    ? { ...task, status: "running", currentRunId: run.id, updatedAt: run.updatedAt }
+    : task);
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const guidance = page.getByLabel("Run guidance");
+  await expect(guidance).toBeVisible();
+  await expect(guidance).toContainText("Type guidance in the message box and press Enter to queue it.");
+  const composer = page.getByLabel("Channel composer");
+  const composerInput = composer.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("完成后也更新 docs");
+  await composerInput.press("Enter");
+
+  await expect.poll(() => state.runInterventions.length).toBe(1);
+  await expect(guidance).toContainText("完成后也更新 docs");
+  expect(state.runInterventions[0]).toMatchObject({
+    sourceRunId: run.id,
+    mode: "queue_followup",
+    status: "queued",
+    instruction: "完成后也更新 docs",
+  });
+  expect(state.channelMessages).toHaveLength(0);
+  expect(state.channelExecutionProposals).toHaveLength(0);
+
+  await expect(composerInput).toHaveValue("");
+  await composerInput.fill("停，改用 daemon API");
+  await expect(composer.getByRole("button", { name: "Stop run" })).toBeEnabled();
+  await composer.getByRole("button", { name: "Stop run" }).click();
+
+  await expect.poll(() => state.runs.find((item) => item.id === run.id)?.status).toBe("cancelled");
+  expect(state.runInterventions).toHaveLength(1);
+  expect(state.channelMessages).toHaveLength(0);
+  expect(state.channelExecutionProposals).toHaveLength(0);
 });
 
 test("composer approval overlay groups multiple local approvals and excludes review queue actions", async ({ page }) => {

@@ -2852,6 +2852,10 @@ function maybeCreateMockWorkflowProposal(
   autoReplyMode: string,
 ): boolean {
   const body = typeof message.body === "string" ? message.body : "";
+  const executableProposal = maybeCreateMockSingleStepExecutableProposal(state, channelId, message, body);
+  if (executableProposal) {
+    return true;
+  }
   const lower = body.toLowerCase();
   const allTeammates = /(所有|全部|全体|每个|每位).{0,8}(队友|agent|teammate|agents)/iu.test(body);
   const orderedWork = /(architect|架构|架构师).{0,80}(engineer|工程|实现|开发|qa|测试|验证|验收)/iu.test(body) ||
@@ -2927,6 +2931,108 @@ function maybeCreateMockWorkflowProposal(
     updatedAt: "2026-05-25T00:18:00.500Z",
   });
   return true;
+}
+
+function maybeCreateMockSingleStepExecutableProposal(
+  state: MockState,
+  channelId: string,
+  message: Record<string, unknown>,
+  body: string,
+): boolean {
+  if (!body.trim()) {
+    return false;
+  }
+  const isCreate = /(创建|新建|生成|写入|保存|create|write|save)/iu.test(body);
+  const isEdit = /(修改|编辑|更新|添加|追加|插入|补充|补一句|加上|edit|update|append|insert|add)/iu.test(body);
+  if (!isCreate && !isEdit) {
+    return false;
+  }
+  const target = mockExecutableFileTarget(state, channelId, body);
+  if (!target) {
+    return false;
+  }
+  const action = isEdit ? "edit" : "write";
+  const verb = isEdit ? "Edit" : "Create";
+  const title = `${verb} ${target}`;
+  const proposal = {
+    id: `proposal_${state.channelExecutionProposals.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId,
+    sourceMessageId: typeof message.id === "string" ? message.id : "",
+    proposedByTeammateId: "ling_agent",
+    title,
+    prompt: `${verb} the requested file.\nTarget: ${target}`,
+    assigneeTeammateId: "ling_agent",
+    acceptanceCriteria: [
+      `Target file is ${isEdit ? "updated" : "created"} at ${target}.`,
+      "No undeclared files, commands, MCP tools, or external actions are used without a separate runtime permission request.",
+    ],
+    collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: `${verb} the requested file.` }],
+    requiredTools: [action],
+    riskSummary: `Need ${action} permission for ${target}. Ling Agent can handle this bounded task now.`,
+    responseLanguage: /[\u3400-\u9fff]/u.test(body) ? "zh-CN" : "en-US",
+    status: "draft",
+    createdAt: "2026-05-25T00:18:02.000Z",
+    updatedAt: "2026-05-25T00:18:02.000Z",
+  };
+  state.channelExecutionProposals.unshift(proposal);
+  state.channelIntentDecisions.push({
+    schemaVersion: 1,
+    id: `intent_${state.channelIntentDecisions.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId,
+    sourceMessageId: typeof message.id === "string" ? message.id : "",
+    action: "direct_workflow",
+    proposalId: proposal.id,
+    reason: "Direct single-step executable proposal created by mock intent selector.",
+    status: "accepted",
+    createdBy: "deterministic",
+    createdAt: "2026-05-25T00:18:00.500Z",
+    updatedAt: "2026-05-25T00:18:00.500Z",
+  });
+  return true;
+}
+
+function mockExecutableFileTarget(state: MockState, channelId: string, body: string): string | undefined {
+  const explicitPath = body.match(/(?:^|[\s"'`([{（，。:：])((?:\/(?!\/)|\.{1,2}\/|Users\/)[^\s"'`，。；;：:!?！？)）\]}]*?[\w.-]+\.(?:md|txt|json|ts|tsx|js|jsx|py|css|html|yml|yaml))/iu)?.[1];
+  if (explicitPath) {
+    return explicitPath.replace(/^Users\//u, "/Users/");
+  }
+  const fileName = body.match(/([\w.-]+\.(?:md|txt|json|ts|tsx|js|jsx|py|css|html|yml|yaml))/iu)?.[1];
+  if (!fileName) {
+    return undefined;
+  }
+  const recentTarget = mockRecentWorkflowFileTarget(state, channelId, fileName);
+  if (recentTarget) {
+    return recentTarget;
+  }
+  const basePath = body.match(/(?:在|到|位于|under|in)\s*((?:\/(?!\/)|Users\/)[^\s，。；;:：]*)(?:\s+下|下面|里|中|\/)?/iu)?.[1];
+  if (basePath) {
+    return `${basePath.replace(/^Users\//u, "/Users/").replace(/\/$/u, "")}/${fileName}`;
+  }
+  return fileName;
+}
+
+function mockRecentWorkflowFileTarget(state: MockState, channelId: string, fileName: string): string | undefined {
+  const wanted = fileName.toLowerCase();
+  const texts = [
+    ...state.channelExecutionProposals
+      .filter((proposal) => isRecord(proposal) && proposal.channelId === channelId)
+      .flatMap((proposal) => [proposal.title, proposal.prompt, proposal.riskSummary].filter((value): value is string => typeof value === "string")),
+    ...state.channelWorkflowSteps
+      .filter((step) => isRecord(step) && step.channelId === channelId)
+      .flatMap((step) => [step.title, step.prompt, step.resultSummary].filter((value): value is string => typeof value === "string")),
+  ];
+  for (const text of texts) {
+    const matches = text.matchAll(/((?:\/(?!\/)|Users\/|\.\.?\/)[^\s"'`，。；;：:!?！？)）\]}]*?[\w.-]+\.(?:md|txt|json|ts|tsx|js|jsx|py|css|html|yml|yaml))/giu);
+    for (const match of matches) {
+      const candidate = match[1].replace(/^Users\//u, "/Users/");
+      if (candidate.split("/").filter(Boolean).at(-1)?.toLowerCase() === wanted) {
+        return candidate;
+      }
+    }
+  }
+  return undefined;
 }
 
 function mockTextMentionsRole(text: string, role: string): boolean {

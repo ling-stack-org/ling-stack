@@ -6,6 +6,7 @@ Date: 2026-06-09
 Related docs:
 
 - [Channel Workspace Design](channel-workspace.md)
+- [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
@@ -13,6 +14,12 @@ Related docs:
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 
 ## Purpose
+
+This document now describes an internal ordinary-chat routing module under the Ling Agent
+session model. The public product owner is
+[Ling Agent Session Control Plane](ling-agent-session.md). Users should see Ling Agent
+answers, task confirmations, progress, approvals, and final reports, not auto-route
+mechanics.
 
 Channel discussion currently replies only when the user explicitly mentions an AI
 teammate. This is safe, but it makes a channel with a default teammate feel silent when
@@ -33,6 +40,10 @@ user channel message
 
 It does not replace workflow orchestration and does not create a shared long-context
 multi-agent chatroom.
+
+Under Ling Agent Session, auto reply runs after active-session handling and executable
+intent detection. It must not claim messages that should become a task, run,
+continuation, or approval response.
 
 ## Current P0 Behavior
 
@@ -66,7 +77,8 @@ create `ChannelExecutionProposal`, tasks, runs, workflows, branches, or approval
 
 ## Product Boundary
 
-The auto reply router is a shaping-stage conversation feature.
+The auto reply router is a shaping-stage conversation feature and an internal Ling Agent
+module.
 
 It may:
 

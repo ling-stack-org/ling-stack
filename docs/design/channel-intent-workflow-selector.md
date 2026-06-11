@@ -6,6 +6,7 @@ Date: 2026-06-10
 Related docs:
 
 - [Channel Workspace Design](channel-workspace.md)
+- [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
@@ -13,6 +14,12 @@ Related docs:
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
 
 ## Purpose
+
+This document now describes an internal Ling Agent Coordinator module. The user-facing
+product model is defined in
+[Ling Agent Session Control Plane](ling-agent-session.md). Users should experience Ling
+Agent process, permission prompts, final reports, and optional evidence rather than
+selector, auto-route, workflow, proposal, or run internals.
 
 Ling now has two adjacent but separate selectors:
 
@@ -39,6 +46,8 @@ This layer decides whether a user message should stay as ordinary conversation o
 a workflow-shaped collaboration request. It does not make the channel a group chat and
 does not let every teammate answer by default. A bounded `visible_multi_reply` is allowed
 only when the user explicitly asks for multiple teammate opinions in the shaping stage.
+Under the Ling Agent session model, this layer is called by Ling Agent before ordinary
+auto-route so executable intent cannot be answered as a plain teammate chat reply.
 
 ## Current Implementation
 
@@ -73,7 +82,13 @@ The current implementation is deterministic by default and uses Ling-native pers
   chat surface collapses process UI and shows the final work result summary, preferring
   the terminal workflow step `resultSummary` over internal step/evidence counts. The
   accepted proposal, workflow steps, runs, and transition records remain available in the
-  audit tools/evidence surfaces, but they should not crowd the ordinary conversation path.
+  audit tools/evidence surfaces, but they should not crowd the ordinary conversation path;
+- follow-up executable edits may refer to the prior work result by filename only, such as
+  `在 README.md 中添加一句测试语句`. The selector should resolve that relative target from
+  recent same-channel workflow/proposal context before ordinary auto-route gets a chance
+  to answer with instructions. If the resolved task needs `edit`, `write`, or `bash`, it
+  must surface as a task-scoped executable proposal with the required tool/assignee
+  blocker instead of a plain teammate chat reply.
 
 Current implemented examples:
 
@@ -100,8 +115,14 @@ Implemented slices:
 
 ## Product Boundary
 
-The channel remains the user's collaboration space. The default visible output is still
-conversation, live progress, compact completed summaries, and expandable evidence.
+The channel remains the user's collaboration space, but the default visible owner is Ling
+Agent. The default visible output is still conversation, live progress, permission
+prompts, compact completed summaries, and expandable evidence.
+
+The selector is not a product surface. It may create route decisions, proposals, and
+workflow entries as internal execution primitives, but the ordinary UI should translate
+those primitives into Ling Agent outcomes: answer, clarify, confirm task, run progress,
+approval needed, final result, or evidence.
 
 The intent selector may:
 
@@ -847,6 +868,11 @@ and prompt text are audit data, not normal conversation content.
   shell snippet; it creates a direct-workflow prefill even when the channel is otherwise
   read-only, unless the selected teammate/provider/runner/workspace policy cannot support
   the required `write` tool.
+- After a terminal workflow creates or edits `/path/README.md`, a later message like
+  `在 README.md 中添加一句测试语句` resolves to `/path/README.md` and creates an `edit`
+  proposal. It must not be suppressed as `no_reply` or answered by Docs with instructions.
+- Paths accidentally entered as `Users/name/...` are normalized to `/Users/name/...`
+  before proposal creation.
 - Single-step executable proposals surface required tools such as `write`, `edit`, or
   `bash` before confirmation and rely on existing approval policy at run time.
 - Confirmed single-step workflow steps pass only the bounded required tools to the runner,

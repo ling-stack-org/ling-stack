@@ -25,6 +25,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { isRecord, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
+import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
 
 export interface CompileWorkflowGraphInput {
   readonly channelId: string;
@@ -451,6 +452,10 @@ function resolveGraphNodeParticipant(store: RunStore, node: WorkflowGraphNode): 
     throw new HttpError(400, "workflow_graph_invalid", `Node ${node.id} must use teammateId or teammateTemplateId, not both`);
   }
   if (node.teammateId) {
+    if (isLingAgentExecutorId(node.teammateId)) {
+      const lingAgent = createLingAgentExecutor();
+      return { toParticipantId: lingAgent.id, toParticipantLabel: lingAgent.displayName };
+    }
     const teammate = store.getAiTeammate(node.teammateId);
     if (!teammate) {
       throw new HttpError(400, "teammate_not_found", `AI teammate not found: ${node.teammateId}`);

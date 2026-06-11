@@ -7396,6 +7396,7 @@ function ChannelExecutionProposalCard({
     ? (linkedWorkflow?.status ?? "workflow")
     : "";
   const collaborationSummary = proposalCollaborationSummary(proposal, teammates, t);
+  const permissionSummary = buildProposalPermissionSummary({ proposal, assigneeLabel, t });
   const statusIcon = proposal.status === "accepted"
     ? <CheckCircle2 size={14} />
     : proposal.status === "blocked" || proposal.status === "run_failed"
@@ -7459,7 +7460,7 @@ function ChannelExecutionProposalCard({
   }
 
   return (
-    <div className={`channel-execution-proposal ${proposal.status}`} aria-label={t("Execution proposal")}>
+    <div className={`channel-execution-proposal ${proposal.status}`} aria-label={t("Task confirmation")}>
       <div className="channel-proposal-head">
         <span>
           {statusIcon}
@@ -7539,6 +7540,30 @@ function ChannelExecutionProposalCard({
         {linkedWorkflowStatus ? <StatusBadge status={linkedWorkflowStatus} /> : null}
         {linkedRunStatus ? <StatusBadge status={linkedRunStatus} /> : null}
       </div>
+      {!editing && canStart ? (
+        <section className="channel-proposal-permission" aria-label={t("Task permission confirmation")}>
+          <div className="channel-proposal-permission-head">
+            <ShieldCheck size={14} />
+            <strong>{t("Task permission confirmation")}</strong>
+          </div>
+          <p>{permissionSummary.sentence}</p>
+          <div className="channel-proposal-permission-grid">
+            <span>
+              <small>{t("Required tool")}</small>
+              <strong>{permissionSummary.toolLabel}</strong>
+            </span>
+            <span>
+              <small>{t("Target")}</small>
+              <strong>{permissionSummary.targetLabel}</strong>
+            </span>
+            <span>
+              <small>{t("Executor")}</small>
+              <strong>{permissionSummary.executorLabel}</strong>
+            </span>
+          </div>
+          <small>{t("Starting this task does not approve future runtime actions. Ling may still ask before file changes, commands, MCP tools, or external actions.")}</small>
+        </section>
+      ) : null}
       {proposal.acceptanceCriteria.length > 0 ? (
         <div className="channel-proposal-criteria">
           <strong>{t("Acceptance criteria")}</strong>
@@ -7601,7 +7626,7 @@ function ChannelExecutionProposalCard({
         ) : canStart ? (
           <button className="primary-button compact-button" type="button" onClick={onConfirm}>
             <Play size={14} />
-            {t("Start handling")}
+            {t("Authorize and start task")}
           </button>
         ) : null}
         {!editing && canEdit ? (
@@ -9133,6 +9158,112 @@ function parseProposalLines(value: string): readonly string[] {
     .filter(Boolean);
 }
 
+interface ProposalPermissionSummary {
+  readonly sentence: string;
+  readonly toolLabel: string;
+  readonly targetLabel: string;
+  readonly executorLabel: string;
+}
+
+function buildProposalPermissionSummary(input: {
+  readonly proposal: ChannelExecutionProposal;
+  readonly assigneeLabel: string;
+  readonly t: Translate;
+}): ProposalPermissionSummary {
+  const { proposal, t } = input;
+  const primaryTool = proposalPermissionPrimaryTool(proposal.requiredTools);
+  const targetLabel = extractProposalPermissionTarget(proposal, primaryTool) ?? t("declared task scope");
+  const toolLabel = proposal.requiredTools.length > 0 ? proposal.requiredTools.join(", ") : t("workspace tools");
+  const sentence = proposalPermissionSentence({
+    tool: primaryTool,
+    targetLabel,
+    t,
+  });
+  return {
+    sentence,
+    toolLabel,
+    targetLabel,
+    executorLabel: input.assigneeLabel,
+  };
+}
+
+function proposalPermissionPrimaryTool(
+  tools: readonly ChannelExecutionProposal["requiredTools"][number][],
+): ChannelExecutionProposal["requiredTools"][number] | undefined {
+  if (tools.includes("write")) {
+    return "write";
+  }
+  if (tools.includes("edit")) {
+    return "edit";
+  }
+  if (tools.includes("bash")) {
+    return "bash";
+  }
+  return tools[0];
+}
+
+function proposalPermissionSentence(input: {
+  readonly tool?: ChannelExecutionProposal["requiredTools"][number];
+  readonly targetLabel: string;
+  readonly t: Translate;
+}): string {
+  if (input.tool === "write") {
+    return input.t("Need write permission to create {target} for this task.", { target: input.targetLabel });
+  }
+  if (input.tool === "edit") {
+    return input.t("Need edit permission to update {target} for this task.", { target: input.targetLabel });
+  }
+  if (input.tool === "bash") {
+    return input.t("Need bash permission to run {target} for this task.", { target: input.targetLabel });
+  }
+  if (input.tool) {
+    return input.t("Need {tool} permission for {target} in this task.", { tool: input.tool, target: input.targetLabel });
+  }
+  return input.t("Confirm this bounded task scope before Ling starts.");
+}
+
+function extractProposalPermissionTarget(
+  proposal: ChannelExecutionProposal,
+  primaryTool?: ChannelExecutionProposal["requiredTools"][number],
+): string | undefined {
+  const sources = [proposal.riskSummary, proposal.prompt, proposal.title].filter((value): value is string => Boolean(value?.trim()));
+  if (primaryTool === "bash") {
+    const command = sources.map(extractProposalCommandTarget).find((value): value is string => Boolean(value));
+    if (command) {
+      return command;
+    }
+  }
+  const path = sources.map(extractProposalPathTarget).find((value): value is string => Boolean(value));
+  if (path) {
+    return path;
+  }
+  return primaryTool === "bash" ? trimPermissionTarget(proposal.title.replace(/^run\s+/iu, "")) : undefined;
+}
+
+function extractProposalCommandTarget(value: string): string | undefined {
+  const explicitCommand = /Command requested by user:\s*([^\n]+)/iu.exec(value)?.[1];
+  if (explicitCommand) {
+    return trimPermissionTarget(explicitCommand);
+  }
+  const riskCommand = /(?:run|运行)\s+(.+?)(?:[；;\n]|$)/iu.exec(value)?.[1];
+  if (riskCommand) {
+    return trimPermissionTarget(riskCommand);
+  }
+  return undefined;
+}
+
+function extractProposalPathTarget(value: string): string | undefined {
+  const matches = value.match(/(?:\/[^\s`"'，。；;:)]+|(?:\.{1,2}\/)?[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)*\.[A-Za-z0-9]{1,8})/gu) ?? [];
+  return matches
+    .map(trimPermissionTarget)
+    .find((candidate) => Boolean(candidate && !candidate.startsWith("http://") && !candidate.startsWith("https://")));
+}
+
+function trimPermissionTarget(value: string): string | undefined {
+  const trimmed = value.trim().replace(/^[`"']+/u, "").replace(/[`"',，。；;:)]+$/u, "").replace(/\.$/u, "");
+  return trimmed ? truncatePreview(trimmed, 180) : undefined;
+}
+
 function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]): string {
   if (status === "draft") {
     return "Ready for confirmation";
@@ -9549,7 +9680,7 @@ function proposalHasTerminalWorkflow(proposal: ChannelExecutionProposal, workflo
 }
 
 function workflowIsTerminal(status: ChannelWorkflow["status"]): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
+  return status === "succeeded" || status === "blocked" || status === "failed" || status === "cancelled";
 }
 
 function buildChannelWorkThreadTree(threads: readonly LingThread[]): ReadonlyArray<{

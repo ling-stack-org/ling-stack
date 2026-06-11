@@ -982,6 +982,63 @@ textarea {
   color: var(--text);
 }
 
+.channel-proposal-permission {
+  display: grid;
+  gap: 7px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.channel-proposal-permission-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+}
+
+.channel-proposal-permission-head strong {
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.channel-proposal-permission > p,
+.channel-proposal-permission > small {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.channel-proposal-permission > small {
+  color: var(--text-soft);
+}
+
+.channel-proposal-permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.channel-proposal-permission-grid span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.channel-proposal-permission-grid small {
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 780;
+  text-transform: uppercase;
+}
+
+.channel-proposal-permission-grid strong {
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .channel-proposal-criteria {
   display: grid;
   gap: 4px;

@@ -8,6 +8,7 @@ import { createCompositeSecretResolver, createSqliteRunStore } from "../../core/
 import { createDaemonServer } from "../dist/index.js";
 import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
+import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("health exposes channel auto_route capability", async () => {
@@ -138,6 +139,439 @@ test("context budget manager resolves provider modes and trims lower priority se
   assert.deepEqual(trimmed.sections.map((section) => section.id), ["must"]);
   assert.deepEqual(trimmed.droppedSectionIds, ["low", "high"]);
   assert.equal(trimmed.overBudget, false);
+});
+
+test("ling agent session view is open when channel has no active work", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-open-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const { channel } = createStoreChannelAndMessage(store, cwd, "hello");
+
+    const view = buildLingAgentSessionViewForChannel({ store, channelId: channel.id });
+
+    assert.equal(view.id, `ling-agent-session:${channel.id}`);
+    assert.equal(view.status, "open");
+    assert.equal(view.owner, "ling_agent");
+    assert.equal(view.confirmation, undefined);
+    assert.equal(view.progress, undefined);
+    assert.equal(view.finalResult, undefined);
+    assert.deepEqual(view.pendingApprovalIds, []);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent session view projects draft proposal as task confirmation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-proposal-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const { channel, message } = createStoreChannelAndMessage(store, cwd, `在 ${cwd} 下创建 README.md`);
+    const proposal = store.createChannelExecutionProposal({
+      channelId: channel.id,
+      sourceMessageId: message.id,
+      proposedByTeammateId: "ling_agent",
+      title: "Create README.md",
+      prompt: `Target: ${cwd}/README.md`,
+      assigneeTeammateId: "ling_agent",
+      requiredTools: ["write"],
+      riskSummary: "Need write permission for README.md.",
+      status: "draft",
+    }, "2026-06-11T00:01:00.000Z");
+
+    const view = buildLingAgentSessionViewForChannel({ store, channelId: channel.id });
+
+    assert.equal(view.status, "ready_for_confirmation");
+    assert.equal(view.objective, proposal.title);
+    assert.equal(view.confirmation?.proposalId, proposal.id);
+    assert.deepEqual(view.confirmation?.requiredTools, ["write"]);
+    assert.equal(view.confirmation?.assigneeTeammateId, "ling_agent");
+    assert.ok(view.evidenceRefs.some((ref) => ref.type === "proposal" && ref.id === proposal.id));
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent session view projects active workflow approval wait", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-approval-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const { channel } = createStoreChannelAndMessage(store, cwd, "帮我跑测试");
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Run tests",
+      objective: "Run the test suite.",
+      status: "running",
+      createdBy: "ling_agent",
+    }, "2026-06-11T00:01:00.000Z");
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Execute test command",
+      prompt: "Run tests.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "waiting_for_approval",
+    }, "2026-06-11T00:02:00.000Z");
+    const run = store.createRun({
+      id: "run_ling_agent_session_waiting",
+      cwd,
+      taskId: "task_ling_agent_session_waiting",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      workflowStepId: step.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_session_waiting", title: "Execute test command" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:03:00.000Z",
+    });
+    store.markRunWaitingForApproval(run.id, "2026-06-11T00:04:00.000Z");
+    store.updateChannelWorkflowStep(step.id, { runId: run.id }, "2026-06-11T00:04:00.000Z");
+    const approval = store.createApprovalRequest({
+      runId: run.id,
+      taskId: run.taskId,
+      channelId: channel.id,
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve test command",
+      description: "Run tests.",
+      payload: { type: "bash", cwd, command: "pnpm test", riskFlags: [] },
+      expiresAt: "2999-01-01T00:00:00.000Z",
+    }, "2026-06-11T00:05:00.000Z");
+
+    const view = buildLingAgentSessionViewForChannel({ store, channelId: channel.id });
+
+    assert.equal(view.status, "waiting_for_approval");
+    assert.equal(view.activeWorkflowId, workflow.id);
+    assert.equal(view.activeRunId, run.id);
+    assert.deepEqual(view.pendingApprovalIds, [approval.id]);
+    assert.equal(view.progress?.workflowId, workflow.id);
+    assert.equal(view.progress?.activeStepId, step.id);
+    assert.ok(view.evidenceRefs.some((ref) => ref.type === "approval" && ref.id === approval.id));
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent session view projects terminal workflow final result", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-final-workflow-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const { channel } = createStoreChannelAndMessage(store, cwd, "实现并验证");
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Implement feature",
+      objective: "Implement and verify the feature.",
+      status: "succeeded",
+      createdBy: "ling_agent",
+    }, "2026-06-11T00:01:00.000Z");
+    const firstStep = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      position: 1,
+      title: "Implementation",
+      prompt: "Implement.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "succeeded",
+    }, "2026-06-11T00:02:00.000Z");
+    const secondStep = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      position: 2,
+      title: "Verification",
+      prompt: "Verify.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "succeeded",
+    }, "2026-06-11T00:03:00.000Z");
+    const verificationRun = store.createRun({
+      id: "run_ling_agent_session_final_verification",
+      cwd,
+      taskId: "task_ling_agent_session_final_verification",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      workflowStepId: secondStep.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_session_final_verification", title: "Verify feature" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:03:30.000Z",
+    });
+    store.markRunSucceeded(verificationRun.id, "2026-06-11T00:04:30.000Z");
+    const artifact = store.createArtifact({
+      runId: verificationRun.id,
+      type: "file",
+      path: `${cwd}/src/feature.ts`,
+      title: "feature.ts",
+      contentType: "text/typescript; charset=utf-8",
+      sizeBytes: 128,
+      createdAt: "2026-06-11T00:04:45.000Z",
+    });
+    store.updateChannelWorkflowStep(firstStep.id, { resultSummary: "Implemented feature." }, "2026-06-11T00:04:00.000Z");
+    store.updateChannelWorkflowStep(secondStep.id, {
+      runId: verificationRun.id,
+      resultSummary: "Verified checks.",
+      metadata: { outputArtifactIds: [artifact.id] },
+    }, "2026-06-11T00:05:00.000Z");
+
+    const view = buildLingAgentSessionViewForChannel({ store, channelId: channel.id });
+
+    assert.equal(view.status, "succeeded");
+    assert.equal(view.finalResult?.outcome, "succeeded");
+    assert.equal(view.finalResult?.summary, "Verified checks.");
+    assert.deepEqual(view.finalResult?.changedPaths, [`${cwd}/src/feature.ts`]);
+    assert.deepEqual(view.finalResult?.artifactIds, [artifact.id]);
+    assert.deepEqual(view.finalResult?.checks.map((check) => check.title), ["Implementation", "Verification"]);
+    assert.ok(view.evidenceRefs.some((ref) => ref.type === "workflow" && ref.id === workflow.id));
+    assert.ok(view.evidenceRefs.some((ref) => ref.type === "run" && ref.id === verificationRun.id));
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent session view projects blocked workflow final result with next action", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-blocked-workflow-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const { channel } = createStoreChannelAndMessage(store, cwd, "需要写文件");
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Create README.md",
+      objective: "Create the requested file.",
+      status: "blocked",
+      createdBy: "ling_agent",
+    }, "2026-06-11T00:01:00.000Z");
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      position: 1,
+      title: "Create file",
+      prompt: "Create README.md.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "blocked",
+    }, "2026-06-11T00:02:00.000Z");
+    store.updateChannelWorkflowStep(step.id, { blocker: "Write permission was not granted." }, "2026-06-11T00:03:00.000Z");
+
+    const view = buildLingAgentSessionViewForChannel({ store, channelId: channel.id });
+
+    assert.equal(view.status, "blocked");
+    assert.equal(view.finalResult?.outcome, "blocked");
+    assert.equal(view.finalResult?.summary, "Write permission was not granted.");
+    assert.deepEqual(view.finalResult?.nextActions, ["Write permission was not granted."]);
+    assert.deepEqual(view.finalResult?.checks, [{
+      id: step.id,
+      title: "Create file",
+      status: "blocked",
+      summary: "Write permission was not granted.",
+    }]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent session view projects terminal failed run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-failed-run-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const { channel } = createStoreChannelAndMessage(store, cwd, "修复失败任务");
+    const run = store.createRun({
+      id: "run_ling_agent_session_failed",
+      cwd,
+      taskId: "task_ling_agent_session_failed",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_session_failed", title: "Fix failing task" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    store.markRunFailed(run.id, "2026-06-11T00:02:00.000Z", "Typecheck failed.");
+
+    const view = buildLingAgentSessionViewForChannel({ store, channelId: channel.id });
+
+    assert.equal(view.status, "failed");
+    assert.equal(view.finalResult?.outcome, "failed");
+    assert.equal(view.finalResult?.title, "Fix failing task");
+    assert.equal(view.finalResult?.summary, "Typecheck failed.");
+    assert.deepEqual(view.finalResult?.nextActions, ["Typecheck failed."]);
+    assert.ok(view.evidenceRefs.some((ref) => ref.type === "run" && ref.id === run.id));
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent session view reports denied approval for terminal run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-denied-approval-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const { channel } = createStoreChannelAndMessage(store, cwd, "创建 README.md");
+    const run = store.createRun({
+      id: "run_ling_agent_session_denied_approval",
+      cwd,
+      taskId: "task_ling_agent_session_denied_approval",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_session_denied_approval", title: "Create README.md" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    const approval = store.createApprovalRequest({
+      runId: run.id,
+      taskId: run.taskId,
+      channelId: channel.id,
+      actionType: "write",
+      risk: "medium",
+      title: "Approve README.md write",
+      description: "Allow creating README.md.",
+      payload: { type: "file_write", path: `${cwd}/README.md`, bytes: 16 },
+      expiresAt: "2999-01-01T00:00:00.000Z",
+    }, "2026-06-11T00:02:00.000Z");
+    store.denyApprovalRequest(approval.id, { reason: "Need a narrower path.", resolvedBy: "local-user" }, "2026-06-11T00:03:00.000Z");
+    store.markRunCancelled(run.id, "2026-06-11T00:04:00.000Z");
+
+    const view = buildLingAgentSessionViewForChannel({ store, channelId: channel.id });
+
+    assert.equal(view.status, "cancelled");
+    assert.equal(view.finalResult?.outcome, "cancelled");
+    assert.equal(view.finalResult?.summary, "Approval denied: Approve README.md write.");
+    assert.deepEqual(view.finalResult?.nextActions, ["Need a narrower path."]);
+    assert.deepEqual(view.finalResult?.approvals, [{
+      approvalId: approval.id,
+      actionType: "write",
+      status: "denied",
+      title: "Approve README.md write",
+    }]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent coordinator queues active run follow-up before ordinary routing", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-followup-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Ling Agent Coordinator",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_docs",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.createRun({
+      id: "run_ling_agent_coordinator_followup",
+      cwd,
+      taskId: "task_ling_agent_coordinator_followup",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_coordinator_followup", title: "Active work" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "完成后也更新 docs",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.activeSessionAction.mode, "queue_followup");
+    assert.equal(created.activeSessionAction.status, "created");
+    assert.equal(created.activeSessionAction.sourceRunId, run.id);
+    assert.equal(created.intervention.sourceRunId, run.id);
+    assert.equal(created.intervention.mode, "queue_followup");
+    const interventions = store.listRunInterventions({ sourceRunId: run.id });
+    assert.deepEqual(interventions.map((intervention) => intervention.id), [created.intervention.id]);
+    assert.deepEqual(store.listEvents(run.id).map((event) => event.type), ["run_intervention_created", "run_followup_queued"]);
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(proposals.proposals, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent coordinator requires confirmation for active run redirect", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-redirect-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Ling Agent Coordinator Redirect",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_docs",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.createRun({
+      id: "run_ling_agent_coordinator_redirect",
+      cwd,
+      taskId: "task_ling_agent_coordinator_redirect",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_coordinator_redirect", title: "Active work" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "停，改用 daemon API",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.intervention, undefined);
+    assert.equal(created.activeSessionAction.mode, "interrupt_redirect");
+    assert.equal(created.activeSessionAction.status, "requires_confirmation");
+    assert.equal(created.activeSessionAction.sourceRunId, run.id);
+    assert.equal(store.getRun(run.id).status, "running");
+    assert.deepEqual(store.listRunInterventions({ sourceRunId: run.id }), []);
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(proposals.proposals, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("channel messages persist and AI blocker replies do not drop the user message", async () => {
@@ -732,6 +1166,102 @@ test("single-step file creation becomes direct workflow with bounded write tools
   }
 });
 
+test("Ling Agent fallback creates file proposal when no Docs teammate can run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-ling-agent-fallback-docs-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Ling Agent fallback docs",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: `在 ${cwd} 下创建 README.md`,
+    });
+
+    assert.equal(created.aiReply, undefined);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].assigneeTeammateId, "ling_agent");
+    assert.equal(proposals.proposals[0].proposedByTeammateId, "ling_agent");
+    assert.deepEqual(proposals.proposals[0].collaborationSteps.map((step) => step.teammateId), ["ling_agent"]);
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
+    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
+
+    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(confirmed.proposal.status, "accepted");
+    assert.equal(confirmed.workflow.createdBy, "ling_agent");
+    assert.equal(confirmed.workflowSteps.length, 1);
+    assert.equal(confirmed.workflowSteps[0].toParticipantId, "ling_agent");
+    assert.equal(confirmed.workflowSteps[0].toParticipantLabel, "Ling Agent");
+    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.equal(runner.runs.length, 1);
+    assert.deepEqual(runner.runs[0].tools, ["write"]);
+    assert.match(runner.runs[0].task.prompt, /Assigned teammate: Ling Agent/);
+    assert.match(runner.runs[0].task.prompt, /Confirmed task-scoped tools:\nwrite/);
+    const runs = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(runs.runs.length, 1);
+    assert.equal(runs.runs[0].teammateId, "ling_agent");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Ling Agent fallback edits code proposal when no Engineer teammate can run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-ling-agent-fallback-engineer-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Ling Agent fallback engineer",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "edit"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: `修改 ${cwd}/src/app.ts，把标题改成 Ling`,
+    });
+
+    assert.equal(created.aiReply, undefined);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].assigneeTeammateId, "ling_agent");
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["edit"]);
+    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
+    assert.match(proposals.proposals[0].riskSummary, /Engineer/);
+
+    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(confirmed.proposal.status, "accepted");
+    assert.equal(confirmed.workflowSteps.length, 1);
+    assert.equal(confirmed.workflowSteps[0].toParticipantId, "ling_agent");
+    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["edit"]);
+    assert.equal(runner.runs.length, 1);
+    assert.deepEqual(runner.runs[0].tools, ["edit"]);
+    assert.match(runner.runs[0].task.prompt, /Assigned teammate: Ling Agent/);
+    const runs = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(runs.runs.length, 1);
+    assert.equal(runs.runs[0].teammateId, "ling_agent");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("single-step file creation starts with task-scoped write when channel lacks static write tool", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-file-channel-readonly-"));
   const runner = new RecordingRunner();
@@ -771,6 +1301,86 @@ test("single-step file creation starts with task-scoped write when channel lacks
     assert.equal(confirmed.workflowSteps[0].metadata.sourceProposalId, proposals.proposals[0].id);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("single-step file edit inherits target path from recent workflow context", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-file-continuation-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Docs edit continuation",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_docs",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "write", "edit"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: `在 ${cwd} 下创建 README.md`,
+    });
+    const createProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(createProposals.proposals.length, 1);
+    await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(createProposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
+
+    const edited = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "在 README.md 中添加一句测试语句",
+    });
+
+    assert.equal(edited.aiReply, undefined);
+    const editProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
+    assert.equal(editProposals.proposals.length, 1);
+    assert.equal(editProposals.proposals[0].status, "draft");
+    assert.deepEqual(editProposals.proposals[0].requiredTools, ["edit"]);
+    assert.match(editProposals.proposals[0].title, /README\.md|\.\.\./);
+    assert.match(editProposals.proposals[0].prompt, new RegExp(`Target: ${escapeRegExp(cwd)}/README\\.md`));
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
+    assert.equal(decisions.decisions[0].action, "direct_workflow");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("single-step file edit normalizes Users path without leading slash", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-file-users-path-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Docs users path edit",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_docs",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "edit"],
+    })).channel;
+
+    const edited = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Users/tianxiao/ling-stack-test 下面，在 README.md 中添加一句测试语句",
+    });
+
+    assert.equal(edited.aiReply, undefined);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["edit"]);
+    assert.match(proposals.proposals[0].title, /\/Users\/tianxiao\/ling-stack-test\/README\.md/);
+    assert.match(proposals.proposals[0].prompt, /Target: \/Users\/tianxiao\/ling-stack-test\/README\.md/);
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -4163,6 +4773,10 @@ class RecordingRunner {
   }
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 class ScriptedRunner {
   constructor(responses) {
     this.responses = responses.slice();
@@ -4365,6 +4979,22 @@ function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {
     },
     new Date().toISOString(),
   );
+}
+
+function createStoreChannelAndMessage(store, cwd, body) {
+  const now = "2026-06-11T00:00:00.000Z";
+  const channel = store.createChannel({
+    name: "Ling Agent Session",
+    status: "active",
+    boundPath: cwd,
+    allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+  }, now);
+  const message = store.createChannelMessage({
+    channelId: channel.id,
+    authorType: "local-user",
+    body,
+  }, now);
+  return { channel, message };
 }
 
 function customTemplate(overrides = {}) {

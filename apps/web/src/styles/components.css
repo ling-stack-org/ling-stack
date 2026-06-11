@@ -4541,6 +4541,59 @@ code,
   font-weight: 600;
 }
 
+.channel-proposal-permission {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.channel-proposal-permission-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+}
+
+.channel-proposal-permission-head strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.channel-proposal-permission > p,
+.channel-proposal-permission > small {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.channel-proposal-permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.channel-proposal-permission-grid span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.channel-proposal-permission-grid small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.channel-proposal-permission-grid strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
 .channel-proposal-collaboration {
   display: grid;
   gap: 8px;
