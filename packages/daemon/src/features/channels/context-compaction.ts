@@ -1,4 +1,4 @@
-import type { ChannelWorkflowStep, RunArtifact, RunStore } from "@ling-stack/core";
+import type { Channel, ChannelContextSummary, ChannelMessage, ChannelWorkflowStep, RunArtifact, RunStore } from "@ling-stack/core";
 import {
   buildWorkflowStepContextPack,
   type ContextPack,
@@ -28,6 +28,66 @@ export interface WorkflowStepContextCompactionSummary {
 export interface WorkflowStepContextCompactionResult {
   readonly contextPack: ContextPack;
   readonly compactions: readonly WorkflowStepContextCompactionSummary[];
+}
+
+export interface ChannelDiscussionCompactionResult {
+  readonly summary: ChannelContextSummary;
+  readonly compactedSummary: {
+    readonly id: string;
+    readonly text: string;
+    readonly sourceMessageIds: readonly string[];
+  };
+}
+
+const CONTEXT_LENGTH_ERROR_PATTERNS = [
+  /context[_ -]?length/i,
+  /context window/i,
+  /maximum context/i,
+  /token limit/i,
+  /too many tokens/i,
+  /prompt is too long/i,
+  /input.*too long/i,
+];
+
+export function isContextLengthError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return CONTEXT_LENGTH_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+export function compactChannelDiscussionForNoToolsRetry(input: {
+  readonly store: RunStore;
+  readonly channel: Channel;
+  readonly sourceMessage: ChannelMessage;
+  readonly now: string;
+}): ChannelDiscussionCompactionResult {
+  const sourceMessages = selectChannelSummaryMessages(input.store, input.channel, input.sourceMessage);
+  const summaryText = renderChannelDiscussionSummary(input.channel, input.sourceMessage, sourceMessages);
+  const summary = input.store.createChannelContextSummary(
+    {
+      channelId: input.channel.id,
+      targetType: "thread",
+      targetId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+      sourceMessageIds: sourceMessages.map((message) => message.id),
+      summary: summaryText,
+      acceptanceCriteria: [],
+      openQuestions: [],
+      authorType: "system",
+    },
+    input.now,
+  );
+  return {
+    summary,
+    compactedSummary: {
+      id: summary.id,
+      text: [
+        "Compacted channel discussion summary for a no-tools retry:",
+        summary.summary,
+        "",
+        "Use this summary instead of expanding older channel history. It excludes private teammate chat, hidden prompts, provider secrets, raw artifact bodies, and protocol mutations.",
+      ].join("\n"),
+      sourceMessageIds: summary.sourceMessageIds,
+    },
+  };
 }
 
 export function maybeCompactWorkflowStepContext(input: {
@@ -68,6 +128,37 @@ export function maybeCompactWorkflowStepContext(input: {
 
 function shouldCompactWorkflowStepContext(pack: ContextPack): boolean {
   return pack.overBudget || pack.droppedSectionIds.some((id) => id === "workflow_dependencies" || id.startsWith("workflow_dependency_"));
+}
+
+function selectChannelSummaryMessages(store: RunStore, channel: Channel, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
+  const byId = new Map<string, ChannelMessage>();
+  for (const message of store.listChannelMessages({ channelId: channel.id, limit: 30 })) {
+    if (message.status === "pending" || !message.body.trim()) {
+      continue;
+    }
+    byId.set(message.id, message);
+  }
+  byId.set(sourceMessage.id, sourceMessage);
+  return [...byId.values()]
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .slice(-20);
+}
+
+function renderChannelDiscussionSummary(channel: Channel, sourceMessage: ChannelMessage, messages: readonly ChannelMessage[]): string {
+  const recentLines = messages.slice(-12).map((message) => [
+    `- ${message.createdAt} ${message.authorType}${message.authorId ? `:${message.authorId}` : ""}`,
+    message.threadId ? `thread=${message.threadId}` : undefined,
+    `kind=${message.kind}`,
+    `body=${truncateSummary(message.body, 240)}`,
+  ].filter((line): line is string => line !== undefined).join("; "));
+  return [
+    `Channel: ${channel.name} (${channel.id})`,
+    `Source message: ${sourceMessage.id}`,
+    `Compacted visible message count: ${messages.length}.`,
+    "Recent visible channel messages:",
+    ...recentLines,
+    messages.length > recentLines.length ? `- ${messages.length - recentLines.length} older visible messages omitted from retry prompt; source refs remain on the summary record.` : undefined,
+  ].filter((line): line is string => line !== undefined).join("\n");
 }
 
 function workflowStepDependencies(input: WorkflowStepContextPackInput): readonly ChannelWorkflowStep[] {

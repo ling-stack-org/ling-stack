@@ -96,6 +96,8 @@ interface ChannelReplyContextPackInput {
   readonly teammate: AiTeammate | undefined;
   readonly canonicalTeammateId: string;
   readonly visibleParticipantTeammateIds?: readonly string[];
+  readonly compactedChannelSummary?: ChannelCompactedDiscussionSummary;
+  readonly minimal?: boolean;
 }
 
 interface ChannelIntentSelectorContextPackInput {
@@ -103,6 +105,8 @@ interface ChannelIntentSelectorContextPackInput {
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly providerPresetId?: string;
+  readonly compactedChannelSummary?: ChannelCompactedDiscussionSummary;
+  readonly minimal?: boolean;
 }
 
 export interface ChannelAutoRouteCandidateContext {
@@ -115,6 +119,12 @@ export interface ChannelAutoRouteCandidateContext {
 
 interface ChannelAutoRouteContextPackInput extends ChannelIntentSelectorContextPackInput {
   readonly candidates: readonly ChannelAutoRouteCandidateContext[];
+}
+
+export interface ChannelCompactedDiscussionSummary {
+  readonly id: string;
+  readonly text: string;
+  readonly sourceMessageIds: readonly string[];
 }
 
 export interface WorkflowStepContextPackInput {
@@ -239,33 +249,43 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
   const kind: ContextPackKind = (input.visibleParticipantTeammateIds?.length ?? 0) > 0
     ? "visible_multi_reply"
     : "channel_reply";
+  const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
+  const compactedSummarySection = input.compactedChannelSummary
+    ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)]
+    : [];
   return buildContextPack({
     kind,
     providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
     sections: [
       protocolSection,
+      ...compactedSummarySection,
       {
         id: "channel_discussion",
         role: "user",
         priority: "must_keep",
-        text: formatChannelDiscussionPrompt(input.channel, input.sourceMessage, discussionPromptContext),
-        sourceRefIds: [input.sourceMessage.id, input.channel.id],
+        text: formatChannelDiscussionPrompt(input.channel, sourceMessage, discussionPromptContext),
+        sourceRefIds: [sourceMessage.id, input.channel.id],
       },
     ],
     sourceRefs: [
       { type: "channel", id: input.channel.id, label: input.channel.name },
-      { type: "message", id: input.sourceMessage.id, label: "Source message" },
+      { type: "message", id: sourceMessage.id, label: "Source message" },
+      ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
     ],
+    compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
   });
 }
 
 export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelectorContextPackInput): ContextPack {
   const protocolSection = buildChannelProtocolContextSection(input);
-  const recentMessages = input.store
-    .listChannelMessages({ channelId: input.channel.id, limit: 8 })
-    .filter((message) => message.id !== input.sourceMessage.id)
-    .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
-    .join("\n");
+  const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
+  const recentMessages = input.minimal
+    ? ""
+    : input.store
+      .listChannelMessages({ channelId: input.channel.id, limit: 8 })
+      .filter((message) => message.id !== input.sourceMessage.id)
+      .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
+      .join("\n");
   const teammateRoles = input.store
     .listAiTeammates({ status: "active", includeHidden: false, limit: 20 })
     .map((teammate) => ({ id: teammate.id, role: teammate.roleKey, label: teammate.displayName }))
@@ -290,12 +310,13 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
         ].join("\n"),
       },
       protocolSection,
+      ...(input.compactedChannelSummary ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)] : []),
       {
         id: "selector_source_message",
         role: "user",
         priority: "must_keep",
-        text: [`Channel: ${input.channel.name}`, `Latest user message: ${input.sourceMessage.body}`].join("\n"),
-        sourceRefIds: [input.channel.id, input.sourceMessage.id],
+        text: [`Channel: ${input.channel.name}`, `Latest user message: ${sourceMessage.body}`].join("\n"),
+        sourceRefIds: [input.channel.id, sourceMessage.id],
       },
       {
         id: "selector_recent_context",
@@ -312,18 +333,23 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
     ],
     sourceRefs: [
       { type: "channel", id: input.channel.id, label: input.channel.name },
-      { type: "message", id: input.sourceMessage.id, label: "Latest user message" },
+      { type: "message", id: sourceMessage.id, label: "Latest user message" },
+      ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
     ],
+    compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
   });
 }
 
 export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextPackInput): ContextPack {
   const protocolSection = buildChannelProtocolContextSection(input);
-  const recentMessages = input.store
-    .listChannelMessages({ channelId: input.channel.id, limit: 8 })
-    .filter((message) => message.id !== input.sourceMessage.id)
-    .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
-    .join("\n");
+  const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
+  const recentMessages = input.minimal
+    ? ""
+    : input.store
+      .listChannelMessages({ channelId: input.channel.id, limit: 8 })
+      .filter((message) => message.id !== input.sourceMessage.id)
+      .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
+      .join("\n");
   return buildContextPack({
     kind: "auto_route_selector",
     providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
@@ -340,12 +366,13 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
         ].join("\n"),
       },
       protocolSection,
+      ...(input.compactedChannelSummary ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)] : []),
       {
         id: "auto_route_source_message",
         role: "user",
         priority: "must_keep",
-        text: [`Channel: ${input.channel.name}`, `Latest user message: ${input.sourceMessage.body}`].join("\n"),
-        sourceRefIds: [input.channel.id, input.sourceMessage.id],
+        text: [`Channel: ${input.channel.name}`, `Latest user message: ${sourceMessage.body}`].join("\n"),
+        sourceRefIds: [input.channel.id, sourceMessage.id],
       },
       {
         id: "auto_route_recent_context",
@@ -362,8 +389,10 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
     ],
     sourceRefs: [
       { type: "channel", id: input.channel.id, label: input.channel.name },
-      { type: "message", id: input.sourceMessage.id, label: "Latest user message" },
+      { type: "message", id: sourceMessage.id, label: "Latest user message" },
+      ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
     ],
+    compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
   });
 }
 
@@ -502,6 +531,26 @@ function renderChannelProtocolContext(protocol: EffectiveChannelCollaborationPro
     `- Visible multi-reply max participants: ${protocol.protocol.visibleMultiReplyMaxParticipants} (source=${protocol.sources.visibleMultiReplyMaxParticipants.source})`,
     "- Private teammate chat, hidden prompts, provider secrets, and unreviewed memory are excluded unless an explicit future approved flow promotes them.",
   ].join("\n");
+}
+
+function buildCompactedChannelDiscussionSection(summary: ChannelCompactedDiscussionSummary): ContextSection {
+  return {
+    id: "channel_discussion_summary",
+    role: "evidence",
+    priority: "high",
+    text: summary.text,
+    sourceRefIds: [summary.id, ...summary.sourceMessageIds],
+  };
+}
+
+function contextSourceMessage(sourceMessage: ChannelMessage, maxBodyLength: number | undefined): ChannelMessage {
+  if (!maxBodyLength || sourceMessage.body.length <= maxBodyLength) {
+    return sourceMessage;
+  }
+  return {
+    ...sourceMessage,
+    body: `${sourceMessage.body.slice(0, Math.max(0, maxBodyLength - 80))}\n\n[Message body truncated for no-tools context retry. Full text remains in the channel message record: ${sourceMessage.id}]`,
+  };
 }
 
 function buildCompactedWorkflowDependencySection(summary: WorkflowStepCompactedDependencySummary): ContextSection {

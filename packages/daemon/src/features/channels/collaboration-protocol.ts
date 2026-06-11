@@ -2,9 +2,16 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   channelAutoReplyModes,
   channelResponseLanguages,
+  channelWorkflowPreferences,
   type Channel,
   type ChannelAutoReplyMode,
+  type ChannelCollaborationProtocolDraft,
+  type ChannelCollaborationProtocolPatch,
+  type ChannelProtocolDraftCreatedBy,
+  type ChannelProtocolDraftStatus,
+  type ChannelProtocolSourceRef,
   type ChannelResponseLanguage,
+  type ChannelWorkflowPreference,
   type RunStore,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -17,6 +24,7 @@ import { resolveAiTeammateReference } from "../teammates/identity.js";
 export type ChannelProtocolFieldSource =
   | "current_message"
   | "channel_setting"
+  | "protocol_override"
   | "workspace_setting"
   | "default"
   | "teammate_instruction";
@@ -34,11 +42,12 @@ export interface EffectiveChannelCollaborationProtocol {
   readonly responseLanguage: ChannelResponseLanguage;
   readonly autoReplyMode: ChannelAutoReplyMode;
   readonly defaultTeammateId?: string;
-  readonly defaultWorkflowPreference: "manual";
+  readonly protocolVersion?: number;
+  readonly defaultWorkflowPreference: ChannelWorkflowPreference;
   readonly visibleMultiReplyMaxParticipants: number;
   readonly privacyRules: readonly string[];
   readonly reviewRules: readonly string[];
-  readonly updatedBy: "local-user" | "system_template";
+  readonly updatedBy: "local-user" | "system_template" | "ai-draft";
   readonly updatedAt: string;
 }
 
@@ -48,25 +57,26 @@ export interface EffectiveChannelCollaborationProtocolResult {
     readonly responseLanguage: ChannelProtocolFieldResolution<ChannelResponseLanguage>;
     readonly autoReplyMode: ChannelProtocolFieldResolution<ChannelAutoReplyMode>;
     readonly defaultTeammateId: ChannelProtocolFieldResolution<string | undefined>;
-    readonly defaultWorkflowPreference: ChannelProtocolFieldResolution<"manual">;
+    readonly defaultWorkflowPreference: ChannelProtocolFieldResolution<ChannelWorkflowPreference>;
     readonly visibleMultiReplyMaxParticipants: ChannelProtocolFieldResolution<number>;
     readonly privacyRules: ChannelProtocolFieldResolution<readonly string[]>;
     readonly reviewRules: ChannelProtocolFieldResolution<readonly string[]>;
   };
   readonly storage: {
-    readonly mode: "channel_fields";
+    readonly mode: "channel_fields" | "channel_fields_and_protocol_overrides";
     readonly editableFields: readonly string[];
     readonly unsupportedFields: readonly string[];
   };
 }
 
 const EDITABLE_PROTOCOL_FIELDS = ["responseLanguage", "autoReplyMode", "defaultTeammateId"] as const;
-const UNSUPPORTED_PROTOCOL_FIELDS = [
+const PROTOCOL_OVERRIDE_FIELDS = [
   "defaultWorkflowPreference",
   "visibleMultiReplyMaxParticipants",
   "privacyRules",
   "reviewRules",
 ] as const;
+const ALL_PROTOCOL_FIELDS = [...EDITABLE_PROTOCOL_FIELDS, ...PROTOCOL_OVERRIDE_FIELDS] as const;
 
 type ProtocolPatchInput = {
   readonly responseLanguage?: ChannelResponseLanguage | null;
@@ -74,30 +84,33 @@ type ProtocolPatchInput = {
   readonly defaultTeammateId?: string | null;
 };
 
+type MutableProtocolPatch = {
+  -readonly [K in keyof ChannelCollaborationProtocolPatch]: ChannelCollaborationProtocolPatch[K];
+};
+
 export function resolveEffectiveChannelCollaborationProtocol(input: {
   readonly store: RunStore;
   readonly channel: Channel;
 }): EffectiveChannelCollaborationProtocolResult {
   const workspaceSettings = input.store.getWorkspaceSettings();
+  const override = input.store.getChannelCollaborationProtocolOverride(input.channel.id);
   const responseLanguage = resolveResponseLanguageField(input.channel, workspaceSettings.responseLanguage);
   const autoReplyMode = resolveAutoReplyModeField(input.channel);
   const defaultTeammateId = resolveDefaultTeammateField(input.channel);
-  const defaultWorkflowPreference: ChannelProtocolFieldResolution<"manual"> = {
-    value: "manual",
-    source: "default",
-  };
-  const visibleMultiReplyMaxParticipants: ChannelProtocolFieldResolution<number> = {
-    value: 3,
-    source: "default",
-  };
-  const privacyRules: ChannelProtocolFieldResolution<readonly string[]> = {
-    value: [],
-    source: "default",
-  };
-  const reviewRules: ChannelProtocolFieldResolution<readonly string[]> = {
-    value: [],
-    source: "default",
-  };
+  const defaultWorkflowPreference = resolveProtocolOverrideField<ChannelWorkflowPreference>(override?.defaultWorkflowPreference, "manual");
+  const visibleMultiReplyMaxParticipants = resolveProtocolOverrideField(override?.visibleMultiReplyMaxParticipants, 3);
+  const privacyRules = resolveProtocolOverrideField<readonly string[]>(override?.privacyRules, []);
+  const reviewRules = resolveProtocolOverrideField<readonly string[]>(override?.reviewRules, []);
+  const updatedBy = override
+    ? override.updatedBy
+    : responseLanguage.source === "default" &&
+      autoReplyMode.source === "default" &&
+      defaultTeammateId.source === "default"
+      ? "system_template"
+      : "local-user";
+  const updatedAt = override && override.updatedAt.localeCompare(input.channel.updatedAt) > 0
+    ? override.updatedAt
+    : input.channel.updatedAt;
 
   return {
     protocol: {
@@ -106,16 +119,13 @@ export function resolveEffectiveChannelCollaborationProtocol(input: {
       responseLanguage: responseLanguage.value,
       autoReplyMode: autoReplyMode.value,
       defaultTeammateId: defaultTeammateId.value,
+      protocolVersion: override?.version,
       defaultWorkflowPreference: defaultWorkflowPreference.value,
       visibleMultiReplyMaxParticipants: visibleMultiReplyMaxParticipants.value,
       privacyRules: privacyRules.value,
       reviewRules: reviewRules.value,
-      updatedBy: responseLanguage.source === "default" &&
-        autoReplyMode.source === "default" &&
-        defaultTeammateId.source === "default"
-        ? "system_template"
-        : "local-user",
-      updatedAt: input.channel.updatedAt,
+      updatedBy,
+      updatedAt,
     },
     sources: {
       responseLanguage,
@@ -127,10 +137,23 @@ export function resolveEffectiveChannelCollaborationProtocol(input: {
       reviewRules,
     },
     storage: {
-      mode: "channel_fields",
-      editableFields: EDITABLE_PROTOCOL_FIELDS,
-      unsupportedFields: UNSUPPORTED_PROTOCOL_FIELDS,
+      mode: "channel_fields_and_protocol_overrides",
+      editableFields: ALL_PROTOCOL_FIELDS,
+      unsupportedFields: [],
     },
+  };
+}
+
+function resolveProtocolOverrideField<T>(overrideValue: T | undefined, defaultValue: T): ChannelProtocolFieldResolution<T> {
+  if (overrideValue !== undefined) {
+    return {
+      value: overrideValue,
+      source: "protocol_override",
+    };
+  }
+  return {
+    value: defaultValue,
+    source: "default",
   };
 }
 
@@ -140,7 +163,8 @@ export async function handleChannelCollaborationProtocol(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
-  action?: "revert",
+  action?: "revert" | "drafts" | "apply-draft",
+  draftId?: string,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -159,6 +183,51 @@ export async function handleChannelCollaborationProtocol(
 
     if (!action && request.method === "GET") {
       writeJson(response, 200, { cwd, ...resolveEffectiveChannelCollaborationProtocol({ store, channel }) });
+      return;
+    }
+
+    if (action === "drafts" && request.method === "GET") {
+      const status = readDraftStatusFilter(url.searchParams.get("status"));
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        drafts: store.listChannelCollaborationProtocolDrafts({
+          channelId,
+          status,
+          limit: readLimit(url.searchParams.get("limit")),
+        }),
+      });
+      return;
+    }
+
+    if (action === "drafts" && request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const draftInput = parseCreateProtocolDraftInput(body);
+      const validationError = validateProtocolPatch(store, draftInput.proposedPatch, config);
+      if (validationError) {
+        writeJson(response, validationError.statusCode, {
+          error: validationError.code,
+          message: validationError.message,
+        });
+        return;
+      }
+      const draft = store.createChannelCollaborationProtocolDraft(
+        {
+          channelId,
+          baseVersion: draftInput.baseVersion,
+          proposedPatch: draftInput.proposedPatch,
+          reason: draftInput.reason,
+          createdBy: draftInput.createdBy ?? "ai-draft",
+          sourceRefs: draftInput.sourceRefs,
+          expiresAt: draftInput.expiresAt,
+        },
+        new Date().toISOString(),
+      );
+      writeJson(response, 201, {
+        cwd,
+        draft,
+        ...resolveEffectiveChannelCollaborationProtocol({ store, channel }),
+      });
       return;
     }
 
@@ -191,10 +260,29 @@ export async function handleChannelCollaborationProtocol(
         autoReplyMode: null,
         defaultTeammateId: null,
       }, new Date().toISOString());
+      store.deleteChannelCollaborationProtocolOverride(channelId);
       writeJson(response, 200, {
         cwd,
-        revertedFields: EDITABLE_PROTOCOL_FIELDS,
+        revertedFields: ALL_PROTOCOL_FIELDS,
         ...resolveEffectiveChannelCollaborationProtocol({ store, channel: updated ?? channel }),
+      });
+      return;
+    }
+
+    if (action === "apply-draft" && request.method === "POST") {
+      if (!draftId) {
+        writeJson(response, 400, { error: "bad_request", message: "Protocol draft id is required." });
+        return;
+      }
+      const applied = applyProtocolDraft(store, channel, draftId, config);
+      if ("error" in applied) {
+        writeJson(response, applied.statusCode, applied.error);
+        return;
+      }
+      writeJson(response, 200, {
+        cwd,
+        draft: applied.draft,
+        ...resolveEffectiveChannelCollaborationProtocol({ store, channel: applied.channel }),
       });
       return;
     }
@@ -214,6 +302,136 @@ export async function handleChannelCollaborationProtocol(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function applyProtocolDraft(
+  store: RunStore,
+  channel: Channel,
+  draftId: string,
+  config: ResolvedDaemonConfig,
+):
+  | { readonly channel: Channel; readonly draft: ChannelCollaborationProtocolDraft }
+  | { readonly statusCode: number; readonly error: Record<string, unknown> } {
+  const draft = store.getChannelCollaborationProtocolDraft(draftId);
+  if (!draft || draft.channelId !== channel.id) {
+    return {
+      statusCode: 404,
+      error: { error: "protocol_draft_not_found", message: `Channel protocol draft not found: ${draftId}` },
+    };
+  }
+  if (draft.status !== "draft") {
+    return {
+      statusCode: 409,
+      error: { error: "protocol_draft_not_applyable", message: `Channel protocol draft is ${draft.status}.`, draft },
+    };
+  }
+
+  const validationError = validateProtocolPatch(store, draft.proposedPatch, config);
+  if (validationError) {
+    return {
+      statusCode: validationError.statusCode,
+      error: {
+        error: validationError.code,
+        message: validationError.message,
+      },
+    };
+  }
+
+  const currentOverride = store.getChannelCollaborationProtocolOverride(channel.id);
+  const currentVersion = currentOverride?.version ?? 0;
+  if (draft.baseVersion !== undefined && draft.baseVersion !== currentVersion) {
+    const stale = store.updateChannelCollaborationProtocolDraft(draft.id, { status: "stale" }, new Date().toISOString()) ?? draft;
+    return {
+      statusCode: 409,
+      error: {
+        error: "draft_base_version_mismatch",
+        message: `Channel protocol draft base version ${draft.baseVersion} does not match current version ${currentVersion}.`,
+        draft: stale,
+        currentVersion,
+      },
+    };
+  }
+
+  let nextChannel = channel;
+  const patch = draft.proposedPatch;
+  if (hasChannelFieldPatch(patch)) {
+    nextChannel = store.updateChannel(channel.id, {
+      responseLanguage: patch.responseLanguage,
+      autoReplyMode: patch.autoReplyMode,
+      defaultTeammateId: patch.defaultTeammateId,
+    }, new Date().toISOString()) ?? channel;
+  }
+
+  const overridePatch = protocolOverridePatch(patch);
+  let appliedProtocolVersion = currentOverride?.version ?? 0;
+  if (Object.keys(overridePatch).length > 0) {
+    const override = store.upsertChannelCollaborationProtocolOverride({
+      channelId: channel.id,
+      ...overridePatch,
+      sourceRefs: draft.sourceRefs,
+      updatedBy: draft.createdBy,
+    }, new Date().toISOString());
+    appliedProtocolVersion = override.version;
+  }
+  const appliedDraft = store.updateChannelCollaborationProtocolDraft(
+    draft.id,
+    {
+      status: "applied",
+      appliedProtocolVersion,
+    },
+    new Date().toISOString(),
+  ) ?? draft;
+  return { channel: nextChannel, draft: appliedDraft };
+}
+
+function hasChannelFieldPatch(patch: ChannelCollaborationProtocolPatch): boolean {
+  return patch.responseLanguage !== undefined || patch.autoReplyMode !== undefined || patch.defaultTeammateId !== undefined;
+}
+
+function protocolOverridePatch(patch: ChannelCollaborationProtocolPatch): Pick<
+  ChannelCollaborationProtocolPatch,
+  "defaultWorkflowPreference" | "visibleMultiReplyMaxParticipants" | "privacyRules" | "reviewRules"
+> {
+  const result: {
+    defaultWorkflowPreference?: ChannelWorkflowPreference;
+    visibleMultiReplyMaxParticipants?: number;
+    privacyRules?: readonly string[];
+    reviewRules?: readonly string[];
+  } = {};
+  if (patch.defaultWorkflowPreference !== undefined) {
+    result.defaultWorkflowPreference = patch.defaultWorkflowPreference;
+  }
+  if (patch.visibleMultiReplyMaxParticipants !== undefined) {
+    result.visibleMultiReplyMaxParticipants = patch.visibleMultiReplyMaxParticipants;
+  }
+  if (patch.privacyRules !== undefined) {
+    result.privacyRules = patch.privacyRules;
+  }
+  if (patch.reviewRules !== undefined) {
+    result.reviewRules = patch.reviewRules;
+  }
+  return result;
+}
+
+function readDraftStatusFilter(value: string | null): ChannelProtocolDraftStatus | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (value !== "draft" && value !== "applied" && value !== "cancelled" && value !== "stale") {
+    throw new Error("Unsupported channel protocol draft status filter");
+  }
+  return value;
+}
+
+function readLimit(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error("limit must be a positive integer");
+  }
+  return parsed;
 }
 
 function resolveResponseLanguageField(
@@ -278,12 +496,12 @@ function parseProtocolPatchInput(value: unknown): ProtocolPatchInput {
   }
   const unknownFields = Object.keys(value).filter((key) =>
     !EDITABLE_PROTOCOL_FIELDS.includes(key as typeof EDITABLE_PROTOCOL_FIELDS[number]) &&
-    !UNSUPPORTED_PROTOCOL_FIELDS.includes(key as typeof UNSUPPORTED_PROTOCOL_FIELDS[number])
+    !PROTOCOL_OVERRIDE_FIELDS.includes(key as typeof PROTOCOL_OVERRIDE_FIELDS[number])
   );
   if (unknownFields.length > 0) {
     throw new Error(`Unsupported channel protocol field: ${unknownFields.join(", ")}`);
   }
-  const unsupportedField = UNSUPPORTED_PROTOCOL_FIELDS.find((field) => value[field] !== undefined);
+  const unsupportedField = PROTOCOL_OVERRIDE_FIELDS.find((field) => value[field] !== undefined);
   if (unsupportedField) {
     throw new UnsupportedProtocolFieldError(unsupportedField);
   }
@@ -294,9 +512,77 @@ function parseProtocolPatchInput(value: unknown): ProtocolPatchInput {
   };
 }
 
+function parseCreateProtocolDraftInput(value: unknown): {
+  readonly baseVersion?: number;
+  readonly proposedPatch: ChannelCollaborationProtocolPatch;
+  readonly reason: string;
+  readonly createdBy?: ChannelProtocolDraftCreatedBy;
+  readonly sourceRefs?: readonly ChannelProtocolSourceRef[];
+  readonly expiresAt?: string;
+} {
+  if (!isRecord(value)) {
+    throw new Error("Channel protocol draft request must be a JSON object");
+  }
+  const proposedPatch = readProtocolDraftPatch(value.proposedPatch);
+  const reason = typeof value.reason === "string" && value.reason.trim().length > 0
+    ? value.reason.trim()
+    : "AI drafted channel protocol changes for user review.";
+  return {
+    baseVersion: readOptionalVersion(value.baseVersion, "baseVersion"),
+    proposedPatch,
+    reason,
+    createdBy: readOptionalDraftCreatedBy(value.createdBy),
+    sourceRefs: readOptionalProtocolSourceRefs(value.sourceRefs),
+    expiresAt: readOptionalString(value.expiresAt, "expiresAt"),
+  };
+}
+
+function readProtocolDraftPatch(value: unknown): ChannelCollaborationProtocolPatch {
+  if (!isRecord(value)) {
+    throw new Error("proposedPatch must be a JSON object");
+  }
+  const unknownFields = Object.keys(value).filter((key) => !ALL_PROTOCOL_FIELDS.includes(key as typeof ALL_PROTOCOL_FIELDS[number]));
+  if (unknownFields.length > 0) {
+    throw new Error(`Unsupported channel protocol draft field: ${unknownFields.join(", ")}`);
+  }
+  const patch: MutableProtocolPatch = {};
+  const responseLanguage = readNullableProtocolResponseLanguage(value, "responseLanguage");
+  const autoReplyMode = readNullableProtocolAutoReplyMode(value, "autoReplyMode");
+  const defaultTeammateId = readNullableProtocolString(value, "defaultTeammateId");
+  const defaultWorkflowPreference = readOptionalWorkflowPreference(value, "defaultWorkflowPreference");
+  const visibleMultiReplyMaxParticipants = readOptionalVisibleMultiReplyMaxParticipants(value, "visibleMultiReplyMaxParticipants");
+  const privacyRules = readOptionalStringList(value, "privacyRules");
+  const reviewRules = readOptionalStringList(value, "reviewRules");
+  if (responseLanguage !== undefined) {
+    patch.responseLanguage = responseLanguage;
+  }
+  if (autoReplyMode !== undefined) {
+    patch.autoReplyMode = autoReplyMode;
+  }
+  if (defaultTeammateId !== undefined) {
+    patch.defaultTeammateId = defaultTeammateId;
+  }
+  if (defaultWorkflowPreference !== undefined) {
+    patch.defaultWorkflowPreference = defaultWorkflowPreference;
+  }
+  if (visibleMultiReplyMaxParticipants !== undefined) {
+    patch.visibleMultiReplyMaxParticipants = visibleMultiReplyMaxParticipants;
+  }
+  if (privacyRules !== undefined) {
+    patch.privacyRules = privacyRules;
+  }
+  if (reviewRules !== undefined) {
+    patch.reviewRules = reviewRules;
+  }
+  if (Object.values(patch).every((entry) => entry === undefined)) {
+    throw new Error("proposedPatch must include at least one protocol field");
+  }
+  return patch;
+}
+
 function validateProtocolPatch(
   store: RunStore,
-  patch: ProtocolPatchInput,
+  patch: ChannelCollaborationProtocolPatch,
   config: ResolvedDaemonConfig,
 ): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
   if (patch.autoReplyMode === "auto_route" && !config.channels.autoRoute) {
@@ -310,6 +596,18 @@ function validateProtocolPatch(
     if (teammate.status !== "active" || teammate.hidden) {
       return { statusCode: 400, code: "default_teammate_not_available", message: `Default teammate is not available: ${patch.defaultTeammateId}` };
     }
+  }
+  if (patch.defaultWorkflowPreference !== undefined && !channelWorkflowPreferences.includes(patch.defaultWorkflowPreference)) {
+    return { statusCode: 400, code: "invalid_workflow_preference", message: "Channel workflow preference is invalid." };
+  }
+  if (
+    patch.visibleMultiReplyMaxParticipants !== undefined &&
+    (!Number.isInteger(patch.visibleMultiReplyMaxParticipants) || patch.visibleMultiReplyMaxParticipants < 1 || patch.visibleMultiReplyMaxParticipants > 8)
+  ) {
+    return { statusCode: 400, code: "invalid_visible_multi_reply_cap", message: "Visible multi-reply cap must be between 1 and 8." };
+  }
+  if (patch.privacyRules?.some((rule) => !rule.trim()) || patch.reviewRules?.some((rule) => !rule.trim())) {
+    return { statusCode: 400, code: "invalid_protocol_rules", message: "Protocol rules cannot contain empty entries." };
   }
   return undefined;
 }
@@ -356,9 +654,105 @@ function readNullableProtocolString(record: Record<string, unknown>, key: string
   return value;
 }
 
+function readOptionalWorkflowPreference(record: Record<string, unknown>, key: string): ChannelWorkflowPreference | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !channelWorkflowPreferences.includes(value as ChannelWorkflowPreference)) {
+    throw new Error(`${key} must be one of: ${channelWorkflowPreferences.join(", ")}`);
+  }
+  return value as ChannelWorkflowPreference;
+}
+
+function readOptionalVisibleMultiReplyMaxParticipants(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 8) {
+    throw new Error(`${key} must be an integer between 1 and 8`);
+  }
+  return value;
+}
+
+function readOptionalStringList(record: Record<string, unknown>, key: string): readonly string[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`${key} must be a string array`);
+  }
+  return value;
+}
+
+function readOptionalVersion(value: unknown, key: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${key} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function readOptionalDraftCreatedBy(value: unknown): ChannelProtocolDraftCreatedBy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "local-user" && value !== "ai-draft") {
+    throw new Error("createdBy must be local-user or ai-draft");
+  }
+  return value;
+}
+
+function readOptionalProtocolSourceRefs(value: unknown): readonly ChannelProtocolSourceRef[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("sourceRefs must be an array");
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error("sourceRefs entries must be JSON objects");
+    }
+    if (
+      item.type !== "message" &&
+      item.type !== "channel_decision" &&
+      item.type !== "context_summary" &&
+      item.type !== "task" &&
+      item.type !== "run" &&
+      item.type !== "workflow" &&
+      item.type !== "workflow_step"
+    ) {
+      throw new Error("sourceRefs entries must use a supported type");
+    }
+    if (typeof item.id !== "string" || item.id.trim().length === 0) {
+      throw new Error("sourceRefs entries must include a non-empty id");
+    }
+    return {
+      type: item.type,
+      id: item.id,
+      label: typeof item.label === "string" && item.label.trim() ? item.label : undefined,
+    };
+  });
+}
+
+function readOptionalString(value: unknown, key: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${key} must be a non-empty string`);
+  }
+  return value;
+}
+
 class UnsupportedProtocolFieldError extends Error {
   constructor(readonly field: string) {
-    super(`Protocol field is not editable in P7B1: ${field}`);
+    super(`Protocol field is not editable through direct PATCH: ${field}`);
     this.name = "UnsupportedProtocolFieldError";
   }
 }

@@ -10,6 +10,7 @@ import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { extractChannelExecutionProposal } from "./ai-proposals.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
+import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 
@@ -144,7 +145,7 @@ async function completeAiChannelReply(input: {
       channel: input.channel,
       sourceText: input.sourceMessage.body,
     }).language;
-    const discussionContextPack = buildChannelReplyContextPack({
+    let discussionContextPack = buildChannelReplyContextPack({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
@@ -152,7 +153,7 @@ async function completeAiChannelReply(input: {
       canonicalTeammateId: input.canonicalTeammateId,
       visibleParticipantTeammateIds: input.visibleParticipantTeammateIds,
     });
-    const discussionPrompt = renderContextPack(discussionContextPack);
+    let discussionPrompt = renderContextPack(discussionContextPack);
     const systemPrompt = [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
@@ -171,24 +172,6 @@ async function completeAiChannelReply(input: {
           ]),
       memoryPrompt,
     ].filter((line): line is string => Boolean(line)).join("\n");
-    const provider = resolveProviderForRun(
-      input.store,
-      {
-        cwd: input.store.paths.cwd,
-        workspaceCwd: input.store.paths.cwd,
-        task: {
-          id: input.sourceMessage.id,
-          title: `Channel discussion in ${input.channel.name}`,
-          prompt: discussionPrompt,
-          channelId: input.channel.id,
-        },
-        providerPresetId: input.providerPresetId,
-        tools: [],
-        thinkingLevel: "medium",
-        systemPrompt,
-      },
-      input.secretResolver,
-    );
 
     acquireRunRuntimeSemaphores({
       store: input.store,
@@ -201,32 +184,81 @@ async function completeAiChannelReply(input: {
       now: input.now,
     });
 
-    const result = await input.runnerResolution.runner.adapter.runTask({
-      cwd: input.store.paths.cwd,
-      task: {
-        id: input.sourceMessage.id,
-        title: `Channel discussion in ${input.channel.name}`,
-        prompt: discussionPrompt,
-        channelId: input.channel.id,
-      },
-      provider,
-      tools: [],
-      thinkingLevel: "medium",
-      systemPrompt,
-      onEvent: (event) => {
-        input.store.appendRuntimeEvent({
-          workUnitId: input.supervised.workUnit.id,
-          attemptId: input.supervised.attempt.id,
-          type: "work_unit_progress",
-          actor: "runner",
-          ts: new Date().toISOString(),
-          data: { runnerEventType: event.type },
-        });
-        if (event.type === "assistant_text_delta") {
-          textDeltas.push(event.text);
-        }
-      },
-    });
+    const runDiscussionTask = async (prompt: string) => {
+      const provider = resolveProviderForRun(
+        input.store,
+        {
+          cwd: input.store.paths.cwd,
+          workspaceCwd: input.store.paths.cwd,
+          task: {
+            id: input.sourceMessage.id,
+            title: `Channel discussion in ${input.channel.name}`,
+            prompt,
+            channelId: input.channel.id,
+          },
+          providerPresetId: input.providerPresetId,
+          tools: [],
+          thinkingLevel: "medium",
+          systemPrompt,
+        },
+        input.secretResolver,
+      );
+      return input.runnerResolution.runner.adapter.runTask({
+        cwd: input.store.paths.cwd,
+        task: {
+          id: input.sourceMessage.id,
+          title: `Channel discussion in ${input.channel.name}`,
+          prompt,
+          channelId: input.channel.id,
+        },
+        provider,
+        tools: [],
+        thinkingLevel: "medium",
+        systemPrompt,
+        onEvent: (event) => {
+          input.store.appendRuntimeEvent({
+            workUnitId: input.supervised.workUnit.id,
+            attemptId: input.supervised.attempt.id,
+            type: "work_unit_progress",
+            actor: "runner",
+            ts: new Date().toISOString(),
+            data: { runnerEventType: event.type },
+          });
+          if (event.type === "assistant_text_delta") {
+            textDeltas.push(event.text);
+          }
+        },
+      });
+    };
+
+    let result: Awaited<ReturnType<typeof runDiscussionTask>>;
+    try {
+      result = await runDiscussionTask(discussionPrompt);
+    } catch (error) {
+      if (!isContextLengthError(error)) {
+        throw error;
+      }
+      const compaction = compactChannelDiscussionForNoToolsRetry({
+        store: input.store,
+        channel: input.channel,
+        sourceMessage: input.sourceMessage,
+        now: new Date().toISOString(),
+      });
+      discussionContextPack = buildChannelReplyContextPack({
+        store: input.store,
+        channel: input.channel,
+        sourceMessage: input.sourceMessage,
+        providerPresetId: input.providerPresetId,
+        teammate: input.teammate,
+        canonicalTeammateId: input.canonicalTeammateId,
+        visibleParticipantTeammateIds: input.visibleParticipantTeammateIds,
+        compactedChannelSummary: compaction.compactedSummary,
+        minimal: true,
+      });
+      discussionPrompt = renderContextPack(discussionContextPack);
+      textDeltas.length = 0;
+      result = await runDiscussionTask(discussionPrompt);
+    }
     const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
     const extractedProposal = input.proposalMode === "disabled"
       ? undefined

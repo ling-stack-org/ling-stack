@@ -172,6 +172,31 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme", "light");
 });
 
+test("settings channel protocol shortcut opens the workspace protocol editor", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Interface preferences" });
+  await expect(settingsPanel).toContainText("Channel protocol");
+  await expect(settingsPanel).toContainText("Engineering");
+  await settingsPanel.getByRole("button", { name: "Open editor" }).click();
+
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  const contextPanel = page.getByRole("complementary", { name: "Context" });
+  await expect(contextPanel).toBeVisible();
+  await expect(
+    contextPanel.getByRole("tablist", { name: "Channel inspector modes" }).getByRole("button", { name: "Protocol", exact: true }),
+  ).toHaveClass(/active/);
+  await expect(contextPanel).toContainText("Channel protocol");
+  await expect(contextPanel).toContainText("Effective response language");
+  await expect(contextPanel).toContainText("Read-only protocol defaults");
+});
+
 test("settings approval policy loads, edits, and saves tool decisions and write paths", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

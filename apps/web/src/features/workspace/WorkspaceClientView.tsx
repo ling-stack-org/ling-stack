@@ -347,6 +347,7 @@ export function WorkspaceClientView({
   cwd,
   daemonHealthy,
   channelAutoRouteEnabled,
+  channelContextOpenRequest,
   providerLabel,
   channels,
   selectedChannelId,
@@ -487,6 +488,7 @@ export function WorkspaceClientView({
   readonly cwd: string;
   readonly daemonHealthy: boolean | undefined;
   readonly channelAutoRouteEnabled: boolean;
+  readonly channelContextOpenRequest?: { readonly channelId: string; readonly mode: "protocol"; readonly nonce: number };
   readonly providerLabel: string;
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
@@ -1627,6 +1629,18 @@ export function WorkspaceClientView({
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (!channelContextOpenRequest || channelContextOpenRequest.channelId !== selectedChannelId) {
+      return;
+    }
+    setInspectorMode(channelContextOpenRequest.mode);
+    setSidePanelView("context");
+    setSidePanelOpen(true);
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    onRefreshChannelProtocol();
+  }, [channelContextOpenRequest?.nonce, selectedChannelId]);
 
   useEffect(() => {
     const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");

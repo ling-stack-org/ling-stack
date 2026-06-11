@@ -42,6 +42,8 @@ import {
   createChannelAttachmentId,
   createChannelBriefId,
   createChannelBranchId,
+  createChannelCollaborationProtocolDraftId,
+  createChannelCollaborationProtocolOverrideId,
   createChannelContextSummaryId,
   createChannelDecisionId,
   createChannelExecutionProposalId,
@@ -65,6 +67,9 @@ import {
   channelWorkflowStepStatuses,
   channelBranchStatuses,
   channelAutoReplyModes,
+  channelProtocolDraftCreatedByValues,
+  channelProtocolDraftStatuses,
+  channelWorkflowPreferences,
   channelMessageRouteDecisionCreatedByValues,
   channelMessageRouteDecisionStatuses,
   channelIntentDecisionActions,
@@ -81,6 +86,13 @@ import {
   type ChannelBranch,
   type ChannelBranchStatus,
   type ChannelBranchUpdateInput,
+  type ChannelCollaborationProtocolDraft,
+  type ChannelCollaborationProtocolOverride,
+  type ChannelCollaborationProtocolPatch,
+  type ChannelProtocolDraftCreatedBy,
+  type ChannelProtocolDraftStatus,
+  type ChannelProtocolSourceRef,
+  type ChannelProtocolSourceRefType,
   type ChannelContextSummary,
   type ChannelContextSummaryAuthorType,
   type ChannelContextSummaryTargetType,
@@ -119,6 +131,7 @@ import {
   type CreateAiTeammateInput,
   type CreateChannelAttachmentInput,
   type CreateChannelBranchInput,
+  type CreateChannelCollaborationProtocolDraftInput,
   type CreateChannelContextSummaryInput,
   type CreateChannelDecisionInput,
   type CreateChannelExecutionProposalInput,
@@ -193,6 +206,7 @@ import {
   type UpdateWorkflowHandoffIntentInput,
   type UpdateWorkflowSelectorDecisionInput,
   type UpdateWorkspaceSettingsInput,
+  type UpsertChannelCollaborationProtocolOverrideInput,
   type WorkspaceSettings,
   type WorkflowFanInPolicy,
   type WorkflowHandoffIntent,
@@ -604,6 +618,8 @@ const CHANNEL_BRANCHES_MIGRATION_VERSION = 58;
 const CHANNEL_BRANCHES_MIGRATION_NAME = "create_channel_branches";
 const CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_VERSION = 59;
 const CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_NAME = "add_channel_route_inspect_metadata";
+const CHANNEL_PROTOCOL_DRAFTS_MIGRATION_VERSION = 60;
+const CHANNEL_PROTOCOL_DRAFTS_MIGRATION_NAME = "create_channel_protocol_drafts";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -6750,6 +6766,199 @@ export class SqliteRunStore implements RunStore {
         id,
       );
     return this.getChannelContextSummary(id);
+  }
+
+  getChannelCollaborationProtocolOverride(channelId: string): ChannelCollaborationProtocolOverride | undefined {
+    const row = this.database
+      .prepare(channelCollaborationProtocolOverrideSelectSql("WHERE channel_id = ? AND workspace_id = ?"))
+      .get(channelId, DEFAULT_WORKSPACE_ID);
+    return row ? mapChannelCollaborationProtocolOverride(row) : undefined;
+  }
+
+  upsertChannelCollaborationProtocolOverride(
+    input: UpsertChannelCollaborationProtocolOverrideInput,
+    now: string,
+  ): ChannelCollaborationProtocolOverride {
+    this.assertChannelExists(input.channelId);
+    this.assertChannelProtocolSourceRefsInChannel(input.channelId, input.sourceRefs ?? []);
+    validateChannelCollaborationProtocolOverrideInput(input);
+    const existing = this.getChannelCollaborationProtocolOverride(input.channelId);
+    const override: ChannelCollaborationProtocolOverride = {
+      id: existing?.id ?? createChannelCollaborationProtocolOverrideId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      version: (existing?.version ?? 0) + 1,
+      defaultWorkflowPreference: input.defaultWorkflowPreference ?? existing?.defaultWorkflowPreference ?? "manual",
+      visibleMultiReplyMaxParticipants: input.visibleMultiReplyMaxParticipants ?? existing?.visibleMultiReplyMaxParticipants ?? 3,
+      privacyRules: input.privacyRules ?? existing?.privacyRules ?? [],
+      reviewRules: input.reviewRules ?? existing?.reviewRules ?? [],
+      sourceRefs: input.sourceRefs ?? existing?.sourceRefs ?? [],
+      updatedBy: input.updatedBy,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO channel_collaboration_protocols (
+          id,
+          workspace_id,
+          channel_id,
+          version,
+          default_workflow_preference,
+          visible_multi_reply_max_participants,
+          privacy_rules_json,
+          review_rules_json,
+          source_refs_json,
+          updated_by,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, channel_id) DO UPDATE SET
+          version = excluded.version,
+          default_workflow_preference = excluded.default_workflow_preference,
+          visible_multi_reply_max_participants = excluded.visible_multi_reply_max_participants,
+          privacy_rules_json = excluded.privacy_rules_json,
+          review_rules_json = excluded.review_rules_json,
+          source_refs_json = excluded.source_refs_json,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        override.id,
+        override.workspaceId,
+        override.channelId,
+        override.version,
+        override.defaultWorkflowPreference,
+        override.visibleMultiReplyMaxParticipants,
+        stringifyJson(override.privacyRules),
+        stringifyJson(override.reviewRules),
+        stringifyJson(override.sourceRefs),
+        override.updatedBy,
+        override.createdAt,
+        override.updatedAt,
+      );
+    const saved = this.getChannelCollaborationProtocolOverride(input.channelId);
+    if (!saved) {
+      throw new Error(`Failed to save channel collaboration protocol override: ${input.channelId}`);
+    }
+    return saved;
+  }
+
+  deleteChannelCollaborationProtocolOverride(channelId: string): boolean {
+    const result = this.database
+      .prepare("DELETE FROM channel_collaboration_protocols WHERE workspace_id = ? AND channel_id = ?")
+      .run(DEFAULT_WORKSPACE_ID, channelId);
+    return result.changes > 0;
+  }
+
+  createChannelCollaborationProtocolDraft(input: CreateChannelCollaborationProtocolDraftInput, now: string): ChannelCollaborationProtocolDraft {
+    this.assertChannelExists(input.channelId);
+    this.assertChannelProtocolSourceRefsInChannel(input.channelId, input.sourceRefs ?? []);
+    validateChannelCollaborationProtocolDraftInput(input);
+    const draft: ChannelCollaborationProtocolDraft = {
+      id: createChannelCollaborationProtocolDraftId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      baseVersion: input.baseVersion,
+      proposedPatch: input.proposedPatch,
+      reason: input.reason,
+      createdBy: input.createdBy,
+      sourceRefs: input.sourceRefs ?? [],
+      status: "draft",
+      expiresAt: input.expiresAt,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO channel_collaboration_protocol_drafts (
+          id,
+          workspace_id,
+          channel_id,
+          base_version,
+          proposed_patch_json,
+          reason,
+          created_by,
+          source_refs_json,
+          status,
+          applied_protocol_version,
+          expires_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        draft.id,
+        draft.workspaceId,
+        draft.channelId,
+        draft.baseVersion ?? null,
+        stringifyJson(draft.proposedPatch),
+        draft.reason,
+        draft.createdBy,
+        stringifyJson(draft.sourceRefs),
+        draft.status,
+        draft.appliedProtocolVersion ?? null,
+        draft.expiresAt ?? null,
+        draft.createdAt,
+        draft.updatedAt,
+      );
+    const saved = this.getChannelCollaborationProtocolDraft(draft.id);
+    if (!saved) {
+      throw new Error(`Failed to create channel collaboration protocol draft: ${draft.id}`);
+    }
+    return saved;
+  }
+
+  getChannelCollaborationProtocolDraft(id: string): ChannelCollaborationProtocolDraft | undefined {
+    const row = this.database.prepare(channelCollaborationProtocolDraftSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelCollaborationProtocolDraft(row) : undefined;
+  }
+
+  listChannelCollaborationProtocolDrafts(options: {
+    readonly channelId: string;
+    readonly status?: ChannelProtocolDraftStatus;
+    readonly limit?: number;
+  }): ChannelCollaborationProtocolDraft[] {
+    const clauses = ["workspace_id = ?", "channel_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelCollaborationProtocolDraftSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, rowid DESC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelCollaborationProtocolDraft);
+  }
+
+  updateChannelCollaborationProtocolDraft(
+    id: string,
+    input: { readonly status?: ChannelProtocolDraftStatus; readonly appliedProtocolVersion?: number | null },
+    now: string,
+  ): ChannelCollaborationProtocolDraft | undefined {
+    const existing = this.getChannelCollaborationProtocolDraft(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: ChannelCollaborationProtocolDraft = {
+      ...existing,
+      status: input.status ?? existing.status,
+      appliedProtocolVersion: nullableUpdate(input.appliedProtocolVersion, existing.appliedProtocolVersion),
+      updatedAt: now,
+    };
+    if (!channelProtocolDraftStatuses.includes(next.status)) {
+      throw new Error("channel protocol draft status is not supported");
+    }
+    this.database
+      .prepare(`
+        UPDATE channel_collaboration_protocol_drafts
+        SET status = ?, applied_protocol_version = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(next.status, next.appliedProtocolVersion ?? null, next.updatedAt, id);
+    return this.getChannelCollaborationProtocolDraft(id);
   }
 
   createChannelWorkflow(input: CreateChannelWorkflowInput, now: string): ChannelWorkflow {
@@ -13060,6 +13269,60 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_VERSION, CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_NAME);
       }
     }
+
+    const hasChannelProtocolDraftsMigration = this.hasMigration(CHANNEL_PROTOCOL_DRAFTS_MIGRATION_VERSION);
+    if (
+      !hasChannelProtocolDraftsMigration ||
+      !this.hasTable("channel_collaboration_protocols") ||
+      !this.hasTable("channel_collaboration_protocol_drafts")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_collaboration_protocols (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          default_workflow_preference TEXT NOT NULL,
+          visible_multi_reply_max_participants INTEGER NOT NULL,
+          privacy_rules_json TEXT NOT NULL,
+          review_rules_json TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          updated_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(workspace_id, channel_id),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_collaboration_protocols_channel
+        ON channel_collaboration_protocols(workspace_id, channel_id, updated_at);
+
+        CREATE TABLE IF NOT EXISTS channel_collaboration_protocol_drafts (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          base_version INTEGER,
+          proposed_patch_json TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          applied_protocol_version INTEGER,
+          expires_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_collaboration_protocol_drafts_channel
+        ON channel_collaboration_protocol_drafts(workspace_id, channel_id, status, updated_at);
+      `);
+      if (!hasChannelProtocolDraftsMigration) {
+        this.recordMigration(CHANNEL_PROTOCOL_DRAFTS_MIGRATION_VERSION, CHANNEL_PROTOCOL_DRAFTS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -13517,6 +13780,36 @@ export class SqliteRunStore implements RunStore {
         case "channel_brief":
         case "memory":
           break;
+      }
+    }
+  }
+
+  private assertChannelProtocolSourceRefsInChannel(channelId: string, sourceRefs: readonly ChannelProtocolSourceRef[]): void {
+    for (const sourceRef of sourceRefs) {
+      switch (sourceRef.type) {
+        case "message":
+          this.assertMessageInChannel(channelId, sourceRef.id);
+          break;
+        case "channel_decision":
+          this.assertDecisionInChannel(channelId, sourceRef.id);
+          break;
+        case "context_summary":
+          this.assertContextSummaryInChannel(channelId, sourceRef.id);
+          break;
+        case "task":
+          this.assertTaskInChannel(channelId, sourceRef.id);
+          break;
+        case "run":
+          this.assertRunInChannel(channelId, sourceRef.id);
+          break;
+        case "workflow":
+          this.assertWorkflowInChannel(channelId, sourceRef.id);
+          break;
+        case "workflow_step":
+          this.assertWorkflowStepInChannel(channelId, sourceRef.id);
+          break;
+        default:
+          throw new Error(`Unsupported channel protocol source ref type: ${String(sourceRef.type)}`);
       }
     }
   }
@@ -14675,6 +14968,41 @@ function mapChannelContextSummary(row: Record<string, SQLOutputValue>): ChannelC
     openQuestions: parseJsonStringArray(readString(row, "open_questions_json")),
     authorType: readString(row, "author_type") as ChannelContextSummaryAuthorType,
     authorId: readNullableString(row, "author_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelCollaborationProtocolOverride(row: Record<string, SQLOutputValue>): ChannelCollaborationProtocolOverride {
+  return {
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    version: readNumber(row, "version"),
+    defaultWorkflowPreference: readString(row, "default_workflow_preference") as ChannelCollaborationProtocolOverride["defaultWorkflowPreference"],
+    visibleMultiReplyMaxParticipants: readNumber(row, "visible_multi_reply_max_participants"),
+    privacyRules: parseJsonStringArray(readString(row, "privacy_rules_json")),
+    reviewRules: parseJsonStringArray(readString(row, "review_rules_json")),
+    sourceRefs: parseChannelProtocolSourceRefs(readString(row, "source_refs_json")),
+    updatedBy: readString(row, "updated_by") as ChannelCollaborationProtocolOverride["updatedBy"],
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  };
+}
+
+function mapChannelCollaborationProtocolDraft(row: Record<string, SQLOutputValue>): ChannelCollaborationProtocolDraft {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    baseVersion: readNullableNumber(row, "base_version"),
+    proposedPatch: parseChannelCollaborationProtocolPatch(readString(row, "proposed_patch_json")),
+    reason: readString(row, "reason"),
+    createdBy: readString(row, "created_by") as ChannelProtocolDraftCreatedBy,
+    sourceRefs: parseChannelProtocolSourceRefs(readString(row, "source_refs_json")),
+    status: readString(row, "status") as ChannelProtocolDraftStatus,
+    appliedProtocolVersion: readNullableNumber(row, "applied_protocol_version"),
+    expiresAt: readNullableString(row, "expires_at"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -16244,6 +16572,47 @@ function channelContextSummarySelectSql(whereClause: string): string {
   `;
 }
 
+function channelCollaborationProtocolOverrideSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      version,
+      default_workflow_preference,
+      visible_multi_reply_max_participants,
+      privacy_rules_json,
+      review_rules_json,
+      source_refs_json,
+      updated_by,
+      created_at,
+      updated_at
+    FROM channel_collaboration_protocols
+    ${whereClause}
+  `;
+}
+
+function channelCollaborationProtocolDraftSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      base_version,
+      proposed_patch_json,
+      reason,
+      created_by,
+      source_refs_json,
+      status,
+      applied_protocol_version,
+      expires_at,
+      created_at,
+      updated_at
+    FROM channel_collaboration_protocol_drafts
+    ${whereClause}
+  `;
+}
+
 function channelWorkflowSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -17032,6 +17401,79 @@ function readOptionalStringListValue(value: unknown): readonly string[] | undefi
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value as string[] : undefined;
 }
 
+function readNullableNonEmptyStringValue(value: unknown, label: string): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string or null`);
+  }
+  return value;
+}
+
+function readNullableChannelResponseLanguageValue(value: unknown, label: string): ChannelResponseLanguage | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  const parsed = parseOptionalChannelResponseLanguage(value);
+  if (!parsed) {
+    throw new Error(`${label} must be workspace, follow_user, zh-CN, en-US, or null`);
+  }
+  return parsed;
+}
+
+function readNullableChannelAutoReplyModeValue(value: unknown, label: string): Channel["autoReplyMode"] | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || !channelAutoReplyModes.includes(value as Channel["autoReplyMode"])) {
+    throw new Error(`${label} must be ${channelAutoReplyModes.join(", ")}, or null`);
+  }
+  return value as Channel["autoReplyMode"];
+}
+
+function readChannelWorkflowPreferenceValue(
+  value: unknown,
+  label: string,
+): ChannelCollaborationProtocolOverride["defaultWorkflowPreference"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !channelWorkflowPreferences.includes(value as ChannelCollaborationProtocolOverride["defaultWorkflowPreference"])) {
+    throw new Error(`${label} must be one of: ${channelWorkflowPreferences.join(", ")}`);
+  }
+  return value as ChannelCollaborationProtocolOverride["defaultWorkflowPreference"];
+}
+
+function readVisibleMultiReplyMaxParticipantsValue(value: unknown, label: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 8) {
+    throw new Error(`${label} must be an integer between 1 and 8`);
+  }
+  return value;
+}
+
+function readProtocolStringListValue(value: unknown, label: string): readonly string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`${label} must be a string array`);
+  }
+  return value;
+}
+
 function readOptionalPositiveIntegerValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
@@ -17218,6 +17660,48 @@ function parseWorkflowPacketSourceRefs(value: string): WorkflowPacketSourceRef[]
       label: readOptionalStringValue(record.label),
     });
   });
+}
+
+function parseChannelProtocolSourceRefs(value: string): ChannelProtocolSourceRef[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected channel protocol source refs array from SQLite");
+  }
+  return parsed.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new Error("Expected channel protocol source ref object from SQLite");
+    }
+    const record = item as Record<string, unknown>;
+    if (!isChannelProtocolSourceRefTypeValue(record.type) || typeof record.id !== "string" || record.id.trim().length === 0) {
+      throw new Error("Invalid channel protocol source ref from SQLite");
+    }
+    return omitUndefined({
+      type: record.type,
+      id: record.id,
+      label: readOptionalStringValue(record.label),
+    });
+  });
+}
+
+function parseChannelCollaborationProtocolPatch(value: string): ChannelCollaborationProtocolPatch {
+  const parsed = parseJsonObject(value);
+  return normalizeChannelCollaborationProtocolPatch(parsed);
+}
+
+function normalizeChannelCollaborationProtocolPatch(record: Record<string, unknown>): ChannelCollaborationProtocolPatch {
+  const patch = omitUndefined({
+    responseLanguage: readNullableChannelResponseLanguageValue(record.responseLanguage, "responseLanguage"),
+    autoReplyMode: readNullableChannelAutoReplyModeValue(record.autoReplyMode, "autoReplyMode"),
+    defaultTeammateId: readNullableNonEmptyStringValue(record.defaultTeammateId, "defaultTeammateId"),
+    defaultWorkflowPreference: readChannelWorkflowPreferenceValue(record.defaultWorkflowPreference, "defaultWorkflowPreference"),
+    visibleMultiReplyMaxParticipants: readVisibleMultiReplyMaxParticipantsValue(record.visibleMultiReplyMaxParticipants, "visibleMultiReplyMaxParticipants"),
+    privacyRules: readProtocolStringListValue(record.privacyRules, "privacyRules"),
+    reviewRules: readProtocolStringListValue(record.reviewRules, "reviewRules"),
+  });
+  if (Object.keys(patch).length === 0) {
+    throw new Error("channel protocol patch must include at least one field");
+  }
+  return patch;
 }
 
 function parseWorkflowSelectorAlternatives(value: string): WorkflowSelectorAlternative[] {
@@ -17829,6 +18313,71 @@ function validateChannelMessageRouteContextPackMetadata(
   }
 }
 
+function validateChannelCollaborationProtocolOverrideInput(input: UpsertChannelCollaborationProtocolOverrideInput): void {
+  if (input.defaultWorkflowPreference !== undefined && !channelWorkflowPreferences.includes(input.defaultWorkflowPreference)) {
+    throw new Error("channel protocol workflow preference is not supported");
+  }
+  if (
+    input.visibleMultiReplyMaxParticipants !== undefined &&
+    (!Number.isInteger(input.visibleMultiReplyMaxParticipants) || input.visibleMultiReplyMaxParticipants < 1 || input.visibleMultiReplyMaxParticipants > 8)
+  ) {
+    throw new Error("channel protocol visible multi-reply max participants must be between 1 and 8");
+  }
+  if (!channelProtocolDraftCreatedByValues.includes(input.updatedBy)) {
+    throw new Error("channel protocol updatedBy is not supported");
+  }
+  validateStringList(input.privacyRules ?? [], "channel protocol privacy rules");
+  validateStringList(input.reviewRules ?? [], "channel protocol review rules");
+  validateChannelProtocolSourceRefs(input.sourceRefs ?? []);
+}
+
+function validateChannelCollaborationProtocolDraftInput(input: CreateChannelCollaborationProtocolDraftInput): void {
+  if (input.baseVersion !== undefined && (!Number.isInteger(input.baseVersion) || input.baseVersion < 0)) {
+    throw new Error("channel protocol draft baseVersion must be a non-negative integer");
+  }
+  validateChannelCollaborationProtocolPatch(input.proposedPatch);
+  validateNonEmptyString(input.reason, "channel protocol draft reason");
+  if (!channelProtocolDraftCreatedByValues.includes(input.createdBy)) {
+    throw new Error("channel protocol draft createdBy is not supported");
+  }
+  validateChannelProtocolSourceRefs(input.sourceRefs ?? []);
+}
+
+function validateChannelCollaborationProtocolPatch(patch: ChannelCollaborationProtocolPatch): void {
+  if (Object.keys(patch).length === 0) {
+    throw new Error("channel protocol patch must include at least one field");
+  }
+  if (patch.responseLanguage !== undefined && patch.responseLanguage !== null && !parseOptionalChannelResponseLanguage(patch.responseLanguage)) {
+    throw new Error("channel protocol responseLanguage is not supported");
+  }
+  if (patch.autoReplyMode !== undefined && patch.autoReplyMode !== null && !channelAutoReplyModes.includes(patch.autoReplyMode)) {
+    throw new Error("channel protocol autoReplyMode is not supported");
+  }
+  if (patch.defaultTeammateId !== undefined && patch.defaultTeammateId !== null) {
+    validateNonEmptyString(patch.defaultTeammateId, "channel protocol default teammate id");
+  }
+  if (patch.defaultWorkflowPreference !== undefined && !channelWorkflowPreferences.includes(patch.defaultWorkflowPreference)) {
+    throw new Error("channel protocol workflow preference is not supported");
+  }
+  if (
+    patch.visibleMultiReplyMaxParticipants !== undefined &&
+    (!Number.isInteger(patch.visibleMultiReplyMaxParticipants) || patch.visibleMultiReplyMaxParticipants < 1 || patch.visibleMultiReplyMaxParticipants > 8)
+  ) {
+    throw new Error("channel protocol visible multi-reply max participants must be between 1 and 8");
+  }
+  validateStringList(patch.privacyRules ?? [], "channel protocol privacy rules");
+  validateStringList(patch.reviewRules ?? [], "channel protocol review rules");
+}
+
+function validateChannelProtocolSourceRefs(sourceRefs: readonly ChannelProtocolSourceRef[]): void {
+  for (const sourceRef of sourceRefs) {
+    if (!isChannelProtocolSourceRefTypeValue(sourceRef.type)) {
+      throw new Error("channel protocol source ref type is not supported");
+    }
+    validateNonEmptyString(sourceRef.id, "channel protocol source ref id");
+  }
+}
+
 function validateChannelIntentDecisionInput(
   decision: Pick<CreateChannelIntentDecisionInput, "action" | "reason" | "status" | "createdBy">,
 ): void {
@@ -17880,6 +18429,18 @@ function isWorkflowPacketSourceRefTypeValue(value: unknown): value is WorkflowPa
     value === "artifact" ||
     value === "approval" ||
     value === "memory"
+  );
+}
+
+function isChannelProtocolSourceRefTypeValue(value: unknown): value is ChannelProtocolSourceRefType {
+  return (
+    value === "message" ||
+    value === "channel_decision" ||
+    value === "context_summary" ||
+    value === "task" ||
+    value === "run" ||
+    value === "workflow" ||
+    value === "workflow_step"
   );
 }
 

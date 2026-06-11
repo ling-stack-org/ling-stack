@@ -33,6 +33,9 @@ import type {
   ChannelBranchUpdateInput,
   ChannelAttachment,
   ChannelBrief,
+  ChannelCollaborationProtocolDraft,
+  ChannelCollaborationProtocolOverride,
+  ChannelProtocolDraftStatus,
   ChannelContextSummary,
   ChannelDecision,
   ChannelExecutionProposal,
@@ -47,6 +50,7 @@ import type {
   ChannelUpdateInput,
   CreateChannelAttachmentInput,
   CreateChannelBranchInput,
+  CreateChannelCollaborationProtocolDraftInput,
   CreateChannelContextSummaryInput,
   CreateChannelDecisionInput,
   CreateChannelExecutionProposalInput,
@@ -111,6 +115,7 @@ import type {
   UpdateChannelWorkflowInput,
   UpdateChannelWorkflowStepInput,
   UpdateChannelHandoffInput,
+  UpsertChannelCollaborationProtocolOverrideInput,
   WorkflowHandoffIntent,
   WorkflowSelectorDecision,
   UpdateChannelLinkPreviewInput,
@@ -1071,6 +1076,20 @@ export interface RunStore {
     input: UpdateChannelContextSummaryInput,
     now: string,
   ): ChannelContextSummary | undefined;
+  getChannelCollaborationProtocolOverride(channelId: string): ChannelCollaborationProtocolOverride | undefined;
+  upsertChannelCollaborationProtocolOverride(
+    input: UpsertChannelCollaborationProtocolOverrideInput,
+    now: string,
+  ): ChannelCollaborationProtocolOverride;
+  deleteChannelCollaborationProtocolOverride(channelId: string): boolean;
+  createChannelCollaborationProtocolDraft(input: CreateChannelCollaborationProtocolDraftInput, now: string): ChannelCollaborationProtocolDraft;
+  getChannelCollaborationProtocolDraft(id: string): ChannelCollaborationProtocolDraft | undefined;
+  listChannelCollaborationProtocolDrafts(options: { readonly channelId: string; readonly status?: ChannelProtocolDraftStatus; readonly limit?: number }): ChannelCollaborationProtocolDraft[];
+  updateChannelCollaborationProtocolDraft(
+    id: string,
+    input: { readonly status?: ChannelProtocolDraftStatus; readonly appliedProtocolVersion?: number | null },
+    now: string,
+  ): ChannelCollaborationProtocolDraft | undefined;
   createChannelWorkflow(input: CreateChannelWorkflowInput, now: string): ChannelWorkflow;
   getChannelWorkflow(id: string): ChannelWorkflow | undefined;
   listChannelWorkflows(options: ListChannelWorkflowsOptions): ChannelWorkflow[];

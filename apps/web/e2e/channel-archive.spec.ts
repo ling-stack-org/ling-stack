@@ -40,6 +40,19 @@ test("channel branch and channel archive lifecycle is managed from sidebar and s
   await expect(archivedPanel).toContainText("No archived branches");
   await expect(navigation.getByRole("button", { name: "API cleanup" })).toBeVisible();
 
+  await branchShell.hover();
+  await branchShell.getByRole("button", { name: "Archive branch" }).click();
+  await expect.poll(() => mockBranchStatus(state, "API cleanup")).toBe("archived");
+  await archivedPanel.getByRole("button", { name: "Refresh" }).click();
+  await expect(archivedPanel).toContainText("Engineering / API cleanup");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Delete branch API cleanup?");
+    await dialog.accept();
+  });
+  await archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / API cleanup" }).getByRole("button", { name: "Delete" }).click();
+  await expect.poll(() => mockBranchExists(state, "API cleanup")).toBe(false);
+  await expect(archivedPanel).toContainText("No archived branches");
+
   await engineeringGroup.locator(".sidebar-row-main").click();
   await engineeringGroup.getByRole("button", { name: "Archive channel" }).click();
   await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("archived");
@@ -60,6 +73,10 @@ function mockChannelStatus(state: ReturnType<typeof createBaseState>, name: stri
 function mockBranchStatus(state: ReturnType<typeof createBaseState>, name: string): string | undefined {
   const branch = state.channelBranches.find((item) => isRecord(item) && item.name === name);
   return isRecord(branch) && typeof branch.status === "string" ? branch.status : undefined;
+}
+
+function mockBranchExists(state: ReturnType<typeof createBaseState>, name: string): boolean {
+  return state.channelBranches.some((item) => isRecord(item) && item.name === name);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

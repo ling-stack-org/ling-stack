@@ -4,6 +4,8 @@ import type {
   ChannelBranchListResponse,
   ChannelBranchMutationResponse,
   ChannelCollaborationProtocolMutationResponse,
+  ChannelCollaborationProtocolDraftListResponse,
+  ChannelCollaborationProtocolDraftMutationResponse,
   ChannelCollaborationProtocolResponse,
   ChannelContextSummaryListResponse,
   ChannelContextSummaryMutationResponse,
@@ -24,6 +26,7 @@ import type {
   ChannelMessageRouteDecisionListResponse,
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  ChannelProtocolDraftStatus,
   ChannelWorkflowCancelResponse,
   ChannelWorkflowListResponse,
   ChannelWorkflowMutationResponse,
@@ -39,6 +42,7 @@ import type {
   ChannelWorkspaceResponse,
   WorkflowEvidenceResponse,
   CreateChannelBranchRequest,
+  CreateChannelCollaborationProtocolDraftRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelExecutionProposalRequest,
@@ -124,6 +128,30 @@ export async function updateChannelCollaborationProtocol(
   input: UpdateChannelCollaborationProtocolRequest,
 ): Promise<ChannelCollaborationProtocolMutationResponse> {
   return daemonClient.updateChannelCollaborationProtocol(cwd, channelId, input);
+}
+
+export async function listChannelCollaborationProtocolDrafts(
+  cwd: string,
+  channelId: string,
+  options: { readonly status?: ChannelProtocolDraftStatus; readonly limit?: number } = {},
+): Promise<ChannelCollaborationProtocolDraftListResponse> {
+  return daemonClient.listChannelCollaborationProtocolDrafts(cwd, channelId, options);
+}
+
+export async function createChannelCollaborationProtocolDraft(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelCollaborationProtocolDraftRequest,
+): Promise<ChannelCollaborationProtocolDraftMutationResponse> {
+  return daemonClient.createChannelCollaborationProtocolDraft(cwd, channelId, input);
+}
+
+export async function applyChannelCollaborationProtocolDraft(
+  cwd: string,
+  channelId: string,
+  draftId: string,
+): Promise<ChannelCollaborationProtocolDraftMutationResponse> {
+  return daemonClient.applyChannelCollaborationProtocolDraft(cwd, channelId, draftId);
 }
 
 export async function revertChannelCollaborationProtocol(cwd: string, channelId: string): Promise<ChannelCollaborationProtocolMutationResponse> {

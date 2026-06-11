@@ -9,6 +9,8 @@ export type ChannelAutoReplyMode = "mentions_only" | "default_teammate" | "auto_
 
 export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
 
+export type ChannelWorkflowPreference = "manual" | "architect_engineer_qa";
+
 export type ChannelExecutionMode = "serial" | "parallel";
 
 export type ChannelWriteLockScope = "channel" | "boundPath" | "workspace";
@@ -122,9 +124,25 @@ export interface ChannelBranchMutationResponse {
 export type ChannelProtocolFieldSource =
   | "current_message"
   | "channel_setting"
+  | "protocol_override"
   | "workspace_setting"
   | "default"
   | "teammate_instruction";
+
+export type ChannelProtocolSourceRefType =
+  | "message"
+  | "channel_decision"
+  | "context_summary"
+  | "task"
+  | "run"
+  | "workflow"
+  | "workflow_step";
+
+export interface ChannelProtocolSourceRef {
+  readonly type: ChannelProtocolSourceRefType;
+  readonly id: string;
+  readonly label?: string;
+}
 
 export interface ChannelProtocolFieldResolution<T> {
   readonly value: T;
@@ -139,11 +157,12 @@ export interface ChannelCollaborationProtocol {
   readonly responseLanguage: ChannelResponseLanguage;
   readonly autoReplyMode: ChannelAutoReplyMode;
   readonly defaultTeammateId?: string;
-  readonly defaultWorkflowPreference: "manual";
+  readonly protocolVersion?: number;
+  readonly defaultWorkflowPreference: ChannelWorkflowPreference;
   readonly visibleMultiReplyMaxParticipants: number;
   readonly privacyRules: readonly string[];
   readonly reviewRules: readonly string[];
-  readonly updatedBy: "local-user" | "system_template";
+  readonly updatedBy: "local-user" | "system_template" | "ai-draft";
   readonly updatedAt: string;
 }
 
@@ -154,13 +173,13 @@ export interface ChannelCollaborationProtocolResponse {
     readonly responseLanguage: ChannelProtocolFieldResolution<ChannelResponseLanguage>;
     readonly autoReplyMode: ChannelProtocolFieldResolution<ChannelAutoReplyMode>;
     readonly defaultTeammateId: ChannelProtocolFieldResolution<string | undefined>;
-    readonly defaultWorkflowPreference: ChannelProtocolFieldResolution<"manual">;
+    readonly defaultWorkflowPreference: ChannelProtocolFieldResolution<ChannelWorkflowPreference>;
     readonly visibleMultiReplyMaxParticipants: ChannelProtocolFieldResolution<number>;
     readonly privacyRules: ChannelProtocolFieldResolution<readonly string[]>;
     readonly reviewRules: ChannelProtocolFieldResolution<readonly string[]>;
   };
   readonly storage: {
-    readonly mode: "channel_fields";
+    readonly mode: "channel_fields" | "channel_fields_and_protocol_overrides";
     readonly editableFields: readonly string[];
     readonly unsupportedFields: readonly string[];
   };
@@ -170,6 +189,55 @@ export interface UpdateChannelCollaborationProtocolRequest {
   readonly responseLanguage?: ChannelResponseLanguage | null;
   readonly autoReplyMode?: ChannelAutoReplyMode | null;
   readonly defaultTeammateId?: string | null;
+}
+
+export type ChannelProtocolDraftStatus = "draft" | "applied" | "cancelled" | "stale";
+
+export type ChannelProtocolDraftCreatedBy = "local-user" | "ai-draft";
+
+export interface ChannelCollaborationProtocolPatch {
+  readonly responseLanguage?: ChannelResponseLanguage | null;
+  readonly autoReplyMode?: ChannelAutoReplyMode | null;
+  readonly defaultTeammateId?: string | null;
+  readonly defaultWorkflowPreference?: ChannelWorkflowPreference;
+  readonly visibleMultiReplyMaxParticipants?: number;
+  readonly privacyRules?: readonly string[];
+  readonly reviewRules?: readonly string[];
+}
+
+export interface ChannelCollaborationProtocolDraft {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly baseVersion?: number;
+  readonly proposedPatch: ChannelCollaborationProtocolPatch;
+  readonly reason: string;
+  readonly createdBy: ChannelProtocolDraftCreatedBy;
+  readonly sourceRefs: readonly ChannelProtocolSourceRef[];
+  readonly status: ChannelProtocolDraftStatus;
+  readonly appliedProtocolVersion?: number;
+  readonly expiresAt?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelCollaborationProtocolDraftRequest {
+  readonly baseVersion?: number;
+  readonly proposedPatch: ChannelCollaborationProtocolPatch;
+  readonly reason: string;
+  readonly createdBy?: ChannelProtocolDraftCreatedBy;
+  readonly sourceRefs?: readonly ChannelProtocolSourceRef[];
+  readonly expiresAt?: string;
+}
+
+export interface ChannelCollaborationProtocolDraftMutationResponse extends ChannelCollaborationProtocolResponse {
+  readonly draft: ChannelCollaborationProtocolDraft;
+}
+
+export interface ChannelCollaborationProtocolDraftListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly drafts: readonly ChannelCollaborationProtocolDraft[];
 }
 
 export interface ChannelCollaborationProtocolMutationResponse extends ChannelCollaborationProtocolResponse {
