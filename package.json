@@ -9,6 +9,8 @@
   "scripts": {
     "build": "corepack pnpm -r build",
     "typecheck": "corepack pnpm -r typecheck",
+    "ling": "node packages/cli/dist/index.js",
+    "local:restart": "node packages/cli/dist/index.js restart",
     "lint": "corepack pnpm -r lint",
     "test": "corepack pnpm -r test"
   },

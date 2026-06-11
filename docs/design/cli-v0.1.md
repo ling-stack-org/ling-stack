@@ -92,6 +92,13 @@ Not implemented yet:
 ling-stack init
 ling-stack doctor
 
+ling restart
+ling status
+ling logs
+ling-stack restart
+ling-stack status
+ling-stack logs
+
 ling-stack daemon start
 ling-stack daemon status
 ling-stack daemon stop
@@ -529,6 +536,59 @@ Exit behavior:
 - exit `0` when the workspace is ready,
 - exit `3` when the daemon is unreachable,
 - exit `4` when daemon is reachable but workspace readiness is blocked.
+
+### `ling restart`
+
+Purpose:
+
+- restart the local Ling Stack development stack: daemon plus Web UI.
+- hide `launchd`, pid files, raw process kills, and port checks behind one command.
+
+Command:
+
+```bash
+ling restart
+ling restart --force
+ling restart --skip-build
+ling-stack restart
+```
+
+Behavior:
+
+- local-only; never restarts production or remote services,
+- builds `@ling-stack/daemon` in source checkouts unless `--skip-build` is used,
+- uses the installed local service manager when available,
+- waits for daemon `/health` and Web UI readiness,
+- refuses active daemon work by default when it can be verified; `--force` is the explicit override.
+
+Related design: [Local Service Manager](local-service-manager.md).
+
+### `ling status`
+
+Purpose:
+
+- show local daemon and Web UI readiness, manager labels, PIDs, URLs, and log paths.
+
+Command:
+
+```bash
+ling status
+ling-stack status --json
+```
+
+### `ling logs`
+
+Purpose:
+
+- read local daemon/Web logs without requiring users to remember launchd stdout paths.
+
+Command:
+
+```bash
+ling logs
+ling logs --service daemon --lines 100
+ling logs --service web
+```
 
 ### `ling-stack daemon start`
 

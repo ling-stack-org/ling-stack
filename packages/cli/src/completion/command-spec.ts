@@ -37,6 +37,21 @@ export const commandSpec: CommandSpec = {
   summary: "Ling Stack CLI",
   options: globalOptions,
   subcommands: [
+    command("restart", "Restart local daemon and Web UI", [], [
+      option("--force"),
+      option("--skip-build"),
+      option("--timeout", "required"),
+      option("--web-url", "required"),
+    ]),
+    command("status", "Show local daemon and Web UI status", [], [
+      option("--timeout", "required"),
+      option("--web-url", "required"),
+    ]),
+    command("logs", "Read local daemon and Web UI logs", [], [
+      option("--service", "required"),
+      option("--lines", "required"),
+      option("--follow"),
+    ]),
     command("init", "Initialize a workspace", [], [
       option("--with-provider-templates"),
       option("--no-provider-templates"),

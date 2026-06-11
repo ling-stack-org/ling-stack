@@ -212,7 +212,25 @@ corepack pnpm typecheck
 corepack pnpm build
 ```
 
-### 3. Start the daemon
+### 3. Start local services
+
+For a local development checkout, use the short CLI entrypoint:
+
+```bash
+ling restart
+ling status
+```
+
+`ling restart` restarts the local daemon and Web UI, waits for daemon health and the
+Web UI HTTP endpoint, and keeps lower-level service-manager details hidden.
+
+If the short alias is not linked in your shell yet, use:
+
+```bash
+corepack pnpm ling restart
+```
+
+Daemon-only foreground startup is still available for low-level debugging:
 
 ```bash
 node packages/daemon/dist/cli.js

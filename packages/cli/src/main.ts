@@ -38,6 +38,16 @@ import {
   writeLastMessageAtomic,
 } from "./run/last-message.js";
 import { createRunOutput, type RunOutput } from "./run/output.js";
+import {
+  DEFAULT_LOCAL_WEB_URL,
+  readLocalServiceLogs,
+  readLocalStackStatus,
+  restartLocalStack,
+  type LocalServiceLog,
+  type LocalServiceName,
+  type LocalServiceStatus,
+  type LocalStackStatus,
+} from "./local/services.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = "17891";
@@ -172,6 +182,12 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleDoctor(rest, parsed.options);
     case "daemon":
       return await handleDaemon(rest, parsed.options);
+    case "restart":
+      return await handleLocalRestart(rest, parsed.options);
+    case "status":
+      return await handleLocalStatus(rest, parsed.options);
+    case "logs":
+      return await handleLocalLogs(rest, parsed.options);
     case "run":
       return await handleRun(rest, parsed.options);
     case "provider":
@@ -310,6 +326,136 @@ async function handleDaemonStatus(options: GlobalOptions): Promise<number> {
   }
   console.log(`Latency: ${daemon.elapsedMs}ms`);
   return stateStatus === "stale" || stateStatus === "conflict" ? 4 : daemon.ok ? 0 : 3;
+}
+
+async function handleLocalRestart(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["timeout", "web-url"]),
+    booleanFlags: new Set(["force", "skip-build"]),
+  });
+  assertNoPositionals(parsed.positionals, "restart");
+  const timeoutMs = readTimeoutMs(parsed, 10000);
+  const webUrl = normalizeDaemonUrl(getFlag(parsed, "web-url") ?? DEFAULT_LOCAL_WEB_URL);
+  if (!parsed.booleans.has("force")) {
+    await assertNoActiveWorkForLifecycle("restarting", options);
+  }
+  const result = await restartLocalStack({
+    cwd: options.cwd,
+    daemonUrl: options.daemonUrl,
+    webUrl,
+    timeoutMs,
+    buildDaemon: !parsed.booleans.has("skip-build"),
+  });
+
+  if (options.json) {
+    printJson(result);
+    return result.ok ? 0 : 4;
+  }
+
+  console.log("Local stack restarted");
+  console.log(`Daemon build: ${result.build.ran ? "ok" : `skipped (${result.build.skippedReason ?? "not requested"})`}`);
+  printLocalServiceStatus(result.status.daemon);
+  printLocalServiceStatus(result.status.web);
+  return result.ok ? 0 : 4;
+}
+
+async function handleLocalStatus(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["web-url", "timeout"]),
+  });
+  assertNoPositionals(parsed.positionals, "status");
+  const timeoutMs = readTimeoutMs(parsed, 1500);
+  const status = await readLocalStackStatus({
+    daemonUrl: options.daemonUrl,
+    webUrl: normalizeDaemonUrl(getFlag(parsed, "web-url") ?? DEFAULT_LOCAL_WEB_URL),
+    timeoutMs,
+  });
+
+  if (options.json) {
+    printJson(status);
+    return status.ok ? 0 : 3;
+  }
+
+  printLocalStackStatus(status);
+  return status.ok ? 0 : 3;
+}
+
+async function handleLocalLogs(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["service", "lines"]),
+    booleanFlags: new Set(["follow"]),
+  });
+  assertNoPositionals(parsed.positionals, "logs");
+  if (parsed.booleans.has("follow")) {
+    throw new CliError(2, "not_implemented", "logs --follow is not implemented yet.");
+  }
+  const service = readLocalLogService(getFlag(parsed, "service") ?? "all");
+  const lineCount = readOptionalIntegerFlag(parsed, "lines") ?? 200;
+  if (lineCount < 1) {
+    throw new CliError(2, "bad_lines", "--lines must be a positive integer.");
+  }
+  const logs = await readLocalServiceLogs({
+    cwd: options.cwd,
+    service,
+    lines: lineCount,
+  });
+
+  if (options.json) {
+    printJson({ logs });
+    return logs.some((log) => log.error) ? 4 : 0;
+  }
+
+  printLocalServiceLogs(logs);
+  return logs.some((log) => log.error) ? 4 : 0;
+}
+
+function readLocalLogService(value: string): LocalServiceName | "all" {
+  if (value === "daemon" || value === "web" || value === "all") {
+    return value;
+  }
+  throw new CliError(2, "bad_service", "--service must be one of: daemon, web, all.");
+}
+
+function printLocalStackStatus(status: LocalStackStatus): void {
+  console.log(`Local stack: ${status.ok ? "ready" : "not ready"}`);
+  printLocalServiceStatus(status.daemon);
+  printLocalServiceStatus(status.web);
+}
+
+function printLocalServiceStatus(service: LocalServiceStatus): void {
+  const manager = service.launchd.installed ? service.launchd.manager : "unmanaged";
+  const pid = service.launchd.pid ? ` pid=${service.launchd.pid}` : "";
+  const state = service.launchd.state ? ` state=${service.launchd.state}` : "";
+  console.log(`${titleCase(service.name)}: ${service.endpoint.ok ? "ready" : "not ready"} (${service.endpoint.url})`);
+  console.log(`  Manager: ${manager} ${service.launchd.label}${state}${pid}`.trimEnd());
+  if (service.launchd.error && !service.launchd.installed) {
+    console.log(`  Manager error: ${service.launchd.error}`);
+  }
+  if (service.endpoint.service) {
+    console.log(`  Service: ${service.endpoint.service}`);
+  }
+  if (!service.endpoint.ok && service.endpoint.error) {
+    console.log(`  Health: ${service.endpoint.error}`);
+  }
+  if (service.launchd.stdoutPath) {
+    console.log(`  Log: ${service.launchd.stdoutPath}`);
+  }
+}
+
+function printLocalServiceLogs(logs: readonly LocalServiceLog[]): void {
+  for (const [index, log] of logs.entries()) {
+    if (index > 0) {
+      console.log("");
+    }
+    console.log(`==> ${log.service} (${log.path}) <==`);
+    if (log.error) {
+      console.log(`Error: ${log.error}`);
+      continue;
+    }
+    for (const line of log.lines) {
+      console.log(line);
+    }
+  }
 }
 
 async function readDaemonHealth(options: GlobalOptions): Promise<{
@@ -5669,6 +5815,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printDoctorHelp();
     return;
   }
+  if (command === "restart" || command === "status" || command === "logs") {
+    printLocalHelp(command);
+    return;
+  }
   if (command === "provider") {
     printProviderHelp();
     return;
@@ -5720,8 +5870,14 @@ function printHelp(): void {
   console.log(`Ling Stack CLI
 
 Usage:
+  ling restart
+  ling status
+  ling logs
   ling-stack [global options] init
   ling-stack [global options] doctor [config]
+  ling-stack [global options] restart
+  ling-stack [global options] status
+  ling-stack [global options] logs
   ling-stack [global options] daemon status
   ling-stack [global options] daemon start
   ling-stack [global options] daemon stop
@@ -5796,6 +5952,49 @@ function printInitHelp(): void {
 Behavior:
   Creates .ling-stack/, SQLite runtime state, sessions/, artifacts/, logs/, pi/, and config.json.
   Provider templates are created disabled by default and use secret refs such as env:NAME or keychain:NAME.
+`);
+}
+
+function printLocalHelp(command?: string): void {
+  if (command === "restart") {
+    console.log(`Usage:
+  ling restart [--force] [--skip-build] [--timeout 10000] [--web-url http://127.0.0.1:5173]
+
+Behavior:
+  Restarts the local Ling Stack daemon and Web UI.
+  This is a local development command only; it does not restart remote or production services.
+  When launchd services are installed, uses com.lingstack.local.daemon and com.lingstack.local.web.
+  Builds @ling-stack/daemon before restart unless --skip-build is passed.
+  Refuses active work by default; use --force for an explicit operator override.
+`);
+    return;
+  }
+  if (command === "status") {
+    console.log(`Usage:
+  ling status [--timeout 1500] [--web-url http://127.0.0.1:5173]
+
+Behavior:
+  Shows local daemon and Web UI manager, PID, URL, log path, and readiness.
+`);
+    return;
+  }
+  if (command === "logs") {
+    console.log(`Usage:
+  ling logs [--service daemon|web|all] [--lines 200]
+
+Behavior:
+  Reads local daemon/Web logs from launchd stdout paths when available, with logs/ fallback.
+  --follow is not implemented yet.
+`);
+    return;
+  }
+  console.log(`Usage:
+  ling restart [--force] [--skip-build] [--timeout 10000]
+  ling status [--timeout 1500]
+  ling logs [--service daemon|web|all] [--lines 200]
+
+Behavior:
+  Local-only daemon + Web UI lifecycle commands.
 `);
 }
 
