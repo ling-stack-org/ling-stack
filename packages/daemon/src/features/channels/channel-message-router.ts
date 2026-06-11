@@ -13,6 +13,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { buildChannelAutoRouteContextPack, renderContextPack, type ChannelAutoRouteCandidateContext } from "./context-packs.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -408,13 +409,20 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   if (!providerPresetId) {
     throw new Error("No runnable provider is available for channel auto_route.");
   }
+  const prompt = renderContextPack(buildChannelAutoRouteContextPack({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    providerPresetId,
+    candidates: candidatesToRouteContext(candidates),
+  }));
   const provider = resolveProviderForRun(input.store, {
     cwd: input.store.paths.cwd,
     workspaceCwd: input.store.paths.cwd,
     task: {
       id: input.sourceMessage.id,
       title: `Channel auto route in ${input.channel.name}`,
-      prompt: buildModelRoutePrompt(input, candidates),
+      prompt,
       channelId: input.channel.id,
     },
     providerPresetId,
@@ -429,7 +437,7 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
     task: {
       id: input.sourceMessage.id,
       title: `Channel auto route in ${input.channel.name}`,
-      prompt: buildModelRoutePrompt(input, candidates),
+      prompt,
       channelId: input.channel.id,
     },
     provider,
@@ -446,29 +454,14 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   return parseModelRouteOutput(text);
 }
 
-function buildModelRoutePrompt(input: ChannelMessageRouteInput, candidates: readonly RouteCandidate[]): string {
-  const recentMessages = input.store
-    .listChannelMessages({ channelId: input.channel.id, limit: 8 })
-    .filter((message) => message.id !== input.sourceMessage.id)
-    .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
-    .join("\n");
-  const candidateJson = candidates.map((candidate) => ({
+function candidatesToRouteContext(candidates: readonly RouteCandidate[]): readonly ChannelAutoRouteCandidateContext[] {
+  return candidates.map((candidate) => ({
     id: candidate.teammate.id,
     label: candidate.teammate.displayName,
     role: candidate.teammate.roleKey,
     description: candidate.teammate.description.slice(0, 300),
     preferred: candidate.preferred,
   }));
-  return [
-    "Decide whether one AI teammate should reply to the latest user channel message.",
-    "Return strict JSON only with fields: action, teammateId, confidence, reason, alternativesConsidered.",
-    "Use action no_reply for acknowledgements, repeated greetings, ambiguous fragments, or messages that do not need AI.",
-    "Never create tasks, runs, workflows, approvals, memory activation, or multiple replies.",
-    `Channel: ${input.channel.name}`,
-    `Latest user message: ${input.sourceMessage.body}`,
-    recentMessages ? `Recent context:\n${recentMessages}` : "Recent context: none",
-    `Candidates JSON: ${JSON.stringify(candidateJson)}`,
-  ].join("\n\n");
 }
 
 function parseModelRouteOutput(text: string): ChannelAutoRouteModelOutput {

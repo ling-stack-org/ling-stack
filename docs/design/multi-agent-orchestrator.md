@@ -88,6 +88,9 @@ Advanced follow-up design:
 - [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
   splits the next orchestration work into structured handoff intent, selector decisions,
   graph-defined fan-out/fan-in with memory candidates, and workflow evidence detail.
+- [Channel Context Budget Manager](channel-context-budget-manager.md) defines the bounded
+  Context Pack layer that should eventually assemble workflow-step prompt input under
+  provider-compatible budgets.
 
 Implemented hardening:
 
@@ -298,7 +301,9 @@ the same task/run coordinator used by user-started runs.
 ## Prompt Assembly
 
 The orchestrator should construct a step packet and pass it through existing skill-aware
-run fields.
+run fields. As the Context Budget Manager lands, this packet becomes the
+`workflow_packet` Context Pack rendered into those same run fields; the state machine and
+task/run coordinator should not be replaced.
 
 Step prompt inputs:
 
@@ -317,6 +322,8 @@ Step prompt inputs:
 Prompt rules:
 
 - Previous outputs are summarized and referenced. They are not blindly pasted in full.
+- Provider/model budget enforcement belongs to the Context Budget Manager. Unknown custom
+  providers should receive conservative packets instead of raw long transcripts.
 - Private teammate chat is not included unless the user explicitly promotes it.
 - Attachment or webpage bodies are not included unless a future ingestion slice creates
   explicit artifacts.

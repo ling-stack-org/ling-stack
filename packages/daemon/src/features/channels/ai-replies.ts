@@ -9,7 +9,7 @@ import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { extractChannelExecutionProposal } from "./ai-proposals.js";
-import { formatChannelDiscussionPrompt } from "./ai-prompts.js";
+import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 
 export async function createAiChannelReply(input: {
@@ -21,6 +21,7 @@ export async function createAiChannelReply(input: {
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
   readonly channelParallelLimit?: number;
+  readonly visibleParticipantTeammateIds?: readonly string[];
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
 }): Promise<ChannelMessage> {
@@ -95,6 +96,7 @@ async function completeAiChannelReply(input: {
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
   readonly channelParallelLimit?: number;
+  readonly visibleParticipantTeammateIds?: readonly string[];
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly pending: ChannelMessage;
@@ -137,6 +139,15 @@ async function completeAiChannelReply(input: {
       channel: input.channel,
       sourceText: input.sourceMessage.body,
     }).language;
+    const discussionContextPack = buildChannelReplyContextPack({
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      teammate: input.teammate,
+      canonicalTeammateId: input.canonicalTeammateId,
+      visibleParticipantTeammateIds: input.visibleParticipantTeammateIds,
+    });
+    const discussionPrompt = renderContextPack(discussionContextPack);
     const systemPrompt = [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
@@ -163,7 +174,7 @@ async function completeAiChannelReply(input: {
         task: {
           id: input.sourceMessage.id,
           title: `Channel discussion in ${input.channel.name}`,
-          prompt: formatChannelDiscussionPrompt(input.channel, input.sourceMessage),
+          prompt: discussionPrompt,
           channelId: input.channel.id,
         },
         providerPresetId: input.providerPresetId,
@@ -190,7 +201,7 @@ async function completeAiChannelReply(input: {
       task: {
         id: input.sourceMessage.id,
         title: `Channel discussion in ${input.channel.name}`,
-        prompt: formatChannelDiscussionPrompt(input.channel, input.sourceMessage),
+        prompt: discussionPrompt,
         channelId: input.channel.id,
       },
       provider,

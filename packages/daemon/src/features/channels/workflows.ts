@@ -25,6 +25,11 @@ import {
   parseWorkflowTemplateCompileRequest,
 } from "./workflow-templates.js";
 import {
+  buildWorkflowStepContextPack,
+  renderContextPack,
+  type ContextPack,
+} from "./context-packs.js";
+import {
   readWorkflowStepContextPacketArtifact,
   readWorkflowStepOutputPacketArtifact,
 } from "./workflow-step-packets.js";
@@ -74,6 +79,26 @@ export interface WorkflowStepRunRequest {
   };
   readonly tools?: readonly RunTool[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  readonly contextPack?: WorkflowStepRunContextPackSnapshot;
+}
+
+export interface WorkflowStepRunContextPackSnapshot {
+  readonly kind: ContextPack["kind"];
+  readonly providerPresetId?: string;
+  readonly modelId?: string;
+  readonly budget: ContextPack["budget"];
+  readonly estimatedInputTokens: number;
+  readonly overBudget: boolean;
+  readonly droppedSectionIds: readonly string[];
+  readonly compactionIds: readonly string[];
+  readonly sections: readonly {
+    readonly id: string;
+    readonly role: string;
+    readonly priority: string;
+    readonly estimatedTokens?: number;
+    readonly sourceRefIds?: readonly string[];
+  }[];
+  readonly sourceRefs: ContextPack["sourceRefs"];
 }
 
 export type ValidateWorkflowStepRunRequest = (runRequest: WorkflowStepRunRequest) => void;
@@ -639,12 +664,20 @@ export function prepareWorkflowStepStart(
   }
   const runnerId = input.runnerId;
   const taskTitle = input.taskTitle ?? step.title;
-  const taskPrompt = formatWorkflowStepTaskPrompt(
-    input.taskPrompt ?? step.prompt,
+  const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const contextPack = buildWorkflowStepContextPack({
+    store,
+    channel,
     workflow,
     step,
-    store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
-  );
+    prompt: input.taskPrompt ?? step.prompt,
+    providerPresetId,
+    workflowSteps,
+  });
+  if (contextPack.overBudget) {
+    return block(`Workflow step context exceeds provider budget (${contextPack.estimatedInputTokens}/${contextPack.budget.inputBudgetTokens} estimated input tokens).`);
+  }
+  const taskPrompt = renderWorkflowStepContextPackPrompt(contextPack);
   const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runRequestBase: WorkflowStepRunRequest = {
     workspaceCwd: cwd,
@@ -663,6 +696,7 @@ export function prepareWorkflowStepStart(
     },
     tools: channel.allowedTools,
     thinkingLevel: "medium",
+    contextPack: snapshotWorkflowStepContextPack(contextPack),
   };
 
   if (input.mode === "create_and_run_task") {
@@ -960,77 +994,38 @@ function buildWorkflowStepEvidenceSourceIds(store: RunStore, step: ChannelWorkfl
   ].filter((id): id is string => Boolean(id)));
 }
 
-function formatWorkflowStepTaskPrompt(
-  prompt: string,
-  workflow: ChannelWorkflow,
-  step: ChannelWorkflowStep,
-  workflowSteps: readonly ChannelWorkflowStep[],
-): string {
-  const stepsById = new Map(workflowSteps.map((candidate) => [candidate.id, candidate] as const));
-  const dependencies = (step.metadata?.dependsOnStepIds ?? [])
-    .map((stepId) => stepsById.get(stepId))
-    .filter((candidate): candidate is ChannelWorkflowStep => candidate !== undefined);
-  const dependencyLines = dependencies.length === 0
-    ? ["- none"]
-    : dependencies.flatMap((dependency) => formatWorkflowDependencyPromptLines(dependency));
-  const approvalGateLines = formatWorkflowApprovalGatePromptLines(step);
+function renderWorkflowStepContextPackPrompt(pack: ContextPack): string {
   return [
-    `Workflow context packet: ${step.metadata?.contextArtifactId ?? "pending until run starts"}`,
+    `Context Pack: ${pack.kind}`,
+    `Provider budget mode: ${pack.budget.mode}`,
+    `Provider model: ${pack.modelId ?? "unknown"}`,
+    `Estimated input tokens: ${pack.estimatedInputTokens}/${pack.budget.inputBudgetTokens}`,
+    `Dropped sections: ${pack.droppedSectionIds.length > 0 ? pack.droppedSectionIds.join(", ") : "none"}`,
+    "Workflow context artifact: pending until run starts",
     "",
-    "Objective:",
-    workflow.objective || "No objective provided.",
-    "",
-    "Dependencies:",
-    ...dependencyLines,
-    "",
-    "Approval gates:",
-    ...approvalGateLines,
-    "",
-    "Current step:",
-    prompt,
+    renderContextPack(pack),
   ].join("\n");
 }
 
-function formatWorkflowDependencyPromptLines(step: ChannelWorkflowStep): readonly string[] {
-  const artifactIds = uniqueStrings([
-    step.metadata?.outputArtifactId,
-    ...(step.metadata?.outputArtifactIds ?? []),
-  ].filter((artifactId): artifactId is string => Boolean(artifactId)));
-  return [
-    `- ${step.title} (${step.status})`,
-    `  workflowStepId: ${step.id}`,
-    `  runId: ${step.runId ?? "none"}`,
-    `  outputArtifactId: ${step.metadata?.outputArtifactId ?? "none"}`,
-    `  artifactIds: ${artifactIds.length > 0 ? artifactIds.join(", ") : "none"}`,
-    `  resultSummary: ${step.resultSummary ? truncateWorkflowPromptValue(step.resultSummary, 280) : "none"}`,
-  ];
-}
-
-function truncateWorkflowPromptValue(value: string, maxLength: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
-}
-
-function formatWorkflowApprovalGatePromptLines(step: ChannelWorkflowStep): readonly string[] {
-  const lines: string[] = [];
-  if (step.metadata?.approvalGate) {
-    lines.push(`- pre-run: ${formatApprovalProfileSummary(step.metadata.approvalGate)}`);
-  }
-  for (const gate of step.metadata?.gates ?? []) {
-    lines.push(`- ${gate.stage}: ${gate.title} (${formatApprovalProfileSummary(gate.approvalProfile)})`);
-    lines.push(`  reason: ${truncateWorkflowPromptValue(gate.reason, 180)}`);
-    lines.push(`  requiredForStatuses: ${gate.requiredForStatuses?.join(", ") ?? "any"}`);
-  }
-  return lines.length > 0 ? lines : ["- none"];
-}
-
-function formatApprovalProfileSummary(profile: SkillApprovalProfile): string {
-  return [
-    `mode=${profile.mode}`,
-    profile.risk ? `risk=${profile.risk}` : undefined,
-    profile.requiredForTools?.length ? `tools=${profile.requiredForTools.join(",")}` : undefined,
-    profile.requiredForActions?.length ? `actions=${profile.requiredForActions.join(",")}` : undefined,
-  ].filter((item): item is string => Boolean(item)).join("; ");
+function snapshotWorkflowStepContextPack(pack: ContextPack): WorkflowStepRunContextPackSnapshot {
+  return {
+    kind: pack.kind,
+    providerPresetId: pack.providerPresetId,
+    modelId: pack.modelId,
+    budget: pack.budget,
+    estimatedInputTokens: pack.estimatedInputTokens,
+    overBudget: pack.overBudget,
+    droppedSectionIds: pack.droppedSectionIds,
+    compactionIds: pack.compactionIds,
+    sections: pack.sections.map((section) => ({
+      id: section.id,
+      role: section.role,
+      priority: section.priority,
+      estimatedTokens: section.estimatedTokens,
+      sourceRefIds: section.sourceRefIds,
+    })),
+    sourceRefs: pack.sourceRefs,
+  };
 }
 
 function uniqueStrings(values: readonly (string | undefined)[]): readonly string[] {

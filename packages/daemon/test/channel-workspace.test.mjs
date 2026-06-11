@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { createCompositeSecretResolver, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
@@ -27,6 +28,52 @@ test("health exposes channel auto_route capability", async () => {
   } finally {
     await enabledDaemon.close();
   }
+});
+
+test("context budget manager resolves provider modes and trims lower priority sections", () => {
+  const providerBase = {
+    id: "provider_context_test",
+    kind: "openai",
+    displayName: "Context Test",
+    providerId: "openai",
+    model: "context-model",
+    api: "openai-responses",
+    headers: {},
+    input: ["text"],
+    compat: {},
+    capabilities: ["chat"],
+    enabled: true,
+    createdAt: "2026-06-10T00:00:00.000Z",
+    updatedAt: "2026-06-10T00:00:00.000Z",
+  };
+
+  const known = resolveProviderContextBudget({ ...providerBase, contextWindow: 12000, maxTokens: 2000 }, "channel_reply");
+  assert.equal(known.mode, "model_known");
+  assert.equal(known.contextWindowTokens, 12000);
+  assert.equal(known.reservedOutputTokens, 2000);
+  assert.equal(known.inputBudgetTokens, 9488);
+
+  const estimated = resolveProviderContextBudget(providerBase, "intent_selector");
+  assert.equal(estimated.mode, "model_estimated");
+  assert.equal(estimated.contextWindowTokens, 32768);
+  assert.equal(estimated.reservedOutputTokens, 512);
+
+  const unknown = resolveProviderContextBudget({ ...providerBase, kind: "openai-compatible" }, "channel_reply");
+  assert.equal(unknown.mode, "model_unknown");
+  assert.equal(unknown.contextWindowTokens, 8192);
+
+  const trimmed = buildContextPack({
+    kind: "channel_reply",
+    providerPreset: { ...providerBase, contextWindow: 1800, maxTokens: 512 },
+    sections: [
+      { id: "must", role: "user", priority: "must_keep", text: "must", estimatedTokens: 900 },
+      { id: "high", role: "evidence", priority: "high", text: "high", estimatedTokens: 900 },
+      { id: "low", role: "evidence", priority: "low", text: "low", estimatedTokens: 900 },
+    ],
+  });
+  assert.deepEqual(trimmed.sections.map((section) => section.id), ["must"]);
+  assert.deepEqual(trimmed.droppedSectionIds, ["low", "high"]);
+  assert.equal(trimmed.overBudget, false);
 });
 
 test("channel messages persist and AI blocker replies do not drop the user message", async () => {
@@ -93,6 +140,8 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.equal(finalReply.body, "Designer reply");
     assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Current teammate: Designer \(id: teammate_builtin_designer, role: designer\)/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /Channel teammates \(configured roster/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -155,6 +204,7 @@ test("default_teammate routes reply-worthy messages to the channel default witho
     assert.match(finalReply.body, /ling_task_proposal/);
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].systemPrompt, /Do not include hidden proposal blocks/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /Channel teammates \(configured roster/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
@@ -177,6 +227,10 @@ test("default_teammate routes reply-worthy messages to the channel default witho
     const countReplyList = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, countQuestion.aiReply.id, "ready");
     const countReply = countReplyList.messages.find((message) => message.id === countQuestion.aiReply.id);
     assert.equal(countReply.body, "这个频道当前有多个 AI 队友，具体数量以频道成员列表为准。");
+    assert.equal(runner.runs.length, 2);
+    assert.match(runner.runs[1].task.prompt, /Channel teammates \(configured roster; not online\/presence\):/);
+    assert.match(runner.runs[1].task.prompt, /Engineer \(id: teammate_builtin_engineer, role: engineer\).*default/);
+    assert.match(runner.runs[1].task.prompt, /Do not claim online\/presence status/);
 
     const countDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(countQuestion.message.id)}`);
     assert.equal(countDecisions.decisions.length, 1);
@@ -230,6 +284,13 @@ test("channel intent selector creates visible multi-replies for discussion-only 
     await Promise.all(created.aiReplies.map((reply) => waitForChannelMessageStatus(daemon.url, cwd, channel.id, reply.id, "ready")));
     assert.equal(runner.runs.length, 3);
     assert(runner.runs.every((run) => /Do not include hidden proposal blocks/.test(run.systemPrompt)));
+    assert(runner.runs.every((run) => /Channel teammates \(configured roster; not online\/presence\):/.test(run.task.prompt)));
+    assert(runner.runs.every((run) => /Visible multi-reply participants for this batch:/.test(run.task.prompt)));
+    assert(runner.runs.every((run) => /Architect \(id: teammate_builtin_architect, role: architect\)/.test(run.task.prompt)));
+    assert(runner.runs.every((run) => /Engineer \(id: teammate_builtin_engineer, role: engineer\)/.test(run.task.prompt)));
+    assert(runner.runs.every((run) => /QA \(id: teammate_builtin_qa, role: qa\)/.test(run.task.prompt)));
+    assert(runner.runs.every((run) => /Do not claim online\/presence status/.test(run.task.prompt)));
+    assert(runner.runs.every((run) => /not-yet-generated peer replies/.test(run.task.prompt)));
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
@@ -544,6 +605,8 @@ test("model-assisted channel intent selector can suppress ordinary auto replies"
     assert.equal(created.aiReply, undefined);
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
+    assert.match(runner.runs[0].task.prompt, /Classify the latest user channel message into exactly one Ling intent/);
+    assert.match(runner.runs[0].task.prompt, /Available teammate roles JSON/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -873,6 +936,8 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.match(finalReply.body, /ling_task_proposal/);
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel message router/i);
+    assert.match(runner.runs[0].task.prompt, /Decide whether one AI teammate should reply/);
+    assert.match(runner.runs[0].task.prompt, /Candidates JSON/);
     assert.match(runner.runs[1].systemPrompt, /Do not include hidden proposal blocks/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -1376,6 +1441,12 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstContext.objective, "Build the orchestrator test slice.");
     assert.deepEqual(firstContext.dependencies, []);
     assert.equal(firstContext.providerPresetId, provider.id);
+    assert.equal(firstContext.contextPack.kind, "workflow_step");
+    assert.equal(firstContext.contextPack.providerPresetId, provider.id);
+    assert.equal(firstContext.contextPack.budget.mode, "model_estimated");
+    assert.equal(firstContext.contextPack.overBudget, false);
+    assert.equal(firstContext.contextPack.sections.some((section) => section.id === "workflow_runtime_boundary"), true);
+    assert.equal(firstContext.contextPack.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === compiled.workflow.id), true);
     assert.ok(firstStepAfterFirstTick.runId);
     const firstRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(firstStepAfterFirstTick.runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(firstRun.workflowStepId, firstStepAfterFirstTick.id);
@@ -1431,13 +1502,16 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(implementationContext.dependencies.length, 2);
     assert.equal(implementationContext.dependencies.every((dependency) => dependency.outputArtifactId), true);
     assert.equal(implementationContext.priorOutputArtifactIds.length >= 2, true);
-    assert.match(runner.runs[0].task.prompt, /Workflow context packet: pending until run starts/);
+    assert.match(runner.runs[0].task.prompt, /Context Pack: workflow_step/);
+    assert.match(runner.runs[0].task.prompt, /Provider budget mode: model_estimated/);
+    assert.match(runner.runs[0].task.prompt, /Workflow context artifact: pending until run starts/);
     assert.match(runner.runs[0].task.prompt, /Dependencies:\n- none/);
     assert.match(runner.runs[0].task.prompt, /Approval gates:\n- none/);
     const implementationRun = runner.runs.find((run) => run.task.title === "Implementation");
     assert.ok(implementationRun);
-    assert.match(implementationRun.task.prompt, /Workflow context packet: pending until run starts/);
-    assert.match(implementationRun.task.prompt, /Dependencies:/);
+    assert.match(implementationRun.task.prompt, /Context Pack: workflow_step/);
+    assert.match(implementationRun.task.prompt, /Provider budget mode: model_estimated/);
+    assert.match(implementationRun.task.prompt, /Dependency output:/);
     assert.match(implementationRun.task.prompt, /Approval gates:\n- pre-run: mode=standard; risk=medium/);
     assert.match(implementationRun.task.prompt, /Design Review \(succeeded\)/);
     assert.match(implementationRun.task.prompt, /Engineering Review \(succeeded\)/);
@@ -1545,6 +1619,8 @@ test("workflow graph compiles into durable steps and emits standardized packets"
     assert.equal(planContext.graphNodeId, "plan");
     assert.equal(planContext.teammateId, planStep.toParticipantId);
     assert.equal(planContext.skillId, "spec");
+    assert.equal(planContext.contextPack.kind, "workflow_step");
+    assert.equal(planContext.contextPack.sections.some((section) => section.id === "workflow_current_step"), true);
     assert.equal(planContext.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === compiled.workflow.id), true);
 
     const planOutput = await getArtifactJson(daemon.url, cwd, planStep.metadata.outputArtifactId);

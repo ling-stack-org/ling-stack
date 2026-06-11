@@ -98,6 +98,7 @@ export function buildWorkflowStepContextPacket(input: {
     effectiveRunnerId: runnerAudit?.effectiveRunnerId,
     providerPresetId: input.runRequest.providerPresetId ?? input.run.providerPresetId,
     approvalGate: input.step.metadata?.approvalGate,
+    contextPack: input.runRequest.contextPack,
     generatedAt: input.now,
   });
 }

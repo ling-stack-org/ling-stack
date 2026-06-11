@@ -14,6 +14,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 
 export interface ChannelIntentSelectorInput {
@@ -237,7 +238,12 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
   if (!providerPresetId) {
     throw new Error("No runnable provider is available for channel intent selection.");
   }
-  const prompt = buildModelIntentPrompt(input);
+  const prompt = renderContextPack(buildChannelIntentSelectorContextPack({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    providerPresetId,
+  }));
   const provider = resolveProviderForRun(input.store, {
     cwd: input.store.paths.cwd,
     workspaceCwd: input.store.paths.cwd,
@@ -305,32 +311,6 @@ function resolveRunnableIntentProviderPresetId(input: ChannelIntentSelectorInput
     }
   }
   return undefined;
-}
-
-function buildModelIntentPrompt(input: ChannelIntentSelectorInput): string {
-  const recentMessages = input.store
-    .listChannelMessages({ channelId: input.channel.id, limit: 8 })
-    .filter((message) => message.id !== input.sourceMessage.id)
-    .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
-    .join("\n");
-  const teammateRoles = input.store
-    .listAiTeammates({ status: "active", includeHidden: false, limit: 20 })
-    .map((teammate) => ({ id: teammate.id, role: teammate.roleKey, label: teammate.displayName }))
-    .slice(0, 12);
-  return [
-    "Classify the latest user channel message into exactly one Ling intent.",
-    "Return strict JSON only: {\"action\":\"no_reply|single_reply|visible_multi_reply|clarify|workflow_proposal|direct_workflow\",\"reason\":\"short reason\"}.",
-    "Use single_reply for ordinary questions one teammate should answer.",
-    "Use visible_multi_reply only for explicit discussion-only requests asking multiple teammates for visible opinions; do not use it for implementation, validation, publishing, merge, deploy, or tool-running work.",
-    "Use clarify for work-shaped requests missing target, scope, or acceptance checks.",
-    "Use workflow_proposal for multi-role work that needs user confirmation before execution.",
-    "Use direct_workflow only when the user explicitly asks to start/run a workflow; it still requires confirmation.",
-    "Use no_reply for acknowledgements, notes, or messages that do not need AI.",
-    `Channel: ${input.channel.name}`,
-    `Latest user message: ${input.sourceMessage.body}`,
-    recentMessages ? `Recent context:\n${recentMessages}` : "Recent context: none",
-    `Available teammate roles JSON: ${JSON.stringify(teammateRoles)}`,
-  ].join("\n\n");
 }
 
 function parseModelIntentOutput(text: string): ChannelIntentModelOutput {
