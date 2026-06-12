@@ -9,6 +9,28 @@ import type {
 export type LingMaterializationFetch = typeof globalThis.fetch;
 export type LingMaterializationHostResolver = (hostname: string) => Promise<readonly string[]>;
 
+export interface LingImageVisionSummary {
+  readonly contentText: string;
+  readonly structuredSummary?: Record<string, unknown>;
+  readonly byteCount?: number;
+  readonly tokenEstimate?: number;
+  readonly truncated?: boolean;
+  readonly policyDecision?: Record<string, unknown>;
+}
+
+export type LingImageVisionSummarizer = (input: {
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceId: string;
+  readonly sourceFingerprint: string;
+  readonly requestedBy: "turn_envelope" | "workflow_inspection" | "user_action";
+  readonly attachment: ChannelAttachment;
+  readonly absolutePath: string;
+  readonly maxBytes: number;
+  readonly maxChars: number;
+  readonly now: string;
+}) => Promise<LingImageVisionSummary>;
+
 export interface LingMaterializationRequest {
   readonly workspaceId: string;
   readonly channelId: string;
@@ -24,6 +46,7 @@ export interface LingMaterializationRequest {
   readonly linkPreview?: ChannelLinkPreview;
   readonly fetch?: LingMaterializationFetch;
   readonly resolveHostAddresses?: LingMaterializationHostResolver;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly timeoutMs?: number;
   readonly redirectLimit?: number;
 }

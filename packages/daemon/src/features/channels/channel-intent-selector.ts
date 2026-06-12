@@ -1154,26 +1154,26 @@ function buildAttachmentMaterializationClarifyBody(
 ): string {
   if (responseLanguage === "zh-CN") {
     if (attachment.kind === "image") {
-      return `我可以先检查 ${attachment.fileName}，或者你把截图里的关键内容贴出来。`;
+      return `我没能读取 ${attachment.fileName} 的图片内容。你可以换一个可读图片，或把关键内容贴出来。`;
     }
     if (attachment.kind === "pdf") {
-      return `我可以先检查 ${attachment.fileName}，或者你把需要处理的 PDF 内容贴出来。`;
+      return `我没能读取 ${attachment.fileName} 的 PDF 内容。你可以换一个可读文件，或把需要处理的内容贴出来。`;
     }
     if (attachment.kind === "office") {
-      return `我可以先检查 ${attachment.fileName}，或者你把文档里关键内容贴出来。`;
+      return `我没能读取 ${attachment.fileName} 的文档内容。你可以换一个可读文件，或把关键内容贴出来。`;
     }
-    return `我可以先检查 ${attachment.fileName}，或者你把需要处理的内容贴出来。`;
+    return `我没能读取 ${attachment.fileName}。你可以换一个可读文件，或把需要处理的内容贴出来。`;
   }
   if (attachment.kind === "image") {
-    return `I can inspect ${attachment.fileName} first, or you can paste the relevant detail from the image.`;
+    return `I could not read image content from ${attachment.fileName}. Upload a readable image, or paste the relevant details.`;
   }
   if (attachment.kind === "pdf") {
-    return `I can inspect ${attachment.fileName} first, or you can paste the PDF section to use.`;
+    return `I could not read PDF content from ${attachment.fileName}. Upload a readable file, or paste the section to use.`;
   }
   if (attachment.kind === "office") {
-    return `I can inspect ${attachment.fileName} first, or you can paste the document section that matters.`;
+    return `I could not read document content from ${attachment.fileName}. Upload a readable file, or paste the section that matters.`;
   }
-  return `I can inspect ${attachment.fileName} first, or you can paste the content to use.`;
+  return `I could not read ${attachment.fileName}. Upload a readable file, or paste the content to use.`;
 }
 
 function attachmentMaterializationBlocker(
@@ -1202,8 +1202,8 @@ function attachmentMaterializationBlocker(
     : responseLanguage === "zh-CN" ? "当前 turn 没有附件。" : "This turn has no attachments.";
   return {
     userMessage: responseLanguage === "zh-CN"
-      ? "这个文件任务需要先读取附件内容。我可以先检查附件，或者你直接把要写入的内容贴出来。"
-      : "This file task needs the attachment content first. I can inspect the attachment, or you can paste the content to write.",
+      ? "这个文件任务需要可读的附件内容，但当前附件没有成功读取。你可以换一个可读文件，或直接把要写入的内容贴出来。"
+      : "This file task needs readable attachment content, but the attachment was not read successfully. Upload a readable file, or paste the content to write.",
     technicalReason: `Attachment-dependent file task has no available attachment preview/extraction: ${reasons}`,
   };
 }

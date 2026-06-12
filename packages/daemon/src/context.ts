@@ -14,6 +14,7 @@ import type {
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "./config.js";
 import type { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
+import type { LingImageVisionSummarizer } from "./features/channels/materialization/registry.js";
 import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
@@ -67,6 +68,7 @@ export interface DaemonDependencies {
   readonly externalSecretStore?: ExternalSecretStore;
   readonly externalWorkFetch?: typeof globalThis.fetch;
   readonly mcpBroker?: McpBroker;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }
 
 export interface DaemonContext {
@@ -81,6 +83,7 @@ export interface DaemonContext {
   readonly externalSecretStore: ExternalSecretStore;
   readonly mcpBroker: McpBroker;
   readonly externalWorkFetch?: typeof globalThis.fetch;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry;
   readonly automationSchedulers: AutomationSchedulerRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;

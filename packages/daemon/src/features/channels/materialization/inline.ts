@@ -1,12 +1,18 @@
 import type { Channel, ChannelMessage, RunStore } from "@ling-stack/core";
 import { defaultLingMaterializationBudgets } from "./budgets.js";
 import { findChannelInputMaterialization, writeChannelInputMaterialization } from "./cache.js";
+import { imageVisionExtractorV1 } from "./extractors/image.js";
 import { linkBodyExtractorV1 } from "./extractors/link-body.js";
 import { officeExtractorV1 } from "./extractors/office.js";
 import { pdfExtractorV1 } from "./extractors/pdf.js";
 import { textAttachmentExtractorV1 } from "./extractors/text-attachment.js";
 import { attachmentMaterializationFingerprint, linkPreviewMaterializationFingerprint } from "./fingerprints.js";
-import type { LingInputExtractor, LingMaterializationFetch, LingMaterializationHostResolver } from "./registry.js";
+import type {
+  LingImageVisionSummarizer,
+  LingInputExtractor,
+  LingMaterializationFetch,
+  LingMaterializationHostResolver,
+} from "./registry.js";
 
 export interface MaterializeInlineChannelInputsInput {
   readonly store: RunStore;
@@ -15,11 +21,11 @@ export interface MaterializeInlineChannelInputsInput {
   readonly now: string;
   readonly fetch?: LingMaterializationFetch;
   readonly resolveHostAddresses?: LingMaterializationHostResolver;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }
 
 export async function materializeInlineChannelInputs(input: MaterializeInlineChannelInputsInput): Promise<void> {
   const materializeLinkBodies = referencesLinkBody(input.sourceMessage.body);
-  const materializeDocumentAttachments = referencesDocumentOrAttachmentBody(input.sourceMessage.body);
   for (const attachmentId of input.sourceMessage.attachmentIds) {
     const attachment = input.store.getChannelAttachment(attachmentId);
     if (!attachment || attachment.channelId !== input.channel.id) {
@@ -33,9 +39,6 @@ export async function materializeInlineChannelInputs(input: MaterializeInlineCha
         maxBytes: defaultLingMaterializationBudgets.textAttachmentInlineBytes,
         maxChars: defaultLingMaterializationBudgets.textAttachmentPromptChars,
       });
-      continue;
-    }
-    if (!materializeDocumentAttachments) {
       continue;
     }
     if (attachment.kind === "pdf") {
@@ -55,6 +58,16 @@ export async function materializeInlineChannelInputs(input: MaterializeInlineCha
         extractor: officeExtractorV1,
         maxBytes: defaultLingMaterializationBudgets.officeReadBytes,
         maxChars: defaultLingMaterializationBudgets.officePromptChars,
+      });
+      continue;
+    }
+    if (attachment.kind === "image") {
+      await materializeAttachmentWithExtractor({
+        ...input,
+        attachment,
+        extractor: imageVisionExtractorV1,
+        maxBytes: defaultLingMaterializationBudgets.imageReadBytes,
+        maxChars: defaultLingMaterializationBudgets.imagePromptChars,
       });
     }
   }
@@ -142,7 +155,11 @@ async function materializeAttachmentWithExtractor(input: MaterializeAttachmentWi
     now: input.now,
     attachment: input.attachment,
     attachmentsDir: input.store.paths.attachmentsDir,
+    imageVisionSummarizer: input.imageVisionSummarizer,
   });
+  if (result.errorCode === "no_image_vision_summarizer") {
+    return;
+  }
   writeChannelInputMaterialization({
     store: input.store,
     channelId: input.channel.id,
@@ -153,12 +170,6 @@ async function materializeAttachmentWithExtractor(input: MaterializeAttachmentWi
     result,
     now: input.now,
   });
-}
-
-function referencesDocumentOrAttachmentBody(text: string): boolean {
-  const sourceHint = /(附件|文件内容|这个文件|文档|这份文档|pdf|docx|word|office|document|attached file|attachment|this file|this document)/iu;
-  const actionHint = /(总结|概括|读取|读一下|提取|分析|看看|使用|根据|写进|写入|summarize|read|extract|analy[sz]e|use|write|based on|what.*about)/iu;
-  return sourceHint.test(text) && actionHint.test(text);
 }
 
 function referencesLinkBody(text: string): boolean {

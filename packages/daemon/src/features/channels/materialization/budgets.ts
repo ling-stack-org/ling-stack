@@ -7,6 +7,8 @@ export interface LingMaterializationBudgets {
   readonly officeReadBytes: number;
   readonly officeCacheChars: number;
   readonly officePromptChars: number;
+  readonly imageReadBytes: number;
+  readonly imagePromptChars: number;
   readonly linkBodyBytes: number;
   readonly linkBodyPromptChars: number;
   readonly linkBodyTimeoutMs: number;
@@ -22,6 +24,8 @@ export const defaultLingMaterializationBudgets: LingMaterializationBudgets = {
   officeReadBytes: 2 * 1024 * 1024,
   officeCacheChars: 24_000,
   officePromptChars: 8_000,
+  imageReadBytes: 5 * 1024 * 1024,
+  imagePromptChars: 4_000,
   linkBodyBytes: 1024 * 1024,
   linkBodyPromptChars: 8_000,
   linkBodyTimeoutMs: 10_000,

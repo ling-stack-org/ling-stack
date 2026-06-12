@@ -141,11 +141,13 @@ Rules:
 - Attachment ids are not enough for agent reasoning. The envelope must include safe
   metadata and, when available, bounded preview text or image/PDF/office extraction
   summaries.
-- Ling Agent must not claim to inspect attachment bodies that were not materialized into
-  the envelope or explicitly read through an approved tool path.
-- If an executable request depends on an attachment whose content is unavailable, Ling
-  should first materialize the attachment, ask one clarifying question, or create a
-  blocked proposal. It must not blindly auto-start a task that requires unseen content.
+- Ling Agent must not claim to inspect attachment bodies that were not materialized, but
+  supported current-turn attachments should be materialized automatically before Ling
+  answers.
+- If an executable request depends on a supported attachment whose content is still
+  pending, Ling should wait for bounded materialization or start with a safe
+  materialization step. It should not ask the user to request inspection. Clarification is
+  for unsupported, missing, blocked, or policy-sensitive inputs.
 - Reading user-uploaded attachment previews for the current turn is input-context
   materialization. Writing files, running shell commands, Git push/merge, deploy,
   external sends, credentials, provider changes, and broad data mutations remain runtime
@@ -165,8 +167,8 @@ Input statuses:
 | --- | --- | --- |
 | `available` | Safe bounded content was put in the envelope. | Ling may reason from the supplied preview or extraction text and cite it as available context. |
 | `metadata_only` | Filename, URL, MIME type, size, title, or status is known, but body content was not loaded. | Ling may acknowledge the input exists, but must not summarize, copy, edit from, or claim to inspect its body. |
-| `not_loaded` | The type can be materialized later, but no preview/extraction has run yet. | Ling should ask for extraction, create a blocked proposal, or start only a safe first inspection step. |
-| `unsupported` | The current system has no reader for this type. | Ling should explain the limitation and ask for a supported form or explicit inspection path. |
+| `not_loaded` | The type can be materialized later, but no preview/extraction has run yet. | Ling should automatically schedule materialization and wait within a bounded deadline when the current answer depends on it. |
+| `unsupported` | The current system has no reader for this type. | Ling should explain the limitation only when the current request depends on that content, then ask for a supported form or pasted content. |
 | `blocked` | The input is missing, cross-channel, too large, policy-denied, or otherwise unsafe. | Ling should produce a visible blocked/clarify outcome with the concrete reason. |
 
 Per-input contract:
@@ -174,10 +176,10 @@ Per-input contract:
 | Input | Envelope may include before a run | Body/content read contract |
 | --- | --- | --- |
 | Text attachment | filename, type, size, bounded preview text when stored locally and under budget | Preview is current-turn context materialization. Large or unavailable text becomes `not_loaded` or `blocked`. |
-| Image attachment | filename, type, size, optional vision/OCR summary only when a supported extractor produced it | Without materialized vision/OCR output, Ling may mention the image file but must not infer screenshot details. |
-| PDF attachment | filename, type, size, page/count metadata when available, optional bounded extraction text | Without extraction, requests such as "summarize this PDF" must clarify or block before auto-starting content-dependent work. |
-| Office attachment | filename, type, size, optional extractor summary | Without extraction, Ling may offer to inspect/convert but must not invent document contents. |
-| Link preview | URL, title, description/status, cached preview summary when already available | Full remote fetch is not implicit in ordinary chat. If added, it must be a recorded materialization step with fetch status and policy boundaries. |
+| Image attachment | filename, type, size, bounded vision/OCR summary when configured | Supported current-turn images are automatically materialized. Without a summary, Ling may mention the image file but must not infer screenshot details. |
+| PDF attachment | filename, type, size, page/count metadata when available, bounded extraction text | Supported current-turn PDFs are automatically materialized. Unsupported/encrypted PDFs clarify only when the request depends on body content. |
+| Office attachment | filename, type, size, bounded extractor summary | Supported current-turn Office files are automatically materialized. Unsupported formats may request a supported export or pasted content. |
+| Link preview | URL, title, description/status, cached preview/body summary when policy allows | Public unauthenticated page body extraction may run automatically behind URL policy; local/private/authenticated pages remain controlled tool work. |
 | Workspace file ref | normalized path, workspace root relation, user-visible label, optional existence/type metadata | File body reads should happen through the managed run/tool path or an explicit safe inspection step, not through hidden pre-run prompt stuffing. |
 | Active-run guidance | body, attachments, links, file refs, target run/session id | Queued guidance must render the same metadata/preview status later; it must not degrade to raw ids. |
 
@@ -205,9 +207,9 @@ Rules:
 
 - Extraction must be source-scoped and auditable: every extracted summary points back to an
   attachment, link preview, or workspace file ref.
-- Extraction may run automatically only for safe, bounded, current-turn inputs that are
-  already inside the workspace/channel trust boundary. Larger or policy-sensitive inputs
-  require a visible inspection step or a blocked/clarify outcome.
+- Extraction should run automatically for safe, bounded, current-turn attachments that
+  are already inside the workspace/channel trust boundary. Larger or policy-sensitive
+  inputs require a visible inspection step or a blocked/clarify outcome.
 - The extractor result must record the extractor id, source fingerprint, content kind,
   status, byte/token budget, truncation, and failure reason.
 - Extraction never grants mutation rights. It may make context `available`; it cannot

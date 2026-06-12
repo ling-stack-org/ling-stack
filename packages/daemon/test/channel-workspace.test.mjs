@@ -772,6 +772,78 @@ test("channel input materialization cache upserts and feeds turn envelope", asyn
   }
 });
 
+test("inline materialization writes image vision cache with injected summarizer", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-image-vision-inline-cache-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    await mkdir(store.paths.attachmentsDir, { recursive: true });
+    await writeFile(resolve(store.paths.attachmentsDir, "inline.png"), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const channel = store.createChannel({
+      name: "Image vision materialization",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+    }, "2026-06-11T00:00:00.000Z");
+    const attachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "image",
+      fileName: "inline.png",
+      contentType: "image/png",
+      sizeBytes: 8,
+      path: "inline.png",
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    const message = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "Please handle this.",
+      attachmentIds: [attachment.id],
+    }, "2026-06-11T00:02:00.000Z");
+
+    let summarizerCalls = 0;
+    await materializeInlineChannelInputs({
+      store,
+      channel,
+      sourceMessage: message,
+      now: "2026-06-11T00:03:00.000Z",
+      imageVisionSummarizer: async (input) => {
+        summarizerCalls += 1;
+        assert.equal(input.attachment.id, attachment.id);
+        assert.equal(input.maxBytes, 5 * 1024 * 1024);
+        assert.equal(input.maxChars, 4_000);
+        assert.match(input.absolutePath, /inline\.png$/);
+        return {
+          contentText: "The screenshot shows a save button overlapping the sidebar.",
+          structuredSummary: { source: "test_summarizer" },
+          policyDecision: { mode: "test" },
+        };
+      },
+    });
+
+    assert.equal(summarizerCalls, 1);
+    const rows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].extractorId, "image_vision_summary_v1");
+    assert.equal(rows[0].contentKind, "vision_summary");
+    assert.equal(rows[0].status, "available");
+    assert.match(rows[0].contentText, /save button overlapping/);
+    assert.deepEqual(rows[0].structuredSummaryJson, { source: "test_summarizer" });
+    assert.deepEqual(rows[0].policyDecisionJson, { mode: "test" });
+
+    const envelope = buildLingAgentTurnEnvelope({ store, channel, sourceMessage: message });
+    assert.equal(envelope.attachments[0].materializationStatus, "available");
+    assert.equal(envelope.attachments[0].previewStatus, "available");
+    assert.match(envelope.attachments[0].previewText, /save button overlapping/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("public link body extractor strips HTML and blocks unsafe redirects", async () => {
   const linkPreview = {
     id: "link_preview_public_docs",
@@ -1091,7 +1163,7 @@ test("pdf and docx extractors materialize bounded attachment text", async () => 
   }
 });
 
-test("inline materialization writes pdf and docx cache for explicit document requests", async () => {
+test("inline materialization writes pdf and docx cache for current-turn attachments", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-document-inline-cache-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -1127,7 +1199,7 @@ test("inline materialization writes pdf and docx cache for explicit document req
     const message = store.createChannelMessage({
       channelId: channel.id,
       authorType: "local-user",
-      body: "Please summarize this PDF and this document",
+      body: "Context attached.",
       attachmentIds: [pdfAttachment.id, docxAttachment.id],
     }, "2026-06-11T00:03:00.000Z");
 
@@ -1206,6 +1278,53 @@ test("materialized pdf and docx attachments let Ling answer without materializat
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /Turk J Med Sci/);
     assert.match(runner.runs[0].task.prompt, /Walking on imported air/);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(intentDecisions.decisions, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("materialized image attachment lets Ling answer without materialization clarify", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-image-materialized-reply-"));
+  const runner = new ScriptedRunner(["我读到了截图摘要。"]);
+  const daemon = await startDaemonForTest(runner, {
+    imageVisionSummarizer: async () => ({
+      contentText: "The screenshot shows the branch button hidden next to the channel title.",
+      structuredSummary: { source: "test_summarizer" },
+    }),
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Materialized image reply",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read"],
+    })).channel;
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "screenshot.png",
+      contentType: "image/png",
+      contentBase64: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
+    })).attachment;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Please fix the UI from this screenshot",
+      attachmentIds: [attachment.id],
+      requestAiReply: true,
+    });
+
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "我读到了截图摘要。");
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /branch button hidden/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /Image vision summarizer is not configured/);
     const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(intentDecisions.decisions, []);
   } finally {
@@ -2093,7 +2212,7 @@ test("attachment-dependent README write blocks when attachment content is not ma
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].status, "blocked");
-    assert.match(proposals.proposals[0].errorMessage, /先读取附件内容|inspect the attachment/i);
+    assert.match(proposals.proposals[0].errorMessage, /可读的附件内容|readable attachment content/i);
     assert.doesNotMatch(proposals.proposals[0].errorMessage, /附件预览|attachment preview|too large|previewStatus/i);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
@@ -2105,7 +2224,7 @@ test("attachment-dependent README write blocks when attachment content is not ma
   }
 });
 
-test("unsupported screenshot task creates Ling materialization clarify reply", async () => {
+test("unreadable screenshot task creates Ling materialization clarify reply", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-screenshot-materialization-clarify-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
@@ -2130,7 +2249,7 @@ test("unsupported screenshot task creates Ling materialization clarify reply", a
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(runner.runs.length, 0);
-    assert.match(created.aiReply.body, /检查 screenshot\.png|inspect screenshot\.png/i);
+    assert.match(created.aiReply.body, /没能读取 screenshot\.png|could not read image content/i);
     assert.doesNotMatch(created.aiReply.body, /OCR|视觉提取|metadata_only|extractor|SSRF/i);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);

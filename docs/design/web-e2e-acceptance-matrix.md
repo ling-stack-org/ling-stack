@@ -1,17 +1,25 @@
 # Web E2E Acceptance Matrix For Ling Agent Inputs
 
-Status: detailed test design with first browser slice and Smart UX delta landed. This
-document defines browser-visible acceptance coverage for Ling Agent input materialization,
+Status: detailed test design updated for default attachment understanding. This document
+defines browser-visible acceptance coverage for Ling Agent input materialization,
 composer file refs, contextual clarification, queued guidance, and final result display.
 
-Implemented first slice:
+Current browser slice:
 
 - Composer workspace file refs are sent as native `fileRefs` and rendered as chips.
-- Unsupported screenshot content-dependent requests show a Ling clarify reply instead of
-  route/proposal internals.
+- Unsupported screenshot content-dependent requests currently show a Ling clarify reply
+  instead of route/proposal internals.
 - Screenshot and local/private link clarifications use natural Ling copy and assert that
   implementation/debug vocabulary stays out of the default transcript.
 - Active-run guidance rows can render structured file refs from intervention payloads.
+
+Target browser behavior:
+
+- Supported attachments are automatically understood after send or before Ling answers.
+- Image/PDF/DOCX questions should show Ling's answer from extracted content, not a prompt
+  asking the user to inspect the file first.
+- The default transcript still shows simple chips only; read/unread/materialization status
+  stays out of the ordinary conversation.
 
 ## Purpose
 
@@ -35,9 +43,10 @@ Default transcript behavior:
 - attachments, links, and file refs render as simple chips or normal message assets;
 - no permanent `available`, `metadata_only`, `blocked`, `unsupported`, or `truncated`
   labels appear in ordinary messages;
-- Ling automatically uses safe materialized content when it exists;
-- if required content is unavailable, Ling gives one concise natural-language response
-  with the next safe action;
+- Ling automatically prepares and uses safe materialized content for current-turn
+  attachments;
+- if required content is genuinely unavailable, unsupported, or blocked, Ling gives one
+  concise natural-language response with the next safe action;
 - detailed extractor status, policy reason, truncation, and source fingerprint belong in
   opt-in evidence/details surfaces.
 
@@ -52,26 +61,32 @@ to the runtime, but the user sees simple assets and natural Ling responses.
 
 Implemented test updates:
 
-1. Screenshot clarification
-   - keep the current screenshot test;
-   - change the positive assertion from status-heavy copy to natural copy such as
-     `inspect the image` or `paste the relevant detail`;
+1. Screenshot fallback clarification
+   - keep the current screenshot fallback test only for disabled/failed image extraction;
+   - the positive assertion should be natural copy such as `I can't read this image`
+     rather than route/proposal/status internals;
    - add negative assertions for `image content is not available`, `metadata_only`,
      `unsupported`, `extractor`, and `SSRF` in the default transcript.
 
-2. Local/private link clarification
+2. Screenshot automatic understanding
+   - add a happy-path case with image materialization row `available`;
+   - assert Ling answers from the vision/OCR summary without asking the user to inspect
+     the image first;
+   - assert the file chip stays simple and no read/unread/status badge appears.
+
+3. Local/private link clarification
    - add or update a Web mock-daemon case for a local/private URL;
    - assert the transcript says Ling will not open local/private links automatically;
    - assert `SSRF`, raw policy codes, redirect details, and internal status names are not
      visible unless a details surface is opened.
 
-3. Blocked proposal primary copy
+4. Blocked proposal primary copy
    - when an unavailable attachment blocks auto-start, the visible card should explain the
      next safe action;
    - the test should not require byte limits, extractor ids, or raw status names in the
      card body.
 
-4. Evidence/details
+5. Evidence/details
    - if a details drawer exists for the scenario, tests may assert technical status there;
    - if no details drawer exists yet, do not force one only for this slice.
 
@@ -105,8 +120,8 @@ behavior. Parser correctness and cache behavior belong in daemon/core tests.
 | M1 cache/registry | none unless transcript changes | SQLite round trip, cache hit/miss, fingerprint invalidation |
 | M2 text attachment | existing README/text attachment flow | extractor success/too-large/missing-file/truncation |
 | M3 link body | public link summary and local/private link clarify | URL policy, redirect blocking, timeout, content-type, size limit |
-| M4 PDF/Office | browser coverage stays future unless transcript changes; no raw status leakage | daemon parser fixtures for PDF/DOCX success, `.pptx`/`.xlsx` unsupported, too-large/missing/truncated |
-| M5 image inspection | screenshot natural clarify and vision-summary happy path | provider capability/failure/cached-summary tests |
+| M4 PDF/Office | PDF/DOCX extracted-answer happy path plus unsupported fallback when visible | daemon parser fixtures for PDF/DOCX success, `.pptx`/`.xlsx` unsupported, too-large/missing/truncated |
+| M5 automatic attachment understanding | image vision/OCR happy path, unsupported image fallback, no status-chip regression | provider capability/failure/cached-summary tests |
 | M6 details polish | details drawer and mobile visual smoke | payload/schema tests |
 
 This keeps the Web suite product-focused and prevents extractor implementation details
@@ -143,7 +158,7 @@ from leaking into browser assertions.
 | P0-3 | Reload preserves file chip | Existing channel message with `fileRefs` | Reload page | File chip still appears on the same user message | No fallback raw JSON or raw id text appears |
 | P0-4 | Active run file-ref follow-up | Active run in channel | Send file ref as follow-up | Queued guidance row names the file ref | Intervention payload includes `fileRefs`, not only body text |
 | P0-5 | Outside workspace file ref | Channel bound to workspace, file ref points outside root | Send or render outside file ref | Ling explains it will not read that path by default and offers a controlled inspection path | No hidden file read, no auto-start, no raw status badge |
-| P0-6 | Screenshot task without image extraction | Image attachment, no image extractor | Ask `fix UI from this screenshot` | Ling asks to inspect the image or paste the relevant detail | No invented screenshot details, no extractor/debug vocabulary |
+| P0-6 | Screenshot fallback without image extraction | Image attachment, no image extractor or failed extractor | Ask `fix UI from this screenshot` | Ling says it cannot read the image yet and asks for supported input or pasted detail | No invented screenshot details, no extractor/debug vocabulary |
 | P0-7 | Text attachment content-dependent task | Small text attachment under budget | Ask to write README from attachment | Proposal/auto-start can use preview when policy allows | Prompt/evidence includes bounded preview status |
 | P0-8 | Link-only metadata | Ready link preview, no body extraction | Send only a link or ask what it is | Ling uses title/description metadata or asks what to do | Does not claim to read full page body |
 | P0-9 | Local/private link extraction | localhost/private URL | Ask to summarize link | Ling says it will not open local/private links automatically and offers pasted text or controlled inspection | No fetch result or body summary appears, no SSRF/debug vocabulary |
@@ -153,11 +168,11 @@ from leaking into browser assertions.
 
 | ID | Flow | Setup | User action | Expected visible result | Hidden/internal assertion |
 | --- | --- | --- | --- | --- | --- |
-| P1-1 | PDF unsupported | PDF attachment, PDF extractor disabled | Ask `summarize this PDF` | Ling names the PDF and offers inspection or pasted text | No PDF summary invented, no status badge |
-| P1-2 | PDF extracted | PDF materialization row `available` | Ask `summarize this PDF` | Ling summarizes naturally from extracted text | Raw materialization JSON and status labels hidden |
-| P1-3 | Office unsupported | `.docx` attachment, Office extractor disabled | Ask to summarize doc | Ling names file and offers inspection/alternate input | No document body summary invented, no status badge |
-| P1-4 | Office extracted | Office materialization row `available` | Ask to use document content | Ling can use bounded extracted text | Truncation details appear only in evidence/details when applicable |
-| P1-5 | Image OCR/vision available | Image materialization row `available` | Ask a screenshot/UI question | Ling uses extractor summary, not filename inference | Evidence links to materialization status |
+| P1-1 | PDF automatic extraction | PDF attachment, materialization completes as `available` | Ask `summarize this PDF` or attach with a PDF question | Ling summarizes naturally from extracted text without asking to inspect first | Raw materialization JSON and status labels hidden |
+| P1-2 | PDF unsupported or blocked | Encrypted/unsupported PDF or extractor failure | Ask `summarize this PDF` | Ling says it could not read the PDF and asks for readable upload or pasted text | No PDF summary invented, no status badge |
+| P1-3 | Office automatic extraction | `.docx` attachment, materialization completes as `available` | Ask to summarize doc | Ling uses bounded extracted text without asking to inspect first | Truncation details appear only in evidence/details when applicable |
+| P1-4 | Office unsupported | `.pptx`/`.xlsx` or extractor failure | Ask to use document content | Ling asks for supported export or pasted content | No document body summary invented, no status badge |
+| P1-5 | Image OCR/vision automatic | Image materialization row `available` | Ask a screenshot/UI question | Ling uses extractor summary directly, not filename inference or inspect-first copy | Evidence links to materialization status |
 | P1-6 | Link body extraction success | Public link materialization row `available` | Ask to summarize link | Ling summarizes extracted body and shows link chip | Final URL and status in evidence |
 | P1-7 | Link body extraction timeout | Public link extraction failed | Ask to summarize link | Ling says it could not read the page and offers retry/paste path | No stale title-only body summary, technical timeout details only in evidence |
 | P1-8 | Cross-channel attachment id | Message references attachment from another channel | Send/route message | Ling asks for the file again or a valid attachment | No uncaught exception, no raw id leak |
@@ -235,7 +250,7 @@ Prefer:
 ```ts
 await expect(page.getByLabel("Workspace file references").getByText("README.md")).toBeVisible();
 await expect.poll(() => state.lastChannelMessageRequest?.fileRefs).toEqual([...]);
-await expect(page.getByText("inspect the image")).toBeVisible();
+await expect(page.getByText("The screenshot shows")).toBeVisible();
 await expect(page.getByText("routeDecision")).toHaveCount(0);
 await expect(page.getByText("metadata_only")).toHaveCount(0);
 await expect(page.getByText("SSRF")).toHaveCount(0);
@@ -280,10 +295,13 @@ For larger extractor slices, add:
      materialization rows or details.
 
 3. **Text/PDF/link extraction**
-   - Status: text attachment and public link body landed at core/daemon level; PDF remains future.
+   - Status: text attachment, public link body, PDF text, and DOCX raw text landed at
+     core/daemon level; M5a added automatic current-turn PDF/DOCX attachment triggers.
    - Add P0-8, P0-9, P1-1, P1-2, P1-6, P1-7.
 
-4. **Image/Office extraction**
+4. **Image/automatic Office extraction**
+   - Status: image materialization contract and automatic enqueue landed; provider or
+     worker-backed image summarizer remains.
    - Add P0-6, P1-3, P1-4, P1-5.
 
 5. **Polish and visual hardening**

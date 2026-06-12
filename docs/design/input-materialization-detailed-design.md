@@ -1,21 +1,34 @@
 # Input Materialization Detailed Design
 
-Status: detailed design with first implementation slice and Smart UX delta landed. This
-document expands the materialization boundary in `ling-agent-session.md` into an
+Status: detailed design updated for default attachment understanding. This document
+expands the materialization boundary in `ling-agent-session.md` into an
 implementation-ready contract for rich inputs. It does not replace the Ling Agent Session
 entry order, workflow/run stack, or approval system.
 
-Implemented first slice:
+Current implementation after M5a:
 
 - `LingAgentTurnEnvelope` carries attachment/link/file-ref materialization status.
 - Text attachments under the inline budget can provide bounded preview text.
-- Content-dependent screenshot/PDF/Office or link-body requests produce a visible Ling
-  clarify reply when required content is not materialized.
+- Public link body, PDF embedded text, and DOCX raw text extraction exist.
+- Text, PDF, DOCX, and image attachments are now enqueued for materialization for every
+  current-turn attachment before Ling answers.
+- PDF/DOCX extraction is live in the daemon path. Image extraction is wired through an
+  injectable `imageVisionSummarizer`; without a configured provider/worker it falls back
+  naturally without writing a durable "no summarizer" cache entry.
 - File create/edit requests that depend on unavailable attachment content still create a
   blocked proposal instead of auto-starting.
-- Web E2E covers the visible screenshot clarify behavior and hidden routing details.
 - Smart UX delta keeps internal materialization reasons in decisions/proposal diagnostics
   while the default transcript uses natural Ling copy without implementation vocabulary.
+
+Target product behavior:
+
+- Every conversation attachment is treated as material to understand by default.
+- Supported attachments are materialized automatically after message persistence or before
+  Ling answers; the user should not need to ask "read this file/image first".
+- The normal transcript shows simple file chips and Ling's answer, not "read/unread"
+  statuses.
+- Visible clarification is reserved for genuine failures, unsupported formats, blocked
+  policy boundaries, or operations that need runtime approval.
 
 ## Purpose
 
@@ -53,6 +66,7 @@ workspace and approval model.
 
 What Ling Stack should copy:
 
+- uploaded files and images are ordinary conversation context once attached;
 - use boundaries to reduce approval fatigue;
 - keep mutation authority separate from context preparation;
 - make tool/materialization results explicit to the runtime;
@@ -100,8 +114,8 @@ type LingMaterializationContentKind =
 | --- | --- | --- |
 | `available` | Bounded extracted content is in the envelope or cache. | Reason from it, summarize it, cite it as available context. |
 | `metadata_only` | Name, type, size, URL, title, relation, or status is known, but body is not loaded. | Acknowledge that the input exists, but not summarize body contents. |
-| `not_loaded` | A supported extractor could run later, but has not run. | Ask for extraction, create an inspection step, or block content-dependent work. |
-| `unsupported` | No configured extractor supports this source/content kind. | Explain the limitation and ask for another input or inspection path. |
+| `not_loaded` | A supported extractor could run later, but has not run yet. | Schedule automatic materialization and defer dependent answering until it completes or times out. Do not ask the user to request extraction. |
+| `unsupported` | No configured extractor supports this source/content kind. | Explain the format limitation only when the current user request depends on that content. Ask for a supported form or pasted content. |
 | `blocked` | Policy, size, missing file, cross-channel id, outside-workspace path, SSRF, or fetch failure blocks materialization. | Prevent dependent work and offer a safe path when the user requested that content. |
 
 ## Core Rule
@@ -125,13 +139,17 @@ Materialization state is a system contract, not default UI chrome.
 Ling should behave like an intelligent agent product:
 
 - rich inputs are normal conversation material, not a separate debugging workflow;
-- eligible text/image/PDF/Office/link materialization should run automatically inside
-  configured budgets and policies;
+- every current-turn attachment enters automatic materialization without the user asking
+  "read this first";
+- eligible text/image/PDF/Office materialization should run automatically inside
+  configured budgets and policies after message persistence or before Ling answers;
+- public unauthenticated link body materialization may also run automatically behind URL
+  policy, while local/private/authenticated links remain controlled tool work;
 - file, image, link, and workspace-reference chips stay simple by default;
 - internal statuses such as `metadata_only`, `not_loaded`, `blocked`, `unsupported`, and
   `truncated` are not shown as permanent labels in the transcript;
-- Ling only interrupts when the user's requested outcome depends on content that is not
-  available or crosses a permission/safety boundary;
+- Ling only interrupts when content cannot be read automatically, is genuinely
+  unsupported, or crosses a permission/safety boundary;
 - copy in the main conversation should be short, natural, and action-oriented;
 - detailed extractor ids, fingerprints, policy errors, byte counts, and truncation facts
   belong in optional evidence/details surfaces.
@@ -139,9 +157,10 @@ Ling should behave like an intelligent agent product:
 Default user experience:
 
 1. User attaches or references material.
-2. Ling automatically prepares safe context where possible.
-3. Ling answers or proposes work from available context.
-4. If a required input cannot be used, Ling explains the minimum reason in plain language
+2. Ling stores metadata immediately and automatically starts safe materialization.
+3. Ling waits for bounded extraction when the answer depends on the attachment.
+4. Ling answers or proposes work from available context.
+5. If a required input cannot be used, Ling explains the minimum reason in plain language
    and offers the next safe action.
 
 This avoids both failure modes: pretending to read content that was not available, and
@@ -149,9 +168,9 @@ turning the channel into a status-heavy debugging tool.
 
 ## Smart UX Implementation Delta
 
-The first code slice already added deterministic materialization clarification. The Smart
-UX delta keeps that runtime protection but changes the user-facing layer from status
-reporting to natural Ling behavior.
+The first code slices added deterministic materialization clarification. That guard is a
+protective fallback, not the final product shape. The Smart UX delta keeps runtime
+truthfulness while moving normal attachment handling toward automatic understanding.
 
 Implemented delta:
 
@@ -161,6 +180,25 @@ Implemented delta:
 - store technical reasons in intent decisions, proposal diagnostics, or evidence/details,
   not in the default transcript;
 - update Web mock daemon and E2E assertions so tests enforce the smarter UI boundary.
+
+M5a completed delta:
+
+- `messages.ts` enqueues eligible text/PDF/DOCX/image attachment materialization for
+  every current-turn attachment, not only turns whose text explicitly asks to read the
+  file.
+- `channel-intent-selector.ts` no longer uses "I can inspect this first" copy for
+  attachment materialization fallback.
+- Clarify copy is limited to unsupported formats, extraction failure, size/policy
+  blocks, missing files, or explicit controlled-tool boundaries.
+- The default channel UI keeps simple file chips and does not add read/unread or
+  extractor status chips.
+
+Remaining M5b delta:
+
+- connect `imageVisionSummarizer` to a managed provider-vision path or isolated
+  image-processing worker;
+- move teammate direct-message attachments onto the same materialization contract so
+  direct conversations do not rely on metadata-only prompt copy.
 
 Runtime placement:
 
@@ -197,9 +235,10 @@ Copy mapping:
 
 | Internal issue | Main transcript copy | Evidence/details copy |
 | --- | --- | --- |
-| `image unsupported/not_loaded` | `I can inspect screenshot.png first, or you can paste the key detail.` | image extractor status, file size, failure code |
-| `pdf unsupported/not_loaded` | `I can inspect report.pdf first, or you can paste the section to use.` | PDF extractor availability, parser error, truncation |
-| `office unsupported/not_loaded` | `I can inspect the document first, or you can paste the part that matters.` | Office extractor status, format, parser error |
+| supported attachment `not_loaded` | no default reply; run bounded materialization and answer from the result | queued extractor id, budget, elapsed time |
+| `image unsupported` | `I can't read this image format yet. Upload a supported image or paste the key detail.` | image extractor status, file size, failure code |
+| `pdf unsupported/blocked` | `I couldn't read report.pdf. Upload a readable PDF or paste the section to use.` | PDF extractor availability, parser error, truncation |
+| `office unsupported/blocked` | `I couldn't read the document. Upload a supported DOCX/PDF or paste the part that matters.` | Office extractor status, format, parser error |
 | `private/local link blocked` | `I will not open local/private links automatically. Paste the content or ask me to inspect it as a controlled task.` | URL classification, network policy decision, redirect chain |
 | `workspace file outside root` | `That path is outside this workspace. Use a workspace file, or ask me to inspect it as a controlled task.` | normalized path, root relation, policy reason |
 | `content truncated` | no default warning unless it affects the answer | original size, extracted size, prompt preview length |
@@ -254,8 +293,10 @@ Do not store:
 ## Modular V1 Implementation Plan
 
 Status: M1 cache and registry skeleton landed. M2 text attachment migration landed for
-small text attachments. M3 public link body extraction landed for explicit link-body
-requests. Rich extraction for PDF/Office parsing and image inspection remains in M4-M5.
+small text attachments. M3 public link body extraction landed. M4 PDF/DOCX extraction
+landed but still uses explicit request triggers. The next design-correct slice is
+automatic attachment materialization for every current-turn attachment, including image
+vision/OCR.
 
 The complete v1 must be modular. Do not grow `channel-intent-selector.ts`,
 `ling-agent-turn-envelope.ts`, or `messages.ts` into extractor hubs.
@@ -362,19 +403,23 @@ Materialization has three execution modes:
    - no network fetch, no PDF/Office parse, no model call.
 
 2. **Background safe**
-   - public link body fetch;
-   - PDF/Office text extraction under size and timeout budgets;
+   - public link body fetch when URL policy allows it;
+   - PDF/Office text extraction under size and timeout budgets for every current-turn
+     attachment;
    - retryable and cache-backed.
 
 3. **Managed inspection**
-   - provider vision summary;
+   - provider vision summary for current-turn images when a configured vision provider
+     is required;
    - workspace file body reads;
    - private/local links when explicitly requested;
    - anything that needs approval, provider credentials, browser session, or tool work.
 
 The channel message POST path may run inline bounded work and may enqueue/background safe
-work. It must not synchronously block on slow network fetches, PDF parsing, Office
-parsing, or model vision calls.
+work for all current-turn attachments. It must not synchronously block on slow network
+fetches, PDF parsing, Office parsing, or model vision calls. If Ling's next answer depends
+on a pending materialization, the coordinator should wait within a bounded deadline or
+produce a natural "still reading" progress state, not ask the user to request inspection.
 
 ### V1 Slice Order
 
@@ -436,16 +481,25 @@ messages.
 ### M3 Implementation Notes
 
 `link_body_v1` owns public link body reads. `messages.ts` continues to call only
-`materializeInlineChannelInputs`; the hook decides whether a link-body request is explicit
-enough to attempt extraction. Link preview metadata remains separate from full page body.
+`materializeInlineChannelInputs`. The current implementation checks whether a link-body
+request is explicit enough to attempt extraction. The target behavior may auto-fetch safe
+public pages behind URL policy when the conversation likely needs page content. Link
+preview metadata remains separate from full page body.
 
-Trigger:
+Current trigger:
 
 - after a channel message is persisted and before `LingAgentTurnEnvelope` is built;
 - only when the current turn text explicitly asks to read, summarize, extract, inspect, or
   analyze link/page/article content;
 - only for link previews that belong to the active channel and are `ready`;
 - link-only metadata turns still use title/description and do not fetch full page body.
+
+Target trigger:
+
+- safe public links may be background-materialized automatically after link preview
+  readiness when the message likely needs page content;
+- local/private/authenticated/session links never auto-fetch and remain controlled tool
+  work.
 
 Network policy:
 
@@ -486,12 +540,18 @@ decision/evidence surfaces.
    - `pdf_text_v1` uses pinned `pdf-parse@1.1.1` for embedded PDF text only;
    - `office_text_v1` uses pinned `mammoth@1.12.0` for `.docx` raw text only;
    - `.pptx` and `.xlsx` produce `unsupported` rows in this first slice;
-   - materialization runs only when the turn explicitly asks to read, summarize,
-     extract, analyze, use, or write from document/attachment content;
+   - M5a now enqueues PDF/DOCX extraction for every current-turn attachment and lets Ling
+     answer from the cache when ready;
    - cache/prompt text stays bounded by read-byte and prompt-char budgets;
    - no layout reconstruction, OCR, embedded image extraction, or table semantics in M4.
 
-5. **M5 image inspection**
+5. **M5 automatic attachment understanding**
+   - status: M5a landed for automatic current-turn attachment enqueue and injectable
+     image summary contract; M5b remains for provider/worker-backed image extraction;
+   - text/PDF/DOCX/image attachment materialization is automatic for current-turn
+     attachments;
+   - `image_vision_summary_v1` calls `imageVisionSummarizer` when configured so image
+     questions can answer from actual image content, not filename inference;
    - v1 should prefer managed provider vision summary over local OCR unless a local OCR
      dependency is intentionally chosen;
    - cache only bounded textual summary, not image bytes.
@@ -520,7 +580,7 @@ Candidate approach:
 | Link HTML | built-in `fetch` + lightweight internal HTML text stripping first | add Readability/JSDOM only if internal stripper is not enough |
 | PDF | `pdf-parse@1.1.1` embedded text extraction | chosen over newer native-canvas dependency path for default install stability |
 | DOCX | `mammoth@1.12.0` raw text extraction | `.pptx`/`.xlsx` are explicit `unsupported` until separate extractors exist |
-| Image | provider vision summary as managed inspection | local OCR later if product really needs offline OCR |
+| Image | provider vision summary first | local OCR later if product really needs offline OCR |
 
 ### Acceptance Gates
 
@@ -537,6 +597,8 @@ Default transcript regressions are blockers:
 - no raw `metadata_only`, `blocked`, `unsupported`, `extractor`, `SSRF`, fingerprints, or
   raw ids in ordinary channel messages;
 - no claim that Ling read unavailable content;
+- no "I can inspect this first" response for supported attachments that Ling can
+  automatically materialize;
 - no auto-start when a required input is unavailable or blocked.
 
 ## Fingerprints
@@ -637,15 +699,21 @@ Allowed outputs:
 
 - `metadata_only`: image name, content type, size;
 - `available`: OCR text or vision summary produced by a configured extractor;
-- `unsupported`: no image extractor configured;
+- `unsupported`: no image extractor configured or unsupported image format;
 - `blocked`: image too large, unsupported format, missing file, extractor failure.
 
-Content-dependent requests such as "fix UI from this screenshot" require `available` or a
-safe first inspection step.
+Target behavior:
+
+- every current-turn image attachment should enqueue `image_vision_summary_v1` or the
+  configured image extractor automatically;
+- content-dependent requests such as "what is in this image" or "fix UI from this
+  screenshot" should wait for `available` summary and answer from it;
+- visible fallback copy is only for unsupported formats, missing files, provider failure,
+  or budget/policy blocks.
 
 ### PDF Attachments
 
-PDF v1 should extract bounded text and page metadata behind a feature flag.
+PDF v1 extracts bounded embedded text and cheap metadata.
 
 Required metadata:
 
@@ -656,13 +724,21 @@ Required metadata:
 Statuses:
 
 - `available`: bounded text extracted;
-- `not_loaded`: supported but not run yet;
+- `not_loaded`: supported but queued or timed out before answer deadline;
 - `unsupported`: extractor unavailable;
 - `blocked`: encrypted PDF, parser failure, size limit, missing file.
 
+Target behavior:
+
+- every current-turn PDF attachment should enqueue `pdf_text_v1` automatically;
+- Ling should answer PDF questions from extracted text when available;
+- if only metadata is ready, Ling should wait within the bounded deadline rather than
+  asking the user to explicitly request reading.
+
 ### Office Attachments
 
-Office v1 covers `.docx`, `.pptx`, and `.xlsx` only after an extractor exists.
+Office v1 currently covers `.docx` raw text through `office_text_v1`. `.pptx` and `.xlsx`
+remain unsupported until dedicated extractors exist.
 
 Rules:
 
@@ -670,6 +746,9 @@ Rules:
 - mark macros, encrypted files, unknown formats, or parse failures as `blocked` or
   `unsupported`;
 - spreadsheets should avoid dumping entire workbooks into prompt context.
+- every current-turn supported Office attachment should enqueue extraction automatically;
+- Ling should explain only unsupported Office formats or extraction failures, not require
+  users to ask for document inspection.
 
 ### Link Body Extraction
 
@@ -681,7 +760,7 @@ Full link extraction is a separate materialization step with network policy:
 - block localhost, loopback, private IP ranges, link-local ranges, `file:`, `data:`,
   `javascript:`, and unsafe redirects;
 - limit redirects, response bytes, content type, and wall-clock time;
-- only unauthenticated public GET is eligible for context materialization;
+- only unauthenticated public GET is eligible for automatic context materialization;
 - authenticated pages, browser-session pages, forms, checkout/account-changing pages, and
   external sends must use managed tools and approvals.
 
@@ -693,6 +772,10 @@ Allowed content types:
 
 HTML extraction should keep readable article/body text and drop scripts, styles,
 navigation, forms, and tracking markup.
+
+Automatic link behavior is narrower than attachment behavior because it is network access:
+safe public pages may be fetched behind policy; local/private/authenticated/session pages
+must stay controlled tool work.
 
 ### Workspace File References
 
@@ -732,7 +815,8 @@ Rules:
 
 - ordinary metadata questions may answer from `metadata_only`;
 - content summaries require `available`;
-- content-dependent edits require `available` or a first safe inspection step;
+- content-dependent edits require `available` for user-uploaded attachments, or a first
+  safe inspection step for workspace files/private links;
 - writes, edits, shell commands, Git, deploys, and external sends still evaluate runtime
   approval even when all inputs are `available`;
 - any `blocked` required input prevents auto-start; Ling should surface concise,
@@ -743,8 +827,10 @@ Examples:
 | User turn | Required input | First outcome |
 | --- | --- | --- |
 | `what did I attach?` + PDF | metadata | answer from metadata |
-| `summarize this PDF` + no PDF extractor | PDF body | clarify/block |
-| `fix UI from screenshot` + image extractor disabled | image content | clarify/block |
+| `summarize this PDF` + supported PDF | PDF body | auto-materialize, then summarize |
+| `fix UI from screenshot` + supported image | image content | auto-materialize vision/OCR, then answer |
+| `summarize this PDF` + unsupported/encrypted PDF | PDF body | explain unreadable file and ask for supported input |
+| `fix UI from screenshot` + unsupported image extractor | image content | explain image cannot be read yet; do not invent details |
 | `update README based on attached text` + text preview available | text body | proposal or auto-start if tools allow |
 | `update README based on apps/foo.ts` | workspace file body | first safe inspection/read step |
 | `summarize this link` + local/private URL | link body | explain that Ling will not read local/private links by default and ask for approval or pasted text |
@@ -778,8 +864,9 @@ Default copy rules:
 
 Examples:
 
-- `I can see screenshot.png, but I have not inspected the image yet. I can inspect it first, or you can paste the key detail.`
-- `I can see report.pdf, but I cannot read its contents in this turn yet. I can start a document inspection step.`
+- `The screenshot shows the primary button overlapping the right drawer. I would adjust the drawer width and button wrapping first.`
+- `report.pdf says the onboarding drop-off is concentrated in the provider setup step. The relevant section is truncated, so I am using the extracted summary.`
+- `I couldn't read deck.pptx yet. Upload a PDF/DOCX export or paste the slide text you want me to use.`
 - `That link points to a local/private address. I will not open it automatically; paste the content or ask me to inspect it as a controlled task.`
 - `I can inspect README.md first, then apply the edit.`
 
@@ -816,11 +903,15 @@ Do not show:
    - Add PDF text extractor with bounded read/prompt budgets.
    - Add public link body extractor behind policy and SSRF checks.
 
-5. **Image and Office extraction**
-   - status: DOCX raw text landed as M4; image remains M5;
-   - Add image OCR/vision summary behind feature flag.
-   - Add Office plain text extractor for `.docx`; keep `.pptx`/`.xlsx` unsupported
-     until dedicated modules can preserve acceptable semantics.
+5. **Automatic attachment understanding**
+   - status: M5a landed;
+   - trigger materialization for every current-turn text/PDF/DOCX/image attachment;
+   - wire `image_vision_summary_v1` through an injectable `imageVisionSummarizer`;
+   - remove explicit-request-only triggers for supported PDF/DOCX/image attachment
+     understanding;
+   - M5b should connect provider/worker-backed image OCR or vision summary;
+   - keep `.pptx`/`.xlsx` unsupported until dedicated modules can preserve acceptable
+     semantics.
 
 6. **Evidence and Web polish**
    - Keep default transcript focused on user input and Ling outcome.
@@ -838,11 +929,12 @@ Do not show:
 
 ## Open Decisions
 
-- Which PDF extractor implementation should be bundled first.
-- Link body extraction defaults on only for explicit public unauthenticated link-body
-  requests; ordinary link metadata turns do not fetch full page body.
-- Whether image OCR/vision should run locally, through a provider, or only as a managed
-  inspection step.
+- Whether public unauthenticated link body extraction should run automatically for every
+  link preview or only when the message likely needs page content. This is a network
+  boundary decision, unlike user-uploaded attachments.
+- Which image OCR/vision provider path should be the first default: provider vision
+  summary, local OCR, or a hybrid where provider vision is primary and local OCR is an
+  optional offline capability.
 - How long materialization rows should live before expiry.
 - Whether workspace file body reads should ever create materialization rows, or always
   remain run artifacts.

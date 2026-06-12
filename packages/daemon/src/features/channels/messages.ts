@@ -15,6 +15,7 @@ import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-age
 import { buildLingAgentSessionViewForChannel } from "./ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope, type LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 import { materializeInlineChannelInputs } from "./materialization/inline.js";
+import type { LingImageVisionSummarizer } from "./materialization/registry.js";
 import { validateChannelMessageReferences } from "./protocol.js";
 import { parseChannelMessageRequest } from "./schemas.js";
 
@@ -53,6 +54,7 @@ interface LingAgentChannelMessageInput {
   readonly startExecutionProposalWorkflow?: StartChannelExecutionProposalWorkflow;
   readonly config: ResolvedDaemonConfig;
   readonly routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }
 
 interface LingAgentActiveSessionAction {
@@ -81,6 +83,7 @@ export async function handleChannelMessagesCollection(
   createAiReply: CreateChannelAiReply,
   startExecutionProposalWorkflow: StartChannelExecutionProposalWorkflow | undefined,
   routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">,
+  imageVisionSummarizer?: LingImageVisionSummarizer,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -156,6 +159,7 @@ export async function handleChannelMessagesCollection(
         startExecutionProposalWorkflow,
         config,
         routeDependencies,
+        imageVisionSummarizer,
       });
 
       if (result.routeDecisionId && result.aiReply) {
@@ -190,6 +194,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     now: new Date().toISOString(),
+    imageVisionSummarizer: input.imageVisionSummarizer,
   });
   const turnEnvelope = buildLingAgentTurnEnvelope({
     store: input.store,

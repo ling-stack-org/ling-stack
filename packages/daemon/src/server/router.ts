@@ -257,6 +257,7 @@ export async function routeRequest(
     externalSecretStore,
     mcpBroker,
     externalWorkFetch,
+    imageVisionSummarizer,
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
@@ -1335,7 +1336,9 @@ export async function routeRequest(
           runnerRegistry,
           secretResolver,
           config,
-        });
+        },
+        imageVisionSummarizer,
+      );
       return;
     }
     if (channelRoute.action === "message-route-decisions") {

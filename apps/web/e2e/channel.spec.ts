@@ -1355,7 +1355,7 @@ test("channel screenshot request shows materialization clarify reply instead of 
 
   const channelFeed = page.getByLabel("Channel message feed");
   await expect(channelFeed.getByText("Please fix the UI from this screenshot")).toBeVisible();
-  await expect(channelFeed.getByText("inspect screenshot.png first")).toBeVisible();
+  await expect(channelFeed.getByText("could not read image content from screenshot.png")).toBeVisible();
   await expect(page.getByText("routeDecision")).toHaveCount(0);
   await expect(page.getByText("workflow_proposal")).toHaveCount(0);
   await expect(page.getByText("image content is not available")).toHaveCount(0);

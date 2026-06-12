@@ -2961,11 +2961,11 @@ function maybeCreateMockMaterializationClarifyReply(
     if (attachment) {
       const fileName = typeof attachment.fileName === "string" ? attachment.fileName : "attachment";
       if (attachment.kind === "image") {
-        replyBody = `I can inspect ${fileName} first, or you can paste the relevant detail from the image.`;
+        replyBody = `I could not read image content from ${fileName}. Upload a readable image, or paste the relevant details.`;
       } else if (attachment.kind === "pdf") {
-        replyBody = `I can inspect ${fileName} first, or you can paste the PDF section to use.`;
+        replyBody = `I could not read PDF content from ${fileName}. Upload a readable file, or paste the section to use.`;
       } else {
-        replyBody = `I can inspect ${fileName} first, or you can paste the document section that matters.`;
+        replyBody = `I could not read document content from ${fileName}. Upload a readable file, or paste the section that matters.`;
       }
       decisionReason = `Mock attachment content is not materialized: ${fileName}`;
     }
