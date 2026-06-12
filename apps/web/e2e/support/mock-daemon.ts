@@ -217,6 +217,14 @@ export interface MockRunIntervention {
   mode: "queue_followup" | "interrupt_redirect";
   status: "queued" | "cancelling_source" | "starting_continuation" | "started" | "failed" | "cancelled";
   instruction: string;
+  messagePayload?: {
+    body: string;
+    attachmentIds: string[];
+    linkPreviewIds: string[];
+    attachments?: Array<{ id: string; fileName: string; kind: string; contentType: string; sizeBytes: number; materializationStatus: string; previewStatus?: string; previewText?: string; reason?: string }>;
+    linkPreviews?: Array<{ id: string; url: string; normalizedUrl: string; title?: string; description?: string; siteName?: string; status: string; materializationStatus: string; previewText?: string; reason?: string }>;
+    fileRefs?: Array<{ path: string; label?: string; rootRelation: string; kind: string; materializationStatus: string; previewText?: string; blockedReason?: string }>;
+  };
   requestedBy: "local-user" | "system";
   idempotencyKey: string;
   createdAt: string;
@@ -2933,6 +2941,90 @@ function maybeCreateMockWorkflowProposal(
   return {};
 }
 
+function maybeCreateMockMaterializationClarifyReply(
+  state: MockState,
+  channelId: string,
+  message: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const body = typeof message.body === "string" ? message.body : "";
+  const attachmentIds = Array.isArray(message.attachmentIds) ? message.attachmentIds.filter((item): item is string => typeof item === "string") : [];
+  const linkPreviewIds = Array.isArray(message.linkPreviewIds) ? message.linkPreviewIds.filter((item): item is string => typeof item === "string") : [];
+  const wantsAttachmentBody = /(附件|附图|截图|图片|图里|文件内容|这个文件|这个图|这张图|这份文档|attached file|attachment|screenshot|image|this file|this document)/iu.test(body);
+  const wantsLinkBody = /(链接|网页|页面|网址|url|link|page|article)/iu.test(body) &&
+    /(总结|概括|读取|读一下|提取|分析|看看|summarize|read|extract|analy[sz]e|what.*about)/iu.test(body);
+  let replyBody = "";
+  let decisionReason = "Mock materialization clarify reply.";
+  if (wantsAttachmentBody) {
+    const attachment = attachmentIds
+      .map((attachmentId) => state.channelAttachments.find((item) => isRecord(item) && item.id === attachmentId && item.channelId === channelId))
+      .find((item): item is Record<string, unknown> => isRecord(item) && item.kind !== "text");
+    if (attachment) {
+      const fileName = typeof attachment.fileName === "string" ? attachment.fileName : "attachment";
+      if (attachment.kind === "image") {
+        replyBody = `I can inspect ${fileName} first, or you can paste the relevant detail from the image.`;
+      } else if (attachment.kind === "pdf") {
+        replyBody = `I can inspect ${fileName} first, or you can paste the PDF section to use.`;
+      } else {
+        replyBody = `I can inspect ${fileName} first, or you can paste the document section that matters.`;
+      }
+      decisionReason = `Mock attachment content is not materialized: ${fileName}`;
+    }
+  }
+  if (!replyBody && wantsLinkBody) {
+    const preview = linkPreviewIds
+      .map((previewId) => state.channelLinkPreviews.find((item) => isRecord(item) && item.id === previewId && item.channelId === channelId))
+      .find((item): item is Record<string, unknown> => isRecord(item));
+    if (preview) {
+      const url = typeof preview.url === "string" ? preview.url : "link";
+      const title = typeof preview.title === "string" ? preview.title : url;
+      replyBody = preview.status === "blocked"
+        ? `I will not open local/private links automatically. Paste the content, or ask me to inspect it as a controlled task.`
+        : `I can read ${title} first, or you can paste the text you want summarized.`;
+      decisionReason = preview.status === "blocked"
+        ? `Mock link body materialization is blocked: ${url}${typeof preview.errorMessage === "string" ? ` (${preview.errorMessage})` : ""}`
+        : `Mock link body is metadata-only: ${url}`;
+    }
+  }
+  if (!replyBody) {
+    return undefined;
+  }
+  const aiReply = {
+    id: `msg_${state.channelMessages.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId,
+    threadId: typeof message.id === "string" ? message.id : undefined,
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "ling_agent",
+    body: replyBody,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-05-25T00:18:01.000Z",
+    updatedAt: "2026-05-25T00:18:01.000Z",
+  };
+  state.channelMessages.push(aiReply);
+  state.channelIntentDecisions.push({
+    schemaVersion: 1,
+    id: `intent_${state.channelIntentDecisions.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId,
+    sourceMessageId: typeof message.id === "string" ? message.id : "",
+    action: "clarify",
+    selectedTeammateId: "ling_agent",
+    replyMessageId: aiReply.id,
+    reason: decisionReason,
+    status: "accepted",
+    createdBy: "deterministic",
+    createdAt: "2026-05-25T00:18:00.500Z",
+    updatedAt: "2026-05-25T00:18:00.500Z",
+  });
+  return aiReply;
+}
+
 function maybeCreateMockSingleStepExecutableProposal(
   state: MockState,
   channelId: string,
@@ -5005,6 +5097,7 @@ export async function handleDaemonRoute(
       mentions: Array.isArray(body.mentions) ? body.mentions : [],
       attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds : [],
       linkPreviewIds: Array.isArray(body.linkPreviewIds) ? body.linkPreviewIds : [],
+      fileRefs: Array.isArray(body.fileRefs) ? body.fileRefs : [],
       linkedTaskId: typeof body.linkedTaskId === "string" ? body.linkedTaskId : undefined,
       linkedRunId: typeof body.linkedRunId === "string" ? body.linkedRunId : undefined,
       status: "ready",
@@ -5012,6 +5105,11 @@ export async function handleDaemonRoute(
       updatedAt: "2026-05-25T00:18:00.000Z",
     };
     state.channelMessages.push(message);
+    const materializationClarifyReply = maybeCreateMockMaterializationClarifyReply(state, channelId, message);
+    if (materializationClarifyReply) {
+      await route.fulfill({ status: 201, json: { message, aiReply: materializationClarifyReply } });
+      return;
+    }
     const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
     const autoReplyMode = isRecord(channel) && typeof channel.autoReplyMode === "string" ? channel.autoReplyMode : "mentions_only";
     const mockWorkflowProposal = body.requestAiReply !== true
@@ -5081,6 +5179,7 @@ export async function handleDaemonRoute(
           mentions: [],
           attachmentIds: [],
           linkPreviewIds: [],
+          fileRefs: [],
           status: "pending",
           createdAt: "2026-05-25T00:18:01.000Z",
           updatedAt: "2026-05-25T00:18:01.000Z",

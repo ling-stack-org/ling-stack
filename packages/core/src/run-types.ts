@@ -26,6 +26,11 @@ import type {
   UpdateMediaJobStatusInput,
 } from "./media-types.js";
 import type {
+  ChannelInputMaterialization,
+  CreateChannelInputMaterializationInput,
+  ListChannelInputMaterializationsOptions,
+} from "./input-materialization-types.js";
+import type {
   AiTeammate,
   AiTeammateUpdateInput,
   Channel,
@@ -677,6 +682,46 @@ export interface RunInterventionMessagePayload {
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
+  readonly attachments?: readonly RunInterventionAttachmentPayload[];
+  readonly linkPreviews?: readonly RunInterventionLinkPreviewPayload[];
+  readonly fileRefs?: readonly RunInterventionWorkspaceFilePayload[];
+}
+
+export type RunInterventionMaterializationStatus = "available" | "metadata_only" | "not_loaded" | "unsupported" | "blocked";
+
+export interface RunInterventionAttachmentPayload {
+  readonly id: string;
+  readonly fileName: string;
+  readonly kind: ChannelAttachment["kind"] | "other";
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly materializationStatus: RunInterventionMaterializationStatus;
+  readonly previewStatus?: string;
+  readonly previewText?: string;
+  readonly reason?: string;
+}
+
+export interface RunInterventionLinkPreviewPayload {
+  readonly id: string;
+  readonly url: string;
+  readonly normalizedUrl: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly siteName?: string;
+  readonly status: ChannelLinkPreview["status"] | "missing" | "channel_mismatch";
+  readonly materializationStatus: RunInterventionMaterializationStatus;
+  readonly previewText?: string;
+  readonly reason?: string;
+}
+
+export interface RunInterventionWorkspaceFilePayload {
+  readonly path: string;
+  readonly label?: string;
+  readonly rootRelation: "inside_workspace" | "outside_workspace" | "unknown";
+  readonly kind: "file" | "directory" | "glob" | "unknown";
+  readonly materializationStatus: RunInterventionMaterializationStatus;
+  readonly previewText?: string;
+  readonly blockedReason?: string;
 }
 
 export interface CreateRunInterventionInput {
@@ -1058,6 +1103,9 @@ export interface RunStore {
   getChannelLinkPreview(id: string): ChannelLinkPreview | undefined;
   listChannelLinkPreviews(options: ListChannelLinkPreviewsOptions): ChannelLinkPreview[];
   updateChannelLinkPreview(id: string, input: UpdateChannelLinkPreviewInput, now: string): ChannelLinkPreview | undefined;
+  createChannelInputMaterialization(input: CreateChannelInputMaterializationInput, now: string): ChannelInputMaterialization;
+  getChannelInputMaterialization(id: string): ChannelInputMaterialization | undefined;
+  listChannelInputMaterializations(options: ListChannelInputMaterializationsOptions): ChannelInputMaterialization[];
   getChannelBrief(channelId: string): ChannelBrief | undefined;
   updateChannelBrief(channelId: string, input: UpdateChannelBriefInput, now: string): ChannelBrief;
   createChannelDecision(input: CreateChannelDecisionInput, now: string): ChannelDecision;

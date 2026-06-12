@@ -24,6 +24,11 @@ import {
   type ContextPack,
 } from "./context-packs.js";
 import { createLingAgentExecutor, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import {
+  buildLingAgentTurnEnvelope,
+  turnEnvelopeHasUserInput,
+  type LingAgentTurnEnvelope,
+} from "./ling-agent-turn-envelope.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -31,6 +36,7 @@ export interface ChannelMessageRouteInput {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly runnerRegistry: RunnerRegistry;
   readonly secretResolver: SecretResolver;
   readonly config: ResolvedDaemonConfig;
@@ -279,7 +285,12 @@ function deterministicNoReplyReason(input: ChannelMessageRouteInput): string | u
   if (input.channel.status !== "active") {
     return "Channel is not active.";
   }
-  if (!message.body.trim() && message.attachmentIds.length === 0 && message.linkPreviewIds.length === 0) {
+  const envelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: message,
+  });
+  if (!turnEnvelopeHasUserInput(envelope)) {
     return "Message is empty.";
   }
   return undefined;
@@ -371,6 +382,7 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
+    turnEnvelope: input.turnEnvelope,
     providerPresetId,
     candidates: candidatesToRouteContext(candidates),
   });
@@ -429,6 +441,7 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      turnEnvelope: input.turnEnvelope,
       providerPresetId,
       candidates: candidatesToRouteContext(candidates),
       compactedChannelSummary: compaction.compactedSummary,
@@ -606,6 +619,7 @@ function buildReplyRouteContextPackMetadata(
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
+    turnEnvelope: input.turnEnvelope,
     providerPresetId: draft.providerPresetId,
     teammate,
     canonicalTeammateId: teammate?.id ?? draft.teammateId,

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Channel, ChannelExecutionProposal, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
+import type { Channel, ChannelExecutionProposal, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunIntervention, RunInterventionMessagePayload, RunSession, RunStore } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -13,6 +13,8 @@ import {
 import { selectChannelWorkflowIntent } from "./channel-intent-selector.js";
 import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-agent-auto-start.js";
 import { buildLingAgentSessionViewForChannel } from "./ling-agent-session-view.js";
+import { buildLingAgentTurnEnvelope, type LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
+import { materializeInlineChannelInputs } from "./materialization/inline.js";
 import { validateChannelMessageReferences } from "./protocol.js";
 import { parseChannelMessageRequest } from "./schemas.js";
 
@@ -20,6 +22,7 @@ export type CreateChannelAiReply = (input: {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
@@ -42,6 +45,7 @@ interface LingAgentChannelMessageInput {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly requestedProviderPresetId?: string;
   readonly requestedTeammateId?: string;
   readonly requestAiReply: boolean;
@@ -134,6 +138,7 @@ export async function handleChannelMessagesCollection(
           mentions: input.mentions,
           attachmentIds: input.attachmentIds,
           linkPreviewIds: input.linkPreviewIds,
+          fileRefs: input.fileRefs,
           linkedTaskId: input.linkedTaskId,
           linkedRunId: input.linkedRunId,
         },
@@ -180,7 +185,20 @@ export async function handleChannelMessagesCollection(
 }
 
 export async function handleLingAgentChannelMessage(input: LingAgentChannelMessageInput): Promise<LingAgentChannelMessageResult> {
-  const activeSession = maybeHandleActiveSessionMessage(input);
+  await materializeInlineChannelInputs({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    now: new Date().toISOString(),
+  });
+  const turnEnvelope = buildLingAgentTurnEnvelope({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+  });
+  const envelopeInput = { ...input, turnEnvelope };
+
+  const activeSession = maybeHandleActiveSessionMessage(envelopeInput);
   if (activeSession) {
     return activeSession;
   }
@@ -191,6 +209,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      turnEnvelope,
       requestedProviderPresetId: input.requestedProviderPresetId,
       requestedTeammateId: input.requestedTeammateId,
     });
@@ -200,6 +219,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
         store: input.store,
         channel: input.channel,
         sourceMessage: input.sourceMessage,
+        turnEnvelope,
         providerPresetId: route.action === "reply" ? route.providerPresetId ?? input.requestedProviderPresetId : input.requestedProviderPresetId,
         teammateId: route.action === "reply" ? route.teammateId : input.requestedTeammateId,
         proposalMode: "allow",
@@ -211,6 +231,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
+    turnEnvelope,
     requestedProviderPresetId: input.requestedProviderPresetId,
     secretResolver: input.routeDependencies.secretResolver,
     config: input.config,
@@ -273,6 +294,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      turnEnvelope,
       providerPresetId: input.requestedProviderPresetId,
       teammateId,
       proposalMode: "disabled",
@@ -302,6 +324,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
+    turnEnvelope,
     requestedProviderPresetId: input.requestedProviderPresetId,
     requestedTeammateId: input.requestedTeammateId,
   });
@@ -314,6 +337,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      turnEnvelope,
       providerPresetId: route.providerPresetId ?? input.requestedProviderPresetId,
       teammateId: route.teammateId,
       proposalMode: "disabled",
@@ -326,11 +350,14 @@ function maybeHandleActiveSessionMessage(input: LingAgentChannelMessageInput): L
     return undefined;
   }
   const text = normalizeWhitespace(input.sourceMessage.body);
-  if (!text) {
-    return undefined;
-  }
   const activeRun = findActiveSessionRun(input.store, input.channel.id);
   if (!activeRun) {
+    return undefined;
+  }
+  const hasGuidanceAssets = (input.turnEnvelope?.attachments.length ?? input.sourceMessage.attachmentIds.length) > 0 ||
+    (input.turnEnvelope?.linkPreviews.length ?? input.sourceMessage.linkPreviewIds.length) > 0 ||
+    (input.turnEnvelope?.fileRefs.length ?? input.sourceMessage.fileRefs.length) > 0;
+  if (!text && !hasGuidanceAssets) {
     return undefined;
   }
   if (looksLikeInterruptRedirect(text)) {
@@ -343,20 +370,17 @@ function maybeHandleActiveSessionMessage(input: LingAgentChannelMessageInput): L
       },
     };
   }
-  if (!looksLikeQueuedFollowUp(text)) {
+  if (text && !looksLikeQueuedFollowUp(text)) {
     return undefined;
   }
+  const instruction = text || "User added attachments, link previews, or workspace file refs for the active run.";
   const now = new Date().toISOString();
   const intervention = input.store.createRunIntervention({
     sourceRunId: activeRun.id,
     sourceWorkUnitId: activeRun.workUnitId,
     mode: "queue_followup",
-    instruction: text,
-    messagePayload: {
-      body: text,
-      attachmentIds: input.sourceMessage.attachmentIds,
-      linkPreviewIds: input.sourceMessage.linkPreviewIds,
-    },
+    instruction,
+    messagePayload: buildRunInterventionMessagePayload(text, input.sourceMessage, input.turnEnvelope),
     requestedBy: "local-user",
     idempotencyKey: `channel_message:${input.sourceMessage.id}:queue_followup`,
   }, now);
@@ -418,6 +442,62 @@ function appendRunInterventionEvent(store: RunStore, runId: string, type: "run_i
   } catch {
     // The intervention row is authoritative; run events are audit hints.
   }
+}
+
+function buildRunInterventionMessagePayload(
+  body: string,
+  sourceMessage: ChannelMessage,
+  turnEnvelope: LingAgentTurnEnvelope | undefined,
+): RunInterventionMessagePayload {
+  return {
+    body,
+    attachmentIds: sourceMessage.attachmentIds,
+    linkPreviewIds: sourceMessage.linkPreviewIds,
+    ...(turnEnvelope?.attachments.length
+      ? {
+          attachments: turnEnvelope.attachments.map((attachment) => ({
+            id: attachment.id,
+            fileName: attachment.fileName,
+            kind: attachment.kind,
+            contentType: attachment.contentType,
+            sizeBytes: attachment.sizeBytes,
+            materializationStatus: attachment.materializationStatus,
+            previewStatus: attachment.previewStatus,
+            ...(attachment.previewText ? { previewText: attachment.previewText } : {}),
+            ...(attachment.reason ? { reason: attachment.reason } : {}),
+          })),
+        }
+      : {}),
+    ...(turnEnvelope?.linkPreviews.length
+      ? {
+          linkPreviews: turnEnvelope.linkPreviews.map((preview) => ({
+            id: preview.id,
+            url: preview.url,
+            normalizedUrl: preview.normalizedUrl,
+            ...(preview.title ? { title: preview.title } : {}),
+            ...(preview.description ? { description: preview.description } : {}),
+            ...(preview.siteName ? { siteName: preview.siteName } : {}),
+            status: preview.status,
+            materializationStatus: preview.materializationStatus,
+            ...(preview.previewText ? { previewText: preview.previewText } : {}),
+            ...(preview.reason ? { reason: preview.reason } : {}),
+          })),
+        }
+      : {}),
+    ...(turnEnvelope?.fileRefs.length
+      ? {
+          fileRefs: turnEnvelope.fileRefs.map((ref) => ({
+            path: ref.path,
+            ...(ref.label ? { label: ref.label } : {}),
+            rootRelation: ref.rootRelation,
+            kind: ref.kind,
+            materializationStatus: ref.materializationStatus,
+            ...(ref.previewText ? { previewText: ref.previewText } : {}),
+            ...(ref.blockedReason ? { blockedReason: ref.blockedReason } : {}),
+          })),
+        }
+      : {}),
+  };
 }
 
 function normalizeWhitespace(value: string): string {

@@ -137,7 +137,7 @@ import {
   removeComposerInputRawToken,
   serializeComposerInputParts,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationGuidanceStrip, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, MessageBodyRenderer, MessageBubble, MessageFooterActions, MessageRow, RightDrawer, type ConversationGuidanceItem, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationGuidanceStrip, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, FileRefChip, MessageBodyRenderer, MessageBubble, MessageFooterActions, MessageRow, RightDrawer, type ConversationGuidanceItem, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -155,6 +155,7 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
+  ChannelMessageFileRef,
   ChannelMessageRouteDecision,
   ChannelExecutionProposal,
   UpdateChannelExecutionProposalRequest,
@@ -339,6 +340,7 @@ interface PendingChannelSendPreview {
   readonly mentions: readonly ChannelMention[];
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
+  readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
   readonly autoReplyMode: Channel["autoReplyMode"];
   readonly createdAt: string;
@@ -581,6 +583,7 @@ export function WorkspaceClientView({
     readonly mentions: readonly ChannelMention[];
     readonly attachmentIds: readonly string[];
     readonly linkPreviewIds: readonly string[];
+    readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
   }) => Promise<void>;
   readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => void;
@@ -1032,6 +1035,11 @@ export function WorkspaceClientView({
             .map((previewId) => channelLinkPreviewById.get(previewId))
             .filter((preview): preview is ChannelLinkPreview => Boolean(preview))
             .map((preview) => ({ id: preview.id, label: preview.title || preview.url })),
+          fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((fileRef, index) => ({
+            id: `${fileRef.path}:${fileRef.label ?? ""}:${index}`,
+            label: fileRef.label ?? fileRef.path,
+            status: fileRef.materializationStatus,
+          })),
           statusLabel: channelRunInterventionStatusLabel(intervention.status, t),
           meta: channelRunInterventionModeLabel(intervention.mode, t),
           promoteLabel: t("Run this guidance now"),
@@ -1367,7 +1375,8 @@ export function WorkspaceClientView({
       latestLocalMessage &&
       latestLocalMessage.body === pendingChannelSendPreview.body &&
       sameStringList(latestLocalMessage.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
-      sameStringList(latestLocalMessage.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds),
+      sameStringList(latestLocalMessage.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
+      sameFileRefList(latestLocalMessage.fileRefs ?? [], pendingChannelSendPreview.fileRefs),
     );
   }, [channelMessages, pendingChannelSendPreview]);
   const pendingChannelSendVisible = Boolean(
@@ -2799,10 +2808,18 @@ export function WorkspaceClientView({
     const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const body = serializedInput.body.trim();
+    const fileRefs = [...composerFileRefs];
+    const guidanceFileRefs = fileRefs.map((fileRef) => ({
+      path: fileRef.path,
+      ...(fileRef.label ? { label: fileRef.label } : {}),
+      rootRelation: "unknown" as const,
+      kind: "unknown" as const,
+      materializationStatus: "not_loaded" as const,
+    }));
     const attachmentIds = [...serializedInput.attachmentIds];
     const pendingPreviewRecords = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview] : []);
     const newPreviews: ChannelLinkPreview[] = [];
-    if (!body && attachmentIds.length === 0 && readyLinkPreviewIds.length === 0) {
+    if (!body && attachmentIds.length === 0 && readyLinkPreviewIds.length === 0 && fileRefs.length === 0) {
       return false;
     }
     setRunGuidanceSubmitting("queue_followup");
@@ -2830,6 +2847,7 @@ export function WorkspaceClientView({
         body,
         attachmentIds,
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
+        fileRefs: guidanceFileRefs,
       };
       const instruction = summarizeChannelGuidancePayload(messagePayload, t);
       const response = await createRunIntervention(cwd, activeConversationSourceRunId, {
@@ -2947,6 +2965,7 @@ export function WorkspaceClientView({
     const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const body = serializedInput.body.trim();
+    const fileRefs = [...composerFileRefs];
     const pastedUrls = extractUrls(body);
     const newPreviews: ChannelLinkPreview[] = [];
     const attachmentIds = [...serializedInput.attachmentIds];
@@ -2982,6 +3001,7 @@ export function WorkspaceClientView({
         mentions,
         attachmentIds,
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
+        fileRefs,
         requestAiReply: shouldRequestAi,
         autoReplyMode: selectedChannel?.autoReplyMode ?? "mentions_only",
         createdAt: new Date().toISOString(),
@@ -2998,6 +3018,7 @@ export function WorkspaceClientView({
         mentions,
         attachmentIds,
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
+        fileRefs,
         requestAiReply: shouldRequestAi,
       });
       revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
@@ -3036,6 +3057,7 @@ export function WorkspaceClientView({
         mentions,
         attachmentIds: [],
         linkPreviewIds: [],
+        fileRefs: [],
         requestAiReply: shouldRequestAi,
       });
       setThreadReplyDraft("");
@@ -3107,7 +3129,13 @@ export function WorkspaceClientView({
     part,
     occurrenceIndex: composerFileReferenceParts.slice(0, index).filter((candidate) => candidate.raw === part.raw).length,
   }));
-  const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0;
+  const composerFileRefs = composerFileReferenceParts.map((part): ChannelMessageFileRef => ({
+    path: part.path,
+    label: part.path,
+    source: "composer",
+    ...(part.line !== undefined ? { line: part.line } : {}),
+  }));
+  const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0 || composerFileRefs.length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
   const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0;
 
@@ -3137,9 +3165,7 @@ export function WorkspaceClientView({
       const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
         <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
       ) : undefined;
-      const messageAttachments = message.attachmentIds
-        .map((id) => channelAttachmentById.get(id))
-        .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
+      const messageFileRefs = message.fileRefs ?? [];
       const nonChatAction = message.linkedTaskId
         ? activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
         : activityActionRow(item.id);
@@ -3159,26 +3185,7 @@ export function WorkspaceClientView({
                   <MessageBodyRenderer text={pendingAiReply ? t("AI teammate is replying...") : message.body} cwd={cwd} compact />
                 </div>
               )}
-              attachmentsNode={messageAttachments.length > 0 ? (
-                <ConversationAttachmentStrip
-                  attachments={messageAttachments.map((attachment) => ({
-                    id: attachment.id,
-                    label: attachment.fileName,
-                    meta: formatBytes(attachment.sizeBytes),
-                    href: attachmentContentUrl(attachment),
-                    target: "_blank",
-                    rel: "noreferrer",
-                    icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
-                    previewRequest: attachmentCanPreview(attachment) ? {
-                      source: "attachment",
-                      cwd,
-                      attachmentId: attachment.id,
-                      scope: "channel",
-                      channelId: message.channelId,
-                    } : undefined,
-                  }))}
-                />
-              ) : null}
+              attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.channelId)}
               evidenceNode={messageUsedMemoryEvents.length > 0 ? (
                 <ConversationEvidenceBundlePanel
                   label={t("Message evidence")}
@@ -3622,7 +3629,7 @@ export function WorkspaceClientView({
               <MessageBodyRenderer text={preview.body} cwd={cwd} compact />
             </div>
           )}
-          attachmentsNode={renderChannelAttachmentStrip(preview.attachmentIds)}
+          attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.channelId)}
         />
         <div className="channel-send-thinking-row" role="status" aria-live="polite">
           <Loader2 className="message-pending-spinner spin" size={13} />
@@ -3632,30 +3639,51 @@ export function WorkspaceClientView({
     );
   }
 
-  function renderChannelAttachmentStrip(attachmentIds: readonly string[]): ReactNode {
+  function renderChannelMessageAssets(
+    attachmentIds: readonly string[],
+    fileRefs: readonly ChannelMessageFileRef[] = [],
+    channelId: string = selectedChannelId,
+  ): ReactNode {
     const attachments = attachmentIds
       .map((id) => channelAttachmentById.get(id))
       .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
-    return attachments.length > 0 ? (
-      <ConversationAttachmentStrip
-        attachments={attachments.map((attachment) => ({
-          id: attachment.id,
-          label: attachment.fileName,
-          meta: formatBytes(attachment.sizeBytes),
-          href: attachmentContentUrl(attachment),
-          target: "_blank",
-          rel: "noreferrer",
-          icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
-          previewRequest: attachmentCanPreview(attachment) ? {
-            source: "attachment",
-            cwd,
-            attachmentId: attachment.id,
-            scope: "channel",
-            channelId: selectedChannelId,
-          } : undefined,
-        }))}
-      />
-    ) : null;
+    if (attachments.length === 0 && fileRefs.length === 0) {
+      return null;
+    }
+    return (
+      <>
+        <ConversationAttachmentStrip
+          attachments={attachments.map((attachment) => ({
+            id: attachment.id,
+            label: attachment.fileName,
+            meta: formatBytes(attachment.sizeBytes),
+            href: attachmentContentUrl(attachment),
+            target: "_blank",
+            rel: "noreferrer",
+            icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
+            previewRequest: attachmentCanPreview(attachment) ? {
+              source: "attachment",
+              cwd,
+              attachmentId: attachment.id,
+              scope: "channel",
+              channelId,
+            } : undefined,
+          }))}
+        />
+        {fileRefs.length > 0 ? (
+          <div className="conversation-attachment-strip channel-file-ref-strip" aria-label={t("Workspace file references")}>
+            {fileRefs.map((fileRef, index) => (
+              <FileRefChip
+                key={`${fileRef.path}:${fileRef.line ?? ""}:${index}`}
+                icon={<FileText size={13} />}
+                label={fileRef.label ?? fileRef.path}
+                meta={fileRef.line !== undefined ? `:${fileRef.line}` : undefined}
+              />
+            ))}
+          </div>
+        ) : null}
+      </>
+    );
   }
 
   const channelComposer = (
@@ -5726,6 +5754,16 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameFileRefList(left: readonly ChannelMessageFileRef[], right: readonly ChannelMessageFileRef[]): boolean {
+  return left.length === right.length && left.every((value, index) => {
+    const other = right[index];
+    return Boolean(other) &&
+      value.path === other.path &&
+      value.source === other.source &&
+      value.line === other.line;
+  });
 }
 
 function formatAge(value: string | undefined): string {
@@ -9672,11 +9710,19 @@ function extractUrls(value: string): string[] {
 }
 
 function summarizeChannelGuidancePayload(
-  payload: { readonly body: string; readonly attachmentIds: readonly string[]; readonly linkPreviewIds: readonly string[] },
+  payload: {
+    readonly body: string;
+    readonly attachmentIds: readonly string[];
+    readonly linkPreviewIds: readonly string[];
+    readonly fileRefs?: readonly ChannelMessageFileRef[];
+  },
   t: Translate,
 ): string {
   if (payload.body.trim()) {
     return payload.body.trim();
+  }
+  if (payload.fileRefs?.length) {
+    return t("Queued guidance with {count} file reference(s)", { count: payload.fileRefs.length });
   }
   if (payload.attachmentIds.length > 0 && payload.linkPreviewIds.length > 0) {
     return t("Queued guidance with {attachmentCount} attachment(s) and {linkCount} link(s)", {

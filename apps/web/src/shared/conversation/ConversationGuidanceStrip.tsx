@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { CornerDownLeft, Link2, Loader2, MessageSquareText, MoreHorizontal, Paperclip, PauseCircle, Pencil, Send, Square, Trash2, XCircle } from "lucide-react";
+import { CornerDownLeft, FileText, Link2, Loader2, MessageSquareText, MoreHorizontal, Paperclip, PauseCircle, Pencil, Send, Square, Trash2, XCircle } from "lucide-react";
 
 export interface ConversationGuidanceItem {
   readonly id: string;
   readonly instruction: string;
   readonly attachments?: readonly { readonly id: string; readonly label: string }[];
   readonly linkPreviews?: readonly { readonly id: string; readonly label: string }[];
+  readonly fileRefs?: readonly { readonly id: string; readonly label: string; readonly status?: string }[];
   readonly statusLabel: string;
   readonly meta?: string;
   readonly promoteLabel?: string;
@@ -136,6 +137,12 @@ export function ConversationGuidanceStrip({
                         <span key={`link:${preview.id}`} title={preview.label}>
                           <Link2 size={11} />
                           {preview.label}
+                        </span>
+                      ))}
+                      {item.fileRefs?.map((fileRef) => (
+                        <span key={`file:${fileRef.id}`} title={fileRef.status ? `${fileRef.label}: ${fileRef.status}` : fileRef.label}>
+                          <FileText size={11} />
+                          {fileRef.label}
                         </span>
                       ))}
                     </small>

@@ -6,6 +6,11 @@ import {
   type ChannelProtocolFieldSource,
   type EffectiveChannelCollaborationProtocolResult,
 } from "./collaboration-protocol.js";
+import {
+  buildLingAgentTurnEnvelope,
+  renderLingAgentTurnEnvelopeForPrompt,
+  type LingAgentTurnEnvelope,
+} from "./ling-agent-turn-envelope.js";
 
 export type ContextPackKind =
   | "channel_reply"
@@ -43,6 +48,8 @@ export interface ContextSourceRef {
     | "provider"
     | "memory"
     | "artifact"
+    | "attachment"
+    | "link_preview"
     | "run"
     | "decision"
     | "handoff"
@@ -92,6 +99,7 @@ interface ChannelReplyContextPackInput {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly providerPresetId?: string;
   readonly teammate: AiTeammate | undefined;
   readonly canonicalTeammateId: string;
@@ -104,6 +112,7 @@ interface ChannelIntentSelectorContextPackInput {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly providerPresetId?: string;
   readonly compactedChannelSummary?: ChannelCompactedDiscussionSummary;
   readonly minimal?: boolean;
@@ -249,7 +258,12 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
   const kind: ContextPackKind = (input.visibleParticipantTeammateIds?.length ?? 0) > 0
     ? "visible_multi_reply"
     : "channel_reply";
+  const envelope = resolveTurnEnvelope(input);
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
+  const sourceMessageForPrompt = {
+    ...sourceMessage,
+    body: renderLingAgentTurnEnvelopeForPrompt(envelope),
+  };
   const compactedSummarySection = input.compactedChannelSummary
     ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)]
     : [];
@@ -263,13 +277,14 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
         id: "channel_discussion",
         role: "user",
         priority: "must_keep",
-        text: formatChannelDiscussionPrompt(input.channel, sourceMessage, discussionPromptContext),
+        text: formatChannelDiscussionPrompt(input.channel, sourceMessageForPrompt, discussionPromptContext),
         sourceRefIds: [sourceMessage.id, input.channel.id],
       },
     ],
     sourceRefs: [
       { type: "channel", id: input.channel.id, label: input.channel.name },
       { type: "message", id: sourceMessage.id, label: "Source message" },
+      ...turnEnvelopeSourceRefs(envelope),
       ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
     ],
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
@@ -278,6 +293,7 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
 
 export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelectorContextPackInput): ContextPack {
   const protocolSection = buildChannelProtocolContextSection(input);
+  const envelope = resolveTurnEnvelope(input);
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
   const recentMessages = input.minimal
     ? ""
@@ -314,7 +330,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
         id: "selector_source_message",
         role: "user",
         priority: "must_keep",
-        text: [`Channel: ${input.channel.name}`, `Latest user message: ${sourceMessage.body}`].join("\n"),
+        text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
         sourceRefIds: [input.channel.id, sourceMessage.id],
       },
       {
@@ -333,6 +349,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
     sourceRefs: [
       { type: "channel", id: input.channel.id, label: input.channel.name },
       { type: "message", id: sourceMessage.id, label: "Latest user message" },
+      ...turnEnvelopeSourceRefs(envelope),
       ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
     ],
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
@@ -341,6 +358,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
 
 export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextPackInput): ContextPack {
   const protocolSection = buildChannelProtocolContextSection(input);
+  const envelope = resolveTurnEnvelope(input);
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
   const recentMessages = input.minimal
     ? ""
@@ -370,7 +388,7 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
         id: "auto_route_source_message",
         role: "user",
         priority: "must_keep",
-        text: [`Channel: ${input.channel.name}`, `Latest user message: ${sourceMessage.body}`].join("\n"),
+        text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
         sourceRefIds: [input.channel.id, sourceMessage.id],
       },
       {
@@ -389,6 +407,7 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
     sourceRefs: [
       { type: "channel", id: input.channel.id, label: input.channel.name },
       { type: "message", id: sourceMessage.id, label: "Latest user message" },
+      ...turnEnvelopeSourceRefs(envelope),
       ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
     ],
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
@@ -405,6 +424,34 @@ function listRecentContextMessages(store: RunStore, channelId: string, sourceMes
   return store
     .listChannelMessages({ channelId, limit: 8 })
     .filter((message) => message.id === sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+}
+
+function resolveTurnEnvelope(input: {
+  readonly store: RunStore;
+  readonly channel: Channel;
+  readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
+}): LingAgentTurnEnvelope {
+  return input.turnEnvelope ?? buildLingAgentTurnEnvelope({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+  });
+}
+
+function turnEnvelopeSourceRefs(envelope: LingAgentTurnEnvelope): readonly ContextSourceRef[] {
+  return [
+    ...envelope.attachments.map((attachment): ContextSourceRef => ({
+      type: "attachment",
+      id: attachment.id,
+      label: attachment.fileName,
+    })),
+    ...envelope.linkPreviews.map((preview): ContextSourceRef => ({
+      type: "link_preview",
+      id: preview.id,
+      label: preview.title ?? preview.normalizedUrl,
+    })),
+  ];
 }
 
 function parseChannelMessageGuidanceIdempotencyKey(idempotencyKey: string): string | undefined {

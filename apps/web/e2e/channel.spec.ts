@@ -1306,6 +1306,97 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(topicPanel).toContainText("Thread follow-up from the topic panel");
 });
 
+test("channel composer sends workspace file refs as native message payload", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("Please inspect apps/web/src/features/workspace/WorkspaceClientView.tsx");
+  await expect(page.getByLabel("Pending message assets")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(() => state.lastChannelMessageRequest?.fileRefs).toEqual([
+    {
+      path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+      label: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+      source: "composer",
+    },
+  ]);
+  await expect(page.getByLabel("Workspace file references").getByText("apps/web/src/features/workspace/WorkspaceClientView.tsx")).toBeVisible();
+  await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
+});
+
+test("channel screenshot request shows materialization clarify reply instead of hidden routing", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.locator("input[type=file]").setInputFiles({
+    name: "screenshot.png",
+    mimeType: "image/png",
+    buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+  });
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("Please fix the UI from this screenshot");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  const channelFeed = page.getByLabel("Channel message feed");
+  await expect(channelFeed.getByText("Please fix the UI from this screenshot")).toBeVisible();
+  await expect(channelFeed.getByText("inspect screenshot.png first")).toBeVisible();
+  await expect(page.getByText("routeDecision")).toHaveCount(0);
+  await expect(page.getByText("workflow_proposal")).toHaveCount(0);
+  await expect(page.getByText("image content is not available")).toHaveCount(0);
+  await expect(page.getByText("metadata_only")).toHaveCount(0);
+  await expect(page.getByText("unsupported")).toHaveCount(0);
+  await expect(page.getByText("extractor")).toHaveCount(0);
+  await expect(page.getByText("SSRF")).toHaveCount(0);
+  await expect.poll(() => state.channelIntentDecisions.some((decision) =>
+    isRecord(decision) && decision.action === "clarify" && /Mock attachment content is not materialized/.test(String(decision.reason))
+  )).toBe(true);
+});
+
+test("channel local link request shows natural clarify copy without debug vocabulary", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("Please summarize this link http://127.0.0.1/private");
+  await expect(page.getByText("Private network previews are blocked.")).toBeVisible({ timeout: 3_000 });
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  const channelFeed = page.getByLabel("Channel message feed");
+  await expect(channelFeed.getByText("Please summarize this link http://127.0.0.1/private")).toBeVisible();
+  await expect(channelFeed.getByText("will not open local/private links automatically")).toBeVisible();
+  await expect(channelFeed.getByText("Paste the content")).toBeVisible();
+  await expect(page.getByText("body extraction is blocked")).toHaveCount(0);
+  await expect(page.getByText("metadata_only")).toHaveCount(0);
+  await expect(page.getByText("extractor")).toHaveCount(0);
+  await expect(page.getByText("SSRF")).toHaveCount(0);
+  await expect.poll(() => state.channelIntentDecisions.some((decision) =>
+    isRecord(decision) && decision.action === "clarify" && /Mock link body materialization is blocked/.test(String(decision.reason))
+  )).toBe(true);
+});
+
 test("channel execution proposal confirms into a multi-step workflow", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
