@@ -260,6 +260,11 @@ export type TeammateDirectReplyInterventionStatus =
   | "cancelled"
   | "failed";
 
+export interface TeammateDirectReplyInterventionMessagePayload {
+  readonly body: string;
+  readonly attachmentIds: readonly string[];
+}
+
 export interface TeammateDirectReplyIntervention {
   readonly id: string;
   readonly workspaceId: string;
@@ -270,6 +275,7 @@ export interface TeammateDirectReplyIntervention {
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly status: TeammateDirectReplyInterventionStatus;
   readonly instruction: string;
+  readonly messagePayload?: TeammateDirectReplyInterventionMessagePayload;
   readonly idempotencyKey: string;
   readonly requestedBy: "local-user" | "system";
   readonly continuationMessageId?: string;
@@ -284,6 +290,7 @@ export interface TeammateDirectReplyIntervention {
 export interface CreateTeammateDirectReplyInterventionRequest {
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly instruction: string;
+  readonly messagePayload?: TeammateDirectReplyInterventionMessagePayload;
   readonly idempotencyKey?: string;
 }
 

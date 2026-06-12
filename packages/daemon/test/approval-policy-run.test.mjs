@@ -2854,6 +2854,11 @@ test("queued run guidance starts FIFO continuation after the source run finishes
     const first = await postJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`, {
       mode: "queue_followup",
       instruction: "After that, verify the memory audit UI.",
+      messagePayload: {
+        body: "After that, verify the memory audit UI.",
+        attachmentIds: [],
+        linkPreviewIds: [],
+      },
       idempotencyKey: "guidance-1",
     });
     const second = await postJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`, {
@@ -2862,10 +2867,16 @@ test("queued run guidance starts FIFO continuation after the source run finishes
       idempotencyKey: "guidance-2",
     });
     assert.equal(first.intervention.status, "queued");
+    assert.deepEqual(first.intervention.messagePayload, {
+      body: "After that, verify the memory audit UI.",
+      attachmentIds: [],
+      linkPreviewIds: [],
+    });
     assert.equal(second.intervention.status, "queued");
 
     const listed = await getJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(listed.interventions.map((item) => item.id), [first.intervention.id, second.intervention.id]);
+    assert.deepEqual(listed.interventions[0].messagePayload, first.intervention.messagePayload);
     assert.equal(runner.runs.length, 1);
 
     runner.release();

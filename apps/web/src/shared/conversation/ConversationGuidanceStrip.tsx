@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { CornerDownLeft, Loader2, MessageSquareText, MoreHorizontal, PauseCircle, Pencil, Send, Square, Trash2, XCircle } from "lucide-react";
+import { CornerDownLeft, Link2, Loader2, MessageSquareText, MoreHorizontal, Paperclip, PauseCircle, Pencil, Send, Square, Trash2, XCircle } from "lucide-react";
 
 export interface ConversationGuidanceItem {
   readonly id: string;
   readonly instruction: string;
+  readonly attachments?: readonly { readonly id: string; readonly label: string }[];
+  readonly linkPreviews?: readonly { readonly id: string; readonly label: string }[];
   readonly statusLabel: string;
   readonly meta?: string;
   readonly promoteLabel?: string;
@@ -124,6 +126,18 @@ export function ConversationGuidanceStrip({
                     <small>
                       <span>{item.statusLabel}</span>
                       {item.meta ? <span>{item.meta}</span> : null}
+                      {item.attachments?.map((attachment) => (
+                        <span key={`attachment:${attachment.id}`} title={attachment.label}>
+                          <Paperclip size={11} />
+                          {attachment.label}
+                        </span>
+                      ))}
+                      {item.linkPreviews?.map((preview) => (
+                        <span key={`link:${preview.id}`} title={preview.label}>
+                          <Link2 size={11} />
+                          {preview.label}
+                        </span>
+                      ))}
                     </small>
                   </span>
                 </span>

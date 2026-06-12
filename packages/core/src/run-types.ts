@@ -663,6 +663,7 @@ export interface RunIntervention {
   readonly mode: RunInterventionMode;
   readonly status: RunInterventionStatus;
   readonly instruction: string;
+  readonly messagePayload?: RunInterventionMessagePayload;
   readonly requestedBy: "local-user" | "system";
   readonly idempotencyKey: string;
   readonly createdAt: string;
@@ -670,6 +671,12 @@ export interface RunIntervention {
   readonly startedAt?: string;
   readonly completedAt?: string;
   readonly failureReason?: string;
+}
+
+export interface RunInterventionMessagePayload {
+  readonly body: string;
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
 }
 
 export interface CreateRunInterventionInput {
@@ -680,6 +687,7 @@ export interface CreateRunInterventionInput {
   readonly sourceAttemptId?: string;
   readonly mode: RunInterventionMode;
   readonly instruction: string;
+  readonly messagePayload?: RunInterventionMessagePayload;
   readonly requestedBy?: RunIntervention["requestedBy"];
   readonly idempotencyKey: string;
 }

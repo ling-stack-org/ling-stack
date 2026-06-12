@@ -430,12 +430,28 @@ export function TeammateWorkspace({
   const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
   const directReplyActive = Boolean(directRuntime?.activeReply || directReplyOptimisticActive);
   const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || directReplyOptimisticActive || openDirectInterventions.length > 0);
+  const privateComposerPayload = useMemo(() => {
+    const serializedInput = serializeComposerInputParts(composerInputParts);
+    return {
+      body: serializedInput.body.trim(),
+      attachmentIds: [...serializedInput.attachmentIds],
+    };
+  }, [composerInputParts]);
+  const privateComposerHasGuidancePayload = privateComposerPayload.body.length > 0 || privateComposerPayload.attachmentIds.length > 0;
   const privateComposerSendDisabled = directReplyActive
-    ? Boolean(directGuidanceSubmitting)
+    ? Boolean(directGuidanceSubmitting || uploadingAttachments)
     : hasQueuedDirectGuidance || (!messageDraft.trim() && pendingAttachmentIds.length === 0);
-  const privateComposerSending = directReplyActive ? directGuidanceSubmitting === "stop" : sending;
-  const privateComposerSendLabel = directReplyActive ? t("Stop reply") : t("Send");
-  const privateComposerSendingLabel = directReplyActive ? t("Stop reply") : t("Sending...");
+  const privateComposerSending = directReplyActive ? Boolean(directGuidanceSubmitting) : sending;
+  const privateComposerSendLabel = directReplyActive
+    ? privateComposerHasGuidancePayload
+      ? t("Queue guidance")
+      : t("Stop reply")
+    : t("Send");
+  const privateComposerSendingLabel = directReplyActive
+    ? directGuidanceSubmitting === "queue_followup"
+      ? t("Queueing guidance...")
+      : t("Stop reply")
+    : t("Sending...");
   const privateComposerPlaceholder = directReplyActive
     ? t("Type guidance, then press Enter to queue it")
     : hasQueuedDirectGuidance
@@ -760,11 +776,14 @@ export function TeammateWorkspace({
     }
   }
 
-  async function submitDirectGuidance(mode: "queue_followup" | "interrupt_redirect", instructionInput = messageDraft): Promise<boolean> {
-    const instruction = instructionInput.trim();
-    if (!instruction || directGuidanceSubmitting) {
+  async function submitDirectGuidance(mode: "queue_followup" | "interrupt_redirect"): Promise<boolean> {
+    const payload = privateComposerPayload;
+    if ((!payload.body && payload.attachmentIds.length === 0) || directGuidanceSubmitting) {
       return false;
     }
+    const draftSnapshot = messageDraft;
+    const attachmentIdsSnapshot = pendingAttachmentIds;
+    const instruction = summarizeDirectGuidancePayload(payload, t);
     setDirectGuidanceSubmitting(mode);
     try {
       setWorkspaceError("");
@@ -779,13 +798,17 @@ export function TeammateWorkspace({
       const response = await createTeammateDirectIntervention(cwd.trim(), teammate.id, {
         mode,
         instruction,
+        messagePayload: payload,
         idempotencyKey: `direct-guidance:${activeReply.workUnitId}:${mode}:${operationId}:${instruction}`,
       });
       setDirectRuntime(response.runtime);
       setMessageDraft("");
+      setPendingAttachmentIds([]);
       await refreshDirectRuntime();
       return true;
     } catch (error) {
+      setMessageDraft(draftSnapshot);
+      setPendingAttachmentIds(attachmentIdsSnapshot);
       setWorkspaceError(error instanceof Error ? error.message : String(error));
       return false;
     } finally {
@@ -813,7 +836,8 @@ export function TeammateWorkspace({
     if (intervention.status !== "queued" || directGuidanceCancelingId) {
       return;
     }
-    setMessageDraft(intervention.instruction);
+    setMessageDraft(intervention.messagePayload?.body ?? intervention.instruction);
+    setPendingAttachmentIds(intervention.messagePayload?.attachmentIds ?? []);
     await cancelDirectGuidance(intervention.id);
   }
 
@@ -842,6 +866,10 @@ export function TeammateWorkspace({
 
   function handlePrivateComposerSubmit(): void {
     if (directReplyActive) {
+      if (privateComposerHasGuidancePayload) {
+        void submitDirectGuidance("queue_followup");
+        return;
+      }
       void stopDirectReply();
       return;
     }
@@ -854,7 +882,9 @@ export function TeammateWorkspace({
     }
     event.preventDefault();
     if (directReplyActive) {
-      void submitDirectGuidance("queue_followup", messageDraft);
+      if (privateComposerHasGuidancePayload) {
+        void submitDirectGuidance("queue_followup");
+      }
       return;
     }
     if (hasQueuedDirectGuidance) {
@@ -1751,7 +1781,11 @@ export function TeammateWorkspace({
 
                     return {
                       id: intervention.id,
-                      instruction: intervention.instruction,
+                      instruction: intervention.messagePayload?.body || intervention.instruction,
+                      attachments: (intervention.messagePayload?.attachmentIds ?? [])
+                        .map((attachmentId) => privateAttachmentById.get(attachmentId))
+                        .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
+                        .map((attachment) => ({ id: attachment.id, label: attachment.fileName })),
                       statusLabel: teammateDirectInterventionStatusLabel(intervention.status, t),
                       meta: teammateDirectInterventionModeLabel(intervention.mode, t),
                       promoteLabel: t("Run this guidance now"),
@@ -1783,7 +1817,7 @@ export function TeammateWorkspace({
                 sendDisabled={privateComposerSendDisabled}
                 sendLabel={privateComposerSendLabel}
                 sendingLabel={privateComposerSendingLabel}
-                sendIcon={directReplyActive ? <Square size={15} /> : undefined}
+                sendIcon={directReplyActive ? privateComposerHasGuidancePayload ? undefined : <Square size={15} /> : undefined}
                 attachLabel={uploadingAttachments ? t("Uploading...") : t("Attach files")}
                 accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
                 placeholder={privateComposerPlaceholder}
@@ -3364,6 +3398,19 @@ function teammateDirectInterventionModeLabel(
     case "interrupt_redirect":
       return t("Stop and continue");
   }
+}
+
+function summarizeDirectGuidancePayload(
+  payload: { readonly body: string; readonly attachmentIds: readonly string[] },
+  t: Translate,
+): string {
+  if (payload.body.trim()) {
+    return payload.body.trim();
+  }
+  if (payload.attachmentIds.length > 0) {
+    return t("Queued guidance with {count} attachment(s)", { count: payload.attachmentIds.length });
+  }
+  return t("Queued guidance");
 }
 
 function isHistoricalProviderPreflightMessage(message: TeammateDirectMessage): boolean {

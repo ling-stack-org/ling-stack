@@ -101,12 +101,19 @@ export async function createAiTeammateDirectReply(input: {
     threadId: input.thread.id,
     limit: 20,
   });
+  const privateAttachments = input.store.listTeammatePrivateAttachments({
+    teammateId: input.teammate.id,
+    threadId: input.thread.id,
+    scope: "teammate_direct_thread",
+    limit: 500,
+  });
+  const privateAttachmentsById = new Map(privateAttachments.map((attachment) => [attachment.id, attachment]));
   const textDeltas: string[] = [];
   try {
     const task = {
       id: input.sourceMessage.id,
       title: `Private chat with ${input.teammate.displayName}`,
-      prompt: formatTeammateDirectPrompt(input.teammate, recentMessages),
+      prompt: formatTeammateDirectPrompt(input.teammate, recentMessages, input.sourceMessage, privateAttachmentsById),
       channelId: "private",
     };
     const memoryRecall = input.store.recallMemory({

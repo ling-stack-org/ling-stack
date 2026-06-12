@@ -754,6 +754,10 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   const resumedComposer = page.locator(".teammate-direct-composer");
   const resumedInput = resumedComposer.locator("textarea");
   await resumedInput.fill("Keep this draft while stopping.");
+  await expect(resumedComposer.getByRole("button", { name: "排队执行" })).toBeEnabled();
+  await resumedComposer.getByRole("button", { name: "排队执行" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.instruction).toBe("Keep this draft while stopping.");
+  await expect(resumedInput).toHaveValue("");
   await expect(resumedComposer.getByRole("button", { name: "停止回复" })).toBeEnabled();
 
   await resumedComposer.getByRole("button", { name: "停止回复" }).click();
@@ -762,7 +766,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     const message = state.teammateDirectMessages.find((item) => isRecord(item) && item.id === "tdmsg_pending_reply");
     return isRecord(message) ? message.status : undefined;
   }).toBe("cancelled");
-  await expect(resumedInput).toHaveValue("Keep this draft while stopping.");
+  await expect(resumedInput).toHaveValue("");
   await expect(page.getByLabel("Private message feed").getByText("回复已停止").first()).toBeVisible();
 });
 

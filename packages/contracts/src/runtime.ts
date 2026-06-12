@@ -487,6 +487,12 @@ export type RunInterventionStatus =
   | "failed"
   | "cancelled";
 
+export interface RunInterventionMessagePayload {
+  readonly body: string;
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+}
+
 export interface RunIntervention {
   readonly id: string;
   readonly workspaceId: string;
@@ -498,6 +504,7 @@ export interface RunIntervention {
   readonly mode: RunInterventionMode;
   readonly status: RunInterventionStatus;
   readonly instruction: string;
+  readonly messagePayload?: RunInterventionMessagePayload;
   readonly requestedBy: "local-user" | "system";
   readonly idempotencyKey: string;
   readonly createdAt: string;
@@ -510,6 +517,7 @@ export interface RunIntervention {
 export interface CreateRunInterventionRequest {
   readonly mode: RunInterventionMode;
   readonly instruction: string;
+  readonly messagePayload?: RunInterventionMessagePayload;
   readonly idempotencyKey?: string;
 }
 
