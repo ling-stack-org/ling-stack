@@ -2986,8 +2986,11 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(categoryChip("Runtime")).toContainText("3");
 
   const attentionQueue = page.getByRole("region", { name: "Attention queue" });
-  await expect(attentionQueue.getByLabel("Environment")).toContainText("Current channel");
-  await expect(attentionQueue.getByLabel("Environment")).toContainText("Engineering");
+  const runSettings = attentionQueue.getByLabel("Run settings");
+  await expect(runSettings).toContainText("Permission mode");
+  await expect(runSettings.getByText("Current channel", { exact: true })).toHaveCount(0);
+  await expect(runSettings.getByText("Local", { exact: true })).toHaveCount(0);
+  await expect(runSettings.getByText("Preferred teammate reply", { exact: true })).toHaveCount(0);
   await expect(attentionQueue).toContainText("Attention");
   await expect(attentionQueue).toContainText("5");
   await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Blocked 1");
@@ -3023,7 +3026,7 @@ test("channel activity derives task run approval transition and workflow events"
       };
     };
     return {
-      environmentTitle: read(".attention-context-section .attention-section-head strong"),
+      runSettingsTitle: read(".attention-context-section .attention-section-head strong"),
       progressTitle: read(".attention-progress-head strong"),
       progressPrimary: read(".attention-progress-copy strong"),
       progressSecondary: read(".attention-progress-copy small"),
@@ -3038,7 +3041,7 @@ test("channel activity derives task run approval transition and workflow events"
       detailsButtonCount: document.querySelectorAll(".attention-queue-details").length,
     };
   });
-  expect(attentionTypography.environmentTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
+  expect(attentionTypography.runSettingsTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
   expect(attentionTypography.progressTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
   expect(attentionTypography.progressPrimary).toEqual({ fontSize: "12px", fontWeight: "500", lineHeight: "17px" });
   expect(attentionTypography.progressSecondary).toEqual({ fontSize: "12px", fontWeight: "400", lineHeight: "17px" });
