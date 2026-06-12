@@ -3875,28 +3875,6 @@ export function WorkspaceClientView({
   const channelHasChatContent = channelMessages.length > 0 || channelContextSummaries.length > 0;
   const channelHasProgressContent = channelHasChatContent || workflowProgressByWorkflowId.size > 0;
   const attentionContextRowCandidates: readonly (AttentionContextRow | undefined)[] = [
-    selectedChannel ? {
-      id: "channel",
-      icon: <Hash size={18} />,
-      label: t("Current channel"),
-      value: selectedChannel.name,
-    } : undefined,
-    selectedChannel ? {
-      id: "local",
-      icon: <Command size={18} />,
-      label: t("Local"),
-      value: selectedChannel.boundPath?.trim() || cwd,
-    } : undefined,
-    defaultTeammate ? {
-      id: "default-teammate",
-      icon: <UserPlus size={18} />,
-      label: t("Default teammate"),
-      value: defaultTeammate.label,
-      onOpen: () => {
-        setAttentionQueueOpen(false);
-        setTeammateManagerOpen(true);
-      },
-    } : undefined,
     effectiveProvider ? {
       id: "provider",
       icon: <Activity size={18} />,
@@ -7842,9 +7820,9 @@ function AttentionQueue({
       {contextRows.length > 0 ? (
         <div className="attention-context-section">
           <div className="attention-section-head">
-            <strong>{t("Environment")}</strong>
+            <strong>{t("Run settings")}</strong>
           </div>
-          <div className="attention-context-list" aria-label={t("Environment")}>
+          <div className="attention-context-list" aria-label={t("Run settings")}>
             {contextRows.map((row) => {
               const content = (
                 <>

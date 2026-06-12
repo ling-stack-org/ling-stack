@@ -104,8 +104,8 @@ Mobile geometry:
 Section order:
 
 ```text
-Environment
-  context rows
+Run settings
+  provider and permission rows
 divider
 Progress
   progress rows
@@ -130,20 +130,23 @@ Rules:
 
 ## Information Architecture
 
-### Context
+### Run Settings
 
-The top section is labeled `Environment` in English and `环境信息` in Chinese.
+The top section is labeled `Run settings` in English and `运行设置` in Chinese.
 
 Context rows are compact and optional. The popover should show only rows backed by
 current client state or existing daemon state:
 
-- current channel,
-- bound local path,
-- default teammate,
 - selected/default provider,
 - runtime policy or permission mode,
 - active branch or git action state only if already available from an existing workflow
   or status source.
+
+The popover is already scoped to the selected channel, and the channel header already
+shows the local workspace path. Do not repeat current channel name or bound local path in
+this popover. `defaultTeammateId` is preferred specialist evidence only under the Ling
+Agent session model, so it must not render as a visible default responder or "preferred
+teammate reply" row here.
 
 The Web client must not start new Git probes merely to fill this section. If branch,
 changes, or commit/push state is not already available, omit those rows. Ling should not
@@ -271,7 +274,7 @@ type PopoverTarget =
 
 Rendering rules:
 
-- `label` is a stable field label such as `Local`, `Default teammate`, or `Provider`.
+- `label` is a stable field label such as `Provider` or `Permission mode`.
 - `value` is the current value and must fit with ellipsis or wrap safely on mobile.
 - `primary` states the thing that happened or is waiting.
 - `secondary` names the source or next action.
@@ -281,11 +284,11 @@ Rendering rules:
 
 ## State Matrix
 
-| State | Environment | Progress | Attention | Primary action |
+| State | Run settings | Progress | Attention | Primary action |
 | --- | --- | --- | --- | --- |
 | No channel selected | hidden | hidden | hidden | existing empty state |
 | Channel has no chat/work content | available rows only | hidden | hidden | open Progress drawer only if user asks |
-| Channel has chat but no work | channel/provider/teammate rows | `Waiting for proposal confirmation` only when proposals can exist | hidden | open Progress drawer |
+| Channel has chat but no work | provider/permission rows | `Waiting for proposal confirmation` only when proposals can exist | hidden | open Progress drawer |
 | Latest run succeeded | context rows | `Last run · Succeeded` with success icon | current attention rows if any | open linked task/run drawer |
 | Latest run running | context rows | running row with spinner/clock | pending approval rows if any | open linked task/run drawer |
 | Pending approval exists | context rows | approval-needed row | pending chip and approval rows | open approval detail |
@@ -386,9 +389,6 @@ from paths.
 
 | UI field | Current source | Rule |
 | --- | --- | --- |
-| Current channel | `selectedChannel` | Show channel name or omit when no channel is selected |
-| Bound local path | selected channel/workspace path state | Show shortened path; never show raw path if unavailable |
-| Default teammate | current channel teammate/default teammate state | Show display name; omit if unknown |
 | Provider | selected/default provider preset state | Show display name; omit if no selected/default provider exists |
 | Runtime policy | existing permission/runtime policy state | Show short label only; full policy remains in Settings drawer |
 | Branch | future workspace status source | Do not implement from browser inference or shell probes |
@@ -408,7 +408,7 @@ from paths.
    path, or keep it local to `WorkspaceClientView.tsx` if the shape remains simple.
 2. Replace the current progress preview with context + progress sections.
 3. Restyle attention items from heavy cards into lighter rows.
-4. Add missing English and Chinese labels for `Environment`, row labels, and source
+4. Add missing English and Chinese labels for `Run settings`, row labels, and source
    labels.
 5. Keep the right drawer navigation behavior unchanged.
 6. Add focused Web checks for desktop and mobile popover geometry.
@@ -426,7 +426,7 @@ Recommended file sequence:
    - keep existing desktop lane and mobile fixed sheet behavior,
    - add overflow constraints for long Chinese labels.
 3. `apps/web/src/i18n.tsx`
-   - add English and Chinese labels for `Environment`, context row labels, progress row
+   - add English and Chinese labels for `Run settings`, context row labels, progress row
      copy, and source labels,
    - keep existing status translations.
 4. `apps/web/e2e/app.spec.ts`
@@ -488,7 +488,7 @@ Detailed QA matrix:
 
 | Scenario | Expected result |
 | --- | --- |
-| Drawer hidden, attention items present | Header icon opens popover with Environment, Progress if present, and Attention |
+| Drawer hidden, attention items present | Header icon opens popover with Run settings, Progress if present, and Attention |
 | Drawer open | Header icon opens or focuses the Progress drawer page instead of overlaying the popover |
 | Teammate manager open | Attention popover is hidden and does not stack under the teammate manager |
 | No current work | Popover does not invent latest run/current task rows from another channel |
