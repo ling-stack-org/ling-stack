@@ -917,6 +917,15 @@ button.artifact-action-link {
   white-space: nowrap;
 }
 
+.channel-run-guidance-row small span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .channel-run-guidance-row-actions {
   display: flex;
   align-items: center;

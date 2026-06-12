@@ -126,7 +126,8 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await createDialog.getByText("高级设置").click();
   await expect(page.getByText("Project files")).toHaveCount(0);
   await expect(page.getByText("Skill pack")).toHaveCount(0);
-  await expect(createDialog.getByText("技能包")).toBeVisible();
+  await expect(createDialog.getByText("加入频道")).toBeVisible();
+  await expect(createDialog.getByText("记忆", { exact: true })).toBeVisible();
 });
 
 test("theme switcher supports system, light, and dark preferences", async ({ page }) => {

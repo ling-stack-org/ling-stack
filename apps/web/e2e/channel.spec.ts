@@ -2668,11 +2668,17 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
 
   await expect(composerInput).toHaveValue("");
   await composerInput.fill("停，改用 daemon API");
-  await expect(composer.getByRole("button", { name: "Stop run" })).toBeEnabled();
+  await expect(composer.getByRole("button", { name: "Queue guidance" })).toBeEnabled();
+  await composer.getByRole("button", { name: "Queue guidance" }).click();
+  await expect.poll(() => state.runInterventions.map((item) => item.instruction)).toEqual([
+    "完成后也更新 docs",
+    "停，改用 daemon API",
+  ]);
+  await expect(composerInput).toHaveValue("");
   await composer.getByRole("button", { name: "Stop run" }).click();
 
   await expect.poll(() => state.runs.find((item) => item.id === run.id)?.status).toBe("cancelled");
-  expect(state.runInterventions).toHaveLength(1);
+  expect(state.runInterventions).toHaveLength(2);
   expect(state.channelMessages).toHaveLength(0);
   expect(state.channelExecutionProposals).toHaveLength(0);
 });

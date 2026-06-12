@@ -534,8 +534,22 @@ test("sqlite persists teammate direct reply interventions with idempotency and c
   const now = "2026-06-09T01:00:00.000Z";
   let store = createSqliteRunStore(cwd);
   const teammateId = createBuiltinAiTeammateId("designer");
+  let queuedInterventionId = "";
+  let attachmentId = "";
   try {
     const thread = store.getOrCreateTeammateDirectThread(teammateId, now);
+    const attachment = store.createTeammatePrivateAttachment({
+      teammateId,
+      threadId: thread.id,
+      scope: "teammate_direct_thread",
+      kind: "image",
+      fileName: "wireframe.png",
+      contentType: "image/png",
+      sizeBytes: 512,
+      path: `teammates/${teammateId}/direct/${thread.id}/wireframe.png`,
+      createdAt: now,
+    });
+    attachmentId = attachment.id;
     const sourceMessage = store.createTeammateDirectMessage(
       {
         threadId: thread.id,
@@ -580,11 +594,20 @@ test("sqlite persists teammate direct reply interventions with idempotency and c
         sourceWorkUnitId: "wu_direct_source",
         mode: "queue_followup",
         instruction: "回复完后补一版简短结论。",
+        messagePayload: {
+          body: "回复完后补一版简短结论。",
+          attachmentIds: [attachment.id],
+        },
         idempotencyKey: "direct-guidance-1",
         requestedBy: "local-user",
       },
       "2026-06-09T01:01:00.000Z",
     );
+    queuedInterventionId = queued.id;
+    assert.deepEqual(queued.messagePayload, {
+      body: "回复完后补一版简短结论。",
+      attachmentIds: [attachment.id],
+    });
     const duplicate = store.createTeammateDirectReplyIntervention(
       {
         teammateId,
@@ -610,6 +633,39 @@ test("sqlite persists teammate direct reply interventions with idempotency and c
         requestedBy: "local-user",
       },
       "2026-06-09T01:02:00.000Z",
+    );
+    const otherTeammateId = createBuiltinAiTeammateId("engineer");
+    const otherThread = store.getOrCreateTeammateDirectThread(otherTeammateId, now);
+    const otherAttachment = store.createTeammatePrivateAttachment({
+      teammateId: otherTeammateId,
+      threadId: otherThread.id,
+      scope: "teammate_direct_thread",
+      kind: "image",
+      fileName: "other.png",
+      contentType: "image/png",
+      sizeBytes: 128,
+      path: `teammates/${otherTeammateId}/direct/${otherThread.id}/other.png`,
+      createdAt: now,
+    });
+    assert.throws(
+      () => store.createTeammateDirectReplyIntervention(
+        {
+          teammateId,
+          threadId: thread.id,
+          sourceMessageId: sourceMessage.id,
+          sourceWorkUnitId: "wu_direct_source",
+          mode: "queue_followup",
+          instruction: "错误附件不应入队。",
+          messagePayload: {
+            body: "错误附件不应入队。",
+            attachmentIds: [otherAttachment.id],
+          },
+          idempotencyKey: "direct-guidance-bad-attachment",
+          requestedBy: "local-user",
+        },
+        "2026-06-09T01:02:30.000Z",
+      ),
+      /Private attachment does not belong to teammate direct thread/,
     );
 
     assert.equal(duplicate.id, queued.id);
@@ -639,6 +695,10 @@ test("sqlite persists teammate direct reply interventions with idempotency and c
 
   store = createSqliteRunStore(cwd);
   try {
+    assert.deepEqual(store.getTeammateDirectReplyIntervention(queuedInterventionId).messagePayload, {
+      body: "回复完后补一版简短结论。",
+      attachmentIds: [attachmentId],
+    });
     const persisted = store.listTeammateDirectReplyInterventions({ teammateId });
     assert.equal(persisted.length, 2);
     assert.equal(persisted[0].status, "cancelled");

@@ -731,6 +731,10 @@ export function WorkspaceClientView({
     () => new Map(channelAttachments.map((attachment) => [attachment.id, attachment])),
     [channelAttachments],
   );
+  const channelLinkPreviewById = useMemo(
+    () => new Map(channelLinkPreviews.map((preview) => [preview.id, preview])),
+    [channelLinkPreviews],
+  );
   const channelRuns = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
@@ -1019,7 +1023,15 @@ export function WorkspaceClientView({
         const rowBusy = runGuidanceCancelingId === intervention.id || runGuidancePromotingId === intervention.id;
         return {
           id: intervention.id,
-          instruction: intervention.instruction,
+          instruction: intervention.messagePayload?.body || intervention.instruction,
+          attachments: (intervention.messagePayload?.attachmentIds ?? [])
+            .map((attachmentId) => channelAttachmentById.get(attachmentId))
+            .filter((attachment): attachment is ChannelAttachment => Boolean(attachment))
+            .map((attachment) => ({ id: attachment.id, label: attachment.fileName })),
+          linkPreviews: (intervention.messagePayload?.linkPreviewIds ?? [])
+            .map((previewId) => channelLinkPreviewById.get(previewId))
+            .filter((preview): preview is ChannelLinkPreview => Boolean(preview))
+            .map((preview) => ({ id: preview.id, label: preview.title || preview.url })),
           statusLabel: channelRunInterventionStatusLabel(intervention.status, t),
           meta: channelRunInterventionModeLabel(intervention.mode, t),
           promoteLabel: t("Run this guidance now"),
@@ -1040,7 +1052,7 @@ export function WorkspaceClientView({
           onCloseQueue: isQueued ? () => void cancelChannelRunGuidance(intervention.id) : undefined,
         };
       }),
-    [activeConversationRun, openRunGuidanceInterventions, runGuidanceCancelingId, runGuidancePromotingId, runGuidanceSubmitting, t],
+    [activeConversationRun, channelAttachmentById, channelLinkPreviewById, openRunGuidanceInterventions, runGuidanceCancelingId, runGuidancePromotingId, runGuidanceSubmitting, t],
   );
   const channelActiveStatusStrip = activeConversationRun ? (
     <ConversationStatusStrip
@@ -2592,7 +2604,9 @@ export function WorkspaceClientView({
       if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
         event.preventDefault();
         if (activeConversationRun) {
-          void submitChannelRunGuidanceFromDraft();
+          if (composerHasSendableContent) {
+            void submitChannelRunGuidanceFromDraft();
+          }
           return;
         }
         void sendMessage();
@@ -2776,28 +2790,66 @@ export function WorkspaceClientView({
   }
 
   async function submitChannelRunGuidanceFromDraft(): Promise<boolean> {
-    const instruction = messageDraft.trim();
-    if (!activeConversationRun || !activeConversationSourceRunId || !instruction || runGuidanceSubmitting) {
-      if (!instruction) {
-        setRunGuidanceError(t("Please enter guidance first."));
-      }
+    if (!selectedChannelId || !activeConversationRun || !activeConversationSourceRunId || runGuidanceSubmitting || composerBusy || assetOperationPending) {
+      return false;
+    }
+    const draftSnapshot = messageDraft;
+    const messageMentionsSnapshot = messageMentions;
+    const pendingAttachmentsSnapshot = pendingAttachments;
+    const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
+    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const body = serializedInput.body.trim();
+    const attachmentIds = [...serializedInput.attachmentIds];
+    const pendingPreviewRecords = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview] : []);
+    const newPreviews: ChannelLinkPreview[] = [];
+    if (!body && attachmentIds.length === 0 && readyLinkPreviewIds.length === 0) {
       return false;
     }
     setRunGuidanceSubmitting("queue_followup");
     setRunGuidanceError("");
+    setComposerBusy(true);
     try {
+      for (const url of extractUrls(body)) {
+        if (!pendingPreviewRecords.some((preview) => preview.normalizedUrl === url || preview.url === url)) {
+          try {
+            const preview = await onCreateLinkPreview(url);
+            if (preview) {
+              newPreviews.push(preview);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setPendingLinkPreviews((current) => [
+              ...current,
+              { localId: createLocalId("link"), url, state: "failed", error: message },
+            ]);
+          }
+        }
+      }
+      const linkPreviews = [...pendingPreviewRecords, ...newPreviews];
+      const messagePayload = {
+        body,
+        attachmentIds,
+        linkPreviewIds: linkPreviews.map((preview) => preview.id),
+      };
+      const instruction = summarizeChannelGuidancePayload(messagePayload, t);
       const response = await createRunIntervention(cwd, activeConversationSourceRunId, {
         mode: "queue_followup",
         instruction,
+        messagePayload,
         idempotencyKey: `web-channel:${activeConversationRun.id}:queue_followup:${Date.now()}:${Math.random().toString(36).slice(2)}`,
       });
       setRunGuidanceInterventions((current) => [...current.filter((item) => item.id !== response.intervention.id), response.intervention]
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt)));
       setMessageDraft("");
+      setMessageMentions([]);
+      setPendingAttachments([]);
+      setPendingLinkPreviews([]);
+      autoPreviewUrlsRef.current.clear();
       setMentionPicker(undefined);
       setMentionActiveIndex(0);
       setSendState("idle");
       setSendError("");
+      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
       refreshChannelRunGuidanceSurfaces();
       window.setTimeout(() => {
         void refreshChannelRunGuidance(activeConversationSourceRunId);
@@ -2805,9 +2857,14 @@ export function WorkspaceClientView({
       }, 250);
       return true;
     } catch (error) {
+      setMessageDraft(draftSnapshot);
+      setMessageMentions(messageMentionsSnapshot);
+      setPendingAttachments(pendingAttachmentsSnapshot);
+      setPendingLinkPreviews(pendingLinkPreviewsSnapshot);
       setRunGuidanceError(error instanceof Error ? error.message : String(error));
       return false;
     } finally {
+      setComposerBusy(false);
       setRunGuidanceSubmitting("");
     }
   }
@@ -2851,11 +2908,33 @@ export function WorkspaceClientView({
   }
 
   async function editChannelRunGuidance(intervention: RunIntervention): Promise<void> {
-    setMessageDraft(intervention.instruction);
+    const payload = intervention.messagePayload;
+    const body = payload?.body ?? intervention.instruction;
+    setMessageDraft(body);
+    setPendingAttachments((payload?.attachmentIds ?? [])
+      .map((attachmentId) => channelAttachmentById.get(attachmentId))
+      .filter((attachment): attachment is ChannelAttachment => Boolean(attachment))
+      .map((attachment) => ({
+        localId: createLocalId("attachment"),
+        fileName: attachment.fileName,
+        sizeBytes: attachment.sizeBytes,
+        state: "ready" as const,
+        attachment,
+      })));
+    setPendingLinkPreviews((payload?.linkPreviewIds ?? [])
+      .map((previewId) => channelLinkPreviewById.get(previewId))
+      .filter((preview): preview is ChannelLinkPreview => Boolean(preview))
+      .map((preview) => ({
+        localId: createLocalId("link"),
+        url: preview.url,
+        state: preview.status === "ready" ? "ready" as const : preview.status === "blocked" ? "blocked" as const : "failed" as const,
+        preview,
+        error: preview.errorMessage,
+      })));
     setSendState("idle");
     setSendError("");
     await cancelChannelRunGuidance(intervention.id);
-    focusComposerAt(intervention.instruction.length);
+    focusComposerAt(body.length);
   }
 
   async function sendMessage(): Promise<void> {
@@ -3735,16 +3814,34 @@ export function WorkspaceClientView({
           type="button"
           onClick={() => {
             if (activeConversationRun) {
+              if (composerHasSendableContent) {
+                void submitChannelRunGuidanceFromDraft();
+                return;
+              }
               onCancelActiveRun(activeConversationRun);
               return;
             }
             void sendMessage();
           }}
-          disabled={activeConversationRun ? !selectedChannelId || isCancellingRun : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}
-          aria-label={activeConversationRun ? isCancellingRun ? t("Stopping run...") : t("Stop run") : sendState === "sending" ? t("Sending...") : t("Send")}
-          title={activeConversationRun ? isCancellingRun ? t("Stopping run...") : t("Stop run") : sendState === "sending" ? t("Sending...") : t("Send")}
+          disabled={activeConversationRun
+            ? !selectedChannelId || isCancellingRun || Boolean(runGuidanceSubmitting) || (composerHasSendableContent && (composerBusy || assetOperationPending))
+            : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}
+          aria-label={activeConversationRun
+            ? composerHasSendableContent
+              ? runGuidanceSubmitting === "queue_followup" ? t("Queueing guidance...") : t("Queue guidance")
+              : isCancellingRun ? t("Stopping run...") : t("Stop run")
+            : sendState === "sending" ? t("Sending...") : t("Send")}
+          title={activeConversationRun
+            ? composerHasSendableContent
+              ? runGuidanceSubmitting === "queue_followup" ? t("Queueing guidance...") : t("Queue guidance")
+              : isCancellingRun ? t("Stopping run...") : t("Stop run")
+            : sendState === "sending" ? t("Sending...") : t("Send")}
         >
-          {activeConversationRun ? isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} /> : sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+          {activeConversationRun
+            ? composerHasSendableContent
+              ? runGuidanceSubmitting === "queue_followup" ? <Loader2 className="spin" size={15} /> : <Send size={15} />
+              : isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} />
+            : sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
         </button>
       </div>
       {sendState === "failed" ? (
@@ -9565,6 +9662,28 @@ function splitLines(value: string): string[] {
 function extractUrls(value: string): string[] {
   const matches = value.match(/https?:\/\/[^\s)]+/g) ?? [];
   return [...new Set(matches.map((item) => item.replace(/[.,;!?]+$/, "")))];
+}
+
+function summarizeChannelGuidancePayload(
+  payload: { readonly body: string; readonly attachmentIds: readonly string[]; readonly linkPreviewIds: readonly string[] },
+  t: Translate,
+): string {
+  if (payload.body.trim()) {
+    return payload.body.trim();
+  }
+  if (payload.attachmentIds.length > 0 && payload.linkPreviewIds.length > 0) {
+    return t("Queued guidance with {attachmentCount} attachment(s) and {linkCount} link(s)", {
+      attachmentCount: payload.attachmentIds.length,
+      linkCount: payload.linkPreviewIds.length,
+    });
+  }
+  if (payload.attachmentIds.length > 0) {
+    return t("Queued guidance with {count} attachment(s)", { count: payload.attachmentIds.length });
+  }
+  if (payload.linkPreviewIds.length > 0) {
+    return t("Queued guidance with {count} link(s)", { count: payload.linkPreviewIds.length });
+  }
+  return t("Queued guidance");
 }
 
 function findActiveMention(value: string, caret: number): ActiveMentionPicker | undefined {

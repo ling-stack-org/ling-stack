@@ -1821,6 +1821,7 @@ test("auto_route is rejected by channel create and update while the feature flag
 
 test("auto_route uses the model selector and records accepted route evidence", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-model-"));
+  const stores = new Map();
   const runner = new ScriptedRunner([
     JSON.stringify({
       action: "reply",
@@ -1838,7 +1839,13 @@ test("auto_route uses the model selector and records accepted route evidence", a
     }),
     `<ling_task_proposal>{"title":"Should not persist","prompt":"Create auto task","acceptanceCriteria":["never"],"requiredTools":["read"],"riskSummary":"blocked by proposalMode"}</ling_task_proposal>Designer auto route reply`,
   ]);
-  const daemon = await startDaemonForTest(runner, {}, { channels: { autoRoute: true } });
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { autoRoute: true } });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -1857,6 +1864,39 @@ test("auto_route uses the model selector and records accepted route evidence", a
     await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
       memberships: [{ channelId: channel.id }],
     });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const oldGuidanceMessage = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        authorType: "local-user",
+        body: "排队引导：旧频道引导不应继续影响后续消息。",
+      },
+      "2026-06-12T08:00:00.000Z",
+    );
+    const oldRun = store.createRun({
+      id: "run_old_channel_guidance",
+      cwd,
+      taskId: "task_old_channel_guidance",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_old_channel_guidance", title: "Old active work", prompt: "Old active work." },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd, task: { id: "task_old_channel_guidance", title: "Old active work", prompt: "Old active work.", channelId: channel.id } },
+      createdAt: "2026-06-12T08:00:01.000Z",
+    });
+    store.createRunIntervention(
+      {
+        sourceRunId: oldRun.id,
+        mode: "queue_followup",
+        instruction: oldGuidanceMessage.body,
+        requestedBy: "local-user",
+        idempotencyKey: `channel_message:${oldGuidanceMessage.id}:queue_followup`,
+      },
+      "2026-06-12T08:00:02.000Z",
+    );
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个设置文案应该怎么改？",
@@ -1873,6 +1913,7 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.match(runner.runs[0].task.prompt, /Channel collaboration protocol:/);
     assert.match(runner.runs[0].task.prompt, /Auto reply mode: auto_route \(source=channel_setting\)/);
     assert.match(runner.runs[0].task.prompt, /Candidates JSON/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /旧频道引导不应继续影响后续消息/);
     assert.match(runner.runs[1].systemPrompt, /Do not include hidden proposal blocks/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -1896,7 +1937,8 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.equal(decisions.decisions[0].contextPack.providerPresetId, provider.id);
     assert.deepEqual((await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`)).proposals, []);
     assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
-    assert.deepEqual((await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`)).runs, []);
+    const runs = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(runs.runs.filter((run) => run.id !== oldRun.id), []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -4543,6 +4585,77 @@ test("teammate direct message stream emits ready delta and done events", async (
   }
 });
 
+test("teammate direct prompt anchors latest attachment message instead of old guidance context", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachment-anchor-"));
+  const runner = new RecordingRunner();
+  const stores = [];
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.push(store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "要继续补「排队引导」相关内容。",
+      requestAiReply: false,
+    });
+    const store = stores.find((item) => item.paths.cwd === cwd);
+    assert.ok(store);
+    const thread = store.getOrCreateTeammateDirectThread(teammateId, "2026-06-12T08:00:00.000Z");
+    store.createTeammateDirectMessage(
+      {
+        threadId: thread.id,
+        teammateId,
+        authorType: "system",
+        authorId: "system",
+        body: "排队引导：旧排队引导不应继续生效。",
+        status: "ready",
+      },
+      "2026-06-12T08:01:00.000Z",
+    );
+    const attachment = (await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "screenshot.png",
+      contentType: "image/png",
+      contentBase64: Buffer.from("not-a-real-image").toString("base64"),
+      scope: "teammate_direct_thread",
+    })).attachment;
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "描述下这个图片是什么内容",
+        attachmentIds: [attachment.id],
+        providerPresetId: provider.id,
+      }),
+    });
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+
+    const prompt = runner.runs.at(-1).task.prompt;
+    const oldGuidanceIndex = prompt.indexOf("要继续补「排队引导」相关内容。");
+    const latestIndex = prompt.indexOf("Latest message to answer now:\nUser: 描述下这个图片是什么内容");
+    assert.equal(oldGuidanceIndex >= 0, true);
+    assert.equal(latestIndex > oldGuidanceIndex, true);
+    assert.doesNotMatch(prompt, /旧排队引导不应继续生效/);
+    assert.match(prompt, /Attachments: screenshot\.png \(image, image\/png,/);
+    assert.match(prompt, /Reply to the Latest message to answer now/);
+    assert.match(prompt, /Do not infer unseen attachment contents/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("teammate direct reply cancel aborts active reply and marks pending message cancelled", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-cancel-"));
   const runner = new AbortableDelayedRunner();
@@ -4617,12 +4730,21 @@ test("teammate direct queued guidance can promote to immediate continuation", as
     const queued = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`, {
       mode: "queue_followup",
       instruction: "Use this queued guidance immediately.",
+      messagePayload: {
+        body: "Use this queued guidance immediately.",
+        attachmentIds: [],
+      },
       idempotencyKey: "test-promote-queued-guidance",
     });
     assert.equal(queued.intervention.status, "queued");
+    assert.deepEqual(queued.intervention.messagePayload, {
+      body: "Use this queued guidance immediately.",
+      attachmentIds: [],
+    });
 
     const promoted = await postJson(`${daemon.url}/teammate-direct-interventions/${encodeURIComponent(queued.intervention.id)}/promote?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(promoted.intervention.id, queued.intervention.id);
+    assert.deepEqual(promoted.intervention.messagePayload, queued.intervention.messagePayload);
     assert.equal(promoted.intervention.status, "cancelling_source");
     assert.equal(runner.abortCount, 1);
     await waitForCondition(() => runner.runs.length === 2, "promoted continuation to start");

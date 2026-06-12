@@ -192,6 +192,7 @@ import {
   type TeammateDirectMessageAuthorType,
   type TeammateDirectMessageStatus,
   type TeammateDirectReplyIntervention,
+  type TeammateDirectReplyInterventionMessagePayload,
   type TeammateDirectReplyInterventionMode,
   type TeammateDirectReplyInterventionStatus,
   type TeammateDirectThread,
@@ -284,6 +285,7 @@ import {
   type RunEventType,
   type RunContinuationReason,
   type RunIntervention,
+  type RunInterventionMessagePayload,
   type RunInterventionMode,
   type RunInterventionStatus,
   type RunSession,
@@ -628,6 +630,8 @@ const CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_VERSION = 59;
 const CHANNEL_ROUTE_INSPECT_METADATA_MIGRATION_NAME = "add_channel_route_inspect_metadata";
 const CHANNEL_PROTOCOL_DRAFTS_MIGRATION_VERSION = 60;
 const CHANNEL_PROTOCOL_DRAFTS_MIGRATION_NAME = "create_channel_protocol_drafts";
+const INTERVENTION_MESSAGE_PAYLOAD_MIGRATION_VERSION = 61;
+const INTERVENTION_MESSAGE_PAYLOAD_MIGRATION_NAME = "add_intervention_message_payload";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -1496,8 +1500,27 @@ export class SqliteRunStore implements RunStore {
     if (existing) {
       return mapRunIntervention(existing);
     }
-    if (!this.getRun(input.sourceRunId)) {
+    const sourceRun = this.getRun(input.sourceRunId);
+    if (!sourceRun) {
       throw new Error(`Source run not found: ${input.sourceRunId}`);
+    }
+    const messagePayload = input.messagePayload ? normalizeRunInterventionMessagePayload(input.messagePayload) : undefined;
+    if (messagePayload && (messagePayload.attachmentIds.length > 0 || messagePayload.linkPreviewIds.length > 0)) {
+      if (!sourceRun.channelId) {
+        throw new Error(`Run intervention payload requires a channel run: ${input.sourceRunId}`);
+      }
+      if (messagePayload.attachmentIds.length > 10) {
+        throw new Error("A run intervention can reference at most 10 attachments");
+      }
+      if (messagePayload.linkPreviewIds.length > 10) {
+        throw new Error("A run intervention can reference at most 10 link previews");
+      }
+      for (const attachmentId of messagePayload.attachmentIds) {
+        this.assertAttachmentInChannel(sourceRun.channelId, attachmentId);
+      }
+      for (const linkPreviewId of messagePayload.linkPreviewIds) {
+        this.assertLinkPreviewInChannel(sourceRun.channelId, linkPreviewId);
+      }
     }
     const id = input.id ?? createRunInterventionId();
     const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
@@ -1514,6 +1537,7 @@ export class SqliteRunStore implements RunStore {
           mode,
           status,
           instruction,
+          message_payload_json,
           requested_by,
           idempotency_key,
           created_at,
@@ -1521,7 +1545,7 @@ export class SqliteRunStore implements RunStore {
           started_at,
           completed_at,
           failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -1534,6 +1558,7 @@ export class SqliteRunStore implements RunStore {
         input.mode,
         "queued",
         input.instruction,
+        messagePayload ? stringifyJson(messagePayload) : null,
         input.requestedBy ?? "local-user",
         input.idempotencyKey,
         now,
@@ -4887,6 +4912,18 @@ export class SqliteRunStore implements RunStore {
     if (existing) {
       return mapTeammateDirectReplyIntervention(existing);
     }
+    const messagePayload = input.messagePayload ? normalizeTeammateDirectReplyInterventionMessagePayload(input.messagePayload) : undefined;
+    if (messagePayload) {
+      if (messagePayload.attachmentIds.length > 10) {
+        throw new Error("A teammate direct reply intervention can reference at most 10 attachments");
+      }
+      for (const attachmentId of messagePayload.attachmentIds) {
+        const attachment = this.getTeammatePrivateAttachment(attachmentId);
+        if (!attachment || attachment.teammateId !== input.teammateId || attachment.threadId !== input.threadId || attachment.scope !== "teammate_direct_thread") {
+          throw new Error(`Private attachment does not belong to teammate direct thread: ${attachmentId}`);
+        }
+      }
+    }
 
     const intervention: TeammateDirectReplyIntervention = {
       id: input.id ?? createTeammateDirectReplyInterventionId(),
@@ -4898,6 +4935,7 @@ export class SqliteRunStore implements RunStore {
       mode: input.mode,
       status: "queued",
       instruction: input.instruction,
+      messagePayload,
       idempotencyKey: input.idempotencyKey,
       requestedBy: input.requestedBy ?? "local-user",
       createdAt: now,
@@ -4915,6 +4953,7 @@ export class SqliteRunStore implements RunStore {
           mode,
           status,
           instruction,
+          message_payload_json,
           idempotency_key,
           requested_by,
           continuation_message_id,
@@ -4924,7 +4963,7 @@ export class SqliteRunStore implements RunStore {
           started_at,
           completed_at,
           failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         intervention.id,
@@ -4936,6 +4975,7 @@ export class SqliteRunStore implements RunStore {
         intervention.mode,
         intervention.status,
         intervention.instruction,
+        intervention.messagePayload ? stringifyJson(intervention.messagePayload) : null,
         intervention.idempotencyKey,
         intervention.requestedBy,
         intervention.continuationMessageId ?? null,
@@ -12466,6 +12506,7 @@ export class SqliteRunStore implements RunStore {
           mode TEXT NOT NULL,
           status TEXT NOT NULL,
           instruction TEXT NOT NULL,
+          message_payload_json TEXT,
           requested_by TEXT NOT NULL,
           idempotency_key TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -13216,6 +13257,7 @@ export class SqliteRunStore implements RunStore {
           mode TEXT NOT NULL,
           status TEXT NOT NULL,
           instruction TEXT NOT NULL,
+          message_payload_json TEXT,
           idempotency_key TEXT NOT NULL,
           requested_by TEXT NOT NULL,
           continuation_message_id TEXT,
@@ -13240,6 +13282,23 @@ export class SqliteRunStore implements RunStore {
       `);
       if (!hasTeammateDirectReplyInterventionsMigration) {
         this.recordMigration(TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION, TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_NAME);
+      }
+    }
+
+    const hasInterventionMessagePayloadMigration = this.hasMigration(INTERVENTION_MESSAGE_PAYLOAD_MIGRATION_VERSION);
+    if (
+      !hasInterventionMessagePayloadMigration ||
+      (this.hasTable("run_interventions") && !this.hasColumn("run_interventions", "message_payload_json")) ||
+      (this.hasTable("teammate_direct_reply_interventions") && !this.hasColumn("teammate_direct_reply_interventions", "message_payload_json"))
+    ) {
+      if (this.hasTable("run_interventions") && !this.hasColumn("run_interventions", "message_payload_json")) {
+        this.database.exec("ALTER TABLE run_interventions ADD COLUMN message_payload_json TEXT;");
+      }
+      if (this.hasTable("teammate_direct_reply_interventions") && !this.hasColumn("teammate_direct_reply_interventions", "message_payload_json")) {
+        this.database.exec("ALTER TABLE teammate_direct_reply_interventions ADD COLUMN message_payload_json TEXT;");
+      }
+      if (!hasInterventionMessagePayloadMigration) {
+        this.recordMigration(INTERVENTION_MESSAGE_PAYLOAD_MIGRATION_VERSION, INTERVENTION_MESSAGE_PAYLOAD_MIGRATION_NAME);
       }
     }
 
@@ -14405,6 +14464,7 @@ function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
 }
 
 function mapRunIntervention(row: Record<string, SQLOutputValue>): RunIntervention {
+  const instruction = readString(row, "instruction");
   return omitUndefined({
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
@@ -14415,7 +14475,8 @@ function mapRunIntervention(row: Record<string, SQLOutputValue>): RunInterventio
     continuationWorkUnitId: readNullableString(row, "continuation_work_unit_id"),
     mode: readString(row, "mode") as RunInterventionMode,
     status: readString(row, "status") as RunInterventionStatus,
-    instruction: readString(row, "instruction"),
+    instruction,
+    messagePayload: parseRunInterventionMessagePayload(readNullableString(row, "message_payload_json"), instruction),
     requestedBy: readString(row, "requested_by") as RunIntervention["requestedBy"],
     idempotencyKey: readString(row, "idempotency_key"),
     createdAt: readString(row, "created_at"),
@@ -14450,6 +14511,7 @@ function runInterventionSelectSql(whereClause: string): string {
       mode,
       status,
       instruction,
+      message_payload_json,
       requested_by,
       idempotency_key,
       created_at,
@@ -14987,6 +15049,7 @@ function mapTeammateDirectMessage(row: Record<string, SQLOutputValue>): Teammate
 }
 
 function mapTeammateDirectReplyIntervention(row: Record<string, SQLOutputValue>): TeammateDirectReplyIntervention {
+  const instruction = readString(row, "instruction");
   return omitUndefined({
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
@@ -14996,7 +15059,8 @@ function mapTeammateDirectReplyIntervention(row: Record<string, SQLOutputValue>)
     sourceWorkUnitId: readNullableString(row, "source_work_unit_id"),
     mode: readString(row, "mode") as TeammateDirectReplyInterventionMode,
     status: readString(row, "status") as TeammateDirectReplyInterventionStatus,
-    instruction: readString(row, "instruction"),
+    instruction,
+    messagePayload: parseTeammateDirectReplyInterventionMessagePayload(readNullableString(row, "message_payload_json"), instruction),
     idempotencyKey: readString(row, "idempotency_key"),
     requestedBy: readString(row, "requested_by") as TeammateDirectReplyIntervention["requestedBy"],
     continuationMessageId: readNullableString(row, "continuation_message_id"),
@@ -16557,6 +16621,7 @@ function teammateDirectReplyInterventionSelectSql(whereClause: string): string {
       mode,
       status,
       instruction,
+      message_payload_json,
       idempotency_key,
       requested_by,
       continuation_message_id,
@@ -17970,6 +18035,73 @@ function parseJsonStringArray(value: string): string[] {
     throw new Error("Expected JSON string array from SQLite");
   }
   return parsed as string[];
+}
+
+function normalizeRunInterventionMessagePayload(payload: RunInterventionMessagePayload): RunInterventionMessagePayload {
+  return {
+    body: payload.body.trim(),
+    attachmentIds: normalizeStringList(payload.attachmentIds),
+    linkPreviewIds: normalizeStringList(payload.linkPreviewIds),
+  };
+}
+
+function normalizeTeammateDirectReplyInterventionMessagePayload(
+  payload: TeammateDirectReplyInterventionMessagePayload,
+): TeammateDirectReplyInterventionMessagePayload {
+  return {
+    body: payload.body.trim(),
+    attachmentIds: normalizeStringList(payload.attachmentIds),
+  };
+}
+
+function parseRunInterventionMessagePayload(value: string | undefined, instruction: string): RunInterventionMessagePayload {
+  if (!value) {
+    return {
+      body: instruction,
+      attachmentIds: [],
+      linkPreviewIds: [],
+    };
+  }
+  const parsed = parseJson(value);
+  if (!isRecord(parsed)) {
+    throw new Error("Expected run intervention message payload from SQLite");
+  }
+  const body = typeof parsed.body === "string" ? parsed.body : instruction;
+  const attachmentIds = Array.isArray(parsed.attachmentIds) ? parsed.attachmentIds : [];
+  const linkPreviewIds = Array.isArray(parsed.linkPreviewIds) ? parsed.linkPreviewIds : [];
+  if (attachmentIds.some((item) => typeof item !== "string") || linkPreviewIds.some((item) => typeof item !== "string")) {
+    throw new Error("Expected run intervention message payload ids from SQLite");
+  }
+  return normalizeRunInterventionMessagePayload({
+    body,
+    attachmentIds: attachmentIds as string[],
+    linkPreviewIds: linkPreviewIds as string[],
+  });
+}
+
+function parseTeammateDirectReplyInterventionMessagePayload(
+  value: string | undefined,
+  instruction: string,
+): TeammateDirectReplyInterventionMessagePayload {
+  if (!value) {
+    return {
+      body: instruction,
+      attachmentIds: [],
+    };
+  }
+  const parsed = parseJson(value);
+  if (!isRecord(parsed)) {
+    throw new Error("Expected teammate direct reply intervention message payload from SQLite");
+  }
+  const body = typeof parsed.body === "string" ? parsed.body : instruction;
+  const attachmentIds = Array.isArray(parsed.attachmentIds) ? parsed.attachmentIds : [];
+  if (attachmentIds.some((item) => typeof item !== "string")) {
+    throw new Error("Expected teammate direct reply intervention attachment ids from SQLite");
+  }
+  return normalizeTeammateDirectReplyInterventionMessagePayload({
+    body,
+    attachmentIds: attachmentIds as string[],
+  });
 }
 
 function parseWorkflowPacketSourceRefs(value: string): WorkflowPacketSourceRef[] {

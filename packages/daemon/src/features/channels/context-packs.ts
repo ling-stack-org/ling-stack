@@ -281,8 +281,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
   const recentMessages = input.minimal
     ? ""
-    : input.store
-      .listChannelMessages({ channelId: input.channel.id, limit: 8 })
+    : listRecentContextMessages(input.store, input.channel.id, input.sourceMessage)
       .filter((message) => message.id !== input.sourceMessage.id)
       .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
       .join("\n");
@@ -345,8 +344,7 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
   const recentMessages = input.minimal
     ? ""
-    : input.store
-      .listChannelMessages({ channelId: input.channel.id, limit: 8 })
+    : listRecentContextMessages(input.store, input.channel.id, input.sourceMessage)
       .filter((message) => message.id !== input.sourceMessage.id)
       .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
       .join("\n");
@@ -395,6 +393,27 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
     ],
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
   });
+}
+
+function listRecentContextMessages(store: RunStore, channelId: string, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
+  const historicalGuidanceMessageIds = new Set(
+    store
+      .listRunInterventions({ limit: 500 })
+      .map((intervention) => parseChannelMessageGuidanceIdempotencyKey(intervention.idempotencyKey))
+      .filter((messageId): messageId is string => Boolean(messageId)),
+  );
+  return store
+    .listChannelMessages({ channelId, limit: 8 })
+    .filter((message) => message.id === sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+}
+
+function parseChannelMessageGuidanceIdempotencyKey(idempotencyKey: string): string | undefined {
+  const prefix = "channel_message:";
+  const suffix = ":queue_followup";
+  if (!idempotencyKey.startsWith(prefix) || !idempotencyKey.endsWith(suffix)) {
+    return undefined;
+  }
+  return idempotencyKey.slice(prefix.length, -suffix.length) || undefined;
 }
 
 export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput): ContextPack {

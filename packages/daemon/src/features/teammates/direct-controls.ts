@@ -5,6 +5,7 @@ import type {
   SecretResolver,
   TeammateDirectMessage,
   TeammateDirectReplyIntervention,
+  TeammateDirectReplyInterventionMessagePayload,
   TeammateDirectReplyInterventionMode,
   TeammateDirectThread,
   WorkUnit,
@@ -19,6 +20,7 @@ import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { ProviderStartupRefreshService } from "../providers/startup-refresh.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { isRecord, readOptionalStringArray } from "../../shared/validation.js";
 import { createAiTeammateDirectReply } from "./direct-replies.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 
@@ -84,6 +86,7 @@ export class DirectReplyControlService {
     readonly teammateId: string;
     readonly mode: TeammateDirectReplyInterventionMode;
     readonly instruction: string;
+    readonly messagePayload?: TeammateDirectReplyInterventionMessagePayload;
     readonly idempotencyKey?: string;
   }): TeammateDirectReplyIntervention {
     const teammate = this.requireTeammate(input.store, input.teammateId);
@@ -101,6 +104,7 @@ export class DirectReplyControlService {
         sourceWorkUnitId: active.workUnitId,
         mode: input.mode,
         instruction: input.instruction,
+        messagePayload: input.messagePayload,
         idempotencyKey: input.idempotencyKey ?? `direct-intervention:${active.workUnitId}:${input.mode}:${input.instruction}`,
         requestedBy: "local-user",
       },
@@ -243,6 +247,7 @@ export class DirectReplyControlService {
           authorType: "system",
           authorId: "system",
           body: renderDirectGuidanceMessage(starting),
+          attachmentIds: starting.messagePayload?.attachmentIds ?? [],
           status: "ready",
         },
         now,
@@ -363,10 +368,14 @@ function isActiveDirectReplyStatus(status: WorkUnitStatus): boolean {
 }
 
 function renderDirectGuidanceMessage(intervention: TeammateDirectReplyIntervention): string {
+  const body = intervention.messagePayload?.body.trim() || intervention.instruction;
+  const attachmentSummary = intervention.messagePayload?.attachmentIds.length
+    ? `\n附件：${intervention.messagePayload.attachmentIds.join(", ")}`
+    : "";
   if (intervention.mode === "interrupt_redirect") {
-    return `已停止上一条回复，并按新引导继续：${intervention.instruction}`;
+    return `已停止上一条回复，并按新引导继续：${body}${attachmentSummary}`;
   }
-  return `排队引导：${intervention.instruction}`;
+  return `排队引导：${body}${attachmentSummary}`;
 }
 
 export async function handleTeammateDirectRuntime(
@@ -542,6 +551,7 @@ export async function handleTeammateDirectReplyCancel(
 function parseDirectInterventionCreateRequest(value: unknown): {
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly instruction: string;
+  readonly messagePayload?: TeammateDirectReplyInterventionMessagePayload;
   readonly idempotencyKey?: string;
 } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -556,8 +566,27 @@ function parseDirectInterventionCreateRequest(value: unknown): {
   if (!instruction) {
     throw new Error("instruction is required");
   }
+  const messagePayload = parseDirectInterventionMessagePayload(record.messagePayload);
   const idempotencyKey = typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey.trim() : undefined;
-  return { mode, instruction, idempotencyKey };
+  return { mode, instruction, messagePayload, idempotencyKey };
+}
+
+function parseDirectInterventionMessagePayload(value: unknown): TeammateDirectReplyInterventionMessagePayload | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("messagePayload must be an object");
+  }
+  const body = typeof value.body === "string" ? value.body.trim() : "";
+  const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
+  if (!body && attachmentIds.length === 0) {
+    throw new Error("messagePayload must include body or attachments");
+  }
+  return {
+    body,
+    attachmentIds,
+  };
 }
 
 function parseOptionalReason(value: unknown | undefined): { readonly reason?: string } {

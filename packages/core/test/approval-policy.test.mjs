@@ -165,12 +165,48 @@ test("sqlite store persists run artifacts", async () => {
 test("sqlite store persists run interventions, idempotency, FIFO order, cancellation, and lineage", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-run-interventions-"));
   const now = "2026-06-04T03:00:00.000Z";
+  let firstInterventionId = "";
+  let attachmentId = "";
+  let linkPreviewId = "";
   let store = createSqliteRunStore(cwd);
   try {
+    const channel = store.createChannel({ name: "Guidance", boundPath: cwd }, now);
+    const otherChannel = store.createChannel({ name: "Other", boundPath: cwd }, now);
+    const attachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "text",
+      fileName: "notes.txt",
+      contentType: "text/plain",
+      sizeBytes: 32,
+      path: `${channel.id}/notes.txt`,
+      createdAt: now,
+    });
+    const otherAttachment = store.createChannelAttachment({
+      channelId: otherChannel.id,
+      kind: "text",
+      fileName: "other.txt",
+      contentType: "text/plain",
+      sizeBytes: 16,
+      path: `${otherChannel.id}/other.txt`,
+      createdAt: now,
+    });
+    const linkPreview = store.createChannelLinkPreview(
+      {
+        channelId: channel.id,
+        url: "https://example.com/docs",
+        normalizedUrl: "https://example.com/docs",
+        title: "Docs",
+        status: "ready",
+      },
+      now,
+    );
+    attachmentId = attachment.id;
+    linkPreviewId = linkPreview.id;
     store.createRun({
       id: "run_source",
       cwd,
       taskId: "task_guided",
+      channelId: channel.id,
       providerName: "test-provider",
       providerModel: "test-model",
       taskSnapshot: { id: "task_guided", title: "Guided task", prompt: "Build the feature." },
@@ -186,11 +222,22 @@ test("sqlite store persists run interventions, idempotency, FIFO order, cancella
         sourceWorkUnitId: "wu_source",
         mode: "queue_followup",
         instruction: "After this finishes, check the settings page.",
+        messagePayload: {
+          body: "After this finishes, check the settings page.",
+          attachmentIds: [attachment.id],
+          linkPreviewIds: [linkPreview.id],
+        },
         idempotencyKey: "guidance-1",
         requestedBy: "local-user",
       },
       "2026-06-04T03:01:00.000Z",
     );
+    firstInterventionId = first.id;
+    assert.deepEqual(first.messagePayload, {
+      body: "After this finishes, check the settings page.",
+      attachmentIds: [attachment.id],
+      linkPreviewIds: [linkPreview.id],
+    });
     const duplicate = store.createRunIntervention(
       {
         sourceRunId: "run_source",
@@ -211,6 +258,24 @@ test("sqlite store persists run interventions, idempotency, FIFO order, cancella
         requestedBy: "local-user",
       },
       "2026-06-04T03:02:00.000Z",
+    );
+    assert.throws(
+      () => store.createRunIntervention(
+        {
+          sourceRunId: "run_source",
+          mode: "queue_followup",
+          instruction: "Cross-channel attachment should fail.",
+          messagePayload: {
+            body: "Cross-channel attachment should fail.",
+            attachmentIds: [otherAttachment.id],
+            linkPreviewIds: [],
+          },
+          idempotencyKey: "bad-cross-channel",
+          requestedBy: "local-user",
+        },
+        "2026-06-04T03:02:30.000Z",
+      ),
+      /Attachment does not belong to channel/,
     );
 
     assert.equal(duplicate.id, first.id);
@@ -256,6 +321,11 @@ test("sqlite store persists run interventions, idempotency, FIFO order, cancella
 
   store = createSqliteRunStore(cwd);
   try {
+    assert.deepEqual(store.getRunIntervention(firstInterventionId).messagePayload, {
+      body: "After this finishes, check the settings page.",
+      attachmentIds: [attachmentId],
+      linkPreviewIds: [linkPreviewId],
+    });
     const interventions = store.listRunInterventions({ sourceRunId: "run_source" });
     assert.equal(interventions.length, 2);
     assert.equal(interventions[0].status, "cancelled");

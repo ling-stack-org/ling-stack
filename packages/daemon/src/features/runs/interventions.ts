@@ -8,6 +8,7 @@ import {
   type PermissionPreset,
   type RunEventType,
   type RunIntervention,
+  type RunInterventionMessagePayload,
   type RunInterventionMode,
   type RunSession,
   type RunStatus,
@@ -26,7 +27,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-import { isRecord, readOptionalString, readString } from "../../shared/validation.js";
+import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import {
   createDetachedRunExecutionSink,
@@ -73,7 +74,12 @@ export async function handleRunInterventions(
     return;
   }
 
-  let input: { readonly mode: RunInterventionMode; readonly instruction: string; readonly idempotencyKey: string };
+  let input: {
+    readonly mode: RunInterventionMode;
+    readonly instruction: string;
+    readonly messagePayload?: RunInterventionMessagePayload;
+    readonly idempotencyKey: string;
+  };
   try {
     input = parseRunInterventionCreateRequest(await readJsonBody(request, config.maxBodyBytes));
   } catch (error) {
@@ -95,6 +101,7 @@ export async function handleRunInterventions(
       sourceAttemptId: sourceWorkUnit?.activeAttemptId ?? (sourceRun.workUnitId ? store.listWorkUnitAttempts(sourceRun.workUnitId).at(-1)?.id : undefined),
       mode: input.mode,
       instruction: input.instruction,
+      messagePayload: input.messagePayload,
       requestedBy: "local-user",
       idempotencyKey: input.idempotencyKey,
     },
@@ -371,6 +378,7 @@ export function maybeStartNextRunInterventionContinuation(input: {
 function parseRunInterventionCreateRequest(value: unknown): {
   readonly mode: RunInterventionMode;
   readonly instruction: string;
+  readonly messagePayload?: RunInterventionMessagePayload;
   readonly idempotencyKey: string;
 } {
   if (!isRecord(value)) {
@@ -381,8 +389,9 @@ function parseRunInterventionCreateRequest(value: unknown): {
   if (!instruction) {
     throw new Error("instruction is required");
   }
+  const messagePayload = parseRunInterventionMessagePayload(value.messagePayload);
   const idempotencyKey = readOptionalString(value, "idempotencyKey") ?? `run_intervention:${randomUUID()}`;
-  return { mode, instruction, idempotencyKey };
+  return { mode, instruction, messagePayload, idempotencyKey };
 }
 
 function buildRunInterventionContinuationRequest(sourceRun: RunSession, intervention: RunIntervention): RunRequest {
@@ -420,6 +429,7 @@ function buildRunInterventionContinuationRequest(sourceRun: RunSession, interven
         originalPrompt,
         sourceStatus: sourceRun.status,
         instruction: intervention.instruction,
+        messagePayload: intervention.messagePayload,
         mode: intervention.mode,
       }),
       channelId,
@@ -445,6 +455,7 @@ function renderRunInterventionContinuationPrompt(input: {
   readonly originalPrompt: string;
   readonly sourceStatus: RunStatus;
   readonly instruction: string;
+  readonly messagePayload?: RunInterventionMessagePayload;
   readonly mode: RunInterventionMode;
 }): string {
   return [
@@ -463,13 +474,45 @@ function renderRunInterventionContinuationPrompt(input: {
     input.sourceRun.endedAt ? `Ended at: ${input.sourceRun.endedAt}` : undefined,
     "",
     input.mode === "interrupt_redirect" ? "User redirect:" : "Queued user guidance:",
-    input.instruction,
+    renderRunInterventionPayloadForPrompt(input.instruction, input.messagePayload),
     "",
     "Constraints:",
     "- Continue from durable source run context; do not assume unseen state.",
     "- The user guidance does not grant extra tools, approvals, secrets, MCP access, or external-send rights.",
     "- Re-check files or external state before repeating side effects that may have already happened.",
   ].filter((line): line is string => line !== undefined).join("\n");
+}
+
+function parseRunInterventionMessagePayload(value: unknown): RunInterventionMessagePayload | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("messagePayload must be an object");
+  }
+  const body = typeof value.body === "string" ? value.body.trim() : "";
+  const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
+  const linkPreviewIds = readOptionalStringArray(value, "linkPreviewIds") ?? [];
+  if (!body && attachmentIds.length === 0 && linkPreviewIds.length === 0) {
+    throw new Error("messagePayload must include body, attachments, or link previews");
+  }
+  return {
+    body,
+    attachmentIds,
+    linkPreviewIds,
+  };
+}
+
+function renderRunInterventionPayloadForPrompt(instruction: string, payload: RunInterventionMessagePayload | undefined): string {
+  if (!payload) {
+    return instruction;
+  }
+  const lines = [
+    payload.body || instruction,
+    payload.attachmentIds.length > 0 ? `Attachments: ${payload.attachmentIds.join(", ")}` : undefined,
+    payload.linkPreviewIds.length > 0 ? `Link previews: ${payload.linkPreviewIds.join(", ")}` : undefined,
+  ];
+  return lines.filter((line): line is string => Boolean(line)).join("\n");
 }
 
 function streamRunEventIfPossible(

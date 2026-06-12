@@ -286,6 +286,11 @@ function maybeHandleActiveSessionMessage(input: LingAgentChannelMessageInput): L
     sourceWorkUnitId: activeRun.workUnitId,
     mode: "queue_followup",
     instruction: text,
+    messagePayload: {
+      body: text,
+      attachmentIds: input.sourceMessage.attachmentIds,
+      linkPreviewIds: input.sourceMessage.linkPreviewIds,
+    },
     requestedBy: "local-user",
     idempotencyKey: `channel_message:${input.sourceMessage.id}:queue_followup`,
   }, now);
