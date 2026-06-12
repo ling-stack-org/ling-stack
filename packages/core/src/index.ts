@@ -22,6 +22,7 @@ export * from "./automation-types.js";
 export * from "./automation-drafts.js";
 export * from "./automation-templates.js";
 export * from "./preview-types.js";
+export * from "./input-materialization-types.js";
 export * from "./run-types.js";
 export * from "./redaction.js";
 export * from "./secrets.js";

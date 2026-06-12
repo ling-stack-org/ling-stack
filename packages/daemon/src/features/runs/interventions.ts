@@ -8,8 +8,12 @@ import {
   type PermissionPreset,
   type RunEventType,
   type RunIntervention,
+  type RunInterventionAttachmentPayload,
+  type RunInterventionLinkPreviewPayload,
+  type RunInterventionMaterializationStatus,
   type RunInterventionMessagePayload,
   type RunInterventionMode,
+  type RunInterventionWorkspaceFilePayload,
   type RunSession,
   type RunStatus,
   type RunStore,
@@ -493,13 +497,19 @@ function parseRunInterventionMessagePayload(value: unknown): RunInterventionMess
   const body = typeof value.body === "string" ? value.body.trim() : "";
   const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
   const linkPreviewIds = readOptionalStringArray(value, "linkPreviewIds") ?? [];
-  if (!body && attachmentIds.length === 0 && linkPreviewIds.length === 0) {
-    throw new Error("messagePayload must include body, attachments, or link previews");
+  const attachments = readOptionalRunInterventionAttachmentPayloads(value, "attachments");
+  const linkPreviews = readOptionalRunInterventionLinkPreviewPayloads(value, "linkPreviews");
+  const fileRefs = readOptionalRunInterventionWorkspaceFilePayloads(value, "fileRefs");
+  if (!body && attachmentIds.length === 0 && linkPreviewIds.length === 0 && !attachments?.length && !linkPreviews?.length && !fileRefs?.length) {
+    throw new Error("messagePayload must include body, attachments, link previews, or file refs");
   }
   return {
     body,
     attachmentIds,
     linkPreviewIds,
+    ...(attachments?.length ? { attachments } : {}),
+    ...(linkPreviews?.length ? { linkPreviews } : {}),
+    ...(fileRefs?.length ? { fileRefs } : {}),
   };
 }
 
@@ -509,10 +519,180 @@ function renderRunInterventionPayloadForPrompt(instruction: string, payload: Run
   }
   const lines = [
     payload.body || instruction,
-    payload.attachmentIds.length > 0 ? `Attachments: ${payload.attachmentIds.join(", ")}` : undefined,
-    payload.linkPreviewIds.length > 0 ? `Link previews: ${payload.linkPreviewIds.join(", ")}` : undefined,
+    renderRunInterventionAttachmentsForPrompt(payload),
+    renderRunInterventionLinkPreviewsForPrompt(payload),
+    renderRunInterventionWorkspaceFileRefsForPrompt(payload),
   ];
   return lines.filter((line): line is string => Boolean(line)).join("\n");
+}
+
+function renderRunInterventionAttachmentsForPrompt(payload: RunInterventionMessagePayload): string | undefined {
+  if (payload.attachments?.length) {
+    return [
+      "Attachments:",
+      ...payload.attachments.map((attachment, index) => [
+        `- ${index + 1}. ${attachment.fileName} (${attachment.kind}, ${attachment.contentType}, ${attachment.sizeBytes} bytes, materialization=${attachment.materializationStatus}${attachment.previewStatus ? `, preview=${attachment.previewStatus}` : ""})`,
+        attachment.reason ? `  statusReason: ${attachment.reason}` : undefined,
+        attachment.previewText ? `  preview:\n${indentPromptBlock(attachment.previewText)}` : undefined,
+      ].filter((line): line is string => Boolean(line)).join("\n")),
+    ].join("\n");
+  }
+  return payload.attachmentIds.length > 0 ? `Attachments: ${payload.attachmentIds.join(", ")}` : undefined;
+}
+
+function renderRunInterventionLinkPreviewsForPrompt(payload: RunInterventionMessagePayload): string | undefined {
+  if (payload.linkPreviews?.length) {
+    return [
+      "Link previews:",
+      ...payload.linkPreviews.map((preview, index) => [
+        `- ${index + 1}. ${preview.title ?? preview.normalizedUrl} (${preview.status}, materialization=${preview.materializationStatus})`,
+        `  url: ${preview.url}`,
+        preview.siteName ? `  site: ${preview.siteName}` : undefined,
+        preview.description ? `  description: ${preview.description}` : undefined,
+        preview.reason ? `  statusReason: ${preview.reason}` : undefined,
+        preview.previewText ? `  preview:\n${indentPromptBlock(preview.previewText)}` : undefined,
+      ].filter((line): line is string => Boolean(line)).join("\n")),
+    ].join("\n");
+  }
+  return payload.linkPreviewIds.length > 0 ? `Link previews: ${payload.linkPreviewIds.join(", ")}` : undefined;
+}
+
+function renderRunInterventionWorkspaceFileRefsForPrompt(payload: RunInterventionMessagePayload): string | undefined {
+  if (!payload.fileRefs?.length) {
+    return undefined;
+  }
+  return [
+    "Workspace file refs:",
+    ...payload.fileRefs.map((ref, index) => [
+      `- ${index + 1}. ${ref.label ? `${ref.label}: ` : ""}${ref.path} (${ref.kind}, ${ref.rootRelation}, materialization=${ref.materializationStatus})`,
+      ref.blockedReason ? `  statusReason: ${ref.blockedReason}` : undefined,
+      ref.previewText ? `  preview:\n${indentPromptBlock(ref.previewText)}` : undefined,
+    ].filter((line): line is string => Boolean(line)).join("\n")),
+  ].join("\n");
+}
+
+function readOptionalRunInterventionAttachmentPayloads(
+  record: Record<string, unknown>,
+  key: string,
+): readonly RunInterventionAttachmentPayload[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key} must contain objects`);
+    }
+    const id = readString(item, "id");
+    const previewStatus = readOptionalString(item, "previewStatus");
+    const previewText = readOptionalString(item, "previewText");
+    const reason = readOptionalString(item, "reason");
+    return {
+      id,
+      fileName: readOptionalString(item, "fileName") ?? id,
+      kind: readRunInterventionAttachmentKind(item.kind),
+      contentType: readOptionalString(item, "contentType") ?? "application/octet-stream",
+      sizeBytes: readOptionalNonNegativeNumber(item, "sizeBytes"),
+      materializationStatus: readRunInterventionMaterializationStatus(item.materializationStatus),
+      ...(previewStatus ? { previewStatus } : {}),
+      ...(previewText ? { previewText } : {}),
+      ...(reason ? { reason } : {}),
+    };
+  });
+}
+
+function readOptionalRunInterventionLinkPreviewPayloads(
+  record: Record<string, unknown>,
+  key: string,
+): readonly RunInterventionLinkPreviewPayload[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key} must contain objects`);
+    }
+    const id = readString(item, "id");
+    const url = readOptionalString(item, "url") ?? id;
+    const normalizedUrl = readOptionalString(item, "normalizedUrl") ?? url;
+    const title = readOptionalString(item, "title");
+    const description = readOptionalString(item, "description");
+    const siteName = readOptionalString(item, "siteName");
+    const previewText = readOptionalString(item, "previewText");
+    const reason = readOptionalString(item, "reason");
+    return {
+      id,
+      url,
+      normalizedUrl,
+      ...(title ? { title } : {}),
+      ...(description ? { description } : {}),
+      ...(siteName ? { siteName } : {}),
+      status: readRunInterventionLinkPreviewStatus(item.status),
+      materializationStatus: readRunInterventionMaterializationStatus(item.materializationStatus),
+      ...(previewText ? { previewText } : {}),
+      ...(reason ? { reason } : {}),
+    };
+  });
+}
+
+function readOptionalRunInterventionWorkspaceFilePayloads(
+  record: Record<string, unknown>,
+  key: string,
+): readonly RunInterventionWorkspaceFilePayload[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key} must contain objects`);
+    }
+    const label = readOptionalString(item, "label");
+    const previewText = readOptionalString(item, "previewText");
+    const blockedReason = readOptionalString(item, "blockedReason");
+    return {
+      path: readString(item, "path"),
+      ...(label ? { label } : {}),
+      rootRelation: readRunInterventionWorkspaceFileRootRelation(item.rootRelation),
+      kind: readRunInterventionWorkspaceFileKind(item.kind),
+      materializationStatus: readRunInterventionMaterializationStatus(item.materializationStatus),
+      ...(previewText ? { previewText } : {}),
+      ...(blockedReason ? { blockedReason } : {}),
+    };
+  });
+}
+
+function readOptionalNonNegativeNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0;
+}
+
+function readRunInterventionMaterializationStatus(value: unknown): RunInterventionMaterializationStatus {
+  if (value === "available" || value === "metadata_only" || value === "not_loaded" || value === "unsupported" || value === "blocked") {
+    return value;
+  }
+  return "metadata_only";
+}
+
+function readRunInterventionAttachmentKind(value: unknown): RunInterventionAttachmentPayload["kind"] {
+  return value === "image" || value === "pdf" || value === "office" || value === "text" || value === "other" ? value : "other";
+}
+
+function readRunInterventionLinkPreviewStatus(value: unknown): RunInterventionLinkPreviewPayload["status"] {
+  return value === "ready" || value === "blocked" || value === "failed" || value === "missing" || value === "channel_mismatch" ? value : "missing";
+}
+
+function readRunInterventionWorkspaceFileRootRelation(value: unknown): RunInterventionWorkspaceFilePayload["rootRelation"] {
+  return value === "inside_workspace" || value === "outside_workspace" || value === "unknown" ? value : "unknown";
+}
+
+function readRunInterventionWorkspaceFileKind(value: unknown): RunInterventionWorkspaceFilePayload["kind"] {
+  return value === "file" || value === "directory" || value === "glob" || value === "unknown" ? value : "unknown";
+}
+
+function indentPromptBlock(value: string): string {
+  return value.split(/\r?\n/u).map((line) => `    ${line}`).join("\n");
 }
 
 function streamRunEventIfPossible(

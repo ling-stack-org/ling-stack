@@ -1,15 +1,34 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { createCompositeSecretResolver, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
+import { buildLingAgentTurnEnvelope } from "../dist/features/channels/ling-agent-turn-envelope.js";
+import { linkBodyExtractorV1 } from "../dist/features/channels/materialization/extractors/link-body.js";
+import { officeExtractorV1 } from "../dist/features/channels/materialization/extractors/office.js";
+import { pdfExtractorV1 } from "../dist/features/channels/materialization/extractors/pdf.js";
+import { attachmentMaterializationFingerprint, linkPreviewMaterializationFingerprint } from "../dist/features/channels/materialization/fingerprints.js";
+import { materializeInlineChannelInputs } from "../dist/features/channels/materialization/inline.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+
+const require = createRequire(import.meta.url);
+
+async function readPdfFixtureBytes() {
+  const pdfParseDir = dirname(require.resolve("pdf-parse/package.json"));
+  return readFile(resolve(pdfParseDir, "test", "data", "04-valid.pdf"));
+}
+
+async function readDocxFixtureBytes() {
+  const mammothDir = dirname(require.resolve("mammoth/package.json"));
+  return readFile(resolve(mammothDir, "test", "test-data", "single-paragraph.docx"));
+}
 
 test("health exposes channel auto_route capability", async () => {
   const disabledDaemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false, intentSelector: false } });
@@ -511,6 +530,762 @@ test("ling agent coordinator queues active run follow-up before ordinary routing
     assert.deepEqual(routeDecisions.decisions, []);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent coordinator queues attachment-only active run guidance", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-attachment-followup-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Ling Agent Coordinator Attachment",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_docs",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.createRun({
+      id: "run_ling_agent_coordinator_attachment_followup",
+      cwd,
+      taskId: "task_ling_agent_coordinator_attachment_followup",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_coordinator_attachment_followup", title: "Active work" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "followup.txt",
+      contentType: "text/plain",
+      contentBase64: Buffer.from("active run follow-up context", "utf8").toString("base64"),
+    })).attachment;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "",
+      attachmentIds: [attachment.id],
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.activeSessionAction.mode, "queue_followup");
+    assert.equal(created.activeSessionAction.status, "created");
+    assert.equal(created.activeSessionAction.sourceRunId, run.id);
+    assert.equal(created.intervention.sourceRunId, run.id);
+    assert.deepEqual(created.intervention.messagePayload.attachmentIds, [attachment.id]);
+    assert.equal(created.intervention.messagePayload.body, "");
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent coordinator queues file-ref-only active run guidance", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-file-ref-followup-"));
+  await writeFile(resolve(cwd, "README.md"), "# File ref guidance\n", "utf8");
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Ling Agent Coordinator File Ref",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_docs",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.createRun({
+      id: "run_ling_agent_coordinator_file_ref_followup",
+      cwd,
+      taskId: "task_ling_agent_coordinator_file_ref_followup",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_coordinator_file_ref_followup", title: "Active work" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "",
+      fileRefs: [{ path: "README.md", label: "README.md", source: "composer" }],
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.deepEqual(created.message.fileRefs, [{ path: "README.md", label: "README.md", source: "composer" }]);
+    assert.equal(created.activeSessionAction.mode, "queue_followup");
+    assert.equal(created.activeSessionAction.status, "created");
+    assert.equal(created.activeSessionAction.sourceRunId, run.id);
+    assert.equal(created.intervention.sourceRunId, run.id);
+    assert.equal(created.intervention.messagePayload.body, "");
+    assert.deepEqual(created.intervention.messagePayload.attachmentIds, []);
+    assert.deepEqual(created.intervention.messagePayload.linkPreviewIds, []);
+    assert.equal(created.intervention.messagePayload.fileRefs[0].path, "README.md");
+    assert.equal(created.intervention.messagePayload.fileRefs[0].rootRelation, "inside_workspace");
+    assert.equal(created.intervention.messagePayload.fileRefs[0].kind, "file");
+    assert.equal(created.intervention.messagePayload.fileRefs[0].materializationStatus, "metadata_only");
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent turn envelope merges persisted and explicit text file refs safely", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-turn-file-refs-"));
+  await writeFile(resolve(cwd, "README.md"), "# Current README\n", "utf8");
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({
+      name: "Ling Agent File Refs",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+    }, "2026-06-11T00:00:00.000Z");
+    const message = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "Also inspect file:README.md and path:/tmp/outside.txt",
+      fileRefs: [{ path: "README.md", label: "README.md", source: "composer" }],
+    }, "2026-06-11T00:01:00.000Z");
+
+    const envelope = buildLingAgentTurnEnvelope({ store, channel, sourceMessage: message });
+
+    assert.deepEqual(envelope.fileRefs.map((ref) => ref.path), ["README.md", "/tmp/outside.txt"]);
+    assert.equal(envelope.fileRefs[0].source, "composer");
+    assert.equal(envelope.fileRefs[0].rootRelation, "inside_workspace");
+    assert.equal(envelope.fileRefs[0].kind, "file");
+    assert.equal(envelope.fileRefs[1].source, "explicit_text");
+    assert.equal(envelope.fileRefs[1].rootRelation, "outside_workspace");
+    assert.equal(envelope.fileRefs[1].materializationStatus, "blocked");
+    assert.match(envelope.fileRefs[1].blockedReason, /outside the active workspace/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel input materialization cache upserts and feeds turn envelope", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-input-materialization-cache-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({
+      name: "Materialization cache",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+    }, "2026-06-11T00:00:00.000Z");
+    const attachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "image",
+      fileName: "screenshot.png",
+      contentType: "image/png",
+      sizeBytes: 128,
+      path: "screenshot.png",
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    const fingerprint = attachmentMaterializationFingerprint(attachment);
+
+    const first = store.createChannelInputMaterialization({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+      sourceFingerprint: fingerprint,
+      extractorId: "image_vision_summary_v1",
+      extractorVersion: "1",
+      contentKind: "vision_summary",
+      status: "available",
+      contentText: "The screenshot shows a save button overlapping the sidebar.",
+      byteCount: 128,
+      tokenEstimate: 12,
+      policyDecisionJson: { source: "test" },
+    }, "2026-06-11T00:02:00.000Z");
+    const second = store.createChannelInputMaterialization({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+      sourceFingerprint: fingerprint,
+      extractorId: "image_vision_summary_v1",
+      extractorVersion: "1",
+      contentKind: "vision_summary",
+      status: "available",
+      contentText: "Updated screenshot summary from cache.",
+      truncated: true,
+    }, "2026-06-11T00:03:00.000Z");
+
+    assert.equal(second.id, first.id);
+    const rows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].contentText, "Updated screenshot summary from cache.");
+    assert.equal(rows[0].truncated, true);
+    assert.deepEqual(first.policyDecisionJson, { source: "test" });
+
+    const message = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "Fix this screenshot",
+      attachmentIds: [attachment.id],
+    }, "2026-06-11T00:04:00.000Z");
+    const envelope = buildLingAgentTurnEnvelope({ store, channel, sourceMessage: message });
+
+    assert.equal(envelope.attachments.length, 1);
+    assert.equal(envelope.attachments[0].materializationStatus, "available");
+    assert.equal(envelope.attachments[0].materializationId, first.id);
+    assert.equal(envelope.attachments[0].previewStatus, "available");
+    assert.equal(envelope.attachments[0].previewText, "Updated screenshot summary from cache.");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("public link body extractor strips HTML and blocks unsafe redirects", async () => {
+  const linkPreview = {
+    id: "link_preview_public_docs",
+    workspaceId: "workspace_default",
+    channelId: "channel_docs",
+    url: "https://example.com/docs",
+    normalizedUrl: "https://example.com/docs",
+    title: "Docs",
+    status: "ready",
+    createdAt: "2026-06-11T00:00:00.000Z",
+    updatedAt: "2026-06-11T00:00:00.000Z",
+  };
+  const success = await linkBodyExtractorV1.materialize({
+    workspaceId: "workspace_default",
+    channelId: "channel_docs",
+    sourceKind: "link_preview",
+    sourceId: linkPreview.id,
+    sourceFingerprint: "fingerprint",
+    requestedBy: "turn_envelope",
+    maxBytes: 4096,
+    maxChars: 1000,
+    now: "2026-06-11T00:00:00.000Z",
+    linkPreview,
+    resolveHostAddresses: async () => ["93.184.216.34"],
+    fetch: async () => new Response(`
+      <html>
+        <head><title>Docs</title><script>window.secret = true;</script></head>
+        <body>
+          <nav>Navigation noise</nav>
+          <main><h1>Public guide</h1><p>Use this body for the summary.</p></main>
+        </body>
+      </html>
+    `, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }),
+  });
+
+  assert.equal(success.status, "available");
+  assert.equal(success.contentKind, "html_text");
+  assert.match(success.contentText, /Public guide/);
+  assert.match(success.contentText, /Use this body for the summary/);
+  assert.doesNotMatch(success.contentText, /window\.secret|Navigation noise/);
+
+  let calls = 0;
+  const redirected = await linkBodyExtractorV1.materialize({
+    workspaceId: "workspace_default",
+    channelId: "channel_docs",
+    sourceKind: "link_preview",
+    sourceId: linkPreview.id,
+    sourceFingerprint: "fingerprint",
+    requestedBy: "turn_envelope",
+    maxBytes: 4096,
+    maxChars: 1000,
+    now: "2026-06-11T00:00:00.000Z",
+    linkPreview,
+    resolveHostAddresses: async () => ["93.184.216.34"],
+    fetch: async () => {
+      calls += 1;
+      return new Response(null, {
+        status: 302,
+        headers: { location: "http://127.0.0.1/private" },
+      });
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(redirected.status, "blocked");
+  assert.equal(redirected.errorCode, "local_or_private_host");
+
+  let privateFetchCalled = false;
+  const privateBlocked = await linkBodyExtractorV1.materialize({
+    workspaceId: "workspace_default",
+    channelId: "channel_docs",
+    sourceKind: "link_preview",
+    sourceId: "link_preview_private",
+    sourceFingerprint: "fingerprint",
+    requestedBy: "turn_envelope",
+    maxBytes: 4096,
+    maxChars: 1000,
+    now: "2026-06-11T00:00:00.000Z",
+    linkPreview: {
+      ...linkPreview,
+      id: "link_preview_private",
+      url: "http://127.0.0.1/private",
+      normalizedUrl: "http://127.0.0.1/private",
+    },
+    fetch: async () => {
+      privateFetchCalled = true;
+      return new Response("should not fetch", { status: 200 });
+    },
+  });
+
+  assert.equal(privateBlocked.status, "blocked");
+  assert.equal(privateBlocked.errorCode, "local_or_private_host");
+  assert.equal(privateFetchCalled, false);
+});
+
+test("inline materialization writes public link body cache for explicit link request", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-link-body-inline-cache-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({
+      name: "Link body materialization",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+    }, "2026-06-11T00:00:00.000Z");
+    const linkPreview = store.createChannelLinkPreview({
+      channelId: channel.id,
+      url: "https://example.com/docs",
+      normalizedUrl: "https://example.com/docs",
+      title: "Example Docs",
+      description: "Metadata only before body extraction.",
+      siteName: "Example",
+      status: "ready",
+    }, "2026-06-11T00:01:00.000Z");
+    const message = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "Please summarize this link",
+      linkPreviewIds: [linkPreview.id],
+    }, "2026-06-11T00:02:00.000Z");
+
+    await materializeInlineChannelInputs({
+      store,
+      channel,
+      sourceMessage: message,
+      now: "2026-06-11T00:03:00.000Z",
+      resolveHostAddresses: async () => ["93.184.216.34"],
+      fetch: async () => new Response("<main><p>Inline public body cache.</p></main>", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    });
+
+    const rows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "link_preview",
+      sourceId: linkPreview.id,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].extractorId, "link_body_v1");
+    assert.equal(rows[0].status, "available");
+    assert.match(rows[0].contentText, /Inline public body cache/);
+
+    const envelope = buildLingAgentTurnEnvelope({ store, channel, sourceMessage: message });
+    assert.equal(envelope.linkPreviews[0].materializationStatus, "available");
+    assert.equal(envelope.linkPreviews[0].materializationId, rows[0].id);
+    assert.match(envelope.linkPreviews[0].previewText, /Inline public body cache/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("cached public link body lets Ling answer without materialization clarify", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-link-body-cached-reply-"));
+  const runner = new ScriptedRunner(["这个页面讲的是 cached public link body。"]);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Cached link body reply",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const linkPreview = store.createChannelLinkPreview({
+      channelId: channel.id,
+      url: "https://example.com/guide",
+      normalizedUrl: "https://example.com/guide",
+      title: "Guide",
+      description: "Metadata before cached body.",
+      siteName: "Example",
+      status: "ready",
+    }, "2026-06-11T00:01:00.000Z");
+    store.createChannelInputMaterialization({
+      channelId: channel.id,
+      sourceKind: "link_preview",
+      sourceId: linkPreview.id,
+      sourceFingerprint: linkPreviewMaterializationFingerprint(linkPreview),
+      extractorId: "link_body_v1",
+      extractorVersion: "1",
+      contentKind: "html_text",
+      status: "available",
+      contentText: "Cached public link body for Ling to summarize.",
+      byteCount: 48,
+      tokenEstimate: 12,
+    }, "2026-06-11T00:02:00.000Z");
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Please summarize this link",
+      linkPreviewIds: [linkPreview.id],
+    });
+
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "这个页面讲的是 cached public link body。");
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Cached public link body for Ling to summarize/);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(intentDecisions.decisions, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pdf and docx extractors materialize bounded attachment text", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-document-extractors-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    await mkdir(store.paths.attachmentsDir, { recursive: true });
+    const channel = store.createChannel({
+      name: "Document extractors",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+    }, "2026-06-11T00:00:00.000Z");
+
+    const pdfBytes = await readPdfFixtureBytes();
+    await writeFile(resolve(store.paths.attachmentsDir, "fixture.pdf"), pdfBytes);
+    const pdfAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "pdf",
+      fileName: "fixture.pdf",
+      contentType: "application/pdf",
+      sizeBytes: pdfBytes.byteLength,
+      path: "fixture.pdf",
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    const pdfResult = await pdfExtractorV1.materialize({
+      workspaceId: pdfAttachment.workspaceId,
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: pdfAttachment.id,
+      sourceFingerprint: "pdf-fingerprint",
+      requestedBy: "turn_envelope",
+      maxBytes: 128 * 1024,
+      maxChars: 100,
+      now: "2026-06-11T00:02:00.000Z",
+      attachment: pdfAttachment,
+      attachmentsDir: store.paths.attachmentsDir,
+    });
+    assert.equal(pdfResult.status, "available", JSON.stringify(pdfResult));
+    assert.equal(pdfResult.contentKind, "pdf_text");
+    assert.match(pdfResult.contentText, /Turk J Med Sci/);
+    assert.equal(pdfResult.structuredSummary.pageCount, 5);
+
+    const docxBytes = await readDocxFixtureBytes();
+    await writeFile(resolve(store.paths.attachmentsDir, "fixture.docx"), docxBytes);
+    const docxAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "office",
+      fileName: "fixture.docx",
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      sizeBytes: docxBytes.byteLength,
+      path: "fixture.docx",
+      createdAt: "2026-06-11T00:03:00.000Z",
+    });
+    const docxResult = await officeExtractorV1.materialize({
+      workspaceId: docxAttachment.workspaceId,
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: docxAttachment.id,
+      sourceFingerprint: "docx-fingerprint",
+      requestedBy: "turn_envelope",
+      maxBytes: 128 * 1024,
+      maxChars: 100,
+      now: "2026-06-11T00:04:00.000Z",
+      attachment: docxAttachment,
+      attachmentsDir: store.paths.attachmentsDir,
+    });
+    assert.equal(docxResult.status, "available", JSON.stringify(docxResult));
+    assert.equal(docxResult.contentKind, "office_text");
+    assert.match(docxResult.contentText, /Walking on imported air/);
+    assert.deepEqual(docxResult.structuredSummary, { format: "docx", warnings: [] });
+
+    const pptxAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "office",
+      fileName: "slides.pptx",
+      contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      sizeBytes: 128,
+      path: "slides.pptx",
+      createdAt: "2026-06-11T00:05:00.000Z",
+    });
+    const pptxResult = await officeExtractorV1.materialize({
+      workspaceId: pptxAttachment.workspaceId,
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: pptxAttachment.id,
+      sourceFingerprint: "pptx-fingerprint",
+      requestedBy: "turn_envelope",
+      maxBytes: 4096,
+      maxChars: 100,
+      now: "2026-06-11T00:06:00.000Z",
+      attachment: pptxAttachment,
+      attachmentsDir: store.paths.attachmentsDir,
+    });
+    assert.equal(pptxResult.status, "unsupported");
+    assert.equal(pptxResult.errorCode, "unsupported_office_format");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("inline materialization writes pdf and docx cache for explicit document requests", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-document-inline-cache-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    await mkdir(store.paths.attachmentsDir, { recursive: true });
+    const channel = store.createChannel({
+      name: "Document inline cache",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+    }, "2026-06-11T00:00:00.000Z");
+    const pdfBytes = await readPdfFixtureBytes();
+    await writeFile(resolve(store.paths.attachmentsDir, "inline.pdf"), pdfBytes);
+    const pdfAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "pdf",
+      fileName: "inline.pdf",
+      contentType: "application/pdf",
+      sizeBytes: pdfBytes.byteLength,
+      path: "inline.pdf",
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    const docxBytes = await readDocxFixtureBytes();
+    await writeFile(resolve(store.paths.attachmentsDir, "inline.docx"), docxBytes);
+    const docxAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "office",
+      fileName: "inline.docx",
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      sizeBytes: docxBytes.byteLength,
+      path: "inline.docx",
+      createdAt: "2026-06-11T00:02:00.000Z",
+    });
+    const message = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "Please summarize this PDF and this document",
+      attachmentIds: [pdfAttachment.id, docxAttachment.id],
+    }, "2026-06-11T00:03:00.000Z");
+
+    await materializeInlineChannelInputs({
+      store,
+      channel,
+      sourceMessage: message,
+      now: "2026-06-11T00:04:00.000Z",
+    });
+
+    const pdfRows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: pdfAttachment.id,
+    });
+    assert.equal(pdfRows.length, 1);
+    assert.equal(pdfRows[0].extractorId, "pdf_text_v1");
+    assert.equal(pdfRows[0].status, "available", JSON.stringify(pdfRows[0]));
+    assert.match(pdfRows[0].contentText, /Turk J Med Sci/);
+
+    const docxRows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: docxAttachment.id,
+    });
+    assert.equal(docxRows.length, 1);
+    assert.equal(docxRows[0].extractorId, "office_text_v1");
+    assert.equal(docxRows[0].status, "available", JSON.stringify(docxRows[0]));
+    assert.match(docxRows[0].contentText, /Walking on imported air/);
+
+    const envelope = buildLingAgentTurnEnvelope({ store, channel, sourceMessage: message });
+    assert.deepEqual(envelope.attachments.map((attachment) => attachment.materializationStatus), ["available", "available"]);
+    assert.match(envelope.attachments[0].previewText, /Turk J Med Sci/);
+    assert.match(envelope.attachments[1].previewText, /Walking on imported air/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("materialized pdf and docx attachments let Ling answer without materialization clarify", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-document-materialized-reply-"));
+  const runner = new ScriptedRunner(["我读到了 PDF 和 DOCX 的正文。"]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Materialized document reply",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read"],
+    })).channel;
+    const pdfAttachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "guide.pdf",
+      contentType: "application/pdf",
+      contentBase64: (await readPdfFixtureBytes()).toString("base64"),
+    })).attachment;
+    const docxAttachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "brief.docx",
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      contentBase64: (await readDocxFixtureBytes()).toString("base64"),
+    })).attachment;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Please summarize this PDF and this document",
+      attachmentIds: [pdfAttachment.id, docxAttachment.id],
+    });
+
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "我读到了 PDF 和 DOCX 的正文。");
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Turk J Med Sci/);
+    assert.match(runner.runs[0].task.prompt, /Walking on imported air/);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(intentDecisions.decisions, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ling agent coordinator preserves materialized guidance metadata for active run continuation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-materialized-guidance-"));
+  await writeFile(resolve(cwd, "README.md"), "# Current README\n", "utf8");
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Ling Agent Materialized Guidance",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_engineer",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.createRun({
+      id: "run_ling_agent_materialized_guidance",
+      cwd,
+      taskId: "task_ling_agent_materialized_guidance",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_ling_agent_materialized_guidance", title: "Active work" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "followup.txt",
+      contentType: "text/plain",
+      contentBase64: Buffer.from("active run follow-up context", "utf8").toString("base64"),
+    })).attachment;
+    const linkPreview = store.createChannelLinkPreview({
+      channelId: channel.id,
+      url: "https://example.com/docs",
+      normalizedUrl: "https://example.com/docs",
+      title: "Example Docs",
+      description: "Cached link-preview metadata only.",
+      siteName: "Example",
+      status: "ready",
+    }, "2026-06-11T00:02:30.000Z");
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "另外也更新 file:README.md",
+      attachmentIds: [attachment.id],
+      linkPreviewIds: [linkPreview.id],
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.activeSessionAction.mode, "queue_followup");
+    assert.equal(created.intervention.sourceRunId, run.id);
+    assert.deepEqual(created.intervention.messagePayload.attachmentIds, [attachment.id]);
+    assert.deepEqual(created.intervention.messagePayload.linkPreviewIds, [linkPreview.id]);
+    assert.equal(created.intervention.messagePayload.attachments[0].fileName, "followup.txt");
+    assert.equal(created.intervention.messagePayload.attachments[0].materializationStatus, "available");
+    assert.match(created.intervention.messagePayload.attachments[0].previewText, /active run follow-up context/);
+    assert.equal(created.intervention.messagePayload.linkPreviews[0].title, "Example Docs");
+    assert.equal(created.intervention.messagePayload.linkPreviews[0].materializationStatus, "metadata_only");
+    assert.match(created.intervention.messagePayload.linkPreviews[0].previewText, /Cached link-preview metadata only/);
+    assert.equal(created.intervention.messagePayload.fileRefs[0].path, "README.md");
+    assert.equal(created.intervention.messagePayload.fileRefs[0].rootRelation, "inside_workspace");
+    assert.equal(created.intervention.messagePayload.fileRefs[0].kind, "file");
+    assert.equal(created.intervention.messagePayload.fileRefs[0].materializationStatus, "metadata_only");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1166,6 +1941,240 @@ test("single-step file creation becomes direct workflow with bounded write tools
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
     assert.match(runner.runs[0].task.prompt, /Confirmed task-scoped tools:\nwrite/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("text attachment preview can feed a direct README write workflow", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-attachment-readme-preview-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Attachment README execution",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "readme-copy.txt",
+      contentType: "text/plain",
+      contentBase64: Buffer.from("README body from attachment", "utf8").toString("base64"),
+    })).attachment;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "把附件内容写进 README.md",
+      attachmentIds: [attachment.id],
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    assert.equal(runner.runs.length, 1);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.match(proposals.proposals[0].prompt, /Attachment: readme-copy\.txt/);
+    assert.match(proposals.proposals[0].prompt, /README body from attachment/);
+    assert.match(runner.runs[0].task.prompt, /README body from attachment/);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("text attachment materialization cache hit avoids rereading attachment file", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-attachment-cache-hit-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Attachment materialization cache hit",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "readme-cache.txt",
+      contentType: "text/plain",
+      contentBase64: Buffer.from("Cached attachment body", "utf8").toString("base64"),
+    })).attachment;
+
+    const first = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "把附件内容写进 README.md",
+      attachmentIds: [attachment.id],
+    });
+    assert.equal(first.autoStartedWorkflow.workflowSteps.length, 1);
+    assert.equal(runner.runs.length, 1);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const rows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].extractorId, "text_attachment_v1");
+    assert.equal(rows[0].status, "available");
+    assert.equal(rows[0].contentText, "Cached attachment body");
+
+    await rm(resolve(store.paths.attachmentsDir, attachment.path), { force: true });
+
+    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "把附件内容写进 SECOND.md",
+      attachmentIds: [attachment.id],
+    });
+    assert.equal(second.autoStartedWorkflow.workflowSteps.length, 1);
+    assert.equal(runner.runs.length, 2);
+    assert.match(runner.runs[1].task.prompt, /Cached attachment body/);
+    const afterCacheHit = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+    });
+    assert.equal(afterCacheHit.length, 1);
+    assert.equal(afterCacheHit[0].status, "available");
+    assert.equal(afterCacheHit[0].contentText, "Cached attachment body");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("attachment-dependent README write blocks when attachment content is not materialized", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-attachment-readme-blocked-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Attachment README blocked",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+    const oversized = "x".repeat(20 * 1024);
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "large-readme-source.txt",
+      contentType: "text/plain",
+      contentBase64: Buffer.from(oversized, "utf8").toString("base64"),
+    })).attachment;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "把附件内容写进 README.md",
+      attachmentIds: [attachment.id],
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.runs.length, 0);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "blocked");
+    assert.match(proposals.proposals[0].errorMessage, /先读取附件内容|inspect the attachment/i);
+    assert.doesNotMatch(proposals.proposals[0].errorMessage, /附件预览|attachment preview|too large|previewStatus/i);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.match(decisions.decisions[0].reason, /no available attachment preview\/extraction/i);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unsupported screenshot task creates Ling materialization clarify reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-screenshot-materialization-clarify-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Screenshot materialization clarify",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "edit"],
+    })).channel;
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "screenshot.png",
+      contentType: "image/png",
+      contentBase64: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
+    })).attachment;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "根据这个截图修 UI",
+      attachmentIds: [attachment.id],
+    });
+
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.runs.length, 0);
+    assert.match(created.aiReply.body, /检查 screenshot\.png|inspect screenshot\.png/i);
+    assert.doesNotMatch(created.aiReply.body, /OCR|视觉提取|metadata_only|extractor|SSRF/i);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 0);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "clarify");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.match(decisions.decisions[0].reason, /Attachment content is not materialized/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("blocked link body request creates Ling materialization clarify reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-link-materialization-clarify-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Link materialization clarify",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls"],
+    })).channel;
+    const linkPreview = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/link-previews?cwd=${encodeURIComponent(cwd)}`, {
+      url: "http://127.0.0.1/private",
+    })).linkPreview;
+    assert.equal(linkPreview.status, "blocked");
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Please summarize this link",
+      linkPreviewIds: [linkPreview.id],
+    });
+
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.runs.length, 0);
+    assert.match(created.aiReply.body, /local\/private links automatically|本机或私有地址/i);
+    assert.doesNotMatch(created.aiReply.body, /body extraction is blocked|SSRF|metadata_only|extractor/i);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "clarify");
+    assert.match(decisions.decisions[0].reason, /Link body materialization is blocked/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2171,6 +3180,52 @@ test("channel attachment upload validates file types and serves content safely",
     });
     assert.equal(rejected.status, 400);
     assert.match((await rejected.json()).message, /Unsupported attachment type/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("attachment-only channel turn reaches Ling Agent with metadata and preview", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-attachment-only-turn-"));
+  const runner = new ScriptedRunner(["看到了 brief.txt。你要我总结、写入文件，还是作为当前任务上下文？"]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Attachment turn",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read"],
+    })).channel;
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "brief.txt",
+      contentType: "text/plain",
+      contentBase64: Buffer.from("hello channel attachment", "utf8").toString("base64"),
+    })).attachment;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "",
+      attachmentIds: [attachment.id],
+    });
+
+    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.authorId, "ling_agent");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "看到了 brief.txt。你要我总结、写入文件，还是作为当前任务上下文？");
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Turn envelope/);
+    assert.match(runner.runs[0].task.prompt, /brief\.txt/);
+    assert.match(runner.runs[0].task.prompt, /hello channel attachment/);
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(routeDecisions.decisions.length, 1);
+    assert.equal(routeDecisions.decisions[0].action, "reply");
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(intentDecisions.decisions, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

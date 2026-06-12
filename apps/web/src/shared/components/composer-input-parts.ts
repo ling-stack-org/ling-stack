@@ -71,7 +71,9 @@ export function parseComposerInputParts(text: string, options: ParseComposerInpu
       }
     }
 
-    const path = pathPattern.exec(remaining);
+    const previousChar = index > 0 ? text[index - 1] ?? "" : "";
+    const pathCanStart = index === 0 || /\s/u.test(previousChar) || previousChar === "(" || previousChar === "[" || previousChar === "{";
+    const path = pathCanStart ? pathPattern.exec(remaining) : null;
     if (path && path[0].includes("/")) {
       flushText();
       const ref = parseLocalFileReference(path[0], options.cwd);

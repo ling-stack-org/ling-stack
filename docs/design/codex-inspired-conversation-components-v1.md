@@ -415,8 +415,10 @@ Attachments render as compact chips under the body:
 - open/download action,
 - remove action only when the current user owns the attachment or the surface allows it.
 
-Private attachment chips must not imply the AI has read the file. If a future explicit
-inclusion path is implemented, the row must show a separate audited evidence item.
+Private attachment chips must not imply the AI has read the file. Ling Agent may receive
+attachment metadata through the turn envelope; body content requires a separate preview,
+extraction, or tool-read state. When body content is materialized, the row must show a
+separate audited evidence item such as "included in context".
 
 ### Status Treatment
 
@@ -894,8 +896,9 @@ Allowed sections:
 - recent Used Memory,
 - current provider status.
 
-Do not auto-read attachment bodies for AI unless a future explicit inclusion path adds
-an auditable event.
+Do not imply attachment bodies were read just because chips are visible. The Ling Agent
+turn envelope should include metadata and preview/extraction status. Body content enters
+model context only through an auditable preview, extraction, or tool-read event.
 
 ### Single-Agent Settings Entry
 

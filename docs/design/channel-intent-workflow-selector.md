@@ -15,16 +15,16 @@ Related docs:
 
 ## Purpose
 
-This document now describes an internal Ling Agent Coordinator module. The user-facing
+This document now describes an internal Ling Agent Coordinator classifier. The user-facing
 product model is defined in
 [Ling Agent Session Control Plane](ling-agent-session.md). Users should experience Ling
 Agent process, permission prompts, final reports, and optional evidence rather than
 selector, auto-route, workflow, proposal, or run internals.
 
-Ling now has two adjacent but separate selectors:
+Ling still has lower-level selector-like helpers:
 
 ```text
-ordinary channel message
+Ling Agent Session answer outcome
   -> channel auto reply router
   -> maybe one ordinary ai_reply
 
@@ -33,30 +33,34 @@ workflow graph step
   -> next step / branch / handoff
 ```
 
-The missing layer is the entry selector between them:
+This module is not the entry point between chat and work. Ling Agent Session first builds
+one turn envelope from the whole user turn:
 
 ```text
-ordinary channel message
+user turn
+  -> LingAgentTurnEnvelope(body, mentions, attachments, links, file refs, guidance)
+  -> Ling Agent Session
   -> channel intent selector
   -> no_reply | single_reply | visible_multi_reply | clarify | workflow_proposal | direct_workflow
-  -> channel auto reply router or workflow selector entry
+  -> Ling Agent Session renders the outcome
 ```
 
-This layer decides whether a user message should stay as ordinary conversation or become
-a workflow-shaped collaboration request. It does not make the channel a group chat and
-does not let every teammate answer by default. A bounded `visible_multi_reply` is allowed
-only when the user explicitly asks for multiple teammate opinions in the shaping stage.
-Under the Ling Agent session model, this layer is called by Ling Agent before ordinary
-auto-route so executable intent cannot be answered as a plain teammate chat reply.
-It is not the top-level turn owner: Ling Agent Session decides whether the resulting
-proposal evidence auto-starts or waits for a confirmation card.
+This classifier helps Ling decide whether the current envelope should produce an ordinary
+answer, clarification, visible multi-reply, proposal evidence, or a direct workflow. It
+does not decide whether Ling Agent receives the turn, and it must not reduce the turn to
+plain text. Attachments, link previews, workspace file refs, and active-run guidance are
+part of the classifier input.
 
 ## Current Implementation
 
-The current implementation is deterministic by default and uses Ling-native persistence:
+The current implementation is deterministic by default and uses Ling-native persistence.
+It is still partially text-first and should be migrated behind a TurnEnvelope boundary:
 
 - non-mentioned root channel messages pass through `selectChannelWorkflowIntent` before
-  the ordinary auto reply router;
+  the ordinary answer router;
+- current deterministic checks mostly inspect `sourceMessage.body`; follow-up work must
+  move them to envelope-aware predicates so attachment-only, link-only, and guidance
+  turns do not disappear;
 - clear multi-role requests create one draft `ChannelExecutionProposal`;
 - discussion-only all-teammate requests create bounded `visible_multi_reply` ordinary
   `ai_reply` messages, with default cap 3 and no proposal/workflow/task side effects;
@@ -93,6 +97,10 @@ The current implementation is deterministic by default and uses Ling-native pers
   to answer with instructions. If the resolved task needs `edit`, `write`, or `bash`, it
   must surface as a task-scoped executable proposal with the required tool/assignee
   blocker instead of a plain teammate chat reply.
+- attachment-dependent requests should become `clarify`, `workflow_proposal`, or
+  `direct_workflow` only after attachment metadata and available preview/extraction
+  status are included in the envelope. If the needed content is unavailable, the outcome
+  should be clarification or blocked proposal, not ordinary chat and not blind auto-start.
 
 Current implemented examples:
 
@@ -133,6 +141,8 @@ approval needed, final result, or evidence.
 The intent selector may:
 
 - suppress messages that do not need an AI response;
+- classify a root local-user turn from the full envelope, including attachments, links,
+  file refs, and active-run guidance metadata;
 - route ordinary questions to one selected teammate;
 - create a bounded visible multi-reply when the user explicitly asks multiple teammates
   for opinions, critique, or brainstorming;
@@ -149,6 +159,7 @@ It must not:
 - make all teammates speak by default or during execution work;
 - create a shared long-context multi-agent transcript;
 - expose raw selector JSON, prompts, scoring, or confidence numbers in ordinary UI;
+- ignore envelope assets by reading only `body`;
 - use the right drawer for ordinary route explanation or proposal explanation;
 - let model output grant tools, approvals, provider access, credentials, deploy authority,
   external-send authority, or memory authority;
@@ -283,6 +294,11 @@ interface ChannelWorkflowIntent {
 }
 ```
 
+The durable decision record stays compact, but the classifier input is the full
+`LingAgentTurnEnvelope`. Implementations may store only source ids in the decision row;
+they must still evaluate attachment refs, link preview refs, file refs, and guidance
+payload before returning the decision.
+
 `userVisibleLabel` is short UI copy such as `Auto routed`, `Workflow proposed`, or
 `Clarification needed`. It must not contain confidence values.
 
@@ -297,6 +313,15 @@ interface ChannelWorkflowIntent {
 | `workflow_proposal` | The message asks for coordinated work or multiple roles. | Create compact proposal evidence; auto-start only when Ling Agent Session policy allows it, otherwise show confirmation. |
 | `direct_workflow` | The message explicitly asks to start known executable work. | Create validated proposal evidence; auto-start when scope, executor/provider, and approval policy allow run creation. Runtime approval gates side effects. |
 
+Attachment-aware examples:
+
+| User turn | Selector outcome | Notes |
+| --- | --- | --- |
+| Attachment only, no text | `single_reply` or `clarify` | Ling should acknowledge the attached file metadata and ask what to do, not silently no-op. |
+| `总结这个附件` + previewable text/PDF | `single_reply` or `direct_workflow` | If the summary can be produced from preview context, answer; if it should create an artifact, use proposal evidence. |
+| `根据这个截图修 UI` + image attachment | `workflow_proposal` or `clarify` | If image understanding is not materialized, ask for extraction/inspection path before auto-start. |
+| `把附件内容写进 README.md` + text attachment | `direct_workflow` only after content preview is available | If content is unavailable, block or clarify. Do not invent file contents. |
+
 `direct_workflow` is intentionally narrow. In Ling it does not mean hidden uncontrolled
 side effects. It means the selector is allowed to prefill a known workflow/task start
 shape. Ling Agent Session may auto-accept and start only under the auto-start policy.
@@ -306,9 +331,10 @@ When in doubt, use `workflow_proposal` or `clarify`.
 
 ```text
 persist local-user message
+  -> Ling Agent Session builds TurnEnvelope
   -> deterministic safety and spam filters
   -> explicit mention handling
-  -> channel intent selector
+  -> channel intent selector consumes TurnEnvelope
      -> no_reply
      -> single_reply
         -> channel auto reply router
@@ -405,16 +431,16 @@ UI behavior:
 
 ## Context Injection Boundary
 
-The selector decides intent; the Context Budget Manager decides what context is safe and
-small enough to inject.
+The selector classifies the envelope; the Context Budget Manager decides what context is
+safe and small enough to inject.
 
 | Intent | Context level | Boundary |
 | --- | --- | --- |
 | `single_reply` | `minimal` by default | Do not include full roster unless the user asks about teammates or routing. |
 | `visible_multi_reply` | `roster_compact` | Include compact roster and selected participants; exclude presence and hidden peer content. |
 | `clarify` | `minimal` plus relevant protocol rules | Ask one question; do not create workflow context. |
-| `workflow_proposal` | `capability_routing` | Use teammate roles/capabilities for proposal drafting, not as shared chat context. |
-| `direct_workflow` | `capability_routing` then `workflow_packet` after start | Durable proposal evidence first; execution may auto-start or wait for confirmation according to Ling Agent Session policy. |
+| `workflow_proposal` | `capability_routing` plus asset refs needed for scope | Use teammate roles/capabilities and envelope asset metadata for proposal drafting, not as shared chat context. |
+| `direct_workflow` | `capability_routing`, required asset previews, then `workflow_packet` after start | Durable proposal evidence first; execution may auto-start only when required scope and asset content are available or not needed. |
 
 This boundary lets Ling answer "who is in this channel?" without treating every
 teammate reply as part of one autonomous shared transcript.

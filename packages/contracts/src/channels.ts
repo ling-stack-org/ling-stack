@@ -293,6 +293,15 @@ export interface ChannelMention {
   readonly kind: "ai-teammate" | "local-user" | "channel";
 }
 
+export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api";
+
+export interface ChannelMessageFileRef {
+  readonly path: string;
+  readonly label?: string;
+  readonly source?: ChannelMessageFileRefSource;
+  readonly line?: number;
+}
+
 export interface ChannelMessage {
   readonly id: string;
   readonly workspaceId: string;
@@ -306,6 +315,7 @@ export interface ChannelMessage {
   readonly mentions: readonly ChannelMention[];
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
+  readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
   readonly status: "pending" | "ready" | "blocked" | "failed";
@@ -324,6 +334,7 @@ export interface CreateChannelMessageRequest {
   readonly mentions?: readonly ChannelMention[];
   readonly attachmentIds?: readonly string[];
   readonly linkPreviewIds?: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
   readonly requestAiReply?: boolean;

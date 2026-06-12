@@ -26,7 +26,8 @@ an executable user request and turns it into a generic "I cannot execute" chat a
 The Ling Agent Session coordinator owns the turn. This module is called only for the
 ordinary `answer` outcome after active-session handling, executable intent detection,
 auto-start eligibility, confirmation gating, approval handling, and clarification have
-all declined the message.
+all declined the message. It consumes the same Ling Agent turn envelope as the selector;
+it is not allowed to re-interpret the turn as text-only.
 
 Channel discussion used to reply only when the user explicitly mentioned an AI teammate.
 That was safe, but it made root channel turns feel silent. Under the Ling Agent session
@@ -41,6 +42,7 @@ This design preserves a narrow ordinary-answer router:
 
 ```text
 user channel message
+  -> Ling Agent Session builds TurnEnvelope
   -> Ling Agent Session decides this is ordinary answer mode
   -> decide answer or no_answer
   -> choose Ling Agent as the visible ordinary responder
@@ -56,7 +58,9 @@ executable intent detection, auto-start/confirmation decision, and clarification
 consumes the protected built-in `ling_agent` teammate identity as the visible ordinary
 responder; it does not select or create a separate default speaker. It must not claim
 messages that should become a task, run, continuation, approval response, or
-clarification.
+clarification. It may mention attachment/link metadata that is present in the envelope,
+but it must not claim to have read attachment bodies unless preview or extraction content
+was explicitly materialized into the envelope.
 
 ## Current P0 Behavior
 
@@ -105,6 +109,8 @@ It may:
 - produce explainable routing evidence;
 - reuse the existing `createAiChannelReply` path for ordinary reply generation, with
   proposal extraction explicitly disabled for auto-routed messages.
+- answer attachment-only or link-only turns by acknowledging available metadata and asking
+  what the user wants, when no executable/clarification outcome already handled the turn.
 
 It must not:
 
@@ -336,7 +342,7 @@ Never reply:
 - message is authored by `ai-teammate` or `system`;
 - message kind is `ai_reply`, `system`, or `task_link`;
 - message is in a thread reply panel unless P0 explicitly supports thread replies;
-- message is empty after trimming text and attachments;
+- turn envelope has no text, attachments, links, file refs, or guidance payload;
 - message is a short acknowledgement;
 - message is a repeated greeting or repeated short prompt in the recent window;
 - channel status is not `active`;
@@ -356,6 +362,8 @@ Reply-worthy:
 - Chinese question markers such as `什么`, `怎么`, `为什么`, `是否`, `能不能`,
   `可以吗`, `是什么`, `怎么做`;
 - message has attachments or links plus a question marker;
+- message has attachments or links with no text and no executable intent; Ling should ask
+  one concise "what should I do with this?" style question rather than no-op;
 - message length is above a small threshold and is not a status fragment.
 
 Legacy not-reply-worthy examples are no longer valid for root local-user messages:

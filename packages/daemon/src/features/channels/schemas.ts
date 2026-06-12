@@ -20,6 +20,8 @@ import {
   type ChannelDecisionStatus,
   type ChannelExecutionProposalStep,
   type ChannelExecutionProposalStatus,
+  type ChannelMessageFileRef,
+  type ChannelMessageFileRefSource,
   type ChannelHandoffStatus,
   type ChannelIntentDecisionAction,
   type ChannelIntentDecisionStatus,
@@ -169,6 +171,7 @@ export interface ChannelMessageRequest {
   readonly mentions: readonly ChannelMention[];
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
+  readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
   readonly requestAiReply: boolean;
@@ -578,21 +581,25 @@ export function parseChannelMessageRequest(value: unknown): ChannelMessageReques
     intent: readOptionalChannelMessageIntent(value, "intent") ?? "discuss",
     authorType: readOptionalChannelMessageAuthorType(value, "authorType") ?? "local-user",
     authorId: readOptionalString(value, "authorId"),
-    body: readString(value, "body"),
+    body: readStringAllowEmpty(value, "body"),
     mentions: readOptionalChannelMentions(value, "mentions") ?? [],
     attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
     linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
+    fileRefs: readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [],
     linkedTaskId: readOptionalString(value, "linkedTaskId"),
     linkedRunId: readOptionalString(value, "linkedRunId"),
     requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
     providerPresetId: readOptionalString(value, "providerPresetId"),
     teammateId: readOptionalString(value, "teammateId"),
   };
-  if (!input.body.trim() && input.attachmentIds.length === 0 && input.linkPreviewIds.length === 0) {
-    throw new Error("body, attachmentIds, or linkPreviewIds is required");
+  if (!input.body.trim() && input.attachmentIds.length === 0 && input.linkPreviewIds.length === 0 && input.fileRefs.length === 0) {
+    throw new Error("body, attachmentIds, linkPreviewIds, or fileRefs is required");
   }
   if (input.attachmentIds.length > 10) {
     throw new Error("A channel message can reference at most 10 attachments");
+  }
+  if (input.fileRefs.length > 12) {
+    throw new Error("A channel message can reference at most 12 workspace files");
   }
   return input;
 }
@@ -892,6 +899,52 @@ function readOptionalChannelMentions(record: Record<string, unknown>, key: strin
     }
     return { id, label, kind };
   });
+}
+
+function readOptionalChannelMessageFileRefs(record: Record<string, unknown>, key: string): ChannelMessageFileRef[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    const path = readString(item, "path").trim();
+    if (path.length > 2_000) {
+      throw new Error(`${key}[${index}].path must be 2000 characters or fewer`);
+    }
+    const label = readOptionalString(item, "label")?.trim();
+    const source = readOptionalChannelMessageFileRefSource(item, "source", `${key}[${index}].source`);
+    const line = readOptionalNumber(item, "line");
+    if (line !== undefined && (!Number.isInteger(line) || line < 1)) {
+      throw new Error(`${key}[${index}].line must be a positive integer`);
+    }
+    return {
+      path,
+      ...(label ? { label: label.slice(0, 240) } : {}),
+      ...(source ? { source } : {}),
+      ...(line !== undefined ? { line } : {}),
+    };
+  });
+}
+
+function readOptionalChannelMessageFileRefSource(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): ChannelMessageFileRefSource | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "composer" && value !== "explicit_text" && value !== "api") {
+    throw new Error(`${label} must be one of: composer, explicit_text, api`);
+  }
+  return value;
 }
 
 function readChannelContextSummaryTargetType(record: Record<string, unknown>, key: string): ChannelContextSummaryTargetType {

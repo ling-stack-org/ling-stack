@@ -1,8 +1,9 @@
 # Multi-Agent Orchestration P4-P7 Detailed Design
 
 Status: initial implementation landed; workflow model-assisted selector remains a follow-up.
-Channel `auto_route` is split out; the channel-message entry into workflow selector now
-has P1-P6 implemented with model-assisted intent selection feature-gated.
+Ling Agent Session is the user-turn entry point. Channel `auto_route` and the workflow
+intent selector are internal helpers behind the Ling Agent turn envelope boundary, with
+P1-P6 implemented and model-assisted intent selection feature-gated.
 Date: 2026-06-09
 
 Source design:
@@ -101,19 +102,20 @@ The existing code already anticipates P4/P5 by adding `selectorDecisionIds` and
 `handoffIntentIds` to context/output packets and workflow-step metadata. P4-P7 should
 populate those ids and render them as evidence, not create a parallel transcript system.
 
-Ordinary channel auto replies are a separate entry point. They may reuse the structured
-decision and validation pattern, but they should use
-[Channel Auto Reply Router](channel-auto-reply-router.md) and create only normal
-`ai_reply` messages. They must not invoke workflow selector authority or advance a
-workflow.
+Ordinary channel replies are an internal Ling Agent answer outcome, not a separate
+top-level entry point. They may reuse the structured decision and validation pattern, but
+they should use [Channel Auto Reply Router](channel-auto-reply-router.md) only after Ling
+Agent Session has built the full turn envelope and declined active-run handling,
+executable intent, confirmation, and clarification. They create only normal `ai_reply`
+messages and must not invoke workflow selector authority or advance a workflow.
 
-When an ordinary message is likely to start coordinated work, it should first pass
-through [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md). That
-entry layer may produce a compact workflow proposal, a clarify question, or a validated
-direct-workflow prefill that still requires confirmation. Its P1 adapter hands a
-confirmed proposal into this workflow graph/selector layer; it must not turn ordinary
-channel discussion into a shared multi-agent transcript or bypass workflow state
-machines.
+When a user turn is likely to start coordinated work, Ling Agent Session should pass the
+same turn envelope through
+[Channel Intent To Workflow Selector](channel-intent-workflow-selector.md). That internal
+classifier may produce a compact workflow proposal, a clarify question, or a validated
+direct-workflow prefill. Its P1 adapter hands a confirmed or auto-start-eligible proposal
+into this workflow graph/selector layer; it must not turn channel discussion into a shared
+multi-agent transcript or bypass workflow state machines.
 
 ## Execution Stage Boundary
 
@@ -140,8 +142,8 @@ contribute different perspectives, but Ling should keep it as a bounded one-roun
 discussion. It must not become an autonomous shared-context selector group chat, create
 workflow steps, start tools, grant permissions, or feed hidden peer messages into a
 running workflow. If the user asks the same teammates to implement, verify, publish,
-merge, deploy, or otherwise execute work, the entry selector should create a
-`workflow_proposal` instead.
+merge, deploy, or otherwise execute work, Ling Agent Session should classify the turn as
+`workflow_proposal` or `direct_workflow` through its internal intent selector instead.
 
 ### Collaboration Protocol Boundary
 

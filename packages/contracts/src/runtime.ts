@@ -491,6 +491,46 @@ export interface RunInterventionMessagePayload {
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
+  readonly attachments?: readonly RunInterventionAttachmentPayload[];
+  readonly linkPreviews?: readonly RunInterventionLinkPreviewPayload[];
+  readonly fileRefs?: readonly RunInterventionWorkspaceFilePayload[];
+}
+
+export type RunInterventionMaterializationStatus = "available" | "metadata_only" | "not_loaded" | "unsupported" | "blocked";
+
+export interface RunInterventionAttachmentPayload {
+  readonly id: string;
+  readonly fileName: string;
+  readonly kind: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly materializationStatus: RunInterventionMaterializationStatus;
+  readonly previewStatus?: string;
+  readonly previewText?: string;
+  readonly reason?: string;
+}
+
+export interface RunInterventionLinkPreviewPayload {
+  readonly id: string;
+  readonly url: string;
+  readonly normalizedUrl: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly siteName?: string;
+  readonly status: string;
+  readonly materializationStatus: RunInterventionMaterializationStatus;
+  readonly previewText?: string;
+  readonly reason?: string;
+}
+
+export interface RunInterventionWorkspaceFilePayload {
+  readonly path: string;
+  readonly label?: string;
+  readonly rootRelation: "inside_workspace" | "outside_workspace" | "unknown";
+  readonly kind: "file" | "directory" | "glob" | "unknown";
+  readonly materializationStatus: RunInterventionMaterializationStatus;
+  readonly previewText?: string;
+  readonly blockedReason?: string;
 }
 
 export interface RunIntervention {

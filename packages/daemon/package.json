@@ -19,9 +19,12 @@
     "@ling-stack/providers": "workspace:*",
     "@ling-stack/runner-pi": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.25.2",
+    "mammoth": "1.12.0",
+    "pdf-parse": "1.1.1",
     "ws": "^8.20.1"
   },
   "devDependencies": {
+    "@types/pdf-parse": "1.1.5",
     "@types/ws": "^8.5.13"
   }
 }

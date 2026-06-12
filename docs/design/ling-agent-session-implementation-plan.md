@@ -52,7 +52,9 @@ The first implementation should add a product control-plane read model and route
 
 ```text
 Ling Agent Session View
+  -> TurnEnvelope builder
   -> active-session continuation / approval handling
+  -> attachment/link/file-ref materialization
   -> executable intent detection
   -> auto-start or workflow/task confirmation
   -> ordinary chat routing
@@ -68,6 +70,8 @@ layers that already enforce state, permissions, runner behavior, and audit.
 - Keep executable work on the existing workflow/run path.
 - Keep permissions on the existing approval path.
 - Treat proposal records as auditable task plans, not mandatory user-facing stop signs.
+- Treat attachments, link previews, composer file refs, and active-run guidance payloads
+  as first-class turn input, not UI decorations or optional message metadata.
 - Keep process details expandable, not default transcript content.
 - Make Ling Agent a protected built-in system teammate and default executor identity, not
   a permission authority.
@@ -79,6 +83,7 @@ layers that already enforce state, permissions, runner behavior, and audit.
 | Area | Current anchor |
 | --- | --- |
 | Channel message entry | `packages/daemon/src/features/channels/messages.ts` |
+| Turn envelope and context packs | `packages/daemon/src/features/channels/context-packs.ts` |
 | Executable/collaboration detection | `packages/daemon/src/features/channels/channel-intent-selector.ts` |
 | Ordinary chat routing | `packages/daemon/src/features/channels/channel-message-router.ts` |
 | Proposal to workflow confirmation | `packages/daemon/src/features/channels/proposal-workflows.ts` |
@@ -186,12 +191,17 @@ corepack pnpm --filter @ling-stack/daemon exec node --test --test-name-pattern "
 
 ## P2: Coordinator Entry Order
 
-Status: implementation corrected. Ling Agent now treats intent-selector `no_reply` as
-"not executable work" and continues into ordinary reply handling instead of ending the
-channel message. Ordinary root messages, auto-route fallbacks, model-selected ordinary
-routes, and deterministic clarify questions render from `ling_agent`. Suppressed
-ordinary-route and intent-selector evidence is retained for diagnostics but no longer
-renders as route/intent chrome in the default feed.
+Status: implementation corrected and first TurnEnvelope slice landed. Ling Agent now
+treats intent-selector `no_reply` as "not executable work" and continues into ordinary
+reply handling instead of ending the channel message. Ordinary root messages,
+auto-route fallbacks, model-selected ordinary routes, and deterministic clarify questions
+render from `ling_agent`. Suppressed ordinary-route and intent-selector evidence is
+retained for diagnostics but no longer renders as route/intent chrome in the default
+feed. The daemon now builds a `LingAgentTurnEnvelope` for channel turns, passes it through
+active-session handling, intent selection, ordinary routing, and AI reply context packs,
+allows attachment-only messages through the root turn path, materializes bounded text
+attachment previews, and blocks attachment-dependent executable work when required
+content is unavailable.
 
 ### Goal
 
@@ -202,11 +212,13 @@ Target priority:
 
 ```text
 persist user message
+-> build LingAgentTurnEnvelope from body, mentions, attachments, links, file refs, and guidance
 -> active-session handling
+-> materialize attachment/link/file-ref context needed for the decision
 -> executable intent selector
 -> workflow/collaboration selector
 -> ordinary chat auto-route
--> no reply
+-> visible Ling outcome, or no visible reply only for non-eligible system/AI/thread inputs
 ```
 
 ### Daemon Work
@@ -230,6 +242,617 @@ async function handleLingAgentChannelMessage(input: LingAgentChannelMessageInput
 
 This is a shape, not the exact API. The important change is ownership and ordering.
 
+### Turn Envelope Contract
+
+Before calling any selector/router, message handling should build a `LingAgentTurnEnvelope`
+from the persisted channel message and available channel assets.
+
+Minimum fields:
+
+- source message id, channel id, thread id, author;
+- `body`, mentions, response-language hints;
+- attachment refs with filename, kind, content type, size, and preview/extraction status;
+- link preview refs with URL, title/status, and bounded summary when available;
+- composer workspace file refs parsed from the current input;
+- active-run guidance payload when the turn is intended for a running session.
+
+The envelope is the only input object passed to:
+
+- active session guidance/redirect classification;
+- executable/collaboration intent selector;
+- ordinary answer router;
+- proposal/workflow prompt generation;
+- final answer context assembly.
+
+Do not let helper modules re-read only `sourceMessage.body` and forget attachments. A
+text-empty turn with attachments, links, or guidance is still a valid Ling Agent turn.
+
+### Attachment And Link Materialization
+
+Materialization is not unrestricted tool execution. It is bounded context preparation for
+the current user-provided turn.
+
+Rules:
+
+- Use safe metadata first: filename, kind, MIME type, size, uploaded id, link title/status.
+- Add preview text only when the existing preview/extraction path supports the file type
+  and size.
+- For images/PDF/Office files, record whether content is `available`, `unsupported`,
+  `blocked`, or `not_loaded`.
+- If a task depends on unavailable content, Ling should ask for clarification, request an
+  explicit extraction path, or create a blocked proposal; it should not auto-start a write
+  or shell task that depends on unseen attachment content.
+- Ordinary replies may say "I can see an attached file named X" when metadata is present,
+  but must not claim to have read body contents unless preview/extraction was supplied in
+  the envelope.
+- Runtime approvals remain unchanged for file writes, `bash`, Git, deploy, external send,
+  provider changes, credentials, and broad data mutation.
+
+### Detailed Implementation Slices
+
+Status: Slice 1 through the first half of Slice 5 is implemented for channel turns.
+Durable storage remains unchanged: `attachmentIds` and `linkPreviewIds` are still the
+persisted source refs, while the daemon envelope is the decision/prompt input.
+
+Implement the TurnEnvelope migration in small slices so the product boundary changes
+without rewriting the workflow/run stack.
+
+#### Slice 1: Envelope Builder
+
+Add a daemon-only builder near the existing channel context pack code. It should be pure
+and deterministic: input is a persisted `ChannelMessage` plus store-readable channel
+assets; output is a `LingAgentTurnEnvelope`.
+
+```ts
+interface BuildLingAgentTurnEnvelopeInput {
+  readonly channel: Channel;
+  readonly sourceMessage: ChannelMessage;
+  readonly activeRunId?: string;
+  readonly guidancePayload?: LingTurnGuidancePayload;
+}
+
+function buildLingAgentTurnEnvelope(input: BuildLingAgentTurnEnvelopeInput): LingAgentTurnEnvelope;
+```
+
+Responsibilities:
+
+- preserve `body`, author, channel, thread, mentions, attachment refs, link refs, file
+  refs, response-language hints, and active-run target;
+- resolve attachment and link metadata from existing channel-scoped assets;
+- never throw away a turn only because `body.trim()` is empty;
+- mark missing or cross-channel assets as `blocked` with a reason that can be rendered in
+  clarification or diagnostics;
+- keep preview text bounded so the envelope can be used by no-tools routing prompts.
+
+Non-goals:
+
+- starting a run;
+- granting tool permission;
+- reading arbitrary workspace files;
+- fetching remote link bodies outside existing preview state.
+
+#### Slice 2: Envelope-Aware Channel Entry
+
+Change `handleLingAgentChannelMessage` so the first step after persistence is envelope
+construction.
+
+```text
+persist user message
+-> build LingAgentTurnEnvelope
+-> active-session handling
+-> executable intent selector
+-> ordinary answer router
+```
+
+`maybeHandleActiveSessionMessage`, `selectChannelWorkflowIntent`,
+`maybeRouteChannelMessage`, `createAiChannelReply`, proposal prompt builders, and final
+context assembly should receive the envelope or a context object that contains it. During
+the migration, it is acceptable to keep `sourceMessage` for durable ids and audit fields,
+but helper code must not reconstruct meaning from `sourceMessage.body` alone.
+
+Acceptance criteria:
+
+- attachment-only and link-only turns reach Ling Agent Session;
+- explicit executable work with attachments reaches the executable selector before
+  ordinary answer routing;
+- `ChannelIntentDecision.action = "no_reply"` means "not executable work", not "no
+  visible Ling outcome";
+- ordinary answer routing can still decline non-root or AI-authored messages.
+
+#### Slice 3: Materialization Policy
+
+Add a small materialization classifier that answers two questions before auto-start:
+
+```ts
+interface LingTurnMaterializationDecision {
+  readonly canReasonFromEnvelope: boolean;
+  readonly missingRequiredInputs: readonly LingMissingInput[];
+  readonly mayAutoStartExecutableWork: boolean;
+}
+```
+
+Rules:
+
+- metadata-only is enough for questions such as "what did I attach?" or "which file is
+  this?";
+- preview/extraction content is required for "summarize this attachment", "copy this
+  attachment into README", "fix UI according to this screenshot", or any task where the
+  attached content changes the output;
+- if required content is unavailable, the selector should return `clarify` or a blocked
+  proposal with a concrete reason;
+- auto-start may proceed only when every required attachment/link/file input is either
+  materialized or irrelevant to the first safe inspection step.
+
+This policy prevents two bad outcomes: answering as if Ling read a file it did not read,
+and starting a write/edit/bash task whose required input was never placed in context.
+
+#### Slice 4: Prompt And Evidence Migration
+
+Update prompt/context builders to render envelope facts explicitly:
+
+- body text;
+- mentions and requested visible participants;
+- attachment metadata and preview status;
+- bounded preview or extraction text when available;
+- link preview title/status/summary;
+- active run target and queued guidance context.
+
+Do not render raw ids alone unless the prompt also includes enough user-facing metadata
+to understand what the id refers to. Durable evidence records may stay compact by storing
+source ids, but inspect views should make it clear which envelope inputs affected the
+decision.
+
+#### Slice 5: Web And Diagnostics
+
+The Web composer already permits attachment-only sends. The Web work for this slice is
+mostly display and diagnostics:
+
+- keep attachment/link chips visible on the user message;
+- do not show selector/router rows as default transcript content;
+- when Ling asks for clarification because attachment content is unavailable, show the
+  missing input in normal assistant copy, not in raw router JSON;
+- active-run guidance previews should summarize attached files/links as queued guidance,
+  not only show `Attachments: <id>`.
+
+#### Slice 6: Backward Compatibility And Cleanup
+
+After selectors consume envelopes:
+
+- keep old storage fields such as `attachmentIds` and `linkPreviewIds`;
+- keep decision rows compact and source-id based;
+- remove or quarantine helpers that return false solely from `message.body.trim()`;
+- rename diagnostics from public `auto_route` language to internal route evidence where
+  the UI exposes it;
+- keep feature flags as rollout controls, not product-mode concepts.
+
+### Follow-Up Detailed Design For Remaining Envelope Work
+
+Status: backend follow-up slice implemented for materialization status vocabulary,
+explicit `file:`/`path:` workspace refs, enriched active-run intervention payloads, and
+continuation prompt rendering. Composer-native file refs are now a persisted message
+contract via `file_refs_json`, Web composer path chips send `fileRefs`, message rows render
+file chips, and active-run follow-ups preserve file refs in queued payloads. Rich
+image/PDF/Office body extraction and full remote link body extraction remain separate
+follow-up slices.
+
+Detailed contracts for the remaining input and browser-acceptance work live in:
+
+- [Input Materialization Detailed Design](input-materialization-detailed-design.md)
+- [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
+
+The first envelope slice fixes the top-level product owner problem: every root user turn
+enters Ling Agent Session before helper modules decide executable work, active-run
+guidance, specialist context, or ordinary answers. The remaining work should not reopen
+that architecture. It should fill in materialization, rendering, and test coverage around
+the same envelope contract.
+
+#### Extraction Pipeline Detailed Contract
+
+Goal: add real extraction for rich inputs without making ordinary chat a hidden tool
+runner.
+
+Extractor interface:
+
+```ts
+type LingMaterializationSourceKind = "attachment" | "link_preview" | "workspace_file_ref";
+type LingMaterializationContentKind =
+  | "plain_text"
+  | "ocr_text"
+  | "vision_summary"
+  | "pdf_text"
+  | "office_text"
+  | "html_text"
+  | "metadata";
+
+interface LingMaterializationRequest {
+  readonly channelId: string;
+  readonly sourceKind: LingMaterializationSourceKind;
+  readonly sourceId: string;
+  readonly sourceFingerprint: string;
+  readonly requestedBy: "turn_envelope" | "workflow_inspection" | "user_action";
+  readonly maxBytes: number;
+  readonly maxChars: number;
+}
+
+interface LingInputExtractor {
+  readonly id: string;
+  readonly supportedSourceKinds: readonly LingMaterializationSourceKind[];
+  supports(input: LingMaterializationRequest): boolean;
+  materialize(input: LingMaterializationRequest): Promise<LingMaterializationResult>;
+}
+
+interface LingMaterializationResult {
+  readonly status: "available" | "metadata_only" | "not_loaded" | "unsupported" | "blocked";
+  readonly contentKind: LingMaterializationContentKind;
+  readonly contentText?: string;
+  readonly structuredSummary?: Record<string, unknown>;
+  readonly byteCount?: number;
+  readonly tokenEstimate?: number;
+  readonly truncated?: boolean;
+  readonly errorCode?: string;
+  readonly errorMessage?: string;
+}
+```
+
+Durable cache:
+
+Add a channel-scoped materialization cache before adding multiple extractors. The cache is
+source evidence, not a new conversation object.
+
+```ts
+interface ChannelInputMaterialization {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceKind: LingMaterializationSourceKind;
+  readonly sourceId: string;
+  readonly sourceFingerprint: string;
+  readonly extractorId: string;
+  readonly contentKind: LingMaterializationContentKind;
+  readonly status: "available" | "metadata_only" | "not_loaded" | "unsupported" | "blocked";
+  readonly contentText?: string;
+  readonly structuredSummaryJson?: Record<string, unknown>;
+  readonly byteCount?: number;
+  readonly tokenEstimate?: number;
+  readonly truncated: boolean;
+  readonly errorCode?: string;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+```
+
+Storage rules:
+
+- key cache lookup by `sourceKind + sourceId + sourceFingerprint + extractorId`;
+- keep `contentText` bounded and safe for prompt assembly;
+- if extracted text exceeds the prompt budget, store a bounded preview plus an artifact or
+  source pointer for a managed run to inspect later;
+- never store provider secrets, cookies, auth headers, raw forms, or external-send payloads
+  in materialization rows;
+- materialization rows may be referenced from intent decisions, proposals, run
+  interventions, and evidence drawers.
+
+Trigger policy:
+
+| Trigger | Allowed first action |
+| --- | --- |
+| Small text attachment | Synchronous preview in envelope. |
+| Image/PDF/Office upload with no content-dependent request | Metadata only; no extraction required. |
+| `summarize/fix/copy according to this image/PDF/Office` | Try supported extractor, otherwise clarify/block. |
+| Clear executable task that depends on rich content | Auto-start only if extractor output is `available`, or first step is a safe managed inspection. |
+| Link-only message | Use cached preview metadata; full body extraction only if user asks or task requires it. |
+| Workspace file ref | Metadata before run; body read through managed inspection/run path. |
+
+Attachment extraction:
+
+- Image v1 should support OCR/vision summary only when an extractor is configured. Without
+  extractor output, screenshots stay `unsupported` or `not_loaded`.
+- PDF v1 should extract bounded text and page metadata. If text extraction fails, return
+  `blocked` with a concrete reason instead of falling back to invented summaries.
+- Office v1 should extract bounded plain text for supported document types. Unknown or
+  encrypted documents become `unsupported` or `blocked`.
+- Archive and binary attachments remain metadata-only until a separate unpacking design
+  exists.
+
+Link body extraction:
+
+- Reuse the existing link-preview SSRF boundary: block localhost, private IP ranges,
+  file/data/javascript schemes, and unsafe redirects.
+- Limit redirects, response size, content type, and wall-clock time.
+- Only unauthenticated public GET is eligible for context materialization.
+- Authenticated fetch, browser session use, forms, checkout/account-changing pages, and
+  external sends must use managed tools and runtime approvals.
+- Link extraction should store final URL, content type, title, extraction timestamp, and
+  failure reason.
+
+Rollout phases:
+
+1. Add materialization cache and extractor registry with no new extractors enabled.
+2. Move current text attachment preview into the cache-backed interface.
+3. Add PDF/text extraction and link body extraction behind feature flags.
+4. Add image/OCR/vision and Office extraction behind feature flags.
+5. Wire materialization evidence into proposal cards, run interventions, and Web evidence.
+
+#### Web Composer And E2E Detailed Contract
+
+Goal: make file chips and missing input states visible to users while keeping internal
+selector/router diagnostics hidden.
+
+Message request contract:
+
+```ts
+interface ChannelMessageFileRefInput {
+  readonly path: string;
+  readonly label?: string;
+  readonly source?: "composer" | "explicit_text" | "api";
+  readonly line?: number;
+}
+
+interface ChannelMessageRequest {
+  readonly body: string;
+  readonly attachmentIds?: readonly string[];
+  readonly linkPreviewIds?: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRefInput[];
+}
+```
+
+Persistence options:
+
+- Preferred: add `file_refs_json` to channel messages so composer-native file chips
+  survive reload, active-run guidance, and evidence drilldown.
+- Transitional: continue parsing `file:`/`path:` text refs into envelope refs, but do not
+  treat this as the final composer contract.
+- Do not overload `attachmentIds` for workspace files; uploads and workspace refs have
+  different permission and trust boundaries.
+
+Daemon rules:
+
+- validate `fileRefs` count and path shape at message creation;
+- normalize file refs into `LingTurnWorkspaceFileRef` before active-session handling,
+  intent selection, ordinary routing, and AI reply prompt assembly;
+- mark outside-workspace refs `blocked` unless an explicit policy-approved source exists;
+- file ref metadata may be available before a run, but body content is read only by a
+  managed inspection/run step;
+- active-run interventions must preserve file refs in the queued payload.
+
+Web rendering:
+
+- User message rows show attachment chips, link chips, and file chips consistently.
+- Blocked/clarify Ling copy names the concrete input and status:
+  `I can see screenshot.png, but its image content is not available yet. Start an inspection task?`
+- Proposal cards blocked by missing materialization show:
+  input name, source kind, status, reason, and first unblock action.
+- Queued guidance previews show file/link/attachment names and statuses, never only raw
+  ids.
+- Evidence drawers may show materialization ids, extractor ids, source fingerprints, raw
+  decision ids, and debug status. The default transcript must not.
+
+Browser/E2E acceptance matrix:
+
+| Flow | Expected visible result |
+| --- | --- |
+| Empty text + uploaded screenshot | User message shows screenshot chip; Ling asks to inspect or explains unsupported extraction. |
+| Screenshot task with extractor disabled | No invented visual details; blocked/clarify copy names screenshot and missing extractor. |
+| PDF summarize with extractor enabled | Ling answer/proposal cites extracted text status and hides raw materialization JSON. |
+| Link-only message | Ling uses title/description metadata or asks what to do. |
+| `summarize this link` with extraction failure | Visible blocked/clarify with URL and reason. |
+| Composer file chip only | Ling receives a valid turn; file chip persists after reload. |
+| Composer file chip outside workspace | Visible blocked/clarify; no hidden file read. |
+| Active run follow-up with attachment/link/file chip | Queued guidance preview names each input and status. |
+| Content-dependent proposal blocked | Proposal card shows missing input and unblock action; no stale start confirmation. |
+| Completed work | Default transcript shows final result, not duplicate process/router rows. |
+
+#### Follow-Up A: Image, PDF, And Office Materialization
+
+Goal: make unsupported rich attachments explicit and safe, without letting Ling pretend it
+read content that never entered context.
+
+Contract:
+
+- extend attachment refs with a stable materialization status vocabulary:
+  `available`, `metadata_only`, `not_loaded`, `unsupported`, and `blocked`;
+- keep the existing `previewStatus` field as a compatibility alias during migration, but
+  prefer the broader materialization status in prompts and diagnostics;
+- use current metadata first: file name, kind, MIME type, size, uploaded id, and preview
+  or extractor status;
+- only mark rich attachment content `available` when an image/OCR/PDF/Office extractor
+  has actually produced bounded text or structured summary for the envelope;
+- if a user request depends on unavailable rich attachment content, return a visible
+  clarify or blocked proposal before auto-starting content-dependent edits or shell work;
+- allow auto-start only for a safe first inspection step when the first step itself is to
+  materialize or inspect the attachment through the managed run/tool path.
+
+Non-goals:
+
+- do not add a hidden image/PDF reader inside ordinary chat prompts;
+- do not treat a filename or MIME type as evidence of visual/document content;
+- do not grant write, edit, bash, network, or external-send permission from
+  materialization status.
+
+Acceptance cases:
+
+| Case | Expected result |
+| --- | --- |
+| `根据这个截图修 UI` + image with no extractor output | blocked/clarify, no invented screenshot details |
+| image with extractor summary | Ling may reason from the extractor summary and include it in proposal/context evidence |
+| `总结这个 PDF` + unsupported PDF | visible limitation and request for extraction/alternate input |
+| Office document with bounded extracted text | ordinary answer/proposal may use the extracted text under token budget |
+
+#### Follow-Up B: Link Body Extraction
+
+Goal: distinguish cached link-preview metadata from full page/body understanding.
+
+Contract:
+
+- envelope link refs should always include URL, preview title, description/status, and
+  cached summary when already available;
+- full remote body fetch is a separate materialization step, not an implicit ordinary-chat
+  side effect;
+- if link extraction is added, record fetch status, content type, final URL, size budget,
+  extraction timestamp, and failure reason;
+- unauthenticated public GET extraction may be treated as bounded context
+  materialization only when product policy allows it; authenticated pages, forms,
+  account-changing flows, and external sends must use managed tools and approvals;
+- ordinary Ling replies may summarize only preview metadata until extraction content is
+  `available`.
+
+Acceptance cases:
+
+| Case | Expected result |
+| --- | --- |
+| link-only with cached title/description | Ling answers from metadata or asks what to do |
+| `总结这个链接` without extracted body | clarify or offer extraction path; no body summary invented |
+| extracted article body under budget | Ling may summarize extracted content and cite link status in evidence |
+| extraction timeout/blocked | visible blocked/clarify result with URL and failure reason |
+
+#### Follow-Up C: Workspace File References
+
+Goal: let composer file refs participate in the same Ling Agent turn model without hiding
+workspace reads in pre-run prompt assembly.
+
+Contract:
+
+```ts
+interface LingTurnWorkspaceFileRef {
+  readonly path: string;
+  readonly label?: string;
+  readonly rootRelation: "inside_workspace" | "outside_workspace" | "unknown";
+  readonly kind: "file" | "directory" | "glob" | "unknown";
+  readonly materializationStatus: "available" | "metadata_only" | "not_loaded" | "unsupported" | "blocked";
+  readonly previewText?: string;
+  readonly blockedReason?: string;
+}
+```
+
+Rules:
+
+- parse file refs from composer metadata or explicit user text into normalized paths;
+- resolve only metadata that is safe and cheap before a run: root relation, type, and
+  user-facing label;
+- do not read arbitrary workspace file bodies into ordinary chat merely because a path was
+  mentioned;
+- when file content is required, create a managed inspection step or use the existing
+  run/tool path so evidence and approval policy stay attached;
+- block refs outside the active workspace unless the user explicitly provides a supported
+  attachment or a policy-approved path.
+
+Acceptance cases:
+
+| Case | Expected result |
+| --- | --- |
+| `看一下 README.md 是否要改` | proposal/run may start with safe read/inspection step |
+| `把 /tmp/private.txt 内容写进 README.md` outside workspace | blocked/clarify unless provided as attachment or policy-approved input |
+| composer file chip with no text | Ling receives a valid turn and asks/acts from file-ref metadata |
+| missing file ref | visible blocked/clarify result; no uncaught exception |
+
+#### Follow-Up D: Active Run Intervention Rendering
+
+Goal: keep queued guidance faithful to the original turn instead of degrading to raw ids.
+
+Contract:
+
+- `RunIntervention` may store compact source ids, but its prompt rendering input must be
+  reconstructed from `LingAgentTurnEnvelope`;
+- continuation prompts should render body text, file names, URLs, preview status, bounded
+  preview text when available, and missing-input reasons;
+- UI previews should say "Queued guidance" with file/link names and statuses, not
+  `Attachments: <id>`;
+- if a queued intervention contains unavailable content, continuation should pause or ask
+  for materialization before applying content-dependent instructions.
+
+Acceptance cases:
+
+| Case | Expected result |
+| --- | --- |
+| active run follow-up with text attachment | queued guidance prompt includes file name and preview text |
+| active run follow-up with image unsupported | queued guidance names image and marks content unavailable |
+| active run follow-up with link preview | queued guidance renders URL/title/status, not only id |
+
+#### Follow-Up E: Text-Only Helper Cleanup
+
+Goal: remove remaining root-turn decisions that accidentally depend only on
+`sourceMessage.body`.
+
+Rules:
+
+- helpers that only generate deterministic titles or language hints may keep reading body
+  text when their output cannot affect whether Ling responds or starts work;
+- any helper that decides reply-worthiness, executable intent, materialization, active-run
+  guidance, proposal eligibility, or prompt context must consume the envelope;
+- empty `body` plus attachments, links, file refs, or guidance payload is a valid root
+  turn and must never be treated as "nothing to do";
+- `no_reply` remains valid for AI-authored/system/internal messages, but not as a terminal
+  result for ordinary root local-user turns.
+
+Acceptance cases:
+
+| Case | Expected result |
+| --- | --- |
+| empty body + attachment | reaches Ling outcome path |
+| empty body + link | reaches Ling outcome path |
+| empty body + file ref | reaches Ling outcome path |
+| AI/system message | helper may still decline visible reply |
+
+#### Follow-Up F: Web Blocked/Clarify Display
+
+Goal: make missing input understandable without exposing selector/router internals.
+
+Contract:
+
+- user message rows keep attachment/link/file chips visible;
+- Ling blocked/clarify copy names the missing input and status:
+  `I can see screenshot.png, but its image content is not available yet. Start an
+  inspection task?`;
+- default transcript hides selector/router rows, raw confidence, JSON, and raw id lists;
+- evidence expansion may show compact source ids plus materialization status for
+  debugging;
+- proposal cards that are blocked by unavailable content should show the first concrete
+  unblock action, such as "extract PDF text" or "attach the file as text".
+
+Acceptance cases:
+
+| Case | Expected result |
+| --- | --- |
+| unsupported screenshot request | ordinary transcript shows a clear Ling clarification, not route diagnostics |
+| blocked proposal | card shows missing input and next action |
+| active queued guidance | preview names files/links and statuses |
+
+#### Follow-Up G: Browser And E2E Verification
+
+Goal: verify the product behavior users actually see after daemon-level tests pass.
+
+Coverage:
+
+- attachment-only send creates a visible Ling outcome;
+- screenshot attachment with unsupported materialization produces blocked/clarify copy;
+- text attachment preview can feed README/write proposal or auto-start when policy allows;
+- proposal blocked by unavailable content does not show stale confirmation or raw router
+  rows;
+- active-run guidance with attachments renders file/link names in the queued preview;
+- final transcript shows user turn, Ling outcome, and final report without duplicate
+  process cards.
+
+Use Playwright/browser verification only after the daemon behavior is covered by focused
+tests. The Web tests should assert visible copy and hidden diagnostics, not raw internal
+decision JSON.
+
+### Detailed Test Matrix
+
+Add focused daemon tests before broad Web e2e coverage:
+
+| Case | Expected result |
+| --- | --- |
+| empty body + one text attachment | Ling creates a visible answer/clarify outcome, not silent no-op |
+| `总结这个附件` + previewable text attachment | selector may choose `single_reply` or `direct_workflow` with preview in context |
+| `把附件内容写进 README.md` + text attachment without preview | blocked proposal or clarify, no auto-start |
+| `根据这个截图修 UI` + image without image materialization | clarify or blocked proposal, no invented screenshot details |
+| link-only turn | ordinary Ling reply asks what to do or summarizes available link metadata |
+| active run follow-up with attachment | queued guidance preserves attachment refs and metadata |
+| `好的` root user turn | visible Ling acknowledgement is allowed; selector `no_reply` is not terminal |
+| AI-authored/system message | router may return no visible user-facing reply |
+| missing/cross-channel attachment id | blocked/diagnostic outcome, not uncaught exception |
+
 ### Active-Session Handling
 
 If a session has active run/workflow state:
@@ -252,10 +875,15 @@ Implemented initial behavior:
   active-session action, but does not create an intervention or cancel the source run;
 - both paths run before executable selector and ordinary auto-route, so they do not create
   route decisions or execution proposals.
+- follow-up interventions must preserve the full envelope payload, not just the text body,
+  so attachments and link previews remain available when the queued guidance is rendered
+  into a run prompt.
 
 ### Guardrails
 
 - Auto-route must not run before executable intent detection.
+- No selector/router may be called with only the text body when the source turn includes
+  attachments, link previews, file refs, or active-run guidance payload.
 - Intent-selector `no_reply` is not terminal; it falls through to ordinary chat routing.
 - `Channel.defaultTeammateId` must not become the visible ordinary-chat author. It is a
   preferred specialist hint for assignment, workflow participation, and evidence.
@@ -273,6 +901,10 @@ Implemented initial behavior:
 Add daemon tests for:
 
 - file create request creates proposal, no ordinary route decision;
+- attachment-only turn creates a Ling reply, clarification, or blocked proposal rather
+  than being dropped because `body` is empty;
+- attachment-dependent execution request does not auto-start until required attachment
+  content is materialized or the user clarifies the target;
 - README follow-up resolves recent target before ordinary route;
 - ordinary question still creates one visible Ling Agent reply when a runnable provider is
   available, even if a default teammate is configured;

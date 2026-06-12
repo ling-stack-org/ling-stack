@@ -26,6 +26,15 @@ import {
   type ProviderPresetUpdateInput,
 } from "../provider-types.js";
 import {
+  createChannelInputMaterializationId,
+  type ChannelInputMaterialization,
+  type CreateChannelInputMaterializationInput,
+  type LingMaterializationContentKind,
+  type LingMaterializationSourceKind,
+  type LingMaterializationStatus,
+  type ListChannelInputMaterializationsOptions,
+} from "../input-materialization-types.js";
+import {
   createDefaultApprovalPolicy,
   defaultApprovalToolDecisions,
   readOnlyRunTools,
@@ -117,6 +126,8 @@ import {
   type ChannelLinkPreviewStatus,
   type ChannelMessage,
   type ChannelMessageAuthorType,
+  type ChannelMessageFileRef,
+  type ChannelMessageFileRefSource,
   type ChannelMessageIntent,
   type ChannelMessageKind,
   type ChannelMessageListPage,
@@ -285,9 +296,13 @@ import {
   type RunEventType,
   type RunContinuationReason,
   type RunIntervention,
+  type RunInterventionAttachmentPayload,
+  type RunInterventionLinkPreviewPayload,
+  type RunInterventionMaterializationStatus,
   type RunInterventionMessagePayload,
   type RunInterventionMode,
   type RunInterventionStatus,
+  type RunInterventionWorkspaceFilePayload,
   type RunSession,
   type RunStore,
   type RunStatus,
@@ -632,6 +647,10 @@ const CHANNEL_PROTOCOL_DRAFTS_MIGRATION_VERSION = 60;
 const CHANNEL_PROTOCOL_DRAFTS_MIGRATION_NAME = "create_channel_protocol_drafts";
 const INTERVENTION_MESSAGE_PAYLOAD_MIGRATION_VERSION = 61;
 const INTERVENTION_MESSAGE_PAYLOAD_MIGRATION_NAME = "add_intervention_message_payload";
+const CHANNEL_MESSAGE_FILE_REFS_MIGRATION_VERSION = 62;
+const CHANNEL_MESSAGE_FILE_REFS_MIGRATION_NAME = "add_channel_message_file_refs";
+const CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_VERSION = 63;
+const CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_NAME = "create_channel_input_materializations";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -5202,6 +5221,7 @@ export class SqliteRunStore implements RunStore {
       mentions: input.mentions ?? [],
       attachmentIds: input.attachmentIds ?? [],
       linkPreviewIds: input.linkPreviewIds ?? [],
+      fileRefs: normalizeChannelMessageFileRefs(input.fileRefs),
       linkedTaskId: input.linkedTaskId,
       linkedRunId: input.linkedRunId,
       status: input.status ?? "ready",
@@ -5225,13 +5245,14 @@ export class SqliteRunStore implements RunStore {
           mentions_json,
           attachment_ids_json,
           link_preview_ids_json,
+          file_refs_json,
           linked_task_id,
           linked_run_id,
           status,
           error_message,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         message.id,
@@ -5246,6 +5267,7 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(message.mentions),
         stringifyJson(message.attachmentIds),
         stringifyJson(message.linkPreviewIds),
+        stringifyJson(message.fileRefs),
         message.linkedTaskId ?? null,
         message.linkedRunId ?? null,
         message.status,
@@ -5989,6 +6011,149 @@ export class SqliteRunStore implements RunStore {
         id,
     );
     return this.getChannelLinkPreview(id);
+  }
+
+  createChannelInputMaterialization(input: CreateChannelInputMaterializationInput, now: string): ChannelInputMaterialization {
+    if (!this.getChannel(input.channelId)) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const materialization: ChannelInputMaterialization = {
+      id: createChannelInputMaterializationId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      sourceKind: input.sourceKind,
+      sourceId: input.sourceId,
+      sourceFingerprint: input.sourceFingerprint,
+      extractorId: input.extractorId,
+      extractorVersion: input.extractorVersion,
+      contentKind: input.contentKind,
+      status: input.status,
+      contentText: input.contentText,
+      structuredSummaryJson: input.structuredSummaryJson,
+      byteCount: input.byteCount,
+      tokenEstimate: input.tokenEstimate,
+      truncated: input.truncated ?? false,
+      policyDecisionJson: input.policyDecisionJson,
+      errorCode: input.errorCode,
+      errorMessage: input.errorMessage,
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: input.expiresAt,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO channel_input_materializations (
+          id,
+          workspace_id,
+          channel_id,
+          source_kind,
+          source_id,
+          source_fingerprint,
+          extractor_id,
+          extractor_version,
+          content_kind,
+          status,
+          content_text,
+          structured_summary_json,
+          byte_count,
+          token_estimate,
+          truncated,
+          policy_decision_json,
+          error_code,
+          error_message,
+          created_at,
+          updated_at,
+          expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(channel_id, source_kind, source_id, source_fingerprint, extractor_id)
+        DO UPDATE SET
+          extractor_version = excluded.extractor_version,
+          content_kind = excluded.content_kind,
+          status = excluded.status,
+          content_text = excluded.content_text,
+          structured_summary_json = excluded.structured_summary_json,
+          byte_count = excluded.byte_count,
+          token_estimate = excluded.token_estimate,
+          truncated = excluded.truncated,
+          policy_decision_json = excluded.policy_decision_json,
+          error_code = excluded.error_code,
+          error_message = excluded.error_message,
+          updated_at = excluded.updated_at,
+          expires_at = excluded.expires_at
+      `)
+      .run(
+        materialization.id,
+        materialization.workspaceId,
+        materialization.channelId,
+        materialization.sourceKind,
+        materialization.sourceId,
+        materialization.sourceFingerprint,
+        materialization.extractorId,
+        materialization.extractorVersion,
+        materialization.contentKind,
+        materialization.status,
+        materialization.contentText ?? null,
+        materialization.structuredSummaryJson ? stringifyJson(materialization.structuredSummaryJson) : null,
+        materialization.byteCount ?? null,
+        materialization.tokenEstimate ?? null,
+        materialization.truncated ? 1 : 0,
+        materialization.policyDecisionJson ? stringifyJson(materialization.policyDecisionJson) : null,
+        materialization.errorCode ?? null,
+        materialization.errorMessage ?? null,
+        materialization.createdAt,
+        materialization.updatedAt,
+        materialization.expiresAt ?? null,
+      );
+
+    const created = this.database
+      .prepare(channelInputMaterializationSelectSql(`
+        WHERE workspace_id = ?
+          AND channel_id = ?
+          AND source_kind = ?
+          AND source_id = ?
+          AND source_fingerprint = ?
+          AND extractor_id = ?
+      `))
+      .get(
+        DEFAULT_WORKSPACE_ID,
+        input.channelId,
+        input.sourceKind,
+        input.sourceId,
+        input.sourceFingerprint,
+        input.extractorId,
+      );
+    if (!created) {
+      throw new Error(`Failed to create channel input materialization for source: ${input.sourceKind}:${input.sourceId}`);
+    }
+    return mapChannelInputMaterialization(created);
+  }
+
+  getChannelInputMaterialization(id: string): ChannelInputMaterialization | undefined {
+    const row = this.database.prepare(channelInputMaterializationSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelInputMaterialization(row) : undefined;
+  }
+
+  listChannelInputMaterializations(options: ListChannelInputMaterializationsOptions): ChannelInputMaterialization[] {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    const conditions = ["workspace_id = ?", "channel_id = ?"];
+    const values: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    if (options.sourceKind) {
+      conditions.push("source_kind = ?");
+      values.push(options.sourceKind);
+    }
+    if (options.sourceId) {
+      conditions.push("source_id = ?");
+      values.push(options.sourceId);
+    }
+    if (options.status) {
+      conditions.push("status = ?");
+      values.push(options.status);
+    }
+    values.push(limit);
+    return this.database
+      .prepare(`${channelInputMaterializationSelectSql(`WHERE ${conditions.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...values)
+      .map(mapChannelInputMaterialization);
   }
 
   getChannelBrief(channelId: string): ChannelBrief | undefined {
@@ -10881,6 +11046,7 @@ export class SqliteRunStore implements RunStore {
           mentions_json TEXT NOT NULL,
           attachment_ids_json TEXT NOT NULL,
           link_preview_ids_json TEXT NOT NULL,
+          file_refs_json TEXT NOT NULL DEFAULT '[]',
           linked_task_id TEXT,
           linked_run_id TEXT,
           status TEXT NOT NULL,
@@ -13302,6 +13468,65 @@ export class SqliteRunStore implements RunStore {
       }
     }
 
+    const hasChannelMessageFileRefsMigration = this.hasMigration(CHANNEL_MESSAGE_FILE_REFS_MIGRATION_VERSION);
+    if (
+      !hasChannelMessageFileRefsMigration ||
+      (this.hasTable("channel_messages") && !this.hasColumn("channel_messages", "file_refs_json"))
+    ) {
+      if (this.hasTable("channel_messages") && !this.hasColumn("channel_messages", "file_refs_json")) {
+        this.database.exec("ALTER TABLE channel_messages ADD COLUMN file_refs_json TEXT NOT NULL DEFAULT '[]';");
+      }
+      if (!hasChannelMessageFileRefsMigration) {
+        this.recordMigration(CHANNEL_MESSAGE_FILE_REFS_MIGRATION_VERSION, CHANNEL_MESSAGE_FILE_REFS_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelInputMaterializationsMigration = this.hasMigration(CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_VERSION);
+    if (
+      !hasChannelInputMaterializationsMigration ||
+      !this.hasTable("channel_input_materializations")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_input_materializations (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          source_fingerprint TEXT NOT NULL,
+          extractor_id TEXT NOT NULL,
+          extractor_version TEXT NOT NULL,
+          content_kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          content_text TEXT,
+          structured_summary_json TEXT,
+          byte_count INTEGER,
+          token_estimate INTEGER,
+          truncated INTEGER NOT NULL DEFAULT 0,
+          policy_decision_json TEXT,
+          error_code TEXT,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          expires_at TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_input_materializations_source
+        ON channel_input_materializations(channel_id, source_kind, source_id, source_fingerprint, extractor_id);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_input_materializations_lookup
+        ON channel_input_materializations(channel_id, source_kind, source_id, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_input_materializations_status
+        ON channel_input_materializations(channel_id, status, updated_at);
+      `);
+      if (!hasChannelInputMaterializationsMigration) {
+        this.recordMigration(CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_VERSION, CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_NAME);
+      }
+    }
+
     const hasWorkspaceSettingsAndChannelBindingMigration = this.hasMigration(WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION);
     if (
       !hasWorkspaceSettingsAndChannelBindingMigration ||
@@ -15104,6 +15329,7 @@ function mapChannelMessage(row: Record<string, SQLOutputValue>): ChannelMessage 
     mentions: parseChannelMentions(readString(row, "mentions_json")),
     attachmentIds: parseJsonStringArray(readString(row, "attachment_ids_json")),
     linkPreviewIds: parseJsonStringArray(readString(row, "link_preview_ids_json")),
+    fileRefs: parseChannelMessageFileRefs(readString(row, "file_refs_json")),
     linkedTaskId: readNullableString(row, "linked_task_id"),
     linkedRunId: readNullableString(row, "linked_run_id"),
     status: readString(row, "status") as ChannelMessage["status"],
@@ -15216,6 +15442,34 @@ function mapChannelLinkPreview(row: Record<string, SQLOutputValue>): ChannelLink
     errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelInputMaterialization(row: Record<string, SQLOutputValue>): ChannelInputMaterialization {
+  const structuredSummaryJson = readNullableString(row, "structured_summary_json");
+  const policyDecisionJson = readNullableString(row, "policy_decision_json");
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    sourceKind: readString(row, "source_kind") as LingMaterializationSourceKind,
+    sourceId: readString(row, "source_id"),
+    sourceFingerprint: readString(row, "source_fingerprint"),
+    extractorId: readString(row, "extractor_id"),
+    extractorVersion: readString(row, "extractor_version"),
+    contentKind: readString(row, "content_kind") as LingMaterializationContentKind,
+    status: readString(row, "status") as LingMaterializationStatus,
+    contentText: readNullableString(row, "content_text"),
+    structuredSummaryJson: structuredSummaryJson ? parseJsonObject(structuredSummaryJson) : undefined,
+    byteCount: readNullableNumber(row, "byte_count"),
+    tokenEstimate: readNullableNumber(row, "token_estimate"),
+    truncated: readNumber(row, "truncated") === 1,
+    policyDecisionJson: policyDecisionJson ? parseJsonObject(policyDecisionJson) : undefined,
+    errorCode: readNullableString(row, "error_code"),
+    errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    expiresAt: readNullableString(row, "expires_at"),
   });
 }
 
@@ -16671,6 +16925,7 @@ function channelMessageSelectSql(whereClause: string): string {
       mentions_json,
       attachment_ids_json,
       link_preview_ids_json,
+      file_refs_json,
       linked_task_id,
       linked_run_id,
       status,
@@ -16799,6 +17054,35 @@ function channelLinkPreviewSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM channel_link_previews
+    ${whereClause}
+  `;
+}
+
+function channelInputMaterializationSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      source_kind,
+      source_id,
+      source_fingerprint,
+      extractor_id,
+      extractor_version,
+      content_kind,
+      status,
+      content_text,
+      structured_summary_json,
+      byte_count,
+      token_estimate,
+      truncated,
+      policy_decision_json,
+      error_code,
+      error_message,
+      created_at,
+      updated_at,
+      expires_at
+    FROM channel_input_materializations
     ${whereClause}
   `;
 }
@@ -18037,12 +18321,136 @@ function parseJsonStringArray(value: string): string[] {
   return parsed as string[];
 }
 
+function normalizeChannelMessageFileRefs(fileRefs: readonly ChannelMessageFileRef[] | undefined): readonly ChannelMessageFileRef[] {
+  if (!fileRefs || fileRefs.length === 0) {
+    return [];
+  }
+  const normalized: ChannelMessageFileRef[] = [];
+  const seen = new Set<string>();
+  for (const fileRef of fileRefs) {
+    const path = fileRef.path.trim();
+    if (!path || path.length > 2_000) {
+      continue;
+    }
+    const line = fileRef.line === undefined ? undefined : Math.max(1, Math.trunc(fileRef.line));
+    const key = `${path}\0${line ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    normalized.push({
+      path,
+      ...(fileRef.label?.trim() ? { label: fileRef.label.trim().slice(0, 240) } : {}),
+      ...(fileRef.source && isChannelMessageFileRefSource(fileRef.source) ? { source: fileRef.source } : {}),
+      ...(line !== undefined ? { line } : {}),
+    });
+    if (normalized.length >= 12) {
+      break;
+    }
+  }
+  return normalized;
+}
+
+function parseChannelMessageFileRefs(value: string): readonly ChannelMessageFileRef[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected channel message file refs array from SQLite");
+  }
+  return normalizeChannelMessageFileRefs(parsed.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`Expected channel message file ref object at index ${index}`);
+    }
+    const source = typeof item.source === "string" && isChannelMessageFileRefSource(item.source) ? item.source : undefined;
+    const line = typeof item.line === "number" && Number.isFinite(item.line) ? item.line : undefined;
+    return {
+      path: readRecordString(item, "path"),
+      ...(typeof item.label === "string" ? { label: item.label } : {}),
+      ...(source ? { source } : {}),
+      ...(line !== undefined ? { line } : {}),
+    };
+  }));
+}
+
+function readRecordString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string`);
+  }
+  return value;
+}
+
+function isChannelMessageFileRefSource(value: string): value is ChannelMessageFileRefSource {
+  return value === "composer" || value === "explicit_text" || value === "api";
+}
+
 function normalizeRunInterventionMessagePayload(payload: RunInterventionMessagePayload): RunInterventionMessagePayload {
+  const attachments = normalizeRunInterventionAttachmentPayloads(payload.attachments);
+  const linkPreviews = normalizeRunInterventionLinkPreviewPayloads(payload.linkPreviews);
+  const fileRefs = normalizeRunInterventionWorkspaceFilePayloads(payload.fileRefs);
   return {
     body: payload.body.trim(),
     attachmentIds: normalizeStringList(payload.attachmentIds),
     linkPreviewIds: normalizeStringList(payload.linkPreviewIds),
+    ...(attachments ? { attachments } : {}),
+    ...(linkPreviews ? { linkPreviews } : {}),
+    ...(fileRefs ? { fileRefs } : {}),
   };
+}
+
+function normalizeRunInterventionAttachmentPayloads(
+  attachments: readonly RunInterventionAttachmentPayload[] | undefined,
+): readonly RunInterventionAttachmentPayload[] | undefined {
+  if (!attachments || attachments.length === 0) {
+    return undefined;
+  }
+  return attachments.map((attachment) => ({
+    id: attachment.id.trim(),
+    fileName: attachment.fileName.trim() || attachment.id.trim(),
+    kind: attachment.kind,
+    contentType: attachment.contentType.trim() || "application/octet-stream",
+    sizeBytes: Math.max(0, Math.trunc(attachment.sizeBytes)),
+    materializationStatus: attachment.materializationStatus,
+    ...(attachment.previewStatus?.trim() ? { previewStatus: attachment.previewStatus.trim() } : {}),
+    ...(attachment.previewText ? { previewText: attachment.previewText } : {}),
+    ...(attachment.reason?.trim() ? { reason: attachment.reason.trim() } : {}),
+  }));
+}
+
+function normalizeRunInterventionLinkPreviewPayloads(
+  linkPreviews: readonly RunInterventionLinkPreviewPayload[] | undefined,
+): readonly RunInterventionLinkPreviewPayload[] | undefined {
+  if (!linkPreviews || linkPreviews.length === 0) {
+    return undefined;
+  }
+  return linkPreviews.map((preview) => ({
+    id: preview.id.trim(),
+    url: preview.url.trim() || preview.normalizedUrl.trim() || preview.id.trim(),
+    normalizedUrl: preview.normalizedUrl.trim() || preview.url.trim() || preview.id.trim(),
+    ...(preview.title?.trim() ? { title: preview.title.trim() } : {}),
+    ...(preview.description?.trim() ? { description: preview.description.trim() } : {}),
+    ...(preview.siteName?.trim() ? { siteName: preview.siteName.trim() } : {}),
+    status: preview.status,
+    materializationStatus: preview.materializationStatus,
+    ...(preview.previewText ? { previewText: preview.previewText } : {}),
+    ...(preview.reason?.trim() ? { reason: preview.reason.trim() } : {}),
+  }));
+}
+
+function normalizeRunInterventionWorkspaceFilePayloads(
+  fileRefs: readonly RunInterventionWorkspaceFilePayload[] | undefined,
+): readonly RunInterventionWorkspaceFilePayload[] | undefined {
+  if (!fileRefs || fileRefs.length === 0) {
+    return undefined;
+  }
+  return fileRefs.map((ref) => ({
+    path: ref.path.trim(),
+    ...(ref.label?.trim() ? { label: ref.label.trim() } : {}),
+    rootRelation: readRunInterventionWorkspaceFileRootRelation(ref.rootRelation),
+    kind: readRunInterventionWorkspaceFileKind(ref.kind),
+    materializationStatus: ref.materializationStatus,
+    ...(ref.previewText ? { previewText: ref.previewText } : {}),
+    ...(ref.blockedReason?.trim() ? { blockedReason: ref.blockedReason.trim() } : {}),
+  }));
 }
 
 function normalizeTeammateDirectReplyInterventionMessagePayload(
@@ -18072,11 +18480,124 @@ function parseRunInterventionMessagePayload(value: string | undefined, instructi
   if (attachmentIds.some((item) => typeof item !== "string") || linkPreviewIds.some((item) => typeof item !== "string")) {
     throw new Error("Expected run intervention message payload ids from SQLite");
   }
+  const attachments = Array.isArray(parsed.attachments) ? parsed.attachments.map(parseRunInterventionAttachmentPayload) : undefined;
+  const linkPreviews = Array.isArray(parsed.linkPreviews) ? parsed.linkPreviews.map(parseRunInterventionLinkPreviewPayload) : undefined;
+  const fileRefs = Array.isArray(parsed.fileRefs) ? parsed.fileRefs.map(parseRunInterventionWorkspaceFilePayload) : undefined;
   return normalizeRunInterventionMessagePayload({
     body,
     attachmentIds: attachmentIds as string[],
     linkPreviewIds: linkPreviewIds as string[],
+    attachments,
+    linkPreviews,
+    fileRefs,
   });
+}
+
+function parseRunInterventionAttachmentPayload(value: unknown): RunInterventionAttachmentPayload {
+  if (!isRecord(value)) {
+    throw new Error("Expected run intervention attachment payload object from SQLite");
+  }
+  const id = readPayloadString(value, "id");
+  const materializationStatus = readRunInterventionMaterializationStatus(value.materializationStatus);
+  const previewStatus = readPayloadOptionalString(value, "previewStatus");
+  const previewText = readPayloadOptionalString(value, "previewText");
+  const reason = readPayloadOptionalString(value, "reason");
+  return {
+    id,
+    fileName: readPayloadOptionalString(value, "fileName") ?? id,
+    kind: readRunInterventionAttachmentKind(value.kind),
+    contentType: readPayloadOptionalString(value, "contentType") ?? "application/octet-stream",
+    sizeBytes: readPayloadNonNegativeNumber(value, "sizeBytes"),
+    materializationStatus,
+    ...(previewStatus ? { previewStatus } : {}),
+    ...(previewText ? { previewText } : {}),
+    ...(reason ? { reason } : {}),
+  };
+}
+
+function parseRunInterventionLinkPreviewPayload(value: unknown): RunInterventionLinkPreviewPayload {
+  if (!isRecord(value)) {
+    throw new Error("Expected run intervention link preview payload object from SQLite");
+  }
+  const id = readPayloadString(value, "id");
+  const url = readPayloadOptionalString(value, "url") ?? id;
+  const normalizedUrl = readPayloadOptionalString(value, "normalizedUrl") ?? url;
+  const title = readPayloadOptionalString(value, "title");
+  const description = readPayloadOptionalString(value, "description");
+  const siteName = readPayloadOptionalString(value, "siteName");
+  const previewText = readPayloadOptionalString(value, "previewText");
+  const reason = readPayloadOptionalString(value, "reason");
+  return {
+    id,
+    url,
+    normalizedUrl,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(siteName ? { siteName } : {}),
+    status: readRunInterventionLinkPreviewStatus(value.status),
+    materializationStatus: readRunInterventionMaterializationStatus(value.materializationStatus),
+    ...(previewText ? { previewText } : {}),
+    ...(reason ? { reason } : {}),
+  };
+}
+
+function parseRunInterventionWorkspaceFilePayload(value: unknown): RunInterventionWorkspaceFilePayload {
+  if (!isRecord(value)) {
+    throw new Error("Expected run intervention workspace file payload object from SQLite");
+  }
+  const label = readPayloadOptionalString(value, "label");
+  const previewText = readPayloadOptionalString(value, "previewText");
+  const blockedReason = readPayloadOptionalString(value, "blockedReason");
+  return {
+    path: readPayloadString(value, "path"),
+    ...(label ? { label } : {}),
+    rootRelation: readRunInterventionWorkspaceFileRootRelation(value.rootRelation),
+    kind: readRunInterventionWorkspaceFileKind(value.kind),
+    materializationStatus: readRunInterventionMaterializationStatus(value.materializationStatus),
+    ...(previewText ? { previewText } : {}),
+    ...(blockedReason ? { blockedReason } : {}),
+  };
+}
+
+function readPayloadString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`Expected non-empty ${key} in run intervention payload`);
+  }
+  return value.trim();
+}
+
+function readPayloadOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readPayloadNonNegativeNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0;
+}
+
+function readRunInterventionMaterializationStatus(value: unknown): RunInterventionMaterializationStatus {
+  if (value === "available" || value === "metadata_only" || value === "not_loaded" || value === "unsupported" || value === "blocked") {
+    return value;
+  }
+  return "metadata_only";
+}
+
+function readRunInterventionAttachmentKind(value: unknown): RunInterventionAttachmentPayload["kind"] {
+  return value === "image" || value === "pdf" || value === "office" || value === "text" || value === "other" ? value : "other";
+}
+
+function readRunInterventionLinkPreviewStatus(value: unknown): RunInterventionLinkPreviewPayload["status"] {
+  return value === "ready" || value === "blocked" || value === "failed" || value === "missing" || value === "channel_mismatch" ? value : "missing";
+}
+
+function readRunInterventionWorkspaceFileRootRelation(value: unknown): RunInterventionWorkspaceFilePayload["rootRelation"] {
+  return value === "inside_workspace" || value === "outside_workspace" || value === "unknown" ? value : "unknown";
+}
+
+function readRunInterventionWorkspaceFileKind(value: unknown): RunInterventionWorkspaceFilePayload["kind"] {
+  return value === "file" || value === "directory" || value === "glob" || value === "unknown" ? value : "unknown";
 }
 
 function parseTeammateDirectReplyInterventionMessagePayload(

@@ -12,6 +12,11 @@ import { extractChannelExecutionProposal } from "./ai-proposals.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
 import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import {
+  buildLingAgentTurnEnvelope,
+  renderLingAgentTurnEnvelopeSearchText,
+  type LingAgentTurnEnvelope,
+} from "./ling-agent-turn-envelope.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 
 export async function createAiChannelReply(input: {
@@ -19,6 +24,7 @@ export async function createAiChannelReply(input: {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
@@ -95,6 +101,7 @@ async function completeAiChannelReply(input: {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
   readonly proposalMode?: "allow" | "disabled";
@@ -129,11 +136,16 @@ async function completeAiChannelReply(input: {
 
   const textDeltas: string[] = [];
   try {
+    const turnEnvelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+    });
     const memoryRecall = input.store.recallMemory({
       teammateId: input.canonicalTeammateId,
       channelId: input.channel.id,
       intent: "channel-reply",
-      query: input.sourceMessage.body,
+      query: renderLingAgentTurnEnvelopeSearchText(turnEnvelope) || input.sourceMessage.body,
       maxResults: 6,
     });
     const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
@@ -146,6 +158,7 @@ async function completeAiChannelReply(input: {
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      turnEnvelope,
       teammate: input.teammate,
       canonicalTeammateId: input.canonicalTeammateId,
       visibleParticipantTeammateIds: input.visibleParticipantTeammateIds,
@@ -155,7 +168,7 @@ async function completeAiChannelReply(input: {
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
       responseLanguageInstruction(responseLanguage),
-      "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
+      "Use only attachment/link metadata and preview/extraction text that is explicitly included in the turn envelope. Do not claim to inspect unavailable attachment bodies or web page bodies.",
       "Do not perform tool use or side effects.",
       ...(input.proposalMode === "disabled"
         ? [
@@ -245,6 +258,7 @@ async function completeAiChannelReply(input: {
         store: input.store,
         channel: input.channel,
         sourceMessage: input.sourceMessage,
+        turnEnvelope,
         providerPresetId: input.providerPresetId,
         teammate: input.teammate,
         canonicalTeammateId: input.canonicalTeammateId,

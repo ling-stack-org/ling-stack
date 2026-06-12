@@ -25,6 +25,7 @@ import type {
   ChannelHandoffStatus,
   ChannelLinkPreview,
   ChannelMessage,
+  ChannelMessageFileRef,
   ChannelExecutionProposal,
   ChannelWorkflow,
   ChannelWorkflowStep,
@@ -1818,6 +1819,7 @@ export function AppShell(): JSX.Element {
     readonly mentions: readonly { readonly id: string; readonly label: string; readonly kind: "ai-teammate" | "local-user" | "channel" }[];
     readonly attachmentIds: readonly string[];
     readonly linkPreviewIds: readonly string[];
+    readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
   }): Promise<void> {
     if (!selectedChannelId) {
@@ -1838,6 +1840,7 @@ export function AppShell(): JSX.Element {
         mentions: input.mentions,
         attachmentIds: input.attachmentIds,
         linkPreviewIds: input.linkPreviewIds,
+        fileRefs: input.fileRefs,
         requestAiReply: input.requestAiReply,
         providerPresetId: providerPresetId || undefined,
         teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,

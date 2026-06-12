@@ -19,12 +19,19 @@ import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-pr
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
 import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import {
+  buildLingAgentTurnEnvelope,
+  renderLingAgentTurnEnvelopeForPrompt,
+  turnEnvelopeHasUserInput,
+  type LingAgentTurnEnvelope,
+} from "./ling-agent-turn-envelope.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 
 export interface ChannelIntentSelectorInput {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly requestedProviderPresetId?: string;
   readonly secretResolver: SecretResolver;
   readonly config?: ResolvedDaemonConfig;
@@ -69,6 +76,13 @@ type ClarifyReasonCode =
   | "missing_acceptance"
   | "approval_sensitive_target";
 
+interface MaterializationClarifyReason {
+  readonly body: string;
+  readonly sourceLabel: string;
+  readonly issueKind: "attachment_unavailable" | "link_body_unavailable" | "workspace_file_ref_blocked";
+  readonly technicalReason: string;
+}
+
 interface ChannelIntentModelOutput {
   readonly action: "no_reply" | "single_reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "direct_workflow";
   readonly reason: string;
@@ -97,6 +111,11 @@ interface SingleStepExecutableIntent {
   readonly rolePreferences: readonly AiTeammate["roleKey"][];
   readonly acceptanceCriteria: readonly string[];
   readonly riskSummary: string;
+}
+
+interface SingleStepExecutableBlocker {
+  readonly userMessage: string;
+  readonly technicalReason?: string;
 }
 
 const roleMatches: readonly RoleMatch[] = [
@@ -153,6 +172,10 @@ const roleMatches: readonly RoleMatch[] = [
 export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorInput): Promise<ChannelIntentSelectorResult> {
   if (!messageCanCreateWorkflowProposal(input)) {
     return { action: "continue" };
+  }
+  const materializationClarify = detectMaterializationClarify(input);
+  if (materializationClarify) {
+    return createMaterializationClarifyReply(input, materializationClarify);
   }
   const modelIntent = await maybeSelectModelAssistedIntent(input);
   if (modelIntent) {
@@ -280,6 +303,7 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
+    turnEnvelope: input.turnEnvelope,
     providerPresetId,
   });
   let prompt = renderContextPack(contextPack);
@@ -336,6 +360,7 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      turnEnvelope: input.turnEnvelope,
       providerPresetId,
       compactedChannelSummary: compaction.compactedSummary,
       minimal: true,
@@ -364,7 +389,9 @@ function resolveRunnableIntentProviderPresetId(input: ChannelIntentSelectorInput
         task: {
           id: input.sourceMessage.id,
           title: `Channel intent selection in ${input.channel.name}`,
-          prompt: input.sourceMessage.body || "Classify channel message intent",
+          prompt: input.turnEnvelope
+            ? renderLingAgentTurnEnvelopeForPrompt(input.turnEnvelope)
+            : input.sourceMessage.body || "Classify channel message intent",
           channelId: input.channel.id,
         },
         providerPresetId,
@@ -560,7 +587,7 @@ function createSingleStepExecutableProposal(
     ?? (isLingAgentExecutorId(participant.teammate.id) ? executableIntent.rolePreferences[0] : undefined);
   const now = new Date().toISOString();
   const riskSummary = blocker
-    ? `${executableIntent.riskSummary}\n\n${blocker}`
+    ? `${executableIntent.riskSummary}\n\n${blocker.userMessage}`
     : fallbackSpecialistRoleKey
       ? `${executableIntent.riskSummary}\n\n${lingAgentFallbackRecommendation(fallbackSpecialistRoleKey, responseLanguage)}`
       : executableIntent.riskSummary;
@@ -582,14 +609,17 @@ function createSingleStepExecutableProposal(
       riskSummary,
       responseLanguage,
       status: blocker ? "blocked" : "draft",
-      errorMessage: blocker,
+      errorMessage: blocker?.userMessage,
     },
     now,
   );
   const decision = persistIntentDecision(input, {
     action: "direct_workflow",
     proposalId: proposal.id,
-    reason: decisionReason ?? `Direct single-step executable proposal created for ${executableIntent.kind}.`,
+    reason: decisionReason
+      ?? (blocker?.technicalReason
+        ? `Direct single-step executable proposal blocked for ${executableIntent.kind}: ${blocker.technicalReason}`
+        : `Direct single-step executable proposal created for ${executableIntent.kind}.`),
     status: "accepted",
     createdBy,
   });
@@ -651,6 +681,55 @@ function createClarifyReply(
   return { action: "clarify", aiReply, intentDecisionId: decision.id };
 }
 
+function createMaterializationClarifyReply(
+  input: ChannelIntentSelectorInput,
+  clarify: MaterializationClarifyReason,
+  createdBy: "deterministic" | "model" = "deterministic",
+): ChannelIntentSelectorResult {
+  const existingReply = input.store
+    .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
+    .find((message) => message.kind === "ai_reply" && message.status !== "failed");
+  if (existingReply) {
+    const decision = persistIntentDecision(input, {
+      action: "clarify",
+      selectedTeammateId: existingReply.authorId,
+      replyMessageId: existingReply.id,
+      reason: `Existing materialization clarify reply already covers this message: ${existingReply.id}`,
+      status: "suppressed",
+      createdBy,
+    });
+    return { action: "clarify", aiReply: existingReply, intentDecisionId: decision.id };
+  }
+
+  const teammate = chooseClarifyingTeammate(input);
+  if (!teammate) {
+    return { action: "continue" };
+  }
+  const now = new Date().toISOString();
+  const aiReply = input.store.createChannelMessage(
+    {
+      channelId: input.channel.id,
+      threadId: input.sourceMessage.id,
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: teammate.id,
+      body: clarify.body,
+      status: "ready",
+    },
+    now,
+  );
+  const decision = persistIntentDecision(input, {
+    action: "clarify",
+    selectedTeammateId: teammate.id,
+    replyMessageId: aiReply.id,
+    reason: clarify.technicalReason,
+    status: "accepted",
+    createdBy,
+  });
+  return { action: "clarify", aiReply, intentDecisionId: decision.id };
+}
+
 function messageCanCreateWorkflowProposal(input: ChannelIntentSelectorInput): boolean {
   const message = input.sourceMessage;
   if (message.authorType !== "local-user") {
@@ -668,7 +747,12 @@ function messageCanCreateWorkflowProposal(input: ChannelIntentSelectorInput): bo
   if (input.channel.status !== "active") {
     return false;
   }
-  return message.body.trim().length > 0;
+  const envelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: message,
+  });
+  return turnEnvelopeHasUserInput(envelope);
 }
 
 function detectWorkflowIntentReason(message: ChannelMessage): IntentReasonCode | undefined {
@@ -721,7 +805,7 @@ function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: str
   if (!target) {
     return undefined;
   }
-  const content = extractRequestedFileContent(text);
+  const content = extractRequestedFileContent(text) ?? extractMaterializedAttachmentContentForFileRequest(input, text);
   const requiredTools = fileAction === "file_edit" ? ["edit"] as const : ["write"] as const;
   const rolePreferences: readonly AiTeammate["roleKey"][] = target.toLowerCase().endsWith(".md")
     ? ["docs", "engineer"]
@@ -820,7 +904,7 @@ function detectFileAction(text: string): "file_create" | "file_edit" | undefined
   if (/(修改|编辑|更新|替换|改一下|改成|添加|追加|插入|补充|补一句|加上|patch|edit|update|replace|append|insert|add)/iu.test(text) && looksLikeFileTarget(text)) {
     return "file_edit";
   }
-  if (/(创建|新建|生成|写入|写到|保存|落盘|create|write|save)/iu.test(text) && looksLikeFileTarget(text)) {
+  if (/(创建|新建|生成|写入|写到|写进|保存|落盘|create|write|save)/iu.test(text) && looksLikeFileTarget(text)) {
     return "file_create";
   }
   return undefined;
@@ -961,6 +1045,176 @@ function extractRequestedFileContent(text: string): string | undefined {
   const match = /(?:内容是|内容为|写入|写成|改成|如下|content\s*(?:is|:)|with\s+content)\s*[:：]?\s*([\s\S]+)$/iu.exec(text);
   const content = match?.[1]?.trim();
   return content && content.length > 0 ? content : undefined;
+}
+
+function extractMaterializedAttachmentContentForFileRequest(input: ChannelIntentSelectorInput, text: string): string | undefined {
+  if (!referencesAttachmentBody(text)) {
+    return undefined;
+  }
+  const envelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+  });
+  const previews = envelope.attachments
+    .filter((attachment) => attachment.previewStatus === "available" && attachment.previewText?.trim())
+    .map((attachment) => [
+      `Attachment: ${attachment.fileName}`,
+      attachment.previewText?.trim(),
+    ].filter((line): line is string => Boolean(line)).join("\n"));
+  return previews.length > 0 ? previews.join("\n\n") : undefined;
+}
+
+function detectMaterializationClarify(input: ChannelIntentSelectorInput): MaterializationClarifyReason | undefined {
+  const text = normalizeWhitespace(input.sourceMessage.body);
+  if (!text || detectFileAction(text)) {
+    return undefined;
+  }
+  const envelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+  });
+  const responseLanguage = resolveChannelResponseLanguage({
+    store: input.store,
+    channel: input.channel,
+    sourceText: input.sourceMessage.body,
+  }).language;
+
+  const blockedFileRef = envelope.fileRefs.find((ref) => ref.materializationStatus === "blocked");
+  if (blockedFileRef) {
+    const label = blockedFileRef.label ?? blockedFileRef.path;
+    return {
+      body: responseLanguage === "zh-CN"
+        ? `这个路径不在当前工作区内。请换成工作区里的文件，或让我通过受控任务先检查它。`
+        : `That path is outside this workspace. Use a workspace file, or ask me to inspect it as a controlled task.`,
+      sourceLabel: label,
+      issueKind: "workspace_file_ref_blocked",
+      technicalReason: `Workspace file ref is blocked: ${label}${blockedFileRef.blockedReason ? ` (${blockedFileRef.blockedReason})` : ""}`,
+    };
+  }
+
+  if (referencesLinkBody(text)) {
+    const blockedLink = envelope.linkPreviews.find((preview) => preview.materializationStatus === "blocked");
+    if (blockedLink) {
+      return {
+        body: buildBlockedLinkMaterializationClarifyBody(blockedLink, responseLanguage),
+        sourceLabel: blockedLink.url,
+        issueKind: "link_body_unavailable",
+        technicalReason: `Link body materialization is blocked: ${blockedLink.url}${blockedLink.reason ? ` (${blockedLink.reason})` : ""}`,
+      };
+    }
+    const metadataOnlyLink = envelope.linkPreviews.find((preview) => preview.materializationStatus === "metadata_only");
+    if (metadataOnlyLink) {
+      const label = metadataOnlyLink.title ?? metadataOnlyLink.url;
+      return {
+        body: responseLanguage === "zh-CN"
+          ? `我可以先读取 ${label} 的页面内容，或者你直接把要总结的正文贴出来。`
+          : `I can read ${label} first, or you can paste the text you want summarized.`,
+        sourceLabel: label,
+        issueKind: "link_body_unavailable",
+        technicalReason: `Link body is metadata-only: ${metadataOnlyLink.url}`,
+      };
+    }
+  }
+
+  if (referencesAttachmentBody(text)) {
+    const unavailableAttachment = envelope.attachments.find((attachment) => attachment.materializationStatus !== "available");
+    if (unavailableAttachment) {
+      return {
+        body: buildAttachmentMaterializationClarifyBody(unavailableAttachment, responseLanguage),
+        sourceLabel: unavailableAttachment.fileName,
+        issueKind: "attachment_unavailable",
+        technicalReason: `Attachment content is not materialized: ${unavailableAttachment.fileName} (${unavailableAttachment.materializationStatus}${unavailableAttachment.reason ? `: ${unavailableAttachment.reason}` : ""})`,
+      };
+    }
+  }
+  return undefined;
+}
+
+function buildBlockedLinkMaterializationClarifyBody(
+  preview: LingAgentTurnEnvelope["linkPreviews"][number],
+  responseLanguage: ResponseLanguage,
+): string {
+  const localOrPrivate = /localhost|local\/private|local or private|private network|本机|私有|loopback|127\.0\.0\.1|0\.0\.0\.0|::1|10\.|192\.168|172\.(1[6-9]|2\d|3[01])/iu
+    .test(`${preview.url} ${preview.reason ?? ""}`);
+  if (responseLanguage === "zh-CN") {
+    return localOrPrivate
+      ? "这个链接看起来是本机或私有地址，我不会自动打开。你可以贴正文，或让我作为受控任务检查它。"
+      : "我没能自动读取这个页面。你可以让我重试，或直接把要处理的正文贴出来。";
+  }
+  return localOrPrivate
+    ? "I will not open local/private links automatically. Paste the content, or ask me to inspect it as a controlled task."
+    : "I could not read that page automatically. Ask me to retry, or paste the text you want to use.";
+}
+
+function buildAttachmentMaterializationClarifyBody(
+  attachment: LingAgentTurnEnvelope["attachments"][number],
+  responseLanguage: ResponseLanguage,
+): string {
+  if (responseLanguage === "zh-CN") {
+    if (attachment.kind === "image") {
+      return `我可以先检查 ${attachment.fileName}，或者你把截图里的关键内容贴出来。`;
+    }
+    if (attachment.kind === "pdf") {
+      return `我可以先检查 ${attachment.fileName}，或者你把需要处理的 PDF 内容贴出来。`;
+    }
+    if (attachment.kind === "office") {
+      return `我可以先检查 ${attachment.fileName}，或者你把文档里关键内容贴出来。`;
+    }
+    return `我可以先检查 ${attachment.fileName}，或者你把需要处理的内容贴出来。`;
+  }
+  if (attachment.kind === "image") {
+    return `I can inspect ${attachment.fileName} first, or you can paste the relevant detail from the image.`;
+  }
+  if (attachment.kind === "pdf") {
+    return `I can inspect ${attachment.fileName} first, or you can paste the PDF section to use.`;
+  }
+  if (attachment.kind === "office") {
+    return `I can inspect ${attachment.fileName} first, or you can paste the document section that matters.`;
+  }
+  return `I can inspect ${attachment.fileName} first, or you can paste the content to use.`;
+}
+
+function attachmentMaterializationBlocker(
+  input: ChannelIntentSelectorInput,
+  executableIntent: SingleStepExecutableIntent,
+  responseLanguage: ResponseLanguage,
+): SingleStepExecutableBlocker | undefined {
+  if (executableIntent.kind !== "file_create" && executableIntent.kind !== "file_edit") {
+    return undefined;
+  }
+  const text = normalizeWhitespace(input.sourceMessage.body);
+  if (!referencesAttachmentBody(text)) {
+    return undefined;
+  }
+  const envelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+  });
+  const available = envelope.attachments.filter((attachment) => attachment.previewStatus === "available" && attachment.previewText?.trim());
+  if (available.length > 0) {
+    return undefined;
+  }
+  const reasons = envelope.attachments.length > 0
+    ? envelope.attachments.map((attachment) => `${attachment.fileName}: ${attachment.previewStatus}${attachment.reason ? ` (${attachment.reason})` : ""}`).join("; ")
+    : responseLanguage === "zh-CN" ? "当前 turn 没有附件。" : "This turn has no attachments.";
+  return {
+    userMessage: responseLanguage === "zh-CN"
+      ? "这个文件任务需要先读取附件内容。我可以先检查附件，或者你直接把要写入的内容贴出来。"
+      : "This file task needs the attachment content first. I can inspect the attachment, or you can paste the content to write.",
+    technicalReason: `Attachment-dependent file task has no available attachment preview/extraction: ${reasons}`,
+  };
+}
+
+function referencesAttachmentBody(text: string): boolean {
+  return /(附件|附图|截图|图片|图里|文件内容|这个文件|这个图|这张图|这份文档|attached file|attachment|screenshot|image|this file|this document)/iu.test(text);
+}
+
+function referencesLinkBody(text: string): boolean {
+  return /(链接|网页|页面|网址|url|link|page|article)/iu.test(text) &&
+    /(总结|概括|读取|读一下|提取|分析|看看|summarize|read|extract|analy[sz]e|what.*about)/iu.test(text);
 }
 
 function extractExplicitCommand(text: string): string | undefined {
@@ -1202,20 +1456,35 @@ function singleStepExecutableBlocker(
   executableIntent: SingleStepExecutableIntent,
   teammate: AiTeammate,
   responseLanguage: ResponseLanguage,
-): string | undefined {
-  const blockers: string[] = [];
+): SingleStepExecutableBlocker | undefined {
+  const userMessages: string[] = [];
+  const technicalReasons: string[] = [];
   if (!teammateCanReplyInChannel(input.store, input.channel, teammate.id)) {
-    blockers.push(responseLanguage === "zh-CN"
+    userMessages.push(responseLanguage === "zh-CN"
       ? `${teammate.displayName} 当前不在这个频道可执行名单里；请把该队友加入频道或编辑 proposal 的执行人。`
       : `${teammate.displayName} is not available in this channel; add the teammate to the channel or edit the proposal assignee.`);
+    technicalReasons.push(`Assignee is not available in channel: ${teammate.id}`);
   }
   const missingTeammateTools = executableIntent.requiredTools.filter((tool) => !teammate.allowedTools.includes(tool));
   if (missingTeammateTools.length > 0) {
-    blockers.push(responseLanguage === "zh-CN"
+    userMessages.push(responseLanguage === "zh-CN"
       ? `${teammate.displayName} 缺少所需工具: ${missingTeammateTools.join(", ")}；请换执行人或调整队友工具范围。`
       : `${teammate.displayName} is missing required tools: ${missingTeammateTools.join(", ")}. Choose another assignee or update teammate tool scope.`);
+    technicalReasons.push(`Assignee ${teammate.id} is missing required tools: ${missingTeammateTools.join(", ")}`);
   }
-  return blockers.length > 0 ? blockers.join("\n") : undefined;
+  const missingMaterializedInput = attachmentMaterializationBlocker(input, executableIntent, responseLanguage);
+  if (missingMaterializedInput) {
+    userMessages.push(missingMaterializedInput.userMessage);
+    if (missingMaterializedInput.technicalReason) {
+      technicalReasons.push(missingMaterializedInput.technicalReason);
+    }
+  }
+  return userMessages.length > 0
+    ? {
+        userMessage: userMessages.join("\n"),
+        technicalReason: technicalReasons.length > 0 ? technicalReasons.join("\n") : undefined,
+      }
+    : undefined;
 }
 
 function buildSingleStepExecutablePrompt(
