@@ -1,6 +1,6 @@
 # Channel Auto Reply Router
 
-Status: P0 implemented and validated; message-level route explanation and runtime-gated local auto_route enablement implemented
+Status: internal module under Ling Agent Session; legacy auto-route terminology kept only for storage, diagnostics, and rollback
 Date: 2026-06-09
 
 Related docs:
@@ -21,6 +21,13 @@ session model. The public product owner is
 answers, task confirmations, progress, approvals, and final reports, not auto-route
 mechanics.
 
+This module is not a top-level product layer. It must never be the fallback that catches
+an executable user request and turns it into a generic "I cannot execute" chat answer.
+The Ling Agent Session coordinator owns the turn. This module is called only for the
+ordinary `answer` outcome after active-session handling, executable intent detection,
+auto-start eligibility, confirmation gating, approval handling, and clarification have
+all declined the message.
+
 Channel discussion used to reply only when the user explicitly mentioned an AI teammate.
 That was safe, but it made root channel turns feel silent. Under the Ling Agent session
 model, ordinary root turns are owned by Ling Agent; specialist teammates are visible only
@@ -30,11 +37,12 @@ when explicitly mentioned or explicitly requested as visible participants.
 What does v0.1 Smoke acceptance mean?
 ```
 
-This design adds a narrow channel message router:
+This design preserves a narrow ordinary-answer router:
 
 ```text
 user channel message
-  -> decide reply or no_reply
+  -> Ling Agent Session decides this is ordinary answer mode
+  -> decide answer or no_answer
   -> choose Ling Agent as the visible ordinary responder
   -> optionally record preferred specialist evidence
   -> create normal ai_reply message from ling_agent
@@ -43,11 +51,12 @@ user channel message
 It does not replace workflow orchestration and does not create a shared long-context
 multi-agent chatroom.
 
-Under Ling Agent Session, auto reply runs after active-session handling and executable
-intent detection. It consumes the protected built-in `ling_agent` teammate identity as the
-visible ordinary responder; it does not select or create a separate default speaker. It
-must not claim messages that should become a task, run, continuation, or approval
-response.
+Under Ling Agent Session, ordinary answer mode runs after active-session handling,
+executable intent detection, auto-start/confirmation decision, and clarification. It
+consumes the protected built-in `ling_agent` teammate identity as the visible ordinary
+responder; it does not select or create a separate default speaker. It must not claim
+messages that should become a task, run, continuation, approval response, or
+clarification.
 
 ## Current P0 Behavior
 
@@ -77,13 +86,15 @@ message:
 - the same question creates one ordinary `ai_reply` from `ling_agent` in `auto_route`,
   while the model-selected teammate is retained as internal routing evidence.
 
-Auto-routed and default-teammate replies pass `proposalMode: "disabled"` and must not
-create `ChannelExecutionProposal`, tasks, runs, workflows, branches, or approvals.
+Ordinary answer-mode replies pass `proposalMode: "disabled"` and must not create
+`ChannelExecutionProposal`, tasks, runs, workflows, branches, or approvals. Executable
+requests must be handled before this module by Ling Agent Session and may create
+proposal evidence that is either auto-started or shown as a confirmation card.
 
 ## Product Boundary
 
-The auto reply router is a shaping-stage conversation feature and an internal Ling Agent
-module.
+The old "auto reply" product concept is retired. The remaining router is an internal
+ordinary-answer module.
 
 It may:
 
@@ -109,18 +120,19 @@ It must not:
   or audit requirements;
 - let every teammate speak by default;
 - turn ordinary channel discussion into a multi-agent transcript.
-- auto-create `ChannelExecutionProposal`, tasks, runs, branches, or workflow steps from an
-  auto-routed ordinary reply.
+- create `ChannelExecutionProposal`, tasks, runs, branches, or workflow steps from an
+  ordinary answer.
+- decide whether a proposal should auto-start; that belongs to Ling Agent Session.
 
 ## Relationship To Workflow Selector
 
-Workflow P5 selector and channel auto reply router are related patterns but different
-entry points.
+Workflow/executable selectors and the ordinary-answer router are related helper patterns
+but different internal modules.
 
 | Concern | Workflow selector | Channel auto reply router |
 | --- | --- | --- |
 | Input | workflow graph, packets, step state | one channel message plus recent channel context |
-| Output | selected workflow step, branch, handoff, or teammate evidence | `reply` or `no_reply`, selected teammate |
+| Output | selected workflow step, branch, handoff, proposal, or teammate evidence | ordinary answer or no answer evidence |
 | Authority | unlock/start existing workflow step through orchestrator | create one ordinary `ai_reply` |
 | Side effects | workflow state transition through state machines | channel message only |
 | Default implementation | deterministic selector | deterministic channel rules |
@@ -129,12 +141,12 @@ entry points.
 Do not reuse the workflow selector runtime directly for ordinary chat. Reuse only the
 pattern: structured decision, validation, durable evidence, and safe fallback.
 
-The missing channel-to-workflow entry is specified separately in
-[Channel Intent To Workflow Selector](channel-intent-workflow-selector.md). That layer
-decides whether an ordinary message should stay as `no_reply` / `single_reply` /
-`clarify`, become a confirmed workflow proposal, or enter a validated direct-workflow
-prefill that still requires confirmation. Auto reply remains the single-teammate
-ordinary conversation path.
+The channel-to-workflow entry is specified separately in
+[Channel Intent To Workflow Selector](channel-intent-workflow-selector.md) and is owned
+by [Ling Agent Session Control Plane](ling-agent-session.md). That layer decides whether
+a message should become a clarification, an auto-started executable run, a confirmation
+card, collaboration work, or an ordinary answer. This router handles only the ordinary
+answer case.
 
 ## Terms
 

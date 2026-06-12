@@ -104,8 +104,9 @@ QA added acceptance criteria.
 
 ### 2. Live Execution Stage
 
-After the user confirms an execution proposal or starts a workflow, the channel should show
-live progress without streaming raw internal chatter into the main feed.
+After Ling Agent auto-starts a clear bounded task, the user confirms an execution
+proposal, or the user starts a workflow, the channel should show live progress without
+streaming raw internal chatter into the main feed.
 
 Good default progress rows:
 

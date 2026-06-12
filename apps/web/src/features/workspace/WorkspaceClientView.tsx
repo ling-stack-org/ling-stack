@@ -3132,7 +3132,7 @@ export function WorkspaceClientView({
       const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
       const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
       const executionProposals = (executionProposalsByMessageId.get(message.id) ?? [])
-        .filter((proposal) => auditActivityVisible || !proposalHasTerminalWorkflow(proposal, channelWorkflows));
+        .filter((proposal) => auditActivityVisible || !proposalShouldHideInDefaultFeed(proposal, channelWorkflows));
       const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
       const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
         <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
@@ -9575,6 +9575,13 @@ function filterChannelBranchThreads(threads: readonly LingThread[], activeThread
     Boolean(thread.pinnedAt) ||
     (Boolean(activeThreadId) && thread.id === activeThreadId)
   );
+}
+
+function proposalShouldHideInDefaultFeed(proposal: ChannelExecutionProposal, workflows: readonly ChannelWorkflow[]): boolean {
+  if (proposal.status === "accepted" && proposal.linkedWorkflowId) {
+    return true;
+  }
+  return proposalHasTerminalWorkflow(proposal, workflows);
 }
 
 function proposalHasTerminalWorkflow(proposal: ChannelExecutionProposal, workflows: readonly ChannelWorkflow[]): boolean {

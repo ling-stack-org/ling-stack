@@ -675,6 +675,12 @@ function detectWorkflowIntentReason(message: ChannelMessage): IntentReasonCode |
   const text = message.body.trim();
   const lower = text.toLowerCase();
   if (
+    /(帮我|请|麻烦|开始|启动|执行|处理|推进|做|来).{0,60}(push|merge|合并|发布|部署|ship|release|deploy|pr\b)/iu.test(text) ||
+    /(push|merge|合并|发布|部署|ship|release|deploy).{0,24}(代码|pr|pull request|分支|版本|上线)/iu.test(text)
+  ) {
+    return "explicit_workflow_start";
+  }
+  if (
     /(开始|启动|执行|开跑|start|run).{0,80}(workflow|工作流|协作|多.?agent|multi.?agent|autoplan|ship|push|合并|发布|architect|engineer|qa|架构|工程|测试|验证)/iu.test(text)
   ) {
     return "explicit_workflow_start";
@@ -701,7 +707,9 @@ function detectSingleStepExecutableIntent(input: ChannelIntentSelectorInput): Si
   if (!text || asksForInstructionsOnly(text)) {
     return undefined;
   }
-  return detectFileExecutableIntent(input, text) ?? detectCommandExecutableIntent(text);
+  return detectFileExecutableIntent(input, text)
+    ?? detectReleaseExecutableIntent(text)
+    ?? detectCommandExecutableIntent(text);
 }
 
 function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: string): SingleStepExecutableIntent | undefined {
@@ -735,7 +743,7 @@ function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: str
       `Target file is ${fileAction === "file_edit" ? "updated" : "created"} at ${target}.`,
       "No undeclared files, commands, MCP tools, or external actions are used without a separate runtime permission request.",
     ],
-    riskSummary: `需要 ${requiredTools.join(", ")} 权限处理 ${target}；用户确认只授权本次任务声明的文件操作范围。`,
+    riskSummary: `需要 ${requiredTools.join(", ")} 权限处理 ${target}；proposal evidence 只声明本次任务的文件操作范围，实际副作用仍走 runtime approval。`,
   };
 }
 
@@ -766,7 +774,35 @@ function detectCommandExecutableIntent(text: string): SingleStepExecutableIntent
       `${target} has been run, or a clear blocker explains why it cannot run.`,
       "No undeclared file writes, edits, external actions, or broader commands are used without a separate runtime permission request.",
     ],
-    riskSummary: `需要 bash 权限运行 ${target}；用户确认只授权本次任务声明的命令范围。`,
+    riskSummary: `需要 bash 权限运行 ${target}；proposal evidence 只声明本次任务的命令范围，实际副作用仍走 runtime approval。`,
+  };
+}
+
+function detectReleaseExecutableIntent(text: string): SingleStepExecutableIntent | undefined {
+  const looksLikeGitPublication = /(帮我|请|麻烦|开始|启动|执行|处理|推进|做|来).{0,60}(push|merge|合并|发布|部署|ship|release|deploy|pr\b)/iu.test(text)
+    || /(push|merge|合并|发布|部署|ship|release|deploy).{0,24}(代码|pr|pull request|分支|版本|上线)/iu.test(text);
+  if (!looksLikeGitPublication) {
+    return undefined;
+  }
+  const target = "Git push/merge workflow";
+  return {
+    kind: "command_run",
+    title: "Prepare Git push/merge",
+    prompt: [
+      "Prepare and run the requested Git push/merge workflow.",
+      `Target: ${target}`,
+      "Inspect repository state first, run the narrowest relevant checks, and perform mutation steps only through the active runtime approval policy.",
+    ].join("\n"),
+    actionSummary: "Prepare Git push/merge with the declared bash scope.",
+    targetLabel: target,
+    requiredTools: ["bash"],
+    rolePreferences: ["release", "engineer"],
+    acceptanceCriteria: [
+      "Repository state is inspected before any push, merge, release, deploy, or publish mutation.",
+      "Required checks are run or a clear blocker explains why they cannot run.",
+      "Git push/merge mutation follows runtime approval policy and is not silently bypassed.",
+    ],
+    riskSummary: "需要 bash 权限处理 Git push/merge；proposal evidence 只声明本次任务的发布/合并范围，真正的高风险副作用继续由 runtime approval policy 控制。",
   };
 }
 
@@ -1199,8 +1235,8 @@ function buildSingleStepExecutablePrompt(
       "",
       executableIntent.prompt,
       "",
-      "权限边界: 用户确认 proposal 只授权本次任务声明的工具和目标；运行中如需未声明工具、路径、命令、MCP 或外部副作用，必须走 runtime permission request。",
-      "等待用户明确确认后再开始可执行工作。",
+      "权限边界: proposal evidence 只声明本次任务的工具和目标；运行中如需未声明工具、路径、命令、MCP 或外部副作用，必须走 runtime permission request。",
+      "开始边界: Ling Agent Session 会在 scope 清楚且所需工具未被 deny 时自动开始；高风险副作用继续由 runtime approval policy 控制，不完整任务必须先澄清。",
     ].join("\n");
   }
   return [
@@ -1214,8 +1250,8 @@ function buildSingleStepExecutablePrompt(
     "",
     executableIntent.prompt,
     "",
-    "Permission boundary: confirming the proposal only authorizes the declared tools and target for this task; undeclared tools, paths, commands, MCP actions, or external side effects must use runtime permission request.",
-    "Wait for explicit user confirmation before starting executable work.",
+    "Permission boundary: proposal evidence only declares the tools and target for this task; undeclared tools, paths, commands, MCP actions, or external side effects must use runtime permission request.",
+    "Start boundary: Ling Agent Session may auto-start when scope is clear and required tools are not denied; high-risk side effects remain governed by runtime approval policy, and incomplete work must be clarified first.",
   ].join("\n");
 }
 
@@ -1375,7 +1411,7 @@ function buildProposalPrompt(
       "建议协作步骤:",
       ...steps,
       "",
-      "等待用户明确确认后再开始可执行工作。",
+      "多步骤协作默认等待用户确认；清晰可执行任务在所需工具未被 deny 时可由 Ling Agent Session 自动开始，副作用继续由 runtime approval policy 控制。",
     ].join("\n");
   }
   return [
@@ -1386,19 +1422,19 @@ function buildProposalPrompt(
     "Proposed collaboration:",
     ...steps,
     "",
-    "Wait for explicit user confirmation before starting executable work.",
+    "Multi-step collaboration waits for user confirmation by default; clear executable work may be auto-started by Ling Agent Session when required tools are not denied, while side effects remain governed by runtime approval policy.",
   ].join("\n");
 }
 
 function buildAcceptanceCriteria(responseLanguage: ResponseLanguage): readonly string[] {
   return responseLanguage === "zh-CN"
     ? [
-        "开始执行前先确认协作范围。",
+        "执行前先产生可审计 proposal evidence；多步骤、范围不完整或 policy-denied 的工作需要确认或阻断。",
         "每个实现步骤都通过现有频道 task/run 路径执行。",
         "selector、handoff、run、approval 和 artifact 证据都保持可展开查看。",
       ]
     : [
-        "Confirm the collaboration scope before starting execution.",
+        "Create auditable proposal evidence before execution; multi-step, incomplete-scope, or policy-denied work needs confirmation or blocking.",
         "Run each implementation step through the existing channel task/run path.",
         "Keep selector, handoff, run, approval, and artifact evidence expandable.",
       ];
@@ -1424,12 +1460,12 @@ function buildRiskSummary(reasonCode: IntentReasonCode, responseLanguage: Respon
   }
   if (reasonCode === "explicit_workflow_start") {
     return responseLanguage === "zh-CN"
-      ? "显式开始 workflow 的请求会先预填为 proposal；执行前仍需要用户确认。"
-      : "Direct workflow request is prefilled as a proposal; user confirmation is still required before execution.";
+      ? "显式开始 workflow 的请求会先预填为 proposal evidence；Ling Agent Session 会在工具未被 deny 时自动开始，真正的高风险副作用继续由 runtime approval policy 控制。"
+      : "Direct workflow request is prefilled as proposal evidence; Ling Agent Session auto-starts when required tools are not denied, while high-risk side effects remain governed by runtime approval policy.";
   }
   return responseLanguage === "zh-CN"
     ? "多 agent 工作只会在确认后开始，并继续沿用现有 workflow/run approval。"
-    : "Multi-agent work starts only after confirmation and continues through existing workflow/run approvals.";
+    : "Multi-agent work starts after confirmation and continues through existing workflow/run approvals.";
 }
 
 function roleSummary(role: RoleMatch, responseLanguage: ResponseLanguage): string {

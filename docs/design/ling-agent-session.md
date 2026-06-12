@@ -34,7 +34,8 @@ Target user experience:
 ```text
 user asks Ling to do something
 -> Ling Agent understands whether this is chat, work, continuation, or approval
--> Ling Agent shows the needed task confirmation or asks one clarifying question
+-> Ling Agent auto-starts clearly scoped safe work, or asks one clarifying question
+-> Ling Agent shows confirmation only when scope or policy requires it
 -> Ling Agent uses specialists when useful and available
 -> execution flows through workflow/run/approval
 -> active process stays visible while running
@@ -71,7 +72,9 @@ Ling Agent owns the conversation session. It is the product-level coordinator th
   approval-related response, or a clarification;
 - chooses one or more specialist teammates when they improve the work;
 - falls back to direct execution when no specialist is required or available;
-- turns executable intent into a confirmable task or workflow;
+- turns executable intent into an auditable proposal, task, or workflow;
+- auto-accepts and starts clearly scoped safe local work when the user's message already
+  grants task intent;
 - keeps running process visible without making internals the default transcript;
 - reports terminal results in user language;
 - links evidence for audit.
@@ -168,8 +171,9 @@ The required order is:
 ```text
 persist user message
 -> active session handling
--> executable or collaboration intent detection
--> ordinary Ling reply handling
+-> executable/collaboration intent detection
+-> auto-start or confirmation decision
+-> ordinary Ling answer mode
 -> no reply
 ```
 
@@ -178,8 +182,8 @@ message result. It means only "this message is not executable work or collaborat
 After that decision, Ling Agent still decides whether the message deserves an ordinary
 reply. For example:
 
-- "在 README.md 里添加一句测试语句" becomes a confirmable task proposal before chat
-  routing.
+- "在 README.md 里添加一句测试语句" becomes proposal evidence and either an
+  auto-started run or a confirmation card before chat routing.
 - "晚上好" can receive a normal Ling reply when the channel reply mode allows it.
 - "好的", "。。", and repeated greetings receive concise visible Ling replies instead of
   being suppressed by reply-worthiness heuristics.
@@ -187,7 +191,14 @@ reply. For example:
   see a blocked Ling reply with the configuration reason, not a silent `no_reply`.
 
 This keeps the product model simple: users talk to Ling Agent; Ling decides whether to
-chat, prepare work, continue a run, request approval, or stay silent.
+answer, clarify, prepare work, start a run, request approval, or stay silent.
+
+The old "auto reply" product layer is no longer a top-level decision layer. Ordinary
+reply generation remains as an internal `answer` outcome owned by Ling Agent Session.
+It must run only after active-session handling and executable intent handling decline the
+message. It must not be allowed to catch executable requests and respond with "I cannot
+execute"; those requests should become a clarification, an auto-started run, or a
+confirmation card.
 
 `Channel.defaultTeammateId` is not the visible default speaker under this model. It is a
 preferred specialist hint for task assignment, workflow participation, and routing
@@ -342,7 +353,7 @@ State meanings:
 | --- | --- | --- |
 | `open` | Session has no active task. | Normal composer. |
 | `shaping` | Ling Agent is clarifying or planning. | One concise question or plan card. |
-| `ready_for_confirmation` | Executable task/workflow is prepared. | Confirmation card with required permissions. |
+| `ready_for_confirmation` | Executable task/workflow is prepared but not safe or complete enough to auto-start. | Confirmation card with required permissions. |
 | `running` | Workflow/run is active. | Mutable process row, progress popover, optional detail drawer. |
 | `waiting_for_approval` | Existing approval system is blocking execution. | Inline approval strip near active context. |
 | `reporting` | Work reached terminal state and Ling Agent is producing final summary. | Short "preparing result" state if needed. |
@@ -358,13 +369,17 @@ collapse under evidence.
 ## Intent Handling
 
 Ling Agent Coordinator is the public entry point. The existing selector and auto-route
-logic become internal modules.
+logic become internal helper modules. "Auto reply" is not a sibling path next to
+workflow/proposal/run; it is only the ordinary-answer outcome after the coordinator has
+ruled out active work, executable intent, approval handling, and clarification.
 
 ```text
 persist user message
 -> attach message to Ling Agent session
 -> if active work exists, classify as approval response, queued follow-up, or redirect
 -> otherwise classify as ordinary chat, executable work, or collaboration request
+-> for executable work, create an auditable proposal record
+-> auto-accept/start when the task is clear and policy allows auto-start
 -> call internal modules as needed:
    - ordinary reply router
    - executable intent detector
@@ -378,12 +393,34 @@ User-visible outcomes:
 
 - ordinary answer from Ling Agent;
 - one clarifying question from Ling Agent;
-- executable task confirmation card;
+- auto-started executable task with progress;
+- executable task confirmation card when scope, executor, or policy requires it;
 - multi-step collaboration proposal;
 - queued follow-up confirmation;
 - stop-and-redirect confirmation;
 - inline permission request;
 - final result report.
+
+Coordinator decision order is a product contract, not an implementation suggestion:
+
+```text
+1. active session intake
+   - approval response
+   - status question
+   - queued follow-up
+   - stop-and-redirect
+2. executable or collaboration intent detection
+3. auto-start eligibility for clear local work
+4. pre-execution confirmation for incomplete or policy-gated work
+5. one clarifying question for incomplete executable work
+6. ordinary answer mode
+7. no reply only for system-noise cases
+```
+
+Executable or collaboration intent must never fall through into ordinary answer mode
+with a "cannot execute" reply. If Ling Agent cannot start safely, it must produce one of
+these visible outcomes: clarification, confirmation card, blocked task explanation, or
+policy error.
 
 Internal outcomes:
 
@@ -454,11 +491,63 @@ This is a recommendation, not a blocker, unless policy requires that role.
 
 ## Permission And Approval Boundary
 
-Permissions are not approved all at session start. Ling uses two approval moments:
+Permissions are not approved all at session start. Ling uses three related but distinct
+moments:
 
-### 1. Pre-Execution Task Confirmation
+### 1. Intent Acceptance And Auto-Start
 
-Before starting executable work, Ling Agent should show the bounded task scope:
+When the user clearly asks Ling to do bounded local work, Ling may create an internal
+proposal and immediately mark it accepted, then start the task/run:
+
+```text
+user: "在 README.md 里加一句测试说明"
+-> Ling creates proposal evidence with requiredTools=["edit"]
+-> proposal is auto-accepted because the target and action are clear
+-> task/run starts
+-> runtime edit approval follows the workspace policy
+```
+
+Auto-start is allowed only when all are true:
+
+- the message is authored by the local user in the active root session;
+- the requested work is clearly scoped enough to create a bounded task/run;
+- the target is known or can be resolved by the run through normal inspection, or the
+  first run step is explicitly to inspect and resolve it;
+- the selected executor has a runnable provider and compatible tool boundary;
+- the required tools are not denied by workspace approval policy;
+- starting the run does not itself grant broad future permissions.
+
+Auto-start is forbidden when:
+
+- the target, content, acceptance, or command is missing and cannot be safely inferred;
+- the request is a question about whether Ling can execute instead of a task request;
+- the selected executor or provider is unavailable;
+- any required tool is `deny` under workspace approval policy;
+- policy requires explicit human review before creating a run.
+
+If the task is incomplete, Ling asks one clarifying question. If the task is executable
+but runtime side effects are risky, Ling should still start the run when policy permits;
+the first side-effecting tool call is then governed by runtime approval.
+
+Auto-start classification should be explicit and deterministic before any model wording
+is generated:
+
+| Request class | Default outcome | Notes |
+| --- | --- | --- |
+| Create or edit a named local file | Auto-start | Runtime `write` or `edit` approval may still pause the run. |
+| Update a small known docs/code section | Auto-start | Allowed when target and acceptance are clear from the message or same-session context. |
+| Run a narrow local check command | Auto-start | Runtime `bash` approval still follows policy. |
+| Inspect/read/summarize local project state | Auto-start or ordinary answer | Auto-start when it needs tool execution; ordinary answer only when no tool work is needed. |
+| Delete, move broad data, clean directories | Auto-start when policy permits; runtime-gated | If `bash/edit/write=ask`, pause at the tool call with target/blast radius. If denied, block. |
+| Git push, merge, release, deploy, publish | Auto-start when policy permits; runtime-gated | If `bash=ask`, start inspection/preflight and pause before mutation. If `bash=allow`, it may proceed. |
+| Credentials, provider settings, approval policy, memory authority | Auto-start only when represented through an allowed run tool; otherwise block or settings flow | Product settings changes are not silently granted by Ling Agent. |
+| External send, paid action, account mutation | Auto-start only when a runtime approval/tool policy can gate it | Otherwise block or show confirmation. |
+| Missing target/content/acceptance | Clarification | Ask one concrete question; do not create a generic answer. |
+
+### 2. Pre-Execution Confirmation
+
+When auto-start is not allowed but the work is otherwise executable, Ling Agent should
+show the bounded task scope:
 
 ```text
 Need write permission to create /path/README.md for this task.
@@ -466,7 +555,8 @@ Start task?
 ```
 
 This confirms intent and starts the existing workflow/run path. It does not grant broad
-workspace permission.
+workspace permission. A confirmation card is a start gate, not the primary execution
+model for every task.
 
 The confirmation card should include:
 
@@ -476,7 +566,7 @@ The confirmation card should include:
 - selected executor, usually Ling Agent or a specialist;
 - policy note if runtime approval may still be required.
 
-### 2. Runtime Approval Requests
+### 3. Runtime Approval Requests
 
 When a running tool call or permission escalation needs approval, the existing approval
 system creates a durable request:
@@ -495,6 +585,8 @@ Rules:
 - Ling Agent cannot approve its own requests.
 - Runtime approval does not mutate workspace approval policy.
 - Grants are scoped to the run or continuation.
+- Auto-started tasks still obey the same runtime approval policy; `ask` means pause and
+  ask before the side effect.
 - External sends, deploys, credentials, provider changes, paid media actions, and broad
   filesystem changes remain explicit approvals.
 - Review Queue and Work Board remain separate external/background work surfaces. Inline
@@ -599,13 +691,16 @@ Routing priority should become:
 Ling Agent Coordinator
   -> active-session continuation / approval response handling
   -> executable intent handling
-  -> workflow/collaboration proposal handling
+  -> auto-start eligibility
+  -> confirmation or clarification
+  -> workflow/collaboration proposal handling when multi-step work is required
   -> ordinary chat routing
   -> no-reply suppression
 ```
 
 This prevents an executable request from being answered by Docs with shell instructions
-before Ling has a chance to create a confirmable task.
+before Ling has a chance to create proposal evidence, auto-start safe work, or show the
+right confirmation/clarification surface.
 
 ## Implementation Slices
 
@@ -647,6 +742,18 @@ Detailed implementation slices are tracked in
 - Preserve the existing approval policy; task confirmation does not grant broad future
   runtime actions.
 
+### P4A: Auto-Start Policy
+
+- For explicit executable work, create durable proposal evidence and start the existing
+  workflow/run path automatically when the required tools are not denied.
+- Show clarification instead for ambiguous work; show confirmation/blocking only when
+  executor/provider/scope is unavailable, required tools are denied, or a product policy
+  requires human review before run creation.
+- Keep runtime approval unchanged: `ask` still pauses before `write`, `edit`, `bash`,
+  MCP, Git push/merge through `bash`, deploy/release commands, or other side effects.
+- Hide the proposal card after successful auto-start; show the active process cell,
+  inline approval if needed, and final report when terminal.
+
 ### P5: Built-In Ling Agent Executor And Specialist Recommendation
 
 - Add Ling Agent as a built-in system teammate executor when no specialist is required or
@@ -681,8 +788,12 @@ Detailed implementation slices are tracked in
 
 ## Acceptance Criteria
 
-- A request to create or edit a file creates a permission-oriented task confirmation, not
-  a Docs reply with a shell snippet.
+- A clear request to create or edit a local file creates durable proposal evidence and
+  auto-starts the existing workflow/run path when required tools are not denied; runtime
+  approval still pauses before `write` or `edit` when policy is `ask`.
+- A high-risk explicit request creates proposal evidence and starts when required tools
+  are not denied; runtime approval still gates the first side effect. Ambiguous work asks
+  one clarifying question instead of producing a Docs shell snippet.
 - A filename-only follow-up can resolve against recent same-session work context before
   ordinary chat routing.
 - Missing Engineer, Docs, QA, or Release teammates do not block safe work that Ling Agent

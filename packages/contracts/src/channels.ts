@@ -1,5 +1,6 @@
 import type { RunTool, ToolName } from "./shared.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
+import type { ChannelWorkflow, ChannelWorkflowOrchestrationResponse, ChannelWorkflowStep } from "./workflows.js";
 
 export type ChannelStatus = "active" | "paused" | "archived";
 
@@ -342,6 +343,12 @@ export interface ChannelMessageMutationResponse {
   readonly message: ChannelMessage;
   readonly aiReply?: ChannelMessage;
   readonly aiReplies?: readonly ChannelMessage[];
+  readonly autoStartedWorkflow?: {
+    readonly proposal: ChannelExecutionProposal;
+    readonly workflow: ChannelWorkflow;
+    readonly workflowSteps: readonly ChannelWorkflowStep[];
+    readonly orchestration?: ChannelWorkflowOrchestrationResponse;
+  };
 }
 
 export type ChannelMessageRouteAction = "reply" | "no_reply";

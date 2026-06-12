@@ -54,7 +54,7 @@ The first implementation should add a product control-plane read model and route
 Ling Agent Session View
   -> active-session continuation / approval handling
   -> executable intent detection
-  -> workflow or task confirmation
+  -> auto-start or workflow/task confirmation
   -> ordinary chat routing
   -> terminal final report
 ```
@@ -67,6 +67,7 @@ layers that already enforce state, permissions, runner behavior, and audit.
 - Prefer derived views before new tables.
 - Keep executable work on the existing workflow/run path.
 - Keep permissions on the existing approval path.
+- Treat proposal records as auditable task plans, not mandatory user-facing stop signs.
 - Keep process details expandable, not default transcript content.
 - Make Ling Agent a protected built-in system teammate and default executor identity, not
   a permission authority.
@@ -339,18 +340,52 @@ Add tests for:
 
 ## P4: Permission UX Integration
 
-Status: initial implementation complete. The first slice updates Web confirmation copy
-and tests the existing inline runtime approval path; it does not add a new approval store
-or grant broad permissions from task confirmation.
+Status: initial implementation needs one follow-up slice. The first slice updated Web
+confirmation copy and tested the existing inline runtime approval path. The next slice
+must allow clearly scoped local executable requests to auto-accept their proposal and
+start the existing workflow/run path, while still using durable runtime approvals for
+side effects.
 
 ### Goal
 
-Separate pre-execution task confirmation from runtime approval without making the user
-learn workflow/run/approval internals.
+Separate intent acceptance, optional pre-execution confirmation, and runtime approval
+without making the user learn workflow/run/approval internals.
+
+### Auto-Start Policy
+
+For clear executable work, Ling Agent should create proposal evidence, auto-accept it,
+and start the existing task/run or workflow path immediately when required tools are not
+denied:
+
+```text
+user asks for clear executable work
+-> create ChannelExecutionProposal with requiredTools
+-> mark it accepted and persist autoStartReason evidence
+-> call the existing proposal-to-workflow/run adapter
+-> runtime write/edit/bash approvals still follow workspace policy
+```
+
+Auto-start is allowed for explicit executable work when:
+
+- the target file, command, task scope, or first inspection step is explicit enough to
+  create a bounded run;
+- a runnable executor is available;
+- required tools are not `deny` under workspace approval policy;
+- the resulting run request can be represented through existing proposal/workflow/run
+  state and approval policy.
+
+Auto-start must fall back to clarification, confirmation, or blocked proposal when:
+
+- required scope is missing and cannot be inspected safely inside a run;
+- the model cannot confidently resolve target, content, or acceptance;
+- no runnable executor/provider is available;
+- one or more required tools are `deny` under workspace approval policy;
+- a workspace/channel policy explicitly requires confirmation before run creation.
 
 ### Pre-Execution Confirmation
 
-Use confirmation copy such as:
+Use confirmation copy only when auto-start is not allowed. Copy should be permission
+oriented, such as:
 
 ```text
 Need write permission to create /path/README.md for this task.
@@ -364,6 +399,9 @@ The confirmation card should include:
 - required tool family: `write`, `edit`, `bash`, `mcp_tool_call`;
 - executor: Ling Agent or specialist teammate;
 - note that runtime approval may still be requested.
+
+The card should not be shown for every ordinary clear task. It is a scope/risk gate, not
+the normal start mechanism.
 
 ### Runtime Approval
 
@@ -379,8 +417,10 @@ Rules:
 
 - no mutation of workspace approval policy from task confirmation;
 - no second approval store;
-- no auto-approve from Ling Agent;
-- high-risk or external actions stay explicit.
+- Ling Agent may auto-accept a start proposal only under the Auto-Start Policy above;
+  it must never auto-approve runtime `ApprovalRequest` records;
+- high-risk or external actions stay governed by runtime approval policy; `ask` pauses at
+  the tool call, `allow` proceeds, and `deny` blocks.
 
 ### Code Anchors
 
@@ -393,11 +433,229 @@ Rules:
 
 Add tests for:
 
-- file create confirmation mentions `write` and target path;
-- file edit confirmation mentions `edit` and target path;
-- command confirmation mentions `bash` and command;
+- clear file create auto-starts through proposal/workflow/run and then waits on runtime
+  `write` approval when policy is `ask`;
+- clear file edit auto-starts through proposal/workflow/run and then waits on runtime
+  `edit` approval when policy is `ask`;
+- clear project command auto-starts through proposal/workflow/run and then waits on
+  runtime `bash` approval when policy is `ask`;
+- high-risk file/delete/push/deploy/provider/credential requests auto-start only when
+  required tools are not denied; runtime approval policy still gates the side effect;
+- incomplete creation requests ask one clarifying question and do not create an ordinary
+  "I cannot execute" reply;
 - runtime approval still resolves through existing approval endpoint;
 - approving a runtime permission does not change workspace policy.
+
+### P4A Follow-Up Slice: Auto-Start Execution
+
+Implement auto-start as a follow-up to the existing P4 permission UX work:
+
+- add an auto-start eligibility helper beside executable intent detection;
+- persist proposal evidence before any run/workflow starts;
+- mark eligible proposals `accepted` and persist auto-start reason in decision/workflow
+  evidence, such as `autoStartReason`;
+- call the existing proposal-to-workflow/run adapter rather than adding a new runner
+  entry point;
+- render running progress immediately instead of a stale confirmation card;
+- keep runtime approval behavior unchanged.
+
+P4A must not teach the ordinary answer router to create work. It belongs to Ling Agent
+Session after executable detection and before ordinary answer mode.
+
+### P4A Detailed Implementation Contract
+
+P4A is a daemon coordinator change, not a Web shortcut. The user message handler should
+make the start decision after executable intent detection and before ordinary answer
+routing.
+
+Required order:
+
+```text
+persist user message
+-> build LingAgentSessionView
+-> handle active-session approval/follow-up/redirect cases
+-> detect executable or collaboration intent
+-> create ChannelExecutionProposal when intent is executable
+-> evaluate auto-start eligibility
+-> if allowed: call confirmChannelExecutionProposalWorkflow service directly
+-> if denied by risk/policy: leave proposal as draft/blocked and render confirmation
+-> if incomplete: ask one clarifying question and do not create an ordinary answer
+-> only then allow ordinary answer routing
+```
+
+The manual Web route remains the same:
+
+```text
+POST /channel-proposals/:proposalId/confirm-workflow?cwd=...
+```
+
+Auto-start should call the same daemon service function that powers that route,
+`confirmChannelExecutionProposalWorkflow`, with a server-side caller. Do not add a second
+workflow compiler, task runner, or hidden run creation path.
+
+#### Eligibility Helper
+
+Add a small pure helper near executable intent handling:
+
+```ts
+type LingAutoStartRisk = "low" | "medium" | "high";
+
+type LingAutoStartBlockReason =
+  | "missing_target"
+  | "missing_content"
+  | "ambiguous_acceptance"
+  | "high_risk_action"
+  | "external_side_effect"
+  | "credential_or_provider_change"
+  | "approval_policy_change"
+  | "deploy_release_publish"
+  | "git_push_or_merge"
+  | "broad_delete_or_move"
+  | "missing_executor"
+  | "policy_requires_confirmation";
+
+interface LingAutoStartDecision {
+  readonly allowed: boolean;
+  readonly risk: LingAutoStartRisk;
+  readonly reason: string;
+  readonly blockReason?: LingAutoStartBlockReason;
+}
+```
+
+The helper must be deterministic from normalized intent, proposal data, channel policy,
+workspace approval policy, executor availability, and current session state. It should
+not depend on model prose after the proposal is already built.
+
+Allowed by default:
+
+- create or edit one or a small set of named local files;
+- update a known docs/code section where target and acceptance are clear;
+- run a narrow local command such as a test, typecheck, lint, or smoke command;
+- inspect/read/summarize local project state when tool execution is required;
+- explicit push/merge/deploy/release requests when the needed tool family is not denied;
+  runtime approval policy gates the mutation step.
+
+Runtime-gated by default:
+
+- broad deletes, moves, cleanups, or filesystem rewrites;
+- Git push, merge, release, deploy, publish, or external-send work;
+- credential, provider, plugin, approval-policy, memory-authority, or permission-scope
+  changes;
+- paid actions, account mutations, or actions against external services.
+
+These classes do not automatically block run creation. They raise risk and should cause
+the runner to hit runtime approval when the workspace policy is `ask`. They block only
+when the required tool family is `deny` or no supported runtime gate exists.
+
+Denied before run creation:
+
+- required tool family is `deny` under workspace approval policy;
+- no runnable executor/provider is available;
+- missing target, missing content, ambiguous command, or unclear acceptance that cannot
+  be safely resolved by an initial inspection step.
+
+#### Proposal And State Semantics
+
+Do not add a new proposal status for the first P4A slice.
+
+Use existing states:
+
+```text
+draft proposal
+  -> accepted + linkedWorkflowId when auto-start succeeds
+  -> draft or blocked when confirmation is required or validation fails
+  -> cancelled or superseded through existing user actions
+```
+
+Auto-start evidence should be auditable without a schema migration:
+
+- `ChannelExecutionProposal.status = "accepted"` means the plan was accepted, whether by
+  user click or auto-start policy;
+- `linkedWorkflowId` links to the started workflow;
+- `channel_intent_decisions` should record that the accepted outcome came from Ling Agent
+  Session auto-start, including `LingAutoStartDecision.reason` and any block reason;
+- workflow metadata may include `sourceProposalId`, `sourceMessageId`,
+  `autoStartSource: "ling_agent_session"`, and `autoStartReason` when metadata is
+  available;
+- proposal schema changes are deferred unless evidence cannot be reconstructed from
+  intent decisions plus workflow metadata.
+
+#### Confirmation And Clarification Semantics
+
+When auto-start is denied because scope is incomplete, do not create a proposal card that
+contains guessed work. Ask one targeted clarification question.
+
+When auto-start is denied because run-start policy blocks execution, keep or create the
+proposal card and render it as a start gate. The card should explain the concrete block
+reason:
+
+- `tool_denied`: "Workspace policy denies bash/edit/write for this task."
+- `missing_executor`: "No runnable executor/provider is available."
+- `missing_target`: "The target is missing and cannot be safely inspected."
+- `policy_requires_confirmation`: "Workspace/channel policy requires confirmation before
+  run creation."
+
+#### Runtime Approval Semantics
+
+Auto-start is not runtime approval.
+
+The first side-effecting tool call still flows through existing approval records:
+
+```text
+auto-started workflow running
+-> runner requests write/edit/bash/MCP
+-> ApprovalRequest or ExecutionAction is created
+-> policy ask pauses the run
+-> inline approval strip appears
+-> user approves or denies
+```
+
+P4A must not:
+
+- mutate workspace approval policy;
+- pre-grant `write`, `edit`, `bash`, MCP, external-send, deploy, or credential authority;
+- let Ling Agent approve its own runtime request;
+- hide approval denial inside a final report without showing the blocked state.
+
+#### Web Rendering Contract
+
+For auto-started work:
+
+- hide the proposal confirmation card from the default feed once the linked workflow is
+  running;
+- show one active mutable process cell;
+- show inline runtime approval when the run is waiting for approval;
+- collapse completed process detail under the Ling Agent final report;
+- keep proposal, intent decision, workflow, run, and approval evidence available through
+  expansion.
+
+For confirmation-required work:
+
+- show the proposal card with the block reason and concrete required permission family;
+- do not show a running process cell until the user starts it;
+- after user confirmation, reuse the same rendering path as auto-started work.
+
+#### Minimum Tests
+
+Daemon tests should cover:
+
+- clear file create intent creates a proposal, auto-confirms it through
+  `confirmChannelExecutionProposalWorkflow`, and links a workflow;
+- clear file edit intent does the same with required tool `edit`;
+- narrow test command intent does the same with required tool `bash`;
+- runtime approval policy `ask` still creates a waiting approval after auto-start;
+- high-risk Git push/deploy/delete/provider/credential requests auto-start when required
+  tools are not denied and then rely on runtime approval policy for the side effect;
+- required tool `deny` creates a blocked/confirmation proposal and does not auto-start;
+- missing target/content asks clarification and does not create an ordinary answer;
+- ordinary non-executable chat still reaches the ordinary answer router.
+
+Web tests should cover:
+
+- auto-started work shows running progress instead of a stale confirmation card;
+- waiting runtime approval appears inline for an auto-started task;
+- confirmation-required work still shows the proposal card;
+- terminal auto-started work collapses process detail under the final report.
 
 ## P5: Ling Agent Built-In Executor
 
@@ -452,12 +710,17 @@ Do not show this for every ordinary task.
 
 Add tests for:
 
-- file creation with no runnable Docs teammate creates a `ling_agent` draft proposal;
-- code edit with no runnable Engineer teammate creates a `ling_agent` draft proposal;
-- confirming the fallback proposal creates a workflow step assigned to `ling_agent`;
+- file creation with no runnable Docs teammate creates a `ling_agent` proposal and
+  auto-starts when the scope is clear and required tools are not denied;
+- code edit with no runnable Engineer teammate creates a `ling_agent` proposal and
+  auto-starts when the scope is clear and required tools are not denied;
+- ambiguous fallback proposals clarify; policy-denied fallback proposals remain
+  `ready_for_confirmation` or blocked;
+- an accepted/auto-started fallback proposal creates a workflow step assigned to
+  `ling_agent`;
 - the started run receives only the proposal's task-scoped required tools.
 
-- no Docs teammate, README create still creates Ling Agent executable proposal;
+- no Docs teammate, README create still uses Ling Agent executor;
 - no Engineer teammate, simple code edit can use Ling Agent executor;
 - explicit teammate mention still selects that teammate when runnable;
 - missing required specialist blocks only when workflow policy says the role is required.
@@ -607,7 +870,8 @@ Not allowed:
 - editing the built-in product-owned Ling Agent instruction document;
 - granting tools, provider access, memory authority beyond protected defaults,
   credentials, deploy authority, or external-send authority;
-- bypassing task confirmation, runtime approval, runner registry, or audit.
+- bypassing Ling Agent Session auto-start/confirmation policy, runtime approval, runner
+  registry, or audit.
 
 ### Instruction Layering
 
@@ -682,16 +946,17 @@ Recommended order:
 3. P3 final report projection and Web completed-cell behavior.
 4. P4 permission copy plus inline approval integration polish.
 5. P5 Ling Agent built-in executor.
-6. P6 Web E2E and smoke hardening.
-7. P7 protected Ling Agent teammate profile and personalization.
-8. P8 always-on teammate memory and Ling Agent Memory panel.
+6. P4A auto-start policy for clear executable work.
+7. P6 Web E2E and smoke hardening.
+8. P7 protected Ling Agent teammate profile and personalization.
+9. P8 always-on teammate memory and Ling Agent Memory panel.
 
 Avoid combining P2 routing changes with P3 Web final-report UI in the same PR unless the
 diff stays small. Routing bugs and UI-collapse bugs have different failure modes.
 
 ## Data Migration Policy
 
-P1-P8 should not require database migrations.
+P1-P8 plus P4A should not require database migrations.
 
 Allowed without migration:
 
@@ -707,15 +972,23 @@ Require a separate migration proposal if:
 - final reports need durable persistence;
 - Ling Agent sessions need first-class storage;
 - executor identity cannot fit existing teammate/workflow metadata;
-- confirmation cards need a new durable decision record beyond existing proposals.
+- auto-start/confirmation cards need a new durable decision record beyond existing
+  proposals.
 - Ling Agent personalization requires durable profile or instruction storage that cannot be
   represented as a virtual profile plus existing workspace settings.
 
 ## Acceptance Criteria
 
 - Users see Ling Agent process and results, not selector/auto-route/workflow/run names.
-- Executable requests become confirmation cards before ordinary chat routing.
-- Confirmation cards name the concrete permission family and target.
+- Executable requests become durable proposal evidence before ordinary chat routing.
+- Explicit executable requests auto-start through existing workflow/run paths when
+  executor/provider/scope is available and required tools are not denied.
+- Ambiguous requests clarify; policy-denied requests show confirmation/blocking instead
+  of auto-starting.
+- High-risk side effects such as Git push/merge, deploy/release/publish, broad delete,
+  external send, or credential/provider changes are runtime-gated by approval policy
+  rather than blocked before run creation.
+- Confirmation cards, when shown, name the concrete permission family and target.
 - Runtime tool approval still uses existing durable approvals.
 - Missing specialists do not block safe Ling Agent direct execution.
 - Ling Agent appears as a protected built-in teammate in every channel.
@@ -734,7 +1007,7 @@ Require a separate migration proposal if:
 
 Product boundary decisions: none for this plan.
 
-Implementation decisions to close during P1-P8:
+Implementation decisions to close during P1-P8 plus P4A:
 
 - exact location of the shared `LingAgentSessionView` type after the first daemon/Web
   slice proves the shape;

@@ -633,7 +633,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   await expect(proposal).toContainText("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await expect(proposal).toContainText("Engineer");
   await expect(proposal.locator(".channel-proposal-collaboration")).toContainText("Collaboration 3 records");
-  await expect(proposal).toContainText("Multi-agent work starts only after confirmation");
+  await expect(proposal).toContainText("Non-direct multi-agent collaboration waits for confirmation");
   await expect(proposal).toContainText("Starting this task does not approve future runtime actions");
   await expect(proposal.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
   await expect(page.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
@@ -747,7 +747,7 @@ test("task confirmation cards explain bounded tool permission and target", async
   await expect(commandCard.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
 });
 
-test("Ling Agent session acceptance matrix routes executable messages to task confirmation", async ({ page }) => {
+test("Ling Agent session acceptance matrix auto-starts executable messages", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -761,28 +761,30 @@ test("Ling Agent session acceptance matrix routes executable messages to task co
 
   await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
+  await expect.poll(() => state.channelWorkflows.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
   const feed = page.locator(".activity-shell");
-  const createCard = feed.getByLabel("Task confirmation").filter({ hasText: "Create /tmp/example/README.md" });
-  await expect(createCard).toBeVisible();
-  await expect(createCard).toContainText("Need write permission to create /tmp/example/README.md for this task.");
-  await expect(createCard).toContainText("Required tool");
-  await expect(createCard).toContainText("write");
-  await expect(createCard).toContainText("Target");
-  await expect(createCard).toContainText("/tmp/example/README.md");
-  await expect(createCard).toContainText("Ling Agent");
-  await expect(createCard.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
+  await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
+  const createWorkCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create /tmp/example/README.md" });
+  await expect(createWorkCell).toBeVisible();
+  expect(isRecord(state.channelExecutionProposals[0]) ? state.channelExecutionProposals[0].status : undefined).toBe("accepted");
+  expect(isRecord(state.channelExecutionProposals[0]) ? state.channelExecutionProposals[0].linkedWorkflowId : undefined).toBe(
+    isRecord(state.channelWorkflows[0]) ? state.channelWorkflows[0].id : undefined,
+  );
   await expect(feed.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
 
   await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("在 README.md 中添加一句测试语句");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   await expect.poll(() => state.channelExecutionProposals.length).toBe(2);
-  const editCard = feed.getByLabel("Task confirmation").filter({ hasText: "Edit /tmp/example/README.md" });
-  await expect(editCard).toBeVisible();
-  await expect(editCard).toContainText("Need edit permission to update /tmp/example/README.md for this task.");
-  await expect(editCard).toContainText("edit");
-  await expect(editCard).toContainText("/tmp/example/README.md");
+  await expect.poll(() => state.channelWorkflows.length).toBe(2);
+  await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
+  const editWorkCell = feed.locator(".conversation-work-cell").filter({ hasText: "Edit /tmp/example/README.md" });
+  await expect(editWorkCell).toBeVisible();
+  expect(isRecord(state.channelExecutionProposals[0]) ? state.channelExecutionProposals[0].status : undefined).toBe("accepted");
+  expect(isRecord(state.channelExecutionProposals[0]) ? state.channelExecutionProposals[0].linkedWorkflowId : undefined).toBe(
+    isRecord(state.channelWorkflows[0]) ? state.channelWorkflows[0].id : undefined,
+  );
   await expect.poll(() => {
     const decision = state.channelIntentDecisions[0];
     return isRecord(decision) ? [decision.action, decision.status, decision.createdBy].join("|") : "";
@@ -1410,7 +1412,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
       sourceMessageId: "msg_ai_proposal",
       proposedByTeammateId: "teammate_builtin_engineer",
       title: "Refine channel workspace copy",
-      prompt: "The user message looks like a coordinated workflow request. Original request: 所有的队友，都回复我一下 Proposed collaboration: 1. QA: Validate the expected behavior and regression checks. 2. 产品策略: Clarify product scope and acceptance before execution. 3. Security: Review trust boundaries and approval-sensitive publication steps. Wait for explicit user confirmation before starting executable work.",
+      prompt: "The user message looks like a coordinated workflow request. Original request: 所有的队友，都回复我一下 Proposed collaboration: 1. QA: Validate the expected behavior and regression checks. 2. 产品策略: Clarify product scope and acceptance before execution. 3. Security: Review trust boundaries and approval-sensitive publication steps. Non-direct multi-agent collaboration waits for user confirmation before starting.",
       assigneeTeammateId: "teammate_builtin_engineer",
       acceptanceCriteria: [
         "Task is created only after confirmation, with every visible long acceptance criterion wrapping inside the proposal card.",

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Channel, ChannelMessage, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
+import type { Channel, ChannelExecutionProposal, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -11,6 +11,7 @@ import {
   type ChannelMessageRouteInput,
 } from "./channel-message-router.js";
 import { selectChannelWorkflowIntent } from "./channel-intent-selector.js";
+import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-agent-auto-start.js";
 import { buildLingAgentSessionViewForChannel } from "./ling-agent-session-view.js";
 import { validateChannelMessageReferences } from "./protocol.js";
 import { parseChannelMessageRequest } from "./schemas.js";
@@ -26,6 +27,17 @@ export type CreateChannelAiReply = (input: {
   readonly visibleParticipantTeammateIds?: readonly string[];
 }) => Promise<ChannelMessage>;
 
+export type StartChannelExecutionProposalWorkflow = (input: {
+  readonly store: RunStore;
+  readonly proposalId: string;
+  readonly autoStartDecision: LingAutoStartDecision;
+}) => Promise<{
+  readonly proposal: ChannelExecutionProposal;
+  readonly workflow: ChannelWorkflow;
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly orchestration?: unknown;
+}>;
+
 interface LingAgentChannelMessageInput {
   readonly store: RunStore;
   readonly channel: Channel;
@@ -34,6 +46,7 @@ interface LingAgentChannelMessageInput {
   readonly requestedTeammateId?: string;
   readonly requestAiReply: boolean;
   readonly createAiReply: CreateChannelAiReply;
+  readonly startExecutionProposalWorkflow?: StartChannelExecutionProposalWorkflow;
   readonly config: ResolvedDaemonConfig;
   readonly routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">;
 }
@@ -52,6 +65,7 @@ interface LingAgentChannelMessageResult {
   readonly routeDecisionId?: string;
   readonly intervention?: RunIntervention;
   readonly activeSessionAction?: LingAgentActiveSessionAction;
+  readonly autoStartedWorkflow?: Awaited<ReturnType<StartChannelExecutionProposalWorkflow>>;
 }
 
 export async function handleChannelMessagesCollection(
@@ -61,6 +75,7 @@ export async function handleChannelMessagesCollection(
   storeRegistry: RunStoreRegistry,
   channelId: string,
   createAiReply: CreateChannelAiReply,
+  startExecutionProposalWorkflow: StartChannelExecutionProposalWorkflow | undefined,
   routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -133,6 +148,7 @@ export async function handleChannelMessagesCollection(
         requestedTeammateId: input.teammateId,
         requestAiReply: Boolean(input.requestAiReply),
         createAiReply,
+        startExecutionProposalWorkflow,
         config,
         routeDependencies,
       });
@@ -149,6 +165,7 @@ export async function handleChannelMessagesCollection(
         ...(result.aiReplies ? { aiReplies: result.aiReplies } : {}),
         ...(result.intervention ? { intervention: result.intervention } : {}),
         ...(result.activeSessionAction ? { activeSessionAction: result.activeSessionAction } : {}),
+        ...(result.autoStartedWorkflow ? { autoStartedWorkflow: result.autoStartedWorkflow } : {}),
       });
       return;
     }
@@ -200,6 +217,55 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     runnerRegistry: input.routeDependencies.runnerRegistry,
   });
   if (workflowIntent.action === "workflow_proposal") {
+    const autoStartDecision = decideLingAgentAutoStart({
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      proposal: workflowIntent.proposal,
+    });
+    if (autoStartDecision.allowed && input.startExecutionProposalWorkflow) {
+      try {
+        const autoStartedWorkflow = await input.startExecutionProposalWorkflow({
+          store: input.store,
+          proposalId: workflowIntent.proposal.id,
+          autoStartDecision,
+        });
+        input.store.createChannelIntentDecision({
+          channelId: input.channel.id,
+          sourceMessageId: input.sourceMessage.id,
+          action: "direct_workflow",
+          proposalId: autoStartedWorkflow.proposal.id,
+          workflowId: autoStartedWorkflow.workflow.id,
+          reason: `Ling Agent Session auto-started proposal ${autoStartedWorkflow.proposal.id}. ${autoStartDecision.reason}`,
+          status: "accepted",
+          createdBy: "deterministic",
+        }, new Date().toISOString());
+        return { autoStartedWorkflow };
+      } catch (error) {
+        input.store.createChannelIntentDecision({
+          channelId: input.channel.id,
+          sourceMessageId: input.sourceMessage.id,
+          action: "direct_workflow",
+          proposalId: workflowIntent.proposal.id,
+          reason: `Ling Agent Session auto-start failed; proposal remains available for confirmation. ${autoStartDecision.reason}`,
+          status: "failed",
+          createdBy: "deterministic",
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }, new Date().toISOString());
+      }
+    }
+    if (!autoStartDecision.allowed && autoStartDecision.blockReason === "tool_denied") {
+      input.store.createChannelIntentDecision({
+        channelId: input.channel.id,
+        sourceMessageId: input.sourceMessage.id,
+        action: "direct_workflow",
+        proposalId: workflowIntent.proposal.id,
+        reason: `Ling Agent Session auto-start blocked by approval policy. ${autoStartDecision.reason}`,
+        status: "failed",
+        createdBy: "deterministic",
+        errorMessage: autoStartDecision.reason,
+      }, new Date().toISOString());
+    }
     return {};
   }
   if (workflowIntent.action === "visible_multi_reply") {

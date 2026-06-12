@@ -1082,6 +1082,38 @@ export async function routeRequest(
     return startOrchestratedRun;
   };
 
+  const confirmAndOrchestrateChannelProposal = async (input: {
+    readonly store: RunStore;
+    readonly cwd: string;
+    readonly proposalId: string;
+  }) => {
+    const confirmed = confirmChannelExecutionProposalWorkflow({
+      store: input.store,
+      cwd: input.cwd,
+      proposalId: input.proposalId,
+      runnerRegistry,
+      validateRunRequest: (candidateRunRequest) => {
+        resolveProviderForRun(input.store, candidateRunRequest, secretResolver);
+      },
+    });
+    const startOrchestratedRun = createStartOrchestratedRun(input.store, input.cwd);
+    const orchestration = await orchestrateChannelWorkflow({
+      store: input.store,
+      cwd: input.cwd,
+      workflowId: confirmed.workflow.id,
+      validateRunRequest: (candidateRunRequest) => {
+        resolveProviderForRun(input.store, candidateRunRequest, secretResolver);
+      },
+      startRun: startOrchestratedRun,
+    });
+    return {
+      proposal: input.store.getChannelExecutionProposal(input.proposalId) ?? confirmed.proposal,
+      workflow: orchestration.workflow,
+      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, limit: 500 }),
+      orchestration,
+    };
+  };
+
   const workflowHandoffIntentRoute = parseWorkflowHandoffIntentRoute(url.pathname);
   if (workflowHandoffIntentRoute) {
     if (workflowHandoffIntentRoute.kind === "collection") {
@@ -1286,12 +1318,18 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "messages") {
+      const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
       await handleChannelMessagesCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
         createAiChannelReply({
           runnerRegistry,
           runtimeSupervisor,
           secretResolver,
           ...input,
+        }),
+        (input) => confirmAndOrchestrateChannelProposal({
+          store: input.store,
+          cwd: channelMessagesCwd,
+          proposalId: input.proposalId,
         }),
         {
           runnerRegistry,
@@ -1354,30 +1392,16 @@ export async function routeRequest(
       }
       try {
         const store = storeRegistry.getStore(cwd);
-        const confirmed = confirmChannelExecutionProposalWorkflow({
+        const confirmed = await confirmAndOrchestrateChannelProposal({
           store,
           cwd,
           proposalId: channelProposalRoute.proposalId,
-          runnerRegistry,
-          validateRunRequest: (candidateRunRequest) => {
-            resolveProviderForRun(store, candidateRunRequest, secretResolver);
-          },
-        });
-        const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
-        const orchestration = await orchestrateChannelWorkflow({
-          store,
-          cwd,
-          workflowId: confirmed.workflow.id,
-          validateRunRequest: (candidateRunRequest) => {
-            resolveProviderForRun(store, candidateRunRequest, secretResolver);
-          },
-          startRun: startOrchestratedRun,
         });
         writeJson(response, 200, {
-          proposal: store.getChannelExecutionProposal(channelProposalRoute.proposalId) ?? confirmed.proposal,
-          workflow: orchestration.workflow,
-          workflowSteps: store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, limit: 500 }),
-          orchestration,
+          proposal: confirmed.proposal,
+          workflow: confirmed.workflow,
+          workflowSteps: confirmed.workflowSteps,
+          orchestration: confirmed.orchestration,
         });
       } catch (error) {
         writeJson(response, error instanceof HttpError ? error.statusCode : 400, {

@@ -398,7 +398,7 @@ Message footer actions should be quiet, but discoverable.
 | --- | --- | --- |
 | Copy message | hover/focus | icon button with tooltip |
 | Reply/thread | hover/focus where supported | channel/thread only |
-| Create task | hover/focus where supported | should open proposal, not auto-run |
+| Create task | hover/focus where supported | creates proposal evidence; may auto-start only when Ling Agent Session policy allows it |
 | Open evidence | always visible when evidence exists | badge or disclosure button |
 | Timestamp | compact footer text | not a dominant column |
 
@@ -486,7 +486,12 @@ Required content:
 - primary confirm action,
 - secondary dismiss/edit action.
 
-Do not let a proposal silently create or run work without explicit user confirmation.
+Do not let a proposal silently create or run uncontrolled side effects. Clear executable
+work may auto-start only through Ling Agent Session policy after durable proposal
+evidence is created and required tools are not denied. High-risk, external, destructive,
+deploy/release/publish, Git push/merge, or credential/provider/policy-changing side
+effects are gated by runtime approval policy; ambiguous or policy-blocked work still
+requires clarification, confirmation, or a blocked proposal before run creation.
 
 ### Approval Summary
 
@@ -827,7 +832,7 @@ the UI must make the routing explicit:
 | add normal message | Send | posts a normal channel message |
 | ask active run to continue later | Queue follow-up | stores linked follow-up after terminal state |
 | stop and redirect work | Stop and redirect | cancels active run and creates continuation |
-| create new task from message | Create task | opens proposal requiring confirmation |
+| create new task from message | Create task | creates proposal evidence; auto-starts only when Ling Agent Session policy allows it, otherwise opens confirmation |
 
 Do not silently route a new message into an active run.
 

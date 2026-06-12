@@ -48,6 +48,8 @@ does not let every teammate answer by default. A bounded `visible_multi_reply` i
 only when the user explicitly asks for multiple teammate opinions in the shaping stage.
 Under the Ling Agent session model, this layer is called by Ling Agent before ordinary
 auto-route so executable intent cannot be answered as a plain teammate chat reply.
+It is not the top-level turn owner: Ling Agent Session decides whether the resulting
+proposal evidence auto-starts or waits for a confirmation card.
 
 ## Current Implementation
 
@@ -68,7 +70,9 @@ The current implementation is deterministic by default and uses Ling-native pers
 - intent decisions are persisted in `channel_intent_decisions`, separate from ordinary
   `channel_message_route_decisions`;
 - explicit workflow-start requests become validated prefilled proposals with
-  `direct_workflow` intent evidence, but still require the user to click Start;
+  `direct_workflow` intent evidence. Ling Agent Session may auto-accept/start only when
+  the scope is clear, the executor/provider can run, and required tools are not denied;
+  otherwise the proposal clarifies, blocks, or waits for a user Start confirmation;
 - model-assisted intent selection is available only behind
   `channels.intentSelector` / `LING_STACK_CHANNEL_INTENT_SELECTOR`, requires strict JSON,
   and falls back to deterministic routing on failure;
@@ -106,8 +110,10 @@ Implemented slices:
   proposal or silence;
 - P4 independent `channel_intent_decisions` persistence after the workflow adapter makes
   intent evidence more important;
-- P5 `direct_workflow` as a validated, prefilled proposal-confirmation path. It must not
-  start execution without explicit user confirmation;
+- P5 `direct_workflow` as a validated, prefilled proposal path. Ling Agent Session may
+  auto-start clear executable work after durable proposal evidence is created when
+  required tools are not denied; otherwise it remains a clarification, blocking, or
+  confirmation path;
 - P6 model-assisted intent selector behind feature flag, strict JSON validation, and
   deterministic fallback.
 - Bounded `visible_multi_reply` for discussion-only all-teammate requests, including
@@ -135,7 +141,7 @@ The intent selector may:
 - prefill a single-step executable workflow when the user asks for a concrete local file,
   code, command, or documentation write action;
 - prefill a direct workflow proposal only when the user request is explicit, safe, and
-  policy-valid, then wait for confirmation;
+  policy-valid, then hand auto-start or confirmation gating to Ling Agent Session;
 - pass structured workflow intent into the existing workflow graph compiler and selector.
 
 It must not:
@@ -288,12 +294,13 @@ interface ChannelWorkflowIntent {
 | `single_reply` | One teammate should answer as normal channel conversation. | Use `default_teammate` or `auto_route` to create one normal `ai_reply`. |
 | `visible_multi_reply` | The user explicitly asks multiple teammates for visible opinions or discussion before work is scoped. | Create bounded ordinary `ai_reply` messages, one per selected teammate; do not create a task, workflow, approval, or memory candidate. |
 | `clarify` | The request is likely work, but the scope is ambiguous. | One teammate asks one clarifying question. |
-| `workflow_proposal` | The message asks for coordinated work or multiple roles. | Show a compact proposal in the conversation; wait for confirmation. |
-| `direct_workflow` | The message explicitly asks to start a safe known workflow. | Create a validated prefilled proposal or confirmation step; start only after explicit user confirmation. |
+| `workflow_proposal` | The message asks for coordinated work or multiple roles. | Create compact proposal evidence; auto-start only when Ling Agent Session policy allows it, otherwise show confirmation. |
+| `direct_workflow` | The message explicitly asks to start known executable work. | Create validated proposal evidence; auto-start when scope, executor/provider, and approval policy allow run creation. Runtime approval gates side effects. |
 
-`direct_workflow` is intentionally narrow. In Ling it does not mean hidden auto-start.
-It means the selector is allowed to prefill a known workflow start shape and present it
-for confirmation. When in doubt, use `workflow_proposal` or `clarify`.
+`direct_workflow` is intentionally narrow. In Ling it does not mean hidden uncontrolled
+side effects. It means the selector is allowed to prefill a known workflow/task start
+shape. Ling Agent Session may auto-accept and start only under the auto-start policy.
+When in doubt, use `workflow_proposal` or `clarify`.
 
 ## Routing Flow
 
@@ -341,8 +348,8 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 | `帮我跑测试看一下` | `direct_workflow` or `clarify` | If the target test command or project context is known, prefill an approved command workflow; otherwise ask for the target. |
 | `所有队友协作实现这个功能` | `workflow_proposal` | The user asks for coordinated work, not just visible opinions. |
 | `Architect 先拆，Engineer 实现，QA 验证` | `workflow_proposal` | If the artifact/scope is clear enough, proposal can be prefilled. |
-| `开始让 Architect 拆这个 PR，然后 Engineer 改，QA 跑 e2e` | `direct_workflow` or `workflow_proposal` | Direct means prefilled confirmed-start proposal, not no-confirm execution. |
-| `帮我 push 合并代码` | `direct_workflow` with confirmation and approvals | May require ship workflow and approval gates; never bypass destructive checks. |
+| `开始让 Architect 拆这个 PR，然后 Engineer 改，QA 跑 e2e` | `direct_workflow` or `workflow_proposal` | Direct means validated proposal evidence plus Ling Agent Session run-start policy, not hidden uncontrolled execution. |
+| `帮我 push 合并代码` | `direct_workflow` with runtime approval policy | May auto-start preflight/workflow when `bash` is not denied; Git mutation still follows runtime approval policy. |
 
 ## Visible Multi-Reply UX
 
@@ -407,7 +414,7 @@ small enough to inject.
 | `visible_multi_reply` | `roster_compact` | Include compact roster and selected participants; exclude presence and hidden peer content. |
 | `clarify` | `minimal` plus relevant protocol rules | Ask one question; do not create workflow context. |
 | `workflow_proposal` | `capability_routing` | Use teammate roles/capabilities for proposal drafting, not as shared chat context. |
-| `direct_workflow` | `capability_routing` then `workflow_packet` after confirmation | Prefill only; execution still waits for user confirmation. |
+| `direct_workflow` | `capability_routing` then `workflow_packet` after start | Durable proposal evidence first; execution may auto-start or wait for confirmation according to Ling Agent Session policy. |
 
 This boundary lets Ling answer "who is in this channel?" without treating every
 teammate reply as part of one autonomous shared transcript.
@@ -571,7 +578,7 @@ P1 replaced the old single-task confirmation path with a daemon-owned adapter:
 
 ```text
 ChannelExecutionProposal(draft)
-  -> user clicks Start
+  -> user clicks Start or Ling Agent Session auto-start policy accepts it
   -> daemon validates proposal, teammates, providers, channel runtime policy
   -> compile ChannelWorkflow + ChannelWorkflowStep[]
   -> mark proposal accepted and link workflow id
@@ -596,7 +603,7 @@ Compilation rules:
 - use the step teammate as the step assignee, not only the proposal assignee;
 - derive `dependencies` so each sequential step depends on the previous step;
 - use existing workflow graph compiler/orchestrator types, not a new mini-runner;
-- link proposal metadata to the workflow and source message for evidence drilldown;
+- link proposal, workflow metadata, and source message for evidence drilldown;
 - never start tools until the existing workflow orchestrator validates the first step.
 
 Validation rules:
@@ -720,7 +727,8 @@ show only accepted outcomes by default.
 
 ## P5 Direct Workflow
 
-`direct_workflow` is a high-confidence confirmed-start proposal, not a hidden auto-run.
+`direct_workflow` is high-confidence start evidence, not a hidden uncontrolled auto-run.
+Runtime side effects still obey approval policy.
 
 Trigger examples:
 
@@ -733,12 +741,19 @@ Behavior:
 
 1. validate that a known graph shape can be built;
 2. prefill proposal steps and target;
-3. show the proposal with a stronger CTA such as `Start workflow`;
-4. after user confirmation, call the P1 adapter;
-5. if validation is incomplete, downgrade to `workflow_proposal` or `clarify`.
+3. create durable proposal evidence;
+4. if Ling Agent Session auto-start policy allows it, mark the proposal accepted and call
+   the P1 adapter;
+5. otherwise show the proposal with a stronger CTA such as `Start workflow`;
+6. if validation is incomplete, downgrade to `workflow_proposal` or `clarify`.
 
-No message should directly start a workflow just because it says `开始`. The user
-confirmation click is still required.
+No message should directly start a workflow just because it says `开始`. Auto-start is
+allowed only after validation, durable proposal evidence, and Ling Agent Session policy
+checks. High-risk actions such as Git push/merge, deploy/release/publish, broad delete,
+credential/provider changes, or external sends are not blocked before run creation when
+the required tools are allowed or ask-gated; they must be governed by runtime approval
+policy at the side-effecting tool call. Ambiguous, executor-missing, provider-missing, or
+tool-denied work still falls back to clarification, confirmation, or blocked proposal.
 
 ## P6 Model-Assisted Intent Selector
 
@@ -832,9 +847,14 @@ and prompt text are audit data, not normal conversation content.
 - Side effects must be executed only by existing daemon routes/state machines.
 - The selector cannot mutate approval policy, provider settings, teammate permissions,
   memory authority, tool scopes, secrets, branch state, or deploy state.
-- `workflow_proposal` requires user confirmation before workflow creation.
-- `direct_workflow` must still require explicit user confirmation before workflow
-  creation.
+- `workflow_proposal` and `direct_workflow` must create durable proposal evidence before
+  workflow/run creation.
+- Auto-start may mark the proposal accepted and start workflow/run only when Ling Agent
+  Session policy allows it.
+- Explicit user confirmation remains required when scope is ambiguous, executor/provider
+  is missing, required tools are denied, or workspace/channel policy requires human
+  review before run creation. High-risk side effects otherwise rely on runtime approval
+  policy.
 - `direct_workflow` must downgrade to `workflow_proposal` or `clarify` when target
   artifact, graph template, participant, provider, approval, or policy validation is
   incomplete.
@@ -850,11 +870,12 @@ and prompt text are audit data, not normal conversation content.
 | P2 | Proposal `Edit` UI and validation before confirmation. Implemented. | Medium |
 | P3 | `clarify` decision with one coordinator question. Implemented. | Low |
 | P4 | Independent `channel_intent_decisions` persistence and source-message idempotency. Implemented. | Medium |
-| P5 | `direct_workflow` as validated prefilled proposal plus confirmation. Implemented. | Medium |
+| P5 | `direct_workflow` as validated proposal evidence plus Ling Agent Session start gating. Implemented. | Medium |
 | P6 | Model-assisted intent selector behind feature flag and deterministic fallback. Implemented. | Medium |
 | P7 | Bounded `visible_multi_reply` for explicit discussion-only all-teammate requests. Implemented. | Medium |
 | P8 | Compact roster/visible participants context for `visible_multi_reply`. Implemented as the P1/P2 prompt-context slice; full Context Budget Manager remains future work. | Low |
 | P9 | Single-step executable intent for file writes, code edits, command/test runs, artifact writes, bounded required-tools metadata, and blocked proposals when channel/teammate tools are missing. Implemented. | Medium |
+| P10 | Ling Agent Session auto-start policy for clear executable work, while preserving runtime approvals. Planned. | High |
 
 ## Acceptance Criteria
 

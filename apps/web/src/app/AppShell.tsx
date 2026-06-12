@@ -1855,6 +1855,9 @@ export function AppShell(): JSX.Element {
       }
       await refreshChannelMessageRouteDecisions(selectedChannelId);
       await refreshChannelFiles(selectedChannelId);
+      if (response.autoStartedWorkflow) {
+        await refreshChannelActivity();
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
       throw error;

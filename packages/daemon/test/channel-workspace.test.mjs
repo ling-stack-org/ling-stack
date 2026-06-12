@@ -915,7 +915,7 @@ test("channel intent selector creates workflow proposals for execution-shaped al
     );
     assert.equal(proposals.proposals[0].responseLanguage, "zh-CN");
     assert.match(proposals.proposals[0].prompt, /建议协作步骤/);
-    assert.match(proposals.proposals[0].acceptanceCriteria[0], /确认协作范围/);
+    assert.match(proposals.proposals[0].acceptanceCriteria[0], /可审计 proposal evidence/);
     assert.match(proposals.proposals[0].collaborationSteps[0].summary, /拆解实现边界/);
     assert.match(proposals.proposals[0].riskSummary, /工作流 proposal/);
 
@@ -995,7 +995,7 @@ test("channel intent selector asks one clarify question for underspecified work 
   }
 });
 
-test("channel intent selector records direct workflow as a confirmed-start proposal only", async () => {
+test("channel intent selector auto-starts explicit direct workflow proposals", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-direct-workflow-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
@@ -1025,32 +1025,31 @@ test("channel intent selector records direct workflow as a confirmed-start propo
     });
 
     assert.equal(created.aiReply, undefined);
-    assert.equal(runner.runs.length, 0);
-    assert.deepEqual((await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`)).workflows, []);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 3);
+    assert.equal(runner.runs.length, 3);
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.equal(proposals.proposals[0].responseLanguage, "zh-CN");
     assert.deepEqual(
       proposals.proposals[0].collaborationSteps.map((step) => step.teammateId),
       ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"],
     );
-    assert.match(proposals.proposals[0].riskSummary, /执行前仍需要用户确认/);
+    assert.match(proposals.proposals[0].riskSummary, /runtime approval policy/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions.length, 2);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "direct_workflow");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
+    assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
 
-    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(confirmed.proposal.status, "accepted");
-    assert.equal(confirmed.workflow.metadata.responseLanguage, "zh-CN");
-    assert.equal(confirmed.workflowSteps.length, 3);
-    assert.match(confirmed.workflowSteps[0].prompt, /用户可读输出请使用中文/);
-    assert.match(confirmed.workflowSteps[0].prompt, /API 字段和证据摘录保持原文/);
+    assert.equal(created.autoStartedWorkflow.workflow.metadata.responseLanguage, "zh-CN");
+    assert.match(created.autoStartedWorkflow.workflowSteps[0].prompt, /用户可读输出请使用中文/);
+    assert.match(created.autoStartedWorkflow.workflowSteps[0].prompt, /API 字段和证据摘录保持原文/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1089,8 +1088,8 @@ test("explicit response language overrides workspace default for workflow propos
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].responseLanguage, "en-US");
     assert.match(proposals.proposals[0].prompt, /Proposed collaboration/);
-    assert.match(proposals.proposals[0].acceptanceCriteria[0], /Confirm the collaboration scope/);
-    assert.match(proposals.proposals[0].riskSummary, /Multi-agent work starts only after confirmation/);
+    assert.match(proposals.proposals[0].acceptanceCriteria[0], /Create auditable proposal evidence/);
+    assert.match(proposals.proposals[0].riskSummary, /Multi-agent work starts after confirmation/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1118,7 +1117,7 @@ test("channel response language overrides follow-user inference for workflow pro
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].responseLanguage, "en-US");
     assert.match(proposals.proposals[0].prompt, /Proposed collaboration/);
-    assert.match(proposals.proposals[0].riskSummary, /Multi-agent work starts only after confirmation/);
+    assert.match(proposals.proposals[0].riskSummary, /Multi-agent work starts after confirmation/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1147,22 +1146,23 @@ test("single-step file creation becomes direct workflow with bounded write tools
     });
 
     assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.equal(proposals.proposals[0].assigneeTeammateId, "teammate_builtin_docs");
     assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
     assert.match(proposals.proposals[0].riskSummary, /write/);
     assert.match(proposals.proposals[0].prompt, /权限边界/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions.length, 2);
     assert.equal(decisions.decisions[0].action, "direct_workflow");
     assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
 
-    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(confirmed.workflowSteps.length, 1);
-    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["write"]);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
     assert.match(runner.runs[0].task.prompt, /Confirmed task-scoped tools:\nwrite/);
@@ -1193,22 +1193,22 @@ test("Ling Agent fallback creates file proposal when no Docs teammate can run", 
     });
 
     assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.equal(proposals.proposals[0].assigneeTeammateId, "ling_agent");
     assert.equal(proposals.proposals[0].proposedByTeammateId, "ling_agent");
     assert.deepEqual(proposals.proposals[0].collaborationSteps.map((step) => step.teammateId), ["ling_agent"]);
     assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
     assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
 
-    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(confirmed.proposal.status, "accepted");
-    assert.equal(confirmed.workflow.createdBy, "ling_agent");
-    assert.equal(confirmed.workflowSteps.length, 1);
-    assert.equal(confirmed.workflowSteps[0].toParticipantId, "ling_agent");
-    assert.equal(confirmed.workflowSteps[0].toParticipantLabel, "Ling Agent");
-    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.equal(created.autoStartedWorkflow.proposal.status, "accepted");
+    assert.equal(created.autoStartedWorkflow.workflow.createdBy, "ling_agent");
+    assert.equal(created.autoStartedWorkflow.workflowSteps[0].toParticipantId, "ling_agent");
+    assert.equal(created.autoStartedWorkflow.workflowSteps[0].toParticipantLabel, "Ling Agent");
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["write"]);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
     assert.match(runner.runs[0].task.prompt, /Assigned teammate: Ling Agent/);
@@ -1243,19 +1243,18 @@ test("Ling Agent fallback edits code proposal when no Engineer teammate can run"
     });
 
     assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.equal(proposals.proposals[0].assigneeTeammateId, "ling_agent");
     assert.deepEqual(proposals.proposals[0].requiredTools, ["edit"]);
     assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
     assert.match(proposals.proposals[0].riskSummary, /Engineer/);
 
-    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(confirmed.proposal.status, "accepted");
-    assert.equal(confirmed.workflowSteps.length, 1);
-    assert.equal(confirmed.workflowSteps[0].toParticipantId, "ling_agent");
-    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["edit"]);
+    assert.equal(created.autoStartedWorkflow.workflowSteps[0].toParticipantId, "ling_agent");
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["edit"]);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["edit"]);
     assert.match(runner.runs[0].task.prompt, /Assigned teammate: Ling Agent/);
@@ -1290,9 +1289,11 @@ test("single-step file creation starts with task-scoped write when channel lacks
     });
 
     assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow.orchestration.status, "started", created.autoStartedWorkflow.orchestration.blocker);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
     assert.equal(proposals.proposals[0].errorMessage, undefined);
     assert.match(proposals.proposals[0].riskSummary, /write/);
@@ -1300,11 +1301,8 @@ test("single-step file creation starts with task-scoped write when channel lacks
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
 
-    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(confirmed.proposal.status, "accepted");
-    assert.equal(confirmed.orchestration.status, "started", confirmed.orchestration.blocker);
-    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["write"]);
-    assert.equal(confirmed.workflowSteps[0].metadata.sourceProposalId, proposals.proposals[0].id);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.equal(created.autoStartedWorkflow.workflowSteps[0].metadata.sourceProposalId, proposals.proposals[0].id);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
   } finally {
@@ -1335,16 +1333,18 @@ test("single-step file edit inherits target path from recent workflow context", 
     });
     const createProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(createProposals.proposals.length, 1);
-    await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(createProposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(createProposals.proposals[0].status, "accepted");
 
     const edited = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "在 README.md 中添加一句测试语句",
     });
 
     assert.equal(edited.aiReply, undefined);
+    assert.equal(edited.autoStartedWorkflow.workflowSteps.length, 1);
     const editProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
     assert.equal(editProposals.proposals.length, 1);
-    assert.equal(editProposals.proposals[0].status, "draft");
+    assert.equal(editProposals.proposals[0].status, "accepted");
+    assert.equal(editProposals.proposals[0].linkedWorkflowId, edited.autoStartedWorkflow.workflow.id);
     assert.deepEqual(editProposals.proposals[0].requiredTools, ["edit"]);
     assert.match(editProposals.proposals[0].title, /README\.md|\.\.\./);
     assert.match(editProposals.proposals[0].prompt, new RegExp(`Target: ${escapeRegExp(cwd)}/README\\.md`));
@@ -1455,6 +1455,86 @@ test("single-step test request becomes direct workflow with bounded bash tools",
     assert.match(proposals.proposals[0].riskSummary, /bash/);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions[0].action, "direct_workflow");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("high-risk push merge request auto-starts when required tools are not denied", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-high-risk-push-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Release",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "帮我 push 合并代码",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    assert.equal(runner.runs.length, 1);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
+    assert.match(proposals.proposals[0].riskSummary, /runtime approval policy/);
+
+    const workflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(workflows.workflows.length, 1);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => /High-risk side effect is runtime-gated: git_push_or_merge/.test(decision.reason)), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("high-risk push merge request blocks before run when required tool is denied", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-high-risk-push-deny-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await patchJson(`${daemon.url}/approval-policy?cwd=${encodeURIComponent(cwd)}`, {
+      toolDecisions: { bash: "deny" },
+    });
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Release",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "帮我 push 合并代码",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.runs.length, 0);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, undefined);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => decision.status === "failed" && /denies required tools: bash/.test(decision.errorMessage ?? decision.reason)), true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

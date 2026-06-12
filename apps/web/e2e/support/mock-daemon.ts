@@ -2850,11 +2850,11 @@ function maybeCreateMockWorkflowProposal(
   channelId: string,
   message: Record<string, unknown>,
   autoReplyMode: string,
-): boolean {
+): { readonly autoStartedWorkflow?: unknown } | undefined {
   const body = typeof message.body === "string" ? message.body : "";
   const executableProposal = maybeCreateMockSingleStepExecutableProposal(state, channelId, message, body);
   if (executableProposal) {
-    return true;
+    return executableProposal;
   }
   const lower = body.toLowerCase();
   const allTeammates = /(所有|全部|全体|每个|每位).{0,8}(队友|agent|teammate|agents)/iu.test(body);
@@ -2864,7 +2864,7 @@ function maybeCreateMockWorkflowProposal(
   const roleOrder = ["architect", "engineer", "qa", "designer", "product", "security", "docs", "release"];
   const matchedRoles = roleOrder.filter((role) => mockTextMentionsRole(lower, role));
   if (!allTeammates && !orderedWork && matchedRoles.length < 2) {
-    return false;
+    return undefined;
   }
 
   const activeTeammates = state.aiTeammates.filter((teammate): teammate is Record<string, unknown> =>
@@ -2882,7 +2882,7 @@ function maybeCreateMockWorkflowProposal(
         return teammate ? [teammate] : [];
       });
   if (selectedTeammates.length === 0) {
-    return false;
+    return undefined;
   }
 
   const engineer = selectedTeammates.find((teammate) => teammate.roleKey === "engineer");
@@ -2895,7 +2895,7 @@ function maybeCreateMockWorkflowProposal(
     sourceMessageId: typeof message.id === "string" ? message.id : "",
     proposedByTeammateId: assigneeId,
     title: body.length > 72 ? `${body.slice(0, 69)}...` : body,
-    prompt: `The user message looks like a coordinated workflow request.\n\nOriginal request: ${body}\n\nWait for explicit user confirmation before starting executable work.`,
+    prompt: `The user message looks like a coordinated workflow request.\n\nOriginal request: ${body}\n\nNon-direct multi-agent collaboration waits for user confirmation before starting.`,
     assigneeTeammateId: assigneeId,
     acceptanceCriteria: [
       "Confirm the collaboration scope before starting execution.",
@@ -2910,7 +2910,7 @@ function maybeCreateMockWorkflowProposal(
     requiredTools: Array.from(new Set(selectedTeammates.flatMap((teammate) => Array.isArray(teammate.allowedTools) ? teammate.allowedTools : []))),
     riskSummary: allTeammates
       ? "Converted an all-teammates request into one workflow proposal instead of visible group chat."
-      : "Multi-agent work starts only after confirmation and continues through existing workflow/run approvals.",
+      : "Non-direct multi-agent collaboration waits for confirmation and continues through existing workflow/run approvals.",
     status: "draft",
     createdAt: "2026-05-25T00:18:02.000Z",
     updatedAt: "2026-05-25T00:18:02.000Z",
@@ -2930,7 +2930,7 @@ function maybeCreateMockWorkflowProposal(
     createdAt: "2026-05-25T00:18:00.500Z",
     updatedAt: "2026-05-25T00:18:00.500Z",
   });
-  return true;
+  return {};
 }
 
 function maybeCreateMockSingleStepExecutableProposal(
@@ -2938,18 +2938,18 @@ function maybeCreateMockSingleStepExecutableProposal(
   channelId: string,
   message: Record<string, unknown>,
   body: string,
-): boolean {
+): { readonly autoStartedWorkflow?: unknown } | undefined {
   if (!body.trim()) {
-    return false;
+    return undefined;
   }
   const isCreate = /(创建|新建|生成|写入|保存|create|write|save)/iu.test(body);
   const isEdit = /(修改|编辑|更新|添加|追加|插入|补充|补一句|加上|edit|update|append|insert|add)/iu.test(body);
   if (!isCreate && !isEdit) {
-    return false;
+    return undefined;
   }
   const target = mockExecutableFileTarget(state, channelId, body);
   if (!target) {
-    return false;
+    return undefined;
   }
   const action = isEdit ? "edit" : "write";
   const verb = isEdit ? "Edit" : "Create";
@@ -2990,7 +2990,8 @@ function maybeCreateMockSingleStepExecutableProposal(
     createdAt: "2026-05-25T00:18:00.500Z",
     updatedAt: "2026-05-25T00:18:00.500Z",
   });
-  return true;
+  const autoStartedWorkflow = mockAutoStartExecutionProposalWorkflow(state, proposal);
+  return { autoStartedWorkflow };
 }
 
 function mockExecutableFileTarget(state: MockState, channelId: string, body: string): string | undefined {
@@ -3011,6 +3012,77 @@ function mockExecutableFileTarget(state: MockState, channelId: string, body: str
     return `${basePath.replace(/^Users\//u, "/Users/").replace(/\/$/u, "")}/${fileName}`;
   }
   return fileName;
+}
+
+function mockAutoStartExecutionProposalWorkflow(state: MockState, proposal: Record<string, unknown>): unknown {
+  const collaborationSteps = Array.isArray(proposal.collaborationSteps) && proposal.collaborationSteps.length > 0
+    ? proposal.collaborationSteps.filter(isRecord)
+    : [{ teammateId: proposal.assigneeTeammateId, action: "coordinated", summary: "Complete the confirmed execution proposal." }];
+  const workflow = {
+    id: `workflow_${state.channelWorkflows.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId: proposal.channelId,
+    title: typeof proposal.title === "string" ? proposal.title : "Execution proposal workflow",
+    objective: typeof proposal.prompt === "string" ? proposal.prompt : "",
+    status: "running",
+    createdBy: typeof proposal.proposedByTeammateId === "string" ? proposal.proposedByTeammateId : "local-user",
+    metadata: {
+      sourceProposalId: proposal.id,
+      sourceMessageId: proposal.sourceMessageId,
+    },
+    createdAt: "2026-05-25T00:32:00.000Z",
+    updatedAt: "2026-05-25T00:32:00.000Z",
+  };
+  const workflowSteps = collaborationSteps.map((step, index) => {
+    const teammateId = typeof step.teammateId === "string" ? step.teammateId : String(proposal.assigneeTeammateId ?? "engineer");
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return {
+      id: `workflow_step_${state.channelWorkflowSteps.length + index + 1}`,
+      workspaceId: "workspace_default",
+      channelId: proposal.channelId,
+      workflowId: workflow.id,
+      position: index + 1,
+      title: `${isRecord(teammate) && typeof teammate.displayName === "string" ? teammate.displayName : teammateId}: ${typeof step.action === "string" ? step.action : "coordinated"}`,
+      prompt: typeof step.summary === "string" ? step.summary : String(proposal.prompt ?? ""),
+      toParticipantId: teammateId,
+      toParticipantLabel: isRecord(teammate) && typeof teammate.displayName === "string" ? teammate.displayName : teammateId,
+      status: index === 0 ? "running" : "queued",
+      metadata: {
+        sourceProposalId: proposal.id,
+        sourceMessageId: proposal.sourceMessageId,
+        dependsOnStepIds: index === 0 ? undefined : [`workflow_step_${state.channelWorkflowSteps.length + index}`],
+        autoStart: true,
+      },
+      createdAt: "2026-05-25T00:32:00.000Z",
+      updatedAt: "2026-05-25T00:32:00.000Z",
+    };
+  });
+  const updatedProposal = {
+    ...proposal,
+    status: "accepted",
+    linkedWorkflowId: workflow.id,
+    linkedTaskId: undefined,
+    linkedRunId: undefined,
+    errorMessage: undefined,
+    updatedAt: "2026-05-25T00:32:00.000Z",
+  };
+  state.channelExecutionProposals = state.channelExecutionProposals.map((item) =>
+    isRecord(item) && item.id === proposal.id ? updatedProposal : item
+  );
+  state.channelWorkflows.unshift(workflow);
+  state.channelWorkflowSteps.unshift(...workflowSteps);
+  return {
+    proposal: updatedProposal,
+    workflow,
+    workflowSteps,
+    orchestration: {
+      status: workflowSteps.length > 0 ? "started" : "idle",
+      workflow,
+      workflowStep: workflowSteps[0],
+      taskId: workflowSteps[0]?.id ? `task_${workflowSteps[0].id}` : undefined,
+      runId: workflowSteps[0]?.id ? `run_${workflowSteps[0].id}` : undefined,
+    },
+  };
 }
 
 function mockRecentWorkflowFileTarget(state: MockState, channelId: string, fileName: string): string | undefined {
@@ -4942,8 +5014,11 @@ export async function handleDaemonRoute(
     state.channelMessages.push(message);
     const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
     const autoReplyMode = isRecord(channel) && typeof channel.autoReplyMode === "string" ? channel.autoReplyMode : "mentions_only";
-    if (body.requestAiReply !== true && maybeCreateMockWorkflowProposal(state, channelId, message, autoReplyMode)) {
-      await route.fulfill({ status: 201, json: { message } });
+    const mockWorkflowProposal = body.requestAiReply !== true
+      ? maybeCreateMockWorkflowProposal(state, channelId, message, autoReplyMode)
+      : undefined;
+    if (mockWorkflowProposal) {
+      await route.fulfill({ status: 201, json: { message, ...mockWorkflowProposal } });
       return;
     }
     const shouldAutoReply = body.requestAiReply === true ||
