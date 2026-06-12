@@ -15,6 +15,7 @@ import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-age
 import { buildLingAgentSessionViewForChannel } from "./ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope, type LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 import { materializeInlineChannelInputs } from "./materialization/inline.js";
+import { createProviderBackedImageVisionSummarizer } from "./materialization/provider-vision.js";
 import type { LingImageVisionSummarizer } from "./materialization/registry.js";
 import { validateChannelMessageReferences } from "./protocol.js";
 import { parseChannelMessageRequest } from "./schemas.js";
@@ -189,12 +190,18 @@ export async function handleChannelMessagesCollection(
 }
 
 export async function handleLingAgentChannelMessage(input: LingAgentChannelMessageInput): Promise<LingAgentChannelMessageResult> {
+  const imageVisionSummarizer = input.imageVisionSummarizer ?? createProviderBackedImageVisionSummarizer({
+    store: input.store,
+    channel: input.channel,
+    requestedProviderPresetId: input.requestedProviderPresetId,
+    secretResolver: input.routeDependencies.secretResolver,
+  });
   await materializeInlineChannelInputs({
     store: input.store,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     now: new Date().toISOString(),
-    imageVisionSummarizer: input.imageVisionSummarizer,
+    imageVisionSummarizer,
   });
   const turnEnvelope = buildLingAgentTurnEnvelope({
     store: input.store,

@@ -1333,6 +1333,90 @@ test("materialized image attachment lets Ling answer without materialization cla
   }
 });
 
+test("provider-backed image materialization works without injected summarizer", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-backed-image-materialization-"));
+  const relay = await startMockOpenAICompatibleServer({
+    responseContent: ({ body }) => {
+      const content = body?.messages?.[0]?.content;
+      if (Array.isArray(content) && content.some((part) => part?.type === "image_url")) {
+        return "The screenshot shows a settings dialog with the permission section highlighted.";
+      }
+      return "OK";
+    },
+  });
+  const runner = new ScriptedRunner(["我读到了 provider 视觉摘要。"]);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      kind: "openai-compatible",
+      displayName: "Vision Relay",
+      providerId: "relay",
+      model: "vision-chat",
+      api: "openai-completions",
+      baseUrl: `${relay.url}/v1`,
+      capabilities: ["chat"],
+      input: ["text"],
+      authHeader: false,
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Provider backed image reply",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read"],
+    })).channel;
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "settings.png",
+      contentType: "image/png",
+      contentBase64: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
+    })).attachment;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "为什么还是这样？",
+      attachmentIds: [attachment.id],
+      requestAiReply: true,
+    });
+
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "我读到了 provider 视觉摘要。");
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /permission section highlighted/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /contents aren't available|Image vision summarizer is not configured/i);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const rows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].extractorId, "image_vision_summary_v1");
+    assert.equal(rows[0].status, "available", JSON.stringify(rows[0]));
+    assert.match(rows[0].contentText, /settings dialog/);
+
+    const visionRequest = relay.requests.find((request) => Array.isArray(request.body?.messages?.[0]?.content));
+    assert.ok(visionRequest);
+    const imagePart = visionRequest.body.messages[0].content.find((part) => part.type === "image_url");
+    assert.match(imagePart.image_url.url, /^data:image\/png;base64,/);
+  } finally {
+    await daemon.close();
+    await relay.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("ling agent coordinator preserves materialized guidance metadata for active run continuation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-materialized-guidance-"));
   await writeFile(resolve(cwd, "README.md"), "# Current README\n", "utf8");
@@ -6528,7 +6612,7 @@ async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
   });
 }
 
-async function startMockOpenAICompatibleServer() {
+async function startMockOpenAICompatibleServer(options = {}) {
   const requests = [];
   const server = createServer(async (request, response) => {
     const chunks = [];
@@ -6536,17 +6620,21 @@ async function startMockOpenAICompatibleServer() {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     const bodyText = Buffer.concat(chunks).toString("utf8");
+    const body = bodyText ? JSON.parse(bodyText) : {};
     requests.push({
       method: request.method,
       path: request.url,
       authorization: request.headers.authorization,
-      body: bodyText ? JSON.parse(bodyText) : {},
+      body,
     });
+    const responseContent = typeof options.responseContent === "function"
+      ? options.responseContent({ request, body })
+      : options.responseContent ?? "OK";
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       id: "chatcmpl-startup-refresh",
       object: "chat.completion",
-      choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+      choices: [{ index: 0, message: { role: "assistant", content: responseContent }, finish_reason: "stop" }],
     }));
   });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));

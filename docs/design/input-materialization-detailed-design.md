@@ -546,14 +546,19 @@ decision/evidence surfaces.
    - no layout reconstruction, OCR, embedded image extraction, or table semantics in M4.
 
 5. **M5 automatic attachment understanding**
-   - status: M5a landed for automatic current-turn attachment enqueue and injectable
-     image summary contract; M5b remains for provider/worker-backed image extraction;
+   - status: M5a landed for automatic current-turn attachment enqueue; M5b landed for
+     provider-backed image vision summaries through the same provider preset pipeline;
    - text/PDF/DOCX/image attachment materialization is automatic for current-turn
      attachments;
-   - `image_vision_summary_v1` calls `imageVisionSummarizer` when configured so image
-     questions can answer from actual image content, not filename inference;
-   - v1 should prefer managed provider vision summary over local OCR unless a local OCR
-     dependency is intentionally chosen;
+   - `image_vision_summary_v1` calls the injected `imageVisionSummarizer` when tests or
+     future workers provide one; otherwise the daemon creates a provider-backed summarizer
+     from the requested provider, channel default provider, or first enabled compatible
+     chat provider;
+   - provider-backed v1 supports OpenAI-compatible chat completions, OpenAI Responses,
+     and Anthropic Messages multimodal request shapes; it intentionally attempts these
+     protocols even when legacy provider metadata still says `input=["text"]`, because
+     older user presets may predate the vision capability flag;
+   - local OCR remains a future worker boundary, not a daemon-inline parser dependency;
    - cache only bounded textual summary, not image bytes.
 
 6. **M6 evidence/details and visual hardening**
@@ -904,12 +909,15 @@ Do not show:
    - Add public link body extractor behind policy and SSRF checks.
 
 5. **Automatic attachment understanding**
-   - status: M5a landed;
+   - status: M5a/M5b landed for automatic current-turn enqueue and provider-backed image
+     vision summaries;
    - trigger materialization for every current-turn text/PDF/DOCX/image attachment;
-   - wire `image_vision_summary_v1` through an injectable `imageVisionSummarizer`;
+   - wire `image_vision_summary_v1` through an injectable `imageVisionSummarizer`, with a
+     default provider-backed summarizer when no test/worker summarizer is injected;
    - remove explicit-request-only triggers for supported PDF/DOCX/image attachment
      understanding;
-   - M5b should connect provider/worker-backed image OCR or vision summary;
+   - future worker-backed OCR can replace or augment provider vision behind the same
+     summarizer contract;
    - keep `.pptx`/`.xlsx` unsupported until dedicated modules can preserve acceptable
      semantics.
 
