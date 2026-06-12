@@ -2077,6 +2077,8 @@ Current MVP implementation status:
 - [x] Hide the Activity message feed scrollbar while preserving scroll behavior.
 - [x] Pin the Activity message feed to the latest visible conversation item when entering
   or switching channels.
+- [x] Keep pinned feeds at the latest item while a streamed AI reply updates the same
+  message body.
 - [x] Show a centered floating down-arrow button when the user scrolls away from the
   latest conversation item.
 - [x] Let the Activity message feed start directly below the top divider with no extra
@@ -2540,6 +2542,8 @@ Focused e2e scenarios:
 - message feed scrolls independently from the channel header and tabs,
 - message feed does not show a visible scrollbar and defaults to the latest conversation
   position when the user enters a channel,
+- streamed AI replies keep the feed pinned to the latest visible message while the user
+  is already at the bottom,
 - when the user scrolls away from the latest conversation item, a centered floating
   down-arrow returns the feed to the latest message without moving the composer,
 - task, run, approval, protocol, workflow, and state-transition cards remain actionable

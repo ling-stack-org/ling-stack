@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -278,6 +278,8 @@ export function TeammateWorkspace({
   const [workspaceError, setWorkspaceError] = useState("");
   const privateFeedRef = useRef<HTMLDivElement | null>(null);
   const privateFeedPinnedToLatestRef = useRef(true);
+  const privateFeedAutoFollowUntilRef = useRef(0);
+  const privateFeedUserScrollIntentRef = useRef(false);
   const directGuidanceOperationSeqRef = useRef(0);
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const settingsProvider = settingsForm.providerPresetId ? providers.find((item) => item.id === settingsForm.providerPresetId) : undefined;
@@ -399,6 +401,16 @@ export function TeammateWorkspace({
     }
   }, [activeTab, isProtectedSystemTeammate]);
   const latestVisiblePrivateMessageId = visibleMessages.at(-1)?.id ?? "";
+  const latestVisiblePrivateMessage = visibleMessages.at(-1);
+  const latestVisiblePrivateMessageSignature = latestVisiblePrivateMessage
+    ? [
+        latestVisiblePrivateMessage.id,
+        latestVisiblePrivateMessage.status,
+        latestVisiblePrivateMessage.updatedAt,
+        latestVisiblePrivateMessage.body,
+        latestVisiblePrivateMessage.attachmentIds.join(","),
+      ].join("|")
+    : "";
   const privateMessageFeedVirtualizer = useVirtualizer({
     count: visibleMessages.length,
     getScrollElement: () => privateFeedRef.current,
@@ -487,6 +499,7 @@ export function TeammateWorkspace({
     setDirectGuidanceCancelingId("");
     setDirectGuidancePromotingId("");
     privateFeedPinnedToLatestRef.current = true;
+    privateFeedUserScrollIntentRef.current = false;
     setPrivateFeedLatestButtonVisible(false);
     setHardDeleteReason("");
     setTaskForm({ channelId: "", requestedSkillId: "", title: "", prompt: "" });
@@ -502,6 +515,7 @@ export function TeammateWorkspace({
 
   useEffect(() => {
     privateFeedPinnedToLatestRef.current = true;
+    privateFeedUserScrollIntentRef.current = false;
     setPrivateFeedLatestButtonVisible(false);
   }, [normalizedMessageSearchQuery]);
 
@@ -515,11 +529,12 @@ export function TeammateWorkspace({
     }
     const frameIds: number[] = [];
     const scrollToLatest = (attempt: number): void => {
+      privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
+      privateFeedUserScrollIntentRef.current = false;
       if (visibleMessages.length > 0) {
         privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
-      } else {
-        feed.scrollTop = feed.scrollHeight;
       }
+      feed.scrollTop = feed.scrollHeight;
       privateFeedPinnedToLatestRef.current = true;
       setPrivateFeedLatestButtonVisible(false);
       if (attempt < 4) {
@@ -532,7 +547,7 @@ export function TeammateWorkspace({
     return () => {
       frameIds.forEach((scheduledFrameId) => globalThis.cancelAnimationFrame(scheduledFrameId));
     };
-  }, [latestVisiblePrivateMessageId, loading, privateMessageFeedVirtualizer, visibleMessages.length, workspaceView]);
+  }, [latestVisiblePrivateMessageId, latestVisiblePrivateMessageSignature, loading, privateMessageFeedVirtualizer, visibleMessages.length, workspaceView]);
 
   useEffect(() => {
     setTaskForm((current) => {
@@ -683,6 +698,10 @@ export function TeammateWorkspace({
       setWorkspaceError("");
       setMessageDraft("");
       setPendingAttachmentIds([]);
+      privateFeedPinnedToLatestRef.current = true;
+      privateFeedAutoFollowUntilRef.current = Date.now() + 3_000;
+      privateFeedUserScrollIntentRef.current = false;
+      setPrivateFeedLatestButtonVisible(false);
       const response = await streamTeammateDirectMessage(cwd.trim(), teammate.id, {
         body,
         attachmentIds,
@@ -1011,13 +1030,25 @@ export function TeammateWorkspace({
     setMessageDraft((current) => removeComposerInputRawToken(current, raw, occurrenceIndex));
   }
 
-  function handlePrivateFeedScroll(): void {
+  function handlePrivateFeedScroll(_event: UIEvent<HTMLDivElement>): void {
     const feed = privateFeedRef.current;
     if (!feed) {
       return;
     }
     const maxScrollTop = feed.scrollHeight - feed.clientHeight;
     const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
+    const latestMessage = visibleMessages.at(-1);
+    const latestMessagePending = latestMessage?.authorType === "ai-teammate" && latestMessage.status === "pending";
+    const preserveAutoFollow =
+      !pinnedToLatest &&
+      !privateFeedUserScrollIntentRef.current &&
+      privateFeedPinnedToLatestRef.current &&
+      (Date.now() < privateFeedAutoFollowUntilRef.current || latestMessagePending);
+    if (preserveAutoFollow) {
+      privateFeedPinnedToLatestRef.current = true;
+      setPrivateFeedLatestButtonVisible(false);
+      return;
+    }
     privateFeedPinnedToLatestRef.current = pinnedToLatest;
     setPrivateFeedLatestButtonVisible((visible) => {
       const nextVisible = !pinnedToLatest && maxScrollTop > 0;
@@ -1025,16 +1056,22 @@ export function TeammateWorkspace({
     });
   }
 
+  function cancelPrivateFeedAutoFollow(): void {
+    privateFeedAutoFollowUntilRef.current = 0;
+    privateFeedUserScrollIntentRef.current = true;
+  }
+
   function scrollPrivateFeedToLatest(): void {
     const feed = privateFeedRef.current;
     if (!feed) {
       return;
     }
+    privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
+    privateFeedUserScrollIntentRef.current = false;
     if (visibleMessages.length > 0) {
       privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
-    } else {
-      feed.scrollTop = feed.scrollHeight;
     }
+    feed.scrollTop = feed.scrollHeight;
     privateFeedPinnedToLatestRef.current = true;
     setPrivateFeedLatestButtonVisible(false);
   }
@@ -1657,6 +1694,7 @@ export function TeammateWorkspace({
               getItemKind={(message) => message.authorType}
               measureElement={privateMessageFeedVirtualizer.measureElement}
               onScroll={handlePrivateFeedScroll}
+              onUserScrollIntent={cancelPrivateFeedAutoFollow}
               renderItem={(message) => {
                 const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
                 const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";

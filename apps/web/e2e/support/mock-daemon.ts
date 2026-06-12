@@ -54,6 +54,7 @@ export interface MockState {
   providerCheckDelayMs?: number;
   runResponseDelayMs?: number;
   channelMessageDelayMs?: number;
+  channelAiReplyBody?: string;
   failNextChannelMessage?: boolean;
   lastChannelMessageRequest?: Record<string, unknown>;
   channelMessageQueries?: Record<string, unknown>[];
@@ -5096,6 +5097,7 @@ export async function handleDaemonRoute(
       updatedAt: "2026-05-25T00:18:00.500Z",
     };
     state.channelMessageRouteDecisions.push(routeDecision);
+    const aiReplyBody = state.channelAiReplyBody ?? "收到，我会按频道上下文推进。";
     const aiReply = shouldAutoReply && routedTeammateId
       ? {
           id: `msg_${state.channelMessages.length + 1}`,
@@ -5106,7 +5108,7 @@ export async function handleDaemonRoute(
           intent: "discuss",
           authorType: "ai-teammate",
           authorId: routedTeammateId,
-          body: "收到，我会按频道上下文推进。",
+          body: aiReplyBody,
           mentions: [],
           attachmentIds: [],
           linkPreviewIds: [],

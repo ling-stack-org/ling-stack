@@ -19,6 +19,12 @@ While a pending AI reply has no visible text yet, the Web feed should show a
 generic `Thinking...` status with a spinner. As soon as `delta.body` is non-empty,
 the same bubble must render that body instead of a generic pending label.
 
+If the channel feed is already pinned to the latest item, streamed `delta.body`
+updates must keep the feed pinned to the bottom as the same message grows. If
+the user has intentionally scrolled upward to read history, streaming updates
+must not steal focus; the existing jump-to-latest affordance remains the recovery
+path.
+
 ## HTTP Contract
 
 ```http
@@ -61,3 +67,4 @@ When a channel turn intentionally creates multiple AI replies, the stream may em
 - Existing non-streaming `POST /channels/:id/messages` continues to work.
 - The Web composer consumes the stream and updates the existing message bubble rather than inserting duplicate assistant messages.
 - Pending AI bubbles show `Thinking...` only before visible body text exists; they do not hide streamed body text behind a static pending label.
+- While pinned to latest, long streamed AI replies keep the message feed at the bottom without requiring manual scrolling.

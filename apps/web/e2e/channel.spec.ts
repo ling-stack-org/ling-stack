@@ -1974,6 +1974,7 @@ test("channel activity keeps the composer visible while the message feed scrolls
   expect(feedBox?.height ?? 0).toBeGreaterThan(180);
   expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeGreaterThan((panelBox?.y ?? 0) + (panelBox?.height ?? 0) - 36);
   await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
   });
@@ -1989,6 +1990,48 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   await expect(latestButton).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
+});
+
+test("channel message feed stays pinned while AI reply text streams", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+  if (isRecord(channel)) {
+    channel.autoReplyMode = "auto_route";
+  }
+  state.channelMessages = Array.from({ length: 36 }, (_, index) => ({
+    id: `msg_stream_scroll_${index + 1}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "tian",
+    body: `Streaming scroll seed message ${index + 1}.`,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "ready",
+    createdAt: new Date(Date.UTC(2026, 4, 25, 1, index, 0)).toISOString(),
+    updatedAt: new Date(Date.UTC(2026, 4, 25, 1, index, 0)).toISOString(),
+  }));
+  state.channelAiReplyBody = Array.from({ length: 40 }, (_, index) => `Auto-scroll proof paragraph ${index + 1}.`).join("\n\n");
+  await mockDaemon(page, state, { channelAutoRouteEnabled: true });
+  await page.goto("/");
+
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Who owns the streaming scroll follow-up?");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(() =>
+    state.channelMessages.some((message) =>
+      isRecord(message) && typeof message.body === "string" && message.body.includes("Auto-scroll proof paragraph 40.")
+    )
+  ).toBe(true);
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
 });
 
 test("channel activity paginates long message history and virtualizes visible rows", async ({ page }) => {
@@ -2030,6 +2073,7 @@ test("channel activity paginates long message history and virtualizes visible ro
   expect(scrollBefore.atBottom).toBe(true);
 
   await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
   });

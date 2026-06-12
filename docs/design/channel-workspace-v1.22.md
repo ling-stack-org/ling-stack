@@ -36,7 +36,8 @@ The Activity chat feed uses a virtual list:
 - older pages are prepended with id-based deduplication,
 - the visible scroll position is restored after prepending so the conversation does not
   jump,
-- when pinned to the latest item, new messages keep the feed at the bottom,
+- when pinned to the latest item, new messages and streamed updates to the latest
+  message body keep the feed at the bottom,
 - when the user is reading history, new messages do not steal focus and the existing
   floating down-arrow returns to the latest conversation item.
 
@@ -54,7 +55,8 @@ The long-history regression suite should cover:
 - same-timestamp messages keep stable order across pages,
 - invalid cursors return a bad request,
 - a 3000-message channel renders only the visible virtual rows,
-- jumping to latest and loading older history preserve the expected scroll behavior.
+- jumping to latest, streaming the latest message body, and loading older history
+  preserve the expected scroll behavior.
 
 ```bash
 corepack pnpm --filter @ling-stack/web typecheck

@@ -21,6 +21,7 @@ export interface ConversationVirtualFeedProps<TItem> {
   readonly renderItem: (item: TItem, index: number) => ReactNode;
   readonly measureElement: (node: HTMLDivElement | null) => void;
   readonly onScroll?: UIEventHandler<HTMLDivElement>;
+  readonly onUserScrollIntent?: () => void;
   readonly statusNode?: ReactNode;
   readonly latestButtonNode?: ReactNode;
 }
@@ -44,6 +45,7 @@ export function ConversationVirtualFeed<TItem>({
   renderItem,
   measureElement,
   onScroll,
+  onUserScrollIntent,
   statusNode,
   latestButtonNode,
 }: ConversationVirtualFeedProps<TItem>): JSX.Element {
@@ -52,7 +54,14 @@ export function ConversationVirtualFeed<TItem>({
 
   return (
     <div className={className}>
-      <div ref={scrollRef} className={resolvedFeedClassName} aria-label={ariaLabel} onScroll={onScroll}>
+      <div
+        ref={scrollRef}
+        className={resolvedFeedClassName}
+        aria-label={ariaLabel}
+        onScroll={onScroll}
+        onWheel={onUserScrollIntent ? () => onUserScrollIntent() : undefined}
+        onTouchMove={onUserScrollIntent ? () => onUserScrollIntent() : undefined}
+      >
         {showLoadingState ? (
           <ConversationEmptyState className="client-empty-state" label={loadingLabel} loading />
         ) : empty ? (

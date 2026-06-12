@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -344,6 +344,67 @@ interface PendingChannelSendPreview {
   readonly requestAiReply: boolean;
   readonly autoReplyMode: Channel["autoReplyMode"];
   readonly createdAt: string;
+}
+
+function messageFeedItemRenderSignature(item: MessageFeedItem | undefined): string {
+  if (!item) {
+    return "";
+  }
+  if (item.kind === "older-loader") {
+    return item.id;
+  }
+  if (item.kind === "pending-send") {
+    return [
+      item.id,
+      item.preview.body,
+      item.preview.createdAt,
+      item.preview.requestAiReply ? "reply" : "no-reply",
+      item.preview.attachmentIds.join(","),
+      item.preview.linkPreviewIds.join(","),
+      item.preview.fileRefs.map((fileRef) => `${fileRef.path}:${fileRef.source ?? ""}:${fileRef.line ?? ""}`).join(","),
+    ].join("|");
+  }
+  return channelActivityItemRenderSignature(item.item);
+}
+
+function channelActivityItemRenderSignature(item: ChannelActivityItem): string {
+  const base = `${item.id}|${item.kind}|${item.createdAt}|${item.attention}`;
+  if (item.kind === "message") {
+    return [
+      base,
+      item.record.status,
+      item.record.updatedAt,
+      item.record.body,
+      item.record.attachmentIds.join(","),
+      item.record.linkPreviewIds.join(","),
+      (item.record.fileRefs ?? []).map((fileRef) => `${fileRef.path}:${fileRef.source ?? ""}:${fileRef.line ?? ""}`).join(","),
+    ].join("|");
+  }
+  if (item.kind === "workflow") {
+    return [base, item.record.status, item.record.updatedAt, item.record.title, item.record.objective].join("|");
+  }
+  if (item.kind === "workflow-step") {
+    return [base, item.record.status, item.record.updatedAt, item.record.title, item.record.resultSummary ?? ""].join("|");
+  }
+  if (item.kind === "task") {
+    return [base, item.record.status, item.record.updatedAt, item.record.title].join("|");
+  }
+  if (item.kind === "run") {
+    return [base, item.record.status, item.record.updatedAt, item.record.endedAt ?? "", item.record.errorMessage ?? ""].join("|");
+  }
+  if (item.kind === "approval") {
+    return [base, item.record.status, item.record.resolvedAt ?? "", item.record.decisionReason ?? ""].join("|");
+  }
+  if (item.kind === "summary") {
+    return [base, item.record.updatedAt, item.record.summary].join("|");
+  }
+  if (item.kind === "state-transition") {
+    return [base, item.record.fromStatus, item.record.toStatus, item.record.reason ?? ""].join("|");
+  }
+  if (item.kind === "decision") {
+    return [base, item.record.status, item.record.updatedAt, item.record.title, item.record.decision].join("|");
+  }
+  return [base, item.record.status, item.record.updatedAt].join("|");
 }
 
 export function WorkspaceClientView({
@@ -715,6 +776,8 @@ export function WorkspaceClientView({
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
   const messageFeedPinnedToLatestRef = useRef(true);
+  const messageFeedAutoFollowUntilRef = useRef(0);
+  const messageFeedUserScrollIntentRef = useRef(false);
   const messageFeedOlderLoadArmedRef = useRef(true);
   const messageFeedOlderLoadSnapshotRef = useRef<{ readonly anchorId: string; readonly anchorOffset: number } | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
@@ -1404,6 +1467,10 @@ export function WorkspaceClientView({
     getItemKey: (index) => messageFeedItems[index]?.id ?? index,
   });
   const messageFeedVirtualRows = messageFeedVirtualizer.getVirtualItems();
+  const messageFeedTailRenderSignature = useMemo(
+    () => messageFeedItemRenderSignature(messageFeedItems.at(-1)),
+    [messageFeedItems],
+  );
   const firstMessageFeedVirtualIndex = messageFeedVirtualRows[0]?.index ?? -1;
   useEffect(() => {
     if (
@@ -1587,6 +1654,7 @@ export function WorkspaceClientView({
     setPendingChannelTeammateId("");
     setChannelNotificationLevel(isChannelNotificationLevel(selectedChannelNotificationLevel) ? selectedChannelNotificationLevel : readChannelNotificationLevel(cwd, selectedChannelId));
     messageFeedPinnedToLatestRef.current = true;
+    messageFeedUserScrollIntentRef.current = false;
     messageFeedOlderLoadArmedRef.current = true;
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
@@ -1613,11 +1681,12 @@ export function WorkspaceClientView({
     }
     const frameIds: number[] = [];
     const scrollToLatest = (attempt: number): void => {
+      messageFeedAutoFollowUntilRef.current = Date.now() + 1_000;
+      messageFeedUserScrollIntentRef.current = false;
       if (messageFeedItems.length > 0) {
         messageFeedVirtualizer.scrollToIndex(messageFeedItems.length - 1, { align: "end" });
-      } else {
-        feed.scrollTop = feed.scrollHeight;
       }
+      feed.scrollTop = feed.scrollHeight;
       messageFeedPinnedToLatestRef.current = true;
       setMessageFeedLatestButtonVisible(false);
       if (attempt < 4) {
@@ -1634,6 +1703,7 @@ export function WorkspaceClientView({
     channelMessagesLoading,
     channelProtocolLoading,
     latestVisibleActivityItemId,
+    messageFeedTailRenderSignature,
     messageFeedItems.length,
     renderableActivityItems.length,
     selectedChannelId,
@@ -1693,6 +1763,7 @@ export function WorkspaceClientView({
     setCreateTaskOpen(false);
     setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
     messageFeedPinnedToLatestRef.current = true;
+    messageFeedUserScrollIntentRef.current = false;
     messageFeedOlderLoadArmedRef.current = true;
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
@@ -1745,15 +1816,29 @@ export function WorkspaceClientView({
     onSelectTask(taskId);
   }
 
-  function handleMessageFeedScroll(): void {
+  function handleMessageFeedScroll(_event: UIEvent<HTMLDivElement>): void {
     const feed = messageFeedRef.current;
     if (!feed) {
       return;
     }
     const maxScrollTop = feed.scrollHeight - feed.clientHeight;
     const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
+    const latestItem = messageFeedItems.at(-1);
+    const latestItemPending = latestItem?.kind === "activity" &&
+      latestItem.item.kind === "message" &&
+      latestItem.item.record.status === "pending";
+    const preserveAutoFollow =
+      !pinnedToLatest &&
+      !messageFeedUserScrollIntentRef.current &&
+      messageFeedPinnedToLatestRef.current &&
+      (Date.now() < messageFeedAutoFollowUntilRef.current || latestItemPending);
     if (feed.scrollTop > 80) {
       messageFeedOlderLoadArmedRef.current = true;
+    }
+    if (preserveAutoFollow) {
+      messageFeedPinnedToLatestRef.current = true;
+      setMessageFeedLatestButtonVisible(false);
+      return;
     }
     messageFeedPinnedToLatestRef.current = pinnedToLatest;
     setMessageFeedLatestButtonVisible((visible) => {
@@ -1762,16 +1847,22 @@ export function WorkspaceClientView({
     });
   }
 
+  function cancelMessageFeedAutoFollow(): void {
+    messageFeedAutoFollowUntilRef.current = 0;
+    messageFeedUserScrollIntentRef.current = true;
+  }
+
   function scrollMessageFeedToLatest(): void {
     const feed = messageFeedRef.current;
     if (!feed) {
       return;
     }
+    messageFeedAutoFollowUntilRef.current = Date.now() + 1_000;
+    messageFeedUserScrollIntentRef.current = false;
     if (messageFeedItems.length > 0) {
       messageFeedVirtualizer.scrollToIndex(messageFeedItems.length - 1, { align: "end" });
-    } else {
-      feed.scrollTop = feed.scrollHeight;
     }
+    feed.scrollTop = feed.scrollHeight;
     messageFeedPinnedToLatestRef.current = true;
     setMessageFeedLatestButtonVisible(false);
   }
@@ -2973,6 +3064,10 @@ export function WorkspaceClientView({
     const mentions = mergeMentions(messageMentions, findMentionsInText(body, teammateOptions));
     const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
     let pendingSendPreviewId = "";
+    messageFeedPinnedToLatestRef.current = true;
+    messageFeedAutoFollowUntilRef.current = Date.now() + 3_000;
+    messageFeedUserScrollIntentRef.current = false;
+    setMessageFeedLatestButtonVisible(false);
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
@@ -4818,6 +4913,7 @@ export function WorkspaceClientView({
                     renderItem={(feedItem) => renderMessageFeedItem(feedItem)}
                     measureElement={messageFeedVirtualizer.measureElement}
                     onScroll={handleMessageFeedScroll}
+                    onUserScrollIntent={cancelMessageFeedAutoFollow}
                     statusNode={
                       <>
                         {channelActivityTransitionsLoading ? (
