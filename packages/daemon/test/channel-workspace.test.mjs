@@ -1626,6 +1626,93 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
   }
 });
 
+test("channel message stream emits visible deltas into a durable AI reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-stream-"));
+  const runner = new ScriptedRunner(["Streamed channel reply"]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "@Engineer 请流式回复",
+        mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+        requestAiReply: true,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), ["ready", "ready", "delta", "done"]);
+    assert.equal(events[0].data.message.body, "@Engineer 请流式回复");
+    assert.equal(events[1].data.aiReply.status, "pending");
+    assert.equal(events[2].data.delta, "Streamed channel reply");
+    assert.equal(events[2].data.body, "Streamed channel reply");
+    assert.equal(events[3].data.aiReply.body, "Streamed channel reply");
+
+    const listed = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    const finalReply = listed.messages.find((message) => message.id === events[1].data.aiReply.id);
+    assert.equal(finalReply.body, "Streamed channel reply");
+    assert.equal(finalReply.status, "ready");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel message stream does not expose hidden task proposal blocks", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-stream-proposal-"));
+  const runner = new ScriptedRunner([
+    `可以开始。\n<ling_task_proposal>{"title":"Stream proposal","prompt":"Implement streaming","assigneeTeammateId":"teammate_builtin_engineer","acceptanceCriteria":["reply streams"],"collaborationSteps":[{"teammateId":"teammate_builtin_engineer","action":"coordinated","summary":"Implement"}],"requiredTools":["read"],"riskSummary":"low"}</ling_task_proposal>`,
+  ]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "@Engineer 可以开始实现吗",
+        mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+        requestAiReply: true,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), ["ready", "ready", "delta", "done"]);
+    assert.doesNotMatch(JSON.stringify(events.map((event) => event.data)), /ling_task_proposal/);
+    assert.equal(events[2].data.body, "可以开始。\n");
+    assert.equal(events[3].data.aiReply.body, "可以开始。");
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].title, "Stream proposal");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel no-tools AI reply retries once with compacted channel summary after context-length error", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-context-retry-"));
   const runner = new ScriptedRunner([

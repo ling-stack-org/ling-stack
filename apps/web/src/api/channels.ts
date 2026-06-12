@@ -202,6 +202,14 @@ export async function createChannelMessage(
   return daemonClient.createChannelMessage(cwd, channelId, input);
 }
 
+export async function streamChannelMessage(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelMessageRequest,
+): Promise<Response> {
+  return daemonClient.streamChannelMessage(cwd, channelId, input);
+}
+
 export async function listChannelMessageRouteDecisions(
   cwd: string,
   channelId: string,

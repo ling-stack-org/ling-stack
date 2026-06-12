@@ -704,6 +704,7 @@ Channel discussion is durable in the workspace SQLite database. Uploaded files a
 ```http
 GET /channels/:id/messages?cwd=/path/to/project&limit=100
 POST /channels/:id/messages?cwd=/path/to/project
+POST /channels/:id/messages/stream?cwd=/path/to/project
 ```
 
 `POST` accepts a local/user/system message plus structured mentions, attachment ids, link preview ids, and optional `requestAiReply`. Referenced attachments and link previews must belong to the same channel. When AI reply is requested, the daemon uses the selected provider preset or the channel default provider in text-only, no-tools mode. If no provider is ready, the user message is still persisted and the AI reply is stored with `status: "blocked"`.
@@ -719,6 +720,21 @@ POST /channels/:id/messages?cwd=/path/to/project
   "teammateId": "engineer"
 }
 ```
+
+`POST /messages/stream` uses the same request body and returns `text/event-stream`.
+It persists the local message, creates durable pending AI reply messages, and streams
+visible assistant text into those same message rows.
+
+SSE events:
+
+- `ready`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[] }`
+- `delta`: `{ "messageId": string, "delta": string, "body": string }`
+- `done`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[], "autoStartedWorkflow"?: ... }`
+- `blocked`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[], "error"?: string }`
+- `error`: `{ "message"?: ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[], "error": string }`
+
+Hidden `<ling_task_proposal>` blocks are not streamed as visible deltas. The daemon
+continues to extract and persist proposals through the channel proposal pipeline.
 
 ### Attachments
 

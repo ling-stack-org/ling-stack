@@ -32,6 +32,13 @@ export async function createAiChannelReply(input: {
   readonly visibleParticipantTeammateIds?: readonly string[];
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
+  readonly completionMode?: "background" | "inline";
+  readonly stream?: {
+    readonly onReady: (message: ChannelMessage) => void;
+    readonly onDelta: (message: ChannelMessage, delta: string) => void;
+    readonly onDone: (message: ChannelMessage) => void;
+    readonly onBlocked: (message: ChannelMessage) => void;
+  };
 }): Promise<ChannelMessage> {
   const now = new Date().toISOString();
   const teammateId =
@@ -56,11 +63,12 @@ export async function createAiChannelReply(input: {
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: canonicalTeammateId,
-      body: "AI teammate is preparing a reply...",
+      body: input.completionMode === "inline" ? "" : "AI teammate is preparing a reply...",
       status: "pending",
     },
     now,
   );
+  input.stream?.onReady(pending);
   const supervised = startRuntimeWorkUnit({
     store: input.store,
     runtimeSupervisor: input.runtimeSupervisor,
@@ -83,7 +91,7 @@ export async function createAiChannelReply(input: {
     },
   });
 
-  void completeAiChannelReply({
+  const completion = completeAiChannelReply({
     ...input,
     pending,
     supervised,
@@ -93,6 +101,10 @@ export async function createAiChannelReply(input: {
     runnerResolution,
     now,
   });
+  if (input.completionMode === "inline") {
+    return await completion;
+  }
+  void completion;
   return pending;
 }
 
@@ -115,26 +127,35 @@ async function completeAiChannelReply(input: {
   readonly canonicalTeammateId: string;
   readonly runnerResolution: RunnerResolution;
   readonly now: string;
-}): Promise<void> {
+  readonly stream?: {
+    readonly onReady: (message: ChannelMessage) => void;
+    readonly onDelta: (message: ChannelMessage, delta: string) => void;
+    readonly onDone: (message: ChannelMessage) => void;
+    readonly onBlocked: (message: ChannelMessage) => void;
+  };
+}): Promise<ChannelMessage> {
   if (input.teammate && input.teammate.status !== "active") {
-    finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+    const blocked = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
       body: `AI teammate is ${input.teammate.status}.`,
       status: "blocked",
       errorMessage: `Teammate status is ${input.teammate.status}.`,
     });
-    return;
+    input.stream?.onBlocked(blocked);
+    return blocked;
   }
 
   if (!input.providerPresetId) {
-    finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+    const blocked = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
       body: "AI teammate is not configured for this channel.",
       status: "blocked",
       errorMessage: "No provider preset is selected for this channel discussion.",
     });
-    return;
+    input.stream?.onBlocked(blocked);
+    return blocked;
   }
 
   const textDeltas: string[] = [];
+  let lastVisibleStreamBody = "";
   try {
     const turnEnvelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
       store: input.store,
@@ -236,6 +257,25 @@ async function completeAiChannelReply(input: {
           });
           if (event.type === "assistant_text_delta") {
             textDeltas.push(event.text);
+            const visibleBody = visibleReplyTextSoFar(textDeltas.join(""));
+            if (visibleBody !== lastVisibleStreamBody) {
+              const delta = visibleBody.startsWith(lastVisibleStreamBody)
+                ? visibleBody.slice(lastVisibleStreamBody.length)
+                : visibleBody;
+              lastVisibleStreamBody = visibleBody;
+              const updated = input.store.updateChannelMessageRuntime(
+                input.pending.id,
+                {
+                  body: visibleBody,
+                  status: "pending",
+                  errorMessage: null,
+                },
+                new Date().toISOString(),
+              );
+              if (updated) {
+                input.stream?.onDelta(updated, delta);
+              }
+            }
           }
         },
       });
@@ -268,18 +308,33 @@ async function completeAiChannelReply(input: {
       });
       discussionPrompt = renderContextPack(discussionContextPack);
       textDeltas.length = 0;
+      lastVisibleStreamBody = "";
+      const reset = input.store.updateChannelMessageRuntime(
+        input.pending.id,
+        {
+          body: "",
+          status: "pending",
+          errorMessage: null,
+        },
+        new Date().toISOString(),
+      );
+      if (reset) {
+        input.stream?.onDelta(reset, "");
+      }
       result = await runDiscussionTask(discussionPrompt);
     }
     const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
     const extractedProposal = input.proposalMode === "disabled"
       ? undefined
       : extractChannelExecutionProposal(rawReplyText, input.canonicalTeammateId, isRunTool);
-    const replyText = extractedProposal?.visibleBody || rawReplyText;
+    const fallbackReplyText = input.stream ? visibleReplyText(rawReplyText) : rawReplyText;
+    const replyText = extractedProposal?.visibleBody ?? (fallbackReplyText || rawReplyText);
     const reply = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
       body: replyText,
       status: "ready",
       errorMessage: null,
     });
+    input.stream?.onDone(reply);
     if (memoryRecall.memories.length > 0) {
       input.store.recordUsedMemoryEvent(
         {
@@ -312,16 +367,45 @@ async function completeAiChannelReply(input: {
         new Date().toISOString(),
       );
     }
+    return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+    const blocked = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
       body: `AI teammate is blocked: ${message}`,
       status: "blocked",
       errorMessage: message,
     });
+    input.stream?.onBlocked(blocked);
+    return blocked;
   } finally {
     input.store.releaseRuntimeSemaphoreSlotsForOwner(input.supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
+}
+
+function visibleReplyTextSoFar(raw: string): string {
+  const visible = stripHiddenProposalText(raw);
+  if (visible.length !== raw.length) {
+    return visible;
+  }
+  const marker = "<ling_task_proposal";
+  const lower = raw.toLowerCase();
+  const maxPrefixLength = Math.min(marker.length - 1, lower.length);
+  for (let length = maxPrefixLength; length > 0; length -= 1) {
+    if (marker.startsWith(lower.slice(-length))) {
+      return raw.slice(0, raw.length - length);
+    }
+  }
+  return raw;
+}
+
+function visibleReplyText(raw: string): string {
+  return stripHiddenProposalText(raw).trim();
+}
+
+function stripHiddenProposalText(raw: string): string {
+  return raw
+    .replace(/<ling_task_proposal[\s\S]*?<\/ling_task_proposal>/giu, "")
+    .replace(/<ling_task_proposal[\s\S]*$/iu, "");
 }
 
 function toRunnerResolutionSnapshot(resolution: RunnerResolution): {

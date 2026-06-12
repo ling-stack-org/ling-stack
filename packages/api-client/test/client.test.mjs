@@ -534,6 +534,26 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   assert.equal(client.attachmentContentUrl("attachment 1", "/repo"), "http://daemon.test/attachments/attachment%201/content?cwd=%2Frepo");
 });
 
+test("streams channel messages through the channel stream route", async () => {
+  const mock = createFetchMock({ ok: true });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.streamChannelMessage("/repo", "channel 1", {
+    body: "hello @Engineer",
+    mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+    requestAiReply: true,
+  });
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/messages/stream?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    body: "hello @Engineer",
+    mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+    requestAiReply: true,
+  });
+  assert.equal(mock.calls[0].headers.Accept, "text/event-stream");
+});
+
 test("uses expected managed plugin routes", async () => {
   const mock = createFetchMock({ plugin: { id: "trusted-local:cua-driver" }, plugins: [] });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });

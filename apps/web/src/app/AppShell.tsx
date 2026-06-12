@@ -26,6 +26,11 @@ import type {
   ChannelLinkPreview,
   ChannelMessage,
   ChannelMessageFileRef,
+  ChannelMessageStreamBlockedEvent,
+  ChannelMessageStreamDeltaEvent,
+  ChannelMessageStreamDoneEvent,
+  ChannelMessageStreamErrorEvent,
+  ChannelMessageStreamReadyEvent,
   ChannelExecutionProposal,
   ChannelWorkflow,
   ChannelWorkflowStep,
@@ -102,6 +107,7 @@ import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "..
 import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
+import { readSseResponse } from "../sse.js";
 import { getControlPlaneSnapshot } from "../api/control-plane.js";
 import { routeExternalWork } from "../api/external-work.js";
 import { claimWorkItem, heartbeatWorkItem, listWorkItems } from "../api/work-items.js";
@@ -249,7 +255,6 @@ export function AppShell(): JSX.Element {
     createChannelDecision,
     createChannelHandoff,
     createChannelLinkPreview,
-    createChannelMessage,
     createChannelWorkflowFromHandoff,
     createChannelWorkflowFromTemplate,
     createTask,
@@ -261,6 +266,7 @@ export function AppShell(): JSX.Element {
     patchChannel,
     retryChannelWorkflowStep,
     startChannelWorkflowStep,
+    streamChannelMessage,
     updateChannel,
     updateChannelBranch,
     updateChannelBrief,
@@ -1834,7 +1840,9 @@ export function AppShell(): JSX.Element {
     );
     try {
       setErrorMessage("");
-      const response = await createChannelMessage(form.cwd.trim(), selectedChannelId, {
+      let receivedAiReply = false;
+      let autoStartedWorkflow = false;
+      const response = await streamChannelMessage(form.cwd.trim(), selectedChannelId, {
         threadId: input.threadId,
         body: input.body,
         mentions: input.mentions,
@@ -1845,20 +1853,58 @@ export function AppShell(): JSX.Element {
         providerPresetId: providerPresetId || undefined,
         teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
       });
-      const aiReplies = response.aiReplies?.length ? response.aiReplies : response.aiReply ? [response.aiReply] : [];
-      setChannelMessages((current) => [
-        ...current,
-        response.message,
-        ...aiReplies,
-      ]);
+      await readSseResponse(response, (event) => {
+        if (event.event === "ready") {
+          const data = JSON.parse(event.data) as ChannelMessageStreamReadyEvent;
+          const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
+          receivedAiReply = receivedAiReply || aiReplies.length > 0;
+          setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
+          return;
+        }
+        if (event.event === "delta") {
+          const data = JSON.parse(event.data) as ChannelMessageStreamDeltaEvent;
+          setChannelMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, body: data.body, status: "pending" } : message));
+          return;
+        }
+        if (event.event === "done") {
+          const data = JSON.parse(event.data) as ChannelMessageStreamDoneEvent;
+          const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
+          receivedAiReply = receivedAiReply || aiReplies.length > 0;
+          autoStartedWorkflow = Boolean(data.autoStartedWorkflow);
+          setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
+          return;
+        }
+        if (event.event === "blocked") {
+          const data = JSON.parse(event.data) as ChannelMessageStreamBlockedEvent;
+          const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
+          receivedAiReply = receivedAiReply || aiReplies.length > 0;
+          setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
+          if (data.error) {
+            setErrorMessage(data.error);
+          }
+          return;
+        }
+        if (event.event === "error") {
+          const data = JSON.parse(event.data) as ChannelMessageStreamErrorEvent;
+          const messages = [data.message, ...(data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [])]
+            .filter((message): message is ChannelMessage => Boolean(message));
+          receivedAiReply = receivedAiReply || messages.some((message) => message.kind === "ai_reply");
+          if (messages.length > 0) {
+            setChannelMessages((current) => upsertChannelMessages(current, messages));
+          }
+          if (data.error) {
+            setErrorMessage(data.error);
+          }
+        }
+      });
       await refreshChannelExecutionProposals(selectedChannelId);
       await refreshChannelIntentDecisions(selectedChannelId);
-      if (aiReplies.length > 0) {
+      if (receivedAiReply) {
         await refreshUsedMemoryAudit(form.cwd.trim());
       }
       await refreshChannelMessageRouteDecisions(selectedChannelId);
       await refreshChannelFiles(selectedChannelId);
-      if (response.autoStartedWorkflow) {
+      if (autoStartedWorkflow) {
         await refreshChannelActivity();
       }
     } catch (error) {
@@ -3471,6 +3517,21 @@ function buildSidebarChannelNotifications(
 
 function latestChannelMessageTimestamp(messages: readonly ChannelMessage[]): string {
   return messages.reduce((latest, message) => message.updatedAt > latest ? message.updatedAt : latest, "");
+}
+
+function upsertChannelMessages(
+  current: readonly ChannelMessage[],
+  incoming: readonly ChannelMessage[],
+): ChannelMessage[] {
+  const byId = new Map(current.map((message) => [message.id, message]));
+  const order = current.map((message) => message.id);
+  for (const message of incoming) {
+    if (!byId.has(message.id)) {
+      order.push(message.id);
+    }
+    byId.set(message.id, message);
+  }
+  return order.map((id) => byId.get(id)!);
 }
 
 function buildSidebarTeammateNotifications(

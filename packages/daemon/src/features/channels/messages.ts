@@ -4,7 +4,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
-import { writeJson } from "../../shared/response.js";
+import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import {
   routeChannelMessageReply,
   routeExplicitChannelMention,
@@ -30,6 +30,13 @@ export type CreateChannelAiReply = (input: {
   readonly proposalMode?: "allow" | "disabled";
   readonly channelParallelLimit?: number;
   readonly visibleParticipantTeammateIds?: readonly string[];
+  readonly completionMode?: "background" | "inline";
+  readonly stream?: {
+    readonly onReady: (message: ChannelMessage) => void;
+    readonly onDelta: (message: ChannelMessage, delta: string) => void;
+    readonly onDone: (message: ChannelMessage) => void;
+    readonly onBlocked: (message: ChannelMessage) => void;
+  };
 }) => Promise<ChannelMessage>;
 
 export type StartChannelExecutionProposalWorkflow = (input: {
@@ -56,6 +63,173 @@ interface LingAgentChannelMessageInput {
   readonly config: ResolvedDaemonConfig;
   readonly routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
+}
+
+export async function handleChannelMessageStream(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+  createAiReply: CreateChannelAiReply,
+  startExecutionProposalWorkflow: StartChannelExecutionProposalWorkflow | undefined,
+  routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">,
+  imageVisionSummarizer?: LingImageVisionSummarizer,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel message stream` });
+      return;
+    }
+
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelMessageRequest(body);
+    const referenceError = validateChannelMessageReferences(store, channelId, input.attachmentIds, input.linkPreviewIds);
+    if (referenceError) {
+      writeJson(response, referenceError.statusCode, {
+        error: referenceError.code,
+        message: referenceError.message,
+      });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const message = store.createChannelMessage(
+      {
+        channelId,
+        threadId: input.threadId,
+        kind: input.kind ?? "message",
+        intent: input.intent ?? "discuss",
+        authorType: input.authorType,
+        authorId: input.authorId,
+        body: input.body,
+        mentions: input.mentions,
+        attachmentIds: input.attachmentIds,
+        linkPreviewIds: input.linkPreviewIds,
+        fileRefs: input.fileRefs,
+        linkedTaskId: input.linkedTaskId,
+        linkedRunId: input.linkedRunId,
+      },
+      now,
+    );
+
+    let closed = false;
+    response.on("close", () => {
+      closed = true;
+    });
+    const safeWriteSse = (event: string, data: unknown): void => {
+      if (!closed && !response.destroyed) {
+        writeSse(response, event, data);
+      }
+    };
+    const aiRepliesById = new Map<string, ChannelMessage>();
+    const upsertAiReply = (aiReply: ChannelMessage): readonly ChannelMessage[] => {
+      aiRepliesById.set(aiReply.id, aiReply);
+      return Array.from(aiRepliesById.values());
+    };
+
+    writeSseHead(response);
+    safeWriteSse("ready", { message });
+    try {
+      const result = await handleLingAgentChannelMessage({
+        store,
+        channel,
+        sourceMessage: message,
+        requestedProviderPresetId: input.providerPresetId,
+        requestedTeammateId: input.teammateId,
+        requestAiReply: Boolean(input.requestAiReply),
+        createAiReply: async (replyInput) =>
+          await createAiReply({
+            ...replyInput,
+            completionMode: "inline",
+            stream: {
+              onReady: (aiReply) => {
+                const aiReplies = upsertAiReply(aiReply);
+                safeWriteSse("ready", { message, aiReply, aiReplies });
+              },
+              onDelta: (aiReply, delta) => {
+                upsertAiReply(aiReply);
+                safeWriteSse("delta", { messageId: aiReply.id, delta, body: aiReply.body });
+              },
+              onDone: (aiReply) => {
+                upsertAiReply(aiReply);
+              },
+              onBlocked: (aiReply) => {
+                upsertAiReply(aiReply);
+              },
+            },
+          }),
+        startExecutionProposalWorkflow,
+        config,
+        routeDependencies,
+        imageVisionSummarizer,
+      });
+
+      if (result.routeDecisionId && result.aiReply) {
+        store.updateChannelMessageRouteDecision(result.routeDecisionId, {
+          replyMessageId: result.aiReply.id,
+        }, new Date().toISOString());
+      }
+
+      const aiReplies = result.aiReplies?.length
+        ? result.aiReplies
+        : result.aiReply
+          ? [result.aiReply]
+          : Array.from(aiRepliesById.values());
+      for (const aiReply of aiReplies) {
+        upsertAiReply(aiReply);
+      }
+      const streamPayload = {
+        message,
+        ...(result.aiReply ? { aiReply: result.aiReply } : {}),
+        ...(aiReplies.length > 0 ? { aiReplies } : {}),
+        ...(result.autoStartedWorkflow ? { autoStartedWorkflow: result.autoStartedWorkflow } : {}),
+      };
+      const failedReply = aiReplies.find((reply) => reply.status === "failed");
+      const blockedReply = aiReplies.find((reply) => reply.status === "blocked");
+      if (failedReply) {
+        safeWriteSse("error", { ...streamPayload, error: failedReply.errorMessage });
+      } else if (blockedReply) {
+        safeWriteSse("blocked", { ...streamPayload, error: blockedReply.errorMessage });
+      } else {
+        safeWriteSse("done", streamPayload);
+      }
+    } catch (error) {
+      const aiReplies = Array.from(aiRepliesById.values());
+      safeWriteSse("error", {
+        message,
+        ...(aiReplies[0] ? { aiReply: aiReplies[0] } : {}),
+        ...(aiReplies.length > 0 ? { aiReplies } : {}),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (!closed && !response.destroyed) {
+        response.end();
+      }
+    }
+  } catch (error) {
+    if (response.headersSent) {
+      response.end();
+      return;
+    }
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 interface LingAgentActiveSessionAction {

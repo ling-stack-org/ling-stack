@@ -24,7 +24,7 @@ import {
 import { createAiChannelReply } from "../features/channels/ai-replies.js";
 import { handleChannelCollaborationProtocol } from "../features/channels/collaboration-protocol.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
-import { handleChannelMessagesCollection } from "../features/channels/messages.js";
+import { handleChannelMessagesCollection, handleChannelMessageStream } from "../features/channels/messages.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import {
   handleWorkflowHandoffIntentAccept,
@@ -1321,6 +1321,29 @@ export async function routeRequest(
     if (channelRoute.action === "messages") {
       const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
       await handleChannelMessagesCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
+        createAiChannelReply({
+          runnerRegistry,
+          runtimeSupervisor,
+          secretResolver,
+          ...input,
+        }),
+        (input) => confirmAndOrchestrateChannelProposal({
+          store: input.store,
+          cwd: channelMessagesCwd,
+          proposalId: input.proposalId,
+        }),
+        {
+          runnerRegistry,
+          secretResolver,
+          config,
+        },
+        imageVisionSummarizer,
+      );
+      return;
+    }
+    if (channelRoute.action === "messages-stream") {
+      const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
+      await handleChannelMessageStream(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
         createAiChannelReply({
           runnerRegistry,
           runtimeSupervisor,

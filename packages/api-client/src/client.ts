@@ -953,6 +953,25 @@ export class LingDaemonClient {
     return this.post(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd }, input);
   }
 
+  async streamChannelMessage(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelMessageRequest,
+  ): Promise<Response> {
+    const response = await this.fetchImpl(this.url(`/channels/${encodeURIComponent(channelId)}/messages/stream`, { cwd }), {
+      method: "POST",
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+    }
+    return response;
+  }
+
   async listChannelMessageRouteDecisions(
     cwd: string,
     channelId: string,

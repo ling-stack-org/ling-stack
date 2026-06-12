@@ -362,6 +362,39 @@ export interface ChannelMessageMutationResponse {
   };
 }
 
+export interface ChannelMessageStreamReadyEvent {
+  readonly message: ChannelMessage;
+  readonly aiReply?: ChannelMessage;
+  readonly aiReplies?: readonly ChannelMessage[];
+}
+
+export interface ChannelMessageStreamDeltaEvent {
+  readonly messageId: string;
+  readonly delta: string;
+  readonly body: string;
+}
+
+export interface ChannelMessageStreamDoneEvent {
+  readonly message: ChannelMessage;
+  readonly aiReply?: ChannelMessage;
+  readonly aiReplies?: readonly ChannelMessage[];
+  readonly autoStartedWorkflow?: ChannelMessageMutationResponse["autoStartedWorkflow"];
+}
+
+export interface ChannelMessageStreamBlockedEvent {
+  readonly message: ChannelMessage;
+  readonly aiReply?: ChannelMessage;
+  readonly aiReplies?: readonly ChannelMessage[];
+  readonly error?: string;
+}
+
+export interface ChannelMessageStreamErrorEvent {
+  readonly message?: ChannelMessage;
+  readonly aiReply?: ChannelMessage;
+  readonly aiReplies?: readonly ChannelMessage[];
+  readonly error: string;
+}
+
 export type ChannelMessageRouteAction = "reply" | "no_reply";
 
 export type ChannelMessageRouteDecisionStatus = "accepted" | "suppressed" | "failed";

@@ -231,7 +231,7 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "workspace" | "protocol" | "branches";
+  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "workspace" | "protocol" | "branches";
   readonly branchId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft";
   readonly protocolDraftId?: string;
@@ -249,6 +249,9 @@ export function parseChannelRoute(
   }
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "branches") {
     return { channelId: segments[1], action: "branches" };
+  }
+  if (segments.length === 4 && segments[0] === "channels" && segments[2] === "messages" && segments[3] === "stream") {
+    return { channelId: segments[1], action: "messages-stream" };
   }
   if (segments.length === 4 && segments[0] === "channels" && segments[2] === "branches") {
     return { channelId: segments[1], action: "branches", branchId: segments[3] };
