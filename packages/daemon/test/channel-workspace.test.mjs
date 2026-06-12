@@ -719,7 +719,7 @@ test("mentions_only creates a blocked Ling Agent reply when the channel has no r
   }
 });
 
-test("default_teammate routes reply-worthy messages to the channel default without proposals", async () => {
+test("default_teammate routes root messages through Ling Agent without proposals", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-route-"));
   const runner = new ScriptedRunner([
     `<ling_task_proposal>{"title":"Should not persist","prompt":"Create a task","acceptanceCriteria":["never"],"requiredTools":["read"],"riskSummary":"blocked by proposalMode"}</ling_task_proposal>Visible default reply`,
@@ -743,12 +743,13 @@ test("default_teammate routes reply-worthy messages to the channel default witho
       body: "这个实现边界怎么处理？",
     });
     assert.equal(created.aiReply.status, "pending");
-    assert.equal(created.aiReply.authorId, "teammate_builtin_engineer");
+    assert.equal(created.aiReply.authorId, "ling_agent");
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.match(finalReply.body, /ling_task_proposal/);
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].systemPrompt, /Do not include hidden proposal blocks/);
+    assert.match(runner.runs[0].task.prompt, /Current teammate: Ling Agent \(id: ling_agent, role: custom\)/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /Channel teammates \(configured roster/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -757,7 +758,7 @@ test("default_teammate routes reply-worthy messages to the channel default witho
     assert.equal(decisions.decisions[0].action, "reply");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
-    assert.equal(decisions.decisions[0].selectedTeammateId, "teammate_builtin_engineer");
+    assert.equal(decisions.decisions[0].selectedTeammateId, "ling_agent");
     assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
@@ -969,7 +970,7 @@ test("channel intent selector asks one clarify question for underspecified work 
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.threadId, created.message.id);
-    assert.equal(created.aiReply.authorId, "teammate_builtin_engineer");
+    assert.equal(created.aiReply.authorId, "ling_agent");
     assert.match(created.aiReply.body, /确认范围/);
     assert.equal(runner.runs.length, 0);
 
@@ -985,7 +986,7 @@ test("channel intent selector asks one clarify question for underspecified work 
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
-    assert.equal(decisions.decisions[0].selectedTeammateId, "teammate_builtin_engineer");
+    assert.equal(decisions.decisions[0].selectedTeammateId, "ling_agent");
     assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
     assert.match(decisions.decisions[0].reason, /Clarify question created from channel intent/);
   } finally {
@@ -1392,7 +1393,7 @@ test("single-step file edit normalizes Users path without leading slash", async 
   }
 });
 
-test("file creation how-to question remains ordinary chat intent", async () => {
+test("file creation how-to question remains ordinary Ling chat intent", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-howto-"));
   const daemon = await startDaemonForTest();
   try {
@@ -1408,7 +1409,8 @@ test("file creation how-to question remains ordinary chat intent", async () => {
       body: "如何创建 README.md？",
     });
 
-    assert.equal(created.aiReply, undefined);
+    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.authorId, "ling_agent");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -1417,6 +1419,8 @@ test("file creation how-to question remains ordinary chat intent", async () => {
     const whyQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "为什么不能创建 README.md？",
     });
+    assert.equal(whyQuestion.aiReply.status, "pending");
+    assert.equal(whyQuestion.aiReply.authorId, "ling_agent");
     const whyProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(whyQuestion.message.id)}`);
     assert.deepEqual(whyProposals.proposals, []);
   } finally {
@@ -1461,7 +1465,7 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-no-reply-fallthrough-"));
   const runner = new ScriptedRunner([
     JSON.stringify({ action: "no_reply", reason: "Not an executable task." }),
-    "这个问题应该由首选队友回复。",
+    "这个问题应该由 Ling Agent 回复。",
   ]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
   try {
@@ -1488,10 +1492,10 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
     });
 
     assert.equal(created.aiReply.status, "pending");
-    assert.equal(created.aiReply.authorId, "teammate_builtin_engineer");
+    assert.equal(created.aiReply.authorId, "ling_agent");
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
-    assert.equal(finalReply.body, "这个问题应该由首选队友回复。");
+    assert.equal(finalReply.body, "这个问题应该由 Ling Agent 回复。");
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
     assert.match(runner.runs[0].task.prompt, /Classify the latest user channel message into exactly one Ling intent/);
@@ -1558,7 +1562,7 @@ test("model-assisted channel intent selector falls back to deterministic workflo
   }
 });
 
-test("default_teammate route suppresses duplicate replies for the same source message", async () => {
+test("default_teammate route suppresses duplicate Ling Agent replies for the same source message", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-idempotent-"));
   const now = "2026-06-09T00:00:00.000Z";
   const store = createSqliteRunStore(cwd);
@@ -1607,7 +1611,7 @@ test("default_teammate route suppresses duplicate replies for the same source me
         threadId: sourceMessage.id,
         kind: "ai_reply",
         authorType: "ai-teammate",
-        authorId: "teammate_builtin_engineer",
+        authorId: "ling_agent",
         body: "Existing reply.",
       },
       now,
@@ -1858,7 +1862,7 @@ test("auto_route uses the model selector and records accepted route evidence", a
       body: "这个设置文案应该怎么改？",
     });
 
-    assert.equal(created.aiReply.authorId, teammateId);
+    assert.equal(created.aiReply.authorId, "ling_agent");
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.match(finalReply.body, /ling_task_proposal/);
@@ -1876,9 +1880,10 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.equal(decisions.decisions[0].mode, "auto_route");
     assert.equal(decisions.decisions[0].createdBy, "model");
     assert.equal(decisions.decisions[0].status, "accepted");
-    assert.equal(decisions.decisions[0].selectedTeammateId, teammateId);
+    assert.equal(decisions.decisions[0].selectedTeammateId, "ling_agent");
     assert.equal(decisions.decisions[0].confidence, 0.9);
     assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
+    assert.equal(decisions.decisions[0].alternativesConsidered[0].teammateId, teammateId);
     assert.equal(decisions.decisions[0].contextPack.kind, "auto_route_selector");
     assert.deepEqual(decisions.decisions[0].contextPack.sectionIds, [
       "auto_route_instructions",
@@ -1910,7 +1915,7 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
     });
 
     assert.equal(created.aiReply.status, "pending");
-    assert.equal(created.aiReply.authorId, "teammate_builtin_designer");
+    assert.equal(created.aiReply.authorId, "ling_agent");
     assert.equal(runner.runs.length, 2);
     let decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
@@ -1928,7 +1933,7 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       body: "这个 UI 问题可以自动判断吗？",
     });
     assert.equal(lowConfidence.aiReply.status, "pending");
-    assert.equal(lowConfidence.aiReply.authorId, "teammate_builtin_designer");
+    assert.equal(lowConfidence.aiReply.authorId, "ling_agent");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(lowConfidence.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.match(decisions.decisions[0].reason, /Route model confidence was below threshold/);
@@ -1944,7 +1949,7 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       body: "这个带解释的模型输出应该失败吗？",
     });
     assert.equal(wrappedJson.aiReply.status, "pending");
-    assert.equal(wrappedJson.aiReply.authorId, "teammate_builtin_designer");
+    assert.equal(wrappedJson.aiReply.authorId, "ling_agent");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(wrappedJson.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");
@@ -1960,7 +1965,7 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       body: "这个未知 teammate 应该失败吗？",
     });
     assert.equal(unknownTeammate.aiReply.status, "pending");
-    assert.equal(unknownTeammate.aiReply.authorId, "teammate_builtin_designer");
+    assert.equal(unknownTeammate.aiReply.authorId, "ling_agent");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(unknownTeammate.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");

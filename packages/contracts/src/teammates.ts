@@ -38,11 +38,23 @@ export type AiTeammateRoleKey =
   | "custom";
 
 export type AiTeammateStatus = "active" | "paused" | "disabled";
+export type AiTeammateKind = "ai_teammate" | "system_teammate";
+export type AiTeammateSystemRole = "ling_agent";
+export type AiTeammateEditableField =
+  | "displayName"
+  | "description"
+  | "avatarTone"
+  | "avatarImageAttachmentId"
+  | "appendSystemPrompt";
 
 export interface AiTeammate {
   readonly id: string;
   readonly workspaceId: string;
   readonly templateId?: string;
+  readonly kind?: AiTeammateKind;
+  readonly systemRole?: AiTeammateSystemRole;
+  readonly protectedProfile?: boolean;
+  readonly editableFields?: readonly AiTeammateEditableField[];
   readonly roleKey: AiTeammateRoleKey;
   readonly displayName: string;
   readonly description: string;

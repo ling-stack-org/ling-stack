@@ -21,9 +21,10 @@ session model. The public product owner is
 answers, task confirmations, progress, approvals, and final reports, not auto-route
 mechanics.
 
-Channel discussion currently replies only when the user explicitly mentions an AI
-teammate. This is safe, but it makes a channel with a default teammate feel silent when
-the user asks ordinary questions such as:
+Channel discussion used to reply only when the user explicitly mentioned an AI teammate.
+That was safe, but it made root channel turns feel silent. Under the Ling Agent session
+model, ordinary root turns are owned by Ling Agent; specialist teammates are visible only
+when explicitly mentioned or explicitly requested as visible participants.
 
 ```text
 What does v0.1 Smoke acceptance mean?
@@ -34,16 +35,19 @@ This design adds a narrow channel message router:
 ```text
 user channel message
   -> decide reply or no_reply
-  -> choose one teammate
-  -> create normal ai_reply message
+  -> choose Ling Agent as the visible ordinary responder
+  -> optionally record preferred specialist evidence
+  -> create normal ai_reply message from ling_agent
 ```
 
 It does not replace workflow orchestration and does not create a shared long-context
 multi-agent chatroom.
 
 Under Ling Agent Session, auto reply runs after active-session handling and executable
-intent detection. It must not claim messages that should become a task, run,
-continuation, or approval response.
+intent detection. It consumes the protected built-in `ling_agent` teammate identity as the
+visible ordinary responder; it does not select or create a separate default speaker. It
+must not claim messages that should become a task, run, continuation, or approval
+response.
 
 ## Current P0 Behavior
 
@@ -68,10 +72,10 @@ message:
   or a visible blocked Ling reply if the channel has no runnable provider;
 - `What is the acceptance scope?` creates one ordinary `ai_reply` even in legacy
   `mentions_only`; the storage enum no longer means root user turns are ignored;
-- the same question creates one ordinary `ai_reply` from the channel default teammate in
-  `default_teammate`, if that teammate has a runnable provider;
-- the same question can create one ordinary `ai_reply` from the model-selected teammate in
-  `auto_route`, only when the daemon feature flag is enabled.
+- the same question creates one ordinary `ai_reply` from `ling_agent` in
+  `default_teammate`; `defaultTeammateId` remains only a preferred specialist hint;
+- the same question creates one ordinary `ai_reply` from `ling_agent` in `auto_route`,
+  while the model-selected teammate is retained as internal routing evidence.
 
 Auto-routed and default-teammate replies pass `proposalMode: "disabled"` and must not
 create `ChannelExecutionProposal`, tasks, runs, workflows, branches, or approvals.
@@ -84,8 +88,9 @@ module.
 It may:
 
 - answer ordinary channel questions;
-- route a question to the channel default teammate;
-- route a question to one selected teammate in `auto_route` mode;
+- create ordinary visible replies from the protected built-in `ling_agent` identity;
+- use `defaultTeammateId` as preferred specialist evidence;
+- use model routing to decide specialist context in `auto_route` mode;
 - produce explainable routing evidence;
 - reuse the existing `createAiChannelReply` path for ordinary reply generation, with
   proposal extraction explicitly disabled for auto-routed messages.
@@ -99,6 +104,9 @@ It must not:
   authority;
 - activate memory;
 - inject hidden prompts into a running Pi session;
+- edit, delete, disable, or remove the Ling Agent system teammate profile;
+- override Ling Agent's built-in instructions, user-instruction layering, approval policy,
+  or audit requirements;
 - let every teammate speak by default;
 - turn ordinary channel discussion into a multi-agent transcript.
 - auto-create `ChannelExecutionProposal`, tasks, runs, branches, or workflow steps from an
@@ -130,17 +138,20 @@ ordinary conversation path.
 
 ## Terms
 
-- `defaultTeammateId`: who should normally represent the channel when no teammate is
-  explicitly mentioned.
+- `defaultTeammateId`: preferred specialist hint for assignment, workflow participation,
+  and routing evidence. It is not the visible default speaker for ordinary root chat.
+- `ling_agent`: protected built-in system teammate and visible ordinary responder. Its
+  display name/avatar may be personalized, but route, message, workflow, approval, and
+  evidence records keep the stable `ling_agent` id.
 - `defaultProviderPresetId`: which provider/model preset should be used when the
-  selected teammate does not have its own provider preset.
+  visible Ling Agent or selected explicit teammate does not have a provider preset.
 - `autoReplyMode`: how a channel decides whether ordinary non-mention messages should
   trigger an AI reply.
 
 Provider resolution stays separate from teammate routing:
 
 ```text
-selected teammate providerPresetId
+explicitly selected teammate providerPresetId, when the user mentioned a teammate
 -> current explicit run provider, if applicable
 -> channel.defaultProviderPresetId
 -> workspace selected provider
@@ -162,9 +173,9 @@ Semantics:
 
 | Mode | Behavior |
 | --- | --- |
-| `mentions_only` | Current behavior. Only explicit AI teammate mentions trigger a reply. |
-| `default_teammate` | Explicit mentions win. Otherwise ordinary reply-worthy messages route to `channel.defaultTeammateId`. |
-| `auto_route` | Explicit mentions win. Otherwise the router decides `reply` or `no_reply` and chooses one teammate. |
+| `mentions_only` | Explicit mentions win. Otherwise ordinary root messages may still receive a visible Ling reply under Ling Agent Session. |
+| `default_teammate` | Explicit mentions win. Otherwise ordinary root messages receive a visible Ling Agent reply; `channel.defaultTeammateId` is specialist evidence only. |
+| `auto_route` | Explicit mentions win. Otherwise the router decides specialist context, but the visible ordinary reply author remains Ling Agent. |
 
 Default must be `mentions_only` for existing channels and new channels unless the user
 changes the setting.
@@ -176,7 +187,7 @@ render the value, describe it through the Ling Agent model:
 | Storage value | User-facing copy |
 | --- | --- |
 | `mentions_only` | Only when mentioned / 仅 @ 时交给 Ling |
-| `default_teammate` | Preferred teammate reply / 首选队友回复 |
+| `default_teammate` | Preferred specialist context / 首选专业队友参考 |
 | `auto_route` | Ling Agent decides / Ling Agent 自动判断 |
 
 Do not show "auto route", "selector", "router", "not auto-replied", "why no reply",
@@ -241,7 +252,8 @@ Rules:
 ## Deterministic Default Teammate Mode
 
 `default_teammate` is the deterministic subset of the router. It does not call a routing
-model and does not choose among multiple candidates.
+model and does not choose the visible speaker. Ling Agent remains the visible ordinary
+responder; `channel.defaultTeammateId` is retained as preferred specialist context.
 
 Flow:
 
@@ -249,9 +261,9 @@ Flow:
 channel autoReplyMode = default_teammate
 user sends ordinary root channel question
 -> deterministic suppression
--> validate channel.defaultTeammateId
--> validate teammate membership/status/provider readiness
--> create one normal ai_reply from channel.defaultTeammateId
+-> validate a runnable Ling Agent provider path
+-> include channel.defaultTeammateId as specialist evidence when valid
+-> create one normal ai_reply from ling_agent
 -> persist route decision evidence
 ```
 
@@ -260,9 +272,9 @@ Rules:
 - explicit AI teammate mentions still win in every mode;
 - no explicit mention plus `mentions_only` uses the same visible Ling reply contract as
   ordinary root channel messages;
-- no explicit mention plus `default_teammate` routes only to `channel.defaultTeammateId`;
-- if `channel.defaultTeammateId` is missing, disabled, hidden, not a channel member, or has
-  no runnable provider, fall back to Ling Agent or show a visible blocked Ling reply;
+- no explicit mention plus `default_teammate` creates a visible Ling Agent reply, not a
+  specialist-authored reply;
+- if no runnable provider is available for Ling Agent, show a visible blocked Ling reply;
 - do not use reply-worthiness heuristics to suppress root local-user messages;
 - suppress only AI/system messages, thread replies outside P0 scope, empty messages with
   no assets, and non-active channels;
@@ -278,10 +290,10 @@ Evidence:
 {
   mode: "default_teammate",
   action: "reply" | "no_reply",
-  selectedTeammateId: channel.defaultTeammateId,
+  selectedTeammateId: "ling_agent",
   createdBy: "deterministic",
   status: "accepted" | "suppressed" | "failed",
-  reason: "Default teammate answered a reply-worthy channel question."
+  reason: "Ling Agent answered a root channel message."
 }
 ```
 
@@ -353,6 +365,7 @@ Candidate selection must be deterministic before the model sees options.
 
 Inputs:
 
+- Ling Agent as the visible coordinator candidate;
 - active teammates in the channel;
 - `channel.defaultTeammateId`;
 - teammate role, display name, description, and skill summaries;
@@ -365,10 +378,11 @@ Candidate rules:
 - explicit AI mention bypasses `auto_route` and chooses that teammate;
 - disabled, paused, hidden, or non-member teammates are excluded;
 - teammates without a runnable provider are excluded;
-- the default teammate is included and marked as preferred when valid;
+- Ling Agent is included and marked as the preferred visible coordinator when runnable;
+- the default teammate is included as specialist evidence when valid;
 - no more than a small bounded candidate set should be sent to the model;
-- if one candidate remains and the message is reply-worthy, the router may accept a
-  deterministic route without a model call if the feature policy allows it.
+- if the selector fails, returns `no_reply`, or has low confidence, the router falls back
+  to the Ling Agent visible reply path.
 
 ### Model Route Prompt
 
@@ -422,13 +436,13 @@ Ling validates the model output before creating an AI reply:
 
 - JSON must parse and match schema;
 - `action=reply` requires a valid `teammateId`;
-- selected teammate must be in the candidate set;
-- selected teammate must still be active in the channel;
-- provider resolution must still pass preflight;
+- model-selected teammate must be in the candidate set;
+- model-selected teammate must still be active in the channel when it is a specialist;
+- Ling Agent provider resolution must still pass preflight before creating the visible
+  ordinary reply;
 - confidence below threshold becomes `no_reply`;
 - invalid output becomes `no_reply` by default;
-- optional fallback to the default teammate is allowed only when explicit policy enables
-  it and the default teammate is in the valid candidate set;
+- fallback goes to Ling Agent, not to the channel default teammate;
 - model output cannot create tasks, workflows, approvals, tools, credentials, external
   sends, or memory activation.
 
@@ -438,11 +452,12 @@ P0 needs simple guardrails:
 
 - do not auto-reply to AI-authored messages;
 - at most one auto reply per source message;
-- idempotency key should include `sourceMessage.id` and selected teammate id;
+- idempotency key should include `sourceMessage.id` and visible author id;
 - if a pending or ready AI reply already exists for the source message, do not create a
   second one;
-- suppress repeated short greetings within a small recent-message window;
-- do not auto-reply when the default teammate has an active pending reply in the same
+- repeated short greetings and acknowledgements should receive concise Ling replies
+  rather than silent suppression;
+- do not auto-reply when Ling Agent has an active pending reply in the same
   channel if runtime semaphore budget is exhausted.
 
 ## P0 Evidence Requirement
@@ -490,24 +505,23 @@ export interface ChannelMessageRouteAlternative {
 }
 ```
 
-User-facing route explanation should stay message-level and collapsed by default:
+Developer route explanation should stay in evidence details, not in the ordinary feed:
 
 ```text
-Product Strategy · Default teammate
+Ling Agent · preferred specialist: Product Strategy
 ```
 
 For `auto_route`, show a compact provenance label:
 
 ```text
-QA · Auto routed
+Ling Agent · specialist evidence: QA
 ```
 
-For suppressed or failed source messages, expose a small message-level entry point only
-when useful:
+For suppressed or failed source messages, keep the default feed clean. Evidence details
+may expose a diagnostic entry point only when the user opens debugging context:
 
 ```text
-Not auto-replied
-Why no reply?
+Route evidence available
 ```
 
 Clicking the entry point may open a small popover anchored to the source message. Do not
@@ -515,7 +529,8 @@ send route explanations into the default timeline and do not put ordinary route
 explanations in the right drawer. The explanation should translate durable route decision
 fields into user-readable copy:
 
-- `accepted`: the selected teammate replied through `Default teammate` or `Auto routed`.
+- `accepted`: Ling Agent created a visible ordinary reply; specialist selection, if any,
+  is evidence only.
 - `suppressed`: Ling decided the message looked like an acknowledgement, note, repeat, or
   otherwise not a request for an AI reply.
 - `failed`: Ling could not safely create an auto reply, for example because no runnable
@@ -769,20 +784,23 @@ runtime execution unit, unless a later observability design introduces a dedicat
 
 ## Web Design
 
-Channel Settings should show:
+Channel Settings should not show auto-route or default-teammate mode controls in the
+ordinary product UI. Developer diagnostics may still expose storage values:
 
 ```text
-Auto reply
-[Mentions only]
-[Default teammate]
-[Auto route]
+mentions_only
+default_teammate
+auto_route
 ```
 
-Labels:
+Diagnostic labels:
 
-- `Mentions only`: AI replies only when explicitly mentioned.
-- `Default teammate`: unanswered channel questions go to the default teammate.
-- `Auto route`: Ling chooses whether and who should answer.
+- `mentions_only`: explicit mentions remain specialist-visible; root turns still enter
+  Ling Agent.
+- `default_teammate`: root turns produce Ling Agent replies with preferred specialist
+  evidence.
+- `auto_route`: Ling Agent uses model-assisted specialist context, but remains the
+  visible ordinary responder.
 
 UX rules:
 
@@ -916,17 +934,17 @@ Implemented:
 - request strict JSON output;
 - validate structured output;
 - create one AI reply only after validation;
-- fall back to a valid default teammate or visible blocked Ling reply on invalid output
+- fall back to a visible Ling Agent reply or visible blocked Ling reply on invalid output
   instead of silently ending a root user turn.
 
 Validation:
 
-- model-selected teammate creates one AI reply;
+- model-selected specialist context creates one Ling Agent AI reply;
 - `no_reply` model output falls back to an ordinary visible Ling reply;
 - invalid JSON falls back to an ordinary visible Ling reply and records evidence;
 - low confidence falls back to an ordinary visible Ling reply;
 - unknown teammate falls back to an ordinary visible Ling reply;
-- selected teammate without runnable provider creates a visible blocked Ling reply.
+- no runnable Ling Agent provider creates a visible blocked Ling reply.
 - auto-routed reply body containing a proposal block does not create a
   `ChannelExecutionProposal`.
 
@@ -963,7 +981,7 @@ Add coverage around the screenshot scenario:
 - channel with default teammate and `mentions_only`: ordinary root user message creates
   a visible Ling reply;
 - channel with multiple active teammates and `auto_route`: ordinary question creates one
-  AI reply from the model-selected teammate;
+  AI reply from Ling Agent and records the model-selected specialist as evidence;
 - model `no_reply` creates a fallback visible Ling reply;
 - invalid model output creates a fallback visible Ling reply and records evidence;
 - repeated `hello?` creates a concise visible Ling reply;
@@ -982,15 +1000,15 @@ the remaining work as a follow-up:
 - show a blocker when `default_teammate` has no default teammate;
 - changing mode persists after refresh;
 - channel with default teammate and `default_teammate`: ordinary question creates one AI
-  reply from that teammate;
+  reply from Ling Agent;
 
 ### P2 Message-Level Route Explanation And Local Auto Route Validation
 
 Implemented behavior:
 
 - expose a compact route explanation entry from the source message or AI reply footer;
-- show `Default teammate`, `Auto routed`, `Not auto-replied`, or `Auto reply failed`
-  without adding timeline noise;
+- keep ordinary route labels out of the default feed; evidence drawers may show storage
+  mode and route reason for debugging;
 - open a small anchored popover for the human-readable reason when the user asks why;
 - do not use the right drawer for ordinary route explanation;
 - do not display selector confidence numbers or raw JSON in ordinary UI;
@@ -1025,8 +1043,9 @@ P0 should add daemon route/store tests for route decisions and model-output vali
 
 - Should `default_teammate` reply to topic replies in the first slice, or only root
   channel messages?
-- What is the exact repeated greeting suppression window?
-- Should `auto_route` ever choose the channel default teammate as a fallback when model
+- Should repeated greetings receive a deterministic canned Ling reply or always call the
+  provider?
+- Should `auto_route` keep the channel default teammate as specialist evidence when model
   output is invalid, or should it always fail closed?
 - Should route decisions be attached to message drilldown or conversation work-cell
   evidence first?

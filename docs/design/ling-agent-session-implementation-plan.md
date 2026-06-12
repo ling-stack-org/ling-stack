@@ -1,7 +1,7 @@
 # Ling Agent Session Implementation Plan
 
 Status: implementation plan for the first product-control-plane slices
-Date: 2026-06-11
+Date: 2026-06-12
 
 Related docs:
 
@@ -39,10 +39,10 @@ Implementation status:
   approval surfaces: pre-execution cards use permission-oriented task confirmation copy,
   while runtime approvals still resolve through durable `ApprovalRequest` records and do
   not mutate workspace approval policy.
-- P5 initial fallback execution is implemented with a built-in teammate-like
-  `ling_agent` executor for bounded single-step tasks when no configured specialist can
-  run. Specialist teammates still win when they are available in the channel and support
-  the required tools.
+- P5 initial execution is implemented with the built-in `ling_agent` identity for bounded
+  single-step tasks when no configured specialist can run. The next profile slice should
+  promote this identity into a protected system teammate that appears in roster, channel
+  membership, mentions, and private chat.
 - P6 initial Web acceptance hardening is implemented in `apps/web/e2e/channel.spec.ts`
   with regression coverage for executable task confirmation, filename-only continuation,
   ordinary chat routing, active run guidance/redirect interventions, inline runtime
@@ -68,7 +68,8 @@ layers that already enforce state, permissions, runner behavior, and audit.
 - Keep executable work on the existing workflow/run path.
 - Keep permissions on the existing approval path.
 - Keep process details expandable, not default transcript content.
-- Make Ling Agent a default executor identity, not a permission authority.
+- Make Ling Agent a protected built-in system teammate and default executor identity, not
+  a permission authority.
 - Make user interjections durable interventions, not hidden prompt injection.
 - Ship in narrow slices with daemon tests first, then Web behavior tests.
 
@@ -186,8 +187,10 @@ corepack pnpm --filter @ling-stack/daemon exec node --test --test-name-pattern "
 
 Status: implementation corrected. Ling Agent now treats intent-selector `no_reply` as
 "not executable work" and continues into ordinary reply handling instead of ending the
-channel message. Suppressed ordinary-route and intent-selector evidence is retained for
-diagnostics but no longer renders as route/intent chrome in the default feed.
+channel message. Ordinary root messages, auto-route fallbacks, model-selected ordinary
+routes, and deterministic clarify questions render from `ling_agent`. Suppressed
+ordinary-route and intent-selector evidence is retained for diagnostics but no longer
+renders as route/intent chrome in the default feed.
 
 ### Goal
 
@@ -253,6 +256,10 @@ Implemented initial behavior:
 
 - Auto-route must not run before executable intent detection.
 - Intent-selector `no_reply` is not terminal; it falls through to ordinary chat routing.
+- `Channel.defaultTeammateId` must not become the visible ordinary-chat author. It is a
+  preferred specialist hint for assignment, workflow participation, and evidence.
+- Explicit AI teammate mentions and explicit visible multi-reply requests are the paths
+  where specialist teammates appear as visible reply authors.
 - Suppressed/no-reply route decisions and intent-selector decisions must not render under
   ordinary user messages.
 - Missing runnable providers produce a visible blocked Ling reply, not silent no-reply.
@@ -266,7 +273,8 @@ Add daemon tests for:
 
 - file create request creates proposal, no ordinary route decision;
 - README follow-up resolves recent target before ordinary route;
-- ordinary question still creates one reply when auto-route/default teammate allows it;
+- ordinary question still creates one visible Ling Agent reply when a runnable provider is
+  available, even if a default teammate is configured;
 - acknowledgement, punctuation, and repeated greeting still create a visible Ling outcome;
 - active run follow-up creates or previews intervention instead of ordinary reply.
 
@@ -391,7 +399,7 @@ Add tests for:
 - runtime approval still resolves through existing approval endpoint;
 - approving a runtime permission does not change workspace policy.
 
-## P5: Ling Agent Fallback Executor
+## P5: Ling Agent Built-In Executor
 
 ### Goal
 
@@ -400,16 +408,16 @@ Specialists remain optional collaborators.
 
 ### Executor Identity
 
-Initial implementation uses a clear built-in executor identity:
+Initial implementation uses the protected built-in executor identity:
 
 ```ts
 const LING_AGENT_EXECUTOR_ID = "ling_agent";
 ```
 
-P5 represents Ling Agent as a built-in teammate-like executor in channel proposal and
-workflow paths. This keeps the existing proposal, workflow, run, approval, artifact, and
-evidence state machines unchanged. It does not introduce first-class executor storage or
-a second approval authority.
+P5 represents Ling Agent as a built-in executor in channel proposal and workflow paths.
+P7 promotes the same identity into a protected system teammate profile. This keeps the
+existing proposal, workflow, run, approval, artifact, and evidence state machines
+unchanged. It does not introduce a second approval authority.
 
 ### Selection Rules
 
@@ -481,7 +489,7 @@ Expected: edit confirmation for /tmp/example/README.md.
 
 ```text
 User: 这个 workspace 里面都有谁？
-Expected: one ordinary Ling Agent/default teammate answer.
+Expected: one ordinary Ling Agent answer.
 ```
 
 4. Active follow-up:
@@ -537,6 +545,95 @@ Always run:
 git diff --check
 ```
 
+## P7: Protected Ling Agent Teammate Profile
+
+### Goal
+
+Make Ling Agent visible and usable as the default built-in teammate instead of a hidden
+fallback. Ling Agent should feel like a normal teammate in roster, channel membership,
+mentions, and private chat, while keeping system-owned lifecycle and permission boundaries.
+
+### Profile Contract
+
+Use one canonical identity everywhere:
+
+```ts
+const LING_AGENT_ID = "ling_agent";
+```
+
+The profile must expose at least:
+
+```ts
+interface LingAgentSystemProfile {
+  readonly id: "ling_agent";
+  readonly kind: "system_teammate";
+  readonly displayName: string;
+  readonly avatar?: LingAgentAvatarConfig;
+  readonly description?: string;
+  readonly protected: true;
+  readonly removable: false;
+  readonly editableFields: readonly ["displayName", "avatar", "description", "userInstructions"];
+  readonly userInstructions?: LingAgentUserInstructionsRef;
+}
+```
+
+Implementation may start with a virtual profile and later migrate to durable storage if
+personalization requires it.
+
+### Channel Rules
+
+- New channels include Ling Agent by default.
+- Existing channels synthesize or migrate Ling Agent membership if missing.
+- UI must not expose remove, delete, disable, archive, or hide actions for Ling Agent.
+- Channel settings should not ask users to choose Ling Agent as a default teammate; Ling
+  Agent is always the coordinator. Preferred specialist remains separate.
+- Mention picker includes Ling Agent.
+- Private teammate chat can open Ling Agent using the same conversation shell as other AI
+  teammates.
+
+### Personalization Rules
+
+Allowed:
+
+- display name;
+- avatar image, initials, color, or accent;
+- short description;
+- user-added Ling Agent instructions.
+
+Not allowed:
+
+- changing `id = "ling_agent"`;
+- deleting, disabling, archiving, hiding, or removing Ling Agent from a channel;
+- editing the built-in product-owned Ling Agent instruction document;
+- granting tools, provider access, memory scopes, credentials, deploy authority, or
+  external-send authority;
+- bypassing task confirmation, runtime approval, runner registry, or audit.
+
+### Instruction Layering
+
+Represent the system instruction and user addition as separate sources:
+
+```text
+LING_AGENT.md
+LING_AGENT.user.md
+```
+
+`LING_AGENT.md` is product-owned and versioned with the app. `LING_AGENT.user.md` is
+workspace/user-owned preference material. Prompt assembly should order product rules before
+user additions, and conflicts must resolve in favor of product rules.
+
+### Tests
+
+Add coverage for:
+
+- new channel includes Ling Agent membership;
+- old channel without explicit membership renders Ling Agent anyway;
+- remove/delete/disable actions are unavailable for Ling Agent;
+- display name/avatar personalization changes presentation but not stored author id;
+- user-added instructions are included after built-in instructions;
+- user-added instructions cannot bypass approvals or change protected lifecycle;
+- Ling Agent private chat opens and replies through the normal teammate conversation path.
+
 ## PR Slicing
 
 Recommended order:
@@ -545,15 +642,16 @@ Recommended order:
 2. P2 coordinator entry ordering and regression tests.
 3. P3 final report projection and Web completed-cell behavior.
 4. P4 permission copy plus inline approval integration polish.
-5. P5 Ling Agent fallback executor.
+5. P5 Ling Agent built-in executor.
 6. P6 Web E2E and smoke hardening.
+7. P7 protected Ling Agent teammate profile and personalization.
 
 Avoid combining P2 routing changes with P3 Web final-report UI in the same PR unless the
 diff stays small. Routing bugs and UI-collapse bugs have different failure modes.
 
 ## Data Migration Policy
 
-P1-P5 should not require database migrations.
+P1-P6 should not require database migrations.
 
 Allowed without migration:
 
@@ -570,6 +668,8 @@ Require a separate migration proposal if:
 - Ling Agent sessions need first-class storage;
 - executor identity cannot fit existing teammate/workflow metadata;
 - confirmation cards need a new durable decision record beyond existing proposals.
+- Ling Agent personalization requires durable profile or instruction storage that cannot be
+  represented as a virtual profile plus existing workspace settings.
 
 ## Acceptance Criteria
 
@@ -578,6 +678,10 @@ Require a separate migration proposal if:
 - Confirmation cards name the concrete permission family and target.
 - Runtime tool approval still uses existing durable approvals.
 - Missing specialists do not block safe Ling Agent direct execution.
+- Ling Agent appears as a protected built-in teammate in every channel.
+- Ling Agent private chat is available through the teammate conversation surface.
+- Ling Agent display name/avatar/user-added instructions are customizable without changing
+  `ling_agent` identity or approval behavior.
 - Active follow-ups and redirects use durable intervention semantics.
 - Completed work shows one final result report by default.
 - Evidence remains expandable and complete.
@@ -588,11 +692,12 @@ Require a separate migration proposal if:
 
 Product boundary decisions: none for this plan.
 
-Implementation decisions to close during P1-P5:
+Implementation decisions to close during P1-P7:
 
 - exact location of the shared `LingAgentSessionView` type after the first daemon/Web
   slice proves the shape;
 - whether final reports should be persisted or recomputed;
-- whether Ling Agent direct execution is represented as a built-in teammate-like entity
-  or a separate executor type;
+- whether the protected Ling Agent profile is virtual, durable, or migrated from a seeded
+  teammate row;
+- where user-added `LING_AGENT.user.md` instructions are stored and versioned;
 - exact Web copy for pre-execution confirmation versus runtime approval.

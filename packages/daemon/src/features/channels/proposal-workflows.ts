@@ -168,7 +168,7 @@ function resolveProposalParticipants(
     : [{ teammateId: proposal.assigneeTeammateId, action: "coordinated", summary: "Complete the confirmed execution proposal." } satisfies ChannelExecutionProposalStep];
   return sourceSteps.map((step) => {
     const teammate = isLingAgentExecutorId(step.teammateId)
-      ? createLingAgentExecutor()
+      ? store.getAiTeammate(step.teammateId) ?? createLingAgentExecutor()
       : store.getAiTeammate(step.teammateId);
     if (!teammate) {
       throw new HttpError(400, "proposal_teammate_not_found", `Proposal teammate not found: ${step.teammateId}`);

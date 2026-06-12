@@ -141,6 +141,7 @@ interface TeammateSettingsForm {
   readonly pinned: boolean;
   readonly hidden: boolean;
   readonly systemPrompt: string;
+  readonly appendSystemPromptText: string;
 }
 
 interface TeammateTaskCreateForm {
@@ -280,6 +281,7 @@ export function TeammateWorkspace({
   const directGuidanceOperationSeqRef = useRef(0);
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const settingsProvider = settingsForm.providerPresetId ? providers.find((item) => item.id === settingsForm.providerPresetId) : undefined;
+  const isProtectedSystemTeammate = Boolean(teammate.protectedProfile || teammate.kind === "system_teammate" || teammate.systemRole === "ling_agent");
   const skillDefinitions = useMemo(() => {
     if (skillRegistryEntries.length > 0) {
       return skillRegistryEntries.map((entry) => entry.definition);
@@ -371,10 +373,12 @@ export function TeammateWorkspace({
     { id: "model", label: t("Model") },
     { id: "permissions", label: t("Permissions") },
     { id: "channels", label: t("Channels"), count: effectiveMemberships.length },
-    { id: "skills", label: t("Skills"), count: enabledSkillCount },
-    { id: "memory", label: t("Memory"), count: memoryPromotionInbox.length || memoryScopes.length },
-    { id: "mcp", label: t("MCP") },
-    { id: "danger", label: t("Danger zone"), danger: true },
+    ...(isProtectedSystemTeammate ? [] : [
+      { id: "skills" as const, label: t("Skills"), count: enabledSkillCount },
+      { id: "memory" as const, label: t("Memory"), count: memoryPromotionInbox.length || memoryScopes.length },
+      { id: "mcp" as const, label: t("MCP") },
+      { id: "danger" as const, label: t("Danger zone"), danger: true },
+    ]),
   ];
   const normalizedMessageSearchQuery = messageSearchQuery.trim().toLowerCase();
   const visibleMessages = useMemo(() => {
@@ -388,6 +392,12 @@ export function TeammateWorkspace({
       return `${message.body} ${attachmentText}`.toLowerCase().includes(normalizedMessageSearchQuery);
     });
   }, [messages, normalizedMessageSearchQuery, privateAttachmentById]);
+
+  useEffect(() => {
+    if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "memory" || activeTab === "mcp" || activeTab === "danger")) {
+      setActiveTab("profile");
+    }
+  }, [activeTab, isProtectedSystemTeammate]);
   const latestVisiblePrivateMessageId = visibleMessages.at(-1)?.id ?? "";
   const privateMessageFeedVirtualizer = useVirtualizer({
     count: visibleMessages.length,
@@ -1144,15 +1154,21 @@ export function TeammateWorkspace({
     try {
       setWorkspaceError("");
       setSaveMessage("");
-      const updatedTeammate = await onUpdateTeammate(teammate.id, {
-        displayName: settingsForm.displayName.trim() || teammate.displayName,
-        description: settingsForm.description.trim(),
-        providerPresetId: settingsForm.providerPresetId || null,
-        status: settingsForm.status,
-        pinned: settingsForm.pinned,
-        hidden: settingsForm.hidden,
-        systemPrompt: settingsForm.systemPrompt.trim() || null,
-      });
+      const updatedTeammate = await onUpdateTeammate(teammate.id, isProtectedSystemTeammate
+        ? {
+            displayName: settingsForm.displayName.trim() || teammate.displayName,
+            description: settingsForm.description.trim(),
+            appendSystemPrompt: splitAdditionalInstructions(settingsForm.appendSystemPromptText),
+          }
+        : {
+            displayName: settingsForm.displayName.trim() || teammate.displayName,
+            description: settingsForm.description.trim(),
+            providerPresetId: settingsForm.providerPresetId || null,
+            status: settingsForm.status,
+            pinned: settingsForm.pinned,
+            hidden: settingsForm.hidden,
+            systemPrompt: settingsForm.systemPrompt.trim() || null,
+          });
       setSettingsForm(teammateToSettingsForm(updatedTeammate));
       setSaveMessage(t("Saved"));
       void refreshDirectRuntime().catch(() => undefined);
@@ -1193,12 +1209,18 @@ export function TeammateWorkspace({
     try {
       setWorkspaceError("");
       setSaveMessage("");
-      const updatedTeammate = await onUpdateTeammate(teammate.id, {
-        displayName: personaDraft.displayName.trim() || teammate.displayName,
-        description: personaDraft.description.trim(),
-        systemPrompt: personaDraft.systemPrompt.trim() || null,
-        appendSystemPrompt: personaDraft.appendSystemPrompt,
-      });
+      const updatedTeammate = await onUpdateTeammate(teammate.id, isProtectedSystemTeammate
+        ? {
+            displayName: personaDraft.displayName.trim() || teammate.displayName,
+            description: personaDraft.description.trim(),
+            appendSystemPrompt: personaDraft.appendSystemPrompt,
+          }
+        : {
+            displayName: personaDraft.displayName.trim() || teammate.displayName,
+            description: personaDraft.description.trim(),
+            systemPrompt: personaDraft.systemPrompt.trim() || null,
+            appendSystemPrompt: personaDraft.appendSystemPrompt,
+          });
       setSettingsForm(teammateToSettingsForm(updatedTeammate));
       setPersonaDraft(undefined);
       setPersonaImportForm({ sourcePath: "", content: "" });
@@ -1545,7 +1567,7 @@ export function TeammateWorkspace({
           </button>
           <div>
             <h2>{t("{name} settings", { name: teammate.displayName })}</h2>
-            <p>{t("Single agent profile, permissions, and tool configuration")}</p>
+            <p>{isProtectedSystemTeammate ? t("Built-in teammate profile and user-added instructions") : t("Single agent profile, permissions, and tool configuration")}</p>
           </div>
           <div className="teammate-settings-header-actions">
             <button className="secondary-button compact-button" type="button" onClick={() => setSettingsForm(teammateToSettingsForm(teammate))}>
@@ -1969,27 +1991,34 @@ export function TeammateWorkspace({
               <ShieldCheck size={16} />
               <h2>{t("Model")}</h2>
             </span>
-            <StatusBadge status={settingsProviderReady ? "ready" : "blocked"} />
+            <StatusBadge status={isProtectedSystemTeammate ? "managed" : settingsProviderReady ? "ready" : "blocked"} />
           </div>
-          <div className="teammate-settings-grid">
-            <label className="field wide">
-              <span>{t("Provider")}</span>
-              <select value={settingsForm.providerPresetId} onChange={(event) => setSettingsForm({ ...settingsForm, providerPresetId: event.target.value })}>
-                <option value="">{t("None")}</option>
-                {providers.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.displayName} / {item.model}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          {!isProtectedSystemTeammate ? (
+            <div className="teammate-settings-grid">
+              <label className="field wide">
+                <span>{t("Provider")}</span>
+                <select value={settingsForm.providerPresetId} onChange={(event) => setSettingsForm({ ...settingsForm, providerPresetId: event.target.value })}>
+                  <option value="">{t("None")}</option>
+                  {providers.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.displayName} / {item.model}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
           <div className="teammate-config-card">
             <MetaRow label={t("Provider")} value={settingsProvider ? settingsProvider.displayName : t("None")} compact />
             <MetaRow label={t("Model")} value={settingsProvider?.model ?? "-"} compact />
             <MetaRow label={t("Status")} value={settingsProviderReady ? t("Ready") : t("Needs setup")} compact />
           </div>
-          {settingsProvider && !settingsProviderReady ? (
+          {isProtectedSystemTeammate ? (
+            <div className="provider-run-notice neutral">
+              <ShieldCheck size={16} />
+              <span>{t("Ling Agent uses the active channel or workspace provider path. Its provider access is managed by Ling Stack.")}</span>
+            </div>
+          ) : settingsProvider && !settingsProviderReady ? (
             <div className="provider-run-notice">
               <ShieldCheck size={16} />
               <span>{t("Provider needs a successful check before reliable AI replies.")}</span>
@@ -2006,10 +2035,12 @@ export function TeammateWorkspace({
               <ShieldCheck size={15} />
               {t("Model Workbench")}
             </button>
-            <button className="primary-button" type="button" onClick={() => void saveSettings()} disabled={saving}>
-              {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
-              {t("Save")}
-            </button>
+            {!isProtectedSystemTeammate ? (
+              <button className="primary-button" type="button" onClick={() => void saveSettings()} disabled={saving}>
+                {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
+                {t("Save")}
+              </button>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -2073,18 +2104,24 @@ export function TeammateWorkspace({
                   <article key={channel.id} className="teammate-data-row teammate-channel-row">
                     <span>
                       <strong>{channel.name}</strong>
-                      <small>{isDefault ? t("Channel default") : joined ? t("Joined channel") : t("Not joined")}</small>
+                      <small>{isProtectedSystemTeammate ? t("Built-in coordinator") : isDefault ? t("Channel default") : joined ? t("Joined channel") : t("Not joined")}</small>
                     </span>
                     <div className="teammate-channel-actions">
                       <StatusBadge status={channel.status} />
-                      <button className="secondary-button compact-button" type="button" onClick={() => void toggleChannelMembership(channel.id)} disabled={savingChannels}>
-                        {joined ? <X size={14} /> : <Plus size={14} />}
-                        {joined ? t("Leave") : t("Join")}
-                      </button>
-                      <button className="secondary-button compact-button" type="button" onClick={() => void setDefaultChannel(channel.id)} disabled={savingChannels || isDefault}>
-                        <CheckCircle2 size={14} />
-                        {isDefault ? t("Default teammate") : t("Set default")}
-                      </button>
+                      {isProtectedSystemTeammate ? (
+                        <span className="status-badge neutral">{t("Always joined")}</span>
+                      ) : (
+                        <>
+                          <button className="secondary-button compact-button" type="button" onClick={() => void toggleChannelMembership(channel.id)} disabled={savingChannels}>
+                            {joined ? <X size={14} /> : <Plus size={14} />}
+                            {joined ? t("Leave") : t("Join")}
+                          </button>
+                          <button className="secondary-button compact-button" type="button" onClick={() => void setDefaultChannel(channel.id)} disabled={savingChannels || isDefault}>
+                            <CheckCircle2 size={14} />
+                            {isDefault ? t("Default teammate") : t("Set default")}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </article>
                 );
@@ -2560,6 +2597,12 @@ export function TeammateWorkspace({
             </span>
             {saveMessage ? <small>{saveMessage}</small> : null}
           </div>
+          {isProtectedSystemTeammate ? (
+            <div className="provider-run-notice neutral">
+              <ShieldCheck size={16} />
+              <span>{t("Ling Agent is a protected built-in teammate. You can personalize its name, avatar, description, and additional instructions; lifecycle and permissions stay managed by Ling Stack.")}</span>
+            </div>
+          ) : null}
           <section className="teammate-avatar-settings" aria-label={t("Avatar")}>
             <div className="teammate-avatar-preview compact-preview">
               <TeammateAvatarView teammate={teammate} cwd={cwd} />
@@ -2585,86 +2628,99 @@ export function TeammateWorkspace({
               </button>
             </div>
           </section>
-          <section className="teammate-import-panel" aria-label={t("Persona import")}>
-            <div className="panel-title split">
-              <span>
-                <Upload size={15} />
-                <h3>{t("Persona import")}</h3>
-              </span>
-              {personaDraft ? <small>{t("Draft ready")}</small> : null}
-            </div>
-            <div className="teammate-task-create-grid">
-              <label className="field">
-                <span>{t("Source path")}</span>
-                <input value={personaImportForm.sourcePath} onChange={(event) => setPersonaImportForm({ ...personaImportForm, sourcePath: event.target.value })} placeholder="AGENTS.md" />
-              </label>
-              <label className="field wide">
-                <span>{t("Persona content")}</span>
-                <textarea rows={5} value={personaImportForm.content} onChange={(event) => setPersonaImportForm({ ...personaImportForm, content: event.target.value })} />
-              </label>
-            </div>
-            {personaDraft ? (
-              <div className="teammate-import-preview">
-                <article className="teammate-data-row">
-                  <span>
-                    <strong>{personaDraft.displayName}</strong>
-                    <small>{personaDraft.description}</small>
-                  </span>
-                  <StatusBadge status={personaDraft.sourceKind} />
-                </article>
-                {personaDraft.warnings.map((warning, index) => (
-                  <small key={`${warning}-${index}`} className="teammate-warning warning">{warning}</small>
-                ))}
+          {!isProtectedSystemTeammate ? (
+            <section className="teammate-import-panel" aria-label={t("Persona import")}>
+              <div className="panel-title split">
+                <span>
+                  <Upload size={15} />
+                  <h3>{t("Persona import")}</h3>
+                </span>
+                {personaDraft ? <small>{t("Draft ready")}</small> : null}
               </div>
-            ) : null}
-            <div className="teammate-settings-actions">
-              <button className="secondary-button" type="button" onClick={() => void previewPersonaImport()} disabled={importingPersona || !personaImportForm.content.trim()}>
-                {importingPersona ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
-                {t("Preview draft")}
-              </button>
-              <button className="primary-button" type="button" onClick={() => void applyPersonaDraft()} disabled={importingPersona || !personaDraft}>
-                <CheckCircle2 size={15} />
-                {t("Apply persona draft")}
-              </button>
-            </div>
-          </section>
+              <div className="teammate-task-create-grid">
+                <label className="field">
+                  <span>{t("Source path")}</span>
+                  <input value={personaImportForm.sourcePath} onChange={(event) => setPersonaImportForm({ ...personaImportForm, sourcePath: event.target.value })} placeholder="AGENTS.md" />
+                </label>
+                <label className="field wide">
+                  <span>{t("Persona content")}</span>
+                  <textarea rows={5} value={personaImportForm.content} onChange={(event) => setPersonaImportForm({ ...personaImportForm, content: event.target.value })} />
+                </label>
+              </div>
+              {personaDraft ? (
+                <div className="teammate-import-preview">
+                  <article className="teammate-data-row">
+                    <span>
+                      <strong>{personaDraft.displayName}</strong>
+                      <small>{personaDraft.description}</small>
+                    </span>
+                    <StatusBadge status={personaDraft.sourceKind} />
+                  </article>
+                  {personaDraft.warnings.map((warning, index) => (
+                    <small key={`${warning}-${index}`} className="teammate-warning warning">{warning}</small>
+                  ))}
+                </div>
+              ) : null}
+              <div className="teammate-settings-actions">
+                <button className="secondary-button" type="button" onClick={() => void previewPersonaImport()} disabled={importingPersona || !personaImportForm.content.trim()}>
+                  {importingPersona ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
+                  {t("Preview draft")}
+                </button>
+                <button className="primary-button" type="button" onClick={() => void applyPersonaDraft()} disabled={importingPersona || !personaDraft}>
+                  <CheckCircle2 size={15} />
+                  {t("Apply persona draft")}
+                </button>
+              </div>
+            </section>
+          ) : null}
           <div className="teammate-settings-grid">
             <label className="field">
               <span>{t("Teammate name")}</span>
               <input value={settingsForm.displayName} onChange={(event) => setSettingsForm({ ...settingsForm, displayName: event.target.value })} />
             </label>
-            <label className="field">
-              <span>{t("Status")}</span>
-              <select value={settingsForm.status} onChange={(event) => setSettingsForm({ ...settingsForm, status: event.target.value as AiTeammate["status"] })}>
-                <option value="active">{t("active")}</option>
-                <option value="paused">{t("paused")}</option>
-                <option value="disabled">{t("disabled")}</option>
-              </select>
-            </label>
-            <label className="teammate-toggle inline-toggle">
-              <input type="checkbox" checked={settingsForm.pinned} onChange={(event) => setSettingsForm({ ...settingsForm, pinned: event.target.checked })} />
-              <Bot size={15} />
-              <span>
-                <strong>{t("Pinned in sidebar")}</strong>
-                <small>{t("Keep this teammate near the top of the workspace roster.")}</small>
-              </span>
-            </label>
-            <label className="teammate-toggle inline-toggle">
-              <input type="checkbox" checked={settingsForm.hidden} onChange={(event) => setSettingsForm({ ...settingsForm, hidden: event.target.checked })} />
-              <Bot size={15} />
-              <span>
-                <strong>{t("Hidden from sidebar")}</strong>
-                <small>{t("The teammate remains durable and can be restored later.")}</small>
-              </span>
-            </label>
+            {!isProtectedSystemTeammate ? (
+              <>
+                <label className="field">
+                  <span>{t("Status")}</span>
+                  <select value={settingsForm.status} onChange={(event) => setSettingsForm({ ...settingsForm, status: event.target.value as AiTeammate["status"] })}>
+                    <option value="active">{t("active")}</option>
+                    <option value="paused">{t("paused")}</option>
+                    <option value="disabled">{t("disabled")}</option>
+                  </select>
+                </label>
+                <label className="teammate-toggle inline-toggle">
+                  <input type="checkbox" checked={settingsForm.pinned} onChange={(event) => setSettingsForm({ ...settingsForm, pinned: event.target.checked })} />
+                  <Bot size={15} />
+                  <span>
+                    <strong>{t("Pinned in sidebar")}</strong>
+                    <small>{t("Keep this teammate near the top of the workspace roster.")}</small>
+                  </span>
+                </label>
+                <label className="teammate-toggle inline-toggle">
+                  <input type="checkbox" checked={settingsForm.hidden} onChange={(event) => setSettingsForm({ ...settingsForm, hidden: event.target.checked })} />
+                  <Bot size={15} />
+                  <span>
+                    <strong>{t("Hidden from sidebar")}</strong>
+                    <small>{t("The teammate remains durable and can be restored later.")}</small>
+                  </span>
+                </label>
+              </>
+            ) : null}
             <label className="field wide">
               <span>{t("Description")}</span>
               <textarea rows={3} value={settingsForm.description} onChange={(event) => setSettingsForm({ ...settingsForm, description: event.target.value })} />
             </label>
-            <label className="field wide">
-              <span>{t("System prompt")}</span>
-              <textarea rows={5} value={settingsForm.systemPrompt} onChange={(event) => setSettingsForm({ ...settingsForm, systemPrompt: event.target.value })} />
-            </label>
+            {isProtectedSystemTeammate ? (
+              <label className="field wide">
+                <span>{t("Additional instructions")}</span>
+                <textarea rows={5} value={settingsForm.appendSystemPromptText} onChange={(event) => setSettingsForm({ ...settingsForm, appendSystemPromptText: event.target.value })} placeholder={t("Add user preferences for Ling Agent without changing its core behavior.")} />
+              </label>
+            ) : (
+              <label className="field wide">
+                <span>{t("System prompt")}</span>
+                <textarea rows={5} value={settingsForm.systemPrompt} onChange={(event) => setSettingsForm({ ...settingsForm, systemPrompt: event.target.value })} />
+              </label>
+            )}
           </div>
           <div className="teammate-settings-actions">
             <button className="primary-button" type="button" onClick={() => void saveSettings()} disabled={saving}>
@@ -3247,7 +3303,13 @@ function teammateToSettingsForm(teammate: AiTeammate): TeammateSettingsForm {
     pinned: teammate.pinned,
     hidden: teammate.hidden,
     systemPrompt: teammate.systemPrompt ?? "",
+    appendSystemPromptText: teammate.appendSystemPrompt.join("\n\n"),
   };
+}
+
+function splitAdditionalInstructions(value: string): readonly string[] {
+  const trimmed = value.trim();
+  return trimmed ? [trimmed] : [];
 }
 
 function upsertDirectMessages(

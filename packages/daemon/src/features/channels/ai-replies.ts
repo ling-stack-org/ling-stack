@@ -9,9 +9,9 @@ import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { extractChannelExecutionProposal } from "./ai-proposals.js";
-import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
+import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 
 export async function createAiChannelReply(input: {
@@ -27,16 +27,14 @@ export async function createAiChannelReply(input: {
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
 }): Promise<ChannelMessage> {
-  const protocol = resolveEffectiveChannelCollaborationProtocol({
-    store: input.store,
-    channel: input.channel,
-  });
+  const now = new Date().toISOString();
   const teammateId =
     input.teammateId ??
     input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
-    protocol.protocol.defaultTeammateId ??
-    "ai-teammate";
-  const teammate = resolveAiTeammateReference(input.store, teammateId);
+    LING_AGENT_EXECUTOR_ID;
+  const teammate = isLingAgentExecutorId(teammateId)
+    ? input.store.getAiTeammate(teammateId) ?? createLingAgentExecutor(now)
+    : resolveAiTeammateReference(input.store, teammateId);
   const canonicalTeammateId = teammate?.id ?? teammateId;
   const providerPresetId = input.providerPresetId ?? teammate?.providerPresetId ?? input.channel.defaultProviderPresetId;
   const runnerResolution = input.runnerRegistry.resolve({
@@ -44,7 +42,6 @@ export async function createAiChannelReply(input: {
     allowFallback: true,
     tools: [],
   });
-  const now = new Date().toISOString();
   const pending = input.store.createChannelMessage(
     {
       channelId: input.channel.id,
