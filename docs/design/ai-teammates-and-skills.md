@@ -70,13 +70,13 @@ The current Web slice models the future client flow without locking the backend 
 choose role template or blank
 -> choose provider/model preset
 -> fill teammate name and brief
--> choose channels and memory/file sources
+-> choose channels; default private and channel memory scopes are provisioned automatically
 -> create durable workspace teammate
 ```
 
 This proves the product interaction for per-teammate model selection, channel binding, and
-scoped memory metadata without giving skills execution authority or bypassing the
-coordinator/state-machine path.
+always-on scoped memory metadata without giving skills execution authority or bypassing
+the coordinator/state-machine path.
 
 ## Teammate Persona Sources
 
@@ -309,7 +309,9 @@ filtered context, and approval profile.
 
 - Private chat is private by default. It is not part of a channel or workflow handoff
   unless the user promotes a message, summary, or task.
-- Channel membership does not imply memory access. Memory scopes remain explicit.
+- Channel membership provisions that teammate's own channel brief and decision memory
+  scopes. It does not expose another teammate's private memory, another channel's memory,
+  or workflow/task memory without an explicit reviewed handoff.
 - A skill can request tools, but final tool availability comes from the effective
   capability check.
 - Strict skills such as `ship` and `cso` must surface higher approval requirements
@@ -371,7 +373,8 @@ draft editing and deeper custom skill editing remain follow-ups. See
 - Persist custom skill packs in the workspace database.
 - Add daemon APIs for listing built-in and custom skill packs.
 - Add the Effective Skills read model and blocked-reason UI.
-- Build richer UI controls for editing memory scopes from the private workspace tabs.
+- Build richer UI controls for reviewing and managing memory content from the private
+  workspace tabs. Memory availability itself remains always on for AI teammates.
 - Add importers for `AGENTS.md` and compatible skill directories.
 - Compile workflow templates into durable workflow and workflow-step state machines; see
   [Multi-Agent Orchestrator](multi-agent-orchestrator.md).

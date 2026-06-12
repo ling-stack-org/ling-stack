@@ -212,7 +212,7 @@ Fallback rules:
   budget and retry once for no-tools replies/selectors;
 - workflow runs should build a valid packet before starting the runner instead of relying
   on after-failure retries;
-- provider errors must not trigger protocol rewrites or memory activation.
+- provider errors must not trigger protocol rewrites or memory authority changes.
 
 ## Section Priority
 

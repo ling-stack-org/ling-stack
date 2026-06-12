@@ -191,7 +191,7 @@ function buildWorkflowStepCompactionSummary(input: WorkflowStepContextPackInput 
       `Compacted dependency context for workflow step "${input.step.title}".`,
       `Dependency count: ${input.dependencies.length}.`,
       "The summary contains dependency statuses, terminal summaries, and artifact references only.",
-      "It does not include private teammate chat, raw artifact bodies, channel protocol edits, or memory activation.",
+      "It does not include private teammate chat, raw artifact bodies, channel protocol edits, or memory authority changes.",
       "",
       ...input.dependencies.slice(0, 20).map((dependency) => renderDependencySummary(input.store, dependency)),
       input.dependencies.length > 20 ? `- ${input.dependencies.length - 20} additional dependencies omitted from prompt summary; see source refs.` : undefined,

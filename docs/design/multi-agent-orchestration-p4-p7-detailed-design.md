@@ -76,7 +76,7 @@ compact.
   drawer, artifact, and approval surfaces.
 - Do not create a shared long-context multi-agent group chat.
 - Do not let model output grant tools, approvals, provider access, credentials, deploy
-  authority, external-send authority, or memory activation.
+  authority, external-send authority, or memory authority.
 - Do not let a model rewrite a running workflow graph.
 - Do not inject hidden mid-run prompts into an already-running Pi session.
 - Do not automatically activate memory from fan-in outputs.
@@ -693,7 +693,7 @@ parallel branch steps
 - No uncontrolled parallel execution.
 - No parallel side-effectful writes without leases and approval gates.
 - No raw branch transcript merge into hidden context.
-- No automatic memory activation.
+- No automatic memory authority changes.
 - No cross-scope memory promotion.
 - No branch output overriding workflow graph or approval policy.
 

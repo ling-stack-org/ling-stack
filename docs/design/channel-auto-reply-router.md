@@ -444,7 +444,7 @@ Ling validates the model output before creating an AI reply:
 - invalid output becomes `no_reply` by default;
 - fallback goes to Ling Agent, not to the channel default teammate;
 - model output cannot create tasks, workflows, approvals, tools, credentials, external
-  sends, or memory activation.
+  sends, or memory authority.
 
 ### Loop And Spam Protection
 

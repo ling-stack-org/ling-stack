@@ -402,7 +402,7 @@ export const LING_AGENT_SYSTEM_PROMPT = [
   "Classify user messages as chat, executable work, continuation, approval response, or clarification.",
   "For executable work, prepare scoped task confirmation and use the existing workflow, run, approval, and evidence paths.",
   "Use specialist teammates when they are explicitly mentioned or materially improve the work, but do not require them for safe bounded work.",
-  "Never self-grant tools, credentials, provider access, write scope, deployment authority, external-send authority, memory activation, or approval bypass.",
+  "Never self-grant tools, credentials, provider access, write scope, deployment authority, external-send authority, memory authority beyond protected defaults, or approval bypass.",
 ].join("\n");
 
 export function isLingAgentTeammateId(teammateId: string | undefined): boolean {
@@ -543,6 +543,16 @@ export type TeammateMemoryScopeKind =
   | "channel-decisions"
   | "private-chat-summary"
   | "private-notes";
+
+export const defaultPrivateTeammateMemoryScopeKinds: readonly TeammateMemoryScopeKind[] = [
+  "private-chat-summary",
+  "private-notes",
+];
+
+export const defaultChannelTeammateMemoryScopeKinds: readonly TeammateMemoryScopeKind[] = [
+  "channel-brief",
+  "channel-decisions",
+];
 
 export interface TeammateMemoryScope {
   readonly id: string;

@@ -80,8 +80,24 @@ test("sqlite seeds Ling Agent as a protected system teammate and channel member"
     assert.equal(channel.defaultTeammateId, undefined);
     assert.deepEqual(store.listTeammateChannelMemberships(LING_AGENT_ID).map((membership) => membership.channelId), [channel.id]);
     assert.equal(store.listTeammateChannelMemberships(LING_AGENT_ID)[0].isDefault, false);
+    assert.deepEqual(
+      store.listTeammateMemoryScopes(LING_AGENT_ID).map((scope) => [scope.kind, scope.channelId ?? null, scope.enabled]),
+      [
+        ["private-chat-summary", null, true],
+        ["private-notes", null, true],
+        ["channel-brief", channel.id, true],
+        ["channel-decisions", channel.id, true],
+      ],
+    );
 
     const engineerId = createBuiltinAiTeammateId("engineer");
+    assert.deepEqual(
+      store.listTeammateMemoryScopes(engineerId).map((scope) => [scope.kind, scope.channelId ?? null, scope.enabled]),
+      [
+        ["private-chat-summary", null, true],
+        ["private-notes", null, true],
+      ],
+    );
     const specialistChannel = store.createChannel(
       {
         name: "Preferred Specialist Channel",
@@ -447,6 +463,28 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
     );
     assert.deepEqual(memberships.map((item) => [item.channelId, item.isDefault]), [[channel.id, true]]);
     assert.equal(store.getChannel(channel.id).defaultTeammateId, engineerId);
+    assert.deepEqual(
+      store.listTeammateMemoryScopes(engineerId).map((item) => [item.kind, item.channelId ?? null, item.enabled]),
+      [
+        ["private-chat-summary", null, true],
+        ["private-notes", null, true],
+        ["channel-brief", channel.id, true],
+        ["channel-decisions", channel.id, true],
+      ],
+    );
+    store.replaceTeammateChannelMemberships(engineerId, [], now);
+    assert.deepEqual(
+      store.listTeammateMemoryScopes(engineerId).map((item) => [item.kind, item.channelId ?? null, item.enabled]),
+      [
+        ["private-chat-summary", null, true],
+        ["private-notes", null, true],
+      ],
+    );
+    store.replaceTeammateChannelMemberships(engineerId, [{ channelId: channel.id, isDefault: true }], now);
+    assert.throws(
+      () => store.replaceTeammateMemoryScopes(engineerId, [{ kind: "private-chat-summary", enabled: false }], now),
+      /memory is always enabled/,
+    );
 
     const scopes = store.replaceTeammateMemoryScopes(
       engineerId,
@@ -456,7 +494,12 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
       ],
       now,
     );
-    assert.deepEqual(scopes.map((item) => item.kind), ["private-chat-summary", "channel-brief"]);
+    assert.deepEqual(scopes.map((item) => [item.kind, item.channelId ?? null, item.enabled]), [
+      ["private-chat-summary", null, true],
+      ["private-notes", null, true],
+      ["channel-brief", channel.id, true],
+      ["channel-decisions", channel.id, true],
+    ]);
 
     const thread = store.getOrCreateTeammateDirectThread(engineerId, now);
     const userMessage = store.createTeammateDirectMessage(

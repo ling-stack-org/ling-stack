@@ -453,14 +453,19 @@ GET /teammates/:id/memory-scopes?cwd=/path/to/project
 PUT /teammates/:id/memory-scopes?cwd=/path/to/project
 ```
 
-Memory scopes are visible trust-boundary metadata in this slice. They do not automatically
-feed private chat prompts.
+Memory scopes are visible trust-boundary metadata and are always provisioned for every AI
+teammate. Each teammate gets private `private-chat-summary` and `private-notes` scopes by
+default; each channel membership adds that teammate's own `channel-brief` and
+`channel-decisions` scopes for that channel. There is no supported off switch.
+`enabled:false` is rejected, and Ling Agent scopes are protected system memory.
 
 ```json
 {
   "scopes": [
     { "kind": "private-chat-summary", "enabled": true },
-    { "kind": "channel-brief", "channelId": "channel_...", "enabled": true }
+    { "kind": "private-notes", "enabled": true },
+    { "kind": "channel-brief", "channelId": "channel_...", "enabled": true },
+    { "kind": "channel-decisions", "channelId": "channel_...", "enabled": true }
   ]
 }
 ```
@@ -582,8 +587,9 @@ Response:
 }
 ```
 
-Private chat uses no tools and does not include channel messages, files, memory scopes, or
-web content unless a future explicit inclusion model adds that behavior.
+Private chat uses no tools and does not include channel messages, files, memory objects, or
+web content unless a future explicit prompt-inclusion model adds that behavior. The
+teammate's default memory scopes still exist and remain inspectable.
 
 `POST /direct-messages/stream` uses the same request body and returns
 `text/event-stream`. The daemon first persists the local-user message, then creates a

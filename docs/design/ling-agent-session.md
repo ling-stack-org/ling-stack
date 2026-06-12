@@ -108,6 +108,9 @@ Rules:
 - Ling Agent cannot be deleted, disabled, archived, or removed from a channel.
 - Ling Agent can be mentioned, can reply in channel, and can have a private conversation
   using the same teammate conversation surfaces as other AI teammates.
+- Ling Agent has protected always-on coordinator memory and a dedicated Memory panel. Users
+  can review or manage memory content, but cannot disable recall or grant new memory
+  authority to Ling Agent.
 - Ling Agent is the default visible responder for ordinary root channel messages unless
   the user explicitly mentions a specialist or asks for a visible multi-participant reply.
 - `Channel.defaultTeammateId` must not point at Ling Agent for default-speaker semantics.
@@ -212,7 +215,8 @@ user-facing conversation artifacts.
   `RunnerRegistry`, Pi by default, and the normal run lifecycle.
 - Do not add a second approval system.
 - Do not let Ling Agent self-grant tools, write scopes, MCP access, credentials, deploy
-  authority, external-send authority, provider access, or memory activation.
+  authority, external-send authority, provider access, or memory authority beyond the
+  protected always-on defaults.
 - Do not let user personalization override Ling Agent's protected identity, lifecycle,
   core system instructions, approval policy, or audit requirements.
 - Do not inject follow-up prompts into an active Pi `session.prompt(...)`.
@@ -650,6 +654,12 @@ Detailed implementation slices are tracked in
 - If a specialist is missing, show a recommendation but do not block safe work.
 - Preserve specialist delegation when configured and useful.
 
+### P6: First-Class Session Storage If Needed
+
+- Add `ling_agent_sessions` only if derived projections cannot reliably support active
+  state, terminal reporting, and continuation.
+- Until then, avoid adding storage that duplicates workflow/run/thread authority.
+
 ### P7: System Teammate Profile And Personalization
 
 - Add a protected Ling Agent teammate profile with fixed `id = "ling_agent"`.
@@ -660,11 +670,14 @@ Detailed implementation slices are tracked in
 - Keep core instructions, lifecycle, provider access, approval policy, and audit behavior
   non-overridable by personalization.
 
-### P6: First-Class Session Storage If Needed
+### P8: Always-On Teammate Memory And Ling Agent Memory Panel
 
-- Add `ling_agent_sessions` only if derived projections cannot reliably support active
-  state, terminal reporting, and continuation.
-- Until then, avoid adding storage that duplicates workflow/run/thread authority.
+- Provision private memory scopes for every AI teammate by default.
+- Provision channel memory scopes automatically when a teammate joins a channel.
+- Keep memory availability always on; expose review and content management, not disable
+  toggles.
+- Show Ling Agent's protected coordinator memory in the same teammate Memory surface while
+  blocking self-authorization or removal of protected defaults.
 
 ## Acceptance Criteria
 
@@ -676,6 +689,10 @@ Detailed implementation slices are tracked in
   can execute through current policy.
 - New channels include Ling Agent as a protected built-in teammate.
 - Ling Agent can be opened as a private chat participant.
+- Ling Agent has a visible protected Memory panel.
+- Every AI teammate has default private memory scopes, and channel membership adds
+  channel-scoped teammate memory.
+- UI does not expose memory disable/off controls for AI teammates.
 - Users can personalize Ling Agent display name/avatar and user-added instructions without
   changing `ling_agent` identity, lifecycle, approval policy, or core instructions.
 - Pre-execution confirmation scopes the task but does not approve all future actions.

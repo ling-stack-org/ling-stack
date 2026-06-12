@@ -373,9 +373,9 @@ export function TeammateWorkspace({
     { id: "model", label: t("Model") },
     { id: "permissions", label: t("Permissions") },
     { id: "channels", label: t("Channels"), count: effectiveMemberships.length },
+    { id: "memory" as const, label: t("Memory"), count: memoryPromotionInbox.length || memoryScopes.length },
     ...(isProtectedSystemTeammate ? [] : [
       { id: "skills" as const, label: t("Skills"), count: enabledSkillCount },
-      { id: "memory" as const, label: t("Memory"), count: memoryPromotionInbox.length || memoryScopes.length },
       { id: "mcp" as const, label: t("MCP") },
       { id: "danger" as const, label: t("Danger zone"), danger: true },
     ]),
@@ -394,7 +394,7 @@ export function TeammateWorkspace({
   }, [messages, normalizedMessageSearchQuery, privateAttachmentById]);
 
   useEffect(() => {
-    if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "memory" || activeTab === "mcp" || activeTab === "danger")) {
+    if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "mcp" || activeTab === "danger")) {
       setActiveTab("profile");
     }
   }, [activeTab, isProtectedSystemTeammate]);
@@ -1543,7 +1543,7 @@ export function TeammateWorkspace({
             title={providerReady ? t("Model ready") : t("Model needs setup")}
             statusNode={teammate.status === "active" ? null : <StatusBadge status={teammate.status} />}
             metaItems={[
-              { id: "recall", label: t("Memory"), value: memoryScopes.some((scope) => scope.enabled) ? t("Recall enabled") : t("Recall off") },
+              { id: "recall", label: t("Memory"), value: memoryScopes.length > 0 ? t("Memory on") : t("Memory preparing") },
               { id: "attachments", label: t("Files"), value: t("{count} attachments", { count: directAttachments.length }) },
             ]}
           />
@@ -2415,6 +2415,17 @@ export function TeammateWorkspace({
             </span>
             <small>{memoryPromotionInbox.length ? `${memoryPromotionInbox.length} ${t("Review")}` : `${memoryScopes.length}`}</small>
           </div>
+          {isProtectedSystemTeammate ? (
+            <div className="provider-run-notice neutral">
+              <ShieldCheck size={16} />
+              <span>{t("Ling Agent has protected coordinator memory. It is always on; review controls manage content, not recall availability.")}</span>
+            </div>
+          ) : (
+            <div className="provider-run-notice neutral">
+              <ShieldCheck size={16} />
+              <span>{t("Memory is always on for each teammate. Review controls manage content, not recall availability.")}</span>
+            </div>
+          )}
           <article className="teammate-data-row">
             <span>
               <strong>{t("Vector retrieval")}</strong>
@@ -2570,7 +2581,7 @@ export function TeammateWorkspace({
           {memoryScopes.length === 0 ? (
             <div className="client-empty-state teammate-empty">
               <Bot size={18} />
-              <span>{t("No memory scopes enabled")}</span>
+              <span>{t("Memory scopes are being prepared")}</span>
             </div>
           ) : (
             <div className="teammate-data-list">
@@ -2580,7 +2591,7 @@ export function TeammateWorkspace({
                     <strong>{t(scope.kind)}</strong>
                     <small>{scope.channelId ? channelsById.get(scope.channelId)?.name ?? scope.channelId : t("Private workspace")}</small>
                   </span>
-                  <StatusBadge status={scope.enabled ? "active" : "paused"} />
+                  <StatusBadge status="active" />
                 </article>
               ))}
             </div>
@@ -2931,7 +2942,7 @@ export function TeammateWorkspace({
               <MetaRow label={t("Approval")} value={approvalProfileText(teammate.approvalProfile, t)} compact />
               <MetaRow label={t("Channels")} value={String(effectiveMemberships.length)} compact />
               <MetaRow label={t("Skills")} value={t("{count} executable", { count: skillStats.executable })} compact />
-              <MetaRow label={t("Memory")} value={memoryScopes.some((scope) => scope.enabled) ? t("Recall enabled") : t("Recall off")} compact />
+              <MetaRow label={t("Memory")} value={memoryScopes.length > 0 ? t("Memory on") : t("Memory preparing")} compact />
               <MetaRow label={t("MCP")} value={t("{count} authorized", { count: mcpBindings.length })} compact />
             </div>
           </section>

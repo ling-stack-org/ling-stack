@@ -368,7 +368,8 @@ Current page shape:
 - main area starts with a four-step teammate wizard: `Role -> Model -> Profile -> Scope`,
 - role selection prioritizes built-in `gstack-default` templates and also supports `Start from blank`,
 - model selection binds a provider preset per teammate instead of assuming one global model,
-- scope selection lets the user choose channels and planned memory/file sources,
+- scope selection lets the user choose channels; default teammate memory scopes are
+  provisioned automatically and are not user-disableable,
 - below the wizard, workspace teammates, built-in roles, selected template detail, and the `autoplan-lite` workflow remain inspectable,
 - the left sidebar shows daemon-backed teammate presence and supports pin/hide controls,
 - right context panel summarizes the active skill pack, workspace teammate count, and strict approval skills.

@@ -109,11 +109,15 @@ export function parseReplaceTeammateMemoryScopesRequest(value: unknown): readonl
     if (!isRecord(item)) {
       throw new Error(`scopes[${index}] must be an object`);
     }
+    const enabled = readOptionalBoolean(item, "enabled");
+    if (enabled === false) {
+      throw new Error("Teammate memory is always enabled.");
+    }
     return {
       id: readOptionalString(item, "id"),
       kind: readTeammateMemoryScopeKind(item, "kind"),
       channelId: readOptionalString(item, "channelId"),
-      enabled: readOptionalBoolean(item, "enabled"),
+      enabled,
     };
   });
 }

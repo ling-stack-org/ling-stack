@@ -760,6 +760,10 @@
   accent-color: #0e7a63;
 }
 
+.teammate-toggle.static {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
 .teammate-toggle span {
   display: grid;
   gap: 3px;

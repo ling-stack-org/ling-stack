@@ -145,7 +145,7 @@ It must not:
 - expose raw selector JSON, prompts, scoring, or confidence numbers in ordinary UI;
 - use the right drawer for ordinary route explanation or proposal explanation;
 - let model output grant tools, approvals, provider access, credentials, deploy authority,
-  external-send authority, or memory activation;
+  external-send authority, or memory authority;
 - execute tools directly from selector output;
 - rewrite a running workflow graph;
 - replace the existing workflow selector/runtime.
@@ -831,7 +831,7 @@ and prompt text are audit data, not normal conversation content.
   effect.
 - Side effects must be executed only by existing daemon routes/state machines.
 - The selector cannot mutate approval policy, provider settings, teammate permissions,
-  memory activation, tool scopes, secrets, branch state, or deploy state.
+  memory authority, tool scopes, secrets, branch state, or deploy state.
 - `workflow_proposal` requires user confirmation before workflow creation.
 - `direct_workflow` must still require explicit user confirmation before workflow
   creation.
