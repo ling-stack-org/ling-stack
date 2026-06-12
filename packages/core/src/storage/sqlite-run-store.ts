@@ -67,6 +67,8 @@ import {
   createTeammatePrivateAttachmentId,
   createTaskId,
   createLingAgentSystemTeammate,
+  defaultChannelTeammateMemoryScopeKinds,
+  defaultPrivateTeammateMemoryScopeKinds,
   channelWorkflowStepStatuses,
   channelBranchStatuses,
   channelAutoReplyModes,
@@ -3360,6 +3362,7 @@ export class SqliteRunStore implements RunStore {
     if (!created) {
       throw new Error(`Failed to create AI teammate: ${teammate.id}`);
     }
+    this.ensureDefaultTeammateMemoryScopes(teammate.id, now);
     return created;
   }
 
@@ -3369,6 +3372,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   listAiTeammates(options: ListAiTeammatesOptions = {}): AiTeammate[] {
+    this.ensureDefaultTeammateMemoryScopesForAll(new Date().toISOString());
     const clauses = ["workspace_id = ?"];
     const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
     if (options.status) {
@@ -3635,6 +3639,7 @@ export class SqliteRunStore implements RunStore {
       throw error;
     }
 
+    this.ensureDefaultTeammateMemoryScopes(teammateId, now);
     return this.listTeammateChannelMemberships(teammateId);
   }
 
@@ -3882,8 +3887,9 @@ export class SqliteRunStore implements RunStore {
   }
 
   listTeammateMemoryScopes(teammateId: string): TeammateMemoryScope[] {
+    this.ensureDefaultTeammateMemoryScopes(teammateId, new Date().toISOString());
     return this.database
-      .prepare(`${teammateMemoryScopeSelectSql("WHERE teammate_id = ?")} ORDER BY created_at ASC`)
+      .prepare(`${teammateMemoryScopeSelectSql("WHERE teammate_id = ?")} ORDER BY CASE WHEN channel_id IS NULL THEN 0 ELSE 1 END ASC, channel_id ASC, kind ASC, created_at ASC`)
       .all(teammateId)
       .map(mapTeammateMemoryScope);
   }
@@ -3899,11 +3905,18 @@ export class SqliteRunStore implements RunStore {
     if (isLingAgentTeammateId(teammateId)) {
       throw new Error("Ling Agent memory scopes are protected.");
     }
+    if (scopes.some((scope) => scope.enabled === false)) {
+      throw new Error("Teammate memory is always enabled.");
+    }
     for (const scope of scopes) {
       if (scope.channelId && !this.getChannel(scope.channelId)) {
         throw new Error(`Channel not found: ${scope.channelId}`);
       }
     }
+    const normalized = mergeDefaultTeammateMemoryScopeInputs(
+      scopes,
+      this.listTeammateChannelMemberships(teammateId).map((membership) => membership.channelId),
+    );
 
     this.database.exec("BEGIN");
     try {
@@ -3919,8 +3932,8 @@ export class SqliteRunStore implements RunStore {
           updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
-      for (const scope of scopes) {
-        insert.run(scope.id ?? createTeammateMemoryScopeId(), teammateId, scope.kind, scope.channelId ?? null, scope.enabled === false ? 0 : 1, now, now);
+      for (const scope of normalized) {
+        insert.run(scope.id ?? createTeammateMemoryScopeId(), teammateId, scope.kind, scope.channelId ?? null, 1, now, now);
       }
       this.database.exec("COMMIT");
     } catch (error) {
@@ -13403,6 +13416,7 @@ export class SqliteRunStore implements RunStore {
       const existing = this.getAiTeammate(teammateId);
       if (existing) {
         this.backfillTemplateSkillBindings(teammateId, template, now);
+        this.ensureDefaultTeammateMemoryScopes(teammateId, now);
         this.database
           .prepare("UPDATE channels SET default_teammate_id = ?, updated_at = ? WHERE default_teammate_id = ?")
           .run(teammateId, now, template.id);
@@ -13433,6 +13447,7 @@ export class SqliteRunStore implements RunStore {
         template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
         now,
       );
+      this.ensureDefaultTeammateMemoryScopes(teammateId, now);
       this.database
         .prepare("UPDATE channels SET default_teammate_id = ?, updated_at = ? WHERE default_teammate_id = ?")
         .run(teammateId, now, template.id);
@@ -13440,6 +13455,7 @@ export class SqliteRunStore implements RunStore {
         .prepare("UPDATE tasks SET assignee_teammate_id = ?, updated_at = ? WHERE assignee_teammate_id = ?")
         .run(teammateId, now, template.id);
     }
+    this.ensureDefaultTeammateMemoryScopesForAll(now);
   }
 
   private backfillTemplateSkillBindings(teammateId: string, template: AiTeammateTemplate, now: string): boolean {
@@ -13830,6 +13846,92 @@ export class SqliteRunStore implements RunStore {
     `);
     for (const row of channels as Record<string, SQLOutputValue>[]) {
       insert.run(LING_AGENT_ID, readString(row, "id"), now, now);
+    }
+    this.ensureDefaultTeammateMemoryScopes(LING_AGENT_ID, now);
+  }
+
+  private ensureDefaultTeammateMemoryScopesForAll(now: string): void {
+    if (!this.hasTable("ai_teammates") || !this.hasTable("teammate_memory_scopes")) {
+      return;
+    }
+    const teammates = this.database.prepare("SELECT id FROM ai_teammates").all() as Record<string, SQLOutputValue>[];
+    for (const teammate of teammates) {
+      this.ensureDefaultTeammateMemoryScopes(readString(teammate, "id"), now);
+    }
+  }
+
+  private ensureDefaultTeammateMemoryScopes(teammateId: string, now: string): void {
+    if (!this.hasTable("ai_teammates") || !this.hasTable("teammate_memory_scopes") || !this.getAiTeammate(teammateId)) {
+      return;
+    }
+    const channelIds = this.hasTable("teammate_channel_memberships")
+      ? (this.database
+        .prepare("SELECT channel_id FROM teammate_channel_memberships WHERE teammate_id = ? ORDER BY created_at ASC")
+        .all(teammateId) as Record<string, SQLOutputValue>[])
+        .map((row) => readString(row, "channel_id"))
+      : [];
+    const requiredScopes = mergeDefaultTeammateMemoryScopeInputs([], channelIds);
+    const findPrivateScope = this.database.prepare(`
+      SELECT id, enabled
+      FROM teammate_memory_scopes
+      WHERE teammate_id = ?
+        AND kind = ?
+        AND channel_id IS NULL
+      LIMIT 1
+    `);
+    const findChannelScope = this.database.prepare(`
+      SELECT id, enabled
+      FROM teammate_memory_scopes
+      WHERE teammate_id = ?
+        AND kind = ?
+        AND channel_id = ?
+      LIMIT 1
+    `);
+    const existingChannelScopes = this.database.prepare(`
+      SELECT id, channel_id, kind
+      FROM teammate_memory_scopes
+      WHERE teammate_id = ?
+        AND channel_id IS NOT NULL
+    `);
+    const deleteScope = this.database.prepare("DELETE FROM teammate_memory_scopes WHERE id = ?");
+    const insert = this.database.prepare(`
+      INSERT INTO teammate_memory_scopes (
+        id,
+        teammate_id,
+        kind,
+        channel_id,
+        enabled,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, 1, ?, ?)
+    `);
+    const update = this.database.prepare("UPDATE teammate_memory_scopes SET enabled = 1, updated_at = ? WHERE id = ?");
+    this.database.exec("BEGIN");
+    try {
+      const currentChannelIds = new Set(channelIds);
+      for (const row of existingChannelScopes.all(teammateId) as Record<string, SQLOutputValue>[]) {
+        const kind = readString(row, "kind") as TeammateMemoryScopeKind;
+        const channelId = readString(row, "channel_id");
+        if (defaultChannelTeammateMemoryScopeKinds.includes(kind) && !currentChannelIds.has(channelId)) {
+          deleteScope.run(readString(row, "id"));
+        }
+      }
+      for (const scope of requiredScopes) {
+        const existing = scope.channelId
+          ? findChannelScope.get(teammateId, scope.kind, scope.channelId)
+          : findPrivateScope.get(teammateId, scope.kind);
+        if (existing) {
+          if (readNumber(existing, "enabled") !== 1) {
+            update.run(now, readString(existing, "id"));
+          }
+          continue;
+        }
+        insert.run(createTeammateMemoryScopeId(), teammateId, scope.kind, scope.channelId ?? null, now, now);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
     }
   }
 
@@ -14631,6 +14733,37 @@ function normalizePreferredSpecialistId(teammateId: string | null | undefined): 
     return undefined;
   }
   return teammateId;
+}
+
+function mergeDefaultTeammateMemoryScopeInputs(
+  scopes: readonly ReplaceTeammateMemoryScopeInput[],
+  channelIds: readonly string[],
+): readonly ReplaceTeammateMemoryScopeInput[] {
+  const merged = new Map<string, ReplaceTeammateMemoryScopeInput>();
+  const add = (scope: ReplaceTeammateMemoryScopeInput): void => {
+    const channelId = scope.channelId?.trim() || undefined;
+    const key = `${scope.kind}:${channelId ?? ""}`;
+    if (!merged.has(key)) {
+      merged.set(key, {
+        id: scope.id,
+        kind: scope.kind,
+        channelId,
+        enabled: true,
+      });
+    }
+  };
+  for (const kind of defaultPrivateTeammateMemoryScopeKinds) {
+    add({ kind, enabled: true });
+  }
+  for (const channelId of [...new Set(channelIds.map((id) => id.trim()).filter(Boolean))]) {
+    for (const kind of defaultChannelTeammateMemoryScopeKinds) {
+      add({ kind, channelId, enabled: true });
+    }
+  }
+  for (const scope of scopes) {
+    add(scope);
+  }
+  return [...merged.values()];
 }
 
 function mapTeammateChannelMembership(row: Record<string, SQLOutputValue>): TeammateChannelMembership {

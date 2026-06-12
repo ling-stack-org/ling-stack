@@ -26,7 +26,7 @@ the first durable AI teammate private workspace slice.
 Implemented before this slice:
 
 - `gstack-default` provides built-in teammate templates and skills in `packages/core`.
-- Web has an `AI Teammates` management page with role, model, profile, and scope steps.
+- Web has an `AI Teammates` management page with role, model, profile, and channel steps.
 - The sidebar has distinct active targets for workspace, tasks, channels, teammates, and
   direct messages.
 - Channel messages can mention AI teammates and request a no-tools AI reply.
@@ -40,7 +40,7 @@ Implemented in this slice:
 - durable private teammate threads and message history,
 - persisted teammate identity, provider, status, pin, hide, system prompt, tools, and
   approval profile settings,
-- persisted teammate channel memberships, skill bindings, and memory scope metadata,
+- persisted teammate channel memberships, skill bindings, and default memory scope metadata,
 - daemon teammate CRUD, direct message, task read-model, and activity read-model APIs,
 - API client and Web API wrappers for the teammate routes,
 - sidebar roster rows backed by daemon teammates,
@@ -59,7 +59,7 @@ Still deferred:
 
 - broader skill editing beyond the import draft/publish/archive flow,
 - skill-aware task/run controls outside the teammate private workspace,
-- memory editing controls inside the single-agent settings page,
+- memory content review and management controls inside the single-agent settings page,
 - optional vector retrieval provider installation and hidden ingestion,
 - multi-party direct messages,
 - broad browser e2e coverage beyond the focused durable workspace flows.
@@ -80,8 +80,9 @@ extraction direction lives in
    runs, approvals, and channel/workspace state machines.
 3. Every surface or settings section must be backed by real state or clearly be out of
    scope. Avoid empty product-shaped panels that imply unsupported behavior.
-4. Channel context, files, memory, and private chat must not leak into each other by
-   default.
+4. Each AI teammate has isolated always-on memory. Channel membership provisions that
+   teammate's own channel memory, but private chats, files, and other teammates' memory
+   must not leak across scopes by default.
 5. Provider readiness is part of teammate identity. A teammate with no working provider
    should show a blocked state before the user starts a conversation.
 6. Built-in teammate templates remain stable role templates. Workspace teammate
@@ -154,7 +155,8 @@ Settings sections:
 - Permissions: approval profile, allowed tools, and explicit persona boundary copy.
 - Channels: channel memberships and default teammate controls.
 - Skills: Effective Skill list, import draft, bind/disable/archive, blocked reasons.
-- Memory: visible memory scopes and optional vector retrieval status.
+- Memory: visible always-on memory scopes, review controls, and optional vector retrieval
+  status. The surface must not include a disable/off control.
 - MCP: explicit per-agent MCP authorization.
 - Danger: soft disable and hard delete private data.
 
@@ -277,7 +279,7 @@ Purpose: make teammate context boundaries visible.
 
 MVP behavior:
 
-- shows configured memory scopes as metadata records,
+- shows always-on default memory scopes as metadata records,
 - supports channel brief, channel decisions, prior private chat summary, and private
   notes as scope types,
 - does not implement vector memory, automatic recall, or hidden ingestion,
@@ -704,8 +706,12 @@ GET /teammates/:id/memory-scopes?cwd=/path/to/workspace
 PUT /teammates/:id/memory-scopes?cwd=/path/to/workspace
 ```
 
-Memory scopes are metadata only in the first slice. They do not alter prompt construction
-until explicit inclusion rules are implemented.
+Memory scopes are default teammate capabilities, not user-toggleable setup choices. Every
+AI teammate has `private-chat-summary` and `private-notes`; each channel membership adds
+that teammate's own `channel-brief` and `channel-decisions` scopes for that channel. The
+memory panel may let users inspect, review, or prune memory content, but it must not expose
+an off switch. `enabled:false` is rejected for compatibility clients that still send the
+field, and Ling Agent memory scopes are protected.
 
 ### Private Thread And Messages
 
@@ -820,7 +826,7 @@ Implemented state changes:
 - kept the wizard as draft input only until the user saves,
 - after save, create a durable teammate and refresh the roster,
 - adapted the local draft shape into `CreateAiTeammateRequest` plus membership, skill,
-  and memory-scope setup calls.
+  and default memory-scope provisioning.
 
 Implemented API client changes:
 
@@ -1028,8 +1034,8 @@ Work:
    record? Recommendation: message-only first, optional `linkedRunId` when the runner
    path already emits a session.
 2. Should memory scopes affect prompt construction immediately? Recommendation: no. First
-   make scopes visible and editable; wire prompt inclusion in a later trust-reviewed
-   slice.
+   make always-on scopes visible and reviewable; wire prompt inclusion in a later
+   trust-reviewed slice.
 3. Should Files and Calendar tabs exist now? Recommendation: no. Files can appear after
    richer private attachment or per-teammate artifact workflows exist. Calendar should wait for a
    scheduled task/event model.

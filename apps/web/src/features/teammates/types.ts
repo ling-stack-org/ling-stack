@@ -25,7 +25,6 @@ export interface LocalTeammateDraft {
   readonly status?: AiTeammate["status"];
   readonly modelLabel: string;
   readonly channelIds: readonly string[];
-  readonly memorySources: readonly string[];
   readonly pinned: boolean;
   readonly hidden: boolean;
   readonly disabled: boolean;
@@ -40,5 +39,4 @@ export interface LocalTeammateCreateInput {
   readonly providerPresetId?: string;
   readonly modelLabel: string;
   readonly channelIds: readonly string[];
-  readonly memorySources: readonly string[];
 }

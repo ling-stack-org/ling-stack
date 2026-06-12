@@ -363,7 +363,7 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
           "Return strict JSON only with fields: action, teammateId, confidence, reason, alternativesConsidered.",
           "Root local-user messages should produce a visible Ling outcome. Choose reply for acknowledgements, greetings, punctuation fragments, and short status messages; keep the reply concise.",
           "Use action no_reply only for messages that are not a local-user root turn or cannot be handled as channel discussion.",
-          "Never create tasks, runs, workflows, approvals, memory activation, or multiple replies.",
+          "Never create tasks, runs, workflows, approvals, memory authority changes, or multiple replies.",
         ].join("\n"),
       },
       protocolSection,

@@ -3847,7 +3847,23 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
         { kind: "channel-brief", channelId: channel.id, enabled: true },
       ],
     });
-    assert.deepEqual(memory.scopes.map((item) => item.kind), ["private-chat-summary", "channel-brief"]);
+    assert.deepEqual(memory.scopes.map((item) => [item.kind, item.channelId ?? null, item.enabled]), [
+      ["private-chat-summary", null, true],
+      ["private-notes", null, true],
+      ["channel-brief", channel.id, true],
+      ["channel-decisions", channel.id, true],
+    ]);
+    const disabledMemory = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/memory-scopes?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scopes: [{ kind: "private-chat-summary", enabled: false }],
+      }),
+    });
+    assert.equal(disabledMemory.status, 400);
+    const disabledMemoryBody = await disabledMemory.json();
+    assert.equal(disabledMemoryBody.error, "bad_request");
+    assert.match(disabledMemoryBody.message, /memory is always enabled/i);
 
     const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
       channelId: channel.id,

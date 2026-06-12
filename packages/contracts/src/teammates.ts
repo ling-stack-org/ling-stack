@@ -203,7 +203,7 @@ export interface ReplaceTeammateMemoryScopesRequest {
     readonly id?: string;
     readonly kind: TeammateMemoryScopeKind;
     readonly channelId?: string;
-    readonly enabled?: boolean;
+    readonly enabled?: true;
   }[];
 }
 

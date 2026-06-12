@@ -605,8 +605,8 @@ Not allowed:
 - changing `id = "ling_agent"`;
 - deleting, disabling, archiving, hiding, or removing Ling Agent from a channel;
 - editing the built-in product-owned Ling Agent instruction document;
-- granting tools, provider access, memory scopes, credentials, deploy authority, or
-  external-send authority;
+- granting tools, provider access, memory authority beyond protected defaults,
+  credentials, deploy authority, or external-send authority;
 - bypassing task confirmation, runtime approval, runner registry, or audit.
 
 ### Instruction Layering
@@ -634,6 +634,45 @@ Add coverage for:
 - user-added instructions cannot bypass approvals or change protected lifecycle;
 - Ling Agent private chat opens and replies through the normal teammate conversation path.
 
+## P8: Always-On Teammate Memory And Ling Agent Memory Panel
+
+### Goal
+
+Make memory a default teammate capability rather than a setup toggle. Every AI teammate
+has isolated private memory, channel membership provisions that teammate's own channel
+memory, and Ling Agent exposes protected coordinator memory in its teammate Memory panel.
+
+### Storage Rules
+
+- Every AI teammate gets `private-chat-summary` and `private-notes`.
+- Every channel membership gets `channel-brief` and `channel-decisions` for that teammate
+  and channel.
+- Default scopes are synthesized/backfilled on teammate creation, teammate listing,
+  channel membership changes, and memory-scope reads.
+- Default scopes cannot be removed or disabled. Compatibility clients may send
+  `enabled:true`; `enabled:false` is rejected.
+- Ling Agent scopes are protected system memory and cannot be replaced through the normal
+  teammate memory endpoint.
+
+### UI Rules
+
+- Creation and settings surfaces must not show memory source checkboxes or off switches.
+- The Memory tab shows scope status as active and explains that review controls manage
+  content, not recall availability.
+- Ling Agent sees the Memory tab even though other protected lifecycle tabs remain hidden.
+- Empty states say memory is being prepared, not that memory is disabled.
+
+### Tests
+
+Add coverage for:
+
+- built-in Ling Agent has private and channel scopes after channel creation;
+- newly created teammates have private scopes by default;
+- channel membership adds channel scopes;
+- `enabled:false` is rejected at store and daemon API boundaries;
+- replacing a subset of scopes preserves all required defaults;
+- protected Ling Agent memory remains visible but not replaceable.
+
 ## PR Slicing
 
 Recommended order:
@@ -645,13 +684,14 @@ Recommended order:
 5. P5 Ling Agent built-in executor.
 6. P6 Web E2E and smoke hardening.
 7. P7 protected Ling Agent teammate profile and personalization.
+8. P8 always-on teammate memory and Ling Agent Memory panel.
 
 Avoid combining P2 routing changes with P3 Web final-report UI in the same PR unless the
 diff stays small. Routing bugs and UI-collapse bugs have different failure modes.
 
 ## Data Migration Policy
 
-P1-P6 should not require database migrations.
+P1-P8 should not require database migrations.
 
 Allowed without migration:
 
@@ -682,6 +722,8 @@ Require a separate migration proposal if:
 - Ling Agent private chat is available through the teammate conversation surface.
 - Ling Agent display name/avatar/user-added instructions are customizable without changing
   `ling_agent` identity or approval behavior.
+- AI teammate memory is always on, per-teammate, and not user-disableable.
+- Ling Agent protected coordinator memory is visible in its Memory panel.
 - Active follow-ups and redirects use durable intervention semantics.
 - Completed work shows one final result report by default.
 - Evidence remains expandable and complete.
@@ -692,7 +734,7 @@ Require a separate migration proposal if:
 
 Product boundary decisions: none for this plan.
 
-Implementation decisions to close during P1-P7:
+Implementation decisions to close during P1-P8:
 
 - exact location of the shared `LingAgentSessionView` type after the first daemon/Web
   slice proves the shape;

@@ -60,11 +60,11 @@ const teammateTemplateFilters: readonly { readonly id: TeammateTemplateFilter; r
   { id: "docs", label: "Docs" },
 ];
 
-const teammateMemorySources: readonly { readonly id: string; readonly label: string; readonly detail: string }[] = [
-  { id: "project-files", label: "Project files", detail: "Repository files and task artifacts" },
-  { id: "agents-md", label: "AGENTS.md", detail: "Project agent rules and local operating protocol" },
-  { id: "skill-pack", label: "Skill pack", detail: "Bound skill prompts and workflow templates" },
-  { id: "private-notes", label: "Private notes", detail: "Future per-teammate notes store" },
+const defaultMemoryScopeLabels: readonly string[] = [
+  "private-chat-summary",
+  "private-notes",
+  "channel-brief",
+  "channel-decisions",
 ];
 
 export function AiTeammatesPage({
@@ -106,7 +106,6 @@ export function AiTeammatesPage({
   const [draftDescription, setDraftDescription] = useState(() => templates[0] ? t(templates[0].summary) : "");
   const [selectedProviderId, setSelectedProviderId] = useState(() => providerOptions.find(providerPreflightReady)?.id ?? providerOptions[0]?.id ?? "");
   const [selectedChannelIds, setSelectedChannelIds] = useState<readonly string[]>(() => channels[0] ? [channels[0].id] : []);
-  const [selectedMemorySources, setSelectedMemorySources] = useState<readonly string[]>(["project-files", "agents-md", "skill-pack"]);
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [detailTemplateId, setDetailTemplateId] = useState<string>("");
   const wizardRef = useRef<HTMLElement | null>(null);
@@ -149,12 +148,6 @@ export function AiTeammatesPage({
     );
   }
 
-  function toggleMemorySource(sourceId: string): void {
-    setSelectedMemorySources((currentSources) =>
-      currentSources.includes(sourceId) ? currentSources.filter((id) => id !== sourceId) : [...currentSources, sourceId],
-    );
-  }
-
   function createTeammateDraft(): void {
     if (!canCreateTeammate) {
       return;
@@ -166,7 +159,6 @@ export function AiTeammatesPage({
       providerPresetId: selectedProvider?.id,
       modelLabel: selectedProvider ? `${selectedProvider.displayName} / ${selectedProvider.model}` : t("No model selected"),
       channelIds: selectedChannelIds,
-      memorySources: selectedMemorySources,
     });
     setCreateOpen(false);
   }
@@ -340,19 +332,18 @@ export function AiTeammatesPage({
                   </section>
                   <section>
                     <h3>{t("Memory")}</h3>
+                    <div className="provider-run-notice neutral">
+                      <ShieldCheck size={15} />
+                      <span>{t("Memory is always on for each teammate.")}</span>
+                    </div>
                     <div className="teammate-memory-list compact">
-                      {teammateMemorySources.map((source) => (
-                        <label key={source.id} className="teammate-toggle">
-                          <input
-                            type="checkbox"
-                            checked={selectedMemorySources.includes(source.id)}
-                            onChange={() => toggleMemorySource(source.id)}
-                          />
+                      {defaultMemoryScopeLabels.map((scope) => (
+                        <span key={scope} className="teammate-toggle static">
                           <FileText size={15} />
                           <span>
-                            <strong>{t(source.label)}</strong>
+                            <strong>{t(scope)}</strong>
                           </span>
-                        </label>
+                        </span>
                       ))}
                     </div>
                   </section>

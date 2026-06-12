@@ -6,7 +6,6 @@ import {
   listAiTeammates,
   listTeammateChannels,
   replaceTeammateChannels,
-  replaceTeammateMemoryScopes,
   replaceTeammateSkills,
   updateAiTeammate,
 } from "../../api.js";
@@ -14,7 +13,6 @@ import type { DomainController, DomainError } from "../../app/domain-controller.
 import type {
   AiTeammate,
   CreateAiTeammateRequest,
-  ReplaceTeammateMemoryScopesRequest,
   TeammateChannelMembership,
   UpdateAiTeammateRequest,
 } from "../../types.js";
@@ -26,7 +24,6 @@ export interface TeammateCreateInput {
   readonly providerPresetId?: string;
   readonly modelLabel: string;
   readonly channelIds: readonly string[];
-  readonly memorySources: readonly string[];
 }
 
 export interface BuiltinTeammateTemplate {
@@ -141,10 +138,6 @@ export function useTeammatesDomain(input: {
             template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
           ),
         );
-      }
-      const memoryScopes = buildMemoryScopesForTeammate(createInput.channelIds, createInput.memorySources);
-      if (memoryScopes.length > 0) {
-        setupCalls.push(replaceTeammateMemoryScopes(cwd, teammateId, memoryScopes));
       }
       await Promise.all(setupCalls);
       await refreshAiTeammates(cwd);
@@ -396,27 +389,6 @@ export function useTeammatesDomain(input: {
     error,
     clearError: () => setError(undefined),
   };
-}
-
-function buildMemoryScopesForTeammate(
-  channelIds: readonly string[],
-  memorySources: readonly string[],
-): ReplaceTeammateMemoryScopesRequest["scopes"] {
-  const scopes: ReplaceTeammateMemoryScopesRequest["scopes"][number][] = [
-    { kind: "private-chat-summary", enabled: true },
-  ];
-  if (memorySources.includes("private-notes")) {
-    scopes.push({ kind: "private-notes", enabled: true });
-  }
-  for (const channelId of channelIds) {
-    if (memorySources.includes("project-files") || memorySources.includes("agents-md")) {
-      scopes.push({ kind: "channel-brief", channelId, enabled: true });
-    }
-    if (memorySources.includes("skill-pack")) {
-      scopes.push({ kind: "channel-decisions", channelId, enabled: true });
-    }
-  }
-  return scopes;
 }
 
 function upsertAiTeammate(current: readonly AiTeammate[], teammate: AiTeammate): readonly AiTeammate[] {

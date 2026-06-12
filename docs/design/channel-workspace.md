@@ -1907,7 +1907,7 @@ Current MVP implementation status:
   `auto_route` still daemon-feature-gated but now exposed to Web through runtime
   daemon capabilities rather than a build-time-only flag. This path creates only ordinary
   `ai_reply` messages and must not start
-  workflows, tasks, runs, approvals, or memory activation. Route explanations belong to
+  workflows, tasks, runs, approvals, or memory authority changes. Route explanations belong to
   the message interaction layer: accepted replies may show `Default teammate` or
   `Auto routed`; suppressed or failed messages may expose a lightweight `Why no reply?`
   popover. Do not send route evidence into the default timeline, do not use the right

@@ -3423,7 +3423,6 @@ function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly Provid
     status: teammate.status,
     modelLabel: provider ? `${provider.displayName} / ${provider.model}` : "No model selected",
     channelIds: [],
-    memorySources: [],
     pinned: teammate.pinned,
     hidden: teammate.hidden,
     disabled: teammate.status === "disabled",

@@ -3102,6 +3102,67 @@ export function createTeammateFromBody(body: Record<string, unknown>, id: string
   };
 }
 
+const defaultPrivateMockMemoryScopeKinds = ["private-chat-summary", "private-notes"] as const;
+const defaultChannelMockMemoryScopeKinds = ["channel-brief", "channel-decisions"] as const;
+
+export function ensureMockDefaultTeammateMemoryScopes(state: MockState, teammateId: string): void {
+  const teammateExists = state.aiTeammates.some((item) => isRecord(item) && item.id === teammateId);
+  if (!teammateExists) {
+    return;
+  }
+  const channelIds = state.teammateChannelMemberships
+    .filter((item): item is Record<string, unknown> => isRecord(item) && item.teammateId === teammateId && typeof item.channelId === "string")
+    .map((item) => String(item.channelId));
+  const currentChannelIds = new Set(channelIds);
+  state.teammateMemoryScopes = state.teammateMemoryScopes.filter((item) => {
+    if (!isRecord(item) || item.teammateId !== teammateId) {
+      return true;
+    }
+    if (typeof item.channelId !== "string" || !(defaultChannelMockMemoryScopeKinds as readonly string[]).includes(String(item.kind))) {
+      return true;
+    }
+    return currentChannelIds.has(item.channelId);
+  });
+  for (const kind of defaultPrivateMockMemoryScopeKinds) {
+    upsertMockTeammateMemoryScope(state, { teammateId, kind });
+  }
+  for (const channelId of currentChannelIds) {
+    for (const kind of defaultChannelMockMemoryScopeKinds) {
+      upsertMockTeammateMemoryScope(state, { teammateId, kind, channelId });
+    }
+  }
+}
+
+function upsertMockTeammateMemoryScope(
+  state: MockState,
+  input: { readonly teammateId: string; readonly kind: string; readonly channelId?: string },
+): void {
+  const existingIndex = state.teammateMemoryScopes.findIndex((item) =>
+    isRecord(item) &&
+    item.teammateId === input.teammateId &&
+    item.kind === input.kind &&
+    (typeof item.channelId === "string" ? item.channelId : undefined) === input.channelId
+  );
+  const idSuffix = `${input.kind}_${input.channelId ?? "private"}`.replace(/[^a-z0-9_-]/gi, "_");
+  const record = {
+    id: `memory_${input.teammateId}_${idSuffix}`,
+    teammateId: input.teammateId,
+    kind: input.kind,
+    channelId: input.channelId,
+    enabled: true,
+    createdAt: "2026-05-29T00:09:00.000Z",
+    updatedAt: "2026-05-29T00:09:00.000Z",
+  };
+  if (existingIndex >= 0) {
+    const existing = state.teammateMemoryScopes[existingIndex];
+    state.teammateMemoryScopes[existingIndex] = isRecord(existing)
+      ? { ...existing, enabled: true, updatedAt: record.updatedAt }
+      : record;
+    return;
+  }
+  state.teammateMemoryScopes.push(record);
+}
+
 export function buildProviderCheckResult(provider: Record<string, unknown>): Record<string, unknown> {
   const checkedAt = "2026-05-25T00:11:00.000Z";
   if (provider.enabled === false) {
@@ -3707,6 +3768,11 @@ export async function handleDaemonRoute(
   if (request.method() === "GET" && path === "/teammates") {
     const includeHidden = url.searchParams.get("includeHidden") === "true";
     const includeDisabled = url.searchParams.get("includeDisabled") === "true";
+    for (const teammate of state.aiTeammates) {
+      if (isRecord(teammate) && typeof teammate.id === "string") {
+        ensureMockDefaultTeammateMemoryScopes(state, teammate.id);
+      }
+    }
     const teammates = state.aiTeammates.filter((item) =>
       isRecord(item) &&
       (includeHidden || item.hidden !== true) &&
@@ -3719,6 +3785,7 @@ export async function handleDaemonRoute(
     const body = await request.postDataJSON() as Record<string, unknown>;
     const teammate = createTeammateFromBody(body, `teammate_created_${state.aiTeammates.length + 1}`);
     state.aiTeammates.push(teammate);
+    ensureMockDefaultTeammateMemoryScopes(state, String(teammate.id));
     await route.fulfill({ status: 201, json: { teammate } });
     return;
   }
@@ -3844,6 +3911,7 @@ export async function handleDaemonRoute(
           );
         }
       }
+      ensureMockDefaultTeammateMemoryScopes(state, teammateId);
       await route.fulfill({
         json: {
           cwd,
@@ -3934,6 +4002,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "memory-scopes" && request.method() === "GET") {
+      ensureMockDefaultTeammateMemoryScopes(state, teammateId);
       await route.fulfill({
         json: {
           cwd,
@@ -3945,8 +4014,15 @@ export async function handleDaemonRoute(
     }
     if (action === "memory-scopes" && request.method() === "PUT") {
       const body = await request.postDataJSON() as Record<string, unknown>;
-      state.teammateMemoryScopes = state.teammateMemoryScopes.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       const scopes = Array.isArray(body.scopes) ? body.scopes : [];
+      if (scopes.some((scope) => isRecord(scope) && scope.enabled === false)) {
+        await route.fulfill({
+          status: 400,
+          json: { error: "bad_request", message: "Teammate memory is always enabled." },
+        });
+        return;
+      }
+      state.teammateMemoryScopes = state.teammateMemoryScopes.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       for (const [index, scope] of scopes.entries()) {
         if (!isRecord(scope) || typeof scope.kind !== "string") {
           continue;
@@ -3961,6 +4037,7 @@ export async function handleDaemonRoute(
           updatedAt: "2026-05-29T00:09:00.000Z",
         });
       }
+      ensureMockDefaultTeammateMemoryScopes(state, teammateId);
       await route.fulfill({
         json: {
           cwd,
