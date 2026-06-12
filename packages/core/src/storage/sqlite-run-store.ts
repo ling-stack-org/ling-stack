@@ -37,6 +37,8 @@ import {
 } from "../approval-policy.js";
 import {
   DEFAULT_WORKSPACE_ID,
+  LING_AGENT_ID,
+  LING_AGENT_SYSTEM_PROMPT,
   createAiTeammateId,
   createBuiltinAiTeammateId,
   createChannelAttachmentId,
@@ -64,6 +66,7 @@ import {
   createTeammateMemoryScopeId,
   createTeammatePrivateAttachmentId,
   createTaskId,
+  createLingAgentSystemTeammate,
   channelWorkflowStepStatuses,
   channelBranchStatuses,
   channelAutoReplyModes,
@@ -76,6 +79,9 @@ import {
   channelIntentDecisionCreatedByValues,
   channelIntentDecisionStatuses,
   normalizeChannelRuntimePolicy,
+  isLingAgentTeammateId,
+  lingAgentAllowedTools,
+  lingAgentEditableFields,
   type AiTeammate,
   type AiTeammateStatus,
   type AiTeammateUpdateInput,
@@ -2894,7 +2900,7 @@ export class SqliteRunStore implements RunStore {
       boundPath: input.boundPath,
       workspaceBinding: input.workspaceBinding,
       defaultProviderPresetId: input.defaultProviderPresetId,
-      defaultTeammateId: input.defaultTeammateId,
+      defaultTeammateId: normalizePreferredSpecialistId(input.defaultTeammateId),
       autoReplyMode: input.autoReplyMode ?? "mentions_only",
       responseLanguage: input.responseLanguage,
       allowedTools: input.allowedTools ?? [...readOnlyRunTools],
@@ -2943,6 +2949,7 @@ export class SqliteRunStore implements RunStore {
     if (!created) {
       throw new Error(`Failed to create channel: ${channel.id}`);
     }
+    this.ensureLingAgentChannelMemberships(now, channel.id);
     return created;
   }
 
@@ -2979,7 +2986,7 @@ export class SqliteRunStore implements RunStore {
       boundPath: nullableUpdate(input.boundPath, existing.boundPath),
       workspaceBinding: nullableUpdate(input.workspaceBinding, existing.workspaceBinding),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, existing.defaultProviderPresetId),
-      defaultTeammateId: nullableUpdate(input.defaultTeammateId, existing.defaultTeammateId),
+      defaultTeammateId: normalizePreferredSpecialistId(nullableUpdate(input.defaultTeammateId, existing.defaultTeammateId)),
       autoReplyMode: input.autoReplyMode === null ? "mentions_only" : input.autoReplyMode ?? existing.autoReplyMode,
       responseLanguage: nullableUpdate(input.responseLanguage, existing.responseLanguage),
       allowedTools: input.allowedTools ?? existing.allowedTools,
@@ -3386,32 +3393,36 @@ export class SqliteRunStore implements RunStore {
     if (!existing) {
       return undefined;
     }
-    if (input.avatarImageAttachmentId !== undefined && input.avatarImageAttachmentId !== null) {
-      const avatar = this.getTeammatePrivateAttachment(input.avatarImageAttachmentId);
+    const updateInput = isLingAgentTeammateId(id)
+      ? sanitizeLingAgentUpdateInput(input)
+      : input;
+    if (updateInput.avatarImageAttachmentId !== undefined && updateInput.avatarImageAttachmentId !== null) {
+      const avatar = this.getTeammatePrivateAttachment(updateInput.avatarImageAttachmentId);
       if (!avatar || avatar.teammateId !== id || avatar.scope !== "teammate_profile_avatar" || avatar.kind !== "image") {
-        throw new Error(`Avatar image attachment does not belong to teammate profile: ${input.avatarImageAttachmentId}`);
+        throw new Error(`Avatar image attachment does not belong to teammate profile: ${updateInput.avatarImageAttachmentId}`);
       }
     }
 
-    const next: AiTeammate = {
+    const candidate: AiTeammate = {
       ...existing,
-      templateId: nullableUpdate(input.templateId, existing.templateId),
-      roleKey: input.roleKey ?? existing.roleKey,
-      displayName: input.displayName ?? existing.displayName,
-      description: input.description ?? existing.description,
-      avatarTone: nullableUpdate(input.avatarTone, existing.avatarTone),
-      avatarImageAttachmentId: nullableUpdate(input.avatarImageAttachmentId, existing.avatarImageAttachmentId),
-      providerPresetId: nullableUpdate(input.providerPresetId, existing.providerPresetId),
-      runnerId: normalizeStoredRunnerId(nullableUpdate(input.runnerId, existing.runnerId)),
-      systemPrompt: nullableUpdate(input.systemPrompt, existing.systemPrompt),
-      appendSystemPrompt: input.appendSystemPrompt ?? existing.appendSystemPrompt,
-      allowedTools: input.allowedTools ?? existing.allowedTools,
-      approvalProfile: input.approvalProfile ?? existing.approvalProfile,
-      status: input.status ?? existing.status,
-      pinned: input.pinned ?? existing.pinned,
-      hidden: input.hidden ?? existing.hidden,
+      templateId: nullableUpdate(updateInput.templateId, existing.templateId),
+      roleKey: updateInput.roleKey ?? existing.roleKey,
+      displayName: updateInput.displayName ?? existing.displayName,
+      description: updateInput.description ?? existing.description,
+      avatarTone: nullableUpdate(updateInput.avatarTone, existing.avatarTone),
+      avatarImageAttachmentId: nullableUpdate(updateInput.avatarImageAttachmentId, existing.avatarImageAttachmentId),
+      providerPresetId: nullableUpdate(updateInput.providerPresetId, existing.providerPresetId),
+      runnerId: normalizeStoredRunnerId(nullableUpdate(updateInput.runnerId, existing.runnerId)),
+      systemPrompt: nullableUpdate(updateInput.systemPrompt, existing.systemPrompt),
+      appendSystemPrompt: updateInput.appendSystemPrompt ?? existing.appendSystemPrompt,
+      allowedTools: updateInput.allowedTools ?? existing.allowedTools,
+      approvalProfile: updateInput.approvalProfile ?? existing.approvalProfile,
+      status: updateInput.status ?? existing.status,
+      pinned: updateInput.pinned ?? existing.pinned,
+      hidden: updateInput.hidden ?? existing.hidden,
       updatedAt: now,
     };
+    const next = isLingAgentTeammateId(id) ? applyLingAgentProtectedFields(candidate) : candidate;
 
     this.database
       .prepare(`
@@ -3459,10 +3470,16 @@ export class SqliteRunStore implements RunStore {
   }
 
   disableAiTeammate(id: string, now: string): AiTeammate | undefined {
+    if (isLingAgentTeammateId(id)) {
+      throw new Error("Ling Agent cannot be disabled.");
+    }
     return this.updateAiTeammate(id, { status: "disabled", hidden: true }, now);
   }
 
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined {
+    if (isLingAgentTeammateId(id)) {
+      throw new Error("Ling Agent cannot be deleted.");
+    }
     const teammate = this.getAiTeammate(id);
     if (!teammate) {
       return undefined;
@@ -3582,6 +3599,9 @@ export class SqliteRunStore implements RunStore {
     if (!this.getAiTeammate(teammateId)) {
       throw new Error(`AI teammate not found: ${teammateId}`);
     }
+    if (isLingAgentTeammateId(teammateId)) {
+      throw new Error("Ling Agent channel membership is protected.");
+    }
 
     const normalized = dedupeMembershipInputs(memberships);
     for (const membership of normalized) {
@@ -3633,6 +3653,9 @@ export class SqliteRunStore implements RunStore {
     const teammate = this.getAiTeammate(teammateId);
     if (!teammate) {
       throw new Error(`AI teammate not found: ${teammateId}`);
+    }
+    if (isLingAgentTeammateId(teammateId)) {
+      throw new Error("Ling Agent skill bindings are protected.");
     }
 
     const existing = this.listTeammateSkillBindings(teammateId);
@@ -3872,6 +3895,9 @@ export class SqliteRunStore implements RunStore {
   ): TeammateMemoryScope[] {
     if (!this.getAiTeammate(teammateId)) {
       throw new Error(`AI teammate not found: ${teammateId}`);
+    }
+    if (isLingAgentTeammateId(teammateId)) {
+      throw new Error("Ling Agent memory scopes are protected.");
     }
     for (const scope of scopes) {
       if (scope.channelId && !this.getChannel(scope.channelId)) {
@@ -9037,6 +9063,9 @@ export class SqliteRunStore implements RunStore {
     if (!this.getAiTeammate(teammateId)) {
       throw new Error(`AI teammate not found: ${teammateId}`);
     }
+    if (isLingAgentTeammateId(teammateId)) {
+      throw new Error("Ling Agent MCP bindings are protected.");
+    }
     this.database.prepare("DELETE FROM teammate_mcp_bindings WHERE teammate_id = ?").run(teammateId);
     const insert = this.database.prepare(`
       INSERT INTO teammate_mcp_bindings (
@@ -13364,6 +13393,8 @@ export class SqliteRunStore implements RunStore {
       return;
     }
     const now = new Date().toISOString();
+    this.ensureLingAgentSystemTeammate(now);
+    this.ensureLingAgentChannelMemberships(now);
     for (const template of listDefaultTeammateTemplates(GSTACK_DEFAULT_SKILL_PACK_ID)) {
       const teammateId = createBuiltinAiTeammateId(template.id);
       if (this.hasRetentionTombstone("ai-teammate", teammateId)) {
@@ -13708,6 +13739,97 @@ export class SqliteRunStore implements RunStore {
     }
     if (refs.handoffId) {
       this.assertHandoffInChannel(channelId, refs.handoffId);
+    }
+  }
+
+  private ensureLingAgentSystemTeammate(now: string): AiTeammate {
+    const existing = this.getAiTeammate(LING_AGENT_ID);
+    if (!existing) {
+      const profile = createLingAgentSystemTeammate(now);
+      return this.createAiTeammate({
+        id: profile.id,
+        templateId: profile.templateId,
+        roleKey: profile.roleKey,
+        displayName: profile.displayName,
+        description: profile.description,
+        avatarTone: profile.avatarTone,
+        avatarImageAttachmentId: profile.avatarImageAttachmentId,
+        providerPresetId: profile.providerPresetId,
+        runnerId: profile.runnerId,
+        systemPrompt: profile.systemPrompt,
+        appendSystemPrompt: profile.appendSystemPrompt,
+        allowedTools: profile.allowedTools,
+        approvalProfile: profile.approvalProfile,
+        status: profile.status,
+        pinned: profile.pinned,
+        hidden: profile.hidden,
+      }, now);
+    }
+
+    const next = applyLingAgentProtectedFields(existing);
+    this.database
+      .prepare(`
+        UPDATE ai_teammates
+        SET
+          template_id = ?,
+          role_key = ?,
+          display_name = ?,
+          description = ?,
+          avatar_tone = ?,
+          avatar_image_attachment_id = ?,
+          provider_preset_id = NULL,
+          runner_id = NULL,
+          system_prompt = ?,
+          append_system_prompt_json = ?,
+          allowed_tools_json = ?,
+          approval_profile_json = ?,
+          status = ?,
+          pinned = ?,
+          hidden = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.templateId ?? null,
+        next.roleKey,
+        next.displayName,
+        next.description,
+        next.avatarTone ?? null,
+        next.avatarImageAttachmentId ?? null,
+        next.systemPrompt ?? null,
+        stringifyJson(next.appendSystemPrompt),
+        stringifyJson(next.allowedTools),
+        stringifyJson(next.approvalProfile),
+        next.status,
+        next.pinned ? 1 : 0,
+        next.hidden ? 1 : 0,
+        now,
+        LING_AGENT_ID,
+      );
+    return this.getAiTeammate(LING_AGENT_ID) ?? next;
+  }
+
+  private ensureLingAgentChannelMemberships(now: string, channelId?: string): void {
+    if (!this.hasTable("channels") || !this.hasTable("teammate_channel_memberships") || !this.getAiTeammate(LING_AGENT_ID)) {
+      return;
+    }
+    this.database
+      .prepare("UPDATE channels SET default_teammate_id = NULL, updated_at = ? WHERE default_teammate_id = ?")
+      .run(now, LING_AGENT_ID);
+    const channels = channelId
+      ? this.database.prepare("SELECT id FROM channels WHERE id = ?").all(channelId)
+      : this.database.prepare("SELECT id FROM channels").all();
+    const insert = this.database.prepare(`
+      INSERT OR IGNORE INTO teammate_channel_memberships (
+        teammate_id,
+        channel_id,
+        is_default,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, 0, ?, ?)
+    `);
+    for (const row of channels as Record<string, SQLOutputValue>[]) {
+      insert.run(LING_AGENT_ID, readString(row, "id"), now, now);
     }
   }
 
@@ -14426,7 +14548,7 @@ function mapTask(row: Record<string, SQLOutputValue>): Task {
 }
 
 function mapAiTeammate(row: Record<string, SQLOutputValue>): AiTeammate {
-  return omitUndefined({
+  return withSystemTeammateMetadata(omitUndefined({
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
     templateId: readNullableString(row, "template_id"),
@@ -14446,7 +14568,69 @@ function mapAiTeammate(row: Record<string, SQLOutputValue>): AiTeammate {
     hidden: readBoolean(row, "hidden"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+  }));
+}
+
+function withSystemTeammateMetadata(teammate: AiTeammate): AiTeammate {
+  if (!isLingAgentTeammateId(teammate.id)) {
+    return teammate;
+  }
+  return {
+    ...teammate,
+    kind: "system_teammate",
+    systemRole: "ling_agent",
+    protectedProfile: true,
+    editableFields: lingAgentEditableFields,
+  };
+}
+
+function applyLingAgentProtectedFields(teammate: AiTeammate): AiTeammate {
+  return withSystemTeammateMetadata({
+    ...teammate,
+    templateId: LING_AGENT_ID,
+    roleKey: "custom",
+    providerPresetId: undefined,
+    runnerId: undefined,
+    systemPrompt: LING_AGENT_SYSTEM_PROMPT,
+    allowedTools: lingAgentAllowedTools,
+    approvalProfile: { mode: "standard", risk: "medium" },
+    status: "active",
+    pinned: true,
+    hidden: false,
   });
+}
+
+function sanitizeLingAgentUpdateInput(input: AiTeammateUpdateInput): AiTeammateUpdateInput {
+  const forbiddenFields: (keyof AiTeammateUpdateInput)[] = [
+    "templateId",
+    "roleKey",
+    "providerPresetId",
+    "runnerId",
+    "systemPrompt",
+    "allowedTools",
+    "approvalProfile",
+    "status",
+    "pinned",
+    "hidden",
+  ];
+  const requestedForbidden = forbiddenFields.filter((field) => input[field] !== undefined);
+  if (requestedForbidden.length > 0) {
+    throw new Error(`Ling Agent protected fields cannot be changed: ${requestedForbidden.join(", ")}`);
+  }
+  return {
+    displayName: input.displayName,
+    description: input.description,
+    avatarTone: input.avatarTone,
+    avatarImageAttachmentId: input.avatarImageAttachmentId,
+    appendSystemPrompt: input.appendSystemPrompt,
+  };
+}
+
+function normalizePreferredSpecialistId(teammateId: string | null | undefined): string | undefined {
+  if (!teammateId || isLingAgentTeammateId(teammateId)) {
+    return undefined;
+  }
+  return teammateId;
 }
 
 function mapTeammateChannelMembership(row: Record<string, SQLOutputValue>): TeammateChannelMembership {

@@ -7,6 +7,10 @@ export interface LocalTeammateDraft {
   readonly id: string;
   readonly workspaceId?: string;
   readonly templateId?: string;
+  readonly kind?: AiTeammate["kind"];
+  readonly systemRole?: AiTeammate["systemRole"];
+  readonly protectedProfile?: boolean;
+  readonly editableFields?: AiTeammate["editableFields"];
   readonly roleKey?: AiTeammate["roleKey"];
   readonly displayName: string;
   readonly description: string;

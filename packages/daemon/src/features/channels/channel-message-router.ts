@@ -23,7 +23,7 @@ import {
   type ChannelAutoRouteCandidateContext,
   type ContextPack,
 } from "./context-packs.js";
-import { createLingAgentExecutor } from "./ling-agent-executor.js";
+import { createLingAgentExecutor, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -126,11 +126,11 @@ export async function routeChannelMessageReply(input: ChannelMessageRouteInput):
   }
 
   if (protocol.protocol.autoReplyMode === "default_teammate" || protocol.protocol.autoReplyMode === "mentions_only") {
-    return routeDefaultTeammate(input, candidates);
+    return routeLingAgentVisibleReply(input, candidates);
   }
 
   if (!input.config.channels.autoRoute) {
-    return routeDefaultTeammate(input, candidates, "Ling Agent used an available reply path because automatic teammate selection is disabled.");
+    return routeLingAgentVisibleReply(input, candidates, "Ling Agent used an available reply path because automatic teammate selection is disabled.");
   }
 
   return routeWithModel(input, candidates);
@@ -159,24 +159,32 @@ export function routeExplicitChannelMention(input: ChannelMessageRouteInput): Ch
   };
 }
 
-function routeDefaultTeammate(
+function routeLingAgentVisibleReply(
   input: ChannelMessageRouteInput,
   candidates: readonly RouteCandidate[],
   fallbackReason?: string,
   createdBy: ChannelMessageRouteDecisionCreatedBy = "deterministic",
 ): ChannelMessageRouteResult {
-  const defaultCandidate = candidates.find((candidate) => candidate.preferred) ?? candidates[0];
-  if (!defaultCandidate) {
+  const lingAgentCandidate = candidates.find((candidate) => candidate.teammate.id === LING_AGENT_EXECUTOR_ID);
+  if (!lingAgentCandidate) {
     const decision = persistRouteDecision(input, {
-      action: "no_reply",
-      reason: "Channel default teammate is missing, inactive, or not runnable.",
-      status: "suppressed",
+      action: "reply",
+      teammateId: LING_AGENT_EXECUTOR_ID,
+      reason: "Ling Agent attempted to reply but no runnable provider is configured.",
+      status: "failed",
       createdBy,
       alternativesConsidered: candidatesToAlternatives(candidates),
+      errorMessage: "No runnable provider is available for Ling Agent.",
     });
-    return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
+    return {
+      action: "reply",
+      decisionId: decision.id,
+      teammateId: LING_AGENT_EXECUTOR_ID,
+      reason: decision.reason,
+      createdBy,
+    };
   }
-  if (hasExistingReplyForSource(input, defaultCandidate.teammate.id)) {
+  if (hasExistingReplyForSource(input, LING_AGENT_EXECUTOR_ID)) {
     const decision = persistRouteDecision(input, {
       action: "no_reply",
       reason: "An AI reply already exists for this source message.",
@@ -188,12 +196,10 @@ function routeDefaultTeammate(
   }
   const decision = persistRouteDecision(input, {
     action: "reply",
-    teammateId: defaultCandidate.teammate.id,
-    providerPresetId: defaultCandidate.providerPresetId,
+    teammateId: lingAgentCandidate.teammate.id,
+    providerPresetId: lingAgentCandidate.providerPresetId,
     confidence: 1,
-    reason: fallbackReason ?? (defaultCandidate.preferred
-      ? "Default teammate answered a reply-worthy channel question."
-      : "Ling Agent chose an available teammate for this reply."),
+    reason: fallbackReason ?? "Ling Agent answered a root channel message.",
     status: "accepted",
     createdBy,
     alternativesConsidered: candidatesToAlternatives(candidates),
@@ -201,8 +207,8 @@ function routeDefaultTeammate(
   return {
     action: "reply",
     decisionId: decision.id,
-    teammateId: defaultCandidate.teammate.id,
-    providerPresetId: defaultCandidate.providerPresetId,
+    teammateId: lingAgentCandidate.teammate.id,
+    providerPresetId: lingAgentCandidate.providerPresetId,
     reason: decision.reason,
     createdBy,
   };
@@ -214,9 +220,13 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
     const output = route.output;
     const validated = validateModelRouteOutput(output, candidates);
     if (validated.action === "no_reply") {
-      return routeDefaultTeammate(input, candidates, `Ling Agent fallback replied after teammate selection skipped the message: ${validated.reason}`, "model");
+      return routeLingAgentVisibleReply(input, candidates, `Ling Agent fallback replied after teammate selection skipped the message: ${validated.reason}`, "model");
     }
-    if (hasExistingReplyForSource(input, validated.teammateId)) {
+    const lingAgentCandidate = candidates.find((candidate) => candidate.teammate.id === LING_AGENT_EXECUTOR_ID);
+    if (!lingAgentCandidate) {
+      return routeLingAgentVisibleReply(input, candidates, "Ling Agent fallback replied after automatic teammate selection could not find a runnable coordinator.", "model");
+    }
+    if (hasExistingReplyForSource(input, LING_AGENT_EXECUTOR_ID)) {
       const decision = persistRouteDecision(input, {
         action: "no_reply",
         confidence: validated.confidence,
@@ -230,10 +240,10 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
     }
     const decision = persistRouteDecision(input, {
       action: "reply",
-      teammateId: validated.teammateId,
-      providerPresetId: validated.providerPresetId,
+      teammateId: lingAgentCandidate.teammate.id,
+      providerPresetId: lingAgentCandidate.providerPresetId,
       confidence: validated.confidence,
-      reason: validated.reason,
+      reason: `Ling Agent answered with specialist routing context: ${validated.reason}`,
       status: "accepted",
       createdBy: "model",
       alternativesConsidered: validated.alternativesConsidered,
@@ -242,13 +252,13 @@ async function routeWithModel(input: ChannelMessageRouteInput, candidates: reado
     return {
       action: "reply",
       decisionId: decision.id,
-      teammateId: validated.teammateId,
-      providerPresetId: validated.providerPresetId,
+      teammateId: lingAgentCandidate.teammate.id,
+      providerPresetId: lingAgentCandidate.providerPresetId,
       reason: decision.reason,
       createdBy: "model",
     };
   } catch {
-    return routeDefaultTeammate(input, candidates, "Ling Agent fallback replied after automatic teammate selection failed.", "model");
+    return routeLingAgentVisibleReply(input, candidates, "Ling Agent fallback replied after automatic teammate selection failed.", "model");
   }
 }
 
@@ -277,13 +287,21 @@ function deterministicNoReplyReason(input: ChannelMessageRouteInput): string | u
 
 function buildRouteCandidates(input: ChannelMessageRouteInput, defaultTeammateId: string | undefined): RouteCandidate[] {
   const candidates: RouteCandidate[] = [];
+  const lingAgentProviderPresetId = resolveRunnableProviderPresetId(input, undefined);
+  if (lingAgentProviderPresetId) {
+    candidates.push({
+      teammate: input.store.getAiTeammate(LING_AGENT_EXECUTOR_ID) ?? createLingAgentExecutor(new Date().toISOString()),
+      providerPresetId: lingAgentProviderPresetId,
+      preferred: true,
+    });
+  }
   const defaultTeammate = defaultTeammateId
     ? resolveAiTeammateReference(input.store, defaultTeammateId)
     : undefined;
   if (defaultTeammate) {
     const providerPresetId = resolveRunnableProviderPresetId(input, defaultTeammate);
     if (providerPresetId) {
-      candidates.push({ teammate: defaultTeammate, providerPresetId, preferred: true });
+      candidates.push({ teammate: defaultTeammate, providerPresetId, preferred: false });
     }
   }
 
@@ -300,16 +318,6 @@ function buildRouteCandidates(input: ChannelMessageRouteInput, defaultTeammateId
     }
     if (candidates.length >= 8) {
       break;
-    }
-  }
-  if (!candidates.some((candidate) => candidate.teammate.id === "ling_agent")) {
-    const providerPresetId = resolveRunnableProviderPresetId(input, undefined);
-    if (providerPresetId) {
-      candidates.push({
-        teammate: createLingAgentExecutor(new Date().toISOString()),
-        providerPresetId,
-        preferred: candidates.length === 0,
-      });
     }
   }
   return candidates;
@@ -627,6 +635,6 @@ function candidatesToAlternatives(candidates: readonly RouteCandidate[]): readon
     teammateId: candidate.teammate.id,
     label: candidate.teammate.displayName,
     score: candidate.preferred ? 1 : undefined,
-    reason: candidate.preferred ? "Channel default teammate candidate." : "Active channel teammate candidate.",
+    reason: candidate.preferred ? "Ling Agent visible coordinator candidate." : "Specialist teammate candidate.",
   }));
 }

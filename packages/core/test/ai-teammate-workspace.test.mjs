@@ -9,6 +9,10 @@ import {
   createBuiltinAiTeammateId,
   createSqliteRunStore,
   GSTACK_DEFAULT_SKILL_PACK_ID,
+  LING_AGENT_ID,
+  LING_AGENT_SYSTEM_PROMPT,
+  lingAgentAllowedTools,
+  lingAgentEditableFields,
   listDefaultSkills,
 } from "../dist/index.js";
 
@@ -42,6 +46,83 @@ test("sqlite seeds durable builtin AI teammates and migrates legacy template ref
     if (!closed) {
       store.close();
     }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite seeds Ling Agent as a protected system teammate and channel member", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-system-teammate-"));
+  const now = "2026-06-12T00:00:00.000Z";
+  const updatedAt = "2026-06-12T00:01:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const lingAgent = store.getAiTeammate(LING_AGENT_ID);
+    assert.ok(lingAgent);
+    assert.equal(lingAgent.kind, "system_teammate");
+    assert.equal(lingAgent.systemRole, "ling_agent");
+    assert.equal(lingAgent.protectedProfile, true);
+    assert.deepEqual(lingAgent.editableFields, lingAgentEditableFields);
+    assert.equal(lingAgent.templateId, LING_AGENT_ID);
+    assert.equal(lingAgent.status, "active");
+    assert.equal(lingAgent.pinned, true);
+    assert.equal(lingAgent.hidden, false);
+    assert.equal(lingAgent.systemPrompt, LING_AGENT_SYSTEM_PROMPT);
+    assert.deepEqual(lingAgent.allowedTools, lingAgentAllowedTools);
+
+    const channel = store.createChannel(
+      {
+        name: "Default Ling Agent Channel",
+        boundPath: cwd,
+        defaultTeammateId: LING_AGENT_ID,
+      },
+      now,
+    );
+    assert.equal(channel.defaultTeammateId, undefined);
+    assert.deepEqual(store.listTeammateChannelMemberships(LING_AGENT_ID).map((membership) => membership.channelId), [channel.id]);
+    assert.equal(store.listTeammateChannelMemberships(LING_AGENT_ID)[0].isDefault, false);
+
+    const engineerId = createBuiltinAiTeammateId("engineer");
+    const specialistChannel = store.createChannel(
+      {
+        name: "Preferred Specialist Channel",
+        boundPath: cwd,
+        defaultTeammateId: engineerId,
+      },
+      now,
+    );
+    assert.equal(specialistChannel.defaultTeammateId, engineerId);
+    assert.equal(store.updateChannel(specialistChannel.id, { defaultTeammateId: LING_AGENT_ID }, updatedAt).defaultTeammateId, undefined);
+
+    const personalized = store.updateAiTeammate(
+      LING_AGENT_ID,
+      {
+        displayName: "Ling",
+        description: "Workspace coordinator",
+        appendSystemPrompt: ["Prefer concise Chinese status reports."],
+      },
+      updatedAt,
+    );
+    assert.equal(personalized.displayName, "Ling");
+    assert.equal(personalized.description, "Workspace coordinator");
+    assert.deepEqual(personalized.appendSystemPrompt, ["Prefer concise Chinese status reports."]);
+    assert.equal(personalized.systemPrompt, LING_AGENT_SYSTEM_PROMPT);
+    assert.deepEqual(personalized.allowedTools, lingAgentAllowedTools);
+    assert.deepEqual(personalized.approvalProfile, { mode: "standard", risk: "medium" });
+    assert.equal(personalized.status, "active");
+    assert.equal(personalized.pinned, true);
+    assert.equal(personalized.hidden, false);
+
+    assert.throws(() => store.updateAiTeammate(LING_AGENT_ID, { systemPrompt: "override" }, updatedAt), /protected fields/);
+    assert.throws(() => store.updateAiTeammate(LING_AGENT_ID, { allowedTools: ["read"] }, updatedAt), /protected fields/);
+    assert.throws(() => store.updateAiTeammate(LING_AGENT_ID, { status: "disabled" }, updatedAt), /protected fields/);
+    assert.throws(() => store.disableAiTeammate(LING_AGENT_ID, updatedAt), /cannot be disabled/);
+    assert.throws(() => store.hardDeleteAiTeammate(LING_AGENT_ID, { reason: "owner request" }, updatedAt), /cannot be deleted/);
+    assert.throws(() => store.replaceTeammateChannelMemberships(LING_AGENT_ID, [], updatedAt), /membership is protected/);
+    assert.throws(() => store.replaceTeammateSkillBindings(LING_AGENT_ID, [], updatedAt), /skill bindings are protected/);
+    assert.throws(() => store.replaceTeammateMemoryScopes(LING_AGENT_ID, [], updatedAt), /memory scopes are protected/);
+    assert.throws(() => store.replaceTeammateMcpBindings(LING_AGENT_ID, [], updatedAt), /MCP bindings are protected/);
+  } finally {
+    store.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });

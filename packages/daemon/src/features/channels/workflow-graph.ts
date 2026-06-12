@@ -451,11 +451,11 @@ function resolveGraphNodeParticipant(store: RunStore, node: WorkflowGraphNode): 
   if (node.teammateId && node.teammateTemplateId) {
     throw new HttpError(400, "workflow_graph_invalid", `Node ${node.id} must use teammateId or teammateTemplateId, not both`);
   }
-  if (node.teammateId) {
-    if (isLingAgentExecutorId(node.teammateId)) {
-      const lingAgent = createLingAgentExecutor();
-      return { toParticipantId: lingAgent.id, toParticipantLabel: lingAgent.displayName };
-    }
+	  if (node.teammateId) {
+	    if (isLingAgentExecutorId(node.teammateId)) {
+	      const lingAgent = store.getAiTeammate(node.teammateId) ?? createLingAgentExecutor();
+	      return { toParticipantId: lingAgent.id, toParticipantLabel: lingAgent.displayName };
+	    }
     const teammate = store.getAiTeammate(node.teammateId);
     if (!teammate) {
       throw new HttpError(400, "teammate_not_found", `AI teammate not found: ${node.teammateId}`);

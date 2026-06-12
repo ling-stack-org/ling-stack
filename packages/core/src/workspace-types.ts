@@ -375,10 +375,77 @@ export type AiTeammateStatus = "active" | "paused" | "disabled";
 
 export const aiTeammateStatuses: readonly AiTeammateStatus[] = ["active", "paused", "disabled"];
 
+export const LING_AGENT_ID = "ling_agent";
+
+export type AiTeammateKind = "ai_teammate" | "system_teammate";
+export type AiTeammateSystemRole = "ling_agent";
+export type AiTeammateEditableField =
+  | "displayName"
+  | "description"
+  | "avatarTone"
+  | "avatarImageAttachmentId"
+  | "appendSystemPrompt";
+
+export const lingAgentEditableFields: readonly AiTeammateEditableField[] = [
+  "displayName",
+  "description",
+  "avatarTone",
+  "avatarImageAttachmentId",
+  "appendSystemPrompt",
+];
+
+export const lingAgentAllowedTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+
+export const LING_AGENT_SYSTEM_PROMPT = [
+  "You are Ling Agent, Ling Stack's built-in coordinator.",
+  "You are the default visible agent for channels and private chat.",
+  "Classify user messages as chat, executable work, continuation, approval response, or clarification.",
+  "For executable work, prepare scoped task confirmation and use the existing workflow, run, approval, and evidence paths.",
+  "Use specialist teammates when they are explicitly mentioned or materially improve the work, but do not require them for safe bounded work.",
+  "Never self-grant tools, credentials, provider access, write scope, deployment authority, external-send authority, memory activation, or approval bypass.",
+].join("\n");
+
+export function isLingAgentTeammateId(teammateId: string | undefined): boolean {
+  return teammateId === LING_AGENT_ID;
+}
+
+export function createLingAgentSystemTeammate(now: string, overrides: Partial<Pick<
+  AiTeammate,
+  "displayName" | "description" | "avatarTone" | "avatarImageAttachmentId" | "appendSystemPrompt"
+>> = {}): AiTeammate {
+  return {
+    id: LING_AGENT_ID,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    templateId: LING_AGENT_ID,
+    roleKey: "custom",
+    displayName: overrides.displayName ?? "Ling Agent",
+    description: overrides.description ?? "Built-in coordinator for channels, private chat, tasks, permissions, and specialist collaboration.",
+    avatarTone: overrides.avatarTone ?? "violet",
+    avatarImageAttachmentId: overrides.avatarImageAttachmentId,
+    systemPrompt: LING_AGENT_SYSTEM_PROMPT,
+    appendSystemPrompt: overrides.appendSystemPrompt ?? [],
+    allowedTools: lingAgentAllowedTools,
+    approvalProfile: { mode: "standard", risk: "medium" },
+    status: "active",
+    pinned: true,
+    hidden: false,
+    kind: "system_teammate",
+    systemRole: "ling_agent",
+    protectedProfile: true,
+    editableFields: lingAgentEditableFields,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export interface AiTeammate {
   readonly id: string;
   readonly workspaceId: string;
   readonly templateId?: string;
+  readonly kind?: AiTeammateKind;
+  readonly systemRole?: AiTeammateSystemRole;
+  readonly protectedProfile?: boolean;
+  readonly editableFields?: readonly AiTeammateEditableField[];
   readonly roleKey: AiTeammateRoleKey;
   readonly displayName: string;
   readonly description: string;

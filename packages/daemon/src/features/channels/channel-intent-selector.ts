@@ -18,7 +18,7 @@ import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
-import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
+import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 
 export interface ChannelIntentSelectorInput {
@@ -484,6 +484,16 @@ function createWorkflowProposal(
     sourceText: input.sourceMessage.body,
   }).language;
   const now = new Date().toISOString();
+  const fallbackRecommendations = uniqueStrings(
+    participants
+      .map((participant) => participant.fallbackSpecialistRoleKey)
+      .filter((roleKey): roleKey is AiTeammate["roleKey"] => Boolean(roleKey))
+      .map((roleKey) => lingAgentFallbackRecommendation(roleKey, responseLanguage)),
+  );
+  const riskSummary = [
+    buildRiskSummary(reasonCode, responseLanguage),
+    ...fallbackRecommendations,
+  ].join("\n\n");
   const proposal = input.store.createChannelExecutionProposal(
     {
       channelId: input.channel.id,
@@ -499,7 +509,7 @@ function createWorkflowProposal(
         summary: roleSummary(participant.role, responseLanguage),
       })),
       requiredTools: deriveRequiredTools(participants),
-      riskSummary: buildRiskSummary(reasonCode, responseLanguage),
+      riskSummary,
       responseLanguage,
       status: "draft",
     },
@@ -546,11 +556,13 @@ function createSingleStepExecutableProposal(
     sourceText: input.sourceMessage.body,
   }).language;
   const blocker = singleStepExecutableBlocker(input, executableIntent, participant.teammate, responseLanguage);
+  const fallbackSpecialistRoleKey = participant.fallbackSpecialistRoleKey
+    ?? (isLingAgentExecutorId(participant.teammate.id) ? executableIntent.rolePreferences[0] : undefined);
   const now = new Date().toISOString();
   const riskSummary = blocker
     ? `${executableIntent.riskSummary}\n\n${blocker}`
-    : participant.fallbackSpecialistRoleKey
-      ? `${executableIntent.riskSummary}\n\n${lingAgentFallbackRecommendation(participant.fallbackSpecialistRoleKey, responseLanguage)}`
+    : fallbackSpecialistRoleKey
+      ? `${executableIntent.riskSummary}\n\n${lingAgentFallbackRecommendation(fallbackSpecialistRoleKey, responseLanguage)}`
       : executableIntent.riskSummary;
   const proposal = input.store.createChannelExecutionProposal(
     {
@@ -995,8 +1007,10 @@ function looksWorkShapedButUnderspecified(text: string): boolean {
 
 function selectProposalParticipants(input: ChannelIntentSelectorInput, reasonCode: IntentReasonCode):
   readonly ProposalParticipantSelection[] {
-  const activeTeammates = input.store.listAiTeammates({ status: "active", includeHidden: false, limit: 100 });
-  const byRole = new Map(activeTeammates.map((teammate) => [teammate.roleKey, teammate]));
+  const activeSpecialists = input.store
+    .listAiTeammates({ status: "active", includeHidden: false, limit: 100 })
+    .filter((teammate) => !isLingAgentExecutorId(teammate.id));
+  const byRole = new Map(activeSpecialists.map((teammate) => [teammate.roleKey, teammate]));
   const text = input.sourceMessage.body.toLowerCase();
   const selectedRoles = reasonCode === "all_teammates_request"
     ? roleMatches.filter((role) => byRole.has(role.roleKey)).slice(0, 5)
@@ -1006,10 +1020,21 @@ function selectProposalParticipants(input: ChannelIntentSelectorInput, reasonCod
     ? roleMatches.filter((role) => ["release", "engineer", "qa"].includes(role.roleKey) && byRole.has(role.roleKey))
     : selectedRoles;
 
-  return orderedRoles.flatMap((role) => {
+  const participants = orderedRoles.flatMap((role) => {
     const teammate = byRole.get(role.roleKey);
     return teammate ? [{ teammate, role }] : [];
   });
+  if (participants.length > 0) {
+    return participants;
+  }
+
+  const fallbackRoleKey = inferFallbackSpecialistRoleKey(reasonCode, text);
+  const lingAgent = input.store.getAiTeammate(LING_AGENT_EXECUTOR_ID) ?? createLingAgentExecutor();
+  return [{
+    teammate: lingAgent,
+    role: roleMatchForTeammate(lingAgent, fallbackRoleKey),
+    fallbackSpecialistRoleKey: fallbackRoleKey,
+  }];
 }
 
 function selectVisibleMultiReplyTeammates(input: ChannelIntentSelectorInput): readonly AiTeammate[] {
@@ -1080,7 +1105,9 @@ function selectSingleStepExecutableParticipant(
   input: ChannelIntentSelectorInput,
   executableIntent: SingleStepExecutableIntent,
 ): ProposalParticipantSelection | undefined {
-  const activeTeammates = input.store.listAiTeammates({ status: "active", includeHidden: false, limit: 100 });
+  const activeTeammates = input.store
+    .listAiTeammates({ status: "active", includeHidden: false, limit: 100 })
+    .filter((teammate) => !isLingAgentExecutorId(teammate.id));
   const rolePreferenceSet = new Set(executableIntent.rolePreferences);
   const rolePreferred = activeTeammates.filter((teammate) => rolePreferenceSet.has(teammate.roleKey));
   const inChannel = activeTeammates.filter((teammate) => teammateCanReplyInChannel(input.store, input.channel, teammate.id));
@@ -1101,13 +1128,27 @@ function selectSingleStepExecutableParticipant(
     };
   }
 
-  const lingAgent = createLingAgentExecutor();
+  const lingAgent = input.store.getAiTeammate(LING_AGENT_EXECUTOR_ID) ?? createLingAgentExecutor();
   const fallbackRoleKey = executableIntent.rolePreferences[0];
   return {
     teammate: lingAgent,
     role: roleMatchForTeammate(lingAgent, fallbackRoleKey),
     fallbackSpecialistRoleKey: fallbackRoleKey,
   };
+}
+
+function inferFallbackSpecialistRoleKey(reasonCode: IntentReasonCode, text: string): AiTeammate["roleKey"] {
+  const mentionedRole = roleMatches.find((role) => textMentionsRole(text, role.roleKey));
+  if (mentionedRole) {
+    return mentionedRole.roleKey;
+  }
+  if (reasonCode === "explicit_workflow_start" || reasonCode === "ordered_work_request") {
+    return "engineer";
+  }
+  if (reasonCode === "all_teammates_request" || reasonCode === "multi_role_request") {
+    return "engineer";
+  }
+  return "custom";
 }
 
 function roleMatchForTeammate(teammate: AiTeammate, fallbackRoleKey: AiTeammate["roleKey"] | undefined): RoleMatch {
@@ -1179,26 +1220,7 @@ function buildSingleStepExecutablePrompt(
 }
 
 function chooseClarifyingTeammate(input: ChannelIntentSelectorInput): AiTeammate | undefined {
-  const protocol = resolveEffectiveChannelCollaborationProtocol({
-    store: input.store,
-    channel: input.channel,
-  });
-  const activeTeammates = input.store.listAiTeammates({ status: "active", includeHidden: false, limit: 100 });
-  const defaultTeammate = protocol.protocol.defaultTeammateId
-    ? activeTeammates.find((teammate) => teammate.id === protocol.protocol.defaultTeammateId || teammate.templateId === protocol.protocol.defaultTeammateId)
-    : undefined;
-  const candidates = [
-    defaultTeammate,
-    activeTeammates.find((teammate) => teammate.roleKey === "product" && teammateCanClarifyInChannel(input.store, input.channel, teammate.id)),
-    activeTeammates.find((teammate) => teammate.roleKey === "architect" && teammateCanClarifyInChannel(input.store, input.channel, teammate.id)),
-    activeTeammates.find((teammate) => teammate.roleKey === "engineer" && teammateCanClarifyInChannel(input.store, input.channel, teammate.id)),
-    activeTeammates.find((teammate) => teammateCanClarifyInChannel(input.store, input.channel, teammate.id)),
-  ];
-  return candidates.find((teammate): teammate is AiTeammate => Boolean(teammate && teammateCanClarifyInChannel(input.store, input.channel, teammate.id)));
-}
-
-function teammateCanClarifyInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
-  return teammateCanReplyInChannel(store, channel, teammateId);
+  return input.store.getAiTeammate(LING_AGENT_EXECUTOR_ID) ?? createLingAgentExecutor(new Date().toISOString());
 }
 
 function teammateCanReplyInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
