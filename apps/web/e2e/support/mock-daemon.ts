@@ -4985,6 +4985,159 @@ export async function handleDaemonRoute(
       return;
     }
   }
+  const channelMessageStreamMatch = /^\/channels\/([^/]+)\/messages\/stream$/.exec(path);
+  if (channelMessageStreamMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelMessageStreamMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    state.lastChannelMessageRequest = body;
+    if (state.channelMessageDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.channelMessageDelayMs));
+    }
+    if (state.failNextChannelMessage) {
+      state.failNextChannelMessage = false;
+      await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
+      return;
+    }
+    const message = {
+      id: `msg_${state.channelMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      threadId: typeof body.threadId === "string" ? body.threadId : undefined,
+      kind: typeof body.kind === "string" ? body.kind : "message",
+      intent: typeof body.intent === "string" ? body.intent : "discuss",
+      authorType: typeof body.authorType === "string" ? body.authorType : "local-user",
+      authorId: typeof body.authorId === "string" ? body.authorId : "tian",
+      body: typeof body.body === "string" ? body.body : "",
+      mentions: Array.isArray(body.mentions) ? body.mentions : [],
+      attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds : [],
+      linkPreviewIds: Array.isArray(body.linkPreviewIds) ? body.linkPreviewIds : [],
+      fileRefs: Array.isArray(body.fileRefs) ? body.fileRefs : [],
+      linkedTaskId: typeof body.linkedTaskId === "string" ? body.linkedTaskId : undefined,
+      linkedRunId: typeof body.linkedRunId === "string" ? body.linkedRunId : undefined,
+      status: "ready",
+      createdAt: "2026-05-25T00:18:00.000Z",
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    };
+    state.channelMessages.push(message);
+    const materializationClarifyReply = maybeCreateMockMaterializationClarifyReply(state, channelId, message);
+    if (materializationClarifyReply) {
+      const events = [
+        { event: "ready", data: { message } },
+        { event: "ready", data: { message, aiReply: materializationClarifyReply, aiReplies: [materializationClarifyReply] } },
+        { event: "done", data: { message, aiReply: materializationClarifyReply, aiReplies: [materializationClarifyReply] } },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join(""),
+      });
+      return;
+    }
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    const autoReplyMode = isRecord(channel) && typeof channel.autoReplyMode === "string" ? channel.autoReplyMode : "mentions_only";
+    const mockWorkflowProposal = body.requestAiReply !== true
+      ? maybeCreateMockWorkflowProposal(state, channelId, message, autoReplyMode)
+      : undefined;
+    if (mockWorkflowProposal) {
+      const events = [
+        { event: "ready", data: { message } },
+        { event: "done", data: { message, ...mockWorkflowProposal } },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join(""),
+      });
+      return;
+    }
+    const shouldAutoReply = body.requestAiReply === true ||
+      (
+        typeof message.body === "string" &&
+        message.authorType === "local-user" &&
+        message.kind === "message" &&
+        message.intent === "discuss" &&
+        !message.threadId &&
+        (message.body.includes("?") || message.body.includes("？")) &&
+        (autoReplyMode === "default_teammate" || autoReplyMode === "auto_route")
+      );
+    const routedTeammateId = body.requestAiReply === true
+      ? typeof body.teammateId === "string" ? body.teammateId : "engineer"
+      : autoReplyMode === "auto_route" ? "designer" : isRecord(channel) && typeof channel.defaultTeammateId === "string" ? channel.defaultTeammateId : undefined;
+    const routeDecision = {
+      schemaVersion: 1,
+      id: `route_${state.channelMessageRouteDecisions.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      sourceMessageId: message.id,
+      mode: autoReplyMode,
+      action: shouldAutoReply && routedTeammateId ? "reply" : "no_reply",
+      selectedTeammateId: shouldAutoReply ? routedTeammateId : undefined,
+      selectedProviderPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : undefined,
+      confidence: shouldAutoReply ? 1 : undefined,
+      reason: shouldAutoReply ? "Mock route accepted." : "Mock route suppressed.",
+      alternativesConsidered: [],
+      contextPack: shouldAutoReply
+        ? {
+            schemaVersion: 1,
+            kind: autoReplyMode === "auto_route" ? "auto_route_selector" : "channel_reply",
+            providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : undefined,
+            modelId: "mock-model",
+            sectionIds: autoReplyMode === "auto_route"
+              ? ["auto_route_instructions", "channel_collaboration_protocol", "auto_route_source_message", "auto_route_recent_context", "auto_route_candidates"]
+              : ["channel_collaboration_protocol", "channel_discussion"],
+            droppedSectionIds: [],
+            sourceRefCounts: { channel: 1, message: 1 },
+            compactionIds: [],
+          }
+        : undefined,
+      status: shouldAutoReply && routedTeammateId ? "accepted" : "suppressed",
+      createdBy: body.requestAiReply === true ? "explicit_mention" : autoReplyMode === "auto_route" ? "model" : "deterministic",
+      createdAt: "2026-05-25T00:18:00.500Z",
+      updatedAt: "2026-05-25T00:18:00.500Z",
+    };
+    state.channelMessageRouteDecisions.push(routeDecision);
+    const aiReply = shouldAutoReply && routedTeammateId
+      ? {
+          id: `msg_${state.channelMessages.length + 1}`,
+          workspaceId: "workspace_default",
+          channelId,
+          threadId: message.threadId ?? message.id,
+          kind: "ai_reply",
+          intent: "discuss",
+          authorType: "ai-teammate",
+          authorId: routedTeammateId,
+          body: "收到，我会按频道上下文推进。",
+          mentions: [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          fileRefs: [],
+          status: "ready",
+          createdAt: "2026-05-25T00:18:01.000Z",
+          updatedAt: "2026-05-25T00:18:01.000Z",
+        }
+      : undefined;
+    if (aiReply) {
+      state.channelMessages.push(aiReply);
+      const index = state.channelMessageRouteDecisions.findIndex((decision) => isRecord(decision) && decision.id === routeDecision.id);
+      if (index !== -1) {
+        state.channelMessageRouteDecisions[index] = { ...routeDecision, replyMessageId: aiReply.id, updatedAt: "2026-05-25T00:18:01.000Z" };
+      }
+    }
+    const pendingReply = aiReply ? { ...aiReply, body: "", status: "pending", errorMessage: undefined } : undefined;
+    const events = [
+      { event: "ready", data: { message } },
+      ...(pendingReply ? [{ event: "ready", data: { message, aiReply: pendingReply, aiReplies: [pendingReply] } }] : []),
+      ...(aiReply ? [{ event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } }] : []),
+      { event: "done", data: aiReply ? { message, aiReply, aiReplies: [aiReply] } : { message } },
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: events.map((event) => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join(""),
+    });
+    return;
+  }
+
   const channelMessagesMatch = /^\/channels\/([^/]+)\/messages$/.exec(path);
   if (channelMessagesMatch && request.method() === "GET") {
     const channelId = decodeURIComponent(channelMessagesMatch[1]);

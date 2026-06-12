@@ -3159,6 +3159,7 @@ export function WorkspaceClientView({
       const message = item.record;
       const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
       const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
+      const pendingAiReplyBody = pendingAiReply && !message.body.trim() ? t("Thinking...") : message.body;
       const executionProposals = (executionProposalsByMessageId.get(message.id) ?? [])
         .filter((proposal) => auditActivityVisible || !proposalShouldHideInDefaultFeed(proposal, channelWorkflows));
       const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
@@ -3182,7 +3183,7 @@ export function WorkspaceClientView({
               bodyNode={(
                 <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                   {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                  <MessageBodyRenderer text={pendingAiReply ? t("AI teammate is replying...") : message.body} cwd={cwd} compact />
+                  <MessageBodyRenderer text={pendingAiReplyBody} cwd={cwd} compact />
                 </div>
               )}
               attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.channelId)}
@@ -3254,7 +3255,7 @@ export function WorkspaceClientView({
             author={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), t("You"), allLocalTeammateById)}
             tag={message.kind === "task_link" ? "Task" : undefined}
             time={formatDateTime(message.createdAt)}
-            body={pendingAiReply ? t("AI teammate is replying...") : message.body}
+            body={pendingAiReplyBody}
             pending={pendingAiReply}
             metaAction={plainChatMessage ? (
               <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>

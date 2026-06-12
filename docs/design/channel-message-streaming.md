@@ -15,6 +15,10 @@ Sending a channel message from the composer should start a normal Ling Agent cha
 
 The existing JSON `POST /channels/:id/messages` remains supported for API compatibility. The Web app should prefer the streaming endpoint for composer sends.
 
+While a pending AI reply has no visible text yet, the Web feed should show a
+generic `Thinking...` status with a spinner. As soon as `delta.body` is non-empty,
+the same bubble must render that body instead of a generic pending label.
+
 ## HTTP Contract
 
 ```http
@@ -56,3 +60,4 @@ When a channel turn intentionally creates multiple AI replies, the stream may em
 - Hidden proposal blocks are not present in any streamed `delta` body.
 - Existing non-streaming `POST /channels/:id/messages` continues to work.
 - The Web composer consumes the stream and updates the existing message bubble rather than inserting duplicate assistant messages.
+- Pending AI bubbles show `Thinking...` only before visible body text exists; they do not hide streamed body text behind a static pending label.

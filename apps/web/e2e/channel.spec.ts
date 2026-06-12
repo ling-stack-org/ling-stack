@@ -1208,9 +1208,6 @@ test("channel activity supports mentions, messages, files, links, and topic repl
 
   await expect(page.getByText("@Engineer please refine the channel requirements")).toBeVisible();
   await expect(page.locator(".channel-composer .composer-status-row.loading")).toHaveCount(0);
-  const pendingReply = page.locator(".message-bubble").filter({ hasText: "AI teammate is replying..." });
-  await expect(pendingReply).toBeVisible();
-  await expect(pendingReply).toHaveClass(/message-bubble-peer/);
   await expect(page.getByText("收到，我会按频道上下文推进。")).toBeVisible();
   await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
   await expect.poll(() => state.lastChannelMessageRequest?.providerPresetId).toBe("provider_local");
@@ -1583,7 +1580,16 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_1");
     return isRecord(updated) ? [updated.status, updated.linkedWorkflowId].join("|") : "";
   }).toBe("accepted|workflow_1");
-  await expect(proposal.getByRole("button", { name: "Open workflow" })).toBeVisible();
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
+  const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Refine channel workspace copy" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toContainText("Task in progress");
+
+  await openChannelChatTools(page);
+  const acceptedProposal = feed.getByLabel("Task confirmation").filter({ hasText: "Refine channel workspace copy" });
+  await expect(acceptedProposal).toBeVisible();
+  await expect(acceptedProposal.getByRole("button", { name: "Open workflow" })).toBeVisible();
 });
 
 test("completed workflow hides accepted proposal and leaves final result in default chat", async ({ page }) => {
@@ -2078,8 +2084,9 @@ test("channel composer moves sent messages into the feed while routing is pendin
   await expect(composerInput).toHaveValue("");
   await expect(channelFeed.getByText("Who owns the release checklist?")).toBeVisible();
   await expect(channelFeed.getByText("Thinking...")).toBeVisible();
-  await expect(channelFeed.getByText("AI teammate is replying...")).toBeVisible({ timeout: 3_000 });
+  await expect(channelFeed.getByText("收到，我会按频道上下文推进。")).toBeVisible({ timeout: 3_000 });
   await expect(channelFeed.getByText("Thinking...")).toHaveCount(0);
+  await expect(channelFeed.getByText("AI teammate is replying...")).toHaveCount(0);
 });
 
 test("channel URL preview blocked state stays in Activity and still allows sending text", async ({ page }) => {
