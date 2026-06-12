@@ -15,6 +15,12 @@ Sending a channel message from the composer should start a normal Ling Agent cha
 
 The existing JSON `POST /channels/:id/messages` remains supported for API compatibility. The Web app should prefer the streaming endpoint for composer sends.
 
+Streaming changes only the transport and UI cadence; it must not make the reply
+stateless. The daemon should build the same Ling Agent reply context for streamed and
+non-streamed sends, including bounded recent same-channel history before the latest turn.
+Short follow-ups such as `400字`, `继续`, or `改短点` should therefore continue the
+visible prior topic instead of being treated as isolated new prompts.
+
 While a pending AI reply has no visible text yet, the Web feed should show a
 generic `Thinking...` status with a spinner. As soon as `delta.body` is non-empty,
 the same bubble must render that body instead of a generic pending label.
@@ -68,3 +74,4 @@ When a channel turn intentionally creates multiple AI replies, the stream may em
 - The Web composer consumes the stream and updates the existing message bubble rather than inserting duplicate assistant messages.
 - Pending AI bubbles show `Thinking...` only before visible body text exists; they do not hide streamed body text behind a static pending label.
 - While pinned to latest, long streamed AI replies keep the message feed at the bottom without requiring manual scrolling.
+- Streamed and non-streamed channel replies include recent conversation context, while excluding the current pending assistant placeholder.

@@ -160,6 +160,8 @@ const DEFAULT_OUTPUT_TOKENS = 1_024;
 const SELECTOR_OUTPUT_TOKENS = 512;
 const RUNTIME_OVERHEAD_TOKENS = 512;
 const MIN_INPUT_BUDGET_TOKENS = 1_024;
+const CHANNEL_REPLY_RECENT_CONTEXT_LIMIT = 6;
+const CHANNEL_REPLY_RECENT_CONTEXT_BODY_CHARS = 1_200;
 
 export function resolveProviderContextCapabilities(providerPreset?: ProviderPreset): ProviderContextCapabilities {
   return {
@@ -264,6 +266,9 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
     ...sourceMessage,
     body: renderLingAgentTurnEnvelopeForPrompt(envelope),
   };
+  const recentReplyContextSection = input.minimal
+    ? undefined
+    : buildRecentChannelReplyContextSection(input.store, input.channel.id, input.sourceMessage);
   const compactedSummarySection = input.compactedChannelSummary
     ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)]
     : [];
@@ -273,6 +278,7 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
     sections: [
       protocolSection,
       ...compactedSummarySection,
+      ...(recentReplyContextSection ? [recentReplyContextSection] : []),
       {
         id: "channel_discussion",
         role: "user",
@@ -284,6 +290,11 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
     sourceRefs: [
       { type: "channel", id: input.channel.id, label: input.channel.name },
       { type: "message", id: sourceMessage.id, label: "Source message" },
+      ...(recentReplyContextSection?.sourceRefIds ?? []).map((messageId): ContextSourceRef => ({
+        type: "message",
+        id: messageId,
+        label: "Recent context message",
+      })),
       ...turnEnvelopeSourceRefs(envelope),
       ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
     ],
@@ -424,6 +435,69 @@ function listRecentContextMessages(store: RunStore, channelId: string, sourceMes
   return store
     .listChannelMessages({ channelId, limit: 8 })
     .filter((message) => message.id === sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+}
+
+function buildRecentChannelReplyContextSection(
+  store: RunStore,
+  channelId: string,
+  sourceMessage: ChannelMessage,
+): ContextSection | undefined {
+  const recentMessages = listPriorChannelMessages(store, channelId, sourceMessage)
+    .filter((message) => message.status !== "pending")
+    .slice(-CHANNEL_REPLY_RECENT_CONTEXT_LIMIT);
+  if (recentMessages.length === 0) {
+    return undefined;
+  }
+  return {
+    id: "channel_recent_context",
+    role: "evidence",
+    priority: "high",
+    text: [
+      "Recent channel context before the latest turn:",
+      "Use this context to resolve short follow-ups, edits, continuations, and references like \"继续\", \"改成400字\", \"上面那个\", or \"这个\". If the latest turn is unrelated, answer the latest turn normally.",
+      ...recentMessages.map((message) => formatRecentContextMessage(store, message)),
+    ].join("\n\n"),
+    sourceRefIds: recentMessages.map((message) => message.id),
+  };
+}
+
+function listPriorChannelMessages(store: RunStore, channelId: string, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
+  const recentMessages = listRecentContextMessages(store, channelId, sourceMessage);
+  const sourceIndex = recentMessages.findIndex((message) => message.id === sourceMessage.id);
+  if (sourceIndex >= 0) {
+    return recentMessages.slice(0, sourceIndex);
+  }
+  return recentMessages.filter((message) => message.id !== sourceMessage.id);
+}
+
+function formatRecentContextMessage(store: RunStore, message: ChannelMessage): string {
+  const status = message.status === "ready" ? "" : `, status=${message.status}`;
+  return [
+    `Message ${message.id} (${message.authorType}${status})`,
+    `${formatRecentContextAuthor(store, message)}:`,
+    truncateRecentContextBody(message.body, CHANNEL_REPLY_RECENT_CONTEXT_BODY_CHARS),
+  ].join("\n");
+}
+
+function formatRecentContextAuthor(store: RunStore, message: ChannelMessage): string {
+  if (message.authorType === "local-user") {
+    return "User";
+  }
+  if (message.authorType === "system") {
+    return "System";
+  }
+  if (!message.authorId) {
+    return "AI teammate";
+  }
+  return resolveAiTeammateReference(store, message.authorId)?.displayName ?? `AI teammate ${message.authorId}`;
+}
+
+function truncateRecentContextBody(body: string, maxLength: number): string {
+  const trimmed = body.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed || "[empty]";
+  }
+  return `${trimmed.slice(0, Math.max(0, maxLength - 48))}\n[truncated for recent channel context]`;
 }
 
 function resolveTurnEnvelope(input: {

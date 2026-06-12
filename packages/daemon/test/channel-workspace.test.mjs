@@ -1713,6 +1713,46 @@ test("channel message stream does not expose hidden task proposal blocks", async
   }
 });
 
+test("channel AI reply prompt carries recent context for short follow-ups", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-followup-context-"));
+  const runner = new ScriptedRunner([
+    "雨下到第三天，城里的钟停了。修表匠阿岚把怀表放进钟芯，世界重新开始走动。",
+    "四百字版本",
+  ]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+
+    const first = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "300字的小说",
+      providerPresetId: provider.id,
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, first.aiReply.id, "ready");
+
+    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "400字",
+      providerPresetId: provider.id,
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, second.aiReply.id, "ready");
+
+    assert.equal(runner.runs.length, 2);
+    assert.match(runner.runs[1].task.prompt, /Recent channel context before the latest turn/);
+    assert.match(runner.runs[1].task.prompt, /300字的小说/);
+    assert.match(runner.runs[1].task.prompt, /雨下到第三天，城里的钟停了/);
+    assert.match(runner.runs[1].task.prompt, /User message:[\s\S]*400字/);
+    assert.doesNotMatch(runner.runs[1].task.prompt, /AI teammate is preparing a reply/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel no-tools AI reply retries once with compacted channel summary after context-length error", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-context-retry-"));
   const runner = new ScriptedRunner([

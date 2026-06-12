@@ -115,8 +115,8 @@ not messaging a bot in a stateless chat client.
 - Keep provider, tools, approval profile, and runtime lock state inspectable before a run,
   with execution configuration following the assigned agent.
 - Let files and run artifacts be reached from the channel without opening run history first.
-- Preserve decisions and task context so agents can continue work without re-litigating
-  the same assumptions.
+- Preserve decisions, task context, and recent conversation context so agents can continue
+  work or ordinary chat without making the user restate the previous topic.
 - Preserve the current local-first daemon contract and avoid implying cloud/team sync.
 - Keep the implementation small enough to land in slices.
 
