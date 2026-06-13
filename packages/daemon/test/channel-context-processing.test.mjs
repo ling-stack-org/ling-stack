@@ -21,6 +21,7 @@ import {
   proposalSourceRefsFromContextView,
 } from "../dist/features/channels/context-processing/proposals.js";
 import { buildWorkflowStepContextView } from "../dist/features/channels/context-processing/workflow-steps.js";
+import { memoryEligibilityForView } from "../dist/features/channels/context-processing/memory.js";
 import { renderChannelContextView } from "../dist/features/channels/context-processing/render.js";
 import { buildChannelContextView } from "../dist/features/channels/context-processing/views.js";
 import { buildWorkflowStepContextPack } from "../dist/features/channels/context-packs.js";
@@ -727,6 +728,154 @@ test("selector context view filters private memory and raw evidence sources", ()
     { sourceId: "artifact:raw", reason: "scope" },
     { sourceId: "evidence:raw", reason: "raw_evidence" },
   ]);
+});
+
+test("memory eligibility keeps channel memory but excludes private and secret memory from public channel views", () => {
+  const channelMemory = createSource({ id: "memory:channel", kind: "memory" });
+  const influenceOnlyMemory = createSource({
+    id: "memory:influence",
+    kind: "memory",
+    metadata: { publicQuoteEligible: false },
+  });
+  const privateMemory = createSource({
+    id: "memory:private",
+    kind: "memory",
+    sensitivity: "private",
+    teammateId: "teammate_a",
+  });
+  const secretMemory = createSource({
+    id: "memory:secret",
+    kind: "memory",
+    sensitivity: "secret_adjacent",
+  });
+
+  const view = buildChannelContextView({
+    kind: "ling_agent_channel_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    now,
+    sourceRefs: [],
+    sections: [],
+    sources: [channelMemory, influenceOnlyMemory, privateMemory, secretMemory],
+  });
+
+  assert.deepEqual(view.sources.map((source) => source.id), ["memory:channel", "memory:influence"]);
+  assert.deepEqual(view.dropped, [
+    { sourceId: "memory:private", reason: "sensitivity" },
+    { sourceId: "memory:secret", reason: "sensitivity" },
+  ]);
+  assert.deepEqual(memoryEligibilityForView(channelMemory, "ling_agent_channel_view"), {
+    mode: "public_quote",
+    quotePolicy: "public_ok",
+    policyVersion: "memory_use_isolation_v1",
+  });
+  assert.deepEqual(memoryEligibilityForView(influenceOnlyMemory, "ling_agent_channel_view"), {
+    mode: "influence_only",
+    quotePolicy: "influence_only",
+    policyVersion: "memory_use_isolation_v1",
+  });
+});
+
+test("memory eligibility allows private memory only for the matching teammate consumer", () => {
+  const privateMemory = createSource({
+    id: "memory:private",
+    kind: "memory",
+    sensitivity: "private",
+    teammateId: "teammate_a",
+  });
+
+  const matchingPrivateView = buildChannelContextView({
+    kind: "private_chat_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    consumerTeammateId: "teammate_a",
+    now,
+    sourceRefs: [],
+    sections: [],
+    sources: [privateMemory],
+  });
+  const wrongSpecialistView = buildChannelContextView({
+    kind: "specialist_task_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    consumerTeammateId: "teammate_b",
+    now,
+    sourceRefs: [],
+    sections: [],
+    sources: [privateMemory],
+  });
+
+  assert.deepEqual(matchingPrivateView.sources.map((source) => source.id), ["memory:private"]);
+  assert.deepEqual(matchingPrivateView.dropped, []);
+  assert.deepEqual(wrongSpecialistView.sources, []);
+  assert.deepEqual(wrongSpecialistView.dropped, [
+    { sourceId: "memory:private", reason: "sensitivity" },
+  ]);
+  assert.deepEqual(memoryEligibilityForView(privateMemory, "workflow_step_view", "teammate_a"), {
+    mode: "influence_only",
+    quotePolicy: "influence_only",
+    policyVersion: "memory_use_isolation_v1",
+  });
+});
+
+test("memory eligibility keeps raw memory out of selector and proposal views", () => {
+  const memory = createSource({ id: "memory:channel", kind: "memory" });
+
+  const selectorView = buildChannelContextView({
+    kind: "selector_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    now,
+    sourceRefs: [],
+    sections: [],
+    sources: [memory],
+  });
+  const proposalView = buildChannelContextView({
+    kind: "workflow_proposal_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    now,
+    sourceRefs: [],
+    sections: [],
+    sources: [memory],
+  });
+
+  assert.deepEqual(selectorView.sources, []);
+  assert.deepEqual(proposalView.sources, []);
+  assert.deepEqual(selectorView.dropped, [{ sourceId: "memory:channel", reason: "scope" }]);
+  assert.deepEqual(proposalView.dropped, [{ sourceId: "memory:channel", reason: "scope" }]);
+});
+
+test("memory eligibility keeps memory inspect-only for evidence inspect views", () => {
+  const privateMemory = createSource({
+    id: "memory:private",
+    kind: "memory",
+    sensitivity: "private",
+    teammateId: "teammate_a",
+  });
+  const secretMemory = createSource({
+    id: "memory:secret",
+    kind: "memory",
+    sensitivity: "secret_adjacent",
+  });
+
+  const view = buildChannelContextView({
+    kind: "evidence_inspect_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    now,
+    sourceRefs: [],
+    sections: [],
+    sources: [privateMemory, secretMemory],
+  });
+
+  assert.deepEqual(view.sources.map((source) => source.id), ["memory:private", "memory:secret"]);
+  assert.deepEqual(view.dropped, []);
+  assert.deepEqual(memoryEligibilityForView(secretMemory, "evidence_inspect_view"), {
+    mode: "inspect_only",
+    quotePolicy: "inspect_only",
+    policyVersion: "memory_use_isolation_v1",
+  });
 });
 
 test("context view renderer hides inspect-only sections by default", () => {

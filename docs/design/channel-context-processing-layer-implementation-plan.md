@@ -550,6 +550,54 @@ packages/daemon/src/features/channels/context-processing/memory.test.mjs
 - Memory isolation remains per workspace/channel/teammate/task/run.
 - Public channel replies do not leak private teammate memory excerpts by default.
 
+#### C8A: Memory Eligibility Policy
+
+Status: first implementation slice.
+
+Goal: make `ChannelContextSource(kind="memory")` policy explicit before changing recall,
+prompt rendering, storage, or Web surfaces. The first slice encodes whether a memory source
+is usable as public quote, influence-only context, inspect-only evidence, or excluded from a
+view.
+
+Scope:
+
+- Add a daemon-local memory eligibility module under
+  `packages/daemon/src/features/channels/context-processing/memory.ts`.
+- Classify memory sources by view kind, consumer teammate, source sensitivity, and
+  source metadata such as `quotePolicy` or `publicQuoteEligible`.
+- Route `sourceDropReasonForView` through this module for memory sources while preserving
+  existing source filtering behavior.
+- Cover Ling channel, private chat, specialist/workflow, selector/proposal, and evidence
+  inspect views with daemon tests.
+
+Non-goals:
+
+- No DB schema migration.
+- No memory recall ranking or storage changes.
+- No prompt renderer migration yet.
+- No Web UI change or new visible memory debug surface.
+- No "memory off" switch; teammate memory remains enabled by default.
+
+Policy detail:
+
+| View | Public/channel memory | Private teammate memory | Secret-adjacent memory |
+| --- | --- | --- | --- |
+| Ling channel | Public quote unless metadata downgrades to influence-only. | Excluded from the public channel view. | Excluded. |
+| Private chat | Influence-only for the owning teammate. | Influence-only only when `consumerTeammateId` matches. | Excluded. |
+| Workflow/specialist step | Influence-only for the assigned teammate or step consumer. | Influence-only only when `consumerTeammateId` matches. | Excluded. |
+| Selector/proposal | Excluded; selector/proposal should not route on raw memory excerpts. | Excluded. | Excluded. |
+| Evidence inspect | Inspect-only. | Inspect-only. | Inspect-only. |
+
+Acceptance:
+
+- Public/channel memory can stay in `ling_agent_channel_view`.
+- Private teammate memory is retained only for matching private/specialist/workflow
+  consumers.
+- Selector/proposal views do not include raw memory.
+- Secret-adjacent memory is excluded from ordinary context views.
+- Evidence inspect can keep memory metadata for explainability without making it ordinary
+  prompt text.
+
 ## C9: Inspect Metadata And Web Surfaces
 
 Type: daemon metadata plus Web optional details.
