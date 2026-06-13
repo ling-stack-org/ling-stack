@@ -4164,6 +4164,17 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstContext.contextPack.overBudget, false);
     assert.equal(firstContext.contextPack.sections.some((section) => section.id === "workflow_runtime_boundary"), true);
     assert.equal(firstContext.contextPack.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === compiled.workflow.id), true);
+    const workflowEvidenceAfterFirstTick = await getJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/evidence?cwd=${encodeURIComponent(cwd)}`);
+    const firstStepEvidence = workflowEvidenceAfterFirstTick.steps.find((item) => item.step.id === firstStepAfterFirstTick.id);
+    assert.ok(firstStepEvidence);
+    assert.equal(firstStepEvidence.contextInspect.availability, "available");
+    assert.equal(firstStepEvidence.contextInspect.contextArtifactId, firstStepAfterFirstTick.metadata.contextArtifactId);
+    assert.equal(firstStepEvidence.contextInspect.kind, "workflow_step");
+    assert.equal(firstStepEvidence.contextInspect.budget.mode, "model_estimated");
+    assert.equal(firstStepEvidence.contextInspect.sections.some((section) => section.id === "workflow_runtime_boundary"), true);
+    assert.equal(firstStepEvidence.contextInspect.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === compiled.workflow.id), true);
+    assert.equal(firstStepEvidence.contextInspect.safety.rawPromptTextIncluded, false);
+    assert.doesNotMatch(JSON.stringify(firstStepEvidence.contextInspect), /Workflow step runtime boundary:/);
     assert.ok(firstStepAfterFirstTick.runId);
     const firstRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(firstStepAfterFirstTick.runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(firstRun.workflowStepId, firstStepAfterFirstTick.id);

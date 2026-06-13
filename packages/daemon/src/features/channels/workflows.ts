@@ -41,6 +41,7 @@ import {
   buildChannelCollaborationCardsFromStore,
   buildWorkflowCollaborationCardFromStore,
 } from "./collaboration-cards.js";
+import { buildWorkflowContextInspectSummary, type WorkflowContextInspectSummary } from "./context-processing/inspect.js";
 import {
   parseChannelWorkflowFromHandoffRequest,
   parseChannelWorkflowRequest,
@@ -983,6 +984,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
   readonly steps: readonly {
     readonly step: ChannelWorkflowStep;
     readonly contextPacket?: ReturnType<typeof readWorkflowStepContextPacketArtifact>;
+    readonly contextInspect: WorkflowContextInspectSummary;
     readonly outputPacket?: ReturnType<typeof readWorkflowStepOutputPacketArtifact>;
     readonly linkedRun?: ReturnType<RunStore["getRun"]>;
     readonly packetArtifacts: readonly RunArtifact[];
@@ -1033,6 +1035,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
 function buildWorkflowEvidenceStep(store: RunStore, step: ChannelWorkflowStep): {
   readonly step: ChannelWorkflowStep;
   readonly contextPacket?: ReturnType<typeof readWorkflowStepContextPacketArtifact>;
+  readonly contextInspect: WorkflowContextInspectSummary;
   readonly outputPacket?: ReturnType<typeof readWorkflowStepOutputPacketArtifact>;
   readonly linkedRun?: ReturnType<RunStore["getRun"]>;
   readonly packetArtifacts: readonly RunArtifact[];
@@ -1071,6 +1074,12 @@ function buildWorkflowEvidenceStep(store: RunStore, step: ChannelWorkflowStep): 
   return {
     step,
     contextPacket,
+    contextInspect: buildWorkflowContextInspectSummary({
+      step,
+      contextPacket,
+      contextArtifactMissing: Boolean(step.metadata?.contextArtifactId && !contextArtifact),
+      contextPacketUnreadable: Boolean(contextArtifact && !contextPacket),
+    }),
     outputPacket,
     linkedRun,
     packetArtifacts: [contextArtifact, outputArtifact].filter((artifact): artifact is RunArtifact => Boolean(artifact)),
