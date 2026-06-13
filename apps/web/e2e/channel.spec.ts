@@ -1394,6 +1394,132 @@ test("channel local link request shows natural clarify copy without debug vocabu
   )).toBe(true);
 });
 
+test("channel short follow-up uses recent context without visible routing diagnostics", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+  if (isRecord(channel)) {
+    channel.autoReplyMode = "auto_route";
+  }
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelMessages = [
+    {
+      id: "msg_context_topic",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "右侧进度浮窗只保留任务摘要，不展示调试行。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:10:00.000Z",
+    },
+    {
+      id: "msg_context_ling",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "我会把默认 UI 收敛成任务摘要，详细 context 放到 Inspect。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:11:00.000Z",
+      updatedAt: "2026-05-25T00:11:00.000Z",
+    },
+  ];
+  state.channelAiReplyBody = "接上前面的频道上下文：继续收敛右侧进度浮窗，默认不展示 route/context/token 调试信息。";
+  await mockDaemon(page, state, { channelAutoRouteEnabled: true });
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("继续");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  const channelFeed = page.getByLabel("Channel message feed");
+  await expect(channelFeed.getByText("继续", { exact: true })).toBeVisible();
+  await expect(channelFeed.getByText("接上前面的频道上下文")).toBeVisible();
+  await expect.poll(() => {
+    const decision = state.channelMessageRouteDecisions.find((item) =>
+      isRecord(item) && item.sourceMessageId === "msg_3"
+    );
+    return isRecord(decision) ? decision.action : "";
+  }).toBe("reply");
+  await expect(page.getByText("routeDecision")).toHaveCount(0);
+  await expect(page.getByText("selector_view")).toHaveCount(0);
+  await expect(page.getByText("contextPack")).toHaveCount(0);
+  await expect(page.getByText("estimatedInputTokens")).toHaveCount(0);
+});
+
+test("channel materialized PDF and DOCX inputs show simple chips and a natural Ling answer", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+  if (isRecord(channel)) {
+    channel.autoReplyMode = "auto_route";
+  }
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelAiReplyBody = "我读到了 PDF 的 Q2 风险和 DOCX 的验收项：先收敛默认展示，再保留 Inspect context。";
+  await mockDaemon(page, state, { channelAutoRouteEnabled: true });
+  await page.goto("/");
+
+  await page.locator("input[type=file]").setInputFiles([
+    {
+      name: "risk-brief.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.7 materialized risk brief"),
+    },
+    {
+      name: "acceptance.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: Buffer.from("docx materialized acceptance"),
+    },
+  ]);
+  const pendingAssets = page.getByLabel("Pending message assets");
+  await expect(pendingAssets).toContainText("risk-brief.pdf");
+  await expect(pendingAssets).toContainText("acceptance.docx");
+  for (const attachment of state.channelAttachments) {
+    if (isRecord(attachment) && (attachment.fileName === "risk-brief.pdf" || attachment.fileName === "acceptance.docx")) {
+      attachment.materializationStatus = "available";
+      attachment.previewStatus = "available";
+      attachment.previewText = `${attachment.fileName} extracted content is available.`;
+    }
+  }
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("Summarize these attachments?");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  const channelFeed = page.getByLabel("Channel message feed");
+  await expect(channelFeed.getByText("Summarize these attachments?")).toBeVisible();
+  await expect(channelFeed.getByRole("link", { name: "risk-brief.pdf" })).toBeVisible();
+  await expect(channelFeed.getByRole("link", { name: "acceptance.docx" })).toBeVisible();
+  await expect(channelFeed.getByText("我读到了 PDF 的 Q2 风险和 DOCX 的验收项")).toBeVisible();
+  await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
+  await expect(channelFeed.getByText("metadata_only")).toHaveCount(0);
+  await expect(channelFeed.getByText("not_loaded")).toHaveCount(0);
+  await expect(channelFeed.getByText("unsupported")).toHaveCount(0);
+  await expect(channelFeed.getByText("blocked")).toHaveCount(0);
+  await expect(channelFeed.getByText("extractor")).toHaveCount(0);
+  await expect(channelFeed.getByText("fingerprint")).toHaveCount(0);
+});
+
 test("channel execution proposal confirms into a multi-step workflow", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -1854,6 +1980,90 @@ test("completed workflow hides accepted proposal and leaves final result in defa
 
   await openChannelChatTools(page);
   await expect(feed.getByLabel("Task confirmation")).toContainText("Create /Users/tianxiao/ling-stack-test/README.md");
+});
+
+test("workflow context inspect details stay hidden until explicitly expanded", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelMessages = [
+    {
+      id: "msg_context_inspect",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Implement context inspect without default debug rows.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:49:00.000Z",
+      updatedAt: "2026-05-25T00:49:00.000Z",
+    },
+  ];
+  state.channelWorkflows = [
+    {
+      id: "workflow_context_inspect",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Context inspect workflow",
+      objective: "Expose context evidence only after explicit expansion.",
+      status: "succeeded",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:50:00.000Z",
+      updatedAt: "2026-05-25T00:52:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_context_inspect",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_context_inspect",
+      position: 1,
+      title: "Engineer: Implement inspect summary",
+      prompt: "Expose safe context inspect metadata.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "succeeded",
+      resultSummary: "Context inspect metadata is available on demand.",
+      metadata: {
+        contextArtifactId: "artifact_context_inspect",
+        providerPresetId: "provider_local",
+      },
+      createdAt: "2026-05-25T00:50:00.000Z",
+      updatedAt: "2026-05-25T00:52:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Context inspect workflow" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).not.toContainText("workflow_runtime_boundary");
+  await expect(workCell).not.toContainText("old_verbose_log_tail");
+  await expect(workCell).not.toContainText("raw prompt text excluded");
+  await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
+
+  await workCell.getByRole("button", { name: "Show details" }).click();
+  await expect(workCell).toContainText("Kept sections");
+  await expect(workCell).toContainText("workflow_runtime_boundary");
+  await expect(workCell).toContainText("Dropped sections");
+  await expect(workCell).toContainText("old_verbose_log_tail");
+  await expect(workCell).toContainText("Source refs");
+  await expect(workCell).toContainText("Compactions");
+  await expect(workCell).toContainText("raw prompt text excluded");
+  await expect(workCell).toContainText("raw logs excluded");
+  await expect(workCell).toContainText("raw artifact bodies excluded");
+  await expect(workCell).not.toContainText("Workflow step runtime boundary:");
 });
 
 test("blocked workflow hides accepted proposal and leaves blocker report in default chat", async ({ page }) => {

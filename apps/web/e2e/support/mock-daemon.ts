@@ -2966,7 +2966,12 @@ function maybeCreateMockMaterializationClarifyReply(
   if (wantsAttachmentBody) {
     const attachment = attachmentIds
       .map((attachmentId) => state.channelAttachments.find((item) => isRecord(item) && item.id === attachmentId && item.channelId === channelId))
-      .find((item): item is Record<string, unknown> => isRecord(item) && item.kind !== "text");
+      .find((item): item is Record<string, unknown> =>
+        isRecord(item) &&
+        item.kind !== "text" &&
+        item.materializationStatus !== "available" &&
+        item.previewStatus !== "available"
+      );
     if (attachment) {
       const fileName = typeof attachment.fileName === "string" ? attachment.fileName : "attachment";
       if (attachment.kind === "image") {
@@ -3032,6 +3037,11 @@ function maybeCreateMockMaterializationClarifyReply(
     updatedAt: "2026-05-25T00:18:00.500Z",
   });
   return aiReply;
+}
+
+function isMockContextualFollowUp(body: string): boolean {
+  const trimmed = body.trim();
+  return /^(继续|继续吧|接着|接着说|改短点|再短点|400字|下一步|next|continue)$/iu.test(trimmed);
 }
 
 function maybeCreateMockSingleStepExecutableProposal(
@@ -5079,7 +5089,7 @@ export async function handleDaemonRoute(
         message.kind === "message" &&
         message.intent === "discuss" &&
         !message.threadId &&
-        (message.body.includes("?") || message.body.includes("？")) &&
+        (message.body.includes("?") || message.body.includes("？") || isMockContextualFollowUp(message.body)) &&
         (autoReplyMode === "default_teammate" || autoReplyMode === "auto_route")
       );
     const routedTeammateId = body.requestAiReply === true
@@ -5302,7 +5312,7 @@ export async function handleDaemonRoute(
         message.kind === "message" &&
         message.intent === "discuss" &&
         !message.threadId &&
-        (message.body.includes("?") || message.body.includes("？")) &&
+        (message.body.includes("?") || message.body.includes("？") || isMockContextualFollowUp(message.body)) &&
         (autoReplyMode === "default_teammate" || autoReplyMode === "auto_route")
       );
     const routedTeammateId = body.requestAiReply === true
@@ -5797,6 +5807,17 @@ export async function handleDaemonRoute(
       (!status || workflow.status === status)
     );
     await route.fulfill({ json: { cwd, channelId, workflows } });
+    return;
+  }
+  const workflowEvidenceMatch = /^\/workflows\/([^/]+)\/evidence$/.exec(path);
+  if (workflowEvidenceMatch && request.method() === "GET") {
+    const workflowId = decodeURIComponent(workflowEvidenceMatch[1]);
+    const workflow = state.channelWorkflows.find((item) => isRecord(item) && item.id === workflowId);
+    if (!isRecord(workflow)) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found" } });
+      return;
+    }
+    await route.fulfill({ json: buildMockWorkflowEvidence(state, workflow) });
     return;
   }
   const workflowCollaborationCardMatch = /^\/workflows\/([^/]+)\/collaboration-card$/.exec(path);
@@ -7614,6 +7635,114 @@ export function listOpenMockTeammateDirectInterventions(
     item.threadId === threadId &&
     (item.status === "queued" || item.status === "cancelling_source" || item.status === "starting_continuation")
   );
+}
+
+function buildMockWorkflowEvidence(state: MockState, workflow: Record<string, unknown>): Record<string, unknown> {
+  const workflowId = readString(workflow, "id");
+  const steps = state.channelWorkflowSteps
+    .filter((step) => isRecord(step) && step.workflowId === workflowId)
+    .sort((left, right) => readNumber(left, "position") - readNumber(right, "position") || readString(left, "createdAt").localeCompare(readString(right, "createdAt")));
+  const stepRunIds = new Set(steps.map((step) => readString(step, "runId")).filter(Boolean));
+  const artifacts = Object.entries(state.artifactsByRun)
+    .filter(([runId]) => stepRunIds.has(runId))
+    .flatMap(([, runArtifacts]) => runArtifacts);
+  return {
+    workflow,
+    steps: steps.map((step) => {
+      const runId = readString(step, "runId");
+      return {
+        step,
+        contextInspect: buildMockWorkflowContextInspect(workflow, step),
+        packetArtifacts: [],
+        linkedArtifacts: runId ? state.artifactsByRun[runId] ?? [] : [],
+        diagnostics: [],
+      };
+    }),
+    selectorDecisions: state.channelMessageRouteDecisions.filter((decision) => isRecord(decision) && decision.workflowId === workflowId),
+    handoffIntents: [],
+    handoffs: state.channelHandoffs.filter((handoff) => isRecord(handoff) && handoff.workflowId === workflowId),
+    approvals: state.approvals.filter((approval) => {
+      const approvalRecord = approval as unknown as Record<string, unknown>;
+      return steps.some((step) => approval.runId === readString(step, "runId") || readString(approvalRecord, "workflowStepId") === readString(step, "id"));
+    }),
+    artifacts,
+    memoryCandidates: [],
+  };
+}
+
+function buildMockWorkflowContextInspect(workflow: Record<string, unknown>, step: Record<string, unknown>): Record<string, unknown> {
+  const contextArtifactId = readNestedString(step.metadata, ["contextArtifactId"]);
+  if (!contextArtifactId) {
+    return {
+      schemaVersion: 1,
+      availability: "missing_context_artifact",
+      sectionCount: 0,
+      sourceRefCount: 0,
+      droppedSectionCount: 0,
+      compactionCount: 0,
+      sections: [],
+      droppedSectionIds: [],
+      compactionIds: [],
+      sourceRefs: [],
+      safety: {
+        rawPromptTextIncluded: false,
+        rawLogsIncluded: false,
+        rawArtifactBodiesIncluded: false,
+      },
+    };
+  }
+  const stepId = readString(step, "id");
+  const workflowId = readString(workflow, "id");
+  const providerPresetId = readNestedString(step.metadata, ["providerPresetId"]) || "provider_local";
+  return {
+    schemaVersion: 1,
+    availability: "available",
+    contextArtifactId,
+    generatedAt: readString(step, "updatedAt") || "2026-05-25T00:40:00.000Z",
+    kind: "workflow_step",
+    providerPresetId,
+    modelId: "mock-model",
+    budget: {
+      mode: "model_estimated",
+      inputBudgetTokens: 116000,
+      estimatedInputTokens: 1200,
+      overBudget: false,
+      tokenizer: "heuristic_chars_v1",
+    },
+    sectionCount: 2,
+    sourceRefCount: 2,
+    droppedSectionCount: 1,
+    compactionCount: 1,
+    sections: [
+      {
+        id: "workflow_runtime_boundary",
+        role: "system",
+        priority: "critical",
+        estimatedTokens: 220,
+        sourceRefIds: [`workflow:${workflowId}`],
+        metadataKeys: ["boundary"],
+      },
+      {
+        id: "workflow_step_objective",
+        role: "user",
+        priority: "high",
+        estimatedTokens: 180,
+        sourceRefIds: [`workflow_step:${stepId}`],
+        metadataKeys: ["stepId"],
+      },
+    ],
+    droppedSectionIds: ["old_verbose_log_tail"],
+    compactionIds: ["context_condenser_text_mock"],
+    sourceRefs: [
+      { type: "workflow", id: workflowId, label: readString(workflow, "title") || "Workflow" },
+      { type: "workflow_step", id: stepId, label: readString(step, "title") || "Workflow step" },
+    ],
+    safety: {
+      rawPromptTextIncluded: false,
+      rawLogsIncluded: false,
+      rawArtifactBodiesIncluded: false,
+    },
+  };
 }
 
 function buildMockCollaborationTaskCard(state: MockState, workflow: Record<string, unknown>): Record<string, unknown> | undefined {

@@ -12,6 +12,8 @@ Current browser slice:
 - Screenshot and local/private link clarifications use natural Ling copy and assert that
   implementation/debug vocabulary stays out of the default transcript.
 - Active-run guidance rows can render structured file refs from intervention payloads.
+- C11 context acceptance adds short-follow-up, materialized PDF/DOCX visible behavior,
+  and explicit workflow context inspect coverage.
 
 Target browser behavior:
 
@@ -20,6 +22,40 @@ Target browser behavior:
   asking the user to inspect the file first.
 - The default transcript still shows simple chips only; read/unread/materialization status
   stays out of the ordinary conversation.
+
+## C11 Context Processing Acceptance Slice
+
+This slice validates the "one Ling Agent session" product behavior after Context
+Processing, streaming, and automatic materialization landed.
+
+Implemented browser coverage:
+
+1. **Short contextual follow-up**
+   - send a terse follow-up such as `继续` after a prior same-channel topic;
+   - assert Ling replies from the current channel context;
+   - assert route/context/debug/token implementation details stay out of the default
+     transcript.
+
+2. **Materialized PDF/DOCX happy path**
+   - attach PDF and DOCX files, then ask a natural attachment question;
+   - assert the transcript shows simple file links/chips and Ling's natural answer;
+   - assert materialization status vocabulary such as `metadata_only`, `not_loaded`,
+     `unsupported`, `blocked`, `extractor`, and `fingerprint` is absent from the
+     default transcript.
+
+3. **Explicit workflow context inspect**
+   - render a completed workflow with context-inspect metadata available;
+   - assert the default work cell hides section ids, dropped ids, compaction ids, and
+     safety rows;
+   - after the user expands details, assert the prompt-safe inspect summary appears and
+     raw prompt/log/artifact-body content remains excluded.
+
+Non-goals for this browser slice:
+
+- no real PDF/DOCX parser execution in Playwright;
+- no raw prompt text assertions;
+- no mobile-specific visual matrix;
+- no new default debug UI.
 
 ## Purpose
 
