@@ -12,6 +12,10 @@ import {
   mediaModelKind,
   providerMediaKind,
 } from "@ling-stack/core/provider-adapters";
+import {
+  resolveProviderModelCapabilitySnapshot,
+  type ProviderModelCapabilitySnapshot,
+} from "@ling-stack/core/provider-model-capabilities";
 
 type ProviderTranslate = (key: string, values?: Readonly<Record<string, string | number>>) => string;
 
@@ -21,6 +25,10 @@ export interface ProviderTemplateGroup {
 }
 
 export type ProviderCapabilityUiState = "auto" | "estimated" | "conservative" | "custom_override";
+type ProviderCapabilityUiInput =
+  | ProviderPreset
+  | Pick<ProviderFormState, "api" | "kind" | "providerId" | "model" | "contextWindow" | "maxTokens" | "capabilitiesText">;
+type ProviderCapabilityPresetInput = Pick<ProviderPreset, "id" | "api" | "kind" | "providerId" | "model" | "contextWindow" | "maxTokens" | "capabilities">;
 
 export const defaultProviderForm: ProviderFormState = {
   kind: "openai-compatible",
@@ -63,15 +71,14 @@ export const customOpenAICompatibleForm: ProviderFormState = {
 };
 
 export function deriveProviderCapabilityUiState(
-  provider: Pick<ProviderFormState | ProviderPreset, "api" | "kind" | "contextWindow" | "maxTokens">,
+  provider: ProviderCapabilityUiInput,
+  templates: readonly ProviderTemplate[] = [],
 ): ProviderCapabilityUiState {
-  if (provider.contextWindow || provider.maxTokens) {
+  if (providerHasManualCapabilityOverride(provider)) {
     return "custom_override";
   }
-  if (provider.api === "media-job") {
-    return "auto";
-  }
-  return provider.kind === "openai-compatible" ? "conservative" : "estimated";
+  const snapshot = resolveProviderModelCapabilitySnapshot(providerCapabilityInputToPreset(provider), { templates });
+  return providerCapabilitySnapshotToUiState(snapshot);
 }
 
 export function providerCapabilityUiStateLabel(state: ProviderCapabilityUiState): string {
@@ -89,15 +96,63 @@ export function providerCapabilityUiStateLabel(state: ProviderCapabilityUiState)
 
 export function providerCapabilityUiStateDescription(state: ProviderCapabilityUiState): string {
   if (state === "auto") {
-    return "Ling reads capability metadata automatically.";
+    return "Ling uses known provider or template capabilities automatically.";
   }
   if (state === "estimated") {
-    return "Ling estimates a safe context profile for this model.";
+    return "Ling estimates a safe context profile for this provider family.";
   }
   if (state === "conservative") {
     return "Unknown compatible models use conservative defaults unless overridden.";
   }
-  return "Advanced token fields are overriding automatic capability detection.";
+  return "Advanced model limit overrides are active for this preset.";
+}
+
+function providerHasManualCapabilityOverride(provider: ProviderCapabilityUiInput): boolean {
+  if ("capabilitiesText" in provider) {
+    return provider.contextWindow.trim().length > 0 || provider.maxTokens.trim().length > 0;
+  }
+  return provider.contextWindow !== undefined || provider.maxTokens !== undefined;
+}
+
+function providerCapabilityInputToPreset(provider: ProviderCapabilityUiInput): ProviderCapabilityPresetInput {
+  if ("capabilitiesText" in provider) {
+    return {
+      id: "provider_form_preview",
+      api: provider.api,
+      kind: provider.kind,
+      providerId: provider.providerId,
+      model: provider.model,
+      contextWindow: providerLimitOverride(provider.contextWindow),
+      maxTokens: providerLimitOverride(provider.maxTokens),
+      capabilities: splitProviderCsv(provider.capabilitiesText) as ProviderPreset["capabilities"],
+    };
+  }
+  return provider;
+}
+
+function providerCapabilitySnapshotToUiState(snapshot: ProviderModelCapabilitySnapshot): ProviderCapabilityUiState {
+  if (snapshot.source === "user_override") {
+    return "custom_override";
+  }
+  if (snapshot.source === "non_chat") {
+    return "auto";
+  }
+  if (snapshot.source === "conservative_default" || snapshot.confidence === "conservative") {
+    return "conservative";
+  }
+  if (snapshot.confidence === "estimated") {
+    return "estimated";
+  }
+  return "auto";
+}
+
+function providerLimitOverride(value: string): number | undefined {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return undefined;
+  }
+  const parsedValue = Number(trimmedValue);
+  return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : undefined;
 }
 
 export function providerToForm(provider: ProviderPreset, templates: readonly ProviderTemplate[] = []): ProviderFormState {
@@ -166,8 +221,8 @@ export function providerTemplateToForm(template: ProviderTemplate, t?: ProviderT
     enabled: isRunnableChatTemplate ? true : template.enabled ?? false,
     authHeader: template.authHeader ?? true,
     reasoning: template.reasoning ?? false,
-    contextWindow: template.contextWindow ? String(template.contextWindow) : "",
-    maxTokens: template.maxTokens ? String(template.maxTokens) : "",
+    contextWindow: "",
+    maxTokens: "",
   };
 }
 

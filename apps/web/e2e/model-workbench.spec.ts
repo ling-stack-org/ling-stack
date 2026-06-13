@@ -208,6 +208,37 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(editor.getByRole("button", { name: "保存并检查" })).toHaveCount(0);
 });
 
+test("model workbench capability state follows automatic snapshots and advanced overrides", async ({ page }) => {
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), {
+    templates: createDefaultProviderTemplates(),
+  });
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await page.getByRole("button", { name: "Add model" }).first().click();
+  const editor = page.getByRole("dialog", { name: "New preset" });
+  await expect(editor).toBeVisible();
+  const capabilityState = editor.locator(".provider-capability-state");
+
+  await page.getByRole("button", { name: /Custom OpenAI-compatible/ }).click();
+  await expect(capabilityState).toContainText("Conservative");
+  await expect(editor.getByLabel("Context")).toBeHidden();
+  await expect(editor.getByLabel("Max tokens")).toBeHidden();
+
+  await editor.getByText("Advanced model limits").click();
+  await editor.getByLabel("Context").fill("64000");
+  await expect(capabilityState).toContainText("Custom override");
+
+  await editor.getByRole("tab", { name: /^GPT/ }).click();
+  await page.getByRole("button", { name: /OpenAI GPT/ }).click();
+  await expect(capabilityState).toContainText("Auto");
+  await expect(editor.getByLabel("Context")).toHaveValue("");
+  await expect(editor.getByLabel("Max tokens")).toHaveValue("");
+
+  await page.getByRole("textbox", { name: "Model", exact: true }).fill("gpt-family-preview-unknown");
+  await expect(capabilityState).toContainText("Estimated");
+});
+
 test("model workbench localizes unsupported daemon model discovery errors", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
