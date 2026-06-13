@@ -897,6 +897,198 @@ Acceptance:
 - token-heavy logs are summarized or excluded unless specifically relevant;
 - memory isolation remains per teammate and per visibility boundary.
 
+#### CP11A: Compatibility Foundation Slice
+
+Status: first implementation slice.
+
+Goal: introduce the shared Context Processing module without changing user-visible
+prompt behavior.
+
+This slice deliberately keeps existing builder entry points as the public runtime API:
+
+```text
+buildChannelReplyContextPack
+buildChannelIntentSelectorContextPack
+buildChannelAutoRouteContextPack
+buildWorkflowStepContextPack
+```
+
+The builders may now construct a daemon-local `ChannelContextView` internally, then adapt
+that view back into the existing `ContextPack` shape. This gives the runtime one place to
+attach source/view/drop metadata while preserving the current model-call path.
+
+Scope:
+
+- add daemon-local Context Processing contracts and pure helpers;
+- add turn, channel-state, recent-conversation, and workflow-step source collectors;
+- add a minimal view builder with per-view source filters;
+- add a render/adapter helper that converts prompt-visible view sections back into
+  `ContextPack` sections;
+- migrate current Context Pack builders only through the compatibility adapter.
+
+Non-goals:
+
+- no prompt copy rewrite;
+- no proposal/workflow state-machine change;
+- no runtime permission or approval change;
+- no persistent context cache;
+- no UI inspect surface yet;
+- no LLM condenser or generated summary.
+
+Acceptance:
+
+- existing `ContextPack` callers continue to receive the same kind of prompt text and
+  metadata;
+- source ids are stable enough for future inspect surfaces;
+- selector/reply/workflow-step paths can be migrated incrementally in later slices;
+- tests cover source collection, view filtering, and adapter behavior.
+
+#### CP11B: Reply And Selector Shared Sources
+
+Status: implementation slice after CP11A.
+
+Goal: move reply/selector source collection into `context-processing` so Ling ordinary
+reply, intent selector, and auto-route selector see the same channel state, recent
+conversation, current turn, and active work metadata.
+
+Scope:
+
+- centralize recent-message source collection outside `context-packs.ts`;
+- add active work sources for draft proposals, active workflows, visible workflow steps,
+  linked runs, and pending approvals;
+- attach active work sources to `ling_agent_channel_view` and `selector_view`;
+- keep the existing prompt sections unchanged in this slice;
+- keep active work details as source metadata for later inspect/context migration.
+
+Non-goals:
+
+- no new user-facing active-work card;
+- no selector prompt copy changes;
+- no workflow/proposal generation rewrite;
+- no hidden auto-start or permission grant;
+- no durable context cache.
+
+Acceptance:
+
+- short reply and selector context builders use the same recent-message source helper;
+- active work source refs are present in the view/read model layer without appearing as
+  raw logs or route JSON in rendered prompts;
+- existing reply/selector behavior tests keep passing;
+- new tests cover active work source collection and view filtering.
+
+#### CP11C: Workflow Proposal Context View
+
+Status: implementation slice after CP11B.
+
+Goal: let proposal creation use the shared Context Processing source model for durable
+shaping evidence without changing proposal generation heuristics or workflow execution.
+
+Scope:
+
+- add a daemon-local `workflow_proposal_view` builder;
+- collect current turn, prior channel context, and active work sources for proposal
+  creation;
+- convert supported source refs into existing proposal `shaping.sourceRefs`;
+- keep attachment/link/file materialization details inside view metadata until a shared
+  source-ref contract supports them;
+- keep prompt/title/participant/tool derivation unchanged.
+
+Non-goals:
+
+- no LLM proposal generator;
+- no new proposal/shaping table;
+- no automatic approval or workflow start behavior changes;
+- no raw prompt or route JSON persistence;
+- no new user-facing debug UI.
+
+Acceptance:
+
+- draft proposals retain source message evidence and can include workflow/run/step refs
+  when created as follow-up work;
+- materialized current-turn inputs are represented in view metadata without being
+  fabricated as protocol source refs;
+- existing direct workflow and workflow proposal tests keep passing.
+
+#### CP11D: Workflow Step Context View Extraction
+
+Status: implementation slice after CP11C.
+
+Goal: move workflow-step prompt assembly into the shared Context Processing layer while
+preserving the existing `buildWorkflowStepContextPack` runtime API and rendered prompt
+behavior.
+
+Scope:
+
+- add a daemon-local `workflow_step_view` builder;
+- move workflow runtime boundary, objective, current step, approval gates, dependency
+  evidence, selector decisions, handoff intents, and context-summary sections into the
+  workflow-step view builder;
+- keep the channel collaboration protocol section as a shared compatibility input until
+  protocol context is migrated separately;
+- keep old `ContextPack` output by adapting prompt-visible view sections back through
+  the compatibility wrapper;
+- preserve workflow, step, run, artifact, selector-decision, handoff-intent, and
+  compaction source refs.
+
+Non-goals:
+
+- no workflow state-machine change;
+- no approval or permission behavior change;
+- no new runner/session abstraction;
+- no UI inspect surface;
+- no durable context cache;
+- no prompt copy rewrite.
+
+Acceptance:
+
+- workflow-step prompts keep the same section ids, ordering, and user-visible text;
+- dependency artifact/run refs remain present in old `ContextPack.sourceRefs`;
+- selector decision and handoff intent refs remain present for evidence/audit callers;
+- compacted dependency summaries still replace verbose dependency sections when the
+  provider budget requires compaction;
+- existing workflow orchestration and context compaction tests keep passing.
+
+#### CP11E: Materialized Input And Evidence Sources
+
+Status: implementation slice after CP11D.
+
+Goal: represent attachments, links, workspace file refs, artifacts, and workflow packet
+evidence as first-class Context Processing sources without turning the default product UI
+into a debug surface or changing prompt text.
+
+Scope:
+
+- collect current-turn materialized inputs from the Ling turn envelope:
+  attachments, link previews, and workspace file refs;
+- preserve materialization status, content kind, preview availability, truncation state,
+  and failure reason as source metadata;
+- collect workflow-step evidence from linked run artifacts, context packet artifacts,
+  output packet artifacts, and declared dependency output artifact refs;
+- keep evidence source text concise and bounded; raw artifact bodies and full logs stay in
+  artifact/inspect routes;
+- attach materialized input sources to reply, selector, and proposal views;
+- attach workflow evidence sources to workflow-step views.
+
+Non-goals:
+
+- no new OCR/PDF/Office/link extraction implementation;
+- no raw artifact body reads in Context Processing;
+- no prompt copy rewrite;
+- no UI inspect drawer;
+- no new persistent context cache;
+- no permission, approval, or runner behavior change.
+
+Acceptance:
+
+- current-turn attachments, links, and workspace file refs appear as `materialized_input`
+  sources with stable refs and bounded text;
+- workflow-step context views expose linked artifact/workflow-packet sources for later
+  inspect and audit;
+- legacy `ContextPack` rendering remains compatible and does not expose raw evidence
+  sections by default;
+- tests cover materialized input source collection and workflow evidence source
+  collection.
+
 ### CP12: Developer Inspect And Debug Surfaces
 
 Goal: make context/route/budget evidence available on demand without polluting the
