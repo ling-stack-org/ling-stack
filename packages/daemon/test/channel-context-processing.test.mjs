@@ -14,6 +14,7 @@ import {
   summarizeArtifactEvidence,
   workflowPacketKindForArtifact,
 } from "../dist/features/channels/context-processing/evidence.js";
+import { condenseChannelContextSources } from "../dist/features/channels/context-processing/condenser.js";
 import {
   buildWorkflowProposalContextView,
   proposalSourceRefsFromContextView,
@@ -325,6 +326,97 @@ test("evidence policy redacts and bounds command and artifact summaries", () => 
   assert.equal(workflowPacketKindForArtifact(step, contextArtifact), "context");
   assert.equal(artifactEvidenceSensitivity(logArtifact), "secret_adjacent");
   assert.match(summarizeArtifactEvidence({ artifact: contextArtifact, packetKind: "context" }), /Workflow context packet artifact/);
+});
+
+test("context condenser preserves current turn and condenses long evidence text", () => {
+  const currentTurn = createSource({
+    id: "turn:msg_current",
+    kind: "turn",
+    freshness: "current_turn",
+    text: "current turn ".repeat(120),
+  });
+  const evidence = createSource({
+    id: "evidence:run_log",
+    kind: "evidence",
+    freshness: "durable",
+    title: "Run log",
+    text: `stdout ${"noise ".repeat(120)}sk-live_secret_token_1234567890 ${"tail ".repeat(120)}`,
+    sourceRefs: [{ type: "artifact", id: "artifact_log", label: "Run log" }],
+  });
+
+  const result = condenseChannelContextSources({
+    sources: [currentTurn, evidence],
+    maxSourceTextChars: 600,
+  });
+
+  assert.equal(result.sources[0].text, currentTurn.text);
+  assert.equal(result.sources[1].metadata.condensed, true);
+  assert.match(result.sources[1].text, /Context source condensed for prompt budget/);
+  assert.match(result.sources[1].text, /sourceRefs=artifact:artifact_log/);
+  assert.doesNotMatch(result.sources[1].text, /sk-live_secret_token_1234567890/);
+  assert.equal(result.dropped.length, 0);
+  assert.equal(result.condensedSourceIds[0], "evidence:run_log");
+  assert.match(result.compactionIds[0], /^context_condenser_text_/);
+});
+
+test("context condenser drops low priority old sources before protected sources", () => {
+  const sources = [
+    createSource({ id: "turn:msg_current", kind: "turn", freshness: "current_turn" }),
+    createSource({ id: "active_work:approval:approval_1", kind: "active_work", freshness: "current_turn" }),
+    createSource({ id: "evidence:old", kind: "evidence", freshness: "archival" }),
+    createSource({ id: "recent_message:old", kind: "recent_message", freshness: "recent" }),
+  ];
+
+  const result = condenseChannelContextSources({ sources, maxSources: 3 });
+
+  assert.deepEqual(result.sources.map((source) => source.id), [
+    "turn:msg_current",
+    "active_work:approval:approval_1",
+    "recent_message:old",
+  ]);
+  assert.deepEqual(result.dropped, [{ sourceId: "evidence:old", reason: "budget" }]);
+  assert.match(result.compactionIds[0], /^context_condenser_drop_/);
+});
+
+test("context view opt-in condenser records metadata without changing prompt sections", () => {
+  const view = buildChannelContextView({
+    kind: "ling_agent_channel_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    now,
+    sourceRefs: [],
+    sections: [{
+      id: "prompt",
+      role: "user",
+      priority: "must_keep",
+      title: "Prompt",
+      text: "Visible prompt text",
+      sourceRefIds: [],
+      visibility: "prompt",
+      quotePolicy: "public_ok",
+    }],
+    sources: [
+      createSource({
+        id: "recent_message:long",
+        kind: "recent_message",
+        freshness: "recent",
+        text: "long context ".repeat(120),
+        sourceRefs: [{ type: "message", id: "msg_long" }],
+      }),
+      createSource({ id: "evidence:old", kind: "evidence", freshness: "archival" }),
+    ],
+    condenser: { enabled: true, maxSourceTextChars: 600, maxSources: 1 },
+  });
+
+  assert.equal(renderChannelContextView(view), "Visible prompt text");
+  assert.deepEqual(view.sources.map((source) => source.id), ["recent_message:long"]);
+  assert.equal(view.sources[0].metadata.condensed, true);
+  assert.deepEqual(view.sourceRefs.map((ref) => `${ref.type}:${ref.id}`), ["message:msg_long"]);
+  assert.deepEqual(view.dropped, [{ sourceId: "evidence:old", reason: "budget" }]);
+  assert.equal(view.metadata.condenser.enabled, true);
+  assert.equal(view.metadata.condenser.condensedSourceCount, 1);
+  assert.equal(view.metadata.condenser.droppedSourceCount, 1);
+  assert.equal(view.metadata.sourceCount, 1);
 });
 
 test("workflow proposal context view maps supported source refs for shaping evidence", () => {

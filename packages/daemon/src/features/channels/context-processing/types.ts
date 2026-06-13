@@ -75,10 +75,19 @@ export interface ChannelContextBudgetSnapshot {
   readonly estimatedInputTokens?: number;
 }
 
+export interface ChannelContextCondenserMetadata {
+  readonly enabled: boolean;
+  readonly maxSourceTextChars?: number;
+  readonly maxSources?: number;
+  readonly condensedSourceCount: number;
+  readonly droppedSourceCount: number;
+}
+
 export interface ChannelContextViewMetadata {
   readonly createdAt: string;
   readonly compactionIds: readonly string[];
   readonly sourceCount: number;
+  readonly condenser?: ChannelContextCondenserMetadata;
 }
 
 export interface ChannelContextView {

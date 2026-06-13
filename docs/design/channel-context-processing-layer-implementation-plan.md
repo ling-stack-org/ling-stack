@@ -1122,6 +1122,52 @@ Acceptance:
 - successful command evidence omits raw stdout by default and keeps artifact refs;
 - existing Context View behavior remains compatible.
 
+#### CP11G: Context Condenser Policy
+
+Status: implementation slice after CP11F.
+
+Goal: add a source-level condenser that can shrink oversized Context View sources and
+drop low-priority old evidence before model/provider limits are hit, while keeping active
+collaboration boundaries stable.
+
+Scope:
+
+- add a daemon-local condenser policy module under Context Processing;
+- protect current-turn, channel-state, active-work, workflow, and workflow-step sources
+  from automatic condensation/drop;
+- condense oversized old source text into a bounded redacted preview with source refs;
+- drop low-priority old sources only for budget reasons and report dropped source ids;
+- expose deterministic compaction ids and condenser counts in Context View metadata;
+- wire condenser into `buildChannelContextView` behind an explicit opt-in setting.
+
+Non-goals:
+
+- no default prompt behavior change for existing view builders;
+- no durable summary writes or channel-summary mutation;
+- no replacement of existing workflow dependency packet compaction;
+- no runner/session/approval/permission behavior change;
+- no UI debug surface or token-count display;
+- no LLM summarization call inside the condenser.
+
+Policy:
+
+- immutable boundary sources are retained even when they exceed configured source limits;
+- older evidence/artifact/workflow-packet sources are condensed before conversation
+  history is dropped;
+- when `maxSources` is exceeded, archival/durable evidence is dropped before recent
+  conversation and materialized current-turn inputs;
+- source refs for kept sources remain attached to the view;
+- dropped source ids are retained in `view.dropped` with reason `budget`.
+
+Acceptance:
+
+- current-turn and active-work sources are never condensed or dropped by the condenser;
+- long evidence/log-like source text is bounded and secret-like strings are redacted;
+- source refs remain present for kept condensed sources;
+- condenser metadata records compaction ids, condensed count, and dropped count only when
+  explicitly enabled;
+- existing workflow context compaction tests continue to pass unchanged.
+
 ### CP12: Developer Inspect And Debug Surfaces
 
 Goal: make context/route/budget evidence available on demand without polluting the

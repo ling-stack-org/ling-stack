@@ -1,3 +1,4 @@
+import { condenseChannelContextSources } from "./condenser.js";
 import { sourceDropReasonForView } from "./policies.js";
 import type {
   ChannelContextBudgetSnapshot,
@@ -9,6 +10,12 @@ import type {
   ChannelContextViewKind,
 } from "./types.js";
 
+export interface BuildChannelContextCondenserInput {
+  readonly enabled?: boolean;
+  readonly maxSourceTextChars?: number;
+  readonly maxSources?: number;
+}
+
 export interface BuildChannelContextViewInput {
   readonly kind: ChannelContextViewKind;
   readonly workspaceId: string;
@@ -19,6 +26,7 @@ export interface BuildChannelContextViewInput {
   readonly sources?: readonly ChannelContextSource[];
   readonly dropped?: readonly ChannelContextDroppedSource[];
   readonly budget?: ChannelContextBudgetSnapshot;
+  readonly condenser?: BuildChannelContextCondenserInput;
   readonly compactionIds?: readonly string[];
   readonly now?: string;
 }
@@ -35,6 +43,19 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
     keptSources.push(source);
   }
 
+  const condenserResult = input.condenser?.enabled
+    ? condenseChannelContextSources({
+        sources: keptSources,
+        inputBudgetTokens: input.budget?.inputBudgetTokens,
+        maxSourceTextChars: input.condenser.maxSourceTextChars,
+        maxSources: input.condenser.maxSources,
+      })
+    : undefined;
+  const viewSources = condenserResult?.sources ?? keptSources;
+  if (condenserResult) {
+    dropped.push(...condenserResult.dropped);
+  }
+
   return {
     id: `${input.kind}:${input.channelId ?? input.workspaceId}`,
     kind: input.kind,
@@ -44,15 +65,25 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
     sections: input.sections,
     sourceRefs: uniqueSourceRefs([
       ...input.sourceRefs,
-      ...keptSources.flatMap((source) => source.sourceRefs),
+      ...viewSources.flatMap((source) => source.sourceRefs),
     ]),
-    sources: keptSources,
+    sources: viewSources,
     dropped,
     budget: input.budget,
     metadata: {
       createdAt: input.now ?? new Date().toISOString(),
-      compactionIds: input.compactionIds ?? [],
-      sourceCount: keptSources.length,
+      compactionIds: uniqueStrings([
+        ...(input.compactionIds ?? []),
+        ...(condenserResult?.compactionIds ?? []),
+      ]),
+      sourceCount: viewSources.length,
+      condenser: condenserResult ? {
+        enabled: true,
+        maxSourceTextChars: input.condenser?.maxSourceTextChars,
+        maxSources: input.condenser?.maxSources,
+        condensedSourceCount: condenserResult.condensedSourceIds.length,
+        droppedSourceCount: condenserResult.dropped.length,
+      } : undefined,
     },
   };
 }
@@ -69,4 +100,8 @@ function uniqueSourceRefs(refs: readonly ChannelContextSourceRef[]): readonly Ch
     unique.push(ref);
   }
   return unique;
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
 }
