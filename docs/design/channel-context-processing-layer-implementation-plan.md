@@ -1280,6 +1280,45 @@ Acceptance:
 - default collaboration cards remain free of raw context/debug fields;
 - tests cover available and missing context inspect payloads.
 
+#### CP12B: Web Context Inspect Details
+
+Status: implementation slice after CP12A.
+
+Goal: make the existing explicit workflow evidence/details surfaces consume
+`contextInspect` so developers can inspect context inclusion, dropped sections, budget
+summary, compactions, and source refs without Web reading raw context packet prompt
+sections by default.
+
+Scope:
+
+- update workflow evidence detail rows to prefer `contextInspect` over direct context
+  packet snapshots;
+- update the existing per-step `Inspect context` disclosure to render `contextInspect`
+  when available;
+- preserve backward compatibility with older daemons by falling back to the existing
+  context packet renderer when `contextInspect` is missing;
+- show clear availability states for missing, unreadable, or missing-pack context;
+- include a quiet safety row stating raw prompt text/logs/artifact bodies are excluded.
+
+Non-goals:
+
+- no default channel feed or collaboration-card debug rows;
+- no new route/API surface;
+- no raw prompt text rendering;
+- no raw log/artifact body rendering;
+- no mobile-specific layout changes;
+- no workflow/run/approval state changes.
+
+Acceptance:
+
+- workflow evidence details show context availability, budget summary, kept/dropped
+  section ids, source refs, compaction ids, and safety boundary from `contextInspect`;
+- the explicit `Inspect context` panel uses the same payload when available;
+- older daemon responses without `contextInspect` continue to render the existing packet
+  view;
+- default collaboration task cards still do not contain raw context/debug fields;
+- Web typecheck passes.
+
 ## Global Acceptance Criteria
 
 - Ling Agent ordinary replies, selectors, proposals, workflow steps, and specialist task
