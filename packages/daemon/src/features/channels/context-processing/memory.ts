@@ -1,7 +1,9 @@
+import type { MemorySensitivity, RecalledMemory } from "@ling-stack/core";
 import type {
   ChannelContextDroppedReason,
   ChannelContextQuotePolicy,
   ChannelContextSource,
+  ChannelContextSourceRef,
   ChannelContextViewKind,
 } from "./types.js";
 
@@ -18,7 +20,50 @@ export interface ChannelContextMemoryEligibility {
   readonly policyVersion: "memory_use_isolation_v1";
 }
 
-const MEMORY_POLICY_VERSION = "memory_use_isolation_v1" as const;
+export const MEMORY_USE_ISOLATION_POLICY_VERSION = "memory_use_isolation_v1" as const;
+
+export interface RecalledMemoryContextSourceInput {
+  readonly item: RecalledMemory;
+  readonly workspaceId?: string;
+  readonly channelId?: string;
+}
+
+export function recalledMemoryToContextSource(input: RecalledMemoryContextSourceInput): ChannelContextSource {
+  const memory = input.item.memory;
+  const sourceRefs: ChannelContextSourceRef[] = [
+    { type: "memory", id: memory.id, label: memory.title },
+    ...memory.sourceRefs.map((ref) => ({
+      type: `memory_source:${ref.type}`,
+      id: ref.id,
+      label: ref.label,
+    })),
+  ];
+  return {
+    id: `memory:${memory.id}`,
+    kind: "memory",
+    workspaceId: input.workspaceId ?? memory.workspaceId,
+    channelId: memory.scopeType === "channel" ? memory.ownerId : input.channelId,
+    teammateId: memory.scopeType === "teammate" ? memory.ownerId : undefined,
+    sourceRefs,
+    title: memory.title,
+    text: input.item.excerpt,
+    metadata: {
+      memoryId: memory.id,
+      scopeType: memory.scopeType,
+      ownerId: memory.ownerId,
+      reviewState: memory.reviewState,
+      enabled: memory.enabled,
+      memorySensitivity: memory.sensitivity,
+      score: input.item.score,
+      matchedTerms: input.item.matchedTerms,
+      tags: memory.tags,
+      verifyBeforeUse: memory.verifyBeforeUse,
+      quotePolicy: memory.sensitivity === "private" ? "influence_only" : undefined,
+    },
+    sensitivity: memorySensitivityToContextSensitivity(memory.sensitivity),
+    freshness: "durable",
+  };
+}
 
 export function memoryEligibilityForView(
   source: ChannelContextSource,
@@ -95,7 +140,7 @@ function excludedMemory(droppedReason: ChannelContextDroppedReason): ChannelCont
     mode: "excluded",
     quotePolicy: "inspect_only",
     droppedReason,
-    policyVersion: MEMORY_POLICY_VERSION,
+    policyVersion: MEMORY_USE_ISOLATION_POLICY_VERSION,
   };
 }
 
@@ -106,6 +151,13 @@ function memoryEligibility(
   return {
     mode,
     quotePolicy,
-    policyVersion: MEMORY_POLICY_VERSION,
+    policyVersion: MEMORY_USE_ISOLATION_POLICY_VERSION,
   };
+}
+
+function memorySensitivityToContextSensitivity(sensitivity: MemorySensitivity): ChannelContextSource["sensitivity"] {
+  if (sensitivity === "secret-adjacent") {
+    return "secret_adjacent";
+  }
+  return sensitivity;
 }

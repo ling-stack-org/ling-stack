@@ -598,6 +598,40 @@ Acceptance:
 - Evidence inspect can keep memory metadata for explainability without making it ordinary
   prompt text.
 
+#### C8B: Channel Reply Prompt And Audit Hardening
+
+Status: second implementation slice.
+
+Goal: use the C8A eligibility policy in the real ordinary channel reply path before
+broader private-chat/task-run migration.
+
+Scope:
+
+- Convert recalled memory items into `ChannelContextSource(kind="memory")` values with
+  source refs, sensitivity, scope metadata, score, matched terms, and quote policy hints.
+- Render ordinary channel reply memory prompts from view-eligible memory only.
+- Keep same-teammate private memory recallable for private/specialist/workflow views, but
+  exclude it from `ling_agent_channel_view` prompt text.
+- Record used-memory events only for memory ids that actually entered the prompt, and
+  include both the recall policy version and memory-use-isolation policy version in the
+  audit policy string.
+
+Non-goals:
+
+- No recall ranking change.
+- No DB schema change for used-memory events.
+- No private direct-message migration yet; that belongs to C10.
+- No UI surface or debug row.
+
+Acceptance:
+
+- `/memory/recall` can still show scoped same-teammate private memory when allowed by
+  recall policy.
+- A public channel AI reply prompt does not include private teammate memory text.
+- The used-memory audit event for a public channel reply contains only memory ids that
+  entered the prompt.
+- The used-memory audit `policyVersion` includes `memory_use_isolation_v1`.
+
 ## C9: Inspect Metadata And Web Surfaces
 
 Type: daemon metadata plus Web optional details.

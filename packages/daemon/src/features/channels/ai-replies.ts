@@ -3,7 +3,7 @@ import type { RunnerRegistry, RunnerResolution } from "../../runtime/runners.js"
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
-import { renderUsedMemoryPrompt } from "../memory/prompt.js";
+import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { isRunTool } from "../runs/approvals.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
@@ -169,7 +169,15 @@ async function completeAiChannelReply(input: {
       query: renderLingAgentTurnEnvelopeSearchText(turnEnvelope) || input.sourceMessage.body,
       maxResults: 6,
     });
-    const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
+    const renderedMemory = renderUsedMemoryPromptForView({
+      memories: memoryRecall.memories,
+      recallPolicyVersion: memoryRecall.policyVersion,
+      viewKind: "ling_agent_channel_view",
+      workspaceId: input.channel.workspaceId,
+      channelId: input.channel.id,
+      consumerTeammateId: input.canonicalTeammateId,
+    });
+    const memoryPrompt = renderedMemory.prompt;
     const responseLanguage = resolveChannelResponseLanguage({
       store: input.store,
       channel: input.channel,
@@ -335,16 +343,16 @@ async function completeAiChannelReply(input: {
       errorMessage: null,
     });
     input.stream?.onDone(reply);
-    if (memoryRecall.memories.length > 0) {
+    if (renderedMemory.memoryIds.length > 0) {
       input.store.recordUsedMemoryEvent(
         {
-          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
+          memoryIds: renderedMemory.memoryIds,
           intent: "channel-reply",
           recallQuery: memoryRecall.request.query,
           teammateId: input.canonicalTeammateId,
           channelId: input.channel.id,
           responseId: reply.id,
-          policyVersion: memoryRecall.policyVersion,
+          policyVersion: renderedMemory.policyVersion,
         },
         new Date().toISOString(),
       );

@@ -5765,10 +5765,12 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
     await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     assert.match(runner.runs[0].systemPrompt, /Used memory:/);
     assert.match(runner.runs[0].systemPrompt, /Model Workbench width/);
+    assert.doesNotMatch(runner.runs[0].systemPrompt, /Designer private memory says/);
 
     const used = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&responseId=${encodeURIComponent(created.aiReply.id)}`);
     assert.ok(used.events[0].memoryIds.includes(channelMemory.id));
-    assert.ok(used.events[0].memoryIds.includes(teammateMemory.id));
+    assert.equal(used.events[0].memoryIds.includes(teammateMemory.id), false);
+    assert.match(used.events[0].policyVersion, /memory_use_isolation_v1/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
