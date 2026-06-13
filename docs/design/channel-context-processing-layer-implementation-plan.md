@@ -850,11 +850,13 @@ type ProviderModelCapabilitySource =
   | "provider_metadata"
   | "health_check"
   | "runtime_observed"
-  | "conservative_default";
+  | "conservative_default"
+  | "non_chat";
 
 type ProviderModelCapabilityConfidence = "known" | "estimated" | "conservative";
 
 interface ProviderModelCapabilitySnapshot {
+  readonly chatEligible: boolean;
   readonly providerPresetId?: string;
   readonly providerKind?: ProviderKind;
   readonly providerApi?: ProviderApi;
@@ -886,7 +888,9 @@ Rules:
   override;
 - every prompt-producing path stores enough budget metadata to explain which source won;
 - media-only providers skip chat context budgeting and should return an explicit
-  non-chat capability state to UI callers instead of fake chat limits.
+  non-chat capability state to UI callers instead of fake chat limits. The non-chat
+  state uses `chatEligible: false`, `source: "non_chat"`, and omits chat budget token
+  values.
 
 Acceptance:
 
