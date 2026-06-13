@@ -11,6 +11,7 @@ import {
   defaultAllowedWritePaths,
   defaultApprovalToolDecisions,
   defaultProviderTemplates,
+  resolveConfigPaths,
   resolveRuntimePaths,
   type ApprovalToolDecision,
   type ProviderCheckResult,
@@ -839,17 +840,21 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
 
 async function buildDoctorConfigReport(options: GlobalOptions): Promise<DoctorReport> {
   const snapshot = await readDaemonStateSnapshot(options.cwd);
-  const paths = resolveRuntimePaths(options.cwd);
+  const paths = resolveConfigPaths(options.cwd);
   const checks: DoctorCheck[] = [
     await checkWorkspacePaths(options.cwd),
-    await checkConfigFile(paths.rootDir),
-    await checkWorkspaceSqlite(paths.rootDir),
-    await checkRuntimeSettingsFile(paths.rootDir),
-    await checkPathExists("config.sessions", "config", "sessions directory is under .ling-stack", paths.sessionsDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.artifacts", "config", "artifacts directory is under .ling-stack", paths.artifactsDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.attachments", "config", "attachments directory is under .ling-stack", paths.attachmentsDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.pi", "config", "Pi agent directory is under .ling-stack", paths.piDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.plugins_cache", "config", "plugin cache is under .ling-stack", paths.pluginCacheDir, "directory", "Run ling-stack init."),
+    await checkUserConfigRoot(paths.user.rootDir),
+    await checkOptionalUserConfigFile("config.user_config", "user config is optional", paths.user.configPath),
+    await checkOptionalUserConfigFile("config.user_settings", "user settings are optional", paths.user.settingsPath),
+    await checkOptionalUserConfigFile("config.user_provider_profiles", "user provider profiles are optional", paths.user.providerProfilesPath),
+    await checkConfigFile(paths.workspace.rootDir),
+    await checkWorkspaceSqlite(paths.workspace.rootDir),
+    await checkRuntimeSettingsFile(paths.workspace.rootDir),
+    await checkPathExists("config.sessions", "config", "sessions directory is under .ling-stack", paths.workspace.sessionsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.artifacts", "config", "artifacts directory is under .ling-stack", paths.workspace.artifactsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.attachments", "config", "attachments directory is under .ling-stack", paths.workspace.attachmentsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.pi", "config", "Pi agent directory is under .ling-stack", paths.workspace.piDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.plugins_cache", "config", "plugin cache is under .ling-stack", paths.workspace.pluginCacheDir, "directory", "Run ling-stack init."),
     await checkPathExists("config.logs", "config", "logs directory is under .ling-stack", snapshot.paths.logsDir, "directory", "Run ling-stack daemon start."),
     checkDaemonProcessState(snapshot),
     await checkRootLogsLeak(options.cwd),
@@ -880,6 +885,42 @@ async function checkRuntimeSettingsFile(rootDir: string): Promise<DoctorCheck> {
   } catch {
     return okCheck("config.runtime_settings", "config", "runtime settings use defaults", { path, exists: false }, Date.now() - startedAt);
   }
+}
+
+async function checkUserConfigRoot(path: string): Promise<DoctorCheck> {
+  const startedAt = Date.now();
+  try {
+    const item = await stat(path);
+    if (!item.isDirectory()) {
+      return warningCheck("config.user_root", "config", "user .ling-stack path exists but is not a directory", { path }, "Repair ~/.ling-stack or set LING_STACK_HOME to a directory.", Date.now() - startedAt);
+    }
+    return okCheck("config.user_root", "config", "user .ling-stack directory exists", { path, exists: true }, Date.now() - startedAt);
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      return warningCheck("config.user_root", "config", "user .ling-stack directory could not be inspected", { path, error: errorMessage(error) }, "Repair ~/.ling-stack or set LING_STACK_HOME to a readable directory.", Date.now() - startedAt);
+    }
+    return okCheck("config.user_root", "config", "user .ling-stack defaults are not initialized", { path, exists: false }, Date.now() - startedAt);
+  }
+}
+
+async function checkOptionalUserConfigFile(id: string, summary: string, path: string): Promise<DoctorCheck> {
+  const startedAt = Date.now();
+  try {
+    const item = await stat(path);
+    if (!item.isFile()) {
+      return warningCheck(id, "config", `${summary} but path is not a file`, { path }, "Repair the user-level Ling Stack config path.", Date.now() - startedAt);
+    }
+    return okCheck(id, "config", summary, { path, exists: true }, Date.now() - startedAt);
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      return warningCheck(id, "config", `${summary} but path could not be inspected`, { path, error: errorMessage(error) }, "Repair the user-level Ling Stack config path.", Date.now() - startedAt);
+    }
+    return okCheck(id, "config", `${summary}; using workspace or built-in defaults`, { path, exists: false }, Date.now() - startedAt);
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return isNodeError(error) && error.code === "ENOENT";
 }
 
 async function checkRootLogsLeak(cwd: string): Promise<DoctorCheck> {
@@ -3297,11 +3338,10 @@ async function handleExternalWorkReconcile(args: readonly string[], options: Glo
 
 async function initWorkspace(cwd: string, withProviderTemplates: boolean): Promise<InitResult> {
   const paths = resolveRuntimePaths(cwd);
-  const logsDir = join(paths.rootDir, "logs");
   await mkdir(paths.rootDir, { recursive: true });
   await mkdir(paths.sessionsDir, { recursive: true });
   await mkdir(paths.artifactsDir, { recursive: true });
-  await mkdir(logsDir, { recursive: true });
+  await mkdir(paths.logsDir, { recursive: true });
   await mkdir(paths.piDir, { recursive: true });
   await writeDefaultConfig(paths.rootDir);
 
@@ -3333,9 +3373,9 @@ async function initWorkspace(cwd: string, withProviderTemplates: boolean): Promi
     databasePath: paths.databasePath,
     sessionsDir: paths.sessionsDir,
     artifactsDir: paths.artifactsDir,
-    logsDir,
+    logsDir: paths.logsDir,
     piDir: paths.piDir,
-    configPath: join(paths.rootDir, "config.json"),
+    configPath: paths.configPath,
     createdProviders,
     skippedProviders,
   };

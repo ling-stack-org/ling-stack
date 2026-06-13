@@ -120,29 +120,15 @@ export function parseCustomChannelActivitySavedViewsValue(value: unknown): reado
     .slice(0, maxCustomChannelActivitySavedViews);
 }
 
-export function writeCustomChannelActivitySavedViews(
+export function clearCustomChannelActivitySavedViews(
   cwd: string,
   channelId: string,
-  views: readonly ChannelActivitySavedView[],
 ): void {
   if (!cwd.trim() || !channelId.trim()) {
     return;
   }
   try {
-    const customViews = views.filter((view) => !view.builtin).slice(0, maxCustomChannelActivitySavedViews);
-    globalThis.localStorage?.setItem(
-      savedViewsStorageKey(cwd, channelId),
-      JSON.stringify({
-        version: 1,
-        views: customViews.map((view) => ({
-          id: view.id,
-          name: sanitizeSavedViewName(view.name),
-          filter: sanitizeChannelActivityViewFilter(view.filter),
-          createdAt: view.createdAt,
-          updatedAt: view.updatedAt,
-        })),
-      }),
-    );
+    globalThis.localStorage?.removeItem(savedViewsStorageKey(cwd, channelId));
   } catch {
     // Storage can be unavailable in private or restricted browser contexts.
   }

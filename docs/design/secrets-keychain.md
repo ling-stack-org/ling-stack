@@ -9,9 +9,17 @@ Ling Stack supports `env:NAME` secret refs for local development and accepts sta
 provider API keys, MCP transport secrets, webhook secrets, and future automation tokens
 all use this same boundary.
 
-The goal is to keep a shared SecretResolver abstraction without ever
-storing raw secrets in SQLite, logs, artifacts, Web state, renderer IPC responses, or
-plugin manifests.
+The target goal is to keep a shared SecretResolver abstraction without storing raw
+secrets in JSON config, logs, artifacts, Web state, renderer IPC responses, or plugin
+manifests. Current provider setup also has a workspace-local `local:<providerId>`
+compatibility path backed by SQLite; treat that as local-only compatibility, not the
+target architecture for general secrets.
+
+Related docs:
+
+- [Two-Layer Configuration](two-layer-configuration.md)
+- [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md)
+- [Provider Presets Design](provider-presets.md)
 
 ## Implementation Status
 
@@ -32,6 +40,8 @@ Implemented in v0.1:
 - Web Settings can save/remove GitHub and Linear external-work tokens through the daemon
   without storing token values in browser storage,
 - run events, run snapshots, provider snapshots, and generated artifacts redact resolved secret values.
+- provider API keys can currently use `local:<providerId>` for workspace-local
+  compatibility; this must not be expanded beyond provider setup.
 
 Not implemented in v0.1:
 

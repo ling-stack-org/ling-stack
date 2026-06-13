@@ -1,4 +1,5 @@
 export { daemonBaseUrl } from "./api/client.js";
+export * from "./api/config.js";
 export * from "./api/control-plane.js";
 export * from "./api/automations.js";
 export * from "./api/skills.js";

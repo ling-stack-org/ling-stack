@@ -935,6 +935,31 @@ export function filterOptionalSearchParam(url: URL, key: string, value: string |
   return !expected || value === expected;
 }
 
+function normalizeWorkspaceSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    ...settings,
+    workspaceCwd: typeof settings.workspaceCwd === "string" ? settings.workspaceCwd : cwd,
+    updatedAt: typeof settings.updatedAt === "string" ? settings.updatedAt : "2026-05-22T00:00:00.000Z",
+  };
+}
+
+function effectiveWorkspaceSettingValue(value: unknown, key: string, builtInValue: string): Record<string, unknown> {
+  if (typeof value === "string") {
+    return {
+      value,
+      source: "workspace",
+      path: `${cwd}/.ling-stack/ling-stack.sqlite`,
+      key,
+    };
+  }
+  return {
+    value: builtInValue,
+    source: "built_in",
+    key,
+  };
+}
+
 export function deriveMockThreadFromRuns(state: MockState, threadId: string): MockLingThread | undefined {
   const threadRuns = state.runs.filter((run) => run.threadId === threadId);
   if (threadRuns.length === 0) {
@@ -3440,19 +3465,14 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/workspace-settings") {
-    state.workspaceSettings = {
-      schemaVersion: 1,
-      ...state.workspaceSettings,
-      workspaceCwd: typeof state.workspaceSettings.workspaceCwd === "string" ? state.workspaceSettings.workspaceCwd : cwd,
-      updatedAt: typeof state.workspaceSettings.updatedAt === "string" ? state.workspaceSettings.updatedAt : "2026-05-22T00:00:00.000Z",
-    };
+    state.workspaceSettings = normalizeWorkspaceSettings(state.workspaceSettings);
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
     return;
   }
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const nextSettings = { ...state.workspaceSettings };
-    for (const key of ["workspaceCwd", "theme", "locale", "channelNotifications", "channelActivityViews"] as const) {
+    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "channelNotifications", "channelActivityViews"] as const) {
       if (body[key] === null) {
         delete nextSettings[key];
       } else if (body[key] !== undefined) {
@@ -3465,6 +3485,51 @@ export async function handleDaemonRoute(
       updatedAt: "2026-05-25T00:18:00.000Z",
     };
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/config/effective") {
+    state.workspaceSettings = normalizeWorkspaceSettings(state.workspaceSettings);
+    await route.fulfill({
+      json: {
+        cwd,
+        paths: {
+          user: {
+            rootDir: "/Users/test/.ling-stack",
+            configPath: "/Users/test/.ling-stack/config.json",
+            settingsPath: "/Users/test/.ling-stack/settings.json",
+            providerProfilesPath: "/Users/test/.ling-stack/providers/profiles.json",
+            pluginCacheDir: "/Users/test/.ling-stack/plugins/cache",
+            logsDir: "/Users/test/.ling-stack/logs",
+          },
+          workspace: {
+            rootDir: `${cwd}/.ling-stack`,
+            configPath: `${cwd}/.ling-stack/config.json`,
+            databasePath: `${cwd}/.ling-stack/ling-stack.sqlite`,
+            runtimeSettingsPath: `${cwd}/.ling-stack/runtime-settings.json`,
+            sessionsDir: `${cwd}/.ling-stack/sessions`,
+            artifactsDir: `${cwd}/.ling-stack/artifacts`,
+            attachmentsDir: `${cwd}/.ling-stack/attachments`,
+            pluginCacheDir: `${cwd}/.ling-stack/plugins/cache`,
+            logsDir: `${cwd}/.ling-stack/logs`,
+          },
+        },
+        values: {
+          workspaceCwd: effectiveWorkspaceSettingValue(state.workspaceSettings.workspaceCwd, "workspaceCwd", cwd),
+          theme: effectiveWorkspaceSettingValue(state.workspaceSettings.theme, "theme", "system"),
+          locale: effectiveWorkspaceSettingValue(state.workspaceSettings.locale, "locale", "system"),
+          responseLanguage: effectiveWorkspaceSettingValue(state.workspaceSettings.responseLanguage, "responseLanguage", "follow_user"),
+          runtime: {
+            defaultRunnerId: { value: "pi", source: "built_in", key: "runtime.defaultRunnerId" },
+            explicitRunnerFallback: { value: "disabled", source: "built_in", key: "runtime.explicitRunnerFallback" },
+            implicitRunnerFallback: { value: "disabled", source: "built_in", key: "runtime.implicitRunnerFallback" },
+          },
+        },
+        layers: {
+          workspaceSettings: state.workspaceSettings,
+        },
+        diagnostics: [],
+      },
+    });
     return;
   }
   if (request.method() === "GET" && path === "/providers") {

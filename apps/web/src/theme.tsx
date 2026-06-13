@@ -40,10 +40,6 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): J
     return () => mediaQuery.removeEventListener("change", onChange);
   }, []);
 
-  useEffect(() => {
-    writeThemePreference(preference);
-  }, [preference]);
-
   useLayoutEffect(() => {
     const root = globalThis.document?.documentElement;
     if (!root) {
@@ -103,25 +99,25 @@ export function ThemeSwitcher(): JSX.Element {
   );
 }
 
-function readInitialThemePreference(): ThemePreference {
+export function readSavedThemePreference(): ThemePreference | undefined {
   try {
     const saved = globalThis.localStorage?.getItem(themeStorageKey);
-    return isThemePreference(saved) ? saved : defaultThemePreference;
+    return isThemePreference(saved) ? saved : undefined;
   } catch {
-    return defaultThemePreference;
+    return undefined;
   }
 }
 
-function writeThemePreference(preference: ThemePreference): void {
+export function clearSavedThemePreference(): void {
   try {
-    if (preference === defaultThemePreference) {
-      globalThis.localStorage?.removeItem(themeStorageKey);
-    } else {
-      globalThis.localStorage?.setItem(themeStorageKey, preference);
-    }
+    globalThis.localStorage?.removeItem(themeStorageKey);
   } catch {
     // Storage can be unavailable in private or restricted browser contexts.
   }
+}
+
+function readInitialThemePreference(): ThemePreference {
+  return readSavedThemePreference() ?? defaultThemePreference;
 }
 
 function readSystemTheme(): ResolvedTheme {

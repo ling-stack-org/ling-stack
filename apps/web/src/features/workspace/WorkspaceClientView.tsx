@@ -80,12 +80,12 @@ import {
   allChannelActivitySavedViewId,
   applyActivityViewFilter,
   builtinChannelActivitySavedViews,
+  clearCustomChannelActivitySavedViews,
   createCustomChannelActivitySavedView,
   maxCustomChannelActivitySavedViews,
   parseCustomChannelActivitySavedViewsValue,
   readCustomChannelActivitySavedViews,
   sanitizeSavedViewName,
-  writeCustomChannelActivitySavedViews,
   type ChannelActivitySavedView,
   type ChannelActivityViewAttentionFilter,
   type ChannelActivityViewCategoryFilter,
@@ -724,7 +724,7 @@ export function WorkspaceClientView({
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
-  const [progressPopoverOpen, setProgressPopoverOpen] = useState(true);
+  const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [activityToolsOpen, setActivityToolsOpen] = useState(false);
   const [activitySearch, setActivitySearch] = useState("");
@@ -1747,19 +1747,61 @@ export function WorkspaceClientView({
     const selectedChannelActivityViews = workspaceSettings?.channelActivityViews?.[selectedChannelId];
     const selectedChannelNotificationLevel = workspaceSettings?.channelNotifications?.[selectedChannelId];
     const settingsViews = parseCustomChannelActivitySavedViewsValue(selectedChannelActivityViews);
-    setActivitySavedViews(settingsViews.length > 0 ? settingsViews : readCustomChannelActivitySavedViews(cwd, selectedChannelId));
+    const legacyViews = readCustomChannelActivitySavedViews(cwd, selectedChannelId);
+    const legacyNotificationLevel = readSavedChannelNotificationLevel(cwd, selectedChannelId);
+    const workspaceSettingsLoaded = workspaceSettings !== undefined;
+    const hasSelectedChannel = selectedChannelId.trim().length > 0;
+    const shouldMigrateViews =
+      workspaceSettingsLoaded &&
+      hasSelectedChannel &&
+      selectedChannelActivityViews === undefined &&
+      legacyViews.length > 0;
+    const shouldMigrateNotification =
+      workspaceSettingsLoaded &&
+      hasSelectedChannel &&
+      !isChannelNotificationLevel(selectedChannelNotificationLevel) &&
+      legacyNotificationLevel !== undefined;
+
+    setActivitySavedViews(settingsViews.length > 0 ? settingsViews : shouldMigrateViews || !workspaceSettingsLoaded ? legacyViews : []);
     applyActivityView(builtinChannelActivitySavedViews[0]);
     setActivityFiltersExpanded(false);
     setAttentionQueueExpanded(false);
     setActivityDrilldownItemId("");
     setPendingChannelTeammateId("");
-    setChannelNotificationLevel(isChannelNotificationLevel(selectedChannelNotificationLevel) ? selectedChannelNotificationLevel : readChannelNotificationLevel(cwd, selectedChannelId));
+    setChannelNotificationLevel(
+      isChannelNotificationLevel(selectedChannelNotificationLevel)
+        ? selectedChannelNotificationLevel
+        : legacyNotificationLevel ?? "mentions",
+    );
+    if (shouldMigrateViews || shouldMigrateNotification) {
+      onWorkspaceSettingsPatch({
+        channelActivityViews: shouldMigrateViews
+          ? {
+            ...(workspaceSettings.channelActivityViews ?? {}),
+            [selectedChannelId]: serializeCustomActivitySavedViews(legacyViews),
+          }
+          : workspaceSettings.channelActivityViews,
+        channelNotifications: shouldMigrateNotification
+          ? {
+            ...(workspaceSettings.channelNotifications ?? {}),
+            [selectedChannelId]: legacyNotificationLevel ?? "mentions",
+          }
+          : workspaceSettings.channelNotifications,
+      });
+    } else if (workspaceSettingsLoaded && hasSelectedChannel) {
+      if (selectedChannelActivityViews !== undefined) {
+        clearCustomChannelActivitySavedViews(cwd, selectedChannelId);
+      }
+      if (isChannelNotificationLevel(selectedChannelNotificationLevel)) {
+        clearSavedChannelNotificationLevel(cwd, selectedChannelId);
+      }
+    }
     messageFeedPinnedToLatestRef.current = true;
     messageFeedUserScrollIntentRef.current = false;
     messageFeedOlderLoadArmedRef.current = true;
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
-  }, [cwd, selectedChannelId, workspaceSettings?.channelActivityViews?.[selectedChannelId], workspaceSettings?.channelNotifications?.[selectedChannelId]]);
+  }, [cwd, selectedChannelId, workspaceSettings, workspaceSettings?.channelActivityViews?.[selectedChannelId], workspaceSettings?.channelNotifications?.[selectedChannelId]]);
 
   useEffect(() => {
     setChannelWorkspaceExternalPath(
@@ -1862,7 +1904,7 @@ export function WorkspaceClientView({
     setSelectedApprovalId("");
     setSelectedWorkflowEvidenceWorkflowId("");
     setCreateTaskOpen(false);
-    setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
+    setChannelNotificationLevel("mentions");
     messageFeedPinnedToLatestRef.current = true;
     messageFeedUserScrollIntentRef.current = false;
     messageFeedOlderLoadArmedRef.current = true;
@@ -1877,6 +1919,7 @@ export function WorkspaceClientView({
     setInspectorMode(channelContextOpenRequest.mode);
     setSidePanelView("context");
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     onRefreshChannelProtocol();
@@ -1908,12 +1951,14 @@ export function WorkspaceClientView({
     setCreateTaskOpen(false);
     setSidePanelView("task");
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
   }, [selectedTask, selectedTaskId]);
 
   function selectTask(taskId: string): void {
     setCreateTaskOpen(false);
     setSidePanelView("task");
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
     onSelectTask(taskId);
   }
 
@@ -1984,6 +2029,7 @@ export function WorkspaceClientView({
     setChannelMoreOpen(false);
     setSidePanelView("progress");
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
     onRefreshChannelActivity();
     onRefreshChannelFiles();
     onRefreshTasks();
@@ -2000,6 +2046,7 @@ export function WorkspaceClientView({
     setInspectorMode(mode);
     setSidePanelView("context");
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
     if (mode === "runtime") {
       onRefreshRuntime();
     } else {
@@ -2011,6 +2058,7 @@ export function WorkspaceClientView({
     setSelectedWorkflowEvidenceWorkflowId("");
     setSidePanelView("progress");
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setTeammateManagerOpen(false);
@@ -2025,6 +2073,7 @@ export function WorkspaceClientView({
     setSelectedWorkflowEvidenceWorkflowId(workflowId);
     setSidePanelView("progress");
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setTeammateManagerOpen(false);
@@ -2039,6 +2088,7 @@ export function WorkspaceClientView({
     setSelectedApprovalId(approval.id);
     setSidePanelView("approval");
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setTeammateManagerOpen(false);
@@ -2285,7 +2335,7 @@ export function WorkspaceClientView({
 
   function updateChannelNotificationLevel(level: ChannelNotificationLevel): void {
     setChannelNotificationLevel(level);
-    writeChannelNotificationLevel(cwd, selectedChannelId, level);
+    clearSavedChannelNotificationLevel(cwd, selectedChannelId);
     onWorkspaceSettingsPatch({
       channelNotifications: {
         ...(workspaceSettings?.channelNotifications ?? {}),
@@ -2431,18 +2481,11 @@ export function WorkspaceClientView({
   function persistActivitySavedViews(nextViews: readonly ChannelActivitySavedView[]): void {
     const cappedViews = nextViews.slice(0, maxCustomChannelActivitySavedViews);
     setActivitySavedViews(cappedViews);
-    writeCustomChannelActivitySavedViews(cwd, selectedChannelId, cappedViews);
+    clearCustomChannelActivitySavedViews(cwd, selectedChannelId);
     onWorkspaceSettingsPatch({
       channelActivityViews: {
         ...(workspaceSettings?.channelActivityViews ?? {}),
-        [selectedChannelId]: cappedViews.map((view) => ({
-          id: view.id,
-          name: view.name,
-          filter: view.filter,
-          builtin: false,
-          createdAt: view.createdAt,
-          updatedAt: view.updatedAt,
-        })),
+        [selectedChannelId]: serializeCustomActivitySavedViews(cappedViews),
       },
     });
   }
@@ -4236,6 +4279,7 @@ export function WorkspaceClientView({
   function openSidePanelView(view: ChannelDrawerRootView): void {
     setSidePanelView(view);
     setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setWorkspaceSettingsOpen(false);
@@ -4587,7 +4631,7 @@ export function WorkspaceClientView({
             <SlidersHorizontal size={15} />
           </button>
           <button
-            className={progressPopoverVisible || (sidePanelOpen && sidePanelView === "progress") ? "icon-button active task-toolbar-attention" : "icon-button task-toolbar-attention"}
+            className={progressPopoverVisible || (sidePanelOpen && sidePanelView === "progress") ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
             type="button"
             aria-label={t("Progress")}
             title={t("Progress")}
@@ -4611,9 +4655,11 @@ export function WorkspaceClientView({
               if (sidePanelOpen) {
                 setSidePanelOpen(false);
                 setCreateTaskOpen(false);
+                setProgressPopoverOpen(false);
                 return;
               }
               setSidePanelOpen(true);
+              setProgressPopoverOpen(false);
               setActivityToolsOpen(false);
             }}
           >
@@ -4621,7 +4667,7 @@ export function WorkspaceClientView({
           </button>
         </div>
         {progressPopoverVisible ? (
-          <div className="channel-attention-popover">
+          <div className="channel-progress-popover">
             <ProgressPopover
               contextRows={attentionContextRows}
               expanded={attentionProgressExpanded}
@@ -4745,7 +4791,7 @@ export function WorkspaceClientView({
         className={[
           "task-workbench-main",
           sidePanelOpen ? "with-channel-side-panel" : "",
-          progressPopoverVisible ? "attention-open" : "",
+          progressPopoverVisible ? "progress-open" : "",
         ].filter(Boolean).join(" ")}
       >
         <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>
@@ -10117,18 +10163,18 @@ function channelNotificationLevelDescription(level: ChannelNotificationLevel): s
   return "Notify for @mentions, approval requests, and blockers.";
 }
 
-function readChannelNotificationLevel(cwd: string, channelId: string): ChannelNotificationLevel {
+function readSavedChannelNotificationLevel(cwd: string, channelId: string): ChannelNotificationLevel | undefined {
   try {
     const value = globalThis.localStorage?.getItem(channelNotificationStorageKey(cwd, channelId));
-    return isChannelNotificationLevel(value) ? value : "mentions";
+    return isChannelNotificationLevel(value) ? value : undefined;
   } catch {
-    return "mentions";
+    return undefined;
   }
 }
 
-function writeChannelNotificationLevel(cwd: string, channelId: string, level: ChannelNotificationLevel): void {
+function clearSavedChannelNotificationLevel(cwd: string, channelId: string): void {
   try {
-    globalThis.localStorage?.setItem(channelNotificationStorageKey(cwd, channelId), level);
+    globalThis.localStorage?.removeItem(channelNotificationStorageKey(cwd, channelId));
   } catch {
     // Local notification preferences are best-effort browser state.
   }
@@ -10140,6 +10186,20 @@ function channelNotificationStorageKey(cwd: string, channelId: string): string {
 
 function isChannelNotificationLevel(value: string | null | undefined): value is ChannelNotificationLevel {
   return value === "all" || value === "mentions" || value === "muted";
+}
+
+function serializeCustomActivitySavedViews(views: readonly ChannelActivitySavedView[]): readonly Record<string, unknown>[] {
+  return views
+    .filter((view) => !view.builtin)
+    .slice(0, maxCustomChannelActivitySavedViews)
+    .map((view) => ({
+      id: view.id,
+      name: view.name,
+      filter: view.filter,
+      builtin: false,
+      createdAt: view.createdAt,
+      updatedAt: view.updatedAt,
+    }));
 }
 
 function resolveChannelWorkspaceBinding(channel: Channel, cwd: string): ChannelWorkspaceBinding {

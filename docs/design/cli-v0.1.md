@@ -1211,7 +1211,8 @@ Do not hide missing server state.
 
 ## Config
 
-Local CLI config can live in:
+Local CLI config follows the two-layer model in
+[Two-Layer Configuration](two-layer-configuration.md). Workspace config can live in:
 
 ```text
 .ling-stack/config.json
@@ -1232,8 +1233,9 @@ Config precedence:
 
 1. CLI flags,
 2. environment variables,
-3. `.ling-stack/config.json`,
-4. built-in defaults.
+3. workspace `.ling-stack/config.json` or workspace runtime settings,
+4. user `~/.ling-stack/config.json`,
+5. built-in defaults.
 
 Do not store raw secrets in config.
 

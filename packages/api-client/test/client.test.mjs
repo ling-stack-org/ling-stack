@@ -68,6 +68,7 @@ test("builds URL query parameters for list endpoints", async () => {
   await client.listGitHubExternalWorkCiTriage("/repo", { externalWorkId: "external work 1", channelId: "channel 1", status: "task_created", limit: 12 });
   await client.getGitHubExternalWorkCiTriage("/repo", "triage 1");
   await client.getSecretStatus("keychain:provider 1", "provider_api_key");
+  await client.getEffectiveConfig("/repo path");
 
   assert.equal(mock.calls[0].url, "http://daemon.test/runs?cwd=%2Frepo+path&limit=25");
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/messages?cwd=%2Frepo&limit=15");
@@ -86,6 +87,7 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[14].url, "http://daemon.test/external-work/github/ci/triage?cwd=%2Frepo&externalWorkId=external+work+1&channelId=channel+1&status=task_created&limit=12");
   assert.equal(mock.calls[15].url, "http://daemon.test/external-work/github/ci/triage/triage%201?cwd=%2Frepo");
   assert.equal(mock.calls[16].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
+  assert.equal(mock.calls[17].url, "http://daemon.test/config/effective?cwd=%2Frepo+path");
 });
 
 test("parses daemon health transport feature flags", async () => {

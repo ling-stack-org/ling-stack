@@ -193,8 +193,13 @@ test("doctor warns when shell snapshot diagnostics cannot read a route and does 
 
 test("doctor config audits .ling-stack state and flags root logs", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-config-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-user-config-"));
   try {
     await prepareDoctorWorkspace(cwd);
+    await writeFile(resolve(userRoot, "config.json"), JSON.stringify({ schemaVersion: 1, product: "ling-stack" }), "utf8");
+    await writeFile(resolve(userRoot, "settings.json"), JSON.stringify({ schemaVersion: 1, theme: "system" }), "utf8");
+    await mkdir(resolve(userRoot, "providers"), { recursive: true });
+    await writeFile(resolve(userRoot, "providers", "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles: [] }), "utf8");
     await writeFile(resolve(cwd, ".ling-stack", "config.json"), JSON.stringify({ version: 1 }), "utf8");
     await mkdir(resolve(cwd, ".ling-stack", "sessions"), { recursive: true });
     await mkdir(resolve(cwd, ".ling-stack", "artifacts"), { recursive: true });
@@ -204,12 +209,19 @@ test("doctor config audits .ling-stack state and flags root logs", async () => {
     await mkdir(resolve(cwd, ".ling-stack", "logs"), { recursive: true });
     await mkdir(resolve(cwd, ".logs"), { recursive: true });
 
-    const result = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"]);
+    const result = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
     const body = JSON.parse(result.stdout);
     const checks = new Map(body.checks.map((check) => [check.id, check]));
 
     assert.equal(result.code, 0, result.stderr);
     assert.equal(body.overallStatus, "warning");
+    assert.equal(checks.get("config.user_root").status, "ok");
+    assert.equal(checks.get("config.user_root").details.path, userRoot);
+    assert.equal(checks.get("config.user_config").details.path, resolve(userRoot, "config.json"));
+    assert.equal(checks.get("config.user_settings").details.path, resolve(userRoot, "settings.json"));
+    assert.equal(checks.get("config.user_provider_profiles").details.path, resolve(userRoot, "providers", "profiles.json"));
     assert.equal(checks.get("config.workspace_config").status, "ok");
     assert.equal(checks.get("workspace.sqlite").status, "ok");
     assert.equal(checks.get("config.plugins_cache").status, "ok");
@@ -218,6 +230,40 @@ test("doctor config audits .ling-stack state and flags root logs", async () => {
     assert.doesNotMatch(result.stdout + result.stderr, /sk-/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("doctor config treats missing user layer as built-in defaults", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-config-missing-user-"));
+  const userRoot = resolve(await mkdtemp(resolve(tmpdir(), "ling-stack-cli-user-config-parent-")), "missing-user-root");
+  try {
+    await prepareDoctorWorkspace(cwd);
+    await writeFile(resolve(cwd, ".ling-stack", "config.json"), JSON.stringify({ version: 1 }), "utf8");
+    await mkdir(resolve(cwd, ".ling-stack", "sessions"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "artifacts"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "attachments"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "pi"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "plugins", "cache"), { recursive: true });
+    await mkdir(resolve(cwd, ".ling-stack", "logs"), { recursive: true });
+
+    const result = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    const body = JSON.parse(result.stdout);
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(body.overallStatus, "ok");
+    assert.equal(checks.get("config.user_root").status, "ok");
+    assert.equal(checks.get("config.user_root").details.exists, false);
+    assert.equal(checks.get("config.user_config").status, "ok");
+    assert.equal(checks.get("config.user_config").details.exists, false);
+    assert.equal(checks.get("config.user_settings").status, "ok");
+    assert.equal(checks.get("config.user_provider_profiles").status, "ok");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(dirname(userRoot), { recursive: true, force: true });
   }
 });
 
@@ -237,9 +283,14 @@ test("daemon status remains a thin health check", async () => {
   }
 });
 
-function runCli(daemonUrl, cwd, args) {
+function runCli(daemonUrl, cwd, args, options = {}) {
   return new Promise((resolveResult) => {
-    execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
+    execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], {
+      env: {
+        ...process.env,
+        ...options.env,
+      },
+    }, (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,
         stdout,
