@@ -1,5 +1,5 @@
 import type { Translate } from "../i18n.js";
-import type { ConversationWorkCellRow, ConversationWorkCellRowTone, ConversationWorkCellViewModel } from "./conversation-work-cell.js";
+import type { ConversationWorkCellBranch, ConversationWorkCellRow, ConversationWorkCellRowTone, ConversationWorkCellViewModel } from "./conversation-work-cell.js";
 import type { CollaborationTaskCardModel, CollaborationTaskStepState } from "./collaboration-task-card.js";
 import { workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "./workflow-progress.js";
 
@@ -20,6 +20,7 @@ export function collaborationTaskCardToConversationWorkCell(input: {
     summary: collaborationTaskWorkCellSummary(input.card, base.summary, input.t),
     stats: buildCollaborationWorkCellStats(input.card, input.t),
     activeRows: input.card.mode === "completed" ? [] : buildCollaborationActiveRows(input.card, input.t),
+    branchRows: buildCollaborationBranchRows(input.card, input.t),
     finalReportRows: buildFinalLingReportRows(input.card, base, input.t),
   };
 }
@@ -113,6 +114,27 @@ function buildCollaborationActiveRows(card: CollaborationTaskCardModel, t: Trans
     });
   }
   return rows.slice(0, 5);
+}
+
+function buildCollaborationBranchRows(card: CollaborationTaskCardModel, t: Translate): readonly ConversationWorkCellBranch[] | undefined {
+  if (card.branches.length === 0) {
+    return undefined;
+  }
+  return card.branches.slice(0, 6).map((branch) => ({
+    id: branch.id,
+    label: branch.label,
+    summary: branch.summary,
+    meta: t("{done} of {total} steps complete", { done: branch.completedStepCount, total: branch.totalStepCount }),
+    tone: collaborationStepTone(branch.state),
+    stateLabel: t(collaborationTaskStepStateLabel(branch.state)),
+    rows: branch.steps.slice(0, 6).map((step) => ({
+      id: `branch-step:${step.id}`,
+      title: `${step.ownerLabel}: ${step.title}`,
+      description: step.summary,
+      meta: t(collaborationTaskStepStateLabel(step.state)),
+      tone: collaborationStepTone(step.state),
+    })),
+  }));
 }
 
 function buildFinalLingReportRows(

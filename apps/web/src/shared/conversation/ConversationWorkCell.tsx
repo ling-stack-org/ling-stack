@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { CheckCircle2, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, ChevronDown, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
-import type { ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import type { ConversationWorkCellBranch, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -76,6 +76,10 @@ export function ConversationWorkCell({
           ))}
         </div>
 
+        {model.branchRows && model.branchRows.length > 0 ? (
+          <BranchRows branches={model.branchRows} />
+        ) : null}
+
         {active ? (
           <ActiveTurnItemStream rows={model.activeRows} />
         ) : null}
@@ -114,6 +118,53 @@ export function ConversationWorkCell({
         ) : null}
       </div>
     </article>
+  );
+}
+
+function BranchRows({ branches }: { readonly branches: readonly ConversationWorkCellBranch[] }): JSX.Element {
+  const { t } = useI18n();
+  const [expandedBranchId, setExpandedBranchId] = useState<string>();
+  return (
+    <section className="conversation-work-cell-branches" aria-label={t("Parallel branches")}>
+      <header>
+        <strong>{t("Parallel branches")}</strong>
+        <small>{t("{count} branches", { count: branches.length })}</small>
+      </header>
+      <div className="conversation-work-cell-branch-list">
+        {branches.map((branch) => {
+          const expanded = expandedBranchId === branch.id;
+          return (
+            <div key={branch.id} className={["conversation-work-cell-branch", branch.tone ?? "neutral", expanded ? "expanded" : ""].filter(Boolean).join(" ")}>
+              <button
+                className="conversation-work-cell-branch-head"
+                type="button"
+                aria-expanded={expanded}
+                onClick={() => setExpandedBranchId(expanded ? undefined : branch.id)}
+              >
+                <span className="conversation-work-cell-row-dot" aria-hidden="true" />
+                <span className="conversation-work-cell-branch-copy">
+                  <strong>{branch.label}</strong>
+                  {branch.summary ? <small>{branch.summary}</small> : null}
+                </span>
+                {branch.meta ? <code>{branch.meta}</code> : null}
+                <span className="conversation-work-cell-branch-toggle">
+                  <ChevronDown size={13} aria-hidden="true" />
+                  <span>{expanded ? t("Collapse branch") : t("Expand branch")}</span>
+                </span>
+              </button>
+              {expanded ? (
+                <div className="conversation-work-cell-branch-detail" aria-label={t("Branch steps")}>
+                  {branch.stateLabel ? <small>{branch.stateLabel}</small> : null}
+                  <div className="conversation-work-cell-row-list">
+                    {branch.rows.map((row) => <WorkCellRow key={row.id} row={row} compact />)}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

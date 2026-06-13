@@ -6974,6 +6974,8 @@ function CollaborationTaskProgressCard({
   const { t } = useI18n();
   const visibleSteps = visibleCollaborationTaskSteps(card);
   const hiddenStepCount = Math.max(0, card.steps.length - visibleSteps.length);
+  const visibleBranches = card.branches.slice(0, 3);
+  const hiddenBranchCount = Math.max(0, card.branches.length - visibleBranches.length);
   return (
     <button className={`collaboration-task-card ${card.mode}`} type="button" onClick={onOpen}>
       <span className="collaboration-task-card-head">
@@ -7003,26 +7005,49 @@ function CollaborationTaskProgressCard({
           <small>{card.nextAction}</small>
         </span>
       ) : null}
-      <span className="collaboration-task-step-list" aria-label={t("Collaboration steps")}>
-        {visibleSteps.map((step) => (
-          <span key={step.id} className={`collaboration-task-step ${step.state}`}>
-            <i aria-hidden="true" />
-            <span>
-              <strong>{step.ownerLabel}: {step.title}</strong>
-              {step.summary ? <small>{step.summary}</small> : null}
+      {visibleBranches.length > 0 ? (
+        <span className="collaboration-task-branch-list" aria-label={t("Parallel branches")}>
+          {visibleBranches.map((branch) => (
+            <span key={branch.id} className={`collaboration-task-branch ${branch.state}`}>
+              <i aria-hidden="true" />
+              <span>
+                <strong>{branch.label}</strong>
+                {branch.summary ? <small>{branch.summary}</small> : null}
+              </span>
+              <small>{branch.completedStepCount}/{branch.totalStepCount}</small>
             </span>
-            <small>{t(collaborationTaskStepStateLabel(step.state))}</small>
-          </span>
-        ))}
-        {hiddenStepCount > 0 ? (
-          <span className="collaboration-task-step more">
-            <i aria-hidden="true" />
-            <span>
-              <strong>{t("+{count} more steps", { count: hiddenStepCount })}</strong>
+          ))}
+          {hiddenBranchCount > 0 ? (
+            <span className="collaboration-task-branch more">
+              <i aria-hidden="true" />
+              <span>
+                <strong>{t("+{count} more branches", { count: hiddenBranchCount })}</strong>
+              </span>
             </span>
-          </span>
-        ) : null}
-      </span>
+          ) : null}
+        </span>
+      ) : (
+        <span className="collaboration-task-step-list" aria-label={t("Collaboration steps")}>
+          {visibleSteps.map((step) => (
+            <span key={step.id} className={`collaboration-task-step ${step.state}`}>
+              <i aria-hidden="true" />
+              <span>
+                <strong>{step.ownerLabel}: {step.title}</strong>
+                {step.summary ? <small>{step.summary}</small> : null}
+              </span>
+              <small>{t(collaborationTaskStepStateLabel(step.state))}</small>
+            </span>
+          ))}
+          {hiddenStepCount > 0 ? (
+            <span className="collaboration-task-step more">
+              <i aria-hidden="true" />
+              <span>
+                <strong>{t("+{count} more steps", { count: hiddenStepCount })}</strong>
+              </span>
+            </span>
+          ) : null}
+        </span>
+      )}
       <span className="collaboration-task-card-footer">
         <small>{t("Open workflow evidence")}</small>
       </span>

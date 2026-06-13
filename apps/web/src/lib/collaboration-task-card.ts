@@ -20,7 +20,20 @@ export interface CollaborationTaskCardStep {
   readonly ownerLabel: string;
   readonly state: CollaborationTaskStepState;
   readonly summary?: string;
+  readonly branchGroupId?: string;
+  readonly joinGroupId?: string;
   readonly updatedAt: string;
+}
+
+export interface CollaborationTaskBranch {
+  readonly id: string;
+  readonly label: string;
+  readonly state: CollaborationTaskStepState;
+  readonly summary?: string;
+  readonly completedStepCount: number;
+  readonly totalStepCount: number;
+  readonly ownerLabels: readonly string[];
+  readonly steps: readonly CollaborationTaskCardStep[];
 }
 
 export interface CollaborationTaskCardModel {
@@ -37,6 +50,7 @@ export interface CollaborationTaskCardModel {
   readonly totalStepCount: number;
   readonly pendingApprovalCount: number;
   readonly steps: readonly CollaborationTaskCardStep[];
+  readonly branches: readonly CollaborationTaskBranch[];
   readonly updatedAt: string;
 }
 
@@ -69,6 +83,17 @@ export function buildCollaborationTaskCardModel(input: BuildCollaborationTaskCar
   const queuedStep = orderedSteps.find((step) => step.status === "queued");
   const focusStep = blockedStep ?? failedStep ?? waitingStep ?? activeStep ?? queuedStep;
   const completedStepCount = orderedSteps.filter((step) => step.status === "succeeded" || step.status === "skipped").length;
+  const steps = orderedSteps.map((step) => ({
+    id: step.id,
+    title: step.title,
+    ownerLabel: step.toParticipantLabel,
+    state: collaborationStepState(step),
+    summary: step.resultSummary ?? step.blocker ?? (step.status === "succeeded" || step.status === "skipped" ? undefined : truncatePreview(step.prompt, 120)),
+    branchGroupId: step.metadata?.branchGroupId,
+    joinGroupId: step.metadata?.joinGroupId,
+    updatedAt: step.updatedAt,
+  }));
+  const executionMode = collaborationExecutionMode(orderedSteps);
 
   return {
     id: `collaboration-task-card:${input.workflow.id}`,
@@ -76,23 +101,67 @@ export function buildCollaborationTaskCardModel(input: BuildCollaborationTaskCar
     title: input.workflow.title,
     objective: input.workflow.objective,
     mode: collaborationTaskCardMode(input.workflow, orderedSteps, pendingApprovals),
-    executionMode: collaborationExecutionMode(orderedSteps),
+    executionMode,
     currentOwnerLabel: focusStep?.toParticipantLabel,
     blocker: blockedStep?.blocker ?? failedStep?.blocker,
     nextAction: collaborationNextAction({ t: input.t, workflow: input.workflow, focusStep, pendingApprovalCount: pendingApprovals.length }),
     completedStepCount,
     totalStepCount: orderedSteps.length,
     pendingApprovalCount: pendingApprovals.length,
-    steps: orderedSteps.map((step) => ({
-      id: step.id,
-      title: step.title,
-      ownerLabel: step.toParticipantLabel,
-      state: collaborationStepState(step),
-      summary: step.resultSummary ?? step.blocker ?? (step.status === "succeeded" || step.status === "skipped" ? undefined : truncatePreview(step.prompt, 120)),
-      updatedAt: step.updatedAt,
-    })),
+    steps,
+    branches: buildCollaborationBranches({ steps, executionMode, t: input.t }),
     updatedAt: input.workflow.updatedAt,
   };
+}
+
+function buildCollaborationBranches(input: {
+  readonly steps: readonly CollaborationTaskCardStep[];
+  readonly executionMode: CollaborationExecutionMode;
+  readonly t: Translate;
+}): readonly CollaborationTaskBranch[] {
+  if (input.executionMode === "serial") {
+    return [];
+  }
+  const hasExplicitBranchGroup = input.steps.some((step) => Boolean(step.branchGroupId));
+  const groups = new Map<string, CollaborationTaskCardStep[]>();
+  for (const step of input.steps) {
+    if (step.joinGroupId && !step.branchGroupId) {
+      continue;
+    }
+    const groupId = step.branchGroupId ?? step.id;
+    groups.set(groupId, [...(groups.get(groupId) ?? []), step]);
+  }
+  const branchEntries = [...groups.entries()];
+  if (!hasExplicitBranchGroup && branchEntries.length < 2) {
+    return [];
+  }
+  return branchEntries.map(([groupId, steps], index) => {
+    const ownerLabels = uniqueStrings(steps.map((step) => step.ownerLabel));
+    const completedStepCount = steps.filter((step) => step.state === "done").length;
+    const focusStep =
+      steps.find((step) => step.state === "blocked") ??
+      steps.find((step) => step.state === "failed") ??
+      steps.find((step) => step.state === "active") ??
+      steps.find((step) => step.state === "waiting" || step.state === "queued") ??
+      steps.at(-1);
+    const label = ownerLabels.length > 0
+      ? input.t("{owner} branch", { owner: ownerLabels.slice(0, 2).join(", ") })
+      : input.t("Branch {number}", { number: index + 1 });
+    return {
+      id: `branch:${groupId}`,
+      label,
+      state: collaborationBranchState(steps),
+      summary: focusStep?.summary ?? focusStep?.title,
+      completedStepCount,
+      totalStepCount: steps.length,
+      ownerLabels,
+      steps,
+    };
+  }).sort((left, right) =>
+    branchStatePriority(right.state) - branchStatePriority(left.state) ||
+    right.totalStepCount - left.totalStepCount ||
+    left.label.localeCompare(right.label),
+  );
 }
 
 function collaborationTaskCardMode(
@@ -154,6 +223,51 @@ function collaborationStepState(step: ChannelWorkflowStep): CollaborationTaskSte
     return "cancelled";
   }
   return "queued";
+}
+
+function collaborationBranchState(steps: readonly CollaborationTaskCardStep[]): CollaborationTaskStepState {
+  if (steps.some((step) => step.state === "blocked")) {
+    return "blocked";
+  }
+  if (steps.some((step) => step.state === "failed")) {
+    return "failed";
+  }
+  if (steps.some((step) => step.state === "active")) {
+    return "active";
+  }
+  if (steps.some((step) => step.state === "waiting" || step.state === "queued")) {
+    return "waiting";
+  }
+  if (steps.every((step) => step.state === "done")) {
+    return "done";
+  }
+  if (steps.every((step) => step.state === "cancelled")) {
+    return "cancelled";
+  }
+  return "waiting";
+}
+
+function branchStatePriority(state: CollaborationTaskStepState): number {
+  if (state === "blocked") {
+    return 60;
+  }
+  if (state === "failed") {
+    return 50;
+  }
+  if (state === "active") {
+    return 40;
+  }
+  if (state === "waiting" || state === "queued") {
+    return 30;
+  }
+  if (state === "done") {
+    return 20;
+  }
+  return 0;
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
 }
 
 function collaborationNextAction(input: {

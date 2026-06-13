@@ -1889,6 +1889,9 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
       toParticipantLabel: "Designer",
       status: "succeeded",
       resultSummary: "Card shape accepted.",
+      metadata: {
+        branchGroupId: "branch_design",
+      },
       createdAt: "2026-05-25T00:45:00.000Z",
       updatedAt: "2026-05-25T00:46:00.000Z",
     },
@@ -1903,6 +1906,9 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
       toParticipantId: "engineer",
       toParticipantLabel: "Engineer",
       status: "running",
+      metadata: {
+        branchGroupId: "branch_engineer",
+      },
       createdAt: "2026-05-25T00:46:00.000Z",
       updatedAt: "2026-05-25T00:47:00.000Z",
     },
@@ -1917,6 +1923,9 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
       toParticipantId: "qa",
       toParticipantLabel: "QA",
       status: "queued",
+      metadata: {
+        branchGroupId: "branch_qa",
+      },
       createdAt: "2026-05-25T00:47:00.000Z",
       updatedAt: "2026-05-25T00:47:00.000Z",
     },
@@ -1939,6 +1948,19 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
 
   await mockDaemon(page, state);
   await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  const feedWorkCell = feed.locator(".conversation-work-cell").filter({ hasText: "Ship workflow UI" });
+  await expect(feedWorkCell).toContainText("Parallel branches");
+  await expect(feedWorkCell).toContainText("Engineer branch");
+  await expect(feedWorkCell).toContainText("QA branch");
+  await expect(feedWorkCell).not.toContainText("branch_engineer");
+  const engineerBranch = feedWorkCell.locator(".conversation-work-cell-branch").filter({ hasText: "Engineer branch" });
+  await expect(engineerBranch.locator(".conversation-work-cell-branch-detail")).toHaveCount(0);
+  await engineerBranch.locator(".conversation-work-cell-branch-head").click();
+  await expect(engineerBranch.locator(".conversation-work-cell-branch-detail")).toContainText("Engineer: Implement card UI");
+  await expect(engineerBranch.locator(".conversation-work-cell-branch-toggle")).toContainText("Collapse branch");
+
   await openChannelTasksTab(page);
 
   const panel = page.locator(".channel-side-panel");
@@ -1953,14 +1975,18 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
 
   const runningCard = cards.filter({ hasText: "Ship workflow UI" });
   await expect(runningCard).toContainText("Running");
-  await expect(runningCard).toContainText("Serial");
+  await expect(runningCard).toContainText("Parallel");
   await expect(runningCard).toContainText("Owner: Engineer");
-  await expect(runningCard).toContainText("Engineer: Implement card UI");
+  await expect(runningCard).toContainText("Engineer branch");
+  await expect(runningCard).toContainText("QA branch");
+  await expect(runningCard).not.toContainText("branch_engineer");
   await expect(runningCard).not.toContainText("workflow_running_ui");
 
   await runningCard.click();
   await expect(panel).toContainText("Workflow evidence");
-  await expect(panel.locator(".conversation-work-cell")).toContainText("Ship workflow UI");
+  const evidenceWorkCell = panel.locator(".conversation-work-cell");
+  await expect(evidenceWorkCell).toContainText("Ship workflow UI");
+  await expect(evidenceWorkCell).toContainText("Parallel branches");
 });
 
 test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {
