@@ -3,11 +3,12 @@ import type { RunnerRegistry, RunnerResolution } from "../../runtime/runners.js"
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
+import { buildPrivateChatContextView } from "../channels/context-processing/private-chat.js";
+import { renderChannelContextView } from "../channels/context-processing/render.js";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { materializeInlineTeammateDirectInputs } from "./direct-materialization.js";
-import { formatTeammateDirectPrompt } from "./direct-prompts.js";
 
 export async function createAiTeammateDirectReply(input: {
   readonly runnerRegistry: RunnerRegistry;
@@ -118,18 +119,6 @@ export async function createAiTeammateDirectReply(input: {
       sourceMessage: input.sourceMessage,
       now,
     });
-    const task = {
-      id: input.sourceMessage.id,
-      title: `Private chat with ${input.teammate.displayName}`,
-      prompt: formatTeammateDirectPrompt(
-        input.teammate,
-        recentMessages,
-        input.sourceMessage,
-        privateAttachmentsById,
-        materializedAttachments,
-      ),
-      channelId: "private",
-    };
     const memoryRecall = input.store.recallMemory({
       teammateId: input.teammate.id,
       intent: "private-chat",
@@ -144,6 +133,24 @@ export async function createAiTeammateDirectReply(input: {
       workspaceId: input.teammate.workspaceId,
       consumerTeammateId: input.teammate.id,
     });
+    const privateChatView = buildPrivateChatContextView({
+      store: input.store,
+      teammate: input.teammate,
+      thread: input.thread,
+      messages: recentMessages,
+      sourceMessage: input.sourceMessage,
+      attachmentsById: privateAttachmentsById,
+      materializationsByAttachmentId: materializedAttachments,
+      memorySources: renderedMemory.sources,
+      memoryDropped: renderedMemory.dropped,
+      now,
+    });
+    const task = {
+      id: input.sourceMessage.id,
+      title: `Private chat with ${input.teammate.displayName}`,
+      prompt: renderChannelContextView(privateChatView),
+      channelId: "private",
+    };
     const memoryPrompt = renderedMemory.prompt;
     const systemPrompt = [
       input.teammate.systemPrompt ?? `You are ${input.teammate.displayName}, an AI teammate inside Ling Stack.`,

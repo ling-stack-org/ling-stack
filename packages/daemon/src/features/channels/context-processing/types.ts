@@ -2,6 +2,8 @@ export type ChannelContextSourceKind =
   | "turn"
   | "channel_state"
   | "recent_message"
+  | "private_message"
+  | "teammate_profile"
   | "channel_summary"
   | "decision"
   | "handoff"
