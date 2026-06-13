@@ -168,6 +168,7 @@ import type {
   ChannelWorkflowStepStartMode,
   ChannelWorkspaceBinding,
   ChannelWorkspaceMode,
+  WorkflowContextInspectSummary,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
   MemoryObject,
@@ -6289,6 +6290,7 @@ type WorkflowStepContextEvidenceState =
   | { readonly status: "loading" }
   | {
     readonly status: "loaded";
+    readonly inspect?: WorkflowContextInspectSummary;
     readonly packet?: ChannelWorkflowStepContextPacket;
     readonly diagnostics: readonly WorkflowEvidenceDiagnostic[];
   }
@@ -6329,6 +6331,7 @@ function WorkflowStepContextEvidencePanel({
       const evidenceStep = evidence.steps.find((item) => item.step.id === step.id);
       setState({
         status: "loaded",
+        inspect: evidenceStep?.contextInspect,
         packet: evidenceStep?.contextPacket,
         diagnostics: evidenceStep?.diagnostics ?? [],
       });
@@ -6392,6 +6395,9 @@ function WorkflowStepContextEvidenceBody({
     );
   }
   if (!state.packet) {
+    if (state.inspect) {
+      return <WorkflowContextInspectEvidence inspect={state.inspect} artifactId={artifactId} />;
+    }
     const diagnostic = state.diagnostics.find((item) => item.kind === "bad_packet" || item.kind === "missing_context_packet");
     return (
       <div className="workflow-context-evidence-body">
@@ -6402,6 +6408,9 @@ function WorkflowStepContextEvidenceBody({
         </div>
       </div>
     );
+  }
+  if (state.inspect) {
+    return <WorkflowContextInspectEvidence inspect={state.inspect} artifactId={artifactId} fallbackPacket={state.packet} />;
   }
   if (!state.packet.contextPack) {
     return (
@@ -6415,6 +6424,115 @@ function WorkflowStepContextEvidenceBody({
     );
   }
   return <WorkflowContextPackEvidence packet={state.packet} artifactId={artifactId} />;
+}
+
+function WorkflowContextInspectEvidence({
+  inspect,
+  artifactId,
+  fallbackPacket,
+}: {
+  readonly inspect: WorkflowContextInspectSummary;
+  readonly artifactId: string;
+  readonly fallbackPacket?: ChannelWorkflowStepContextPacket;
+}): JSX.Element {
+  const { t } = useI18n();
+  if (inspect.availability !== "available") {
+    if (fallbackPacket?.contextPack) {
+      return <WorkflowContextPackEvidence packet={fallbackPacket} artifactId={artifactId} />;
+    }
+    return (
+      <div className="workflow-context-evidence-body">
+        <div className="workflow-context-evidence-state">
+          <FileText size={13} />
+          <span>{workflowContextInspectAvailabilityLabel(inspect.availability, t)}</span>
+          <small>{inspect.contextArtifactId ?? artifactId}</small>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="workflow-context-evidence-body">
+      <div className="context-packet muted" aria-label={t("Context inspect summary")}>
+        <span>{t("Kind")}: {inspect.kind ?? "unknown"}</span>
+        <span>{t("Provider")}: {inspect.providerPresetId ?? fallbackPacket?.providerPresetId ?? "unknown"}</span>
+        <span>{t("Model")}: {inspect.modelId ?? "unknown"}</span>
+        <span>{t("Budget")}: {inspect.budget?.mode ?? "unknown"}</span>
+        {inspect.budget ? <span>{inspect.budget.estimatedInputTokens}/{inspect.budget.inputBudgetTokens} tokens</span> : null}
+        {inspect.budget?.overBudget ? <span>{t("Over budget")}</span> : null}
+      </div>
+
+      <div className="workflow-context-evidence-grid">
+        <WorkflowContextInspectBudgetDiagnostics inspect={inspect} t={t} />
+
+        <WorkflowContextEvidenceSection
+          title={t("Kept sections")}
+          summary={t("{count} sections", { count: inspect.sectionCount })}
+        >
+          {inspect.sections.length > 0 ? (
+            <ul>
+              {inspect.sections.map((section) => (
+                <li key={section.id}>
+                  <strong>{section.id}</strong>
+                  <small>{workflowContextInspectSectionMeta(section)}</small>
+                </li>
+              ))}
+            </ul>
+          ) : <small>{t("No kept sections recorded.")}</small>}
+        </WorkflowContextEvidenceSection>
+
+        <WorkflowContextEvidenceSection
+          title={t("Dropped sections")}
+          summary={t("{count} sections", { count: inspect.droppedSectionCount })}
+        >
+          {inspect.droppedSectionIds.length > 0 ? (
+            <div className="workflow-context-chip-list">
+              {inspect.droppedSectionIds.map((sectionId) => <code key={sectionId}>{sectionId}</code>)}
+            </div>
+          ) : <small>{t("No sections dropped.")}</small>}
+        </WorkflowContextEvidenceSection>
+
+        <WorkflowContextEvidenceSection
+          title={t("Source refs")}
+          summary={t("{count} refs", { count: inspect.sourceRefCount })}
+        >
+          {inspect.sourceRefs.length > 0 ? (
+            <ul>
+              {inspect.sourceRefs.slice(0, 18).map((ref) => (
+                <li key={`${ref.type}:${ref.id}`}>
+                  <strong>{ref.type}</strong>
+                  <small>{workflowContextSourceRefLabel(ref)}</small>
+                </li>
+              ))}
+            </ul>
+          ) : <small>{t("No source refs recorded.")}</small>}
+          {inspect.sourceRefs.length > 18 ? <small>{t("+{count} more refs", { count: inspect.sourceRefs.length - 18 })}</small> : null}
+        </WorkflowContextEvidenceSection>
+
+        {inspect.compactionIds.length > 0 ? (
+          <WorkflowContextEvidenceSection
+            title={t("Compactions")}
+            summary={t("{count} compactions", { count: inspect.compactionCount })}
+          >
+            <div className="workflow-context-chip-list">
+              {inspect.compactionIds.map((compactionId) => <code key={compactionId}>{compactionId}</code>)}
+            </div>
+          </WorkflowContextEvidenceSection>
+        ) : null}
+
+        <WorkflowContextEvidenceSection
+          title={t("Safety boundary")}
+          summary={t("Developer diagnostics")}
+        >
+          <div className="workflow-context-chip-list">
+            {inspect.safety.rawPromptTextIncluded ? null : <code>{t("raw prompt text excluded")}</code>}
+            {inspect.safety.rawLogsIncluded ? null : <code>{t("raw logs excluded")}</code>}
+            {inspect.safety.rawArtifactBodiesIncluded ? null : <code>{t("raw artifact bodies excluded")}</code>}
+          </div>
+        </WorkflowContextEvidenceSection>
+      </div>
+    </div>
+  );
 }
 
 function WorkflowContextPackEvidence({
@@ -6622,6 +6740,91 @@ function WorkflowContextBudgetDiagnostics({
   );
 }
 
+function WorkflowContextInspectBudgetDiagnostics({
+  inspect,
+  t,
+}: {
+  readonly inspect: WorkflowContextInspectSummary;
+  readonly t: Translate;
+}): JSX.Element {
+  const sectionEstimateCount = inspect.sections.filter((section) => typeof section.estimatedTokens === "number").length;
+  return (
+    <details className="workflow-context-budget-diagnostics">
+      <summary>
+        <span>{t("Budget diagnostics")}</span>
+        <small>{t("Developer diagnostics")}</small>
+      </summary>
+      <WorkflowContextEvidenceSection
+        title={t("Token budget")}
+        summary={inspect.budget ? workflowContextInspectBudgetUsageLabel(inspect, t) : t("Not recorded")}
+      >
+        {inspect.budget ? (
+          <dl className="workflow-context-diagnostics-grid">
+            <div>
+              <dt>{t("Budget mode")}</dt>
+              <dd>{inspect.budget.mode || t("Not recorded")}</dd>
+            </div>
+            <div>
+              <dt>{t("Tokenizer")}</dt>
+              <dd>{inspect.budget.tokenizer || t("Not recorded")}</dd>
+            </div>
+            <div>
+              <dt>{t("Input budget")}</dt>
+              <dd>{formatWorkflowTokenCount(inspect.budget.inputBudgetTokens, t)}</dd>
+            </div>
+            <div>
+              <dt>{t("Estimated input")}</dt>
+              <dd>{formatWorkflowTokenCount(inspect.budget.estimatedInputTokens, t)}</dd>
+            </div>
+            <div>
+              <dt>{t("Over budget")}</dt>
+              <dd>{inspect.budget.overBudget ? t("Yes") : t("No")}</dd>
+            </div>
+          </dl>
+        ) : <small>{t("Not recorded")}</small>}
+      </WorkflowContextEvidenceSection>
+
+      <WorkflowContextEvidenceSection
+        title={t("Section token estimates")}
+        summary={t("{count} sections", { count: sectionEstimateCount })}
+      >
+        {inspect.sections.length > 0 ? (
+          <ul>
+            {inspect.sections.map((section) => (
+              <li key={section.id}>
+                <strong>{section.id}</strong>
+                <small>{workflowContextInspectSectionDiagnosticMeta(section, t)}</small>
+              </li>
+            ))}
+          </ul>
+        ) : <small>{t("No kept sections recorded.")}</small>}
+      </WorkflowContextEvidenceSection>
+
+      <WorkflowContextEvidenceSection
+        title={t("Dropped section ids")}
+        summary={t("{count} sections", { count: inspect.droppedSectionCount })}
+      >
+        {inspect.droppedSectionIds.length > 0 ? (
+          <div className="workflow-context-chip-list">
+            {inspect.droppedSectionIds.map((sectionId) => <code key={sectionId}>{sectionId}</code>)}
+          </div>
+        ) : <small>{t("No sections dropped.")}</small>}
+      </WorkflowContextEvidenceSection>
+
+      <WorkflowContextEvidenceSection
+        title={t("Compaction ids")}
+        summary={t("{count} compactions", { count: inspect.compactionCount })}
+      >
+        {inspect.compactionIds.length > 0 ? (
+          <div className="workflow-context-chip-list">
+            {inspect.compactionIds.map((compactionId) => <code key={compactionId}>{compactionId}</code>)}
+          </div>
+        ) : <small>{t("No compactions recorded.")}</small>}
+      </WorkflowContextEvidenceSection>
+    </details>
+  );
+}
+
 function WorkflowContextEvidenceSection({
   title,
   summary,
@@ -6651,12 +6854,31 @@ function workflowContextSectionMeta(section: WorkflowContextPackSectionSnapshot)
   ].filter(Boolean).join(" · ");
 }
 
+function workflowContextInspectSectionMeta(section: WorkflowContextInspectSummary["sections"][number]): string {
+  return [
+    section.role,
+    section.priority,
+    typeof section.estimatedTokens === "number" ? `${section.estimatedTokens} tokens` : undefined,
+    `${section.sourceRefIds.length} refs`,
+    section.metadataKeys.length > 0 ? `metadata:${section.metadataKeys.join(", ")}` : undefined,
+  ].filter(Boolean).join(" · ");
+}
+
 function workflowContextSectionDiagnosticMeta(section: WorkflowContextPackSectionSnapshot, t: Translate): string {
   return [
     section.role,
     section.priority,
     formatWorkflowTokenCount(section.estimatedTokens, t),
     t("{count} refs", { count: section.sourceRefIds?.length ?? 0 }),
+  ].join(" · ");
+}
+
+function workflowContextInspectSectionDiagnosticMeta(section: WorkflowContextInspectSummary["sections"][number], t: Translate): string {
+  return [
+    section.role,
+    section.priority,
+    formatWorkflowTokenCount(section.estimatedTokens, t),
+    t("{count} refs", { count: section.sourceRefIds.length }),
   ].join(" · ");
 }
 
@@ -6669,12 +6891,37 @@ function workflowContextBudgetUsageLabel(pack: WorkflowContextPackSnapshot, t: T
   return `${formatWorkflowTokenCount(estimated, t)} / ${formatWorkflowTokenCount(budget, t)} (${Math.round((estimated / budget) * 100)}%)`;
 }
 
+function workflowContextInspectBudgetUsageLabel(inspect: WorkflowContextInspectSummary, t: Translate): string {
+  const estimated = inspect.budget?.estimatedInputTokens;
+  const budget = inspect.budget?.inputBudgetTokens;
+  if (typeof estimated !== "number" || typeof budget !== "number" || !Number.isFinite(estimated) || !Number.isFinite(budget) || budget <= 0) {
+    return t("Not recorded");
+  }
+  return `${formatWorkflowTokenCount(estimated, t)} / ${formatWorkflowTokenCount(budget, t)} (${Math.round((estimated / budget) * 100)}%)`;
+}
+
 function formatWorkflowTokenCount(value: number | undefined, t: Translate): string {
   return typeof value === "number" && Number.isFinite(value) ? t("{count} tokens", { count: value }) : t("Not recorded");
 }
 
-function workflowContextSourceRefLabel(ref: WorkflowContextPackSourceRefSnapshot): string {
+function workflowContextSourceRefLabel(ref: WorkflowContextPackSourceRefSnapshot | WorkflowContextInspectSummary["sourceRefs"][number]): string {
   return ref.label ? `${ref.label} [${ref.id}]` : ref.id;
+}
+
+function workflowContextInspectAvailabilityLabel(
+  availability: WorkflowContextInspectSummary["availability"],
+  t: Translate,
+): string {
+  if (availability === "missing_context_artifact") {
+    return t("No persisted context snapshot for this step.");
+  }
+  if (availability === "unreadable_context_packet") {
+    return t("Context packet could not be read.");
+  }
+  if (availability === "missing_context_pack") {
+    return t("Context artifact exists, but no Context Pack snapshot was recorded.");
+  }
+  return t("Context inspect metadata is available.");
 }
 
 function workflowContextProtocolMetadata(pack: WorkflowContextPackSnapshot): readonly { readonly label: string; readonly value: string }[] {

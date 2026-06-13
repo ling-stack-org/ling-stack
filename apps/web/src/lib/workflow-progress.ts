@@ -273,6 +273,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
 }
 
 type WorkflowEvidenceStepModel = WorkflowEvidenceResponse["steps"][number];
+type WorkflowContextInspectSummary = WorkflowEvidenceStepModel["contextInspect"];
 type WorkflowContextPackSnapshot = NonNullable<NonNullable<WorkflowEvidenceStepModel["contextPacket"]>["contextPack"]>;
 type WorkflowContextSectionSnapshot = WorkflowContextPackSnapshot["sections"][number];
 type WorkflowContextSourceRefSnapshot = WorkflowContextPackSnapshot["sourceRefs"][number];
@@ -281,9 +282,12 @@ function buildWorkflowContextPackRows(
   stepEvidence: WorkflowEvidenceStepModel,
   t: Translate,
 ): ConversationWorkCellRow[] {
-  const { step, contextPacket, diagnostics } = stepEvidence;
+  const { step, contextInspect, contextPacket, diagnostics } = stepEvidence;
   const stepTitle = `${step.toParticipantLabel}: ${step.title}`;
   const artifactId = step.metadata?.contextArtifactId;
+  if (contextInspect) {
+    return buildWorkflowContextInspectRows({ inspect: contextInspect, stepTitle, stepId: step.id, t });
+  }
   if (!artifactId && !contextPacket) {
     return [];
   }
@@ -373,6 +377,118 @@ function buildWorkflowContextPackRows(
   }
 
   return rows;
+}
+
+function buildWorkflowContextInspectRows(input: {
+  readonly inspect: WorkflowContextInspectSummary;
+  readonly stepTitle: string;
+  readonly stepId: string;
+  readonly t: Translate;
+}): ConversationWorkCellRow[] {
+  const { inspect, stepTitle, stepId, t } = input;
+  if (inspect.availability !== "available") {
+    return [{
+      id: `context-inspect:${stepId}`,
+      title: stepTitle,
+      description: workflowContextInspectAvailabilityLabel(inspect.availability, t),
+      meta: inspect.contextArtifactId ? `artifact:${inspect.contextArtifactId}` : t("missing"),
+      tone: "waiting",
+    }];
+  }
+
+  const rows: ConversationWorkCellRow[] = [{
+    id: `context-inspect:${stepId}`,
+    title: stepTitle,
+    description: [
+      `${t("Kind")}: ${inspect.kind ?? "unknown"}`,
+      `${t("Provider")}: ${inspect.providerPresetId ?? "unknown"}`,
+      `${t("Model")}: ${inspect.modelId ?? "unknown"}`,
+      `${t("Budget")}: ${inspect.budget?.mode ?? "unknown"}`,
+    ].join(" · "),
+    meta: inspect.budget ? `${inspect.budget.estimatedInputTokens}/${inspect.budget.inputBudgetTokens} tokens` : t("Not recorded"),
+    tone: inspect.budget?.overBudget ? "waiting" : "neutral",
+  }];
+
+  rows.push({
+    id: `context-inspect-sections:${stepId}`,
+    title: t("Kept sections"),
+    description: inspect.sections.length > 0
+      ? truncatePreview(inspect.sections.map(formatContextInspectSection).join(", "), 220)
+      : t("No kept sections recorded."),
+    meta: String(inspect.sectionCount),
+    tone: "neutral",
+  });
+
+  rows.push({
+    id: `context-inspect-dropped:${stepId}`,
+    title: t("Dropped sections"),
+    description: inspect.droppedSectionIds.length > 0
+      ? truncatePreview(inspect.droppedSectionIds.join(", "), 220)
+      : t("No sections dropped."),
+    meta: String(inspect.droppedSectionCount),
+    tone: inspect.droppedSectionCount > 0 ? "waiting" : "success",
+  });
+
+  rows.push({
+    id: `context-inspect-source-refs:${stepId}`,
+    title: t("Source refs"),
+    description: inspect.sourceRefs.length > 0
+      ? truncatePreview(summarizeContextPackSourceRefs(inspect.sourceRefs), 220)
+      : t("No source refs recorded."),
+    meta: String(inspect.sourceRefCount),
+    tone: "neutral",
+  });
+
+  if (inspect.compactionIds.length > 0) {
+    rows.push({
+      id: `context-inspect-compactions:${stepId}`,
+      title: t("Compactions"),
+      description: truncatePreview(inspect.compactionIds.join(", "), 220),
+      meta: String(inspect.compactionCount),
+      tone: "neutral",
+    });
+  }
+
+  rows.push({
+    id: `context-inspect-safety:${stepId}`,
+    title: t("Safety boundary"),
+    description: workflowContextInspectSafetyLabel(inspect, t),
+    meta: t("Developer diagnostics"),
+    tone: "neutral",
+  });
+
+  return rows;
+}
+
+function formatContextInspectSection(section: WorkflowContextInspectSummary["sections"][number]): string {
+  const sourceCount = section.sourceRefIds.length;
+  const tokens = section.estimatedTokens !== undefined ? `, ${section.estimatedTokens}t` : "";
+  return `${section.id}(${section.role}/${section.priority}, refs:${sourceCount}${tokens})`;
+}
+
+function workflowContextInspectAvailabilityLabel(
+  availability: WorkflowContextInspectSummary["availability"],
+  t: Translate,
+): string {
+  if (availability === "missing_context_artifact") {
+    return t("No persisted context snapshot for this step.");
+  }
+  if (availability === "unreadable_context_packet") {
+    return t("Context packet could not be read.");
+  }
+  if (availability === "missing_context_pack") {
+    return t("Context artifact exists, but no Context Pack snapshot was recorded.");
+  }
+  return t("Context inspect metadata is available.");
+}
+
+function workflowContextInspectSafetyLabel(inspect: WorkflowContextInspectSummary, t: Translate): string {
+  const excluded = [
+    inspect.safety.rawPromptTextIncluded ? undefined : t("raw prompt text excluded"),
+    inspect.safety.rawLogsIncluded ? undefined : t("raw logs excluded"),
+    inspect.safety.rawArtifactBodiesIncluded ? undefined : t("raw artifact bodies excluded"),
+  ].filter((value): value is string => Boolean(value));
+  return excluded.length > 0 ? excluded.join(" · ") : t("No safety exclusions recorded.");
 }
 
 function formatContextPackSection(section: WorkflowContextSectionSnapshot): string {
