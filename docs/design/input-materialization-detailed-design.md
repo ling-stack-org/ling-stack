@@ -195,10 +195,26 @@ M5a completed delta:
 
 Remaining M5b delta:
 
-- connect `imageVisionSummarizer` to a managed provider-vision path or isolated
-  image-processing worker;
 - move teammate direct-message attachments onto the same materialization contract so
   direct conversations do not rely on metadata-only prompt copy.
+
+M5b-A direct-message attachment slice:
+
+- materialize the current direct-message attachments before the private reply prompt is
+  built;
+- support text, PDF embedded text, and DOCX raw text with the same bounded extractor
+  budgets used by channel attachments;
+- render only bounded extracted content into the private prompt;
+- keep image vision and durable private materialization cache out of this slice;
+- keep default UI as simple file chips; do not add read/unread or extractor status labels.
+
+M5b-A storage boundary:
+
+- first slice is in-request materialization for teammate direct replies;
+- do not write private attachments into `channel_input_materializations`, because that
+  table is channel-scoped and has a real channel foreign key;
+- a future durable private materialization cache should use an explicit source namespace
+  instead of overloading channel ids.
 
 Runtime placement:
 
@@ -548,8 +564,11 @@ decision/evidence surfaces.
 5. **M5 automatic attachment understanding**
    - status: M5a landed for automatic current-turn attachment enqueue; M5b landed for
      provider-backed image vision summaries through the same provider preset pipeline;
+     M5b-A adds in-request direct-message text/PDF/DOCX attachment materialization;
    - text/PDF/DOCX/image attachment materialization is automatic for current-turn
      attachments;
+   - teammate direct replies materialize current-turn text/PDF/DOCX private attachments
+     before prompt construction, without adding visible read/unread UI;
    - `image_vision_summary_v1` calls the injected `imageVisionSummarizer` when tests or
      future workers provide one; otherwise the daemon creates a provider-backed summarizer
      from the requested provider, channel default provider, or first enabled compatible

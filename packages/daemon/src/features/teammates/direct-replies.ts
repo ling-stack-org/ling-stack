@@ -6,6 +6,7 @@ import { extractAssistantText } from "../../shared/assistant-text.js";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
+import { materializeInlineTeammateDirectInputs } from "./direct-materialization.js";
 import { formatTeammateDirectPrompt } from "./direct-prompts.js";
 
 export async function createAiTeammateDirectReply(input: {
@@ -110,10 +111,23 @@ export async function createAiTeammateDirectReply(input: {
   const privateAttachmentsById = new Map(privateAttachments.map((attachment) => [attachment.id, attachment]));
   const textDeltas: string[] = [];
   try {
+    const materializedAttachments = await materializeInlineTeammateDirectInputs({
+      store: input.store,
+      teammateId: input.teammate.id,
+      threadId: input.thread.id,
+      sourceMessage: input.sourceMessage,
+      now,
+    });
     const task = {
       id: input.sourceMessage.id,
       title: `Private chat with ${input.teammate.displayName}`,
-      prompt: formatTeammateDirectPrompt(input.teammate, recentMessages, input.sourceMessage, privateAttachmentsById),
+      prompt: formatTeammateDirectPrompt(
+        input.teammate,
+        recentMessages,
+        input.sourceMessage,
+        privateAttachmentsById,
+        materializedAttachments,
+      ),
       channelId: "private",
     };
     const memoryRecall = input.store.recallMemory({

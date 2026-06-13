@@ -6159,6 +6159,52 @@ test("teammate direct message stream emits ready delta and done events", async (
   }
 });
 
+test("teammate direct reply materializes current text and docx attachments", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachment-materialization-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    const textAttachment = (await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "private-note.txt",
+      contentType: "text/plain",
+      contentBase64: Buffer.from("Private direct attachment body", "utf8").toString("base64"),
+    })).attachment;
+    const docxAttachment = (await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "private-brief.docx",
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      contentBase64: (await readDocxFixtureBytes()).toString("base64"),
+    })).attachment;
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Summarize these private attachments.",
+        attachmentIds: [textAttachment.id, docxAttachment.id],
+        providerPresetId: provider.id,
+      }),
+    });
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+
+    const prompt = runner.runs[0].task.prompt;
+    assert.match(prompt, /Attachment content:/);
+    assert.match(prompt, /Private direct attachment body/);
+    assert.match(prompt, /Walking on imported air/);
+    assert.doesNotMatch(prompt, /currently exposes attachment metadata only/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("teammate direct reply uses private chat memory isolation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-memory-isolation-"));
   const runner = new RecordingRunner();

@@ -1,0 +1,125 @@
+import type { ChannelAttachment, RunStore, TeammateDirectMessage, TeammatePrivateAttachment } from "@ling-stack/core";
+import { defaultLingMaterializationBudgets } from "../channels/materialization/budgets.js";
+import { officeExtractorV1 } from "../channels/materialization/extractors/office.js";
+import { pdfExtractorV1 } from "../channels/materialization/extractors/pdf.js";
+import { textAttachmentExtractorV1 } from "../channels/materialization/extractors/text-attachment.js";
+import type { LingInputExtractor } from "../channels/materialization/registry.js";
+
+export interface TeammateDirectAttachmentMaterialization {
+  readonly attachmentId: string;
+  readonly fileName: string;
+  readonly kind: TeammatePrivateAttachment["kind"];
+  readonly contentType: string;
+  readonly status: "available" | "metadata_only" | "unsupported" | "blocked";
+  readonly contentText?: string;
+  readonly truncated?: boolean;
+}
+
+export async function materializeInlineTeammateDirectInputs(input: {
+  readonly store: RunStore;
+  readonly teammateId: string;
+  readonly threadId: string;
+  readonly sourceMessage: TeammateDirectMessage;
+  readonly now: string;
+}): Promise<ReadonlyMap<string, TeammateDirectAttachmentMaterialization>> {
+  const materializations = new Map<string, TeammateDirectAttachmentMaterialization>();
+  for (const attachmentId of input.sourceMessage.attachmentIds) {
+    const attachment = input.store.getTeammatePrivateAttachment(attachmentId);
+    if (!attachment || attachment.teammateId !== input.teammateId || attachment.threadId !== input.threadId || attachment.scope !== "teammate_direct_thread") {
+      continue;
+    }
+    const extractorConfig = extractorForPrivateAttachment(attachment);
+    if (!extractorConfig) {
+      materializations.set(attachment.id, {
+        attachmentId: attachment.id,
+        fileName: attachment.fileName,
+        kind: attachment.kind,
+        contentType: attachment.contentType,
+        status: "metadata_only",
+      });
+      continue;
+    }
+    const result = await extractorConfig.extractor.materialize({
+      workspaceId: attachment.workspaceId,
+      channelId: privateDirectMaterializationNamespace(attachment),
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+      sourceFingerprint: privateAttachmentMaterializationFingerprint(attachment),
+      requestedBy: "turn_envelope",
+      maxBytes: extractorConfig.maxBytes,
+      maxChars: extractorConfig.maxChars,
+      now: input.now,
+      attachment: privateAttachmentAsChannelAttachment(attachment, input.sourceMessage.id),
+      attachmentsDir: input.store.paths.attachmentsDir,
+    });
+    materializations.set(attachment.id, {
+      attachmentId: attachment.id,
+      fileName: attachment.fileName,
+      kind: attachment.kind,
+      contentType: attachment.contentType,
+      status: result.status === "not_loaded" ? "metadata_only" : result.status,
+      contentText: result.status === "available" ? result.contentText : undefined,
+      truncated: result.truncated,
+    });
+  }
+  return materializations;
+}
+
+function extractorForPrivateAttachment(
+  attachment: TeammatePrivateAttachment,
+): { readonly extractor: LingInputExtractor; readonly maxBytes: number; readonly maxChars: number } | undefined {
+  if (attachment.kind === "text") {
+    return {
+      extractor: textAttachmentExtractorV1,
+      maxBytes: defaultLingMaterializationBudgets.textAttachmentInlineBytes,
+      maxChars: defaultLingMaterializationBudgets.textAttachmentPromptChars,
+    };
+  }
+  if (attachment.kind === "pdf") {
+    return {
+      extractor: pdfExtractorV1,
+      maxBytes: defaultLingMaterializationBudgets.pdfReadBytes,
+      maxChars: defaultLingMaterializationBudgets.pdfPromptChars,
+    };
+  }
+  if (attachment.kind === "office") {
+    return {
+      extractor: officeExtractorV1,
+      maxBytes: defaultLingMaterializationBudgets.officeReadBytes,
+      maxChars: defaultLingMaterializationBudgets.officePromptChars,
+    };
+  }
+  return undefined;
+}
+
+function privateAttachmentAsChannelAttachment(attachment: TeammatePrivateAttachment, messageId: string): ChannelAttachment {
+  return {
+    id: attachment.id,
+    workspaceId: attachment.workspaceId,
+    channelId: privateDirectMaterializationNamespace(attachment),
+    messageId,
+    kind: attachment.kind,
+    fileName: attachment.fileName,
+    contentType: attachment.contentType,
+    sizeBytes: attachment.sizeBytes,
+    path: attachment.path,
+    createdAt: attachment.createdAt,
+  };
+}
+
+function privateAttachmentMaterializationFingerprint(attachment: TeammatePrivateAttachment): string {
+  return [
+    "teammate_private_attachment",
+    attachment.id,
+    attachment.teammateId,
+    attachment.threadId ?? "",
+    attachment.path,
+    attachment.sizeBytes,
+    attachment.contentType,
+    attachment.createdAt,
+  ].join(":");
+}
+
+function privateDirectMaterializationNamespace(attachment: TeammatePrivateAttachment): string {
+  return `teammate_direct:${attachment.teammateId}:${attachment.threadId ?? "thread"}`;
+}
