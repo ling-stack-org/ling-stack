@@ -1,13 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Archive,
   Bot,
+  Box,
+  Brain,
   CalendarClock,
   Check,
+  ChevronDown,
   ClipboardList,
+  Folder,
+  GitBranch,
+  Info,
+  Laptop,
   Layers,
   Loader2,
+  MessageCircle,
   MessageSquare,
   Pause,
   Play,
@@ -17,6 +25,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { listLingThreads } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
@@ -24,9 +33,12 @@ import type {
   AutomationContextPreview,
   AutomationDefinition,
   AutomationDraft,
+  AutomationExecutionEnvironment,
+  AutomationMode,
   AutomationOutputDestination,
   AutomationOutputPolicy,
   AutomationPromptTemplate,
+  AutomationReasoningEffort,
   AutomationRun,
   AutomationSchedulerState,
   AutomationStatus,
@@ -36,15 +48,30 @@ import type {
   BuiltinAutomationTemplateId,
   Channel,
   CreateAutomationRequest,
+  LingThread,
+  ProviderPreset,
 } from "../../types.js";
 
 const DEFAULT_WORKSPACE_ID = "workspace_default";
 
 type CreateDialog = "" | "templates" | "manual" | "chat";
+type CreateMode = "chat" | "manual";
+type RuntimeChoice = AutomationExecutionEnvironment | "thread";
+type ScheduleChoice = "daily" | "workdays" | "weekly" | "custom";
+
+interface AutomationTemplatePreset {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly prompt: string;
+  readonly schedule: ScheduleChoice;
+  readonly runtime: RuntimeChoice;
+}
 
 export function AutomationsPage({
   cwd,
   channels,
+  providers,
   automations,
   automationRuns,
   automationDrafts,
@@ -63,6 +90,7 @@ export function AutomationsPage({
   onStopScheduler,
   onCreateFromTemplate,
   onCreateManualDraft,
+  onCreateAutomation,
   onCreateChatDraft,
   onSelectAutomation,
   onSelectDraft,
@@ -80,6 +108,7 @@ export function AutomationsPage({
 }: {
   readonly cwd: string;
   readonly channels: readonly Channel[];
+  readonly providers: readonly ProviderPreset[];
   readonly automations: readonly AutomationDefinition[];
   readonly automationRuns: readonly AutomationRun[];
   readonly automationDrafts: readonly AutomationDraft[];
@@ -98,6 +127,7 @@ export function AutomationsPage({
   readonly onStopScheduler: () => void;
   readonly onCreateFromTemplate: (templateId: BuiltinAutomationTemplateId) => Promise<void>;
   readonly onCreateManualDraft: (partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
+  readonly onCreateAutomation: (automation: CreateAutomationRequest) => Promise<void>;
   readonly onCreateChatDraft: (prompt: string) => Promise<void>;
   readonly onSelectAutomation: (automationId: string) => void;
   readonly onSelectDraft: (draftId: string) => void;
@@ -115,33 +145,58 @@ export function AutomationsPage({
 }): JSX.Element {
   const { t } = useI18n();
   const [dialog, setDialog] = useState<CreateDialog>("");
-  const [detailOpen, setDetailOpen] = useState(true);
-  const selectedDraftCandidate = automationDrafts.find((draft) => draft.id === selectedDraftId);
-  const selectedAutomationCandidate = selectedDraftCandidate
-    ? undefined
-    : automations.find((automation) => automation.id === selectedAutomationId) ?? automations[0];
-  const selectedDraft = detailOpen ? selectedDraftCandidate : undefined;
-  const selectedAutomation = detailOpen ? selectedAutomationCandidate : undefined;
-  const selectedRuns = selectedAutomation
-    ? automationRuns.filter((run) => run.automationId === selectedAutomation.id)
-    : [];
-  const preview = selectedAutomation ? previewByAutomationId[selectedAutomation.id] : undefined;
-  const draftPreview = selectedDraft ? draftPreviewById[selectedDraft.id] : undefined;
-  const busyAutomation = Boolean(selectedAutomation && mutatingAutomationId === selectedAutomation.id);
-  const busyDraft = Boolean(selectedDraft && mutatingDraftId === selectedDraft.id);
+  const [createMode, setCreateMode] = useState<CreateMode>("chat");
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [manualPreset, setManualPreset] = useState<AutomationTemplatePreset | undefined>(undefined);
+  const [threads, setThreads] = useState<readonly LingThread[]>([]);
+  const [threadsLoading, setThreadsLoading] = useState(false);
+  const activeAutomations = useMemo(
+    () => automations.filter((automation) => automation.status !== "paused" && automation.status !== "archived"),
+    [automations],
+  );
+  const pausedAutomations = useMemo(
+    () => automations.filter((automation) => automation.status === "paused"),
+    [automations],
+  );
+  const recentRuns = automationRuns.slice(0, 8);
   const scheduler = schedulers[0];
 
   useEffect(() => {
-    setDetailOpen(true);
-  }, [selectedAutomationId, selectedDraftId]);
+    if (!cwd.trim()) {
+      setThreads([]);
+      return;
+    }
+    let cancelled = false;
+    setThreadsLoading(true);
+    void listLingThreads(cwd, { limit: 80 })
+      .then((response) => {
+        if (!cancelled) {
+          setThreads(response.threads.filter((thread) => thread.status !== "archived" && !thread.archivedAt));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setThreads([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setThreadsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd]);
 
-  async function createTemplateDraft(templateId: BuiltinAutomationTemplateId): Promise<void> {
-    await onCreateFromTemplate(templateId);
-    setDialog("");
+  function openCreateDialog(mode: CreateMode): void {
+    setCreateMode(mode);
+    setCreateMenuOpen(false);
+    setDialog(mode === "manual" ? "manual" : "chat");
   }
 
-  async function createManualDraft(partialAutomation: Partial<CreateAutomationRequest>): Promise<void> {
-    await onCreateManualDraft(partialAutomation);
+  async function createManualAutomation(automation: CreateAutomationRequest): Promise<void> {
+    await onCreateAutomation(automation);
     setDialog("");
   }
 
@@ -150,206 +205,180 @@ export function AutomationsPage({
     setDialog("");
   }
 
-  function selectDraft(draftId: string): void {
-    if (detailOpen && selectedDraftCandidate?.id === draftId) {
-      setDetailOpen(false);
-      return;
-    }
-    onSelectDraft(draftId);
-    setDetailOpen(true);
-  }
-
-  function selectAutomation(automationId: string): void {
-    if (detailOpen && !selectedDraftCandidate && selectedAutomationCandidate?.id === automationId) {
-      setDetailOpen(false);
-      return;
-    }
+  function mutateSelectedAutomation(automationId: string, action: () => void): void {
     onSelectDraft("");
     onSelectAutomation(automationId);
-    setDetailOpen(true);
+    window.setTimeout(action, 0);
   }
 
   return (
-    <div className={detailOpen ? "automations-layout" : "automations-layout detail-closed"}>
-      <section className="panel automations-list-panel" aria-labelledby="automations-title">
-        <div className="panel-title split">
-          <span>
-            <Timer size={18} />
-            <h2 id="automations-title">{t("Automations")}</h2>
-          </span>
-          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
-            {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            {t("Refresh")}
-          </button>
+    <div className="automations-inbox-page">
+      <header className="automations-inbox-header">
+        <div>
+          <h1>{t("Automations")}</h1>
+          <p>{scheduler?.nextRunAt ? `${t("Next")} ${formatDateTime(scheduler.nextRunAt)}` : t("Daemon will restore scheduled automations automatically")}</p>
         </div>
-
-        <div className="automation-create-actions" aria-label="Automation creation modes">
-          <button className="primary-button compact-button" type="button" onClick={() => setDialog("templates")} disabled={isLoading}>
-            <Layers size={15} />
-            {t("Templates")}
+        <div className="automation-create-dropdown">
+          <button className="automation-create-trigger" type="button" onClick={() => openCreateDialog(createMode)} disabled={isLoading}>
+            {createMode === "chat" ? <MessageSquare size={15} /> : <CalendarClock size={15} />}
+            {createMode === "chat" ? t("Create through chat") : t("Manual create")}
           </button>
-          <button className="secondary-button compact-button" type="button" onClick={() => setDialog("manual")} disabled={isLoading}>
-            <CalendarClock size={15} />
-            {t("Manual setup")}
+          <button
+            className="automation-create-caret"
+            type="button"
+            aria-label={t("Choose creation mode")}
+            onClick={() => setCreateMenuOpen((open) => !open)}
+            disabled={isLoading}
+          >
+            <ChevronDown size={15} />
           </button>
-          <button className="secondary-button compact-button" type="button" onClick={() => setDialog("chat")} disabled={isLoading}>
-            <MessageSquare size={15} />
-            {t("Create through chat")}
-          </button>
-        </div>
-
-        <div className="provider-onboarding-strip" aria-label="Automation workspace status">
-          <MetaRow label={t("Workspace")} value={cwd || t("Missing")} compact />
-          <MetaRow label={t("Channels")} value={String(channels.length)} compact />
-          <MetaRow label={t("Drafts")} value={String(automationDrafts.length)} compact />
-          <MetaRow label={t("Enabled")} value={String(automations.filter((automation) => automation.status === "enabled").length)} compact />
-        </div>
-
-        <div className="automation-scheduler-strip" aria-label="Automation scheduler status">
-          <div className="automation-scheduler-summary">
-            <strong>{t("Local scheduler")}</strong>
-            <span>
-              {scheduler
-                ? `${scheduler.status}${scheduler.nextRunAt ? ` · ${t("Next")} ${formatDateTime(scheduler.nextRunAt)}` : ""}`
-                : t("Stopped")}
-            </span>
-          </div>
-          <div className="automation-scheduler-actions">
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={onStartScheduler}
-              disabled={schedulerAction === "start" || isLoading}
-            >
-              {schedulerAction === "start" ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-              {t("Start")}
-            </button>
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={onStopScheduler}
-              disabled={!scheduler || scheduler.status !== "running" || schedulerAction === "stop"}
-            >
-              {schedulerAction === "stop" ? <Loader2 className="spin" size={14} /> : <Timer size={14} />}
-              {t("Stop")}
-            </button>
-          </div>
-        </div>
-
-        {automationDrafts.length > 0 ? (
-          <div className="automation-list-section">
-            <h3>{t("Draft review")}</h3>
-            <div className="automation-list">
-              {automationDrafts.map((draft) => (
-                <button
-                  key={draft.id}
-                  className={selectedDraft?.id === draft.id ? "automation-row selected draft" : "automation-row draft"}
-                  type="button"
-                  aria-expanded={selectedDraft?.id === draft.id}
-                  onClick={() => selectDraft(draft.id)}
-                >
-                  <span className="automation-row-main">
-                    <strong>{draft.title ?? t("Untitled draft")}</strong>
-                    <small>{draft.source} · {draft.kind ?? t("missing kind")}</small>
-                  </span>
-                  <span className="automation-row-meta">
-                    <StatusBadge status={draft.status} />
-                    {draft.missingFields.length > 0 ? <small>{draft.missingFields.length} {t("missing")}</small> : null}
-                  </span>
-                </button>
-              ))}
+          {createMenuOpen ? (
+            <div className="automation-create-menu" role="menu">
+              <button type="button" role="menuitem" onClick={() => openCreateDialog("chat")}>
+                <MessageSquare size={15} />
+                {t("Create through chat")}
+              </button>
+              <button type="button" role="menuitem" onClick={() => openCreateDialog("manual")}>
+                <CalendarClock size={15} />
+                {t("Manual create")}
+              </button>
             </div>
-          </div>
+          ) : null}
+        </div>
+      </header>
+
+      <main className="automations-inbox-main" aria-labelledby="automations-title">
+        <h2 id="automations-title">{t("Current")}</h2>
+        <AutomationInboxSection
+          emptyLabel={isLoading ? t("Loading automations...") : t("No automations yet")}
+          automations={activeAutomations}
+          automationRuns={automationRuns}
+          selectedAutomationId={selectedAutomationId}
+          mutatingAutomationId={mutatingAutomationId}
+          onSelect={(automationId) => {
+            onSelectDraft("");
+            onSelectAutomation(automationId);
+          }}
+          onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
+          onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus(automation.status === "enabled" ? "paused" : "enabled"))}
+          onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
+          onOpenThread={onOpenThread}
+          t={t}
+        />
+
+        {pausedAutomations.length > 0 ? (
+          <>
+            <h2>{t("Paused")}</h2>
+            <AutomationInboxSection
+              emptyLabel={t("No paused automations")}
+              automations={pausedAutomations}
+              automationRuns={automationRuns}
+              selectedAutomationId={selectedAutomationId}
+              mutatingAutomationId={mutatingAutomationId}
+              onSelect={(automationId) => {
+                onSelectDraft("");
+                onSelectAutomation(automationId);
+              }}
+              onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
+              onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus("enabled"))}
+              onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
+              onOpenThread={onOpenThread}
+              t={t}
+            />
+          </>
         ) : null}
 
-        <div className="automation-list-section">
-          <h3>{t("Saved automations")}</h3>
-          <div className="automation-list">
-            {automations.length === 0 ? (
-              <div className="empty-state compact-empty">
-                {isLoading ? <Loader2 className="spin" /> : <Timer />}
-                <span>{t("No automations saved for this workspace")}</span>
-              </div>
-            ) : (
-              automations.map((automation) => {
-                const latestRun = automationRuns.find((run) => run.automationId === automation.id);
-                return (
-                  <button
-                    key={automation.id}
-                    className={selectedAutomation?.id === automation.id ? "automation-row selected" : "automation-row"}
-                    type="button"
-                    aria-expanded={selectedAutomation?.id === automation.id}
-                    onClick={() => selectAutomation(automation.id)}
-                  >
-                    <span className="automation-row-main">
-                      <strong>{automation.title}</strong>
-                      <small>{automation.kind.replace("_", " ")}</small>
-                    </span>
-                    <span className="automation-row-meta">
-                      <StatusBadge status={automation.status} />
-                      {latestRun ? <small>{latestRun.status}</small> : null}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </section>
+        {automationDrafts.length > 0 ? (
+          <section className="automation-draft-lite-list" aria-label={t("Draft review")}>
+            <h2>{t("Draft review")}</h2>
+            {automationDrafts.map((draft) => {
+              const busy = mutatingDraftId === draft.id;
+              const ready = draft.status === "ready_for_confirmation";
+              return (
+                <div
+                  key={draft.id}
+                  className={draft.id === selectedDraftId ? "automation-inbox-row selected draft" : "automation-inbox-row draft"}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectDraft(draft.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectDraft(draft.id);
+                    }
+                  }}
+                >
+                  <span className="automation-row-dot" />
+                  <span className="automation-inbox-row-main">
+                    <strong>{draft.title ?? t("Untitled draft")}</strong>
+                    <small>{automationDraftSourceLabel(draft.source, t)} · {draft.kind ? automationKindLabel(draft.kind, t) : t("Missing")}</small>
+                  </span>
+                  <span className="automation-row-schedule">{automationTriggerLabel(draft.trigger, t)}</span>
+                  <span className="automation-row-actions">
+                    <StatusBadge status={draft.status} />
+                    <button
+                      className="ghost-icon-button"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void onConfirmDraft(draft.id);
+                      }}
+                      disabled={busy || !ready}
+                      aria-label={t("Confirm automation")}
+                      title={t("Confirm automation")}
+                    >
+                      {busy ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+                    </button>
+                    <button
+                      className="ghost-icon-button danger"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void onDiscardDraft(draft.id);
+                      }}
+                      disabled={busy}
+                      aria-label={t("Discard draft")}
+                      title={t("Discard draft")}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
+          </section>
+        ) : null}
 
-      {detailOpen ? (
-        <section className="panel automation-detail-panel" aria-labelledby="automation-detail-title">
-          {selectedDraft ? (
-            <AutomationDraftReview
-              key={selectedDraft.id}
-              cwd={cwd}
-              channels={channels}
-              draft={selectedDraft}
-              preview={draftPreview}
-              busy={busyDraft}
-              onSave={(partial) => onUpdateDraft(selectedDraft.id, partial)}
-              onPreview={async (partial) => {
-                await onUpdateDraft(selectedDraft.id, partial);
-                await onPreviewDraft(selectedDraft.id);
-              }}
-              onConfirm={async (partial) => {
-                await onUpdateDraft(selectedDraft.id, partial);
-                await onConfirmDraft(selectedDraft.id);
-              }}
-              onDiscard={() => onDiscardDraft(selectedDraft.id)}
-              onClose={() => setDetailOpen(false)}
-            />
-          ) : selectedAutomation ? (
-            <AutomationDetail
-              automation={selectedAutomation}
-              channels={channels}
-              runs={selectedRuns}
-              preview={preview}
-              busy={busyAutomation}
-              onPreview={onPreview}
-              onRun={onRun}
-              onArchive={onArchive}
-              onSetStatus={onSetStatus}
-              onSetSchedule={onSetSchedule}
-              onOpenRun={onOpenRun}
-              onOpenThread={onOpenThread}
-              onClose={() => setDetailOpen(false)}
-            />
-          ) : (
-            <div className="empty-state">
-              <Timer />
-              <span>{t("Create an automation draft")}</span>
-            </div>
-          )}
-        </section>
-      ) : null}
+        {recentRuns.length > 0 ? (
+          <section className="automation-history-lite" aria-label={t("History")}>
+            <h2>{t("History")}</h2>
+            {recentRuns.map((run) => (
+              <button
+                key={run.id}
+                className="automation-inbox-row history"
+                type="button"
+                onClick={() => run.runId ? onOpenRun(run.runId) : undefined}
+              >
+                <span className={`status-dot ${run.status}`} />
+                  <span className="automation-inbox-row-main">
+                    <strong>{automations.find((automation) => automation.id === run.automationId)?.title ?? run.automationId}</strong>
+                  <small>{automationRunTriggerLabel(run, t)} · {formatDateTime(run.firedAt)} · {t(run.status)}</small>
+                </span>
+                <span className="automation-row-schedule">{run.runId ? t("Open run") : t(run.status)}</span>
+              </button>
+            ))}
+          </section>
+        ) : null}
+      </main>
 
       {dialog === "templates" ? (
         <AutomationTemplateModal
           templates={templates}
-          channelsReady={channels.length > 0}
-          isLoading={isLoading}
-          onCreate={createTemplateDraft}
+          onApply={(preset) => {
+            setManualPreset(preset);
+            setDialog("manual");
+          }}
+          onManual={() => setDialog("manual")}
           onClose={() => setDialog("")}
         />
       ) : null}
@@ -357,7 +386,12 @@ export function AutomationsPage({
         <AutomationManualSetupModal
           cwd={cwd}
           channels={channels}
-          onCreate={createManualDraft}
+          providers={providers}
+          threads={threads}
+          threadsLoading={threadsLoading}
+          preset={manualPreset}
+          onUseTemplate={() => setDialog("templates")}
+          onCreate={createManualAutomation}
           onClose={() => setDialog("")}
         />
       ) : null}
@@ -367,6 +401,125 @@ export function AutomationsPage({
           onClose={() => setDialog("")}
         />
       ) : null}
+    </div>
+  );
+}
+
+function AutomationInboxSection({
+  automations,
+  automationRuns,
+  selectedAutomationId,
+  mutatingAutomationId,
+  emptyLabel,
+  onSelect,
+  onRun,
+  onToggle,
+  onArchive,
+  onOpenThread,
+  t,
+}: {
+  readonly automations: readonly AutomationDefinition[];
+  readonly automationRuns: readonly AutomationRun[];
+  readonly selectedAutomationId: string;
+  readonly mutatingAutomationId: string;
+  readonly emptyLabel: string;
+  readonly onSelect: (automationId: string) => void;
+  readonly onRun: (automationId: string) => void;
+  readonly onToggle: (automation: AutomationDefinition) => void;
+  readonly onArchive: (automationId: string) => void;
+  readonly onOpenThread: (threadId: string) => void;
+  readonly t: (value: string) => string;
+}): JSX.Element {
+  if (automations.length === 0) {
+    return (
+      <div className="automation-inbox-empty">
+        <Timer size={18} />
+        <span>{emptyLabel}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="automation-inbox-list">
+      {automations.map((automation) => {
+        const latestRun = automationRuns.find((run) => run.automationId === automation.id);
+        const busy = mutatingAutomationId === automation.id;
+        return (
+          <div
+            key={automation.id}
+            className={automation.id === selectedAutomationId ? "automation-inbox-row selected" : "automation-inbox-row"}
+            role="button"
+            tabIndex={0}
+            onClick={() => onSelect(automation.id)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelect(automation.id);
+              }
+            }}
+          >
+            <span className="automation-row-dot" />
+            <span className="automation-inbox-row-main">
+              <strong>{automation.title}</strong>
+              <small>{automationModeLabel(automation, t)} · {automationTargetSummary(automation, t)}</small>
+            </span>
+            <span className="automation-row-schedule">{automationScheduleLabel(automation, t)}</span>
+            <span className="automation-row-actions">
+              {latestRun ? <StatusBadge status={latestRun.status} /> : <StatusBadge status={automation.status} />}
+              <button
+                className="ghost-icon-button"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRun(automation.id);
+                }}
+                disabled={busy || automation.status !== "enabled"}
+                aria-label={t("Run now")}
+                title={t("Run now")}
+              >
+                {busy ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+              </button>
+              <button
+                className="ghost-icon-button"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggle(automation);
+                }}
+                disabled={busy || automation.status === "error"}
+                aria-label={automation.status === "enabled" ? t("Pause") : t("Resume")}
+                title={automation.status === "enabled" ? t("Pause") : t("Resume")}
+              >
+                {automation.status === "enabled" ? <Pause size={14} /> : <Play size={14} />}
+              </button>
+              <button
+                className="ghost-icon-button"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenThread(automation.threadId);
+                }}
+                aria-label={t("Thread")}
+                title={t("Thread")}
+              >
+                <MessageCircle size={14} />
+              </button>
+              <button
+                className="ghost-icon-button danger"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onArchive(automation.id);
+                }}
+                disabled={busy}
+                aria-label={t("Delete")}
+                title={t("Delete")}
+              >
+                <Trash2 size={14} />
+              </button>
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -491,6 +644,7 @@ function AutomationDetail({
           runs.map((run) => (
             <div className="automation-run-row" key={run.id}>
               <StatusBadge status={run.status} />
+              <span>{automationRunTriggerLabel(run, t)}</span>
               <span>{formatDateTime(run.firedAt)}</span>
               <code>{run.runId ?? run.id}</code>
               {run.runId ? (
@@ -537,6 +691,7 @@ function AutomationDraftReview({
   const [scheduleMode, setScheduleMode] = useState(scheduleModeFromTrigger(draft.trigger));
   const [timeOfDay, setTimeOfDay] = useState(timeOfDayFromTrigger(draft.trigger));
   const [weekday, setWeekday] = useState(String(weekdayFromTrigger(draft.trigger)));
+  const [intervalMinutes, setIntervalMinutes] = useState(String(intervalMinutesFromTrigger(draft.trigger)));
   const [writeArtifact, setWriteArtifact] = useState(Boolean(draft.outputPolicy?.destinations.some((destination) => destination.type === "markdown_artifact") ?? true));
 
   const partial = (): Partial<CreateAutomationRequest> => ({
@@ -544,7 +699,7 @@ function AutomationDraftReview({
     title,
     description,
     channelId: channelId || undefined,
-    trigger: buildTrigger(scheduleMode, timeOfDay, Number(weekday)),
+    trigger: buildTrigger(scheduleMode, timeOfDay, Number(weekday), Number(intervalMinutes)),
     target: buildTarget(cwd, channelId),
     promptTemplate: buildPromptTemplate(prompt, draft.promptTemplate),
     outputPolicy: buildOutputPolicy(writeArtifact),
@@ -614,16 +769,23 @@ function AutomationDraftReview({
         </label>
         <label>
           <span>{t("Schedule")}</span>
-          <select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as "manual" | "daily" | "weekly")}>
+          <select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as DraftScheduleMode)}>
             <option value="manual">{t("Manual")}</option>
             <option value="daily">{t("Daily")}</option>
             <option value="weekly">{t("Weekly")}</option>
+            <option value="interval">{t("Interval")}</option>
           </select>
         </label>
-        {scheduleMode !== "manual" ? (
+        {scheduleMode === "daily" || scheduleMode === "weekly" ? (
           <label>
             <span>{t("Time")}</span>
             <input type="time" value={timeOfDay} onChange={(event) => setTimeOfDay(event.target.value)} />
+          </label>
+        ) : null}
+        {scheduleMode === "interval" ? (
+          <label>
+            <span>{t("minutes")}</span>
+            <input min={1} type="number" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} />
           </label>
         ) : null}
         {scheduleMode === "weekly" ? (
@@ -657,33 +819,30 @@ function AutomationDraftReview({
 
 function AutomationTemplateModal({
   templates,
-  channelsReady,
-  isLoading,
-  onCreate,
+  onApply,
+  onManual,
   onClose,
 }: {
   readonly templates: readonly BuiltinAutomationTemplate[];
-  readonly channelsReady: boolean;
-  readonly isLoading: boolean;
-  readonly onCreate: (templateId: BuiltinAutomationTemplateId) => Promise<void>;
+  readonly onApply: (preset: AutomationTemplatePreset) => void;
+  readonly onManual: () => void;
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <AutomationModal title={t("Templates")} icon={<Layers size={18} />} onClose={onClose}>
-      <div className="automation-template-grid modal-grid" aria-label="Automation templates">
-        {templates.map((template) => (
+    <AutomationModal title={t("Automation templates")} icon={<Layers size={18} />} actionLabel={t("Manual setup")} onAction={onManual} onClose={onClose}>
+      <div className="automation-template-grid modal-grid" aria-label={t("Automation templates")}>
+        {buildTemplatePresets(templates).map((template) => (
           <button
             key={template.id}
             className="automation-template-card"
             type="button"
-            onClick={() => onCreate(template.id)}
-            disabled={isLoading || !channelsReady}
+            onClick={() => onApply({ ...template, title: t(template.title), description: t(template.description) })}
           >
-            {template.kind === "weekly_review" ? <ClipboardList size={17} /> : <Sparkles size={17} />}
+            {templateIcon(template.id)}
             <strong>{t(template.title)}</strong>
-            <span>{template.description}</span>
-            <small>{template.tags.join(" · ")}</small>
+            <span>{t(template.description)}</span>
+            <small>{schedulePresetLabel(template.schedule, t)} · {runtimeChoiceLabel(template.runtime, t)}</small>
           </button>
         ))}
       </div>
@@ -694,77 +853,246 @@ function AutomationTemplateModal({
 function AutomationManualSetupModal({
   cwd,
   channels,
+  providers,
+  threads,
+  threadsLoading,
+  preset,
+  onUseTemplate,
   onCreate,
   onClose,
 }: {
   readonly cwd: string;
   readonly channels: readonly Channel[];
-  readonly onCreate: (partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
+  readonly providers: readonly ProviderPreset[];
+  readonly threads: readonly LingThread[];
+  readonly threadsLoading: boolean;
+  readonly preset?: AutomationTemplatePreset;
+  readonly onUseTemplate: () => void;
+  readonly onCreate: (automation: CreateAutomationRequest) => Promise<void>;
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [title, setTitle] = useState("Manual Automation");
-  const [prompt, setPrompt] = useState("Review the supplied Ling context and write a concise automation report.");
-  const [channelId, setChannelId] = useState(channels[0]?.id ?? "");
-  const [scheduleMode, setScheduleMode] = useState<"manual" | "daily" | "weekly">("manual");
+  const [title, setTitle] = useState(preset?.title ?? "");
+  const [prompt, setPrompt] = useState(preset?.prompt ?? "");
+  const [runtime, setRuntime] = useState<RuntimeChoice>(preset?.runtime ?? "worktree");
+  const [targetId, setTargetId] = useState(channels[0]?.id ? `channel:${channels[0].id}` : "workspace");
+  const [threadId, setThreadId] = useState(threads[0]?.id ?? "");
+  const [scheduleMode, setScheduleMode] = useState<ScheduleChoice>(preset?.schedule ?? "daily");
   const [timeOfDay, setTimeOfDay] = useState("09:00");
-  const [writeArtifact, setWriteArtifact] = useState(true);
+  const [weekday, setWeekday] = useState("1");
+  const [customRRule, setCustomRRule] = useState("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0");
+  const [providerPresetId, setProviderPresetId] = useState(providers.find((provider) => provider.enabled && provider.capabilities.includes("chat"))?.id ?? providers[0]?.id ?? "");
+  const [reasoningEffort, setReasoningEffort] = useState<AutomationReasoningEffort>("medium");
+  const [activePopover, setActivePopover] = useState<"" | "runtime" | "target" | "schedule" | "model" | "reasoning">("");
+
+  useEffect(() => {
+    if (!preset) {
+      return;
+    }
+    setTitle(preset.title);
+    setPrompt(preset.prompt);
+    setRuntime(preset.runtime);
+    setScheduleMode(preset.schedule);
+  }, [preset]);
+
+  useEffect(() => {
+    if (!threadId && threads[0]) {
+      setThreadId(threads[0].id);
+    }
+  }, [threadId, threads]);
+
+  const selectedProvider = providers.find((provider) => provider.id === providerPresetId);
+  const selectedChannelId = targetId.startsWith("channel:") ? targetId.slice("channel:".length) : "";
+  const selectedThread = threads.find((thread) => thread.id === threadId);
+  const automationMode: AutomationMode = runtime === "thread" ? "heartbeat" : "cron";
+  const canCreate = Boolean(title.trim() && prompt.trim() && (automationMode === "cron" || threadId));
 
   return (
-    <AutomationModal title={t("Manual setup")} icon={<CalendarClock size={18} />} onClose={onClose}>
+    <AutomationModal title="" ariaLabel={t("Manual create")} icon={<CalendarClock size={18} />} actionLabel={t("Use template")} onAction={onUseTemplate} onClose={onClose}>
       <form
-        className="automation-modal-form"
+        className="automation-composer-form"
         onSubmit={(event) => {
           event.preventDefault();
+          const trigger = buildScheduleTrigger(scheduleMode, timeOfDay, Number(weekday));
+          const rrule = scheduleMode === "custom" ? customRRule.trim() : buildRRule(scheduleMode, timeOfDay, Number(weekday));
           void onCreate({
             kind: "custom_prompt",
-            title,
-            channelId: channelId || undefined,
-            trigger: buildTrigger(scheduleMode, timeOfDay, 5),
-            target: buildTarget(cwd, channelId),
+            title: title.trim(),
+            automationMode,
+            channelId: automationMode === "cron" ? selectedChannelId || undefined : undefined,
+            trigger,
+            rrule,
+            cwds: automationMode === "cron" ? [cwd] : [],
+            targetThreadId: automationMode === "heartbeat" ? threadId : undefined,
+            executionEnvironment: runtime === "thread" ? undefined : runtime,
+            reasoningEffort,
+            model: selectedProvider?.model,
+            target: automationMode === "heartbeat"
+              ? { scope: "thread", workspaceId: DEFAULT_WORKSPACE_ID, threadId, cwd }
+              : buildTarget(cwd, selectedChannelId),
             promptTemplate: buildPromptTemplate(prompt),
-            outputPolicy: buildOutputPolicy(writeArtifact),
+            executionPolicy: {
+              providerPresetId: providerPresetId || undefined,
+              allowedTools: ["read", "grep", "find", "ls"],
+              approvalProfile: { mode: "none" },
+            },
+            outputPolicy: buildOutputPolicy(true),
           });
         }}
       >
-        <label>
-          <span>{t("Title")}</span>
-          <input value={title} onChange={(event) => setTitle(event.target.value)} />
-        </label>
-        <label>
-          <span>{t("Target")}</span>
-          <select value={channelId} onChange={(event) => setChannelId(event.target.value)}>
-            <option value="">{t("Workspace")}</option>
-            {channels.map((channel) => (
-              <option key={channel.id} value={channel.id}>#{channel.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>{t("Schedule")}</span>
-          <select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as "manual" | "daily" | "weekly")}>
-            <option value="manual">{t("Manual")}</option>
-            <option value="daily">{t("Daily")}</option>
-            <option value="weekly">{t("Weekly")}</option>
-          </select>
-        </label>
-        {scheduleMode !== "manual" ? (
-          <label>
-            <span>{t("Time")}</span>
-            <input type="time" value={timeOfDay} onChange={(event) => setTimeOfDay(event.target.value)} />
-          </label>
-        ) : null}
-        <label className="automation-checkbox-row">
-          <input type="checkbox" checked={writeArtifact} onChange={(event) => setWriteArtifact(event.target.checked)} />
-          <span>{t("Write markdown artifact")}</span>
-        </label>
-        <label>
-          <span>{t("Prompt")}</span>
-          <textarea value={prompt} rows={8} onChange={(event) => setPrompt(event.target.value)} />
-        </label>
-        <div className="automation-modal-actions">
-          <button className="secondary-button compact-button" type="button" onClick={onClose}>{t("Cancel")}</button>
-          <button className="primary-button compact-button" type="submit">{t("Create draft")}</button>
+        <input
+          className="automation-composer-title"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder={t("Automation title placeholder")}
+          aria-label={t("Automation title")}
+        />
+        <textarea
+          className="automation-composer-prompt"
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          placeholder={t("Automation prompt placeholder")}
+          aria-label={t("Prompt")}
+        />
+        <div className="automation-composer-toolbar">
+          <AutomationPopoverButton
+            icon={runtime === "thread" ? <MessageCircle size={15} /> : runtime === "worktree" ? <GitBranch size={15} /> : <Laptop size={15} />}
+            label={runtimeChoiceLabel(runtime, t)}
+            active={activePopover === "runtime"}
+            onClick={() => setActivePopover(activePopover === "runtime" ? "" : "runtime")}
+          >
+            <div className="automation-popover-list">
+              {(["local", "worktree", "thread"] as const).map((choice) => (
+                <button key={choice} type="button" onClick={() => { setRuntime(choice); setActivePopover(""); }}>
+                  {choice === "thread" ? <MessageCircle size={15} /> : choice === "worktree" ? <GitBranch size={15} /> : <Laptop size={15} />}
+                  <span>{runtimeChoiceLabel(choice, t)}</span>
+                  {runtime === choice ? <Check size={14} /> : null}
+                </button>
+              ))}
+            </div>
+          </AutomationPopoverButton>
+
+          <AutomationPopoverButton
+            icon={runtime === "thread" ? <MessageCircle size={15} /> : <Folder size={15} />}
+            label={runtime === "thread" ? selectedThread?.title ?? t("Select conversation") : targetChoiceLabel(targetId, channels, t)}
+            active={activePopover === "target"}
+            onClick={() => setActivePopover(activePopover === "target" ? "" : "target")}
+          >
+            <div className="automation-popover-list wide">
+              {runtime === "thread" ? (
+                threadsLoading ? <span className="automation-popover-muted">{t("Loading threads...")}</span> : threads.map((thread) => (
+                  <button key={thread.id} type="button" onClick={() => { setThreadId(thread.id); setActivePopover(""); }}>
+                    <MessageCircle size={15} />
+                    <span>{thread.title}</span>
+                    {thread.id === threadId ? <Check size={14} /> : null}
+                  </button>
+                ))
+              ) : (
+                <>
+                  <button type="button" onClick={() => { setTargetId("workspace"); setActivePopover(""); }}>
+                    <Folder size={15} />
+                    <span>{t("Current workspace")}</span>
+                    {targetId === "workspace" ? <Check size={14} /> : null}
+                  </button>
+                  {channels.map((channel) => (
+                    <button key={channel.id} type="button" onClick={() => { setTargetId(`channel:${channel.id}`); setActivePopover(""); }}>
+                      <Folder size={15} />
+                      <span>#{channel.name}</span>
+                      {targetId === `channel:${channel.id}` ? <Check size={14} /> : null}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          </AutomationPopoverButton>
+
+          <AutomationPopoverButton
+            icon={<CalendarClock size={15} />}
+            label={scheduleSummaryLabel(scheduleMode, timeOfDay, Number(weekday), customRRule, t)}
+            active={activePopover === "schedule"}
+            onClick={() => setActivePopover(activePopover === "schedule" ? "" : "schedule")}
+          >
+            <div className="automation-popover-form">
+              <label>
+                <span>{t("Plan")}</span>
+                <select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as ScheduleChoice)}>
+                  <option value="daily">{t("Daily")}</option>
+                  <option value="workdays">{t("Workdays")}</option>
+                  <option value="weekly">{t("Weekly")}</option>
+                  <option value="custom">{t("Custom RRULE")}</option>
+                </select>
+              </label>
+              {scheduleMode === "weekly" ? (
+                <label>
+                  <span>{t("Weekday")}</span>
+                  <select value={weekday} onChange={(event) => setWeekday(event.target.value)}>
+                    <option value="1">{t("Monday")}</option>
+                    <option value="2">{t("Tuesday")}</option>
+                    <option value="3">{t("Wednesday")}</option>
+                    <option value="4">{t("Thursday")}</option>
+                    <option value="5">{t("Friday")}</option>
+                    <option value="6">{t("Saturday")}</option>
+                    <option value="0">{t("Sunday")}</option>
+                  </select>
+                </label>
+              ) : null}
+              {scheduleMode === "custom" ? (
+                <label>
+                  <span>{t("RRULE")}</span>
+                  <input value={customRRule} onChange={(event) => setCustomRRule(event.target.value)} />
+                </label>
+              ) : (
+                <label>
+                  <span>{t("Time")}</span>
+                  <input type="time" value={timeOfDay} onChange={(event) => setTimeOfDay(event.target.value)} />
+                </label>
+              )}
+            </div>
+          </AutomationPopoverButton>
+
+          <AutomationPopoverButton
+            icon={<Box size={15} />}
+            label={selectedProvider ? `${selectedProvider.displayName} · ${selectedProvider.model}` : t("Select model")}
+            active={activePopover === "model"}
+            onClick={() => setActivePopover(activePopover === "model" ? "" : "model")}
+          >
+            <div className="automation-popover-list wide">
+              {providers.filter((provider) => provider.capabilities.includes("chat")).map((provider) => (
+                <button key={provider.id} type="button" onClick={() => { setProviderPresetId(provider.id); setActivePopover(""); }}>
+                  <Box size={15} />
+                  <span>{provider.displayName} · {provider.model}</span>
+                  {provider.id === providerPresetId ? <Check size={14} /> : null}
+                </button>
+              ))}
+            </div>
+          </AutomationPopoverButton>
+
+          <AutomationPopoverButton
+            icon={<Brain size={15} />}
+            label={reasoningLabel(reasoningEffort, t)}
+            active={activePopover === "reasoning"}
+            onClick={() => setActivePopover(activePopover === "reasoning" ? "" : "reasoning")}
+          >
+            <div className="automation-popover-list">
+              {(["low", "medium", "high", "xhigh"] as const).map((effort) => (
+                <button key={effort} type="button" onClick={() => { setReasoningEffort(effort); setActivePopover(""); }}>
+                  <Brain size={15} />
+                  <span>{reasoningLabel(effort, t)}</span>
+                  {reasoningEffort === effort ? <Check size={14} /> : null}
+                </button>
+              ))}
+            </div>
+          </AutomationPopoverButton>
+
+          <span className="automation-risk-tooltip" tabIndex={0}>
+            <Info size={15} />
+            <span>{t("Automation permission risk tip")}</span>
+          </span>
+
+          <div className="automation-composer-actions">
+            <button className="secondary-button compact-button" type="button" onClick={onClose}>{t("Cancel")}</button>
+            <button className="primary-button compact-button" type="submit" disabled={!canCreate}>{t("Create")}</button>
+          </div>
         </div>
       </form>
     </AutomationModal>
@@ -807,28 +1135,68 @@ function AutomationChatCreateModal({
   );
 }
 
+function AutomationPopoverButton({
+  icon,
+  label,
+  active,
+  children,
+  onClick,
+}: {
+  readonly icon: JSX.Element;
+  readonly label: string;
+  readonly active: boolean;
+  readonly children: ReactNode;
+  readonly onClick: () => void;
+}): JSX.Element {
+  return (
+    <span className="automation-popover-anchor">
+      <button className={active ? "automation-toolbar-pill active" : "automation-toolbar-pill"} type="button" onClick={onClick}>
+        {icon}
+        <span>{label}</span>
+        <ChevronDown size={13} />
+      </button>
+      {active ? <span className="automation-popover-panel">{children}</span> : null}
+    </span>
+  );
+}
+
 function AutomationModal({
   title,
+  ariaLabel,
   icon,
+  actionLabel,
+  onAction,
   children,
   onClose,
 }: {
   readonly title: string;
+  readonly ariaLabel?: string;
   readonly icon: JSX.Element;
+  readonly actionLabel?: string;
+  readonly onAction?: () => void;
   readonly children: ReactNode;
   readonly onClose: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   return (
     <div className="automation-modal-backdrop" role="presentation">
-      <div className="automation-modal" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="automation-modal" role="dialog" aria-modal="true" aria-label={ariaLabel ?? title}>
         <div className="panel-title split">
           <span>
-            {icon}
-            <h2>{title}</h2>
+            {title ? icon : null}
+            {title ? <h2>{title}</h2> : null}
           </span>
-          <button className="ghost-icon-button" type="button" onClick={onClose} aria-label="Close" title="Close">
-            <X size={16} />
-          </button>
+          <span className="automation-modal-header-actions">
+            <Info size={15} />
+            {actionLabel && onAction ? (
+              <button className="secondary-button compact-button" type="button" onClick={onAction}>
+                {actionLabel}
+              </button>
+            ) : null}
+            <button className="ghost-icon-button" type="button" onClick={onClose} aria-label={t("Close")} title={t("Close")}>
+              <X size={16} />
+            </button>
+          </span>
         </div>
         {children}
       </div>
@@ -837,9 +1205,10 @@ function AutomationModal({
 }
 
 function ContextPreview({ preview, emptyLabel }: { readonly preview?: AutomationContextPreview; readonly emptyLabel: string }): JSX.Element {
+  const { t } = useI18n();
   return (
     <div className="automation-preview">
-      <h3>Context preview</h3>
+      <h3>{t("Context preview")}</h3>
       {preview ? (
         <pre>{preview.contextMarkdown}</pre>
       ) : (
@@ -852,7 +1221,254 @@ function ContextPreview({ preview, emptyLabel }: { readonly preview?: Automation
   );
 }
 
-function buildTrigger(mode: "manual" | "daily" | "weekly", timeOfDay: string, weekday: number): AutomationTrigger {
+function automationModeLabel(automation: AutomationDefinition, t: (value: string) => string): string {
+  if (automation.automationMode === "heartbeat") {
+    return t("Automation heartbeat");
+  }
+  return automation.executionEnvironment === "worktree" ? t("Worktree") : t("Local");
+}
+
+function automationTargetSummary(automation: AutomationDefinition, t: (value: string) => string): string {
+  if (automation.automationMode === "heartbeat") {
+    return automation.targetThreadId ? `${t("Conversation")} · ${automation.targetThreadId}` : t("Conversation");
+  }
+  if (automation.target.channelId) {
+    return `#${automation.target.channelId}`;
+  }
+  return t("Workspace");
+}
+
+function automationScheduleLabel(automation: AutomationDefinition, t: (value: string) => string): string {
+  return automationTriggerLabel(automation.trigger, t, automation.rrule);
+}
+
+function automationRunTriggerLabel(run: AutomationRun, t: (value: string) => string): string {
+  if (run.triggerType === "schedule") {
+    return t("Scheduled run");
+  }
+  if (run.triggerType === "manual") {
+    return t("Manual run");
+  }
+  if (run.triggerType === "monitor") {
+    return t("Monitor run");
+  }
+  return t("Automation run");
+}
+
+function automationTriggerLabel(trigger: AutomationTrigger | undefined, t: (value: string) => string, rrule?: string): string {
+  const rruleLabel = rrule ? rruleScheduleLabel(rrule, t) : undefined;
+  if (rruleLabel) {
+    return rruleLabel;
+  }
+  if (!trigger) {
+    return t("Missing");
+  }
+  if (trigger.type !== "schedule") {
+    return t("Manual");
+  }
+  if (trigger.schedule.cadence === "daily") {
+    return `${t("Daily")} ${trigger.schedule.timeOfDay}`;
+  }
+  if (trigger.schedule.cadence === "weekly") {
+    return `${weekdayLabel(trigger.schedule.weekday, t)} ${trigger.schedule.timeOfDay}`;
+  }
+  return `${t("Every")} ${Math.round(trigger.schedule.everyMs / 60000)} ${t("minutes")}`;
+}
+
+function rruleScheduleLabel(rrule: string, t: (value: string) => string): string | undefined {
+  const fields = new Map<string, string>();
+  for (const part of rrule.split(";")) {
+    const [rawKey, ...rawValue] = part.split("=");
+    const key = rawKey?.trim().toUpperCase();
+    const value = rawValue.join("=").trim().toUpperCase();
+    if (key && value) {
+      fields.set(key, value);
+    }
+  }
+  const freq = fields.get("FREQ");
+  const hour = fields.get("BYHOUR")?.split(",")[0] ?? "";
+  const minute = fields.get("BYMINUTE")?.split(",")[0] ?? "";
+  const time = hour && minute ? `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}` : "";
+  const byDay = fields.get("BYDAY") ?? "";
+  if (freq === "WEEKLY" && byDay === "MO,TU,WE,TH,FR") {
+    return `${t("Workdays")}${time ? ` ${time}` : ""}`;
+  }
+  if (freq === "WEEKLY" && byDay) {
+    const weekday = rruleWeekdayIndex(byDay.split(",")[0] ?? "");
+    return `${weekdayLabel(weekday, t)}${time ? ` ${time}` : ""}`;
+  }
+  if (freq === "DAILY") {
+    return `${t("Daily")}${time ? ` ${time}` : ""}`;
+  }
+  if (freq === "MINUTELY") {
+    return `${t("Every")} ${fields.get("INTERVAL") ?? "1"} ${t("minutes")}`;
+  }
+  return undefined;
+}
+
+function rruleWeekdayIndex(day: string): number {
+  const weekdays = new Map([
+    ["SU", 0],
+    ["MO", 1],
+    ["TU", 2],
+    ["WE", 3],
+    ["TH", 4],
+    ["FR", 5],
+    ["SA", 6],
+  ]);
+  return weekdays.get(day.slice(-2).toUpperCase()) ?? 1;
+}
+
+function automationDraftSourceLabel(source: AutomationDraft["source"], t: (value: string) => string): string {
+  return t(`automation.source.${source}`);
+}
+
+function automationKindLabel(kind: AutomationDefinition["kind"], t: (value: string) => string): string {
+  return t(`automation.kind.${kind}`);
+}
+
+function runtimeChoiceLabel(runtime: RuntimeChoice, t: (value: string) => string): string {
+  if (runtime === "thread") {
+    return t("Conversation");
+  }
+  return runtime === "worktree" ? t("Worktree") : t("Local");
+}
+
+function targetChoiceLabel(targetId: string, channels: readonly Channel[], t: (value: string) => string): string {
+  if (targetId === "workspace") {
+    return t("Current workspace");
+  }
+  const channelId = targetId.startsWith("channel:") ? targetId.slice("channel:".length) : "";
+  const channel = channels.find((item) => item.id === channelId);
+  return channel ? `#${channel.name}` : t("Select project");
+}
+
+function reasoningLabel(reasoning: AutomationReasoningEffort, t: (value: string) => string): string {
+  if (reasoning === "low") {
+    return t("Low");
+  }
+  if (reasoning === "high") {
+    return t("High");
+  }
+  if (reasoning === "xhigh") {
+    return t("XHigh");
+  }
+  return t("Medium");
+}
+
+function scheduleSummaryLabel(
+  schedule: ScheduleChoice,
+  timeOfDay: string,
+  weekday: number,
+  customRRule: string,
+  t: (value: string) => string,
+): string {
+  if (schedule === "custom") {
+    return customRRule.trim() || t("Custom RRULE");
+  }
+  if (schedule === "workdays") {
+    return `${t("Workdays")} ${timeOfDay}`;
+  }
+  if (schedule === "weekly") {
+    return `${weekdayLabel(weekday, t)} ${timeOfDay}`;
+  }
+  return `${t("Daily")} ${timeOfDay}`;
+}
+
+function schedulePresetLabel(schedule: ScheduleChoice, t: (value: string) => string): string {
+  if (schedule === "workdays") {
+    return t("Workdays");
+  }
+  if (schedule === "weekly") {
+    return t("Weekly");
+  }
+  if (schedule === "custom") {
+    return t("Custom RRULE");
+  }
+  return t("Daily");
+}
+
+function weekdayLabel(weekday: number, t: (value: string) => string): string {
+  const labels = [t("Sunday"), t("Monday"), t("Tuesday"), t("Wednesday"), t("Thursday"), t("Friday"), t("Saturday")];
+  return labels[weekday] ?? t("Monday");
+}
+
+function buildScheduleTrigger(schedule: ScheduleChoice, timeOfDay: string, weekday: number): AutomationTrigger {
+  if (schedule === "weekly") {
+    return buildTrigger("weekly", timeOfDay, weekday);
+  }
+  return buildTrigger("daily", timeOfDay, weekday);
+}
+
+function buildRRule(schedule: ScheduleChoice, timeOfDay: string, weekday: number): string {
+  const [hour = "09", minute = "00"] = timeOfDay.split(":");
+  const normalizedHour = Number.parseInt(hour, 10);
+  const normalizedMinute = Number.parseInt(minute, 10);
+  if (schedule === "workdays") {
+    return `FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=${normalizedHour};BYMINUTE=${normalizedMinute};BYSECOND=0`;
+  }
+  if (schedule === "weekly") {
+    const day = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][weekday] ?? "MO";
+    return `FREQ=WEEKLY;BYDAY=${day};BYHOUR=${normalizedHour};BYMINUTE=${normalizedMinute};BYSECOND=0`;
+  }
+  return `FREQ=DAILY;BYHOUR=${normalizedHour};BYMINUTE=${normalizedMinute};BYSECOND=0`;
+}
+
+function buildTemplatePresets(templates: readonly BuiltinAutomationTemplate[]): readonly AutomationTemplatePreset[] {
+  const fromServer = templates.map((template) => ({
+    id: template.id,
+    title: template.title,
+    description: template.description,
+    prompt: template.defaultPromptTemplate.promptMarkdown,
+    schedule: template.id === "weekly_review" ? "weekly" as const : "daily" as const,
+    runtime: "worktree" as const,
+  }));
+  const extras: AutomationTemplatePreset[] = [
+    {
+      id: "standup_summary",
+      title: "Standup / Weekly Summary",
+      description: "整理最近工作、阻塞和下一步，适合团队站会或周会前自动生成。",
+      prompt: "总结最近的工作进展、阻塞、风险和下一步。只引用 Ling 已有证据，缺失证据要明确说明。",
+      schedule: "workdays",
+      runtime: "thread",
+    },
+    {
+      id: "mini_game",
+      title: "Mini Game",
+      description: "定期生成一个范围尽可能小的经典小游戏实现建议，避免超出当前仓库工具边界。",
+      prompt: "为当前项目设计一个范围尽可能小的经典小游戏实现任务。不要直接修改文件，只给出可执行的最小步骤。",
+      schedule: "weekly",
+      runtime: "worktree",
+    },
+    {
+      id: "skill_progression",
+      title: "Skill Progression / PR Review",
+      description: "根据近期 PR、评审和失败记录，建议下一步最值得补强的技能或 review 重点。",
+      prompt: "根据近期 PR、评审、失败记录和运行证据，提出下一步最值得补强的技能或 review 重点。每条建议都要有具体证据。",
+      schedule: "weekly",
+      runtime: "worktree",
+    },
+  ];
+  const seen = new Set<string>(fromServer.map((item) => item.id));
+  return [...fromServer, ...extras.filter((item) => !seen.has(item.id))];
+}
+
+function templateIcon(templateId: string): JSX.Element {
+  if (templateId.includes("release")) {
+    return <ClipboardList size={18} />;
+  }
+  if (templateId.includes("bug")) {
+    return <Sparkles size={18} />;
+  }
+  if (templateId.includes("mini")) {
+    return <Bot size={18} />;
+  }
+  return <Layers size={18} />;
+}
+
+type DraftScheduleMode = "manual" | "daily" | "weekly" | "interval";
+
+function buildTrigger(mode: DraftScheduleMode, timeOfDay: string, weekday: number, intervalMinutes = 60): AutomationTrigger {
   if (mode === "daily") {
     return {
       type: "schedule",
@@ -867,6 +1483,15 @@ function buildTrigger(mode: "manual" | "daily" | "weekly", timeOfDay: string, we
       type: "schedule",
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       schedule: { cadence: "weekly", weekday: normalizedWeekday, timeOfDay: timeOfDay || "17:00" },
+      missedRunPolicy: "skip",
+    };
+  }
+  if (mode === "interval") {
+    const minutes = Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 60;
+    return {
+      type: "schedule",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      schedule: { cadence: "interval", everyMs: minutes * 60_000 },
       missedRunPolicy: "skip",
     };
   }
@@ -906,12 +1531,15 @@ function buildOutputPolicy(writeArtifact: boolean): AutomationOutputPolicy {
   return { destinations, artifactFormat: "markdown" };
 }
 
-function scheduleModeFromTrigger(trigger: AutomationTrigger | undefined): "manual" | "daily" | "weekly" {
+function scheduleModeFromTrigger(trigger: AutomationTrigger | undefined): DraftScheduleMode {
   if (trigger?.type === "schedule" && trigger.schedule.cadence === "daily") {
     return "daily";
   }
   if (trigger?.type === "schedule" && trigger.schedule.cadence === "weekly") {
     return "weekly";
+  }
+  if (trigger?.type === "schedule" && trigger.schedule.cadence === "interval") {
+    return "interval";
   }
   return "manual";
 }
@@ -928,6 +1556,13 @@ function weekdayFromTrigger(trigger: AutomationTrigger | undefined): number {
     return trigger.schedule.weekday;
   }
   return 5;
+}
+
+function intervalMinutesFromTrigger(trigger: AutomationTrigger | undefined): number {
+  if (trigger?.type === "schedule" && trigger.schedule.cadence === "interval") {
+    return Math.max(1, Math.round(trigger.schedule.everyMs / 60_000));
+  }
+  return 60;
 }
 
 function triggerLabel(trigger: AutomationTrigger): string {

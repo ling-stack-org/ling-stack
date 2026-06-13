@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { createDaemonServer } from "../dist/index.js";
-import { computeNextRunAt } from "../dist/features/automations/scheduler.js";
+import { computeNextRunAt, computeNextRunAtFromRRule } from "../dist/features/automations/scheduler.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("automation API creates templates, previews context, runs once, deduplicates, and blocks disabled or archived definitions", async () => {
@@ -182,6 +182,42 @@ test("automation draft API persists template/manual/chat proposals and confirms 
     assert.equal(chatDraft.draft.source, "chat");
     assert.equal(chatDraft.draft.status, "ready_for_confirmation");
     assert.equal(chatDraft.draft.trigger.type, "schedule");
+    assert.equal(chatDraft.draft.trigger.schedule.cadence, "daily");
+    const minuteChatDraft = await postJson(`${daemon.url}/automation-drafts?cwd=${encodeURIComponent(cwd)}`, {
+      source: "chat",
+      prompt: "每分钟给我发一下你好",
+      partialAutomation: { channelId: channel.id },
+    });
+    assert.equal(minuteChatDraft.draft.source, "chat");
+    assert.equal(minuteChatDraft.draft.status, "ready_for_confirmation");
+    assert.equal(minuteChatDraft.draft.trigger.type, "schedule");
+    assert.equal(minuteChatDraft.draft.trigger.schedule.cadence, "interval");
+    assert.equal(minuteChatDraft.draft.trigger.schedule.everyMs, 60_000);
+    const twoHourChatDraft = await postJson(`${daemon.url}/automation-drafts?cwd=${encodeURIComponent(cwd)}`, {
+      source: "chat",
+      prompt: "每2小时检查一次最近运行状态",
+      partialAutomation: { channelId: channel.id },
+    });
+    assert.equal(twoHourChatDraft.draft.trigger.type, "schedule");
+    assert.equal(twoHourChatDraft.draft.trigger.schedule.cadence, "interval");
+    assert.equal(twoHourChatDraft.draft.trigger.schedule.everyMs, 2 * 60 * 60_000);
+    const timedDailyChatDraft = await postJson(`${daemon.url}/automation-drafts?cwd=${encodeURIComponent(cwd)}`, {
+      source: "chat",
+      prompt: "每天晚上8:30给我总结今天的运行",
+      partialAutomation: { channelId: channel.id },
+    });
+    assert.equal(timedDailyChatDraft.draft.trigger.type, "schedule");
+    assert.equal(timedDailyChatDraft.draft.trigger.schedule.cadence, "daily");
+    assert.equal(timedDailyChatDraft.draft.trigger.schedule.timeOfDay, "20:30");
+    const weeklyChatDraft = await postJson(`${daemon.url}/automation-drafts?cwd=${encodeURIComponent(cwd)}`, {
+      source: "chat",
+      prompt: "每周一上午9点生成项目周报",
+      partialAutomation: { channelId: channel.id },
+    });
+    assert.equal(weeklyChatDraft.draft.trigger.type, "schedule");
+    assert.equal(weeklyChatDraft.draft.trigger.schedule.cadence, "weekly");
+    assert.equal(weeklyChatDraft.draft.trigger.schedule.weekday, 1);
+    assert.equal(weeklyChatDraft.draft.trigger.schedule.timeOfDay, "09:00");
     const automationsAfterChatDraft = await getJson(`${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(automationsAfterChatDraft.automations.length, 1);
   } finally {
@@ -190,7 +226,7 @@ test("automation draft API persists template/manual/chat proposals and confirms 
   }
 });
 
-test("automation scheduler starts explicitly, deduplicates registration, fires scheduled automations, ignores disabled definitions, and stops timers", async () => {
+test("automation scheduler auto-restores, deduplicates registration, fires scheduled automations, ignores disabled definitions, and stops timers", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-automations-scheduler-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
@@ -221,19 +257,20 @@ test("automation scheduler starts explicitly, deduplicates registration, fires s
       },
     });
 
-    const started = await postJson(`${daemon.url}/automations/scheduler/start?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(started.scheduler.status, "running");
-    assert.equal(started.scheduler.automationCount, 1);
-    assert.equal(started.scheduler.items[0].automationId, scheduled.automation.id);
-    assert.ok(started.scheduler.nextRunAt);
+    const restored = await getJson(`${daemon.url}/automations/scheduler?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(restored.schedulers.length, 1);
+    assert.equal(restored.schedulers[0].status, "running");
+    assert.equal(restored.schedulers[0].automationCount, 1);
+    assert.equal(restored.schedulers[0].items[0].automationId, scheduled.automation.id);
+    assert.ok(restored.schedulers[0].nextRunAt);
 
     const duplicate = await postJson(`${daemon.url}/automations/scheduler/start?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(duplicate.duplicate, true);
-    assert.equal(duplicate.scheduler.id, started.scheduler.id);
+    assert.equal(duplicate.scheduler.id, restored.schedulers[0].id);
 
     const listed = await getJson(`${daemon.url}/automations/scheduler?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.schedulers.length, 1);
-    assert.equal(listed.schedulers[0].id, started.scheduler.id);
+    assert.equal(listed.schedulers[0].id, restored.schedulers[0].id);
 
     await waitForCondition(() => runner.runs.length === 1, "scheduled automation fire");
     const automationRuns = await getJson(`${daemon.url}/automation-runs?cwd=${encodeURIComponent(cwd)}&automationId=${encodeURIComponent(scheduled.automation.id)}`);
@@ -283,6 +320,22 @@ test("automation scheduler computes timezone next runs without burst backfill", 
       new Date("2026-06-06T00:00:00.000Z"),
     ),
     "2026-06-06T00:00:01.500Z",
+  );
+  assert.equal(
+    computeNextRunAtFromRRule(
+      "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+      "Asia/Shanghai",
+      new Date("2026-06-06T00:00:00.000Z"),
+    ),
+    "2026-06-08T01:00:00.000Z",
+  );
+  assert.equal(
+    computeNextRunAtFromRRule(
+      "FREQ=DAILY;BYHOUR=15;BYMINUTE=30;BYSECOND=0",
+      "Asia/Shanghai",
+      new Date("2026-06-06T06:00:00.000Z"),
+    ),
+    "2026-06-06T07:30:00.000Z",
   );
 });
 

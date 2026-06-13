@@ -80,15 +80,17 @@ export function createDaemonServer(
   const mcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
   const controlPlaneEvents = new ControlPlaneEventHub();
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents });
+  let automationSchedulers: AutomationSchedulerRegistry;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore, {
     onStoreInitialized: (cwd, store) => {
       void providerStartupRefresh.start(cwd, store);
+      automationSchedulers?.start(cwd);
     },
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
   const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig);
-  const automationSchedulers = new AutomationSchedulerRegistry(
+  automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
     activeRuns,

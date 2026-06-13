@@ -7,6 +7,12 @@ export type AutomationStatus = "enabled" | "disabled" | "paused" | "archived" | 
 
 export type AutomationKind = "daily_brief" | "weekly_review" | "project_monitor" | "custom_prompt";
 
+export type AutomationMode = "cron" | "heartbeat";
+
+export type AutomationExecutionEnvironment = "local" | "worktree";
+
+export type AutomationReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
 export type AutomationDraftSource = "template" | "manual" | "chat";
 
 export type AutomationDraftStatus = "draft" | "needs_user_input" | "ready_for_confirmation" | "confirmed" | "discarded";
@@ -115,11 +121,18 @@ export interface AutomationDefinition {
   readonly workspaceId: string;
   readonly channelId?: string;
   readonly threadId: string;
+  readonly automationMode: AutomationMode;
   readonly title: string;
   readonly description?: string;
   readonly kind: AutomationKind;
   readonly status: AutomationStatus;
   readonly trigger: AutomationTrigger;
+  readonly rrule?: string;
+  readonly cwds: readonly string[];
+  readonly targetThreadId?: string;
+  readonly executionEnvironment?: AutomationExecutionEnvironment;
+  readonly reasoningEffort?: AutomationReasoningEffort;
+  readonly model?: string;
   readonly target: AutomationTarget;
   readonly promptTemplate: AutomationPromptTemplate;
   readonly executionPolicy: AutomationExecutionPolicy;
@@ -227,10 +240,17 @@ export interface AutomationContextPreview {
 export interface CreateAutomationRequest {
   readonly kind: AutomationKind;
   readonly title: string;
+  readonly automationMode?: AutomationMode;
   readonly channelId?: string;
   readonly description?: string;
   readonly target?: AutomationTarget;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string;
+  readonly cwds?: readonly string[];
+  readonly targetThreadId?: string;
+  readonly executionEnvironment?: AutomationExecutionEnvironment;
+  readonly reasoningEffort?: AutomationReasoningEffort;
+  readonly model?: string;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;
   readonly outputPolicy?: AutomationOutputPolicy;
@@ -240,8 +260,15 @@ export interface CreateAutomationRequest {
 export interface UpdateAutomationRequest {
   readonly title?: string;
   readonly description?: string | null;
+  readonly automationMode?: AutomationMode;
   readonly status?: AutomationStatus;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string | null;
+  readonly cwds?: readonly string[];
+  readonly targetThreadId?: string | null;
+  readonly executionEnvironment?: AutomationExecutionEnvironment | null;
+  readonly reasoningEffort?: AutomationReasoningEffort | null;
+  readonly model?: string | null;
   readonly target?: AutomationTarget;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;

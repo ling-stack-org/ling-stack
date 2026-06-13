@@ -8,86 +8,99 @@ import {
   type MockState,
 } from "./support/mock-state";
 
-test("automations page creates, previews, runs, links runs, and controls the local scheduler", async ({ page }) => {
+test("automations page uses Codex-style inbox, manual composer, templates, and auto scheduler recovery", async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.locale", "zh-CN");
   });
   const state = createBaseState({ approvalStatus: "pending" });
-  state.providers = [createChatProvider()];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "中转站", model: "gpt-test" })];
   await mockDaemon(page, state);
   const automationState = await mockAutomationRoutes(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
-  await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Templates" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Manual setup" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create through chat" })).toBeVisible();
-  await expect(page.getByLabel("Automation scheduler status")).toContainText("Stopped");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "自动化" }).click();
+  const automationsPage = page.locator(".automations-inbox-page");
+  await expect(automationsPage.getByRole("heading", { name: "自动化", level: 1 })).toBeVisible();
+  await expect(automationsPage.getByRole("heading", { name: "当前", level: 2 })).toBeVisible();
+  await expect(automationsPage.getByText("本地服务会自动恢复计划任务。")).toBeVisible();
+  await expect(automationsPage.getByRole("button", { name: /通过聊天创建/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Templates" }).click();
-  const templateDialog = page.getByRole("dialog", { name: "Templates" });
-  await expect(templateDialog.getByRole("button", { name: /Daily Brief/ })).toBeVisible();
-  await expect(templateDialog.getByRole("button", { name: /Weekly Review/ })).toBeVisible();
-  await templateDialog.getByRole("button", { name: /Daily Brief/ }).click();
-  await expect.poll(() => automationState.drafts.length).toBe(1);
-  await expect.poll(() => automationState.automations.length).toBe(0);
-  await expect(page.locator(".automation-detail-panel").getByRole("heading", { name: "Draft review" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Preview" }).click();
-  await expect(page.locator(".automation-preview pre")).toContainText("Ship automations P0 and P1");
-
-  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await automationsPage.getByRole("button", { name: /通过聊天创建/ }).click();
+  const chatDialog = page.getByRole("dialog", { name: "通过聊天创建" });
+  await chatDialog.locator("textarea").fill("每分钟给我发一下你好");
+  await chatDialog.getByRole("button", { name: "创建草稿" }).click();
+  await expect(page.getByRole("dialog", { name: "通过聊天创建" })).toHaveCount(0);
+  const chatDraftRow = automationsPage.locator(".automation-inbox-row.draft", { hasText: "每分钟给我发一下你好" });
+  await expect(chatDraftRow).toBeVisible();
+  await expect(chatDraftRow.getByText("每 1 分钟")).toBeVisible();
+  await chatDraftRow.getByRole("button", { name: "确认启用自动化" }).click();
   await expect.poll(() => automationState.automations.length).toBe(1);
-  await expect(page.getByRole("heading", { name: "Daily Brief" })).toBeVisible();
-  await expect(page.getByText("No runs yet")).toBeVisible();
-  await page.getByRole("button", { name: "Close details" }).click();
-  await expect(page.locator(".automation-detail-panel")).toHaveCount(0);
-  const dailyBriefRow = page.locator(".automation-list-section", { hasText: "Saved automations" }).getByRole("button", { name: /Daily Brief/ });
-  await dailyBriefRow.click();
-  await expect(page.getByRole("heading", { name: "Daily Brief" })).toBeVisible();
-  await dailyBriefRow.click();
-  await expect(page.locator(".automation-detail-panel")).toHaveCount(0);
-  await dailyBriefRow.click();
-  await expect(page.getByRole("heading", { name: "Daily Brief" })).toBeVisible();
-  await page.getByRole("button", { name: "Pause" }).click();
-  await expect(page.locator(".automation-detail-panel")).toContainText("paused");
-  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: "Resume" }).click();
-  await expect(page.locator(".automation-detail-panel")).toContainText("enabled");
-  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
+  await expect(chatDraftRow).toHaveCount(0);
+  await expect(automationsPage.locator(".automation-inbox-row", { hasText: "每分钟给我发一下你好" })).toBeVisible();
+  await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
 
-  await page.getByRole("button", { name: "Preview" }).click();
-  await expect(page.locator(".automation-preview pre")).toContainText("Ship automations P0 and P1");
+  await page.getByLabel("选择创建方式").click();
+  await expect(page.getByRole("menuitem", { name: /通过聊天创建/ })).toBeVisible();
+  await page.getByRole("menuitem", { name: /手动创建/ }).click();
 
-  await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect.poll(() => automationState.runs.length).toBe(1);
-  await expect(page.getByText("Recent automation runs")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open run" })).toBeVisible();
-  await page.getByRole("button", { name: "Open run" }).click();
-  await expect(page.getByRole("heading", { name: "Run Diagnostics" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Automation context: Daily Brief/ })).toBeVisible();
+  const manualDialog = page.getByRole("dialog", { name: "手动创建" });
+  await expect(manualDialog.getByPlaceholder("自动化功能标题")).toBeVisible();
+  await expect(manualDialog.getByPlaceholder("添加提示词，例如：在 $sentry 中查找崩溃")).toBeVisible();
+  await manualDialog.getByPlaceholder("自动化功能标题").fill("每日检查");
+  await manualDialog.getByPlaceholder("添加提示词，例如：在 $sentry 中查找崩溃").fill("每天检查最近运行、审批和风险。");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
-  await page.getByRole("button", { name: "Daily 09:00" }).click();
-  await page.getByLabel("Automation scheduler status").getByRole("button", { name: "Start" }).click();
-  await expect.poll(() => automationState.schedulerStartCalls).toBe(1);
-  await expect(page.getByLabel("Automation scheduler status")).toContainText("running");
-  await page.getByLabel("Automation scheduler status").getByRole("button", { name: "Stop" }).click();
-  await expect.poll(() => automationState.schedulerStopCalls).toBe(1);
-  await expect(page.getByLabel("Automation scheduler status")).toContainText("stopped");
+  await manualDialog.getByRole("button", { name: /工作树/ }).click();
+  await expect(manualDialog.getByRole("button", { name: /本地/ })).toBeVisible();
+  await expect(manualDialog.getByRole("button", { name: /工作树/ }).nth(1)).toBeVisible();
+  await expect(manualDialog.getByRole("button", { name: /对话/ })).toBeVisible();
+  await manualDialog.getByRole("button", { name: /本地/ }).click();
+
+  await manualDialog.getByRole("button", { name: /每天 09:00/ }).click();
+  await expect(manualDialog.getByLabel("计划")).toBeVisible();
+  await expect(manualDialog.getByLabel("时间")).toHaveValue("09:00");
+
+  await manualDialog.locator(".automation-risk-tooltip").hover();
+  await expect(manualDialog.getByText("自动化会按计划运行。只读工具风险最低；写入或 Shell 权限应保持显式审批。")).toBeVisible();
+
+  await manualDialog.getByRole("button", { name: "创建" }).click();
+  await expect.poll(() => automationState.automations.length).toBe(2);
+  await expect(page.getByRole("dialog", { name: "手动创建" })).toHaveCount(0);
+  const createdRow = automationsPage.locator(".automation-inbox-row", { hasText: "每日检查" });
+  await expect(createdRow).toBeVisible();
+  await expect(createdRow.getByText(/本地 ·/)).toBeVisible();
+  await expect(createdRow.getByText("每天 09:00")).toBeVisible();
+  await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
+
+  await page.getByRole("button", { name: /手动创建/ }).click();
+  const secondManualDialog = page.getByRole("dialog", { name: "手动创建" });
+  await secondManualDialog.getByRole("button", { name: "使用模板" }).click();
+  const templateDialog = page.getByRole("dialog", { name: "自动化模板" });
+  await expect(templateDialog.getByRole("button", { name: /Bug 扫描/ })).toBeVisible();
+  await expect(templateDialog.getByRole("button", { name: /迷你游戏/ })).toBeVisible();
+  await templateDialog.getByRole("button", { name: /迷你游戏/ }).click();
+  const filledManualDialog = page.getByRole("dialog", { name: "手动创建" });
+  await expect(filledManualDialog.getByPlaceholder("自动化功能标题")).toHaveValue("迷你游戏");
+  await expect(filledManualDialog.getByPlaceholder("添加提示词，例如：在 $sentry 中查找崩溃")).toHaveValue(/经典小游戏/);
 });
 
 interface MockAutomation {
   readonly id: string;
   readonly workspaceId: string;
-  readonly channelId: string;
+  readonly channelId?: string;
   readonly threadId: string;
+  readonly automationMode?: string;
   readonly title: string;
-  readonly description: string;
+  readonly description?: string;
   readonly kind: string;
   readonly status: string;
   readonly trigger: Record<string, unknown>;
+  readonly rrule?: string;
+  readonly cwds?: readonly string[];
+  readonly targetThreadId?: string;
+  readonly executionEnvironment?: string;
+  readonly reasoningEffort?: string;
+  readonly model?: string;
   readonly target: Record<string, unknown>;
   readonly promptTemplate: Record<string, unknown>;
   readonly executionPolicy: Record<string, unknown>;
@@ -101,22 +114,30 @@ interface MockAutomation {
 interface MockAutomationDraft {
   readonly id: string;
   readonly workspaceId: string;
-  readonly channelId: string;
+  readonly channelId?: string;
   readonly source: string;
   readonly status: string;
-  readonly draft: Partial<MockAutomation>;
+  readonly title?: string;
+  readonly description?: string;
+  readonly kind?: string;
+  readonly trigger?: Record<string, unknown>;
+  readonly target?: Record<string, unknown>;
+  readonly promptTemplate?: Record<string, unknown>;
+  readonly executionPolicy?: Record<string, unknown>;
+  readonly outputPolicy?: Record<string, unknown>;
   readonly missingFields: readonly string[];
   readonly warnings: readonly string[];
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly confirmedAutomationId?: string;
+  readonly discardedAt?: string;
 }
 
 interface MockAutomationRun {
   readonly id: string;
   readonly automationId: string;
   readonly workspaceId: string;
-  readonly channelId: string;
+  readonly channelId?: string;
   readonly threadId: string;
   readonly runId?: string;
   readonly triggerType: string;
@@ -150,8 +171,6 @@ interface MockAutomationRouteState {
   drafts: MockAutomationDraft[];
   runs: MockAutomationRun[];
   schedulers: MockAutomationScheduler[];
-  schedulerStartCalls: number;
-  schedulerStopCalls: number;
 }
 
 async function mockAutomationRoutes(page: Parameters<typeof mockDaemon>[0], state: MockState): Promise<MockAutomationRouteState> {
@@ -159,33 +178,31 @@ async function mockAutomationRoutes(page: Parameters<typeof mockDaemon>[0], stat
     automations: [],
     drafts: [],
     runs: [],
-    schedulers: [],
-    schedulerStartCalls: 0,
-    schedulerStopCalls: 0,
+    schedulers: [createAutomationScheduler([], "running")],
   };
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
     if (request.method() === "GET" && path === "/automations") {
+      refreshScheduler(routeState);
       await route.fulfill({ json: { cwd, automations: routeState.automations, templates: createAutomationTemplates() } });
       return;
     }
+    if (request.method() === "POST" && path === "/automations") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const automation = createAutomationFromRequest(routeState, state, body);
+      routeState.automations.unshift(automation);
+      refreshScheduler(routeState);
+      await route.fulfill({ status: 201, json: { cwd, automation, thread: createAutomationThread(automation) } });
+      return;
+    }
     if (request.method() === "GET" && path === "/automation-drafts") {
-      const status = url.searchParams.get("status");
       const includeTerminal = url.searchParams.get("includeTerminal") === "true";
-      await route.fulfill({
-        json: {
-          cwd,
-          drafts: routeState.drafts.filter((draft) => {
-            if (status) {
-              return draft.status === status;
-            }
-            return includeTerminal || (draft.status !== "confirmed" && draft.status !== "discarded");
-          }),
-          templates: createAutomationTemplates(),
-        },
-      });
+      const drafts = includeTerminal
+        ? routeState.drafts
+        : routeState.drafts.filter((draft) => draft.status !== "confirmed" && draft.status !== "discarded");
+      await route.fulfill({ json: { cwd, drafts, templates: createAutomationTemplates() } });
       return;
     }
     if (request.method() === "POST" && path === "/automation-drafts") {
@@ -195,29 +212,7 @@ async function mockAutomationRoutes(page: Parameters<typeof mockDaemon>[0], stat
       await route.fulfill({ status: 201, json: { cwd, draft } });
       return;
     }
-    if (request.method() === "GET" && path === "/automation-runs") {
-      await route.fulfill({ json: { cwd, automationRuns: routeState.runs } });
-      return;
-    }
-    if (request.method() === "GET" && path === "/automations/scheduler") {
-      await route.fulfill({ json: { cwd, schedulers: routeState.schedulers } });
-      return;
-    }
-    if (request.method() === "POST" && path === "/automations/scheduler/start") {
-      routeState.schedulerStartCalls += 1;
-      const scheduler = createAutomationScheduler(routeState, "running");
-      routeState.schedulers = [scheduler];
-      await route.fulfill({ json: { cwd, scheduler, duplicate: false } });
-      return;
-    }
-    if (request.method() === "POST" && path === "/automations/scheduler/stop") {
-      routeState.schedulerStopCalls += 1;
-      const scheduler = createAutomationScheduler(routeState, "stopped");
-      routeState.schedulers = [scheduler];
-      await route.fulfill({ json: { cwd, scheduler } });
-      return;
-    }
-    const draftRoute = /^\/automation-drafts\/([^/]+)(?:\/(preview|confirm))?$/.exec(path);
+    const draftRoute = /^\/automation-drafts\/([^/]+)(?:\/(confirm|preview))?$/.exec(path);
     if (draftRoute) {
       const draft = routeState.drafts.find((item) => item.id === decodeURIComponent(draftRoute[1]));
       const action = draftRoute[2];
@@ -226,18 +221,48 @@ async function mockAutomationRoutes(page: Parameters<typeof mockDaemon>[0], stat
         return;
       }
       if (request.method() === "POST" && action === "preview") {
-        await route.fulfill({ json: { cwd, draft, context: createAutomationContext(draft.draft.title ?? "Daily Brief") } });
+        await route.fulfill({ json: { cwd, draft, context: createAutomationContext(draft.title ?? "Draft") } });
         return;
       }
       if (request.method() === "POST" && action === "confirm") {
-        const automation = createAutomationFromDraft(routeState, draft);
-        routeState.automations.unshift(automation);
-        routeState.drafts = routeState.drafts.map((item) =>
-          item.id === draft.id ? { ...item, status: "confirmed", confirmedAutomationId: automation.id, updatedAt: "2026-06-06T00:13:00.000Z" } : item
-        );
-        await route.fulfill({ status: 201, json: { cwd, draft: routeState.drafts.find((item) => item.id === draft.id), automation, thread: createAutomationThread(automation) } });
+        const existingAutomation = draft.confirmedAutomationId
+          ? routeState.automations.find((automation) => automation.id === draft.confirmedAutomationId)
+          : undefined;
+        const automation = existingAutomation ?? createAutomationFromDraft(routeState, state, draft);
+        if (!existingAutomation) {
+          routeState.automations.unshift(automation);
+        }
+        const confirmed = {
+          ...draft,
+          status: "confirmed",
+          confirmedAutomationId: automation.id,
+          updatedAt: "2026-06-06T00:17:00.000Z",
+        };
+        routeState.drafts = routeState.drafts.map((item) => item.id === draft.id ? confirmed : item);
+        refreshScheduler(routeState);
+        await route.fulfill({ status: existingAutomation ? 200 : 201, json: { cwd, draft: confirmed, automation, thread: createAutomationThread(automation) } });
         return;
       }
+      if (request.method() === "DELETE" && !action) {
+        const discarded = {
+          ...draft,
+          status: "discarded",
+          discardedAt: "2026-06-06T00:18:00.000Z",
+          updatedAt: "2026-06-06T00:18:00.000Z",
+        };
+        routeState.drafts = routeState.drafts.map((item) => item.id === draft.id ? discarded : item);
+        await route.fulfill({ json: { cwd, draft: discarded } });
+        return;
+      }
+    }
+    if (request.method() === "GET" && path === "/automation-runs") {
+      await route.fulfill({ json: { cwd, automationRuns: routeState.runs } });
+      return;
+    }
+    if (request.method() === "GET" && path === "/automations/scheduler") {
+      refreshScheduler(routeState);
+      await route.fulfill({ json: { cwd, schedulers: routeState.schedulers } });
+      return;
     }
     const automationRoute = /^\/automations\/([^/]+)(?:\/(preview|run))?$/.exec(path);
     if (automationRoute) {
@@ -260,7 +285,15 @@ async function mockAutomationRoutes(page: Parameters<typeof mockDaemon>[0], stat
         const body = await request.postDataJSON() as Partial<MockAutomation>;
         const updatedAutomation = { ...automation, ...body, updatedAt: "2026-06-06T00:15:00.000Z" };
         routeState.automations = routeState.automations.map((item) => item.id === automation.id ? updatedAutomation : item);
+        refreshScheduler(routeState);
         await route.fulfill({ json: { cwd, automation: updatedAutomation, thread: createAutomationThread(updatedAutomation) } });
+        return;
+      }
+      if (request.method() === "DELETE" && !action) {
+        const archived = { ...automation, status: "archived", updatedAt: "2026-06-06T00:16:00.000Z" };
+        routeState.automations = routeState.automations.map((item) => item.id === automation.id ? archived : item);
+        refreshScheduler(routeState);
+        await route.fulfill({ json: { cwd, automation: archived, thread: createAutomationThread(archived) } });
         return;
       }
     }
@@ -269,52 +302,123 @@ async function mockAutomationRoutes(page: Parameters<typeof mockDaemon>[0], stat
   return routeState;
 }
 
+function refreshScheduler(routeState: MockAutomationRouteState): void {
+  routeState.schedulers = [createAutomationScheduler(routeState.automations, "running")];
+}
+
 function createAutomationTemplates(): readonly Record<string, unknown>[] {
   return [
     {
       id: "daily_brief",
       kind: "daily_brief",
       title: "Daily Brief",
-      description: "Summarize channel state every morning.",
+      description: "Summarize the latest channel context, recent runs, approvals, and external work.",
       tags: ["daily", "status"],
       defaultChannelId: "channel_engineering",
+      defaultTrigger: { type: "manual" },
+      defaultPromptTemplate: { promptMarkdown: "Write today's brief.", contextSelectors: [], maxContextItems: 32, templateVersion: 1 },
+      defaultExecutionPolicy: { allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+      defaultOutputPolicy: { destinations: [{ type: "automation_thread" }], artifactFormat: "markdown" },
     },
     {
-      id: "weekly_review",
-      kind: "weekly_review",
-      title: "Weekly Review",
-      description: "Review weekly progress and risks.",
-      tags: ["weekly", "review"],
+      id: "bug_scan",
+      kind: "custom_prompt",
+      title: "Bug Scan",
+      description: "Inspect recent runs and artifacts for likely regressions with evidence.",
+      tags: ["bugs", "risk"],
       defaultChannelId: "channel_engineering",
+      defaultTrigger: { type: "manual" },
+      defaultPromptTemplate: { promptMarkdown: "Identify likely regressions.", contextSelectors: [], maxContextItems: 32, templateVersion: 1 },
+      defaultExecutionPolicy: { allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+      defaultOutputPolicy: { destinations: [{ type: "automation_thread" }], artifactFormat: "markdown" },
     },
   ];
 }
 
+function createAutomationFromRequest(routeState: MockAutomationRouteState, state: MockState, body: Record<string, unknown>): MockAutomation {
+  const id = `automation_${routeState.automations.length + 1}`;
+  const target = isRecord(body.target) ? body.target : {};
+  const channelId = typeof body.channelId === "string"
+    ? body.channelId
+    : typeof target.channelId === "string"
+      ? target.channelId
+      : readFirstChannelId(state);
+  const trigger = isRecord(body.trigger) ? body.trigger : { type: "manual" };
+  const promptTemplate = isRecord(body.promptTemplate)
+    ? body.promptTemplate
+    : { templateVersion: 1, systemPurpose: "Run automation.", promptMarkdown: "Run automation.", contextSelectors: [], maxContextItems: 32 };
+  return {
+    id,
+    workspaceId: "workspace_default",
+    channelId,
+    threadId: `thread_${id}`,
+    automationMode: typeof body.automationMode === "string" ? body.automationMode : "cron",
+    title: String(body.title ?? "Automation"),
+    description: typeof body.description === "string" ? body.description : "Manual automation.",
+    kind: String(body.kind ?? "custom_prompt"),
+    status: String(body.status ?? "enabled"),
+    trigger,
+    rrule: typeof body.rrule === "string" ? body.rrule : undefined,
+    cwds: Array.isArray(body.cwds) ? body.cwds.filter((item): item is string => typeof item === "string") : [],
+    targetThreadId: typeof body.targetThreadId === "string" ? body.targetThreadId : undefined,
+    executionEnvironment: typeof body.executionEnvironment === "string" ? body.executionEnvironment : undefined,
+    reasoningEffort: typeof body.reasoningEffort === "string" ? body.reasoningEffort : undefined,
+    model: typeof body.model === "string" ? body.model : undefined,
+    target: Object.keys(target).length > 0 ? target : { scope: channelId ? "channel" : "workspace", workspaceId: "workspace_default", channelId, cwd },
+    promptTemplate,
+    executionPolicy: isRecord(body.executionPolicy) ? body.executionPolicy : { providerPresetId: "provider_local", allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+    outputPolicy: isRecord(body.outputPolicy) ? body.outputPolicy : { destinations: [{ type: "automation_thread" }], artifactFormat: "markdown" },
+    nextRunAt: trigger.type === "schedule" ? "2026-06-06T01:00:00.000Z" : undefined,
+    createdAt: "2026-06-06T00:13:00.000Z",
+    updatedAt: "2026-06-06T00:13:00.000Z",
+  };
+}
+
+function createAutomationFromDraft(routeState: MockAutomationRouteState, state: MockState, draft: MockAutomationDraft): MockAutomation {
+  return createAutomationFromRequest(routeState, state, {
+    channelId: draft.channelId,
+    title: draft.title,
+    description: draft.description,
+    kind: draft.kind,
+    trigger: draft.trigger,
+    target: draft.target,
+    promptTemplate: draft.promptTemplate,
+    executionPolicy: draft.executionPolicy,
+    outputPolicy: draft.outputPolicy,
+  });
+}
+
 function createAutomationDraft(routeState: MockAutomationRouteState, body: Record<string, unknown>): MockAutomationDraft {
-  const templateId = typeof body.templateId === "string" ? body.templateId : "daily_brief";
-  const title = templateId === "weekly_review" ? "Weekly Review" : "Daily Brief";
+  const partial = isRecord(body.partialAutomation) ? body.partialAutomation : {};
+  const source = String(body.source ?? "manual");
+  const prompt = typeof body.prompt === "string" ? body.prompt : "";
+  const title = typeof partial.title === "string" ? partial.title : prompt || "Daily Brief";
+  const channelId = typeof partial.channelId === "string" ? partial.channelId : "channel_engineering";
+  const trigger = isRecord(partial.trigger)
+    ? partial.trigger
+    : source === "chat"
+      ? inferMockChatDraftTrigger(prompt)
+      : { type: "manual" };
   return {
     id: `automation_draft_${routeState.drafts.length + 1}`,
     workspaceId: "workspace_default",
-    channelId: "channel_engineering",
-    source: "template",
-    status: "ready",
-    draft: {
-      title,
-      description: `${title} automation draft.`,
-      kind: templateId,
-      trigger: { type: "manual" },
-      target: { scope: "channel", workspaceId: "workspace_default", channelId: "channel_engineering", cwd },
-      promptTemplate: {
-        templateVersion: 1,
-        systemPurpose: "Run a confirmed automation from supplied Ling context only.",
-        promptMarkdown: "Ship automations P0 and P1 with evidence.",
-        contextSelectors: [{ kind: "channel_brief", channelId: "channel_engineering" }],
-        maxContextItems: 32,
-      },
-      executionPolicy: { providerPresetId: "provider_local", runnerId: "pi" },
-      outputPolicy: { destinations: [{ type: "automation_thread" }, { type: "markdown_artifact" }], artifactFormat: "markdown" },
+    channelId,
+    source,
+    status: "ready_for_confirmation",
+    title,
+    description: `${title} automation draft.`,
+    kind: typeof partial.kind === "string" ? partial.kind : "custom_prompt",
+    trigger,
+    target: isRecord(partial.target) ? partial.target : { scope: "channel", workspaceId: "workspace_default", channelId, cwd },
+    promptTemplate: isRecord(partial.promptTemplate) ? partial.promptTemplate : {
+      templateVersion: 1,
+      systemPurpose: "Run automation.",
+      promptMarkdown: prompt || "Ship automations with evidence.",
+      contextSelectors: [],
+      maxContextItems: 32,
     },
+    executionPolicy: isRecord(partial.executionPolicy) ? partial.executionPolicy : { providerPresetId: "provider_local", runnerId: "pi" },
+    outputPolicy: isRecord(partial.outputPolicy) ? partial.outputPolicy : { destinations: [{ type: "automation_thread" }], artifactFormat: "markdown" },
     missingFields: [],
     warnings: [],
     createdAt: "2026-06-06T00:12:00.000Z",
@@ -322,31 +426,24 @@ function createAutomationDraft(routeState: MockAutomationRouteState, body: Recor
   };
 }
 
-function createAutomationFromDraft(routeState: MockAutomationRouteState, draft: MockAutomationDraft): MockAutomation {
-  const id = `automation_${routeState.automations.length + 1}`;
-  return {
-    id,
-    workspaceId: "workspace_default",
-    channelId: draft.channelId,
-    threadId: `thread_${id}`,
-    title: String(draft.draft.title ?? "Daily Brief"),
-    description: String(draft.draft.description ?? "Automation draft."),
-    kind: String(draft.draft.kind ?? "daily_brief"),
-    status: "enabled",
-    trigger: draft.draft.trigger ?? { type: "manual" },
-    target: draft.draft.target ?? { scope: "channel", workspaceId: "workspace_default", channelId: draft.channelId, cwd },
-    promptTemplate: draft.draft.promptTemplate ?? {
-      templateVersion: 1,
-      systemPurpose: "Run a confirmed automation from supplied Ling context only.",
-      promptMarkdown: "Ship automations P0 and P1 with evidence.",
-      contextSelectors: [{ kind: "channel_brief", channelId: draft.channelId }],
-      maxContextItems: 32,
-    },
-    executionPolicy: draft.draft.executionPolicy ?? { providerPresetId: "provider_local", runnerId: "pi" },
-    outputPolicy: draft.draft.outputPolicy ?? { destinations: [{ type: "automation_thread" }, { type: "markdown_artifact" }], artifactFormat: "markdown" },
-    createdAt: "2026-06-06T00:13:00.000Z",
-    updatedAt: "2026-06-06T00:13:00.000Z",
-  };
+function inferMockChatDraftTrigger(prompt: string): Record<string, unknown> {
+  const normalized = prompt.toLowerCase();
+  if (/每分钟|每\s*1\s*分钟|一分钟一次|every\s+minute|once\s+a\s+minute/.test(normalized)) {
+    return { type: "schedule", timezone: "Asia/Shanghai", schedule: { cadence: "interval", everyMs: 60_000 }, missedRunPolicy: "skip" };
+  }
+  const zhMinutes = /每\s*(\d{1,3})\s*分钟/.exec(normalized);
+  if (zhMinutes) {
+    return {
+      type: "schedule",
+      timezone: "Asia/Shanghai",
+      schedule: { cadence: "interval", everyMs: Number.parseInt(zhMinutes[1], 10) * 60_000 },
+      missedRunPolicy: "skip",
+    };
+  }
+  if (/\bdaily\b|每天|日报/.test(normalized)) {
+    return { type: "schedule", timezone: "Asia/Shanghai", schedule: { cadence: "daily", timeOfDay: "09:00" }, missedRunPolicy: "skip" };
+  }
+  return { type: "manual" };
 }
 
 function createAutomationThread(automation: MockAutomation): Record<string, unknown> {
@@ -356,7 +453,7 @@ function createAutomationThread(automation: MockAutomation): Record<string, unkn
     kind: "automation",
     channelId: automation.channelId,
     title: automation.title,
-    objective: "Ship automations P0 and P1 with evidence.",
+    objective: String(automation.promptTemplate.promptMarkdown ?? automation.title),
     status: "open",
     createdAt: automation.createdAt,
     updatedAt: automation.updatedAt,
@@ -370,7 +467,7 @@ function createAutomationContext(title: string): Record<string, unknown> {
     `Automation: ${title}`,
     "Channel: Engineering",
     "",
-    "Ship automations P0 and P1 with evidence.",
+    "Ship automations with evidence.",
   ].join("\n");
   return {
     contextMarkdown,
@@ -413,16 +510,6 @@ function createAutomationRun(
     updatedAt: now,
     endedAt: now,
   };
-  const contextArtifact = {
-    id: `artifact_${automationRunId}_context`,
-    runId,
-    type: "markdown",
-    path: `automation-context/${runId}-${automationRunId}.md`,
-    title: `Automation context: ${automation.title}`,
-    contentType: "text/markdown; charset=utf-8",
-    sizeBytes: 512,
-    createdAt: now,
-  };
   const automationRun: MockAutomationRun = {
     id: automationRunId,
     automationId: automation.id,
@@ -436,32 +523,39 @@ function createAutomationRun(
     completedAt: now,
     status: "succeeded",
     idempotencyKey: `automation:${automation.id}:manual:${routeState.runs.length + 1}`,
-    contextPreviewArtifactId: contextArtifact.id,
-    outputArtifactIds: [contextArtifact.id],
+    outputArtifactIds: [],
   };
   state.runs.unshift(run);
-  state.artifactsByRun[runId] = [contextArtifact];
   routeState.runs.unshift(automationRun);
   const updatedAutomation = { ...automation, lastRunId: automationRun.id, updatedAt: now };
   routeState.automations = routeState.automations.map((item) => item.id === automation.id ? updatedAutomation : item);
   return { automation: updatedAutomation, automationRun, context };
 }
 
-function createAutomationScheduler(routeState: MockAutomationRouteState, status: "running" | "stopped"): MockAutomationScheduler {
-  const scheduled = routeState.automations.filter((automation) => automation.status === "enabled" && automation.trigger.type === "schedule");
+function createAutomationScheduler(automations: readonly MockAutomation[], status: "running" | "stopped"): MockAutomationScheduler {
+  const scheduled = automations.filter((automation) => automation.status === "enabled" && automation.trigger.type === "schedule");
   return {
-    id: routeState.schedulers[0]?.id ?? "automation_scheduler_1",
+    id: "automation_scheduler_1",
     cwd,
     status,
     startedAt: "2026-06-06T00:20:00.000Z",
     stoppedAt: status === "stopped" ? "2026-06-06T00:21:00.000Z" : undefined,
     automationCount: scheduled.length,
     tickCount: 0,
-    nextRunAt: status === "running" && scheduled.length > 0 ? "2026-06-06T00:21:00.000Z" : undefined,
+    nextRunAt: status === "running" && scheduled.length > 0 ? "2026-06-06T01:00:00.000Z" : undefined,
     items: scheduled.map((automation) => ({
       automationId: automation.id,
       title: automation.title,
-      nextRunAt: status === "running" ? "2026-06-06T00:21:00.000Z" : undefined,
+      nextRunAt: status === "running" ? "2026-06-06T01:00:00.000Z" : undefined,
     })),
   };
+}
+
+function readFirstChannelId(state: MockState): string | undefined {
+  const channel = state.channels.find(isRecord);
+  return typeof channel?.id === "string" ? channel.id : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
