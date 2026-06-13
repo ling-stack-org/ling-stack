@@ -21,6 +21,7 @@ import {
   proposalSourceRefsFromContextView,
 } from "../dist/features/channels/context-processing/proposals.js";
 import { buildWorkflowStepContextView } from "../dist/features/channels/context-processing/workflow-steps.js";
+import { buildPrivateChatContextView } from "../dist/features/channels/context-processing/private-chat.js";
 import { memoryEligibilityForView } from "../dist/features/channels/context-processing/memory.js";
 import { renderChannelContextView } from "../dist/features/channels/context-processing/render.js";
 import { buildChannelContextView } from "../dist/features/channels/context-processing/views.js";
@@ -818,6 +819,68 @@ test("memory eligibility allows private memory only for the matching teammate co
   });
 });
 
+test("private chat context view keeps private thread sources and explicit task/run refs", () => {
+  const teammate = createTeammate();
+  const thread = createDirectThread({ teammateId: teammate.id });
+  const priorMessage = createDirectMessage({
+    id: "direct_prior",
+    teammateId: teammate.id,
+    threadId: thread.id,
+    authorType: "local-user",
+    body: "Earlier private context only.",
+  });
+  const sourceMessage = createDirectMessage({
+    id: "direct_latest",
+    teammateId: teammate.id,
+    threadId: thread.id,
+    authorType: "local-user",
+    body: "Please continue from the linked run.",
+    linkedTaskId: "task_1",
+    linkedRunId: "run_1",
+  });
+  const privateMemory = createSource({
+    id: "memory:private",
+    kind: "memory",
+    sensitivity: "private",
+    teammateId: teammate.id,
+  });
+  const channelRecent = createSource({
+    id: "recent_message:channel",
+    kind: "recent_message",
+    channelId: "channel_1",
+    text: "This public channel text must not enter private chat.",
+  });
+  const view = buildPrivateChatContextView({
+    store: createPrivateChatStore(),
+    teammate,
+    thread,
+    messages: [priorMessage, sourceMessage],
+    sourceMessage,
+    memorySources: [privateMemory, channelRecent],
+    now,
+  });
+
+  assert.equal(view.kind, "private_chat_view");
+  assert.equal(view.consumerTeammateId, teammate.id);
+  assert.match(renderChannelContextView(view), /Teammate: Designer/);
+  assert.match(renderChannelContextView(view), /Earlier private context only/);
+  assert.match(renderChannelContextView(view), /Please continue from the linked run/);
+  assert.doesNotMatch(renderChannelContextView(view), /This public channel text must not enter private chat/);
+  assert.deepEqual(view.sources.map((source) => source.id), [
+    "teammate_profile:teammate_designer",
+    "private_message:direct_prior",
+    "private_message:direct_latest",
+    "private_ref:task:task_1",
+    "private_ref:run:run_1",
+    "memory:private",
+  ]);
+  assert.deepEqual(view.dropped, [{ sourceId: "recent_message:channel", reason: "scope" }]);
+  assert.ok(view.sourceRefs.some((ref) => ref.type === "task" && ref.id === "task_1"));
+  assert.ok(view.sourceRefs.some((ref) => ref.type === "run" && ref.id === "run_1"));
+  assert.ok(view.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === "workflow_1"));
+  assert.ok(view.sourceRefs.some((ref) => ref.type === "workflow_step" && ref.id === "step_1"));
+});
+
 test("memory eligibility keeps raw memory out of selector and proposal views", () => {
   const memory = createSource({ id: "memory:channel", kind: "memory" });
 
@@ -993,6 +1056,91 @@ function createWorkflowStep(overrides = {}) {
     createdAt: now,
     updatedAt: now,
     ...overrides,
+  };
+}
+
+function createTeammate(overrides = {}) {
+  return {
+    id: "teammate_designer",
+    workspaceId: "workspace_1",
+    roleKey: "designer",
+    displayName: "Designer",
+    description: "Designs product flows.",
+    appendSystemPrompt: [],
+    allowedTools: [],
+    approvalProfile: "standard",
+    status: "active",
+    pinned: false,
+    hidden: false,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function createDirectThread(overrides = {}) {
+  return {
+    id: "direct_thread_1",
+    workspaceId: "workspace_1",
+    teammateId: "teammate_designer",
+    title: "Private chat with Designer",
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function createDirectMessage(overrides = {}) {
+  return {
+    id: "direct_message_1",
+    workspaceId: "workspace_1",
+    threadId: "direct_thread_1",
+    teammateId: "teammate_designer",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "",
+    attachmentIds: [],
+    status: "ready",
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function createPrivateChatStore() {
+  const task = {
+    id: "task_1",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    title: "Linked task",
+    prompt: "Explicit linked task prompt.",
+    status: "ready",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const run = {
+    id: "run_1",
+    status: "succeeded",
+    cwd: "/tmp/ling-stack",
+    taskId: task.id,
+    channelId: task.channelId,
+    workflowStepId: "step_1",
+    providerName: "Test",
+    providerModel: "test-model",
+    taskSnapshot: { title: "Linked run" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: "/tmp/events.jsonl",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const workflow = createWorkflow({ id: "workflow_1", channelId: task.channelId });
+  const step = createWorkflowStep({ id: "step_1", workflowId: workflow.id, channelId: task.channelId });
+  return {
+    getTask: (id) => id === task.id ? task : undefined,
+    getRun: (id) => id === run.id ? run : undefined,
+    getChannelWorkflowStep: (id) => id === step.id ? step : undefined,
+    getChannelWorkflow: (id) => id === workflow.id ? workflow : undefined,
   };
 }
 

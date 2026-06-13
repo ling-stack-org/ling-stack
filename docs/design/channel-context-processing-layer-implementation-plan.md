@@ -737,6 +737,40 @@ Acceptance:
 - Used-memory audit for direct replies includes only rendered memory ids and the memory
   isolation policy version.
 
+#### C10B: Private Chat Source View Completion
+
+Status: implementation slice after C10A.
+
+Goal: make teammate direct replies build their prompt through `private_chat_view` instead
+of bypassing the shared Context View source model.
+
+Scope:
+
+- represent teammate persona as a `teammate_profile` source;
+- represent private thread history as `private_message` sources, not channel
+  `recent_message` sources;
+- attach same-teammate private memory sources and dropped-memory metadata to the view;
+- include explicitly linked task/run references as source refs when a direct message
+  already carries `linkedTaskId` or `linkedRunId`;
+- keep the rendered private prompt behavior compatible with the existing direct-message
+  prompt.
+
+Non-goals:
+
+- no new direct-message API fields for arbitrary channel/workflow refs;
+- no implicit channel history import;
+- no direct-message attachment materialization expansion beyond the existing inline
+  materializer;
+- no Web UI changes or debug default surface.
+
+Acceptance:
+
+- private chat view keeps teammate persona, private history, latest message, and
+  same-teammate private memory sources;
+- channel `recent_message` sources are still excluded from `private_chat_view`;
+- linked task/run refs enter only when already explicit on the direct message;
+- existing direct-message stream/materialization/memory tests keep passing.
+
 ## C11: Browser And E2E Acceptance
 
 Type: Web/e2e verification.
