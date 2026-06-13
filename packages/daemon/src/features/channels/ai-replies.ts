@@ -17,6 +17,7 @@ import {
   renderLingAgentTurnEnvelopeSearchText,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
+import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 
 export async function createAiChannelReply(input: {
@@ -188,6 +189,7 @@ async function completeAiChannelReply(input: {
       channel: input.channel,
       sourceMessage: input.sourceMessage,
       turnEnvelope,
+      providerPresetId: input.providerPresetId,
       teammate: input.teammate,
       canonicalTeammateId: input.canonicalTeammateId,
       visibleParticipantTeammateIds: input.visibleParticipantTeammateIds,
@@ -296,6 +298,11 @@ async function completeAiChannelReply(input: {
       if (!isContextLengthError(error)) {
         throw error;
       }
+      recordProviderContextLengthObservation({
+        providerPreset: discussionContextPack.providerPresetId ? input.store.getProviderPreset(discussionContextPack.providerPresetId) : undefined,
+        contextPack: discussionContextPack,
+        now: new Date().toISOString(),
+      });
       const compaction = compactChannelDiscussionForNoToolsRetry({
         store: input.store,
         channel: input.channel,

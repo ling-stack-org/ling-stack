@@ -953,8 +953,9 @@ Trigger:
 
 State:
 
-- first slice may keep observations in daemon-local memory for the running process;
-- durable observation storage is optional and should be added only when repeated
+- first slice keeps observations in daemon-local memory for the running process and
+  keys them by provider preset id, provider kind, provider API, and model id;
+- durable observation storage remains optional and should be added only when repeated
   restart loss becomes a real product issue;
 - observed records should include provider preset id, model id, previous effective
   context window, new effective context window, failure code, and timestamp.
@@ -964,9 +965,10 @@ Policy:
 - downgrade only, never upgrade from runtime error handling;
 - cap the new context window conservatively, for example 75% of the estimated attempted
   input plus reserved output, rounded down;
-- expire observations after a bounded period or provider edit;
-- user override remains authoritative, but no-tools retry may still compact more
-  aggressively for that single failing request.
+- expire daemon-local observations after a bounded period; provider model/API edits miss
+  the old key and therefore stop using the previous observation;
+- user override remains authoritative and is not superseded by runtime observations, but
+  no-tools retry may still compact more aggressively for that single failing request.
 
 Acceptance:
 

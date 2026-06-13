@@ -47,6 +47,7 @@ export type ProviderModelCapabilitySnapshot =
 
 export interface ResolveProviderModelCapabilitySnapshotOptions {
   readonly templates?: readonly ProviderTemplate[];
+  readonly runtimeObservation?: ProviderModelRuntimeObservation;
 }
 
 type ProviderModelCapabilityPreset = Pick<
@@ -64,6 +65,17 @@ type ProviderModelCapabilityPreset = Pick<
 interface ProviderFamilyEstimate {
   readonly contextWindowTokens: number;
   readonly maxOutputTokens: number;
+}
+
+export interface ProviderModelRuntimeObservation {
+  readonly providerPresetId?: string;
+  readonly providerKind?: ProviderKind;
+  readonly providerApi?: ProviderApi;
+  readonly modelId?: string;
+  readonly previousContextWindowTokens: number;
+  readonly observedContextWindowTokens: number;
+  readonly failureCode: string;
+  readonly observedAt: string;
 }
 
 const CONSERVATIVE_CONTEXT_WINDOW_TOKENS = 8_192;
@@ -118,26 +130,29 @@ export function resolveProviderModelCapabilitySnapshot(
   }
 
   if (templateContextWindowTokens || templateMaxOutputTokens) {
-    return chatSnapshot(providerPreset, {
+    return applyRuntimeObservation(chatSnapshot(providerPreset, {
       source: "provider_template",
       confidence: "known",
       contextWindowTokens: templateContextWindowTokens ?? familyEstimate.contextWindowTokens,
       maxOutputTokens: templateMaxOutputTokens ?? familyEstimate.maxOutputTokens,
       reason: `Matched bundled provider template ${template?.templateId ?? "unknown"}.`,
-    });
+    }), options.runtimeObservation);
   }
 
   if (ESTIMATED_PROVIDER_FAMILIES.has(providerPreset.kind)) {
-    return chatSnapshot(providerPreset, {
+    return applyRuntimeObservation(chatSnapshot(providerPreset, {
       source: "provider_metadata",
       confidence: "estimated",
       contextWindowTokens: familyEstimate.contextWindowTokens,
       maxOutputTokens: familyEstimate.maxOutputTokens,
       reason: "Known provider family without exact model capability metadata.",
-    });
+    }), options.runtimeObservation);
   }
 
-  return conservativeSnapshot(providerPreset, "Unknown compatible provider uses conservative defaults.");
+  return applyRuntimeObservation(
+    conservativeSnapshot(providerPreset, "Unknown compatible provider uses conservative defaults."),
+    options.runtimeObservation,
+  );
 }
 
 export function providerCapabilitySourceLabel(source: ProviderModelCapabilitySource): "Auto" | "Estimated" | "Conservative" | "Custom override" {
@@ -177,6 +192,39 @@ function conservativeSnapshot(
     maxOutputTokens: DEFAULT_OUTPUT_TOKENS,
     reason,
   };
+}
+
+function applyRuntimeObservation(
+  snapshot: ProviderModelChatCapabilitySnapshot,
+  observation: ProviderModelRuntimeObservation | undefined,
+): ProviderModelChatCapabilitySnapshot {
+  const observedContextWindowTokens = positiveInteger(observation?.observedContextWindowTokens);
+  if (!observation || !observedContextWindowTokens || observedContextWindowTokens >= snapshot.contextWindowTokens) {
+    return snapshot;
+  }
+  if (!runtimeObservationMatchesSnapshot(snapshot, observation)) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    source: "runtime_observed",
+    confidence: "estimated",
+    contextWindowTokens: observedContextWindowTokens,
+    observedAt: observation.observedAt,
+    reason: `Runtime context-length failure lowered the effective context window from ${snapshot.contextWindowTokens} to ${observedContextWindowTokens}.`,
+  };
+}
+
+function runtimeObservationMatchesSnapshot(
+  snapshot: ProviderModelChatCapabilitySnapshot,
+  observation: ProviderModelRuntimeObservation,
+): boolean {
+  return (
+    (!observation.providerPresetId || observation.providerPresetId === snapshot.providerPresetId) &&
+    (!observation.providerKind || observation.providerKind === snapshot.providerKind) &&
+    (!observation.providerApi || observation.providerApi === snapshot.providerApi) &&
+    (!observation.modelId || observation.modelId === snapshot.modelId)
+  );
 }
 
 function snapshotBase(providerPreset: ProviderModelCapabilityPreset | undefined): ProviderModelCapabilityBase {

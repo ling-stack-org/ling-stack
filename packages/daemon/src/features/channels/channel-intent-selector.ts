@@ -27,6 +27,7 @@ import {
   turnEnvelopeHasUserInput,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
+import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 
 export interface ChannelIntentSelectorInput {
@@ -352,6 +353,11 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     if (!isContextLengthError(error)) {
       throw error;
     }
+    recordProviderContextLengthObservation({
+      providerPreset: contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined,
+      contextPack,
+      now: new Date().toISOString(),
+    });
     const compaction = compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
