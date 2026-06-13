@@ -237,6 +237,8 @@ export interface WorkflowStepContextPackSnapshot {
     readonly reservedRuntimeOverheadTokens: number;
     readonly inputBudgetTokens: number;
     readonly tokenizer?: string;
+    readonly capabilitySource?: string;
+    readonly capabilityConfidence?: string;
   };
   readonly estimatedInputTokens: number;
   readonly overBudget: boolean;
@@ -461,6 +463,8 @@ export interface WorkflowContextInspectBudget {
   readonly estimatedInputTokens: number;
   readonly overBudget: boolean;
   readonly tokenizer?: string;
+  readonly capabilitySource?: string;
+  readonly capabilityConfidence?: string;
 }
 
 export interface WorkflowContextInspectSummary {

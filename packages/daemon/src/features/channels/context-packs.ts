@@ -1,4 +1,15 @@
-import type { AiTeammate, Channel, ChannelAutoReplyMode, ChannelMessage, ChannelResponseLanguage, ProviderPreset, RunStore } from "@ling-stack/core";
+import {
+  resolveProviderModelCapabilitySnapshot,
+  type AiTeammate,
+  type Channel,
+  type ChannelAutoReplyMode,
+  type ChannelMessage,
+  type ChannelResponseLanguage,
+  type ProviderModelCapabilityConfidence,
+  type ProviderModelCapabilitySource,
+  type ProviderPreset,
+  type RunStore,
+} from "@ling-stack/core";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { formatChannelDiscussionPrompt, type ChannelDiscussionPromptContext, type ChannelDiscussionPromptTeammate } from "./ai-prompts.js";
 import {
@@ -52,6 +63,8 @@ export interface ProviderContextCapabilities {
   readonly maxOutputTokens?: number;
   readonly tokenizer: "openai-compatible" | "anthropic-compatible" | "estimated";
   readonly supportsStructuredOutput: boolean;
+  readonly capabilitySource: ProviderModelCapabilitySource;
+  readonly capabilityConfidence: ProviderModelCapabilityConfidence;
 }
 
 export interface ContextBudget {
@@ -61,6 +74,8 @@ export interface ContextBudget {
   readonly reservedRuntimeOverheadTokens: number;
   readonly inputBudgetTokens: number;
   readonly tokenizer: ProviderContextCapabilities["tokenizer"];
+  readonly capabilitySource: ProviderModelCapabilitySource;
+  readonly capabilityConfidence: ProviderModelCapabilityConfidence;
 }
 
 export interface ContextSourceRef {
@@ -171,11 +186,14 @@ const CHANNEL_REPLY_RECENT_CONTEXT_LIMIT = 6;
 const CHANNEL_REPLY_RECENT_CONTEXT_BODY_CHARS = 1_200;
 
 export function resolveProviderContextCapabilities(providerPreset?: ProviderPreset): ProviderContextCapabilities {
+  const snapshot = resolveProviderModelCapabilitySnapshot(providerPreset);
   return {
-    contextWindowTokens: positiveInteger(providerPreset?.contextWindow),
-    maxOutputTokens: positiveInteger(providerPreset?.maxTokens),
-    tokenizer: providerPreset?.api === "anthropic-messages" ? "anthropic-compatible" : providerPreset ? "openai-compatible" : "estimated",
-    supportsStructuredOutput: providerPreset?.api === "openai-responses" || providerPreset?.api === "openai-completions",
+    contextWindowTokens: snapshot.chatEligible ? snapshot.contextWindowTokens : undefined,
+    maxOutputTokens: snapshot.chatEligible && snapshot.confidence === "known" ? snapshot.maxOutputTokens : undefined,
+    tokenizer: snapshot.tokenizer,
+    supportsStructuredOutput: snapshot.supportsStructuredOutput,
+    capabilitySource: snapshot.source,
+    capabilityConfidence: snapshot.confidence,
   };
 }
 
@@ -184,11 +202,7 @@ export function resolveProviderContextBudget(
   kind: ContextPackKind = "channel_reply",
 ): ContextBudget {
   const capabilities = resolveProviderContextCapabilities(providerPreset);
-  const mode = capabilities.contextWindowTokens
-    ? "model_known"
-    : providerPreset && providerPreset.kind !== "openai-compatible"
-      ? "model_estimated"
-      : "model_unknown";
+  const mode = contextBudgetModeForCapabilities(capabilities);
   const contextWindowTokens =
     capabilities.contextWindowTokens ??
     (mode === "model_estimated" ? MODEL_ESTIMATED_CONTEXT_WINDOW_TOKENS : MODEL_UNKNOWN_CONTEXT_WINDOW_TOKENS);
@@ -204,6 +218,8 @@ export function resolveProviderContextBudget(
     reservedRuntimeOverheadTokens: RUNTIME_OVERHEAD_TOKENS,
     inputBudgetTokens,
     tokenizer: capabilities.tokenizer,
+    capabilitySource: capabilities.capabilitySource,
+    capabilityConfidence: capabilities.capabilityConfidence,
   };
 }
 
@@ -296,6 +312,8 @@ function buildCompatContextView(input: {
       budget: {
         mode: budget.mode,
         inputBudgetTokens: budget.inputBudgetTokens,
+        capabilitySource: budget.capabilitySource,
+        capabilityConfidence: budget.capabilityConfidence,
       },
     }),
   };
@@ -711,6 +729,8 @@ export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput
     budget: {
       mode: budget.mode,
       inputBudgetTokens: budget.inputBudgetTokens,
+      capabilitySource: budget.capabilitySource,
+      capabilityConfidence: budget.capabilityConfidence,
     },
   });
   return buildContextPackFromContextView({
@@ -886,14 +906,15 @@ function uniqueContextSourceRefs(refs: readonly ContextSourceRef[]): readonly Co
   return unique;
 }
 
-function positiveInteger(value: number | undefined): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : undefined;
-}
-
 function sumEstimatedTokens(sections: readonly ContextSection[]): number {
   return sections.reduce((total, section) => total + (section.estimatedTokens ?? estimateTextTokens(section.text)), 0);
+}
+
+function contextBudgetModeForCapabilities(capabilities: ProviderContextCapabilities): ContextBudgetMode {
+  if (capabilities.capabilitySource === "conservative_default" || capabilities.capabilitySource === "non_chat") {
+    return "model_unknown";
+  }
+  return capabilities.capabilityConfidence === "known" ? "model_known" : "model_estimated";
 }
 
 function findDropSectionIndex(sections: readonly ContextSection[]): number {

@@ -75,6 +75,23 @@ test("provider capability snapshot estimates known provider families without exa
   assert.equal(providerCapabilitySourceLabel(snapshot.source), "Estimated");
 });
 
+test("provider capability snapshot does not promote custom model ids to bundled template known", () => {
+  const snapshot = resolveProviderModelCapabilitySnapshot(
+    provider({
+      kind: "openai",
+      providerId: "openai",
+      model: "custom-openai-model",
+      api: "openai-completions",
+    }),
+  );
+
+  assert.equal(snapshot.chatEligible, true);
+  assert.equal(snapshot.source, "provider_metadata");
+  assert.equal(snapshot.confidence, "estimated");
+  assert.equal(snapshot.contextWindowTokens, 32768);
+  assert.equal(snapshot.maxOutputTokens, 1024);
+});
+
 test("provider capability snapshot uses conservative defaults for unknown compatible providers", () => {
   const snapshot = resolveProviderModelCapabilitySnapshot(provider());
 

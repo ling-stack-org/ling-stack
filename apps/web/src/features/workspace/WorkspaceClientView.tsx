@@ -6669,6 +6669,14 @@ function WorkflowContextBudgetDiagnostics({
             <dd>{pack.budget.mode || t("Not recorded")}</dd>
           </div>
           <div>
+            <dt>{t("Capability source")}</dt>
+            <dd>{pack.budget.capabilitySource || t("Not recorded")}</dd>
+          </div>
+          <div>
+            <dt>{t("Capability confidence")}</dt>
+            <dd>{pack.budget.capabilityConfidence || t("Not recorded")}</dd>
+          </div>
+          <div>
             <dt>{t("Tokenizer")}</dt>
             <dd>{pack.budget.tokenizer || t("Not recorded")}</dd>
           </div>
@@ -6763,6 +6771,14 @@ function WorkflowContextInspectBudgetDiagnostics({
             <div>
               <dt>{t("Budget mode")}</dt>
               <dd>{inspect.budget.mode || t("Not recorded")}</dd>
+            </div>
+            <div>
+              <dt>{t("Capability source")}</dt>
+              <dd>{inspect.budget.capabilitySource || t("Not recorded")}</dd>
+            </div>
+            <div>
+              <dt>{t("Capability confidence")}</dt>
+              <dd>{inspect.budget.capabilityConfidence || t("Not recorded")}</dd>
             </div>
             <div>
               <dt>{t("Tokenizer")}</dt>

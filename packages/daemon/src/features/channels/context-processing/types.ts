@@ -73,6 +73,8 @@ export interface ChannelContextBudgetSnapshot {
   readonly mode?: string;
   readonly inputBudgetTokens?: number;
   readonly estimatedInputTokens?: number;
+  readonly capabilitySource?: string;
+  readonly capabilityConfidence?: string;
 }
 
 export interface ChannelContextCondenserMetadata {

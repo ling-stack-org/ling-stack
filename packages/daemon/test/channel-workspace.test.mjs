@@ -136,15 +136,21 @@ test("context budget manager resolves provider modes and trims lower priority se
   assert.equal(known.contextWindowTokens, 12000);
   assert.equal(known.reservedOutputTokens, 2000);
   assert.equal(known.inputBudgetTokens, 9488);
+  assert.equal(known.capabilitySource, "user_override");
+  assert.equal(known.capabilityConfidence, "known");
 
   const estimated = resolveProviderContextBudget(providerBase, "intent_selector");
   assert.equal(estimated.mode, "model_estimated");
   assert.equal(estimated.contextWindowTokens, 32768);
   assert.equal(estimated.reservedOutputTokens, 512);
+  assert.equal(estimated.capabilitySource, "provider_metadata");
+  assert.equal(estimated.capabilityConfidence, "estimated");
 
   const unknown = resolveProviderContextBudget({ ...providerBase, kind: "openai-compatible" }, "channel_reply");
   assert.equal(unknown.mode, "model_unknown");
   assert.equal(unknown.contextWindowTokens, 8192);
+  assert.equal(unknown.capabilitySource, "conservative_default");
+  assert.equal(unknown.capabilityConfidence, "conservative");
 
   const trimmed = buildContextPack({
     kind: "channel_reply",
@@ -4161,6 +4167,8 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstContext.contextPack.kind, "workflow_step");
     assert.equal(firstContext.contextPack.providerPresetId, provider.id);
     assert.equal(firstContext.contextPack.budget.mode, "model_estimated");
+    assert.equal(firstContext.contextPack.budget.capabilitySource, "provider_metadata");
+    assert.equal(firstContext.contextPack.budget.capabilityConfidence, "estimated");
     assert.equal(firstContext.contextPack.overBudget, false);
     assert.equal(firstContext.contextPack.sections.some((section) => section.id === "workflow_runtime_boundary"), true);
     assert.equal(firstContext.contextPack.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === compiled.workflow.id), true);
@@ -4171,6 +4179,8 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstStepEvidence.contextInspect.contextArtifactId, firstStepAfterFirstTick.metadata.contextArtifactId);
     assert.equal(firstStepEvidence.contextInspect.kind, "workflow_step");
     assert.equal(firstStepEvidence.contextInspect.budget.mode, "model_estimated");
+    assert.equal(firstStepEvidence.contextInspect.budget.capabilitySource, "provider_metadata");
+    assert.equal(firstStepEvidence.contextInspect.budget.capabilityConfidence, "estimated");
     assert.equal(firstStepEvidence.contextInspect.sections.some((section) => section.id === "workflow_runtime_boundary"), true);
     assert.equal(firstStepEvidence.contextInspect.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === compiled.workflow.id), true);
     assert.equal(firstStepEvidence.contextInspect.safety.rawPromptTextIncluded, false);
@@ -4451,6 +4461,8 @@ test("workflow step context compacts dependency output before blocking on provid
     assert.equal(contextPacket.contextPack.budget.reservedRuntimeOverheadTokens, 512);
     assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, 1024);
     assert.equal(contextPacket.contextPack.budget.tokenizer, "openai-compatible");
+    assert.equal(contextPacket.contextPack.budget.capabilitySource, "user_override");
+    assert.equal(contextPacket.contextPack.budget.capabilityConfidence, "known");
     assert.equal(typeof contextPacket.contextPack.estimatedInputTokens, "number");
     assert.equal(contextPacket.contextPack.overBudget, false);
     assert.equal(contextPacket.contextPack.sections.some((section) => section.id === "workflow_dependency_summary"), true);
