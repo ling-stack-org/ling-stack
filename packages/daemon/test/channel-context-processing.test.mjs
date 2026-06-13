@@ -9,6 +9,12 @@ import {
   listChannelContextMessages,
 } from "../dist/features/channels/context-processing/sources.js";
 import {
+  artifactEvidenceSensitivity,
+  summarizeCommandEvidence,
+  summarizeArtifactEvidence,
+  workflowPacketKindForArtifact,
+} from "../dist/features/channels/context-processing/evidence.js";
+import {
   buildWorkflowProposalContextView,
   proposalSourceRefsFromContextView,
 } from "../dist/features/channels/context-processing/proposals.js";
@@ -285,6 +291,40 @@ test("workflow evidence collector summarizes linked artifacts without raw artifa
   assert.equal(sources[2].sensitivity, "secret_adjacent");
   assert.match(sources[2].text, /Artifact evidence/);
   assert.doesNotMatch(sources[2].text, /raw log body/);
+});
+
+test("evidence policy redacts and bounds command and artifact summaries", () => {
+  const successSummary = summarizeCommandEvidence({
+    command: "pnpm test",
+    exitCode: 0,
+    stdout: "large stdout ".repeat(200),
+    changedPaths: ["packages/daemon/src/index.ts"],
+    artifactRefs: [{ id: "artifact_1", label: "test log" }],
+  });
+  assert.match(successSummary, /command=pnpm test/);
+  assert.match(successSummary, /stdout=omitted/);
+  assert.doesNotMatch(successSummary, /large stdout large stdout/);
+
+  const failedSummary = summarizeCommandEvidence({
+    command: "curl -H 'Authorization: Bearer abcdefghijklmnop' https://example.test",
+    exitCode: 1,
+    stderr: `${"noise ".repeat(80)}sk-live_secret_token_1234567890 failed with Bearer abcdefghijklmnop`,
+    maxTailChars: 120,
+  });
+  assert.match(failedSummary, /stderrTail/);
+  assert.match(failedSummary, /\[REDACTED\]/);
+  assert.doesNotMatch(failedSummary, /sk-live_secret_token_1234567890/);
+  assert.doesNotMatch(failedSummary, /Bearer abcdefghijklmnop/);
+
+  const step = createWorkflowStep({
+    id: "step_1",
+    metadata: { contextArtifactId: "artifact_context" },
+  });
+  const contextArtifact = createArtifact({ id: "artifact_context", type: "json", path: ".ling-stack/context.json" });
+  const logArtifact = createArtifact({ id: "artifact_log", type: "log", path: ".ling-stack/run.log" });
+  assert.equal(workflowPacketKindForArtifact(step, contextArtifact), "context");
+  assert.equal(artifactEvidenceSensitivity(logArtifact), "secret_adjacent");
+  assert.match(summarizeArtifactEvidence({ artifact: contextArtifact, packetKind: "context" }), /Workflow context packet artifact/);
 });
 
 test("workflow proposal context view maps supported source refs for shaping evidence", () => {

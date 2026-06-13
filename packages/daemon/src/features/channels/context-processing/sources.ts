@@ -1,5 +1,11 @@
 import type { Channel, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunArtifact, RunStore } from "@ling-stack/core";
 import type { LingAgentTurnEnvelope, LingTurnMaterializationStatus } from "../ling-agent-turn-envelope.js";
+import {
+  artifactEvidenceSensitivity,
+  evidenceKindForArtifact,
+  summarizeArtifactEvidence,
+  workflowPacketKindForArtifact,
+} from "./evidence.js";
 import type { ChannelContextSource, ChannelContextSourceRef } from "./types.js";
 
 export function collectTurnSource(input: {
@@ -445,8 +451,8 @@ export function collectWorkflowEvidenceSources(input: {
   return [...artifactMap.values()]
     .slice(0, input.limit ?? 12)
     .map((artifact): ChannelContextSource => {
-      const packetKind = workflowPacketKind(input.step, artifact);
-      const kind = packetKind ? "workflow_packet" : "artifact";
+      const packetKind = workflowPacketKindForArtifact(input.step, artifact);
+      const kind = evidenceKindForArtifact(packetKind);
       return {
         id: `${kind}:${artifact.id}`,
         kind,
@@ -460,7 +466,7 @@ export function collectWorkflowEvidenceSources(input: {
           ...(input.step ? [{ type: "workflow_step", id: input.step.id, label: input.step.title }] : []),
         ],
         title: artifact.title ?? artifact.path,
-        text: artifactEvidenceSummary(artifact, packetKind),
+        text: summarizeArtifactEvidence({ artifact, packetKind }),
         metadata: {
           artifactId: artifact.id,
           artifactType: artifact.type,
@@ -473,7 +479,7 @@ export function collectWorkflowEvidenceSources(input: {
           externalWorkId: artifact.externalWorkId,
           createdAt: artifact.createdAt,
         },
-        sensitivity: artifact.type === "log" ? "secret_adjacent" : "normal",
+        sensitivity: artifactEvidenceSensitivity(artifact),
         freshness: "durable",
       };
     });
@@ -531,29 +537,6 @@ function boundedPromptPreview(text: string | undefined, maxLength = 1_200): stri
     return normalized;
   }
   return `${normalized.slice(0, Math.max(0, maxLength - 44))}\n[truncated materialized input preview]`;
-}
-
-function workflowPacketKind(
-  step: ChannelWorkflowStep | undefined,
-  artifact: RunArtifact,
-): "context" | "output" | undefined {
-  if (step?.metadata?.contextArtifactId === artifact.id) {
-    return "context";
-  }
-  if (step?.metadata?.outputArtifactId === artifact.id || step?.metadata?.outputArtifactIds?.includes(artifact.id)) {
-    return "output";
-  }
-  return undefined;
-}
-
-function artifactEvidenceSummary(artifact: RunArtifact, packetKind: "context" | "output" | undefined): string {
-  return [
-    packetKind ? `Workflow ${packetKind} packet artifact.` : "Artifact evidence.",
-    `type=${artifact.type}`,
-    `path=${artifact.path}`,
-    artifact.contentType ? `contentType=${artifact.contentType}` : undefined,
-    artifact.sizeBytes !== undefined ? `sizeBytes=${artifact.sizeBytes}` : undefined,
-  ].filter((line): line is string => line !== undefined).join("\n");
 }
 
 function uniqueSources(sources: readonly ChannelContextSource[]): readonly ChannelContextSource[] {

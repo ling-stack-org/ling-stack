@@ -1089,6 +1089,39 @@ Acceptance:
 - tests cover materialized input source collection and workflow evidence source
   collection.
 
+#### CP11F: Evidence Filtering Policy
+
+Status: implementation slice after CP11E.
+
+Goal: centralize prompt-safe evidence formatting so command output, logs, artifacts, and
+workflow packets share one filtering policy before future condenser and inspect surfaces
+reuse them.
+
+Scope:
+
+- add a daemon-local evidence policy module;
+- classify workflow context/output artifacts as `workflow_packet` evidence;
+- keep normal artifact evidence to metadata summaries and source refs;
+- mark log artifacts as secret-adjacent for ordinary views;
+- provide bounded command evidence formatting for future runner/log integrations;
+- redact secret-like values before any command stderr/stdout tail can become prompt text.
+
+Non-goals:
+
+- no raw artifact body reads;
+- no inspect UI;
+- no durable evidence cache;
+- no workflow state-machine change;
+- no runner event-log parser;
+- no condenser integration yet.
+
+Acceptance:
+
+- artifact summaries include type/path/size metadata without raw body content;
+- failed command evidence may include a bounded, redacted stderr tail;
+- successful command evidence omits raw stdout by default and keeps artifact refs;
+- existing Context View behavior remains compatible.
+
 ### CP12: Developer Inspect And Debug Surfaces
 
 Goal: make context/route/budget evidence available on demand without polluting the
