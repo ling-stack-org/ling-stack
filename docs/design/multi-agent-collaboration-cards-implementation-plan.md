@@ -714,6 +714,19 @@ Non-goals:
 - no raw log excerpts in the default report;
 - no hidden LLM retry loop in the first rich-report slice.
 
+Implementation note, 2026-06-13:
+
+- First rich-report slice is Web-derived and evidence-only.
+- `Final Ling report` now renders `Outcome`, `Changed`, `Validated`,
+  `Blockers / risks`, and `Next action` rows from the existing collaboration card
+  model plus workflow progress groups.
+- Changed files appear only when backed by file/diff artifacts. Validation appears
+  only when an existing checked/evidence row looks like a test, build, lint,
+  typecheck, QA, or verification record. Otherwise the report explicitly says no
+  validation command was recorded.
+- No LLM-generated final report, no persisted `final_report` output packet, and no
+  raw log excerpts are introduced in this slice.
+
 ### CCI12: Requirement Shaping Persistence
 
 Goal: move beyond styling draft proposals as shaping cards only when the product needs

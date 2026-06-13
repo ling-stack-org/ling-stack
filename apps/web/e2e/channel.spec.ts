@@ -1743,7 +1743,13 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(workCell).toContainText("Collaboration complete: Created the requested README file.");
   await expect(workCell).toContainText("Final Ling report");
   await expect(workCell).toContainText("Outcome");
-  await expect(workCell).toContainText("Evidence and changes");
+  await expect(workCell).toContainText("Changed");
+  await expect(workCell).toContainText("Changed: README.md. Evidence recorded: 1.");
+  await expect(workCell).toContainText("Validated");
+  await expect(workCell).toContainText("No validation commands recorded.");
+  await expect(workCell).toContainText("Blockers / risks");
+  await expect(workCell).toContainText("No blockers or risks recorded.");
+  await expect(workCell).toContainText("Next action");
   await expect(workCell.locator(".conversation-work-cell-active-stream")).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
@@ -1838,7 +1844,12 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
   await expect(workCell).toContainText("Collaboration blocked");
   await expect(workCell).toContainText("Collaboration blocked: Write permission was not granted.");
   await expect(workCell).toContainText("Final Ling report");
+  await expect(workCell).toContainText("Blockers / risks");
+  await expect(workCell).toContainText("Blocker: Write permission was not granted.");
   await expect(workCell).toContainText("Next action");
+  await expect(workCell).toContainText("Resolve blocker");
+  await expect(workCell).toContainText("No changed files recorded. Evidence recorded: 0.");
+  await expect(workCell).toContainText("No validation commands recorded.");
 
   await openChannelChatTools(page);
   await expect(feed.getByLabel("Task confirmation")).toContainText("Create README.md");

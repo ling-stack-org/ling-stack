@@ -146,48 +146,163 @@ function buildFinalLingReportRows(
     return [];
   }
 
-  const rows: ConversationWorkCellRow[] = [];
-  const finalSummary = readFinalStepSummary(card) ?? card.blocker ?? base.summary;
-  rows.push({
+  const changedGroup = base.groups.find((group) => group.id === "changed");
+  const checkedGroup = base.groups.find((group) => group.id === "checked");
+  const evidenceGroup = base.groups.find((group) => group.id === "evidence");
+  const attentionGroup = base.groups.find((group) => group.id === "attention");
+  const changedRows = changedGroup?.rows ?? [];
+  const validationRows = buildValidationRows({ checkedRows: checkedGroup?.rows ?? [], evidenceRows: evidenceGroup?.rows ?? [] });
+  const attentionRows = attentionGroup?.rows ?? [];
+  const evidenceCount = base.evidenceLinks.length || evidenceGroup?.rows.length || 0;
+  const blocker = readFailedStepSummary(card) ?? card.blocker;
+  const rows: ConversationWorkCellRow[] = [{
     id: "final-outcome",
     title: t("Outcome"),
-    description: finalSummary,
+    description: buildFinalOutcomeSummary(card, base, t),
     meta: t(collaborationTaskCardModeLabel(card.mode)),
     tone: card.mode === "completed" ? "success" : card.mode === "blocked" ? "waiting" : "failed",
-  });
-
-  const changedGroup = base.groups.find((group) => group.id === "changed");
-  const evidenceGroup = base.groups.find((group) => group.id === "evidence");
-  const changedCount = changedGroup?.rows.length ?? 0;
-  const evidenceCount = base.evidenceLinks.length || evidenceGroup?.rows.length || 0;
-  if (changedCount > 0 || evidenceCount > 0) {
-    rows.push({
-      id: "final-evidence",
-      title: t("Evidence and changes"),
-      description: changedCount > 0
-        ? t("{changed} changed items, {evidence} evidence items", { changed: changedCount, evidence: evidenceCount })
-        : t("{count} evidence items", { count: evidenceCount }),
-      tone: "neutral",
-    });
-  }
+  }];
 
   if (card.blocker || card.mode === "blocked" || card.mode === "failed") {
-    rows.push({
-      id: "final-next-action",
-      title: t("Next action"),
-      description: card.blocker ?? card.nextAction ?? t("Review workflow evidence"),
-      tone: card.mode === "blocked" ? "waiting" : "failed",
-    });
-  } else if (card.mode === "completed") {
-    rows.push({
-      id: "final-next-action",
-      title: t("Next action"),
-      description: t("Open workflow evidence for details if needed."),
-      tone: "neutral",
-    });
+    rows.push(buildFinalBlockerRow({ card, blocker, attentionRows, t }));
+    rows.push(buildFinalNextActionRow(card, t));
   }
 
-  return rows.slice(0, 4);
+  rows.push({
+    id: "final-changed",
+    title: t("Changed"),
+    description: changedRows.length > 0
+      ? t("Changed: {items}. Evidence recorded: {evidence}.", { items: summarizeFinalReportRows(changedRows, t), evidence: evidenceCount })
+      : t("No changed files recorded. Evidence recorded: {evidence}.", { evidence: evidenceCount }),
+    meta: changedRows.length > 0 ? t("{count} changed items", { count: changedRows.length }) : undefined,
+    tone: changedRows.length > 0 ? "success" : "neutral",
+  });
+
+  rows.push({
+    id: "final-validated",
+    title: t("Validated"),
+    description: validationRows.length > 0
+      ? t("{count} validation records: {items}", { count: validationRows.length, items: summarizeFinalReportRows(validationRows, t) })
+      : t("No validation commands recorded."),
+    meta: validationRows.length > 0 ? String(validationRows.length) : undefined,
+    tone: validationRows.length > 0 ? "success" : "neutral",
+  });
+
+  if (card.mode === "completed") {
+    rows.push(buildFinalBlockerRow({ card, blocker, attentionRows, t }));
+    rows.push(buildFinalNextActionRow(card, t));
+  } else if (card.mode === "cancelled") {
+    rows.push(buildFinalNextActionRow(card, t));
+  }
+
+  return rows.slice(0, 5);
+}
+
+function buildFinalOutcomeSummary(
+  card: CollaborationTaskCardModel,
+  base: ConversationWorkCellViewModel,
+  t: Translate,
+): string {
+  if (card.mode === "completed") {
+    return readFinalStepSummary(card) ?? t("No completion summary was recorded.");
+  }
+  if (card.mode === "blocked") {
+    return t("Collaboration blocked: {reason}", { reason: card.blocker ?? readFailedStepSummary(card) ?? base.summary });
+  }
+  if (card.mode === "failed") {
+    return readFailedStepSummary(card) ?? card.blocker ?? t("No failure reason was recorded.");
+  }
+  return t("Task was cancelled before completion.");
+}
+
+function buildFinalBlockerRow(input: {
+  readonly card: CollaborationTaskCardModel;
+  readonly blocker?: string;
+  readonly attentionRows: readonly ConversationWorkCellRow[];
+  readonly t: Translate;
+}): ConversationWorkCellRow {
+  const attentionSummary = input.attentionRows.length > 0 ? summarizeFinalReportRows(input.attentionRows, input.t) : undefined;
+  const isHealthy = input.card.mode === "completed" && !input.blocker && !attentionSummary;
+  return {
+    id: "final-blockers-risks",
+    title: input.t("Blockers / risks"),
+    description: input.blocker
+      ? input.t("Blocker: {reason}", { reason: input.blocker })
+      : attentionSummary
+        ? input.t("Risks: {items}", { items: attentionSummary })
+        : input.t("No blockers or risks recorded."),
+    tone: isHealthy ? "success" : input.card.mode === "blocked" ? "waiting" : input.card.mode === "completed" ? "neutral" : "failed",
+  };
+}
+
+function buildFinalNextActionRow(card: CollaborationTaskCardModel, t: Translate): ConversationWorkCellRow {
+  if (card.mode === "blocked") {
+    return {
+      id: "final-next-action",
+      title: t("Next action"),
+      description: card.nextAction ?? t("Review the blocker, then open workflow evidence for source records."),
+      tone: "waiting",
+    };
+  }
+  if (card.mode === "failed") {
+    return {
+      id: "final-next-action",
+      title: t("Next action"),
+      description: card.nextAction ?? t("Review the failure, then open workflow evidence for source records."),
+      tone: "failed",
+    };
+  }
+  return {
+    id: "final-next-action",
+    title: t("Next action"),
+    description: t("Open workflow evidence for details if needed."),
+    tone: "neutral",
+  };
+}
+
+function buildValidationRows(input: {
+  readonly checkedRows: readonly ConversationWorkCellRow[];
+  readonly evidenceRows: readonly ConversationWorkCellRow[];
+}): readonly ConversationWorkCellRow[] {
+  const checkedRows = input.checkedRows.filter((row) =>
+    (row.tone === "success" || row.tone === "neutral") && finalReportRowLooksLikeValidation(row, { includeDescription: true }),
+  );
+  const evidenceRows = input.evidenceRows.filter((row) =>
+    (row.tone === "success" || row.tone === "neutral") && finalReportRowLooksLikeValidation(row, { includeDescription: false }),
+  );
+  return uniqueFinalReportRows([...checkedRows, ...evidenceRows]);
+}
+
+function finalReportRowLooksLikeValidation(
+  row: ConversationWorkCellRow,
+  options: { readonly includeDescription: boolean },
+): boolean {
+  const haystack = [row.title, options.includeDescription ? row.description : undefined, row.meta]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /\b(test|tests|tested|typecheck|lint|build|validate|validated|validation|verify|verified|verification|check|checked|qa|coverage|e2e|passed)\b/.test(haystack);
+}
+
+function summarizeFinalReportRows(rows: readonly ConversationWorkCellRow[], t: Translate): string {
+  const labels = uniqueFinalReportRows(rows).slice(0, 3).map((row) => row.title);
+  const summary = labels.join(", ");
+  const hiddenCount = Math.max(0, rows.length - labels.length);
+  return hiddenCount > 0 ? t("{items} and {count} more", { items: summary, count: hiddenCount }) : summary;
+}
+
+function uniqueFinalReportRows(rows: readonly ConversationWorkCellRow[]): readonly ConversationWorkCellRow[] {
+  const seen = new Set<string>();
+  const result: ConversationWorkCellRow[] = [];
+  for (const row of rows) {
+    const key = `${row.title}\n${row.description ?? ""}\n${row.meta ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(row);
+  }
+  return result;
 }
 
 function visibleCollaborationTaskSteps(card: CollaborationTaskCardModel): readonly CollaborationTaskCardModel["steps"][number][] {
