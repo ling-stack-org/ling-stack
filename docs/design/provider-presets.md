@@ -9,6 +9,9 @@ Related docs:
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
+- [Two-Layer Configuration](two-layer-configuration.md)
+- [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md)
+- [Secrets and Keychain](secrets-keychain.md)
 
 This design follows `session-persistence`. Session persistence keeps a redacted request snapshot for direct `/runs` calls. Provider presets replace repeated inline provider JSON with reusable, user-facing configurations.
 
@@ -27,7 +30,11 @@ create provider preset
 -> resolve preset into PiRunnerProviderConfig or media job config
 ```
 
-Provider presets are a product concept. They are not only SDK adapters. A preset represents what the user sees and chooses in the workspace.
+Provider presets are a product concept. They are not only SDK adapters. A preset
+represents what the user sees and chooses in the workspace. User-level provider
+profiles may seed presets, but the active preset referenced by channels, teammates,
+and runs remains workspace state. The profile-to-preset inheritance boundary is
+defined in [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md).
 
 ## Current Baseline
 

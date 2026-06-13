@@ -3526,7 +3526,7 @@ code,
 .channel-more-button,
 .task-toolbar-teammates,
 .task-toolbar-settings,
-.task-toolbar-attention,
+.task-toolbar-progress,
 .task-toolbar-panel {
   position: relative;
   height: 30px;
@@ -3541,7 +3541,7 @@ code,
 
 .task-toolbar-teammates,
 .task-toolbar-settings,
-.task-toolbar-attention,
+.task-toolbar-progress,
 .task-toolbar-panel {
   width: 34px;
 }
@@ -3549,7 +3549,7 @@ code,
 .channel-more-button svg,
 .task-toolbar-teammates svg,
 .task-toolbar-settings svg,
-.task-toolbar-attention svg,
+.task-toolbar-progress svg,
 .task-toolbar-panel svg {
   width: 18px;
   height: 18px;
@@ -3559,7 +3559,7 @@ code,
 .channel-more-button.active,
 .task-toolbar-teammates.active,
 .task-toolbar-settings.active,
-.task-toolbar-attention.active,
+.task-toolbar-progress.active,
 .task-toolbar-panel.active {
   background: var(--surface-selected);
   color: var(--text-strong);
@@ -3951,29 +3951,29 @@ code,
 }
 
 @media (min-width: 901px) and (max-width: 2055px) {
-  .app-shell:not(.channel-sidebar-collapsed) .task-workbench-main.attention-open {
-    --channel-attention-popover-width: min(340px, calc(100vw - 420px));
-    padding-right: calc(var(--channel-attention-popover-width) + 24px);
+  .app-shell:not(.channel-sidebar-collapsed) .task-workbench-main.progress-open {
+    --channel-progress-popover-width: min(340px, calc(100vw - 420px));
+    padding-right: calc(var(--channel-progress-popover-width) + 24px);
   }
 
 }
 
 @media (min-width: 901px) and (max-width: 1871px) {
-  .app-shell.channel-sidebar-collapsed .task-workbench-main.attention-open {
-    --channel-attention-popover-width: min(340px, calc(100vw - 420px));
+  .app-shell.channel-sidebar-collapsed .task-workbench-main.progress-open {
+    --channel-progress-popover-width: min(340px, calc(100vw - 420px));
     padding-right: 0;
   }
 
-  .app-shell.channel-sidebar-collapsed .task-workbench-main.attention-open .channel-chat-panel {
+  .app-shell.channel-sidebar-collapsed .task-workbench-main.progress-open .channel-chat-panel {
     justify-self: end;
-    width: min(1008px, calc(100% - var(--channel-attention-popover-width) - 12px));
-    margin-right: calc(var(--channel-attention-popover-width) + 12px);
+    width: min(1008px, calc(100% - var(--channel-progress-popover-width) - 12px));
+    margin-right: calc(var(--channel-progress-popover-width) + 12px);
   }
 }
 
 @media (min-width: 2000px) {
-  .app-shell.channel-sidebar-collapsed .task-workbench-main.attention-open .activity-chat-layout,
-  .app-shell.channel-sidebar-collapsed .task-workbench-main.attention-open .activity-shell .channel-composer {
+  .app-shell.channel-sidebar-collapsed .task-workbench-main.progress-open .activity-chat-layout,
+  .app-shell.channel-sidebar-collapsed .task-workbench-main.progress-open .activity-shell .channel-composer {
     transform: translateX(52px);
   }
 }
@@ -5828,7 +5828,7 @@ code,
   min-width: 0;
 }
 
-.channel-attention-popover {
+.channel-progress-popover {
   position: absolute;
   top: 62px;
   right: 18px;
@@ -5843,7 +5843,7 @@ code,
   overflow: auto;
 }
 
-.task-workbench-main.attention-open .channel-attention-popover {
+.task-workbench-main.progress-open .channel-progress-popover {
   transform: none;
 }
 
@@ -5983,7 +5983,7 @@ code,
   transition: opacity 140ms ease;
 }
 
-.channel-attention-popover:hover .attention-progress-toggle,
+.channel-progress-popover:hover .attention-progress-toggle,
 .attention-progress-toggle[aria-expanded="false"] {
   opacity: 1;
   pointer-events: auto;
@@ -8888,7 +8888,7 @@ textarea:disabled {
     box-shadow: var(--shadow-panel);
   }
 
-  .channel-attention-popover {
+  .channel-progress-popover {
     position: static;
     width: auto;
     max-height: min(46vh, 420px);

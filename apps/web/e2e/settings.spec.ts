@@ -17,7 +17,8 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
       localStorage.setItem("ling-stack.locale", "en-US");
     }
   });
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state);
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
@@ -38,18 +39,14 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await channelEventFilterToggle(page).click();
   await expect(page.getByLabel("动态类别").getByRole("button", { name: /全部/ })).toBeVisible();
   await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
+  await page.locator(".task-toolbar-progress").click();
   await expect(page.getByRole("region", { name: "进度" })).toBeVisible();
-  await page.locator(".message-bubble").filter({ hasText: "任务事件" }).first().getByRole("button", { name: "详情" }).click();
-  const chineseDetails = page.getByRole("complementary", { name: "动态详情" });
-  await expect(chineseDetails).toContainText("来源摘要");
-  await expect(chineseDetails).toContainText("关联对象");
-  await expect(chineseDetails).toContainText("分诊动作");
-  await chineseDetails.locator(".activity-triage-section summary").click();
-  await expect(chineseDetails).toContainText("创建跟进任务");
-  await chineseDetails.getByLabel("关闭详情").click();
+  await page.locator(".task-toolbar-progress").click();
+  await expect(page.getByRole("region", { name: "进度" })).toHaveCount(0);
   await expect(page.getByPlaceholder("给频道发消息，或 @ 一个 AI 队友")).toBeVisible();
   await expect(page.locator(".channel-composer").getByRole("button", { name: "发送" })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBe("zh-CN");
+  await expect.poll(() => state.workspaceSettings.locale).toBe("zh-CN");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBeNull();
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
@@ -68,22 +65,21 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await channelEventFilterToggle(page).click();
   await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
   await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
+  await page.locator(".task-toolbar-progress").click();
   await expect(page.getByRole("region", { name: "Progress" })).toBeVisible();
-  await page.locator(".message-bubble").filter({ hasText: "Task event" }).first().getByRole("button", { name: "Details" }).click();
-  const englishDetails = page.getByRole("complementary", { name: "Activity details" });
-  await expect(englishDetails).toContainText("Source summary");
-  await expect(englishDetails).toContainText("Related objects");
-  await expect(englishDetails).toContainText("Triage actions");
-  await englishDetails.locator(".activity-triage-section summary").click();
-  await expect(englishDetails).toContainText("Create follow-up task");
+  await page.locator(".task-toolbar-progress").click();
+  await expect(page.getByRole("region", { name: "Progress" })).toHaveCount(0);
   await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
+  await expect.poll(() => state.workspaceSettings.locale).toBe("en-US");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBeNull();
 });
 
 test("Chinese mode localizes workspace settings, runtime policy, and teammate setup labels", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state);
   await page.goto("/");
 
   await expect(page.getByLabel("任务检查器")).toHaveCount(0);
@@ -139,7 +135,8 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
     }
   });
   await page.emulateMedia({ colorScheme: "dark" });
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state);
   await page.goto("/");
 
   const html = page.locator("html");
@@ -153,12 +150,14 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await page.getByRole("button", { name: "Light" }).click();
   await expect(html).toHaveAttribute("data-theme", "light");
   await expect(html).toHaveAttribute("data-theme-preference", "light");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBe("light");
+  await expect.poll(() => state.workspaceSettings.theme).toBe("light");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBeNull();
 
   await page.getByRole("button", { name: "Dark" }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBe("dark");
+  await expect.poll(() => state.workspaceSettings.theme).toBe("dark");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBeNull();
   await page.reload();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
@@ -168,6 +167,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await page.getByRole("button", { name: "System" }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
+  await expect.poll(() => state.workspaceSettings.theme).toBe("system");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBeNull();
   await page.emulateMedia({ colorScheme: "light" });
   await expect(html).toHaveAttribute("data-theme", "light");

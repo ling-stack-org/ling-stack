@@ -50,6 +50,120 @@ path, or log path. The P0 daemon lifecycle design may extend `/health` with thos
 fields after `.ling-stack/daemon/daemon.json` and `.ling-stack/logs/daemon.log` exist.
 Until then, clients must treat those fields as optional and unavailable.
 
+## Effective Configuration
+
+```http
+GET /config/effective?cwd=/path/to/project
+```
+
+This endpoint is read-only. It reports the current user/workspace configuration paths
+and the effective source for the settings the UI needs to explain. It does not create
+`~/.ling-stack`, repair files, migrate localStorage, or change runtime settings.
+
+Current resolution:
+
+- `workspaceCwd`: workspace settings, then the request `cwd`;
+- `theme`, `locale`, `responseLanguage`: workspace settings, then
+  `~/.ling-stack/settings.json`, then built-in defaults;
+- runtime runner settings: field-level workspace runtime settings, then user
+  `~/.ling-stack/config.json.runtimeDefaults`, then built-in Pi defaults.
+
+User-level runtime defaults in `~/.ling-stack/config.json` are returned under
+`layers.userConfig` for visibility and apply to execution until the workspace writes
+that runtime field. `PATCH /runtime/settings` writes a complete workspace runtime
+settings file, so inherited runtime values become workspace-owned after save.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "paths": {
+    "user": {
+      "rootDir": "/Users/me/.ling-stack",
+      "configPath": "/Users/me/.ling-stack/config.json",
+      "settingsPath": "/Users/me/.ling-stack/settings.json",
+      "providerProfilesPath": "/Users/me/.ling-stack/providers/profiles.json",
+      "pluginCacheDir": "/Users/me/.ling-stack/plugins/cache",
+      "logsDir": "/Users/me/.ling-stack/logs"
+    },
+    "workspace": {
+      "rootDir": "/path/to/project/.ling-stack",
+      "configPath": "/path/to/project/.ling-stack/config.json",
+      "databasePath": "/path/to/project/.ling-stack/ling-stack.sqlite",
+      "runtimeSettingsPath": "/path/to/project/.ling-stack/runtime-settings.json",
+      "sessionsDir": "/path/to/project/.ling-stack/sessions",
+      "artifactsDir": "/path/to/project/.ling-stack/artifacts",
+      "attachmentsDir": "/path/to/project/.ling-stack/attachments",
+      "pluginCacheDir": "/path/to/project/.ling-stack/plugins/cache",
+      "logsDir": "/path/to/project/.ling-stack/logs"
+    }
+  },
+  "values": {
+    "workspaceCwd": {
+      "value": "/path/to/project",
+      "source": "built_in",
+      "key": "workspaceCwd"
+    },
+    "theme": {
+      "value": "dark",
+      "source": "user",
+      "path": "/Users/me/.ling-stack/settings.json",
+      "key": "theme"
+    },
+    "locale": {
+      "value": "zh-CN",
+      "source": "user",
+      "path": "/Users/me/.ling-stack/settings.json",
+      "key": "locale"
+    },
+    "responseLanguage": {
+      "value": "follow_user",
+      "source": "built_in",
+      "key": "responseLanguage"
+    },
+    "runtime": {
+      "defaultRunnerId": {
+        "value": "pi",
+        "source": "user",
+        "path": "/Users/me/.ling-stack/config.json",
+        "key": "runtime.defaultRunnerId"
+      },
+      "explicitRunnerFallback": {
+        "value": "disabled",
+        "source": "built_in",
+        "key": "runtime.explicitRunnerFallback"
+      },
+      "implicitRunnerFallback": {
+        "value": "allow_to_default",
+        "source": "built_in",
+        "key": "runtime.implicitRunnerFallback"
+      }
+    }
+  },
+  "layers": {
+    "userConfig": {
+      "runtimeDefaults": {
+        "defaultRunnerId": "pi"
+      }
+    },
+    "userSettings": {
+      "theme": "dark",
+      "locale": "zh-CN"
+    },
+    "workspaceSettings": {
+      "schemaVersion": 1,
+      "updatedAt": "2026-06-13T00:00:00.000Z"
+    }
+  },
+  "diagnostics": []
+}
+```
+
+`diagnostics` contains non-fatal warnings for unreadable or invalid optional user-level
+JSON files. The endpoint ignores unknown user config keys and returns only recognized,
+sanitized user-layer fields.
+
 ## Channels and Tasks
 
 Channels bind a workspace workflow to optional defaults such as a local path, provider preset, teammate, and allowed tools. Tasks are persisted work items inside a channel.

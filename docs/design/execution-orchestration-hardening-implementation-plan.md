@@ -1208,7 +1208,9 @@ Likely files:
 Development decisions to lock before coding:
 
 - settings storage location: file-backed workspace runtime settings at
-  `.ling-stack/runtime-settings.json`; avoid a global config file;
+  `.ling-stack/runtime-settings.json`; user-level defaults may seed missing workspace
+  fields under [Two-Layer Configuration](two-layer-configuration.md), but the workspace
+  runtime settings file remains the execution authority once written;
 - default settings: `defaultRunnerId = "pi"`,
   `implicitRunnerFallback = "allow_to_default"`,
   `explicitRunnerFallback = "disabled"`;

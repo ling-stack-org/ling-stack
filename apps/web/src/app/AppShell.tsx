@@ -8,8 +8,8 @@ import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
   getBuiltinSkillPack,
 } from "@ling-stack/core/builtin-skill-packs";
-import { useI18n } from "../i18n.js";
-import { useTheme } from "../theme.js";
+import { clearSavedLocale, readSavedLocale, useI18n, type Locale } from "../i18n.js";
+import { clearSavedThemePreference, readSavedThemePreference, useTheme, type ThemePreference } from "../theme.js";
 import type {
   ApprovalRequest,
   AiTeammate,
@@ -37,6 +37,7 @@ import type {
   ChannelWorkflowStepStartMode,
   ControlPlaneDomain,
   DaemonFeatureFlags,
+  EffectiveConfigResponse,
   ExternalWorkActionView,
   MediaJob,
   ProviderCheckResult,
@@ -106,12 +107,13 @@ import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammat
 import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "../lib/channel-activity-triage.js";
 import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
-import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
+import { clearSavedWorkspaceCwd, getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
 import { readSseResponse } from "../sse.js";
 import { getControlPlaneSnapshot } from "../api/control-plane.js";
 import { routeExternalWork } from "../api/external-work.js";
 import { claimWorkItem, heartbeatWorkItem, listWorkItems } from "../api/work-items.js";
-import { getWorkspaceSettings, updateWorkspaceSettings } from "../api/workspace-settings.js";
+import { getEffectiveConfig } from "../api/config.js";
+import { updateWorkspaceSettings } from "../api/workspace-settings.js";
 import {
   controlPlaneStreamUrl,
   controlPlaneRpcStreamUrl,
@@ -227,6 +229,7 @@ export function AppShell(): JSX.Element {
   const [durableWorkItemsLoading, setDurableWorkItemsLoading] = useState(false);
   const [busyWorkItemId, setBusyWorkItemId] = useState("");
   const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings | undefined>();
+  const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();
   const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -237,6 +240,8 @@ export function AppShell(): JSX.Element {
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
   const workspaceSettingsLoadedCwdRef = useRef("");
+  const interfaceSettingsSyncRef = useRef<{ readonly cwd: string; readonly theme: ThemePreference; readonly locale: Locale } | undefined>(undefined);
+  const currentLocaleRef = useRef(locale);
   const controlPlaneInvalidationRef = useRef<(domains: readonly ControlPlaneDomain[]) => void>(() => undefined);
   const {
     buildRerunRequest,
@@ -695,6 +700,9 @@ export function AppShell(): JSX.Element {
     saveRuntimeSettings,
     resetForCwd: resetSettingsForCwd,
   } = settingsDomain.actions;
+  useEffect(() => {
+    currentLocaleRef.current = locale;
+  }, [locale]);
   const runsDomain = useRunsDomain({
     cwd: form.cwd.trim(),
     confirmFullAccessRunIfNeeded,
@@ -1294,10 +1302,12 @@ export function AppShell(): JSX.Element {
 
   function updateWorkspaceCwd(cwd: string): void {
     const previousCwd = form.cwd;
-    writeSavedWorkspaceCwd(cwd);
     if (cwd.trim()) {
       void updateWorkspaceSettings(cwd.trim(), { workspaceCwd: cwd.trim() })
-        .then((response) => setWorkspaceSettings(response.settings))
+        .then((response) => {
+          setWorkspaceSettings(response.settings);
+          clearSavedWorkspaceCwd();
+        })
         .catch(() => undefined);
     }
     setForm({ ...form, cwd });
@@ -1325,7 +1335,14 @@ export function AppShell(): JSX.Element {
       return;
     }
     void updateWorkspaceSettings(workspaceCwd, patch)
-      .then((response) => setWorkspaceSettings(response.settings))
+      .then((response) => {
+        setWorkspaceSettings(response.settings);
+        setEffectiveConfig((current) =>
+          current && current.cwd === workspaceCwd
+            ? { ...current, layers: { ...current.layers, workspaceSettings: response.settings } }
+            : current,
+        );
+      })
       .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)));
   }
 
@@ -1333,36 +1350,93 @@ export function AppShell(): JSX.Element {
     const workspaceCwd = form.cwd.trim();
     if (daemonHealthy !== true || !workspaceCwd) {
       setWorkspaceSettings(undefined);
+      setEffectiveConfig(undefined);
       workspaceSettingsLoadedCwdRef.current = "";
+      interfaceSettingsSyncRef.current = undefined;
       return;
     }
     let cancelled = false;
     workspaceSettingsLoadedCwdRef.current = workspaceCwd;
-    void getWorkspaceSettings(workspaceCwd)
+    void getEffectiveConfig(workspaceCwd)
       .then((response) => {
         if (cancelled || workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
           return;
         }
-        setWorkspaceSettings(response.settings);
-        if (response.settings.theme) {
-          setThemePreference(response.settings.theme);
+        const workspaceLayer = response.layers.workspaceSettings;
+        const legacyTheme = readSavedThemePreference();
+        const legacyLocale = readSavedLocale();
+        const nextTheme =
+          !workspaceLayer.theme && response.values.theme.source === "built_in" && legacyTheme
+            ? legacyTheme
+            : response.values.theme.value;
+        const nextLocale =
+          !workspaceLayer.locale && response.values.locale.source === "built_in" && legacyLocale
+            ? legacyLocale
+            : isWorkspaceSettingsLocale(response.values.locale.value)
+              ? response.values.locale.value
+              : currentLocaleRef.current;
+        setWorkspaceSettings(workspaceLayer);
+        setEffectiveConfig(response);
+        setThemePreference(nextTheme);
+        setLocale(nextLocale);
+        interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: nextTheme, locale: nextLocale };
+
+        const migrationPatch: {
+          workspaceCwd?: string;
+          theme?: ThemePreference;
+          locale?: Locale;
+        } = {};
+        if (workspaceLayer.workspaceCwd !== workspaceCwd) {
+          migrationPatch.workspaceCwd = workspaceCwd;
         }
-        if (isWorkspaceSettingsLocale(response.settings.locale)) {
-          setLocale(response.settings.locale);
+        if (!workspaceLayer.theme && response.values.theme.source === "built_in" && legacyTheme && legacyTheme !== response.values.theme.value) {
+          migrationPatch.theme = legacyTheme;
         }
-        if (response.settings.workspaceCwd !== workspaceCwd) {
-          void updateWorkspaceSettings(workspaceCwd, { workspaceCwd })
+        if (!workspaceLayer.locale && response.values.locale.source === "built_in" && legacyLocale && legacyLocale !== response.values.locale.value) {
+          migrationPatch.locale = legacyLocale;
+        }
+        const shouldClearLegacyTheme = legacyTheme !== undefined && (migrationPatch.theme !== undefined || response.values.theme.source !== "built_in" || legacyTheme === response.values.theme.value);
+        const shouldClearLegacyLocale = legacyLocale !== undefined && (migrationPatch.locale !== undefined || response.values.locale.source !== "built_in" || legacyLocale === response.values.locale.value);
+        const shouldClearLegacyCwd = readSavedWorkspaceCwd() === workspaceCwd && (migrationPatch.workspaceCwd !== undefined || workspaceLayer.workspaceCwd === workspaceCwd);
+
+        if (Object.keys(migrationPatch).length > 0) {
+          void updateWorkspaceSettings(workspaceCwd, migrationPatch)
             .then((updated) => {
               if (!cancelled && workspaceSettingsLoadedCwdRef.current === workspaceCwd) {
                 setWorkspaceSettings(updated.settings);
+                setEffectiveConfig((current) =>
+                  current && current.cwd === workspaceCwd
+                    ? { ...current, layers: { ...current.layers, workspaceSettings: updated.settings } }
+                    : current,
+                );
+                if (shouldClearLegacyTheme) {
+                  clearSavedThemePreference();
+                }
+                if (shouldClearLegacyLocale) {
+                  clearSavedLocale();
+                }
+                if (shouldClearLegacyCwd) {
+                  clearSavedWorkspaceCwd();
+                }
               }
             })
             .catch(() => undefined);
+        } else {
+          if (shouldClearLegacyTheme) {
+            clearSavedThemePreference();
+          }
+          if (shouldClearLegacyLocale) {
+            clearSavedLocale();
+          }
+          if (shouldClearLegacyCwd) {
+            clearSavedWorkspaceCwd();
+          }
         }
       })
       .catch(() => {
         if (!cancelled) {
           setWorkspaceSettings(undefined);
+          setEffectiveConfig(undefined);
         }
       });
     return () => {
@@ -1375,14 +1449,27 @@ export function AppShell(): JSX.Element {
     if (daemonHealthy !== true || !workspaceCwd || workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
       return;
     }
-    if (workspaceSettings?.theme === themePreference && workspaceSettings?.locale === locale && workspaceSettings?.workspaceCwd === workspaceCwd) {
+    const synced = interfaceSettingsSyncRef.current;
+    if (synced?.cwd !== workspaceCwd || (synced.theme === themePreference && synced.locale === locale)) {
       return;
     }
     const timeout = globalThis.setTimeout(() => {
-      patchWorkspaceSettings({ workspaceCwd, theme: themePreference, locale });
+      void updateWorkspaceSettings(workspaceCwd, { theme: themePreference, locale })
+        .then((response) => {
+          setWorkspaceSettings(response.settings);
+          setEffectiveConfig((current) =>
+            current && current.cwd === workspaceCwd
+              ? { ...current, layers: { ...current.layers, workspaceSettings: response.settings } }
+              : current,
+          );
+          interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: themePreference, locale };
+          clearSavedThemePreference();
+          clearSavedLocale();
+        })
+        .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)));
     }, 250);
     return () => globalThis.clearTimeout(timeout);
-  }, [daemonHealthy, form.cwd, locale, themePreference, workspaceSettings]);
+  }, [daemonHealthy, form.cwd, locale, themePreference]);
 
   async function refreshHealth(): Promise<void> {
     try {
@@ -3263,7 +3350,8 @@ export function AppShell(): JSX.Element {
                     runtimeSettings={runtimeSettings}
                     runtimeSettingsForm={runtimeSettingsForm}
                     skillLibraryRefreshToken={skillLibraryRefreshToken}
-                    workspaceResponseLanguage={workspaceSettings?.responseLanguage ?? "follow_user"}
+                    effectiveConfig={effectiveConfig}
+                    workspaceResponseLanguage={workspaceSettings?.responseLanguage ?? effectiveConfig?.values.responseLanguage.value ?? "follow_user"}
                     selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
                     externalWorkStatus={externalWorkStatus}
                     mcpServers={mcpServers}

@@ -29,7 +29,7 @@ import {
   patchChannel,
   updateChannelBranch,
 } from "../../api/channels.js";
-import { LanguageSwitcher, useI18n } from "../../i18n.js";
+import { LanguageSwitcher, useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
   buildLocalEffectivePolicyPreview,
@@ -52,6 +52,7 @@ import type {
   Channel,
   ChannelBranch,
   ExternalWorkStatusResponse,
+  EffectiveConfigResponse,
   PermissionPreset,
   RunnerListItem,
   SessionPermissionMode,
@@ -80,6 +81,7 @@ export function SettingsPage({
   runtimeSettings,
   runtimeSettingsForm,
   skillLibraryRefreshToken,
+  effectiveConfig,
   workspaceResponseLanguage,
   selectedChannel,
   externalWorkStatus,
@@ -149,6 +151,7 @@ export function SettingsPage({
   readonly runtimeSettings: WorkspaceRuntimeSettings | undefined;
   readonly runtimeSettingsForm: RuntimeSettingsFormState;
   readonly skillLibraryRefreshToken: number;
+  readonly effectiveConfig: EffectiveConfigResponse | undefined;
   readonly workspaceResponseLanguage: ResponseLanguagePreference;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
@@ -477,6 +480,7 @@ export function SettingsPage({
             <span>
               <Palette size={16} />
               <strong>{t("Theme")}</strong>
+              <small>{configSourceLabel(effectiveConfig?.values.theme.source, t)}</small>
             </span>
             <ThemeSwitcher />
           </div>
@@ -484,6 +488,7 @@ export function SettingsPage({
             <span>
               <Languages size={16} />
               <strong>{t("Language")}</strong>
+              <small>{configSourceLabel(effectiveConfig?.values.locale.source, t)}</small>
             </span>
             <LanguageSwitcher />
           </div>
@@ -491,6 +496,7 @@ export function SettingsPage({
             <span>
               <Bot size={16} />
               <strong>{t("AI response language")}</strong>
+              <small>{configSourceLabel(effectiveConfig?.values.responseLanguage.source, t)}</small>
             </span>
             <select
               value={workspaceResponseLanguage}
@@ -1126,6 +1132,19 @@ function workflowStatusLabel(status: ExternalWorkStatusResponse | undefined): st
     return "missing";
   }
   return status.workflow.valid ? "valid" : "invalid";
+}
+
+function configSourceLabel(source: EffectiveConfigResponse["values"]["theme"]["source"] | undefined, t: Translate): string {
+  if (source === "workspace") {
+    return t("Workspace");
+  }
+  if (source === "user") {
+    return t("User default");
+  }
+  if (source === "built_in") {
+    return t("Built-in");
+  }
+  return t("Loading");
 }
 
 function ArchivedItemGroup({

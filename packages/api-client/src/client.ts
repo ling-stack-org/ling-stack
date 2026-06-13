@@ -107,6 +107,7 @@ import type {
   CreateRunInterventionRequest,
   CreateTaskRequest,
   DaemonHealthResponse,
+  EffectiveConfigResponse,
   ExternalGitHubImportRequest,
   ExternalLinearImportRequest,
   ExternalWorkBackgroundListResponse,
@@ -352,6 +353,10 @@ export class LingDaemonClient {
 
   async updateWorkspaceSettings(cwd: string, input: UpdateWorkspaceSettingsRequest): Promise<WorkspaceSettingsResponse> {
     return this.patch("/workspace-settings", { cwd }, input);
+  }
+
+  async getEffectiveConfig(cwd: string): Promise<EffectiveConfigResponse> {
+    return this.get("/config/effective", { cwd });
   }
 
   async getControlPlaneSnapshot(

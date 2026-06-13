@@ -44,6 +44,7 @@ docs:
 - [Ling Memory v1](ling-memory-v1.md)
 - [Ling Skill Import v1](ling-skill-import-v1.md)
 - [Runtime Supervisor](runtime-supervisor.md)
+- [Two-Layer Configuration](two-layer-configuration.md)
 - [Provider Presets](provider-presets.md)
 - [Approval Policy](approval-policy.md)
 - [Plugin Manager](plugin-manager.md)

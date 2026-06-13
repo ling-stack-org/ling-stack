@@ -119,7 +119,16 @@ Future wrapper:
 
 Use SQLite for metadata and files for bulky session artifacts.
 
-Suggested local paths:
+Ling uses a two-layer configuration model:
+
+- user-level `~/.ling-stack/` for cross-workspace defaults, provider profile
+  templates, plugin cache, recent workspaces, and local operator state;
+- workspace-level `<workspace>/.ling-stack/` for durable workspace metadata,
+  runtime settings, sessions, artifacts, approvals, and audit evidence.
+
+The detailed contract lives in [Two-Layer Configuration](design/two-layer-configuration.md).
+
+Current workspace paths:
 
 ```text
 .ling-stack/
@@ -127,10 +136,13 @@ Suggested local paths:
   sessions/
   artifacts/
   logs/
-  providers.json
+  config.json
+  runtime-settings.json
 ```
 
-API keys should begin in `.env` for development only. Desktop builds should move secrets to OS keychain.
+API keys should use secret refs. `env:` is acceptable for development. Desktop builds
+should prefer OS keychain refs. Raw secret values must not be stored in JSON config,
+logs, artifacts, or run snapshots.
 
 ## Security Model
 
@@ -203,6 +215,7 @@ The next implementation slices are documented separately so the platform archite
 - [Multi-Agent Orchestrator](design/multi-agent-orchestrator.md): compile workflow templates into durable multi-teammate workflow steps that execute through normal task/run state machines.
 - [Codex-like Execution](design/codex-like-execution.md): complete approval action auditing, evidence replay, long-lived threads, and resume/redirect behavior.
 - [Desktop Shell](design/desktop-shell.md): package the Web UI and daemon behind a desktop shell without forking the product model.
+- [Two-Layer Configuration](design/two-layer-configuration.md): split user defaults from workspace execution state without introducing a third localStorage layer.
 - [Secrets and Keychain](design/secrets-keychain.md): keep `env:` and fail-closed `keychain:` refs behind one resolver while keeping raw secret values out of renderer, logs, and artifacts.
 
 ## Desktop Strategy

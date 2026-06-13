@@ -314,13 +314,15 @@ test("saved workspace path wins over daemon default", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.workspaceCwd", "/tmp/saved-workspace");
   });
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), {
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state, {
     defaultWorkspaceCwd: "/tmp/daemon-default-workspace",
   });
   await page.goto("/");
 
   await expect(page.getByLabel("Workspace path")).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.workspaceCwd"))).toBe("/tmp/saved-workspace");
+  await expect.poll(() => state.workspaceSettings.workspaceCwd).toBe("/tmp/saved-workspace");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.workspaceCwd"))).toBeNull();
 });
 
 test("succeeded workspace tasks show a clear result action", async ({ page }) => {

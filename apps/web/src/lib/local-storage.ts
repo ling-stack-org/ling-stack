@@ -9,14 +9,9 @@ export function readSavedWorkspaceCwd(): string {
   }
 }
 
-export function writeSavedWorkspaceCwd(cwd: string): void {
+export function clearSavedWorkspaceCwd(): void {
   try {
-    const trimmed = cwd.trim();
-    if (trimmed) {
-      globalThis.localStorage?.setItem(workspaceCwdStorageKey, trimmed);
-    } else {
-      globalThis.localStorage?.removeItem(workspaceCwdStorageKey);
-    }
+    globalThis.localStorage?.removeItem(workspaceCwdStorageKey);
   } catch {
     // Storage can be unavailable in private or restricted browser contexts.
   }

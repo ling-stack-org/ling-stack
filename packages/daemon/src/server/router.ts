@@ -160,7 +160,7 @@ import {
 } from "../features/runs/routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
-import { handleWorkspaceSettings } from "../features/settings/routes.js";
+import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
 import {
@@ -322,6 +322,11 @@ export async function routeRequest(
   }
 
   if (await handleControlPlaneRoute(request, response, context)) {
+    return;
+  }
+
+  if (url.pathname === "/config/effective") {
+    await handleEffectiveConfig(request, response, config, storeRegistry, runnerRegistry);
     return;
   }
 

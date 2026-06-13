@@ -3506,7 +3506,6 @@ export function I18nProvider({ children }: { readonly children: ReactNode }): JS
   const [locale, setLocaleState] = useState<Locale>(() => resolveInitialLocale());
 
   useEffect(() => {
-    globalThis.localStorage?.setItem(storageKey, locale);
     if (globalThis.document) {
       globalThis.document.documentElement.lang = locale;
     }
@@ -3553,12 +3552,28 @@ export function LanguageSwitcher(): JSX.Element {
   );
 }
 
+export function readSavedLocale(): Locale | undefined {
+  try {
+    const saved = globalThis.localStorage?.getItem(storageKey);
+    return saved === "zh-CN" || saved === "en-US" ? saved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function clearSavedLocale(): void {
+  try {
+    globalThis.localStorage?.removeItem(storageKey);
+  } catch {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
 function resolveInitialLocale(): Locale {
-  const saved = globalThis.localStorage?.getItem(storageKey);
-  if (saved === "zh-CN" || saved === "en-US") {
+  const saved = readSavedLocale();
+  if (saved) {
     return saved;
   }
-
   const browserLanguage = globalThis.navigator?.language?.toLowerCase() ?? "";
   return browserLanguage.startsWith("zh") ? "zh-CN" : defaultLocale;
 }

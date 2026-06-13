@@ -26,3 +26,63 @@ export interface WorkspaceSettingsResponse {
   readonly cwd: string;
   readonly settings: WorkspaceSettings;
 }
+
+export type EffectiveConfigSource = "workspace" | "user" | "built_in";
+
+export interface EffectiveConfigValue<T> {
+  readonly value: T;
+  readonly source: EffectiveConfigSource;
+  readonly path?: string;
+  readonly key: string;
+}
+
+export interface EffectiveConfigDiagnostic {
+  readonly level: "warning";
+  readonly code: string;
+  readonly message: string;
+  readonly path?: string;
+}
+
+export interface EffectiveConfigPaths {
+  readonly user: {
+    readonly rootDir: string;
+    readonly configPath: string;
+    readonly settingsPath: string;
+    readonly providerProfilesPath: string;
+    readonly pluginCacheDir: string;
+    readonly logsDir: string;
+  };
+  readonly workspace: {
+    readonly rootDir: string;
+    readonly configPath: string;
+    readonly databasePath: string;
+    readonly runtimeSettingsPath: string;
+    readonly sessionsDir: string;
+    readonly artifactsDir: string;
+    readonly attachmentsDir: string;
+    readonly pluginCacheDir: string;
+    readonly logsDir: string;
+  };
+}
+
+export interface EffectiveConfigResponse {
+  readonly cwd: string;
+  readonly paths: EffectiveConfigPaths;
+  readonly values: {
+    readonly workspaceCwd: EffectiveConfigValue<string>;
+    readonly theme: EffectiveConfigValue<"light" | "dark" | "system">;
+    readonly locale: EffectiveConfigValue<string>;
+    readonly responseLanguage: EffectiveConfigValue<ResponseLanguagePreference>;
+    readonly runtime: {
+      readonly defaultRunnerId: EffectiveConfigValue<string>;
+      readonly explicitRunnerFallback: EffectiveConfigValue<"disabled" | "allow_to_default">;
+      readonly implicitRunnerFallback: EffectiveConfigValue<"disabled" | "allow_to_default">;
+    };
+  };
+  readonly layers: {
+    readonly userConfig?: Record<string, unknown>;
+    readonly userSettings?: Record<string, unknown>;
+    readonly workspaceSettings: WorkspaceSettings;
+  };
+  readonly diagnostics: readonly EffectiveConfigDiagnostic[];
+}

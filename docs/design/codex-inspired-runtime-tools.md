@@ -341,8 +341,9 @@ Regression tests must prove that enabling Codex-inspired mechanics does not:
   shared package used by runners?
 - Should shell snapshots also have an in-memory runtime diagnostics view, or are
   artifact-backed read models enough after P1 unified exec?
-- Should feature gates live in `.ling-stack/config.json`, daemon config, or runtime
-  settings API?
+- Which feature gates should be user defaults under `~/.ling-stack/config.json`, and
+  which should be workspace execution policy under `.ling-stack/runtime-settings.json`?
+  See [Two-Layer Configuration](two-layer-configuration.md).
 
 ## Summary
 

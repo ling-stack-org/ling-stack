@@ -70,6 +70,11 @@ Adapter follow-up design:
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
   defines why runner-supported tools are metadata and approval-policy inputs, not
   Plugin Manager entries.
+- [Two-Layer Configuration](two-layer-configuration.md) defines how user-level runner
+  defaults can seed a workspace while `.ling-stack/runtime-settings.json` remains the
+  execution authority for that workspace.
+- [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md)
+  defines the field-level runtime default inheritance and solidification rules.
 
 Implemented follow-up hardening:
 

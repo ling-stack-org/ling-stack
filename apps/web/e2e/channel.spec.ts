@@ -27,8 +27,10 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   await expect(page.locator(".channel-left-drawer .sidebar-channel-group > .sidebar-row-shell.selected")).toContainText("Engineering");
   await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
   await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
-  await page.locator(".task-toolbar-attention").click();
-  await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
+  await expect(page.locator(".task-toolbar-attention")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await page.locator(".task-toolbar-progress").click();
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(1);
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await expect(page.locator("article.task-detail")).toHaveCount(0);
   await page.getByRole("button", { name: "Show details" }).click();
@@ -70,7 +72,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const sidebarSwitchSvg = document.querySelector(".channel-sidebar-switch svg");
     const titleIcon = document.querySelector(".channel-title-icon");
     const channelMoreButton = document.querySelector(".channel-more-button");
-    const toolbarButton = document.querySelector(".task-toolbar-attention");
+    const toolbarButton = document.querySelector(".task-toolbar-progress");
     const toolbarButtonSvg = toolbarButton?.querySelector("svg");
     const sidebarSwitch = document.querySelector(".channel-sidebar-switch");
     const toolbarCount = toolbarButton?.querySelector(".toolbar-count");
@@ -310,7 +312,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const chatPanel = document.querySelector(".channel-chat-panel");
     const chat = document.querySelector(".activity-chat-layout");
     const composer = document.querySelector(".channel-composer");
-    const attention = document.querySelector(".channel-attention-popover");
+    const attention = document.querySelector(".channel-progress-popover");
     const chatPanelRect = chatPanel?.getBoundingClientRect();
     const chatRect = chat?.getBoundingClientRect();
     const composerRect = composer?.getBoundingClientRect();
@@ -322,7 +324,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       composerCenterDelta: chatPanelRect && composerRect ? Math.round((composerRect.left + composerRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
       chatTransform: chat ? getComputedStyle(chat).transform : "",
       composerTransform: composer ? getComputedStyle(composer).transform : "",
-      attentionCount: document.querySelectorAll(".channel-attention-popover").length,
+      attentionCount: document.querySelectorAll(".channel-progress-popover").length,
       attentionTop: Math.round(attention?.getBoundingClientRect().top ?? 0),
       chatLeft: Math.round(chatRect?.left ?? 0),
       attentionLeft: Math.round(attention?.getBoundingClientRect().left ?? 0),
@@ -361,7 +363,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
       sidePanelCount: document.querySelectorAll(".channel-side-panel").length,
       chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
-      attentionCount: document.querySelectorAll(".channel-attention-popover").length,
+      attentionCount: document.querySelectorAll(".channel-progress-popover").length,
     };
   });
   expect(restored.columns.startsWith("272px ")).toBe(true);
@@ -457,13 +459,14 @@ test("wide channel progress popover keeps the accepted HTML spacing", async ({ p
   await page.goto("/");
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
+  await page.locator(".task-toolbar-progress").click();
   await page.waitForTimeout(200);
 
   const spacing = await page.evaluate(() => {
     const main = document.querySelector(".task-workbench-main");
     const chat = document.querySelector(".activity-chat-layout");
     const composer = document.querySelector(".channel-composer");
-    const attention = document.querySelector(".channel-attention-popover");
+    const attention = document.querySelector(".channel-progress-popover");
     const composerRect = composer?.getBoundingClientRect();
     const attentionRect = attention?.getBoundingClientRect();
     return {
@@ -955,6 +958,8 @@ test("channel settings can add remove and set default teammates", async ({ page 
   state.teammateChannelMemberships = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
   let manager = page.getByLabel("Channel teammates");
@@ -1007,7 +1012,11 @@ test("channel settings can add remove and set default teammates", async ({ page 
   const notifications = page.getByLabel("Channel notifications");
   await notifications.getByRole("radio", { name: "Muted" }).click();
   await expect(notifications.getByRole("radio", { name: "Muted" })).toHaveAttribute("aria-checked", "true");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBe("muted");
+  await expect.poll(() => {
+    const channelNotifications = state.workspaceSettings.channelNotifications;
+    return isRecord(channelNotifications) ? channelNotifications.channel_engineering : undefined;
+  }).toBe("muted");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBeNull();
 });
 
 test("channel message feed renders AI teammate avatar images", async ({ page }) => {
@@ -2416,8 +2425,9 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await page.locator(".task-toolbar-progress").click();
 
-  const attentionPopover = page.locator(".channel-attention-popover");
+  const attentionPopover = page.locator(".channel-progress-popover");
   const progressList = attentionPopover.locator(".attention-progress-list");
   await expect(attentionPopover).toBeVisible();
   await expect(progressList).toContainText("Collaboration blocked");
@@ -3850,6 +3860,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(categoryChip("Protocol")).toContainText("0");
   await expect(categoryChip("Runtime")).toContainText("3");
 
+  await page.locator(".task-toolbar-progress").click();
   const progressPopover = page.getByRole("region", { name: "Progress" });
   const runSettings = progressPopover.getByLabel("Run settings");
   await expect(runSettings).toContainText("Permission mode");
@@ -3973,10 +3984,10 @@ test("channel activity derives task run approval transition and workflow events"
   await runEventBubble.getByRole("button", { name: "Details" }).click();
   await expect(activityDetails).toContainText("Run run_failed");
   await expect(searchInput).toHaveValue("run_failed");
-  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover .attention-queue-item")).toHaveCount(0);
   await activityDetails.getByLabel("Close details").click();
   await expect(searchInput).toHaveValue("run_failed");
-  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover .attention-queue-item")).toHaveCount(0);
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe("Saved view name");
     await dialog.accept("Run failures");
@@ -4184,7 +4195,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   const composer = page.getByPlaceholder("Message this channel or @ an AI teammate");
   await searchInput.fill("Blocked triage");
   await composer.fill("Composer draft survives triage");
-  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover .attention-queue-item")).toHaveCount(0);
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
   await openTriageActions();
   await activityDetails.getByRole("button", { name: "Create context summary" }).click();
@@ -4195,7 +4206,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await activityDetails.getByLabel("Close details").click();
   await expect(searchInput).toHaveValue("Blocked triage");
   await expect(composer).toHaveValue("Composer draft survives triage");
-  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover .attention-queue-item")).toHaveCount(0);
   const summaryBubble = page.locator(".message-bubble").filter({ hasText: "Context summary" }).filter({ hasText: "Summary from Blocked triage step" });
   await expect(summaryBubble).toBeVisible();
   const taskCount = state.tasks.length;
@@ -4222,9 +4233,9 @@ test("channel activity keeps attention items out of the progress popover", async
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await expect(page.getByRole("button", { name: "Progress" }).locator(".toolbar-count")).toHaveCount(0);
-  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
-  await expect(page.locator(".channel-attention-popover").getByLabel("Attention counts")).toHaveCount(0);
+  await expect(page.locator(".task-toolbar-progress .toolbar-count")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover .attention-queue-item")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover").getByLabel("Attention counts")).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await expect(page.locator("article.task-detail")).toHaveCount(0);
