@@ -98,6 +98,28 @@ export class AutomationSchedulerRegistry {
     return entry ? [entry.state] : [];
   }
 
+  refresh(cwd: string): AutomationSchedulerState {
+    const existing = this.entriesByCwd.get(cwd);
+    if (!existing || existing.state.status !== "running") {
+      return this.start(cwd).scheduler;
+    }
+    this.clearTimers(existing);
+    existing.state = {
+      ...existing.state,
+      automationCount: 0,
+      nextRunAt: undefined,
+      items: [],
+      lastErrorMessage: undefined,
+    };
+    const store = this.storeRegistry.getStore(cwd);
+    const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
+    for (const automation of automations) {
+      this.scheduleAutomation(existing, automation, new Date());
+    }
+    this.refreshStateSummary(existing);
+    return existing.state;
+  }
+
   stop(cwd: string): AutomationSchedulerState | undefined {
     const entry = this.entriesByCwd.get(cwd);
     if (!entry) {
@@ -125,7 +147,7 @@ export class AutomationSchedulerRegistry {
     if (automation.trigger.type !== "schedule") {
       return;
     }
-    const nextRunAt = computeNextRunAt(automation.trigger.schedule, automation.trigger.timezone, from);
+    const nextRunAt = computeNextAutomationRunAt(automation, from);
     const delayMs = Math.max(new Date(nextRunAt).getTime() - Date.now(), 1000);
     const existingTimer = entry.timers.get(automation.id);
     if (existingTimer) {
@@ -307,6 +329,129 @@ export function computeNextRunAt(schedule: AutomationSchedule, timezone: string,
     }
   }
   return new Date(from.getTime() + 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function computeNextAutomationRunAt(
+  automation: Pick<AutomationDefinition, "trigger" | "rrule">,
+  from: Date = new Date(),
+): string {
+  if (automation.trigger.type !== "schedule") {
+    return new Date(from.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  }
+  if (automation.trigger.schedule.cadence !== "interval" && automation.rrule) {
+    const rruleRunAt = computeNextRunAtFromRRule(automation.rrule, automation.trigger.timezone, from);
+    if (rruleRunAt) {
+      return rruleRunAt;
+    }
+  }
+  return computeNextRunAt(automation.trigger.schedule, automation.trigger.timezone, from);
+}
+
+export function computeNextRunAtFromRRule(rrule: string, timezone: string, from: Date = new Date()): string | undefined {
+  const parsed = parseRRule(rrule);
+  if (!parsed) {
+    return undefined;
+  }
+  if (parsed.freq === "MINUTELY") {
+    return new Date(from.getTime() + parsed.interval * 60 * 1000).toISOString();
+  }
+
+  const fromParts = getZonedDateParts(from, timezone);
+  const byHour = parsed.byHour.length > 0 ? parsed.byHour : [fromParts.hour ?? 9];
+  const byMinute = parsed.byMinute.length > 0 ? parsed.byMinute : [0];
+  const bySecond = parsed.bySecond.length > 0 ? parsed.bySecond : [0];
+  const weekdays = parsed.freq === "WEEKLY" || parsed.byDay.length > 0 ? parsed.byDay : [];
+
+  for (let dayOffset = 0; dayOffset <= 370; dayOffset += 1) {
+    const candidateDate = addUtcCalendarDays(fromParts, dayOffset);
+    const weekday = new Date(Date.UTC(candidateDate.year, candidateDate.month - 1, candidateDate.day)).getUTCDay();
+    if (weekdays.length > 0 && !weekdays.includes(weekday)) {
+      continue;
+    }
+    for (const hour of byHour) {
+      for (const minute of byMinute) {
+        for (const second of bySecond) {
+          const candidate = new Date(zonedTimeToUtc(candidateDate.year, candidateDate.month, candidateDate.day, hour, minute, timezone).getTime() + second * 1000);
+          if (candidate.getTime() > from.getTime() + 999) {
+            return candidate.toISOString();
+          }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+interface ParsedRRule {
+  readonly freq: "MINUTELY" | "DAILY" | "WEEKLY";
+  readonly interval: number;
+  readonly byDay: readonly number[];
+  readonly byHour: readonly number[];
+  readonly byMinute: readonly number[];
+  readonly bySecond: readonly number[];
+}
+
+function parseRRule(rrule: string): ParsedRRule | undefined {
+  const fields = new Map<string, string>();
+  for (const part of rrule.split(";")) {
+    const [rawKey, ...rawValue] = part.split("=");
+    const key = rawKey?.trim().toUpperCase();
+    const value = rawValue.join("=").trim().toUpperCase();
+    if (key && value) {
+      fields.set(key, value);
+    }
+  }
+  const freq = fields.get("FREQ");
+  if (freq !== "MINUTELY" && freq !== "DAILY" && freq !== "WEEKLY") {
+    return undefined;
+  }
+  return {
+    freq,
+    interval: Math.max(readPositiveInteger(fields.get("INTERVAL")) ?? 1, 1),
+    byDay: parseRRuleWeekdays(fields.get("BYDAY")),
+    byHour: parseRRuleNumbers(fields.get("BYHOUR"), 0, 23),
+    byMinute: parseRRuleNumbers(fields.get("BYMINUTE"), 0, 59),
+    bySecond: parseRRuleNumbers(fields.get("BYSECOND"), 0, 59),
+  };
+}
+
+function parseRRuleNumbers(value: string | undefined, min: number, max: number): readonly number[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((item) => Number.parseInt(item.trim(), 10))
+    .filter((item, index, values) => Number.isInteger(item) && item >= min && item <= max && values.indexOf(item) === index)
+    .sort((left, right) => left - right);
+}
+
+function parseRRuleWeekdays(value: string | undefined): readonly number[] {
+  if (!value) {
+    return [];
+  }
+  const weekdays = new Map([
+    ["SU", 0],
+    ["MO", 1],
+    ["TU", 2],
+    ["WE", 3],
+    ["TH", 4],
+    ["FR", 5],
+    ["SA", 6],
+  ]);
+  return value
+    .split(",")
+    .map((item) => weekdays.get(item.trim().slice(-2).toUpperCase()))
+    .filter((item, index, values): item is number => item !== undefined && values.indexOf(item) === index)
+    .sort((left, right) => left - right);
+}
+
+function readPositiveInteger(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function addUtcCalendarDays(parts: ZonedDateParts, dayOffset: number): ZonedDateParts {

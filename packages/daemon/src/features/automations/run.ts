@@ -5,6 +5,7 @@ import {
   type AutomationDefinition,
   type AutomationRun,
   type AutomationRunStatus,
+  type LingThread,
   type RunSession,
   type RunStore,
 } from "@ling-stack/core";
@@ -85,6 +86,17 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
     },
     now,
   );
+
+  if (automation.automationMode === "heartbeat") {
+    return await runHeartbeatAutomation({
+      ...input,
+      store,
+      automation,
+      automationRun,
+      thread,
+      now,
+    });
+  }
 
   const context = buildAutomationContext({ store, automation, now, mode: "run" });
   const runRequest = buildAutomationRunRequest({
@@ -175,6 +187,98 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
   };
 }
 
+async function runHeartbeatAutomation(input: RunAutomationInput & {
+  readonly store: RunStore;
+  readonly automation: AutomationDefinition;
+  readonly automationRun: AutomationRun;
+  readonly thread: NonNullable<ReturnType<RunStore["getLingThread"]>>;
+  readonly now: string;
+}): Promise<RunAutomationResult> {
+  const targetThreadId = input.automation.targetThreadId ?? input.automation.target.threadId;
+  if (!targetThreadId) {
+    throw new HttpError(409, "heartbeat_thread_required", "对话自动化需要选择一个可唤醒的对话。");
+  }
+  const targetThread = input.store.getLingThread(targetThreadId);
+  validateHeartbeatTargetThread(targetThread, targetThreadId);
+  const sourceRun = targetThread.lastRunId ? input.store.getRun(targetThread.lastRunId) : undefined;
+  if (!sourceRun) {
+    throw new HttpError(409, "heartbeat_source_run_required", "目标对话还没有可复用的运行记录，暂时不能创建对话自动化。");
+  }
+  const requestSnapshot = asRecord(sourceRun.requestSnapshot);
+  const providerPresetId = readSnapshotString(requestSnapshot, "providerPresetId") ?? sourceRun.providerPresetId;
+  const inlineProvider = providerPresetId ? undefined : optionalRecord(requestSnapshot.provider) as RunRequest["provider"] | undefined;
+  if (!providerPresetId && !inlineProvider) {
+    throw new HttpError(409, "heartbeat_provider_snapshot_required", "目标对话缺少可复用的模型快照，暂时不能自动唤醒。");
+  }
+  let automationRun = input.automationRun;
+  let linkedRunId: string | undefined;
+  const runRequest = buildHeartbeatRunRequest({
+    automation: input.automation,
+    automationRun,
+    sourceRun,
+    targetThread,
+    requestSnapshot,
+    providerPresetId,
+    inlineProvider,
+  });
+
+  const applyRunReady = (runId: string): void => {
+    linkedRunId = runId;
+    const readyAt = new Date().toISOString();
+    automationRun = input.store.updateAutomationRun(
+      automationRun.id,
+      {
+        runId,
+        status: "running",
+        startedAt: readyAt,
+      },
+      readyAt,
+    ) ?? automationRun;
+    input.storeRegistry.rememberRun(runId, input.store);
+  };
+
+  const runId = await input.startRun(runRequest, {
+    onRunReady: applyRunReady,
+    afterRunTerminal: (terminalRun) => {
+      const completedAt = new Date().toISOString();
+      input.store.updateAutomationRun(
+        automationRun.id,
+        {
+          runId: terminalRun.id,
+          status: mapRunStatusToAutomationRunStatus(terminalRun.status),
+          completedAt,
+          errorMessage: terminalRun.errorMessage ?? null,
+        },
+        completedAt,
+      );
+    },
+  });
+
+  if (!runId) {
+    const failedAt = new Date().toISOString();
+    automationRun = input.store.updateAutomationRun(
+      automationRun.id,
+      {
+        status: "failed",
+        completedAt: failedAt,
+        errorMessage: "对话自动化启动失败。",
+      },
+      failedAt,
+    ) ?? automationRun;
+  } else if (!linkedRunId) {
+    applyRunReady(runId);
+  }
+
+  const latestAutomation = input.store.getAutomationDefinition(input.automation.id) ?? input.automation;
+  return {
+    cwd: input.cwd,
+    automation: latestAutomation,
+    automationRun: input.store.getAutomationRun(automationRun.id) ?? automationRun,
+    thread: input.thread,
+    run: runId ? input.store.getRun(runId) : undefined,
+  };
+}
+
 export function buildAutomationRunRequest(input: {
   readonly store: RunStore;
   readonly cwd: string;
@@ -211,6 +315,70 @@ export function buildAutomationRunRequest(input: {
   };
 }
 
+function buildHeartbeatRunRequest(input: {
+  readonly automation: AutomationDefinition;
+  readonly automationRun: AutomationRun;
+  readonly sourceRun: RunSession;
+  readonly targetThread: LingThread;
+  readonly requestSnapshot: Record<string, unknown>;
+  readonly providerPresetId?: string;
+  readonly inlineProvider?: RunRequest["provider"];
+}): RunRequest {
+  const taskSnapshot = asRecord(input.sourceRun.taskSnapshot);
+  const originalTitle = readSnapshotString(taskSnapshot, "title") ?? input.sourceRun.taskId;
+  const cwd = readSnapshotString(input.requestSnapshot, "cwd") ?? input.sourceRun.cwd;
+  const workspaceCwd = readSnapshotString(input.requestSnapshot, "workspaceCwd") ?? input.sourceRun.cwd;
+  const prompt = [
+    "This is a scheduled Ling thread heartbeat.",
+    "",
+    "Automation instruction:",
+    input.automation.promptTemplate.promptMarkdown,
+    "",
+    "Resume the target thread from durable evidence. Do not grant extra tools, approvals, secrets, MCP access, or external-send rights.",
+  ].join("\n");
+  return {
+    cwd,
+    workspaceCwd,
+    providerPresetId: input.providerPresetId,
+    provider: input.inlineProvider,
+    teammateId: readSnapshotString(input.requestSnapshot, "teammateId") ?? input.sourceRun.teammateId,
+    runnerId: readSnapshotString(input.requestSnapshot, "runnerId"),
+    requestedSkillId: readSnapshotString(input.requestSnapshot, "requestedSkillId") ?? input.sourceRun.selectedSkillId,
+    skipProviderPreflight: readSnapshotBoolean(input.requestSnapshot, "skipProviderPreflight") ?? false,
+    idempotencyKey: `automation-heartbeat:${input.automationRun.id}`,
+    threadId: input.targetThread.id,
+    parentRunId: input.sourceRun.id,
+    continuationReason: "manual_resume",
+    task: {
+      id: `automation-heartbeat-${input.automation.id}`,
+      title: `Heartbeat: ${input.targetThread.title || originalTitle}`,
+      prompt,
+      channelId: input.targetThread.channelId ?? input.sourceRun.channelId,
+    },
+    tools: readSnapshotArray(input.requestSnapshot, "tools") as RunRequest["tools"],
+    approvalProfile: optionalRecord(input.requestSnapshot.approvalProfile) as RunRequest["approvalProfile"],
+    permissionPreset: readSnapshotString(input.requestSnapshot, "permissionPreset") as RunRequest["permissionPreset"],
+    permissionMode: readSnapshotString(input.requestSnapshot, "permissionMode") as RunRequest["permissionMode"],
+    permissionConfirmation: optionalRecord(input.requestSnapshot.permissionConfirmation) as RunRequest["permissionConfirmation"],
+    thinkingLevel: readSnapshotString(input.requestSnapshot, "thinkingLevel") as RunRequest["thinkingLevel"],
+    systemPrompt: readSnapshotString(input.requestSnapshot, "systemPrompt"),
+    appendSystemPrompt: [
+      ...readSnapshotStringArray(input.requestSnapshot, "appendSystemPrompt"),
+      "This continuation was started by a scheduled Ling automation heartbeat.",
+    ],
+    agentDir: readSnapshotString(input.requestSnapshot, "agentDir"),
+  };
+}
+
+function validateHeartbeatTargetThread(thread: LingThread | undefined, threadId: string): asserts thread is LingThread {
+  if (!thread) {
+    throw new HttpError(404, "heartbeat_thread_not_found", `未找到要唤醒的对话：${threadId}`);
+  }
+  if (thread.status === "archived" || thread.archivedAt) {
+    throw new HttpError(409, "heartbeat_thread_archived", "目标对话已归档，不能创建对话自动化。");
+  }
+}
+
 function resolveAutomationCwd(cwd: string, automation: AutomationDefinition, channelBoundPath: string | undefined): string {
   const targetCwd = automation.target.cwd ?? channelBoundPath ?? cwd;
   const resolvedWorkspace = resolvePath(cwd);
@@ -219,6 +387,34 @@ function resolveAutomationCwd(cwd: string, automation: AutomationDefinition, cha
     throw new HttpError(400, "automation_target_outside_workspace", `Automation target cwd is outside workspace: ${automation.target.cwd}`);
   }
   return resolvedTarget;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function optionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function readSnapshotString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readSnapshotBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readSnapshotArray(record: Record<string, unknown>, key: string): readonly unknown[] | undefined {
+  const value = record[key];
+  return Array.isArray(value) ? value : undefined;
+}
+
+function readSnapshotStringArray(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function resolveAutomationProviderPresetId(store: RunStore, automation: AutomationDefinition, channelDefaultProviderPresetId: string | undefined): string {

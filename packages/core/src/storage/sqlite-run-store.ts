@@ -449,10 +449,13 @@ import {
   type AutomationDraftSource,
   type AutomationDraftStatus,
   type AutomationDefinition,
+  type AutomationExecutionEnvironment,
   type AutomationExecutionPolicy,
   type AutomationKind,
+  type AutomationMode,
   type AutomationOutputPolicy,
   type AutomationPromptTemplate,
+  type AutomationReasoningEffort,
   type AutomationRun,
   type AutomationRunStatus,
   type AutomationStatus,
@@ -651,6 +654,8 @@ const CHANNEL_MESSAGE_FILE_REFS_MIGRATION_VERSION = 62;
 const CHANNEL_MESSAGE_FILE_REFS_MIGRATION_NAME = "add_channel_message_file_refs";
 const CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_VERSION = 63;
 const CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_NAME = "create_channel_input_materializations";
+const AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_VERSION = 64;
+const AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_NAME = "add_automation_codex_style_fields";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -9328,11 +9333,18 @@ export class SqliteRunStore implements RunStore {
       workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
       channelId: input.channelId,
       threadId: input.threadId,
+      automationMode: input.automationMode ?? "cron",
       title: input.title,
       description: input.description,
       kind: input.kind,
       status: input.status ?? "enabled",
       trigger: input.trigger,
+      rrule: input.rrule,
+      cwds: input.cwds ?? [],
+      targetThreadId: input.targetThreadId,
+      executionEnvironment: input.executionEnvironment,
+      reasoningEffort: input.reasoningEffort,
+      model: input.model,
       target: input.target,
       promptTemplate: input.promptTemplate,
       executionPolicy: input.executionPolicy,
@@ -9348,11 +9360,18 @@ export class SqliteRunStore implements RunStore {
           workspace_id,
           channel_id,
           thread_id,
+          automation_mode,
           title,
           description,
           kind,
           status,
           trigger_json,
+          rrule,
+          cwds_json,
+          target_thread_id,
+          execution_environment,
+          reasoning_effort,
+          model,
           target_json,
           prompt_template_json,
           execution_policy_json,
@@ -9362,18 +9381,25 @@ export class SqliteRunStore implements RunStore {
           last_run_id,
           next_run_at,
           last_error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         definition.id,
         definition.workspaceId,
         definition.channelId ?? null,
         definition.threadId,
+        definition.automationMode,
         definition.title,
         definition.description ?? null,
         definition.kind,
         definition.status,
         stringifyJson(definition.trigger),
+        definition.rrule ?? null,
+        stringifyJson(definition.cwds),
+        definition.targetThreadId ?? null,
+        definition.executionEnvironment ?? null,
+        definition.reasoningEffort ?? null,
+        definition.model ?? null,
         stringifyJson(definition.target),
         stringifyJson(definition.promptTemplate),
         stringifyJson(definition.executionPolicy),
@@ -9437,11 +9463,18 @@ export class SqliteRunStore implements RunStore {
       ...existing,
       channelId: nullableUpdate(input.channelId, existing.channelId),
       threadId: input.threadId ?? existing.threadId,
+      automationMode: input.automationMode ?? existing.automationMode,
       title: input.title ?? existing.title,
       description: nullableUpdate(input.description, existing.description),
       kind: input.kind ?? existing.kind,
       status: input.status ?? existing.status,
       trigger: input.trigger ?? existing.trigger,
+      rrule: nullableUpdate(input.rrule, existing.rrule),
+      cwds: input.cwds ?? existing.cwds,
+      targetThreadId: nullableUpdate(input.targetThreadId, existing.targetThreadId),
+      executionEnvironment: nullableUpdate(input.executionEnvironment, existing.executionEnvironment),
+      reasoningEffort: nullableUpdate(input.reasoningEffort, existing.reasoningEffort),
+      model: nullableUpdate(input.model, existing.model),
       target: input.target ?? existing.target,
       promptTemplate: input.promptTemplate ?? existing.promptTemplate,
       executionPolicy: input.executionPolicy ?? existing.executionPolicy,
@@ -9456,11 +9489,18 @@ export class SqliteRunStore implements RunStore {
         UPDATE automation_definitions
         SET channel_id = ?,
             thread_id = ?,
+            automation_mode = ?,
             title = ?,
             description = ?,
             kind = ?,
             status = ?,
             trigger_json = ?,
+            rrule = ?,
+            cwds_json = ?,
+            target_thread_id = ?,
+            execution_environment = ?,
+            reasoning_effort = ?,
+            model = ?,
             target_json = ?,
             prompt_template_json = ?,
             execution_policy_json = ?,
@@ -9474,11 +9514,18 @@ export class SqliteRunStore implements RunStore {
       .run(
         next.channelId ?? null,
         next.threadId,
+        next.automationMode,
         next.title,
         next.description ?? null,
         next.kind,
         next.status,
         stringifyJson(next.trigger),
+        next.rrule ?? null,
+        stringifyJson(next.cwds),
+        next.targetThreadId ?? null,
+        next.executionEnvironment ?? null,
+        next.reasoningEffort ?? null,
+        next.model ?? null,
         stringifyJson(next.target),
         stringifyJson(next.promptTemplate),
         stringifyJson(next.executionPolicy),
@@ -12946,11 +12993,18 @@ export class SqliteRunStore implements RunStore {
           workspace_id TEXT NOT NULL,
           channel_id TEXT,
           thread_id TEXT NOT NULL,
+          automation_mode TEXT NOT NULL DEFAULT 'cron',
           title TEXT NOT NULL,
           description TEXT,
           kind TEXT NOT NULL,
           status TEXT NOT NULL,
           trigger_json TEXT NOT NULL,
+          rrule TEXT,
+          cwds_json TEXT NOT NULL DEFAULT '[]',
+          target_thread_id TEXT,
+          execution_environment TEXT,
+          reasoning_effort TEXT,
+          model TEXT,
           target_json TEXT NOT NULL,
           prompt_template_json TEXT NOT NULL,
           execution_policy_json TEXT NOT NULL,
@@ -13008,6 +13062,38 @@ export class SqliteRunStore implements RunStore {
       `);
       if (!hasAutomationsMigration) {
         this.recordMigration(AUTOMATIONS_MIGRATION_VERSION, AUTOMATIONS_MIGRATION_NAME);
+      }
+    }
+
+    const hasAutomationCodexStyleFieldsMigration = this.hasMigration(AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_VERSION);
+    if (
+      !hasAutomationCodexStyleFieldsMigration ||
+      !this.hasColumn("automation_definitions", "automation_mode") ||
+      !this.hasColumn("automation_definitions", "cwds_json")
+    ) {
+      if (!this.hasColumn("automation_definitions", "automation_mode")) {
+        this.database.exec("ALTER TABLE automation_definitions ADD COLUMN automation_mode TEXT NOT NULL DEFAULT 'cron';");
+      }
+      if (!this.hasColumn("automation_definitions", "rrule")) {
+        this.database.exec("ALTER TABLE automation_definitions ADD COLUMN rrule TEXT;");
+      }
+      if (!this.hasColumn("automation_definitions", "cwds_json")) {
+        this.database.exec("ALTER TABLE automation_definitions ADD COLUMN cwds_json TEXT NOT NULL DEFAULT '[]';");
+      }
+      if (!this.hasColumn("automation_definitions", "target_thread_id")) {
+        this.database.exec("ALTER TABLE automation_definitions ADD COLUMN target_thread_id TEXT;");
+      }
+      if (!this.hasColumn("automation_definitions", "execution_environment")) {
+        this.database.exec("ALTER TABLE automation_definitions ADD COLUMN execution_environment TEXT;");
+      }
+      if (!this.hasColumn("automation_definitions", "reasoning_effort")) {
+        this.database.exec("ALTER TABLE automation_definitions ADD COLUMN reasoning_effort TEXT;");
+      }
+      if (!this.hasColumn("automation_definitions", "model")) {
+        this.database.exec("ALTER TABLE automation_definitions ADD COLUMN model TEXT;");
+      }
+      if (!hasAutomationCodexStyleFieldsMigration) {
+        this.recordMigration(AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_VERSION, AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_NAME);
       }
     }
 
@@ -14586,17 +14672,27 @@ function mapLingTurnRun(row: Record<string, SQLOutputValue>): LingTurnRun {
 }
 
 function mapAutomationDefinition(row: Record<string, SQLOutputValue>): AutomationDefinition {
+  const trigger = parseAutomationTrigger(readString(row, "trigger_json"));
+  const target = parseAutomationTarget(readString(row, "target_json"));
+  const rrule = readNullableString(row, "rrule") ?? automationTriggerToRRule(trigger);
   return omitUndefined({
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
     channelId: readNullableString(row, "channel_id"),
     threadId: readString(row, "thread_id"),
+    automationMode: parseAutomationMode(readNullableString(row, "automation_mode") ?? "cron"),
     title: readString(row, "title"),
     description: readNullableString(row, "description"),
     kind: readString(row, "kind") as AutomationKind,
     status: readString(row, "status") as AutomationStatus,
-    trigger: parseAutomationTrigger(readString(row, "trigger_json")),
-    target: parseAutomationTarget(readString(row, "target_json")),
+    trigger,
+    rrule,
+    cwds: parseJsonStringArray(readNullableString(row, "cwds_json") ?? "[]"),
+    targetThreadId: readNullableString(row, "target_thread_id"),
+    executionEnvironment: parseOptionalAutomationExecutionEnvironment(readNullableString(row, "execution_environment")),
+    reasoningEffort: parseOptionalAutomationReasoningEffort(readNullableString(row, "reasoning_effort")),
+    model: readNullableString(row, "model"),
+    target,
     promptTemplate: parseAutomationPromptTemplate(readString(row, "prompt_template_json")),
     executionPolicy: parseAutomationExecutionPolicy(readString(row, "execution_policy_json")),
     outputPolicy: parseAutomationOutputPolicy(readString(row, "output_policy_json")),
@@ -14817,11 +14913,18 @@ function automationDefinitionSelectSql(whereClause: string): string {
       workspace_id,
       channel_id,
       thread_id,
+      automation_mode,
       title,
       description,
       kind,
       status,
       trigger_json,
+      rrule,
+      cwds_json,
+      target_thread_id,
+      execution_environment,
+      reasoning_effort,
+      model,
       target_json,
       prompt_template_json,
       execution_policy_json,
@@ -19079,6 +19182,53 @@ function parseAutomationTrigger(value: string): AutomationTrigger {
     throw new Error("Expected automation trigger from SQLite");
   }
   return parsed as unknown as AutomationTrigger;
+}
+
+function parseAutomationMode(value: string): AutomationMode {
+  if (value !== "cron" && value !== "heartbeat") {
+    throw new Error("Expected automation mode from SQLite");
+  }
+  return value;
+}
+
+function parseOptionalAutomationExecutionEnvironment(value: string | undefined): AutomationExecutionEnvironment | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "local" && value !== "worktree") {
+    throw new Error("Expected automation execution environment from SQLite");
+  }
+  return value;
+}
+
+function parseOptionalAutomationReasoningEffort(value: string | undefined): AutomationReasoningEffort | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "low" && value !== "medium" && value !== "high" && value !== "xhigh") {
+    throw new Error("Expected automation reasoning effort from SQLite");
+  }
+  return value;
+}
+
+function automationTriggerToRRule(trigger: AutomationTrigger): string | undefined {
+  if (trigger.type !== "schedule") {
+    return undefined;
+  }
+  if (trigger.schedule.cadence === "daily") {
+    const [hour = "09", minute = "00"] = trigger.schedule.timeOfDay.split(":");
+    return `FREQ=DAILY;BYHOUR=${Number.parseInt(hour, 10)};BYMINUTE=${Number.parseInt(minute, 10)};BYSECOND=0`;
+  }
+  if (trigger.schedule.cadence === "weekly") {
+    const [hour = "09", minute = "00"] = trigger.schedule.timeOfDay.split(":");
+    const weekday = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][trigger.schedule.weekday] ?? "MO";
+    return `FREQ=WEEKLY;BYDAY=${weekday};BYHOUR=${Number.parseInt(hour, 10)};BYMINUTE=${Number.parseInt(minute, 10)};BYSECOND=0`;
+  }
+  if (trigger.schedule.cadence === "interval") {
+    const minutes = Math.max(Math.round(trigger.schedule.everyMs / 60000), 1);
+    return `FREQ=MINUTELY;INTERVAL=${minutes}`;
+  }
+  return undefined;
 }
 
 function parseAutomationTarget(value: string): AutomationTarget {

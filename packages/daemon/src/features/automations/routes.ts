@@ -62,6 +62,7 @@ export async function handleAutomationsCollection(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  schedulerRegistry: AutomationSchedulerRegistry,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = requireCwd(url);
@@ -88,6 +89,7 @@ export async function handleAutomationsCollection(
       rejectSecretLikeKeys(body);
       const input = parseCreateAutomationRequest(body);
       const created = createAutomationDefinitionFromRequest({ store, cwd, input, now: new Date().toISOString() });
+      schedulerRegistry.refresh(cwd);
       writeJson(response, 201, { cwd, automation: created.automation, thread: created.thread });
       return;
     }
@@ -109,6 +111,7 @@ export async function handleAutomationDraftsCollection(
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
+      const now = new Date().toISOString();
       writeJson(response, 200, {
         cwd,
         drafts: store.listAutomationDrafts({
@@ -117,7 +120,7 @@ export async function handleAutomationDraftsCollection(
           channelId: url.searchParams.get("channelId") ?? undefined,
           includeTerminal: readOptionalBooleanQuery(url, "includeTerminal"),
           limit: readOptionalIntegerQuery(url, "limit", 1),
-        }),
+        }).map((draft) => normalizeChatDraftSchedule({ store, draft, now }) ?? draft),
         templates: builtinAutomationTemplates,
       });
       return;
@@ -143,13 +146,18 @@ export async function handleAutomationDraftItem(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  schedulerRegistry: AutomationSchedulerRegistry,
   route: AutomationDraftRoute,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = requireCwd(url);
   try {
     const store = storeRegistry.getStore(cwd);
-    const draft = store.getAutomationDraft(route.draftId);
+    const draft = normalizeChatDraftSchedule({
+      store,
+      draft: store.getAutomationDraft(route.draftId),
+      now: new Date().toISOString(),
+    });
     if (!draft) {
       writeJson(response, 404, { error: "automation_draft_not_found", message: `Automation draft not found: ${route.draftId}` });
       return;
@@ -236,6 +244,7 @@ export async function handleAutomationDraftItem(
       const createInput = automationDraftToCreateRequest(validated);
       const created = createAutomationDefinitionFromResolvedInput({ store, input: createInput, now: new Date().toISOString() });
       const confirmed = store.confirmAutomationDraft(validated.id, created.automation.id, new Date().toISOString());
+      schedulerRegistry.refresh(cwd);
       writeJson(response, 201, { cwd, draft: confirmed ?? validated, automation: created.automation, thread: created.thread });
       return;
     }
@@ -251,6 +260,7 @@ export async function handleAutomationItem(
   storeRegistry: RunStoreRegistry,
   route: AutomationRoute,
   startRun: StartAutomationRunExecution,
+  schedulerRegistry: AutomationSchedulerRegistry,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = requireCwd(url);
@@ -288,6 +298,7 @@ export async function handleAutomationItem(
             },
             new Date().toISOString(),
           );
+          schedulerRegistry.refresh(cwd);
         }
         writeJson(response, 200, { cwd, automation: updated, thread: updated ? store.getLingThread(updated.threadId) : undefined });
         return;
@@ -296,6 +307,7 @@ export async function handleAutomationItem(
         const archivedAt = new Date().toISOString();
         const archived = store.archiveAutomationDefinition(automation.id, archivedAt);
         store.updateLingThread(automation.threadId, { status: "archived", activeRunId: null, archivedAt }, archivedAt);
+        schedulerRegistry.refresh(cwd);
         writeJson(response, 200, { cwd, automation: archived, thread: store.getLingThread(automation.threadId) });
         return;
       }
@@ -630,17 +642,37 @@ function createAutomationDefinitionFromRequest(input: {
   if (channelId && !input.store.getChannel(channelId)) {
     throw new HttpError(404, "channel_not_found", `Channel not found: ${channelId}`);
   }
+  const targetThreadId = input.input.targetThreadId ?? input.input.target?.threadId;
+  if (input.input.automationMode === "heartbeat") {
+    if (!targetThreadId) {
+      throw new HttpError(400, "target_thread_required", "对话自动化需要选择目标对话。");
+    }
+    const targetThread = input.store.getLingThread(targetThreadId);
+    if (!targetThread || targetThread.status === "archived" || targetThread.archivedAt) {
+      throw new HttpError(409, "target_thread_unavailable", "目标对话不存在或已归档，不能创建对话自动化。");
+    }
+    if (!targetThread.lastRunId) {
+      throw new HttpError(409, "target_thread_not_resumable", "目标对话还没有可复用的运行记录，暂时不能创建对话自动化。");
+    }
+  }
   return createAutomationDefinitionFromResolvedInput({
     store: input.store,
     input: {
       channelId,
       workspaceId: DEFAULT_WORKSPACE_ID,
+      automationMode: input.input.automationMode ?? "cron",
       title: input.input.title,
       description: input.input.description ?? template.description,
       kind: input.input.kind,
       status: input.input.status ?? "enabled",
       trigger: input.input.trigger ?? template.trigger,
-      target: resolveTarget(input.cwd, channelId, input.input.target),
+      rrule: input.input.rrule,
+      cwds: input.input.cwds,
+      targetThreadId,
+      executionEnvironment: input.input.executionEnvironment ?? (input.input.automationMode === "heartbeat" ? undefined : "local"),
+      reasoningEffort: input.input.reasoningEffort,
+      model: input.input.model,
+      target: resolveAutomationTarget(input.cwd, channelId, input.input.target, input.input.automationMode, input.input.targetThreadId),
       promptTemplate: input.input.promptTemplate ?? template.promptTemplate,
       executionPolicy: { ...template.executionPolicy, ...(input.input.executionPolicy ?? {}) },
       outputPolicy: input.input.outputPolicy ?? template.outputPolicy,
@@ -673,11 +705,18 @@ function createAutomationDefinitionFromResolvedInput(input: {
       workspaceId: input.input.workspaceId,
       channelId,
       threadId: thread.id,
+      automationMode: input.input.automationMode,
       title: input.input.title,
       description: input.input.description,
       kind: input.input.kind,
       status: input.input.status ?? "enabled",
       trigger: input.input.trigger,
+      rrule: input.input.rrule,
+      cwds: input.input.cwds,
+      targetThreadId: input.input.targetThreadId,
+      executionEnvironment: input.input.executionEnvironment,
+      reasoningEffort: input.input.reasoningEffort,
+      model: input.input.model,
       target: input.input.target,
       promptTemplate: input.input.promptTemplate,
       executionPolicy: input.input.executionPolicy,
@@ -695,11 +734,13 @@ function previewAutomationDefinitionFromDraft(draft: AutomationDraft, cwd: strin
     workspaceId: createInput.workspaceId ?? DEFAULT_WORKSPACE_ID,
     channelId: createInput.channelId,
     threadId: draft.proposedByThreadId ?? `automation_preview_thread_${draft.id}`,
+    automationMode: "cron",
     title: createInput.title,
     description: createInput.description,
     kind: createInput.kind,
     status: "enabled",
     trigger: createInput.trigger,
+    cwds: [],
     target: createInput.target ?? resolveTarget(cwd, createInput.channelId, undefined),
     promptTemplate: createInput.promptTemplate,
     executionPolicy: createInput.executionPolicy,
@@ -718,23 +759,177 @@ function inferChatDraftTitle(prompt: string): string {
 function inferChatDraftTrigger(prompt: string): AutomationTrigger {
   const normalized = prompt.toLowerCase();
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  if (/\bweekly\b|每周|周报/.test(normalized)) {
+  const intervalMs = inferChatDraftIntervalMs(normalized);
+  if (intervalMs) {
     return {
       type: "schedule",
       timezone,
-      schedule: { cadence: "weekly", weekday: 5, timeOfDay: "17:00" },
+      schedule: { cadence: "interval", everyMs: intervalMs },
       missedRunPolicy: "skip",
     };
   }
-  if (/\bdaily\b|每天|日报/.test(normalized)) {
+  const timeOfDay = inferChatDraftTimeOfDay(normalized);
+  const weeklyDay = inferChatDraftWeekday(normalized);
+  if (weeklyDay !== undefined || /\bweekly\b|每周|周报/.test(normalized)) {
     return {
       type: "schedule",
       timezone,
-      schedule: { cadence: "daily", timeOfDay: "09:00" },
+      schedule: { cadence: "weekly", weekday: weeklyDay ?? 5, timeOfDay: timeOfDay ?? "17:00" },
+      missedRunPolicy: "skip",
+    };
+  }
+  if (/\bdaily\b|every\s+day\b|每天|每日|天天|日报/.test(normalized)) {
+    return {
+      type: "schedule",
+      timezone,
+      schedule: { cadence: "daily", timeOfDay: timeOfDay ?? "09:00" },
       missedRunPolicy: "skip",
     };
   }
   return { type: "manual" };
+}
+
+function inferChatDraftIntervalMs(normalizedPrompt: string): number | undefined {
+  if (/每分钟|每\s*1\s*分钟|一分钟一次|每\s*minute|every\s+minute|once\s+a\s+minute/.test(normalizedPrompt)) {
+    return 60_000;
+  }
+  if (/每小时|每\s*1\s*(?:小时|个小时)|一小时一次|every\s+hour|once\s+an?\s+hour/.test(normalizedPrompt)) {
+    return 60 * 60_000;
+  }
+  const zhMinutes = /每\s*(\d{1,3})\s*分钟/.exec(normalizedPrompt);
+  if (zhMinutes) {
+    const minutes = Number.parseInt(zhMinutes[1], 10);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : undefined;
+  }
+  const zhHours = /每\s*(\d{1,3})\s*(?:小时|个小时)/.exec(normalizedPrompt);
+  if (zhHours) {
+    const hours = Number.parseInt(zhHours[1], 10);
+    return Number.isFinite(hours) && hours > 0 ? hours * 60 * 60_000 : undefined;
+  }
+  const zhDays = /每\s*(\d{1,3})\s*天/.exec(normalizedPrompt);
+  if (zhDays) {
+    const days = Number.parseInt(zhDays[1], 10);
+    return Number.isFinite(days) && days > 0 ? days * 24 * 60 * 60_000 : undefined;
+  }
+  const enMinutes = /every\s+(\d{1,3})\s*(?:minute|minutes|min|mins)\b/.exec(normalizedPrompt);
+  if (enMinutes) {
+    const minutes = Number.parseInt(enMinutes[1], 10);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : undefined;
+  }
+  const enHours = /every\s+(\d{1,3})\s*(?:hour|hours|hr|hrs)\b/.exec(normalizedPrompt);
+  if (enHours) {
+    const hours = Number.parseInt(enHours[1], 10);
+    return Number.isFinite(hours) && hours > 0 ? hours * 60 * 60_000 : undefined;
+  }
+  const enDays = /every\s+(\d{1,3})\s*(?:day|days)\b/.exec(normalizedPrompt);
+  if (enDays) {
+    const days = Number.parseInt(enDays[1], 10);
+    return Number.isFinite(days) && days > 0 ? days * 24 * 60 * 60_000 : undefined;
+  }
+  return undefined;
+}
+
+function inferChatDraftTimeOfDay(normalizedPrompt: string): string | undefined {
+  const colonTime = /(?:at\s*)?(?:凌晨|早上|上午|中午|下午|晚上|晚间|morning|afternoon|evening|night)?\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*(am|pm)?/.exec(normalizedPrompt);
+  if (colonTime) {
+    return normalizeTimeOfDay(colonTime[1], colonTime[2], `${colonTime[0]} ${colonTime[3] ?? ""}`);
+  }
+  const zhOClock = /(?:凌晨|早上|上午|中午|下午|晚上|晚间)?\s*(\d{1,2})\s*点\s*(半|(\d{1,2})\s*分?)?/.exec(normalizedPrompt);
+  if (zhOClock) {
+    return normalizeTimeOfDay(zhOClock[1], zhOClock[2] === "半" ? "30" : zhOClock[3] ?? "0", zhOClock[0]);
+  }
+  const enOClock = /\bat\s*(\d{1,2})(?:\s*(am|pm))\b/.exec(normalizedPrompt);
+  if (enOClock) {
+    return normalizeTimeOfDay(enOClock[1], "0", enOClock[2] ?? enOClock[0]);
+  }
+  return undefined;
+}
+
+function normalizeTimeOfDay(rawHour: string, rawMinute: string, marker: string): string | undefined {
+  let hour = Number.parseInt(rawHour, 10);
+  const minute = Number.parseInt(rawMinute, 10);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return undefined;
+  }
+  const lowerMarker = marker.toLowerCase();
+  if ((lowerMarker.includes("下午") || lowerMarker.includes("晚上") || lowerMarker.includes("晚间") || lowerMarker.includes("pm") || lowerMarker.includes("afternoon") || lowerMarker.includes("evening") || lowerMarker.includes("night")) && hour < 12) {
+    hour += 12;
+  }
+  if ((lowerMarker.includes("凌晨") || lowerMarker.includes("上午") || lowerMarker.includes("早上") || lowerMarker.includes("am") || lowerMarker.includes("morning")) && hour === 12) {
+    hour = 0;
+  }
+  if (lowerMarker.includes("中午") && hour < 11) {
+    hour += 12;
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function inferChatDraftWeekday(normalizedPrompt: string): 0 | 1 | 2 | 3 | 4 | 5 | 6 | undefined {
+  const zhWeekday = /(?:每周|周|星期|礼拜)\s*([一二三四五六日天1-7])/.exec(normalizedPrompt);
+  if (zhWeekday) {
+    return parseZhWeekday(zhWeekday[1]);
+  }
+  const enWeekday = /\b(?:every\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)\b/.exec(normalizedPrompt);
+  if (!enWeekday) {
+    return undefined;
+  }
+  return parseEnWeekday(enWeekday[1]);
+}
+
+function parseZhWeekday(value: string): 0 | 1 | 2 | 3 | 4 | 5 | 6 | undefined {
+  const weekdays: Record<string, 0 | 1 | 2 | 3 | 4 | 5 | 6> = {
+    "日": 0,
+    "天": 0,
+    "7": 0,
+    "一": 1,
+    "1": 1,
+    "二": 2,
+    "2": 2,
+    "三": 3,
+    "3": 3,
+    "四": 4,
+    "4": 4,
+    "五": 5,
+    "5": 5,
+    "六": 6,
+    "6": 6,
+  };
+  return weekdays[value];
+}
+
+function parseEnWeekday(value: string): 0 | 1 | 2 | 3 | 4 | 5 | 6 | undefined {
+  const normalized = value.slice(0, 3);
+  const weekdays: Record<string, 0 | 1 | 2 | 3 | 4 | 5 | 6> = {
+    sun: 0,
+    mon: 1,
+    tue: 2,
+    wed: 3,
+    thu: 4,
+    fri: 5,
+    sat: 6,
+  };
+  return weekdays[normalized];
+}
+
+function normalizeChatDraftSchedule(input: {
+  readonly store: RunStore;
+  readonly draft: AutomationDraft | undefined;
+  readonly now: string;
+}): AutomationDraft | undefined {
+  const { store, draft, now } = input;
+  if (!draft || draft.source !== "chat" || draft.trigger?.type === "schedule") {
+    return draft;
+  }
+  const text = [
+    draft.title,
+    draft.description,
+    draft.promptTemplate?.promptMarkdown,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n");
+  const inferred = inferChatDraftTrigger(text);
+  if (inferred.type !== "schedule") {
+    return draft;
+  }
+  return store.updateAutomationDraft(draft.id, { trigger: inferred }, now) ?? draft;
 }
 
 function createChatDraftPromptTemplate(prompt: string): AutomationPromptTemplate {
@@ -801,6 +996,27 @@ function resolveTarget(cwd: string, channelId: string | undefined, target: Autom
     channelId,
     cwd,
   };
+}
+
+function resolveAutomationTarget(
+  cwd: string,
+  channelId: string | undefined,
+  target: AutomationTarget | undefined,
+  automationMode: "cron" | "heartbeat" | undefined,
+  targetThreadId: string | undefined,
+): AutomationTarget {
+  if (target) {
+    return target;
+  }
+  if (automationMode === "heartbeat" && targetThreadId) {
+    return {
+      scope: "thread",
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      threadId: targetThreadId,
+      cwd,
+    };
+  }
+  return resolveTarget(cwd, channelId, undefined);
 }
 
 function requireCwd(url: URL): string {

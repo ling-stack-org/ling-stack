@@ -5,6 +5,9 @@ import type { SkillApprovalProfile } from "./skill-types.js";
 
 export type AutomationStatus = "enabled" | "disabled" | "paused" | "archived" | "error";
 export type AutomationKind = "daily_brief" | "weekly_review" | "project_monitor" | "custom_prompt";
+export type AutomationMode = "cron" | "heartbeat";
+export type AutomationExecutionEnvironment = "local" | "worktree";
+export type AutomationReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type P0CreateAutomationKind = Exclude<AutomationKind, "project_monitor">;
 export type AutomationRunStatus =
   | "queued"
@@ -110,11 +113,18 @@ export interface AutomationDefinition {
   readonly workspaceId: string;
   readonly channelId?: string;
   readonly threadId: string;
+  readonly automationMode: AutomationMode;
   readonly title: string;
   readonly description?: string;
   readonly kind: AutomationKind;
   readonly status: AutomationStatus;
   readonly trigger: AutomationTrigger;
+  readonly rrule?: string;
+  readonly cwds: readonly string[];
+  readonly targetThreadId?: string;
+  readonly executionEnvironment?: AutomationExecutionEnvironment;
+  readonly reasoningEffort?: AutomationReasoningEffort;
+  readonly model?: string;
   readonly target: AutomationTarget;
   readonly promptTemplate: AutomationPromptTemplate;
   readonly executionPolicy: AutomationExecutionPolicy;
@@ -213,11 +223,18 @@ export interface CreateAutomationDefinitionInput {
   readonly workspaceId?: string;
   readonly channelId?: string;
   readonly threadId: string;
+  readonly automationMode?: AutomationMode;
   readonly title: string;
   readonly description?: string;
   readonly kind: AutomationKind;
   readonly status?: AutomationStatus;
   readonly trigger: AutomationTrigger;
+  readonly rrule?: string;
+  readonly cwds?: readonly string[];
+  readonly targetThreadId?: string;
+  readonly executionEnvironment?: AutomationExecutionEnvironment;
+  readonly reasoningEffort?: AutomationReasoningEffort;
+  readonly model?: string;
   readonly target: AutomationTarget;
   readonly promptTemplate: AutomationPromptTemplate;
   readonly executionPolicy: AutomationExecutionPolicy;
@@ -228,11 +245,18 @@ export interface CreateAutomationDefinitionInput {
 export interface UpdateAutomationDefinitionInput {
   readonly channelId?: string | null;
   readonly threadId?: string;
+  readonly automationMode?: AutomationMode;
   readonly title?: string;
   readonly description?: string | null;
   readonly kind?: AutomationKind;
   readonly status?: AutomationStatus;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string | null;
+  readonly cwds?: readonly string[];
+  readonly targetThreadId?: string | null;
+  readonly executionEnvironment?: AutomationExecutionEnvironment | null;
+  readonly reasoningEffort?: AutomationReasoningEffort | null;
+  readonly model?: string | null;
   readonly target?: AutomationTarget;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   archiveAutomation,
   confirmAutomationDraft,
+  createAutomation,
   createAutomationDraft,
   discardAutomationDraft,
   listAutomationDrafts,
@@ -52,6 +53,7 @@ export interface AutomationsActions {
   readonly refreshAutomations: (cwd?: string) => Promise<void>;
   readonly createFromTemplate: (templateId: BuiltinAutomationTemplateId) => Promise<void>;
   readonly createManualDraft: (partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
+  readonly createAutomationDefinition: (automation: CreateAutomationRequest) => Promise<void>;
   readonly createChatDraft: (prompt: string) => Promise<void>;
   readonly updateDraft: (draftId: string, partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
   readonly previewDraft: (draftId: string) => Promise<void>;
@@ -108,6 +110,17 @@ export function useAutomationsDomain(input: {
     setSelectedDraftId(automationDrafts[0]?.id ?? "");
   }, [automationDrafts, selectedDraftId]);
 
+  useEffect(() => {
+    const cwd = input.cwd.trim();
+    if (!cwd || automations.length === 0) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      void refreshRuntimeState(cwd);
+    }, 15_000);
+    return () => window.clearInterval(interval);
+  }, [input.cwd, automations.length]);
+
   async function refreshAutomations(cwd = input.cwd): Promise<void> {
     if (!cwd) {
       setAutomations([]);
@@ -145,6 +158,27 @@ export function useAutomationsDomain(input: {
     try {
       const response = await listAutomationSchedulers(cwd);
       setSchedulers(response.schedulers);
+    } catch (caught) {
+      input.setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function refreshRuntimeState(cwd = input.cwd): Promise<void> {
+    if (!cwd) {
+      setAutomationRuns([]);
+      setSchedulers([]);
+      return;
+    }
+    try {
+      const [automationsResponse, runsResponse, schedulersResponse] = await Promise.all([
+        listAutomations(cwd),
+        listAutomationRuns(cwd, { limit: 100 }),
+        listAutomationSchedulers(cwd),
+      ]);
+      setAutomations(automationsResponse.automations);
+      setTemplates(automationsResponse.templates);
+      setAutomationRuns(runsResponse.automationRuns);
+      setSchedulers(schedulersResponse.schedulers);
     } catch (caught) {
       input.setErrorMessage(caught instanceof Error ? caught.message : String(caught));
     }
@@ -192,6 +226,27 @@ export function useAutomationsDomain(input: {
         partialAutomation,
       });
       setSelectedDraftId(response.draft.id);
+      await refreshAutomations(cwd);
+    } catch (caught) {
+      input.setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createAutomationDefinition(automation: CreateAutomationRequest): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd) {
+      input.setErrorMessage("本地工作区未就绪");
+      return;
+    }
+    setLoading(true);
+    try {
+      input.setErrorMessage("");
+      const response = await createAutomation(cwd, automation);
+      setSelectedAutomationId(response.automation.id);
+      setSelectedDraftId("");
+      setAutomations((current) => [response.automation, ...current.filter((item) => item.id !== response.automation.id)]);
       await refreshAutomations(cwd);
     } catch (caught) {
       input.setErrorMessage(caught instanceof Error ? caught.message : String(caught));
@@ -466,6 +521,7 @@ export function useAutomationsDomain(input: {
       refreshAutomations,
       createFromTemplate,
       createManualDraft,
+      createAutomationDefinition,
       createChatDraft,
       updateDraft,
       previewDraft,

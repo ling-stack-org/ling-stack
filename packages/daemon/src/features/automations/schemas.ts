@@ -1,10 +1,13 @@
 import type {
   AutomationDraftSource,
   AutomationDraftStatus,
+  AutomationExecutionEnvironment,
   AutomationExecutionPolicy,
   AutomationKind,
+  AutomationMode,
   AutomationOutputPolicy,
   AutomationPromptTemplate,
+  AutomationReasoningEffort,
   AutomationRunStatus,
   AutomationSchedule,
   AutomationStatus,
@@ -15,16 +18,23 @@ import type {
   BuiltinAutomationTemplateId,
 } from "@ling-stack/core";
 import { readOnlyRunTools } from "@ling-stack/core";
-import { isRecord, readNullableString, readOptionalBoolean, readOptionalNumber, readOptionalString, readString } from "../../shared/validation.js";
+import { isRecord, readNullableString, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 
 export interface CreateAutomationRequest {
   readonly kind: AutomationKind;
   readonly title: string;
+  readonly automationMode?: AutomationMode;
   readonly channelId?: string;
   readonly description?: string;
   readonly target?: AutomationTarget;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string;
+  readonly cwds?: readonly string[];
+  readonly targetThreadId?: string;
+  readonly executionEnvironment?: AutomationExecutionEnvironment;
+  readonly reasoningEffort?: AutomationReasoningEffort;
+  readonly model?: string;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;
   readonly outputPolicy?: AutomationOutputPolicy;
@@ -34,8 +44,15 @@ export interface CreateAutomationRequest {
 export interface UpdateAutomationRequest {
   readonly title?: string;
   readonly description?: string | null;
+  readonly automationMode?: AutomationMode;
   readonly status?: AutomationStatus;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string | null;
+  readonly cwds?: readonly string[];
+  readonly targetThreadId?: string | null;
+  readonly executionEnvironment?: AutomationExecutionEnvironment | null;
+  readonly reasoningEffort?: AutomationReasoningEffort | null;
+  readonly model?: string | null;
   readonly target?: AutomationTarget;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;
@@ -70,6 +87,9 @@ export interface UpdateAutomationDraftRequest {
 
 const automationStatuses: readonly AutomationStatus[] = ["enabled", "disabled", "paused", "archived", "error"];
 const automationKinds: readonly AutomationKind[] = ["daily_brief", "weekly_review", "project_monitor", "custom_prompt"];
+const automationModes: readonly AutomationMode[] = ["cron", "heartbeat"];
+const automationExecutionEnvironments: readonly AutomationExecutionEnvironment[] = ["local", "worktree"];
+const automationReasoningEfforts: readonly AutomationReasoningEffort[] = ["low", "medium", "high", "xhigh"];
 const automationDraftSources: readonly AutomationDraftSource[] = ["template", "manual", "chat"];
 const automationDraftStatuses: readonly AutomationDraftStatus[] = ["draft", "needs_user_input", "ready_for_confirmation", "confirmed", "discarded"];
 const builtinAutomationTemplateIds: readonly BuiltinAutomationTemplateId[] = [
@@ -103,16 +123,25 @@ export function parseCreateAutomationRequest(value: unknown): CreateAutomationRe
   }
   const channelId = readOptionalString(value, "channelId");
   const target = parseOptionalAutomationTarget(value.target);
-  if (!channelId && !target) {
+  const automationMode = parseOptionalAutomationMode(value.automationMode);
+  const targetThreadId = readOptionalString(value, "targetThreadId");
+  if (!channelId && !target && !(automationMode === "heartbeat" && targetThreadId)) {
     throw new Error("channelId or target is required");
   }
   return {
     kind,
     title: readString(value, "title"),
+    automationMode,
     channelId,
     description: readOptionalString(value, "description"),
     target,
     trigger: parseOptionalAutomationTrigger(value.trigger),
+    rrule: readOptionalString(value, "rrule"),
+    cwds: readOptionalStringArray(value, "cwds"),
+    targetThreadId,
+    executionEnvironment: parseOptionalAutomationExecutionEnvironment(value.executionEnvironment),
+    reasoningEffort: parseOptionalAutomationReasoningEffort(value.reasoningEffort),
+    model: readOptionalString(value, "model"),
     promptTemplate: parseOptionalAutomationPromptTemplate(value.promptTemplate),
     executionPolicy: parseOptionalAutomationExecutionPolicy(value.executionPolicy),
     outputPolicy: parseOptionalAutomationOutputPolicy(value.outputPolicy),
@@ -152,8 +181,15 @@ export function parseUpdateAutomationRequest(value: unknown): UpdateAutomationRe
   return {
     title: readOptionalString(value, "title"),
     description: readNullableString(value, "description"),
+    automationMode: parseOptionalAutomationMode(value.automationMode),
     status: parseOptionalAutomationStatus(value.status),
     trigger: parseOptionalAutomationTrigger(value.trigger),
+    rrule: readNullableString(value, "rrule"),
+    cwds: readOptionalStringArray(value, "cwds"),
+    targetThreadId: readNullableString(value, "targetThreadId"),
+    executionEnvironment: parseNullableAutomationExecutionEnvironment(value.executionEnvironment),
+    reasoningEffort: parseNullableAutomationReasoningEffort(value.reasoningEffort),
+    model: readNullableString(value, "model"),
     target: parseOptionalAutomationTarget(value.target),
     promptTemplate: parseOptionalAutomationPromptTemplate(value.promptTemplate),
     executionPolicy: parseOptionalAutomationExecutionPolicy(value.executionPolicy),
@@ -269,10 +305,17 @@ function parseDraftPartialAutomationRequest(value: unknown): Partial<CreateAutom
   return {
     kind: kind ? parseAutomationKind(kind) : undefined,
     title: readOptionalString(value, "title"),
+    automationMode: parseOptionalAutomationMode(value.automationMode),
     channelId: readOptionalString(value, "channelId"),
     description: readOptionalString(value, "description"),
     target: parseOptionalAutomationTarget(value.target),
     trigger: parseOptionalAutomationTrigger(value.trigger),
+    rrule: readOptionalString(value, "rrule"),
+    cwds: readOptionalStringArray(value, "cwds"),
+    targetThreadId: readOptionalString(value, "targetThreadId"),
+    executionEnvironment: parseOptionalAutomationExecutionEnvironment(value.executionEnvironment),
+    reasoningEffort: parseOptionalAutomationReasoningEffort(value.reasoningEffort),
+    model: readOptionalString(value, "model"),
     promptTemplate: parseOptionalAutomationPromptTemplate(value.promptTemplate),
     executionPolicy: parseOptionalAutomationExecutionPolicy(value.executionPolicy),
     outputPolicy: parseOptionalAutomationOutputPolicy(value.outputPolicy),
@@ -295,6 +338,50 @@ function parseOptionalAutomationStatus(value: unknown): AutomationStatus | undef
     throw new Error("status must be a string");
   }
   return parseAutomationStatus(value);
+}
+
+function parseOptionalAutomationMode(value: unknown): AutomationMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !automationModes.includes(value as AutomationMode)) {
+    throw new Error("automationMode must be cron or heartbeat");
+  }
+  return value as AutomationMode;
+}
+
+function parseOptionalAutomationExecutionEnvironment(value: unknown): AutomationExecutionEnvironment | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !automationExecutionEnvironments.includes(value as AutomationExecutionEnvironment)) {
+    throw new Error("executionEnvironment must be local or worktree");
+  }
+  return value as AutomationExecutionEnvironment;
+}
+
+function parseNullableAutomationExecutionEnvironment(value: unknown): AutomationExecutionEnvironment | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  return parseOptionalAutomationExecutionEnvironment(value);
+}
+
+function parseOptionalAutomationReasoningEffort(value: unknown): AutomationReasoningEffort | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !automationReasoningEfforts.includes(value as AutomationReasoningEffort)) {
+    throw new Error("reasoningEffort must be low, medium, high, or xhigh");
+  }
+  return value as AutomationReasoningEffort;
+}
+
+function parseNullableAutomationReasoningEffort(value: unknown): AutomationReasoningEffort | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  return parseOptionalAutomationReasoningEffort(value);
 }
 
 function parseOptionalAutomationTrigger(value: unknown): AutomationTrigger | undefined {

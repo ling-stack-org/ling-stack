@@ -397,6 +397,7 @@ export function AppShell(): JSX.Element {
     refreshAutomations,
     createFromTemplate: createAutomationFromTemplate,
     createManualDraft,
+    createAutomationDefinition,
     createChatDraft,
     updateDraft,
     previewDraft,
@@ -3031,7 +3032,7 @@ export function AppShell(): JSX.Element {
               />
             ) : (
               <>
-                {activeView === "providers" || (activeView === "teammates" && selectedAiTeammate) ? null : (
+                {activeView === "providers" || activeView === "automations" || (activeView === "teammates" && selectedAiTeammate) ? null : (
                   <div className="workspace-head">
                     <div>
                       <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
@@ -3039,7 +3040,7 @@ export function AppShell(): JSX.Element {
                     </div>
                     {activeView === "teammates" ? (
                       <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-                    ) : activeView === "automations" || activeView === "settings" ? null : (
+                    ) : activeView === "settings" ? null : (
                       <StatusBadge status={latestStatus} />
                     )}
                   </div>
@@ -3120,6 +3121,7 @@ export function AppShell(): JSX.Element {
                   <AutomationsPage
                 cwd={form.cwd}
                 channels={channels}
+                providers={providers}
                 automations={automations}
                 automationRuns={automationRuns}
                 automationDrafts={automationDrafts}
@@ -3138,6 +3140,7 @@ export function AppShell(): JSX.Element {
                 onStopScheduler={() => void stopAutomationSchedulerAction()}
                 onCreateFromTemplate={createAutomationFromTemplate}
                 onCreateManualDraft={createManualDraft}
+                onCreateAutomation={createAutomationDefinition}
                 onCreateChatDraft={createChatDraft}
                 onSelectAutomation={setSelectedAutomationId}
                 onSelectDraft={setSelectedDraftId}

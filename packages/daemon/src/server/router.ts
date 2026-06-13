@@ -359,7 +359,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/automations") {
-    await handleAutomationsCollection(request, response, config, storeRegistry);
+    await handleAutomationsCollection(request, response, config, storeRegistry, automationSchedulers);
     return;
   }
 
@@ -419,13 +419,14 @@ export async function routeRequest(
               controlPlaneEvents,
             },
           )),
+      automationSchedulers,
     );
     return;
   }
 
   const automationDraftRoute = parseAutomationDraftRoute(url.pathname);
   if (automationDraftRoute) {
-    await handleAutomationDraftItem(request, response, config, storeRegistry, automationDraftRoute);
+    await handleAutomationDraftItem(request, response, config, storeRegistry, automationSchedulers, automationDraftRoute);
     return;
   }
 
