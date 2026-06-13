@@ -20,6 +20,8 @@ export interface WorkflowContextInspectSummary {
     readonly estimatedInputTokens: number;
     readonly overBudget: boolean;
     readonly tokenizer?: string;
+    readonly capabilitySource?: string;
+    readonly capabilityConfidence?: string;
   };
   readonly sectionCount: number;
   readonly sourceRefCount: number;
@@ -78,6 +80,8 @@ export function buildWorkflowContextInspectSummary(input: {
       estimatedInputTokens: pack.estimatedInputTokens,
       overBudget: pack.overBudget,
       tokenizer: pack.budget.tokenizer,
+      capabilitySource: pack.budget.capabilitySource,
+      capabilityConfidence: pack.budget.capabilityConfidence,
     },
     sectionCount: pack.sections.length,
     sourceRefCount: pack.sourceRefs.length,

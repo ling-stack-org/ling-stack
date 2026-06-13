@@ -220,8 +220,19 @@ function matchingProviderTemplate(
   templates: readonly ProviderTemplate[],
 ): ProviderTemplate | undefined {
   return (
-    templates.find((template) => template.providerId === providerPreset.providerId && template.kind === providerPreset.kind && template.api === providerPreset.api) ??
-    templates.find((template) => template.providerId === providerPreset.providerId && template.kind === providerPreset.kind)
+    templates.find(
+      (template) =>
+        template.providerId === providerPreset.providerId &&
+        template.kind === providerPreset.kind &&
+        template.api === providerPreset.api &&
+        template.model === providerPreset.model,
+    ) ??
+    templates.find(
+      (template) =>
+        template.providerId === providerPreset.providerId &&
+        template.kind === providerPreset.kind &&
+        template.model === providerPreset.model,
+    )
   );
 }
 

@@ -886,6 +886,9 @@ Rules:
 - user overrides are never overwritten by detection or runtime observations;
 - runtime observations can reduce effective limits but cannot increase above a user
   override;
+- bundled template capability should only promote a provider to `known` when the
+  configured provider/model still matches the template identity; custom model ids fall
+  back to provider-family estimates or conservative defaults;
 - every prompt-producing path stores enough budget metadata to explain which source won;
 - media-only providers skip chat context budgeting and should return an explicit
   non-chat capability state to UI callers instead of fake chat limits. The non-chat
