@@ -45,6 +45,7 @@ import type {
   ChannelContextView,
   ChannelContextViewKind,
 } from "./context-processing/types.js";
+import { providerRuntimeObservationForPreset } from "./provider-runtime-observations.js";
 
 export type ContextPackKind =
   | "channel_reply"
@@ -186,7 +187,9 @@ const CHANNEL_REPLY_RECENT_CONTEXT_LIMIT = 6;
 const CHANNEL_REPLY_RECENT_CONTEXT_BODY_CHARS = 1_200;
 
 export function resolveProviderContextCapabilities(providerPreset?: ProviderPreset): ProviderContextCapabilities {
-  const snapshot = resolveProviderModelCapabilitySnapshot(providerPreset);
+  const snapshot = resolveProviderModelCapabilitySnapshot(providerPreset, {
+    runtimeObservation: providerRuntimeObservationForPreset(providerPreset),
+  });
   return {
     contextWindowTokens: snapshot.chatEligible ? snapshot.contextWindowTokens : undefined,
     maxOutputTokens: snapshot.chatEligible && snapshot.confidence === "known" ? snapshot.maxOutputTokens : undefined,

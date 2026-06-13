@@ -92,6 +92,60 @@ test("provider capability snapshot does not promote custom model ids to bundled 
   assert.equal(snapshot.maxOutputTokens, 1024);
 });
 
+test("provider capability snapshot applies runtime observed downgrades without mutating source identity", () => {
+  const snapshot = resolveProviderModelCapabilitySnapshot(
+    provider({
+      kind: "anthropic",
+      providerId: "custom-anthropic",
+      model: "claude-custom",
+      api: "anthropic-messages",
+    }),
+    {
+      runtimeObservation: {
+        providerPresetId: "provider_test",
+        providerKind: "anthropic",
+        providerApi: "anthropic-messages",
+        modelId: "claude-custom",
+        previousContextWindowTokens: 32768,
+        observedContextWindowTokens: 12000,
+        failureCode: "context_length_error",
+        observedAt: "2026-06-13T00:00:00.000Z",
+      },
+    },
+  );
+
+  assert.equal(snapshot.chatEligible, true);
+  assert.equal(snapshot.source, "runtime_observed");
+  assert.equal(snapshot.confidence, "estimated");
+  assert.equal(snapshot.contextWindowTokens, 12000);
+  assert.equal(snapshot.maxOutputTokens, 1024);
+  assert.equal(snapshot.observedAt, "2026-06-13T00:00:00.000Z");
+});
+
+test("provider capability snapshot keeps user overrides authoritative over runtime observations", () => {
+  const snapshot = resolveProviderModelCapabilitySnapshot(
+    provider({ contextWindow: 64000, maxTokens: 4096 }),
+    {
+      runtimeObservation: {
+        providerPresetId: "provider_test",
+        providerKind: "openai-compatible",
+        providerApi: "openai-completions",
+        modelId: "custom-model",
+        previousContextWindowTokens: 64000,
+        observedContextWindowTokens: 12000,
+        failureCode: "context_length_error",
+        observedAt: "2026-06-13T00:00:00.000Z",
+      },
+    },
+  );
+
+  assert.equal(snapshot.chatEligible, true);
+  assert.equal(snapshot.source, "user_override");
+  assert.equal(snapshot.confidence, "known");
+  assert.equal(snapshot.contextWindowTokens, 64000);
+  assert.equal(snapshot.maxOutputTokens, 4096);
+});
+
 test("provider capability snapshot uses conservative defaults for unknown compatible providers", () => {
   const snapshot = resolveProviderModelCapabilitySnapshot(provider());
 

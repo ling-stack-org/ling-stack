@@ -1788,6 +1788,16 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[1].task.prompt, /Compacted channel discussion summary for a no-tools retry/);
     assert.match(runner.runs[1].task.prompt, /channel_discussion_summary|Compacted visible message count/i);
+    const downgradedBudget = resolveProviderContextBudget(provider, "channel_reply");
+    assert.equal(downgradedBudget.mode, "model_estimated");
+    assert.equal(downgradedBudget.capabilitySource, "runtime_observed");
+    assert.equal(downgradedBudget.capabilityConfidence, "estimated");
+    assert.ok(downgradedBudget.contextWindowTokens < 32768);
+    const providerList = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+    const persistedProvider = providerList.providers.find((item) => item.id === provider.id);
+    assert.ok(persistedProvider);
+    assert.equal(persistedProvider.contextWindow, undefined);
+    assert.equal(persistedProvider.maxTokens, undefined);
 
     const summaries = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/context-summaries?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(summaries.contextSummaries.length, 1);

@@ -29,6 +29,7 @@ import {
   turnEnvelopeHasUserInput,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
+import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -431,6 +432,11 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
     if (!isContextLengthError(error)) {
       throw error;
     }
+    recordProviderContextLengthObservation({
+      providerPreset: contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined,
+      contextPack,
+      now: new Date().toISOString(),
+    });
     const compaction = compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
