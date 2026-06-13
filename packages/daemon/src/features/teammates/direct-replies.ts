@@ -3,7 +3,7 @@ import type { RunnerRegistry, RunnerResolution } from "../../runtime/runners.js"
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
-import { renderUsedMemoryPrompt } from "../memory/prompt.js";
+import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { formatTeammateDirectPrompt } from "./direct-prompts.js";
@@ -123,7 +123,14 @@ export async function createAiTeammateDirectReply(input: {
       maxResults: 6,
       includePrivate: true,
     });
-    const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
+    const renderedMemory = renderUsedMemoryPromptForView({
+      memories: memoryRecall.memories,
+      recallPolicyVersion: memoryRecall.policyVersion,
+      viewKind: "private_chat_view",
+      workspaceId: input.teammate.workspaceId,
+      consumerTeammateId: input.teammate.id,
+    });
+    const memoryPrompt = renderedMemory.prompt;
     const systemPrompt = [
       input.teammate.systemPrompt ?? `You are ${input.teammate.displayName}, an AI teammate inside Ling Stack.`,
       ...input.teammate.appendSystemPrompt,
@@ -196,15 +203,15 @@ export async function createAiTeammateDirectReply(input: {
       errorMessage: null,
     });
     input.stream?.onDone(reply);
-    if (memoryRecall.memories.length > 0) {
+    if (renderedMemory.memoryIds.length > 0) {
       input.store.recordUsedMemoryEvent(
         {
-          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
+          memoryIds: renderedMemory.memoryIds,
           intent: "private-chat",
           recallQuery: memoryRecall.request.query,
           teammateId: input.teammate.id,
           responseId: reply.id,
-          policyVersion: memoryRecall.policyVersion,
+          policyVersion: renderedMemory.policyVersion,
         },
         new Date().toISOString(),
       );

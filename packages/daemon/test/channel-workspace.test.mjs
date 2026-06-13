@@ -6159,6 +6159,62 @@ test("teammate direct message stream emits ready delta and done events", async (
   }
 });
 
+test("teammate direct reply uses private chat memory isolation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-memory-isolation-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    const channel = await createChannel(daemon.url, cwd);
+    const privateMemory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "teammate",
+      ownerId: teammateId,
+      title: "Direct memory token",
+      body: "Designer private directmemorytoken preference should be available in private chat.",
+      sensitivity: "private",
+    })).memory;
+    const otherPrivateMemory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "teammate",
+      ownerId: "teammate_builtin_engineer",
+      title: "Other direct memory token",
+      body: "Engineer private directmemorytoken preference must stay isolated.",
+      sensitivity: "private",
+    })).memory;
+    const channelMemory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: channel.id,
+      title: "Channel direct memory token",
+      body: "Channel directmemorytoken context must not enter private chat by default.",
+    })).memory;
+
+    const created = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Use directmemorytoken in this private reply.",
+      requestAiReply: true,
+    });
+
+    assert.equal(created.aiReply.status, "ready");
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].systemPrompt, /Used memory:/);
+    assert.match(runner.runs[0].systemPrompt, /Designer private directmemorytoken preference/);
+    assert.doesNotMatch(runner.runs[0].systemPrompt, /Engineer private directmemorytoken preference/);
+    assert.doesNotMatch(runner.runs[0].systemPrompt, /Channel directmemorytoken context/);
+
+    const used = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&responseId=${encodeURIComponent(created.aiReply.id)}`);
+    assert.ok(used.events[0].memoryIds.includes(privateMemory.id));
+    assert.equal(used.events[0].memoryIds.includes(otherPrivateMemory.id), false);
+    assert.equal(used.events[0].memoryIds.includes(channelMemory.id), false);
+    assert.match(used.events[0].policyVersion, /memory_use_isolation_v1/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("teammate direct prompt anchors latest attachment message instead of old guidance context", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachment-anchor-"));
   const runner = new RecordingRunner();
