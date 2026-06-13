@@ -706,6 +706,37 @@ packages/daemon/src/features/channels/context-processing/views.ts
 - Private conversations do not leak into channel context unless explicitly referenced or
   promoted through an approved flow.
 
+#### C10A: Direct Reply Memory Context View
+
+Status: first direct-message implementation slice.
+
+Goal: make teammate direct replies use the same memory eligibility and audit contract as
+channel replies, without expanding the visible private-chat product surface.
+
+Scope:
+
+- Render direct-reply memory through `private_chat_view`.
+- Keep same-teammate private memory eligible for the private prompt.
+- Keep unrelated teammate memory and channel-scoped memory out of direct replies unless a
+  later explicit reference/promotion flow adds source refs.
+- Record used-memory events only for memory ids that actually enter the private prompt.
+- Include `memory_use_isolation_v1` in direct-reply used-memory audit policy strings.
+
+Non-goals:
+
+- No direct-message attachment materialization migration; that remains M5b.
+- No new private-chat Context View API or Web surface.
+- No implicit channel history import.
+- No memory storage or recall ranking changes.
+
+Acceptance:
+
+- A teammate private reply can use same-teammate private memory.
+- A teammate private reply does not use another teammate's private memory.
+- A teammate private reply does not use channel-scoped memory by default.
+- Used-memory audit for direct replies includes only rendered memory ids and the memory
+  isolation policy version.
+
 ## C11: Browser And E2E Acceptance
 
 Type: Web/e2e verification.
