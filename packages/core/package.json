@@ -24,6 +24,10 @@
     "./provider-adapters": {
       "types": "./dist/provider-adapters.d.ts",
       "default": "./dist/provider-adapters.js"
+    },
+    "./provider-model-capabilities": {
+      "types": "./dist/provider-model-capabilities.d.ts",
+      "default": "./dist/provider-model-capabilities.js"
     }
   },
   "scripts": {

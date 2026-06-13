@@ -212,7 +212,7 @@ export function ProviderSettings({
     matchingFixedTemplate.api === form.api &&
     normalizeProviderEndpoint(matchingFixedTemplate.baseUrl ?? "") === normalizeProviderEndpoint(form.baseUrl);
   const canEditCustomProviderFields = selectedTemplateIsCustom || !fixedTemplateMatchesCurrentShape;
-  const providerCapabilityState = deriveProviderCapabilityUiState(form);
+  const providerCapabilityState = deriveProviderCapabilityUiState(form, templates);
   const repairProviderId = repairRun ? readRunProviderPresetId(repairRun) : "";
   const repairProvider = repairProviderId ? providers.find((provider) => provider.id === repairProviderId) : undefined;
   const filteredProviders = useMemo(

@@ -979,7 +979,7 @@ Acceptance:
 
 #### C12D: Model Workbench UX
 
-Status: detailed implementation slice after C12A/C12B.
+Status: implemented in C12D web slice.
 
 Goal: keep model setup simple by default and make manual token fields clearly advanced
 overrides.
@@ -989,7 +989,9 @@ Current baseline:
 - token fields already live under `Advanced model limits`;
 - empty values are represented as `Auto`;
 - UI already has basic labels for `Auto`, `Estimated`, `Conservative`, and
-  `Custom override`.
+  `Custom override`;
+- Model Workbench now resolves its visible state through the same capability snapshot
+  resolver used by runtime budgeting.
 
 Required polish:
 
