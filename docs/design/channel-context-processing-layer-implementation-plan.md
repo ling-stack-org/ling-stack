@@ -833,6 +833,204 @@ apps/web/src/lib/providers.ts
   specialists, workflow steps, and condenser calls.
 - Provider capability detection never grants tool permissions or changes approval policy.
 
+#### C12A: Capability Snapshot Contract
+
+Status: detailed implementation slice.
+
+Goal: introduce one effective capability shape that runtime budget code can consume
+without treating persisted provider override fields as required setup.
+
+Contract:
+
+```ts
+type ProviderModelCapabilitySource =
+  | "user_override"
+  | "model_registry"
+  | "provider_template"
+  | "provider_metadata"
+  | "health_check"
+  | "runtime_observed"
+  | "conservative_default";
+
+type ProviderModelCapabilityConfidence = "known" | "estimated" | "conservative";
+
+interface ProviderModelCapabilitySnapshot {
+  readonly providerPresetId?: string;
+  readonly providerKind?: ProviderKind;
+  readonly providerApi?: ProviderApi;
+  readonly modelId?: string;
+  readonly source: ProviderModelCapabilitySource;
+  readonly confidence: ProviderModelCapabilityConfidence;
+  readonly contextWindowTokens: number;
+  readonly maxOutputTokens: number;
+  readonly tokenizer: "openai-compatible" | "anthropic-compatible" | "estimated";
+  readonly supportsStructuredOutput: boolean;
+  readonly observedAt?: string;
+  readonly reason?: string;
+}
+```
+
+Resolution priority:
+
+1. Explicit user override fields on `ProviderPreset`.
+2. Runtime-observed downgrade for the same provider/model if newer than the base source.
+3. Model registry or bundled provider template values.
+4. Provider metadata or successful health-check capability data.
+5. Known-provider family estimates.
+6. Conservative defaults for unknown OpenAI-compatible/custom providers.
+
+Rules:
+
+- user overrides are never overwritten by detection or runtime observations;
+- runtime observations can reduce effective limits but cannot increase above a user
+  override;
+- every prompt-producing path stores enough budget metadata to explain which source won;
+- media-only providers skip chat context budgeting and should return an explicit
+  non-chat capability state to UI callers instead of fake chat limits.
+
+Acceptance:
+
+- blank `contextWindow` and `maxTokens` remain valid persisted provider values;
+- `resolveProviderModelCapabilitySnapshot` returns a deterministic snapshot for
+  configured, template, and unknown providers;
+- snapshot source/confidence can map directly to Model Workbench labels:
+  `Auto`, `Estimated`, `Conservative`, and `Custom override`.
+
+#### C12B: Budget Resolver Integration
+
+Status: detailed implementation slice after C12A.
+
+Goal: feed the capability snapshot into Context Budget Manager and Context Pack builders
+without changing prompt text or permissions.
+
+Scope:
+
+- replace direct `providerPreset.contextWindow/maxTokens` reads in
+  `resolveProviderContextCapabilities` with capability snapshot resolution;
+- expose `capabilitySource` and `capabilityConfidence` in context budget metadata for
+  inspect surfaces;
+- use smaller reserved output for selectors and larger defaults for workflow/condenser
+  calls through the existing `ContextPackKind`;
+- keep existing context-window constants as fallback values only;
+- keep `ContextBudgetMode` compatibility:
+  - `known` source -> `model_known`;
+  - `estimated` source -> `model_estimated`;
+  - `conservative_default` -> `model_unknown`.
+
+Non-goals:
+
+- no new LLM call to estimate budgets;
+- no automatic retry loop change;
+- no prompt copy rewrite;
+- no UI token counters in default channel feed.
+
+Acceptance:
+
+- channel replies, selectors, private replies, workflow proposals, workflow steps, and
+  condenser calls all use the same snapshot resolver;
+- existing context-pack tests continue to pass;
+- inspect payload can explain budget source without exposing raw provider secrets.
+
+#### C12C: Runtime-Observed Downgrade
+
+Status: detailed implementation slice after C12B.
+
+Goal: handle provider context-length failures by lowering future effective budgets for
+the same provider/model without mutating user configuration.
+
+Trigger:
+
+- provider call fails with a classified context-length/token-limit error;
+- failure occurs after Context Processing has built a prompt or context pack;
+- provider/model identity is known.
+
+State:
+
+- first slice may keep observations in daemon-local memory for the running process;
+- durable observation storage is optional and should be added only when repeated
+  restart loss becomes a real product issue;
+- observed records should include provider preset id, model id, previous effective
+  context window, new effective context window, failure code, and timestamp.
+
+Policy:
+
+- downgrade only, never upgrade from runtime error handling;
+- cap the new context window conservatively, for example 75% of the estimated attempted
+  input plus reserved output, rounded down;
+- expire observations after a bounded period or provider edit;
+- user override remains authoritative, but no-tools retry may still compact more
+  aggressively for that single failing request.
+
+Acceptance:
+
+- a simulated context-length error changes the next effective snapshot source to
+  `runtime_observed`;
+- persisted provider fields remain unchanged;
+- no approval, tool, file, network, or memory policy changes.
+
+#### C12D: Model Workbench UX
+
+Status: detailed implementation slice after C12A/C12B.
+
+Goal: keep model setup simple by default and make manual token fields clearly advanced
+overrides.
+
+Current baseline:
+
+- token fields already live under `Advanced model limits`;
+- empty values are represented as `Auto`;
+- UI already has basic labels for `Auto`, `Estimated`, `Conservative`, and
+  `Custom override`.
+
+Required polish:
+
+- map the real capability snapshot source/confidence to the visible state instead of
+  deriving only from kind/api/manual fields;
+- show `Custom override` when either override field is present;
+- show `Conservative` for unknown compatible/custom models with no known limits;
+- show `Estimated` for known provider families whose exact model limit is not known;
+- show `Auto` for registry/template/provider metadata known limits;
+- do not show context/max-token inputs in the default form body;
+- include short helper copy that these fields are overrides, not required setup.
+
+Acceptance:
+
+- creating a custom OpenAI-compatible provider with blank token fields succeeds;
+- selecting a bundled known template shows automatic capability state;
+- editing manual limits changes the state to `Custom override`;
+- Web E2E opens Advanced before asserting token inputs.
+
+#### C12E: Implementation And Test Slices
+
+Status: detailed implementation plan.
+
+Recommended PR sequence:
+
+1. `C12A-contract`
+   - add capability snapshot types/helper in core or daemon-local provider utilities;
+   - add unit tests for user override, template known, known-family estimate, and
+     unknown conservative defaults.
+2. `C12B-budget`
+   - wire snapshot resolution into `context-packs.ts`;
+   - update context inspect metadata tests for source/confidence.
+3. `C12C-observed`
+   - add runtime observed downgrade registry and narrow classifier tests;
+   - keep persistence out unless the implementation needs restart survival.
+4. `C12D-web`
+   - connect Model Workbench state to the resolved capability snapshot or an API-exposed
+     derived state;
+   - add Web E2E for Advanced override visibility.
+
+Validation:
+
+- core/provider capability resolver tests;
+- daemon context budget tests for each consumer kind;
+- provider settings schema tests for blank token fields and manual override;
+- targeted Model Workbench E2E;
+- `corepack pnpm --filter @ling-stack/web typecheck`;
+- `corepack pnpm --filter @ling-stack/daemon typecheck`;
+- `git diff --check`.
+
 ## Recommended PR Sequence
 
 | PR | Scope | Risk |
