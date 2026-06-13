@@ -1099,14 +1099,18 @@ developer diagnostics.
 
 ### CP10: Daemon Collaboration Card Read Model
 
-Goal: expose a stable daemon-side read model for collaboration cards and final reports
-only after the Web-derived model proves stable.
+Status: implemented and reconciled with CCI13/CCI14 in
+`multi-agent-collaboration-cards-implementation-plan.md`.
+
+Goal: expose a stable daemon-side read model for collaboration cards so Web and future
+clients do not each rebuild the same workflow summary.
 
 Scope:
 
 - derive from existing proposal/workflow/step/run/approval/artifact records;
-- cache only product fields needed by Web/mobile clients;
-- invalidate on workflow, step, run, approval, and artifact changes;
+- return only product fields needed by Web/mobile clients;
+- derive on request in the first slice instead of adding a persistent cache/invalidation
+  table;
 - keep Web derivation as compatibility fallback.
 
 Non-goals:
@@ -1122,8 +1126,8 @@ The daemon read model should be a product projection, not a new source of truth.
 Suggested endpoint shape:
 
 ```text
-GET /channels/:channelId/collaboration-cards
-GET /workflows/:workflowId/collaboration-card
+GET /channels/:channelId/collaboration-cards?cwd=...&limit=...
+GET /workflows/:workflowId/collaboration-card?cwd=...
 ```
 
 Suggested payload:
@@ -1147,19 +1151,28 @@ interface DaemonCollaborationCard {
 }
 ```
 
-Invalidation:
+Implemented surface:
 
-- proposal created/updated/cancelled/accepted;
-- workflow created/status updated;
-- workflow step status/run/link/summary/blocker updated;
-- run terminal state updated;
-- approval created/resolved;
-- artifact attached to a linked run/step;
-- final report packet created/updated if introduced later.
+- shared contract types live in `packages/contracts/src/workflows.ts`;
+- API client helpers live in `packages/api-client/src/client.ts`;
+- daemon derivation lives in `packages/daemon/src/features/channels/collaboration-cards.ts`
+  and is exposed through the channel/workflow routes;
+- Web right-panel collaboration cards prefer daemon payloads and keep local derivation as
+  fallback.
+
+Future cache/invalidation:
+
+- keep the first slice derived on request until profiling proves repeated derivation cost
+  matters;
+- if a durable cache is added later, invalidate on proposal, workflow, workflow-step, run,
+  approval, artifact, and final-report writes;
+- cached payloads must still exclude raw prompts, logs, context ids, selector scores,
+  route JSON, and private memory bodies.
 
 Compatibility:
 
-- Web keeps its local derivation as fallback until daemon projection is proven stable;
+- Web keeps its local derivation as fallback for old daemons, request failures, or missing
+  workflow cards;
 - daemon and Web schemas should share labels and mode rules;
 - API must not expose raw context section ids, token budgets, route JSON, selector
   scores, or log paths by default.
@@ -1168,9 +1181,16 @@ Acceptance:
 
 - daemon card matches current Web-derived card for active, blocked, completed, and failed
   workflows;
-- cache invalidates when step/run/approval/artifact state changes;
+- pending approvals map to the `waiting` product state;
+- branch metadata can produce compact parallel branch rows;
 - Web can render from daemon payload without changing user-visible behavior;
 - no permission grants or approval state transitions are performed by the read model.
+
+Validation:
+
+- daemon test: `workflow collaboration card endpoints derive compact product cards`;
+- Web E2E: `right progress panel prefers daemon collaboration card payload`;
+- Web E2E: `right progress panel falls back to local collaboration card derivation`.
 
 ### CP11: Full Context Processing Migration
 
