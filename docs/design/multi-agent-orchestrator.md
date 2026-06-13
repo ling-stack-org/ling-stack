@@ -81,6 +81,9 @@ Advanced follow-up design:
 
 - [Orchestrator Advanced](orchestrator-advanced.md) defines the parallel branch scheduler,
   custom auto-startable template schema, fan-in packet behavior, and additional tests.
+- [Channel Context Processing Layer](channel-context-processing-layer.md) defines how
+  channel context is collected, filtered, compacted, and rendered into per-agent Context
+  Views before Ling Agent, specialists, selectors, or workflow steps consume it.
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md) defines
   the user-facing visibility boundary: live progress is visible while work runs, terminal
   work folds into compact summaries, and raw selector, handoff, and runtime evidence stays
@@ -148,6 +151,8 @@ workflow template -> planned steps -> orchestrator starts eligible step -> task/
 
 - No free-form agent-to-agent loop.
 - No hidden context transfer between teammates.
+- No shared all-agent prompt history. Each teammate receives a bounded Context View for
+  its role, task, and permissions.
 - No runner bypass. Steps still execute through `RunnerRegistry`.
 - No automatic approval of `bash`, `edit`, `write`, release, external-send, or deploy
   actions.
@@ -304,6 +309,8 @@ The orchestrator should construct a step packet and pass it through existing ski
 run fields. As the Context Budget Manager lands, this packet becomes the
 `workflow_packet` Context Pack rendered into those same run fields; the state machine and
 task/run coordinator should not be replaced.
+The packet should be produced from the Context Processing Layer's `workflow_step_view`
+instead of bespoke prompt assembly inside the orchestrator.
 
 Step prompt inputs:
 

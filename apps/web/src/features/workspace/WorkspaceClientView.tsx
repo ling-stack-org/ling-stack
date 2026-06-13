@@ -51,7 +51,7 @@ import {
 import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
-import { createChannelWorktree, handoffChannelWorkspace, refreshChannelWorkspace } from "../../api/channels.js";
+import { createChannelWorktree, handoffChannelWorkspace, listChannelCollaborationCards, refreshChannelWorkspace } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -72,6 +72,9 @@ import {
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
 import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { buildCollaborationProgressProjection, type CollaborationProgressProjectionIcon, type CollaborationProgressProjectionItem, type CollaborationProgressProjectionTone } from "../../lib/collaboration-progress-projection.js";
+import { buildCollaborationTaskCardModel, type CollaborationTaskCardModel, type CollaborationTaskStepState } from "../../lib/collaboration-task-card.js";
+import { collaborationTaskCardToConversationWorkCell } from "../../lib/collaboration-task-work-cell.js";
 import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
 import {
   allChannelActivitySavedViewId,
@@ -219,7 +222,16 @@ type ChannelProposalEditDraft = {
   readonly prompt: string;
   readonly assigneeTeammateId: string;
   readonly acceptanceCriteriaText: string;
+  readonly shapingSummaryText: string;
+  readonly shapingOpenQuestionsText: string;
+  readonly shapingClarificationsText: string;
   readonly collaborationSteps: readonly ChannelProposalStepDraft[];
+};
+type RequirementShapingRow = {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string;
+  readonly tone?: "neutral" | "attention" | "success";
 };
 const proposalStepActions: readonly ChannelProposalStepDraft["action"][] = ["coordinated", "consulted", "reviewed", "flagged_risk"];
 type ThreadTurnsLoadState =
@@ -772,6 +784,12 @@ export function WorkspaceClientView({
   const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
   const [channelWorkspaceNotice, setChannelWorkspaceNotice] = useState("");
   const [channelWorkspaceError, setChannelWorkspaceError] = useState("");
+  const [channelCollaborationCardsState, setChannelCollaborationCardsState] = useState<{
+    readonly channelId: string;
+    readonly signature: string;
+    readonly status: "idle" | "loaded" | "error";
+    readonly cards: readonly CollaborationTaskCardModel[];
+  }>({ channelId: "", signature: "", status: "idle", cards: [] });
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
@@ -805,6 +823,58 @@ export function WorkspaceClientView({
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
   );
+  const channelCollaborationCardRefreshSignature = useMemo(() => {
+    const workflowsSignature = channelWorkflows
+      .filter((workflow) => workflow.channelId === selectedChannelId)
+      .map((workflow) => [workflow.id, workflow.status, workflow.updatedAt].join(":"))
+      .join("|");
+    const stepsSignature = channelWorkflowSteps
+      .filter((step) => step.channelId === selectedChannelId)
+      .map((step) => [step.id, step.workflowId, step.status, step.runId ?? "", step.blocker ?? "", step.resultSummary ?? "", step.updatedAt].join(":"))
+      .join("|");
+    const runsSignature = channelRuns
+      .map((run) => [run.id, run.status, run.workflowStepId ?? "", run.updatedAt, run.startedAt ?? "", run.endedAt ?? ""].join(":"))
+      .join("|");
+    const approvalsSignature = approvals
+      .filter((approval) => approval.channelId === selectedChannelId || channelRuns.some((run) => run.id === approval.runId))
+      .map((approval) => [approval.id, approval.runId ?? "", approval.workflowStepId ?? "", approval.status, approval.resolvedAt ?? "", approval.expiresAt ?? "", approval.createdAt].join(":"))
+      .join("|");
+    return [workflowsSignature, stepsSignature, runsSignature, approvalsSignature].join("\n");
+  }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId]);
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      setChannelCollaborationCardsState({ channelId: "", signature: "", status: "idle", cards: [] });
+      return;
+    }
+    let cancelled = false;
+    void listChannelCollaborationCards(workspaceCwd, selectedChannelId, { limit: 100 })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setChannelCollaborationCardsState({
+          channelId: selectedChannelId,
+          signature: channelCollaborationCardRefreshSignature,
+          status: "loaded",
+          cards: response.cards,
+        });
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setChannelCollaborationCardsState({
+          channelId: selectedChannelId,
+          signature: channelCollaborationCardRefreshSignature,
+          status: "error",
+          cards: [],
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelCollaborationCardRefreshSignature, cwd, selectedChannelId]);
   const derivedChannelWorkThreads = useMemo(
     () => deriveWorkspaceThreadsFromRuns(channelRuns),
     [channelRuns],
@@ -906,11 +976,45 @@ export function WorkspaceClientView({
     }
     return cells;
   }, [approvals, channelArtifactsByRun, channelRuns, channelWorkflowSteps, channelWorkflows, cwd, selectedChannelId, t]);
+  const localCollaborationTaskCardByWorkflowId = useMemo(() => {
+    const cards = new Map<string, CollaborationTaskCardModel>();
+    for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
+      const card = buildCollaborationTaskCardModel({
+        workflow,
+        steps: channelWorkflowSteps.filter((step) => step.workflowId === workflow.id),
+        runs: channelRuns,
+        approvals,
+        t,
+      });
+      if (card) {
+        cards.set(workflow.id, card);
+      }
+    }
+    return cards;
+  }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId, t]);
+  const collaborationTaskCardByWorkflowId = useMemo(() => {
+    const cards = new Map(localCollaborationTaskCardByWorkflowId);
+    if (
+      channelCollaborationCardsState.status === "loaded" &&
+      channelCollaborationCardsState.channelId === selectedChannelId &&
+      channelCollaborationCardsState.signature === channelCollaborationCardRefreshSignature
+    ) {
+      for (const card of channelCollaborationCardsState.cards) {
+        cards.set(card.workflowId, card);
+      }
+    }
+    return cards;
+  }, [channelCollaborationCardRefreshSignature, channelCollaborationCardsState, localCollaborationTaskCardByWorkflowId, selectedChannelId]);
   const selectedWorkflowProgressModel = selectedWorkflowEvidenceWorkflowId
     ? workflowProgressByWorkflowId.get(selectedWorkflowEvidenceWorkflowId)
     : undefined;
+  const selectedWorkflowCollaborationTaskCard = selectedWorkflowEvidenceWorkflowId
+    ? collaborationTaskCardByWorkflowId.get(selectedWorkflowEvidenceWorkflowId)
+    : undefined;
   const selectedWorkflowWorkCell = selectedWorkflowProgressModel
-    ? workflowProgressToConversationWorkCell(selectedWorkflowProgressModel)
+    ? selectedWorkflowCollaborationTaskCard
+      ? collaborationTaskCardToConversationWorkCell({ card: selectedWorkflowCollaborationTaskCard, progress: selectedWorkflowProgressModel, t })
+      : workflowProgressToConversationWorkCell(selectedWorkflowProgressModel)
     : undefined;
   const workflowRepresentedRunIds = useMemo(() => {
     const runIds = new Set<string>();
@@ -3445,7 +3549,10 @@ export function WorkspaceClientView({
       const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
       const progressModel = workflowProgressByWorkflowId.get(workflow.id);
       if (progressModel && !auditActivityVisible) {
-        const workCell = workflowProgressToConversationWorkCell(progressModel);
+        const collaborationCard = collaborationTaskCardByWorkflowId.get(workflow.id);
+        const workCell = collaborationCard
+          ? collaborationTaskCardToConversationWorkCell({ card: collaborationCard, progress: progressModel, t })
+          : workflowProgressToConversationWorkCell(progressModel);
         const detailsKey = workflowWorkCellDetailsCacheKey(workflow.id);
         return (
           <ConversationWorkCell
@@ -4113,8 +4220,11 @@ export function WorkspaceClientView({
   ];
   const attentionContextRows: readonly AttentionContextRow[] = attentionContextRowCandidates.filter((row): row is AttentionContextRow => row !== undefined);
   const workflowAttentionProgressRows: readonly AttentionProgressRow[] = buildWorkflowAttentionProgressRows({
-    models: [...workflowProgressByWorkflowId.values()],
-    t,
+    items: buildCollaborationProgressProjection({
+      cards: [...collaborationTaskCardByWorkflowId.values()],
+      t,
+      limit: 6,
+    }),
     onOpen: () => openSidePanelView("context"),
   });
   const attentionProgressRowCandidates: readonly (AttentionProgressRow | undefined)[] = channelHasProgressContent
@@ -4307,6 +4417,7 @@ export function WorkspaceClientView({
       latestRun={latestRun}
       pendingApprovals={pendingChannelApprovals}
       attentionItems={attentionQueueItems}
+      collaborationTaskCards={[...collaborationTaskCardByWorkflowId.values()]}
       proposals={channelExecutionProposals}
       teammates={teammateOptions}
       selectedWorkflowWorkCell={selectedWorkflowWorkCell}
@@ -4318,6 +4429,7 @@ export function WorkspaceClientView({
       onOpenRun={openRunInPanel}
       onOpenApproval={openApprovalInPanel}
       onOpenContext={() => openProtocolFromActivity("runtime")}
+      onOpenWorkflowDetails={setSelectedWorkflowEvidenceWorkflowId}
       onClearSelectedWorkflow={() => setSelectedWorkflowEvidenceWorkflowId("")}
       onLoadWorkflowDetails={loadWorkflowWorkCellDetails}
       onRefreshExternalWorkCiTriage={onRefreshExternalWorkCiTriage}
@@ -6665,6 +6777,7 @@ function ChannelProgressPanel({
   latestRun,
   pendingApprovals,
   attentionItems,
+  collaborationTaskCards,
   proposals,
   teammates,
   selectedWorkflowWorkCell,
@@ -6676,6 +6789,7 @@ function ChannelProgressPanel({
   onOpenRun,
   onOpenApproval,
   onOpenContext,
+  onOpenWorkflowDetails,
   onClearSelectedWorkflow,
   onLoadWorkflowDetails,
   onRefreshExternalWorkCiTriage,
@@ -6684,6 +6798,7 @@ function ChannelProgressPanel({
   readonly latestRun: RunSession | undefined;
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly attentionItems: readonly ChannelAttentionQueueItem[];
+  readonly collaborationTaskCards: readonly CollaborationTaskCardModel[];
   readonly proposals: readonly ChannelExecutionProposal[];
   readonly teammates: readonly ChannelMention[];
   readonly selectedWorkflowWorkCell?: ConversationWorkCellViewModel;
@@ -6695,11 +6810,13 @@ function ChannelProgressPanel({
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApproval: (approval: ApprovalRequest | undefined) => void;
   readonly onOpenContext: () => void;
+  readonly onOpenWorkflowDetails: (workflowId: string) => void;
   readonly onClearSelectedWorkflow: () => void;
   readonly onLoadWorkflowDetails: (workflowIdOrThreadId: string, options?: { readonly force?: boolean }) => void;
   readonly onRefreshExternalWorkCiTriage: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const visibleCollaborationTaskCards = prioritizeCollaborationTaskCards(collaborationTaskCards).slice(0, 3);
   const activeProposals = proposals.filter((proposal) => proposal.status !== "cancelled" && proposal.status !== "superseded");
   const collaborationRows = activeProposals
     .flatMap((proposal) =>
@@ -6717,6 +6834,7 @@ function ChannelProgressPanel({
       latestRun ||
       pendingApprovals.length > 0 ||
       visibleAttentionItems.length > 0 ||
+      visibleCollaborationTaskCards.length > 0 ||
       collaborationRows.length > 0 ||
       Boolean(selectedWorkflowWorkCell) ||
       externalWorkCiTriage.length > 0,
@@ -6753,6 +6871,27 @@ function ChannelProgressPanel({
             onOpenRun={selectedWorkflowWorkCell.anchorRunId.startsWith("workflow:") ? undefined : onOpenRun}
             onLoadDetails={onLoadWorkflowDetails}
           />
+        </section>
+      ) : null}
+
+      {visibleCollaborationTaskCards.length > 0 ? (
+        <section className="channel-progress-section">
+          <div className="task-strip-head">
+            <span>
+              <Workflow size={15} />
+              <strong>{t("Collaboration task")}</strong>
+            </span>
+            <small>{visibleCollaborationTaskCards.length}</small>
+          </div>
+          <div className="collaboration-task-card-list">
+            {visibleCollaborationTaskCards.map((card) => (
+              <CollaborationTaskProgressCard
+                key={card.id}
+                card={card}
+                onOpen={() => onOpenWorkflowDetails(card.workflowId)}
+              />
+            ))}
+          </div>
         </section>
       ) : null}
 
@@ -6897,6 +7036,205 @@ function ChannelProgressPanel({
       ) : null}
     </section>
   );
+}
+
+function CollaborationTaskProgressCard({
+  card,
+  onOpen,
+}: {
+  readonly card: CollaborationTaskCardModel;
+  readonly onOpen: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const visibleSteps = visibleCollaborationTaskSteps(card);
+  const hiddenStepCount = Math.max(0, card.steps.length - visibleSteps.length);
+  const visibleBranches = card.branches.slice(0, 3);
+  const hiddenBranchCount = Math.max(0, card.branches.length - visibleBranches.length);
+  return (
+    <button className={`collaboration-task-card ${card.mode}`} type="button" onClick={onOpen}>
+      <span className="collaboration-task-card-head">
+        <span>
+          {collaborationTaskCardIcon(card.mode)}
+          <strong>{t(collaborationTaskCardModeLabel(card.mode))}</strong>
+        </span>
+        <em>{t(collaborationExecutionModeLabel(card.executionMode))}</em>
+      </span>
+      <span className="collaboration-task-card-title">
+        <strong>{card.title}</strong>
+        <small>{card.objective}</small>
+      </span>
+      <span className="collaboration-task-card-meta" aria-label={t("Collaboration task metadata")}>
+        {card.currentOwnerLabel ? <small>{t("Owner")}: {card.currentOwnerLabel}</small> : null}
+        <small>{t("{done} of {total} steps complete", { done: card.completedStepCount, total: card.totalStepCount })}</small>
+        {card.pendingApprovalCount > 0 ? <small>{t("{count} pending approvals", { count: card.pendingApprovalCount })}</small> : null}
+      </span>
+      {card.blocker ? (
+        <span className="collaboration-task-card-callout blocked">
+          <CircleAlert size={14} />
+          <small>{card.blocker}</small>
+        </span>
+      ) : card.nextAction ? (
+        <span className="collaboration-task-card-callout">
+          <ListChecks size={14} />
+          <small>{card.nextAction}</small>
+        </span>
+      ) : null}
+      {visibleBranches.length > 0 ? (
+        <span className="collaboration-task-branch-list" aria-label={t("Parallel branches")}>
+          {visibleBranches.map((branch) => (
+            <span key={branch.id} className={`collaboration-task-branch ${branch.state}`}>
+              <i aria-hidden="true" />
+              <span>
+                <strong>{branch.label}</strong>
+                {branch.summary ? <small>{branch.summary}</small> : null}
+              </span>
+              <small>{branch.completedStepCount}/{branch.totalStepCount}</small>
+            </span>
+          ))}
+          {hiddenBranchCount > 0 ? (
+            <span className="collaboration-task-branch more">
+              <i aria-hidden="true" />
+              <span>
+                <strong>{t("+{count} more branches", { count: hiddenBranchCount })}</strong>
+              </span>
+            </span>
+          ) : null}
+        </span>
+      ) : (
+        <span className="collaboration-task-step-list" aria-label={t("Collaboration steps")}>
+          {visibleSteps.map((step) => (
+            <span key={step.id} className={`collaboration-task-step ${step.state}`}>
+              <i aria-hidden="true" />
+              <span>
+                <strong>{step.ownerLabel}: {step.title}</strong>
+                {step.summary ? <small>{step.summary}</small> : null}
+              </span>
+              <small>{t(collaborationTaskStepStateLabel(step.state))}</small>
+            </span>
+          ))}
+          {hiddenStepCount > 0 ? (
+            <span className="collaboration-task-step more">
+              <i aria-hidden="true" />
+              <span>
+                <strong>{t("+{count} more steps", { count: hiddenStepCount })}</strong>
+              </span>
+            </span>
+          ) : null}
+        </span>
+      )}
+      <span className="collaboration-task-card-footer">
+        <small>{t("Open workflow evidence")}</small>
+      </span>
+    </button>
+  );
+}
+
+function prioritizeCollaborationTaskCards(cards: readonly CollaborationTaskCardModel[]): readonly CollaborationTaskCardModel[] {
+  return [...cards].sort((left, right) =>
+    collaborationTaskCardPriority(right) - collaborationTaskCardPriority(left) ||
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
+}
+
+function collaborationTaskCardPriority(card: CollaborationTaskCardModel): number {
+  if (card.mode === "blocked") {
+    return 70;
+  }
+  if (card.mode === "failed") {
+    return 60;
+  }
+  if (card.mode === "waiting") {
+    return 50;
+  }
+  if (card.mode === "running") {
+    return 40;
+  }
+  if (card.mode === "ready_for_confirmation") {
+    return 30;
+  }
+  if (card.mode === "completed") {
+    return 20;
+  }
+  if (card.mode === "cancelled") {
+    return 10;
+  }
+  return 0;
+}
+
+function visibleCollaborationTaskSteps(card: CollaborationTaskCardModel): readonly CollaborationTaskCardModel["steps"][number][] {
+  const active = card.steps.filter((step) => step.state !== "done");
+  if (active.length > 0) {
+    const completedBeforeActive = card.steps.filter((step) => step.state === "done").slice(-2);
+    return [...completedBeforeActive, ...active].slice(0, 6);
+  }
+  return card.steps.slice(-6);
+}
+
+function collaborationTaskCardModeLabel(mode: CollaborationTaskCardModel["mode"]): string {
+  if (mode === "ready_for_confirmation") {
+    return "Ready";
+  }
+  if (mode === "running") {
+    return "Running";
+  }
+  if (mode === "waiting") {
+    return "Waiting";
+  }
+  if (mode === "blocked") {
+    return "Blocked";
+  }
+  if (mode === "completed") {
+    return "Completed";
+  }
+  if (mode === "failed") {
+    return "Failed";
+  }
+  return "Cancelled";
+}
+
+function collaborationExecutionModeLabel(mode: CollaborationTaskCardModel["executionMode"]): string {
+  if (mode === "parallel") {
+    return "Parallel";
+  }
+  if (mode === "mixed") {
+    return "Mixed";
+  }
+  return "Serial";
+}
+
+function collaborationTaskStepStateLabel(state: CollaborationTaskStepState): string {
+  if (state === "active") {
+    return "Active";
+  }
+  if (state === "waiting" || state === "queued") {
+    return "Waiting";
+  }
+  if (state === "blocked") {
+    return "Blocked";
+  }
+  if (state === "done") {
+    return "Done";
+  }
+  if (state === "failed") {
+    return "Failed";
+  }
+  return "Cancelled";
+}
+
+function collaborationTaskCardIcon(mode: CollaborationTaskCardModel["mode"]): JSX.Element {
+  if (mode === "blocked" || mode === "failed") {
+    return <CircleAlert size={15} />;
+  }
+  if (mode === "waiting" || mode === "ready_for_confirmation") {
+    return <ShieldCheck size={15} />;
+  }
+  if (mode === "completed") {
+    return <CheckCircle2 size={15} />;
+  }
+  if (mode === "running") {
+    return <Loader2 className="spin" size={15} />;
+  }
+  return <X size={15} />;
 }
 
 function openProgressTarget(
@@ -7511,6 +7849,8 @@ function ChannelExecutionProposalCard({
     : "";
   const collaborationSummary = proposalCollaborationSummary(proposal, teammates, t);
   const permissionSummary = buildProposalPermissionSummary({ proposal, assigneeLabel, t });
+  const shapingRows = buildRequirementShapingRows({ proposal, assigneeLabel, t });
+  const isRequirementShaping = proposal.status === "draft" && !editing;
   const statusIcon = proposal.status === "accepted"
     ? <CheckCircle2 size={14} />
     : proposal.status === "blocked" || proposal.status === "run_failed"
@@ -7532,7 +7872,7 @@ function ChannelExecutionProposalCard({
     setSaving(true);
     setEditError("");
     try {
-      const updated = await onUpdate(proposal, proposalDraftToUpdateInput(draft));
+      const updated = await onUpdate(proposal, proposalDraftToUpdateInput(proposal, draft));
       if (updated) {
         setEditing(false);
       }
@@ -7574,7 +7914,7 @@ function ChannelExecutionProposalCard({
   }
 
   return (
-    <div className={`channel-execution-proposal ${proposal.status}`} aria-label={t("Task confirmation")}>
+    <div className={`channel-execution-proposal ${proposal.status} ${isRequirementShaping ? "requirement-shaping-card" : ""}`} aria-label={t("Task confirmation")}>
       <div className="channel-proposal-head">
         <span>
           {statusIcon}
@@ -7606,6 +7946,18 @@ function ChannelExecutionProposalCard({
           <label>
             <span>{t("Acceptance criteria")}</span>
             <textarea rows={3} value={draft.acceptanceCriteriaText} onChange={(event) => setDraft({ ...draft, acceptanceCriteriaText: event.currentTarget.value })} />
+          </label>
+          <label>
+            <span>{t("Requirement summary")}</span>
+            <textarea rows={3} value={draft.shapingSummaryText} onChange={(event) => setDraft({ ...draft, shapingSummaryText: event.currentTarget.value })} />
+          </label>
+          <label>
+            <span>{t("Open questions")}</span>
+            <textarea rows={3} value={draft.shapingOpenQuestionsText} onChange={(event) => setDraft({ ...draft, shapingOpenQuestionsText: event.currentTarget.value })} />
+          </label>
+          <label>
+            <span>{t("User clarifications")}</span>
+            <textarea rows={3} value={draft.shapingClarificationsText} onChange={(event) => setDraft({ ...draft, shapingClarificationsText: event.currentTarget.value })} />
           </label>
           <div className="channel-proposal-edit-steps">
             <div className="channel-proposal-edit-steps-head">
@@ -7645,6 +7997,13 @@ function ChannelExecutionProposalCard({
             </div>
           ) : null}
         </div>
+      ) : isRequirementShaping ? (
+        <RequirementShapingSummary
+          rows={shapingRows}
+          shaping={proposal.shaping}
+          collaborationSteps={proposal.collaborationSteps}
+          teammates={teammates}
+        />
       ) : (
         <p>{proposal.prompt}</p>
       )}
@@ -7769,6 +8128,76 @@ function ChannelExecutionProposalCard({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function RequirementShapingSummary({
+  rows,
+  shaping,
+  collaborationSteps,
+  teammates,
+}: {
+  readonly rows: readonly RequirementShapingRow[];
+  readonly shaping: ChannelExecutionProposal["shaping"];
+  readonly collaborationSteps: ChannelExecutionProposal["collaborationSteps"];
+  readonly teammates: readonly ChannelMention[];
+}): JSX.Element {
+  const { t } = useI18n();
+  const visibleSteps = collaborationSteps.slice(0, 4);
+  const openQuestions = shaping?.openQuestions.slice(0, 4) ?? [];
+  const clarifications = shaping?.clarifications.slice(0, 4) ?? [];
+  return (
+    <section className="requirement-shaping-summary" aria-label={t("Requirement shaping")}>
+      <header>
+        <span>
+          <ListChecks size={15} />
+          <strong>{t("Ling is shaping the task")}</strong>
+        </span>
+        <small>{t(requirementShapingStatusLabel(shaping?.status ?? "ready_for_confirmation"))}</small>
+      </header>
+      <div className="requirement-shaping-grid">
+        {rows.map((row) => (
+          <span key={row.id} className={row.tone ?? "neutral"}>
+            <small>{row.label}</small>
+            <strong>{row.value}</strong>
+          </span>
+        ))}
+      </div>
+      {openQuestions.length > 0 || clarifications.length > 0 ? (
+        <div className="requirement-shaping-notes">
+          {openQuestions.length > 0 ? (
+            <section aria-label={t("Open questions")}>
+              <small>{t("Open questions")}</small>
+              <ul>
+                {openQuestions.map((question) => (
+                  <li key={question}>{question}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {clarifications.length > 0 ? (
+            <section aria-label={t("User clarifications")}>
+              <small>{t("User clarifications")}</small>
+              <ul>
+                {clarifications.map((clarification) => (
+                  <li key={clarification.id}>{clarification.body}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+      {visibleSteps.length > 0 ? (
+        <div className="requirement-shaping-participants" aria-label={t("Shaping participants")}>
+          {visibleSteps.map((step, index) => (
+            <span key={`${step.teammateId}-${step.action}-${index}`}>
+              <small>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))} · {t(proposalStepActionLabel(step.action))}</small>
+              <strong>{step.summary}</strong>
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -8095,7 +8524,7 @@ function AttentionQueue({
           </div>
           {expanded ? (
             <div className="attention-progress-list" aria-label={t("Progress")}>
-              {progressRows.slice(0, 4).map((row) => {
+              {progressRows.slice(0, 6).map((row) => {
                 const content = (
                   <>
                     <span className={`attention-row-icon ${row.tone}`}>{row.icon}</span>
@@ -9165,6 +9594,9 @@ function proposalToEditDraft(proposal: ChannelExecutionProposal): ChannelProposa
     prompt: proposal.prompt,
     assigneeTeammateId: proposal.assigneeTeammateId,
     acceptanceCriteriaText: proposal.acceptanceCriteria.join("\n"),
+    shapingSummaryText: proposal.shaping?.summary ?? "",
+    shapingOpenQuestionsText: proposal.shaping?.openQuestions.join("\n") ?? "",
+    shapingClarificationsText: proposal.shaping?.clarifications.map((clarification) => clarification.body).join("\n") ?? "",
     collaborationSteps,
   };
 }
@@ -9178,7 +9610,7 @@ function proposalDraftIsValid(draft: ChannelProposalEditDraft): boolean {
     draft.collaborationSteps.every((step) => step.teammateId.trim().length > 0 && step.summary.trim().length > 0);
 }
 
-function proposalDraftToUpdateInput(draft: ChannelProposalEditDraft): UpdateChannelExecutionProposalRequest {
+function proposalDraftToUpdateInput(proposal: ChannelExecutionProposal, draft: ChannelProposalEditDraft): UpdateChannelExecutionProposalRequest {
   return {
     title: draft.title.trim(),
     prompt: draft.prompt.trim(),
@@ -9189,6 +9621,97 @@ function proposalDraftToUpdateInput(draft: ChannelProposalEditDraft): UpdateChan
       action: step.action,
       summary: step.summary.trim(),
     })),
+    shaping: proposalShapingFromEditDraft(proposal, draft),
+  };
+}
+
+function buildRequirementShapingRows(input: {
+  readonly proposal: ChannelExecutionProposal;
+  readonly assigneeLabel: string;
+  readonly t: Translate;
+}): readonly RequirementShapingRow[] {
+  const participantCount = Math.max(1, input.proposal.collaborationSteps.length);
+  const firstCriterion = input.proposal.acceptanceCriteria[0];
+  const openQuestionCount = input.proposal.shaping?.openQuestions.length ?? 0;
+  const clarificationCount = input.proposal.shaping?.clarifications.length ?? 0;
+  const shapingSummary = input.proposal.shaping?.summary;
+  return [
+    {
+      id: "goal",
+      label: input.t("Goal"),
+      value: truncatePreview(shapingSummary || input.proposal.prompt, 180),
+    },
+    {
+      id: "acceptance",
+      label: input.t("Acceptance"),
+      value: firstCriterion
+        ? truncatePreview(firstCriterion, 150)
+        : input.t("Acceptance checks will be clarified before execution."),
+      tone: firstCriterion ? "success" : "attention",
+    },
+    {
+      id: "participants",
+      label: input.t("Participants"),
+      value: input.t("{count} teammate(s), led by {teammate}", {
+        count: participantCount,
+        teammate: input.assigneeLabel,
+      }),
+    },
+    {
+      id: "risk",
+      label: input.t("Boundary"),
+      value: input.proposal.riskSummary
+        ? truncatePreview(input.proposal.riskSummary, 150)
+        : input.t("No additional boundary surfaced yet."),
+      tone: input.proposal.riskSummary ? "attention" : "neutral",
+    },
+    {
+      id: "questions",
+      label: input.t("Open questions"),
+      value: openQuestionCount > 0
+        ? input.t("{count} open question(s)", { count: openQuestionCount })
+        : clarificationCount > 0
+          ? input.t("{count} clarification(s) recorded", { count: clarificationCount })
+          : input.t("No open questions recorded."),
+      tone: openQuestionCount > 0 ? "attention" : clarificationCount > 0 ? "success" : "neutral",
+    },
+    {
+      id: "next",
+      label: input.t("Next action"),
+      value: input.t("Authorize when the scope looks right, or edit the card first."),
+    },
+  ];
+}
+
+function proposalShapingFromEditDraft(
+  proposal: ChannelExecutionProposal,
+  draft: ChannelProposalEditDraft,
+): NonNullable<UpdateChannelExecutionProposalRequest["shaping"]> {
+  const openQuestions = parseProposalLines(draft.shapingOpenQuestionsText);
+  const clarificationBodies = parseProposalLines(draft.shapingClarificationsText);
+  const existingClarifications = proposal.shaping?.clarifications ?? [];
+  const now = new Date().toISOString();
+  return {
+    status: openQuestions.length > 0 ? "needs_user_clarification" : "ready_for_confirmation",
+    summary: draft.shapingSummaryText.trim() || draft.title.trim(),
+    openQuestions,
+    clarifications: clarificationBodies.map((body, index) => {
+      const existing = existingClarifications[index];
+      if (existing?.body === body) {
+        return existing;
+      }
+      return {
+        id: `clarification_${proposal.id}_${index + 1}`,
+        authorType: "local-user",
+        body,
+        sourceMessageId: proposal.sourceMessageId,
+        createdAt: now,
+      };
+    }),
+    sourceRefs: proposal.shaping?.sourceRefs.length
+      ? proposal.shaping.sourceRefs
+      : [{ type: "message", id: proposal.sourceMessageId }],
+    updatedAt: now,
   };
 }
 
@@ -9322,6 +9845,25 @@ function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]
     return "Superseded";
   }
   return "Cancelled";
+}
+
+function requirementShapingStatusLabel(status: NonNullable<ChannelExecutionProposal["shaping"]>["status"]): string {
+  if (status === "collecting_context") {
+    return "Collecting context";
+  }
+  if (status === "collecting_teammate_input") {
+    return "Collecting teammate input";
+  }
+  if (status === "needs_user_clarification") {
+    return "Needs user clarification";
+  }
+  if (status === "converted_to_task") {
+    return "Converted to task";
+  }
+  if (status === "dismissed") {
+    return "Dismissed";
+  }
+  return "Ready for confirmation";
 }
 
 function proposalStepActionLabel(action: ChannelExecutionProposal["collaborationSteps"][number]["action"]): string {
@@ -9539,106 +10081,37 @@ function runProgressIcon(status: RunSession["status"]): JSX.Element {
 }
 
 function buildWorkflowAttentionProgressRows(input: {
-  readonly models: readonly WorkflowProgressModel[];
-  readonly t: Translate;
+  readonly items: readonly CollaborationProgressProjectionItem[];
   readonly onOpen: () => void;
 }): readonly AttentionProgressRow[] {
-  const candidates = input.models
-    .filter((model) => model.mode === "active" || model.attention !== "none")
-    .sort((left, right) => workflowProgressPriority(right) - workflowProgressPriority(left) || right.updatedAt.localeCompare(left.updatedAt));
-  const primary = candidates[0];
-  if (!primary) {
-    return [];
-  }
-  const rows: AttentionProgressRow[] = [{
-    id: `workflow-progress:${primary.workflowId}`,
-    icon: workflowProgressIcon(primary),
-    tone: workflowProgressTone(primary),
-    primary: workflowProgressPrimaryText(primary, input.t),
-    secondary: primary.summary,
+  return input.items.map((item) => ({
+    id: item.id,
+    icon: collaborationProgressIcon(item.icon),
+    tone: collaborationProgressTone(item.tone),
+    primary: item.primary,
+    secondary: item.secondary,
     onOpen: input.onOpen,
-  }];
-  if (candidates.length > 1) {
-    rows.push({
-      id: "workflow-progress-more",
-      icon: <Workflow size={18} />,
-      tone: "neutral",
-      primary: input.t("{count} active workflows", { count: candidates.length }),
-      secondary: input.t("Open progress for details"),
-      onOpen: input.onOpen,
-    });
-  }
-  return rows;
+  }));
 }
 
-function workflowProgressPriority(model: WorkflowProgressModel): number {
-  if (model.attention === "blocked") {
-    return 50;
-  }
-  if (model.attention === "failed") {
-    return 40;
-  }
-  if (model.attention === "waiting") {
-    return 30;
-  }
-  if (model.status === "running") {
-    return 20;
-  }
-  if (model.status === "ready" || model.status === "draft") {
-    return 10;
-  }
-  return 0;
+function collaborationProgressTone(tone: CollaborationProgressProjectionTone): AttentionProgressTone {
+  return tone;
 }
 
-function workflowProgressTone(model: WorkflowProgressModel): AttentionProgressTone {
-  if (model.attention === "blocked") {
-    return "blocked";
-  }
-  if (model.attention === "failed") {
-    return "failed";
-  }
-  if (model.attention === "waiting") {
-    return "waiting";
-  }
-  if (model.status === "succeeded") {
-    return "success";
-  }
-  if (model.mode === "active") {
-    return "running";
-  }
-  return "neutral";
-}
-
-function workflowProgressIcon(model: WorkflowProgressModel): JSX.Element {
-  if (model.attention === "blocked" || model.attention === "failed") {
+function collaborationProgressIcon(icon: CollaborationProgressProjectionIcon): JSX.Element {
+  if (icon === "blocked" || icon === "failed") {
     return <CircleAlert size={18} />;
   }
-  if (model.attention === "waiting") {
+  if (icon === "waiting") {
     return <ShieldCheck size={18} />;
   }
-  if (model.status === "succeeded") {
+  if (icon === "success") {
     return <CheckCircle2 size={18} />;
   }
-  if (model.mode === "active") {
+  if (icon === "running") {
     return <Loader2 className="spin" size={18} />;
   }
   return <Workflow size={18} />;
-}
-
-function workflowProgressPrimaryText(model: WorkflowProgressModel, t: Translate): string {
-  if (model.attention === "blocked") {
-    return t("Workflow blocked");
-  }
-  if (model.attention === "failed") {
-    return t("Workflow needs attention");
-  }
-  if (model.attention === "waiting") {
-    return t("Workflow waiting for approval");
-  }
-  if (model.status === "succeeded") {
-    return t("Workflow done");
-  }
-  return t("Workflow in progress");
 }
 
 function deriveWorkspaceThreadsFromRuns(runs: readonly RunSession[]): readonly LingThread[] {

@@ -22,6 +22,16 @@ export interface ConversationWorkCellRow {
   readonly tone?: ConversationWorkCellRowTone;
 }
 
+export interface ConversationWorkCellBranch {
+  readonly id: string;
+  readonly label: string;
+  readonly summary?: string;
+  readonly meta?: string;
+  readonly tone?: ConversationWorkCellRowTone;
+  readonly stateLabel?: string;
+  readonly rows: readonly ConversationWorkCellRow[];
+}
+
 export interface ConversationWorkCellEvidenceLink {
   readonly id: string;
   readonly label: string;
@@ -44,10 +54,16 @@ export interface ConversationWorkCellViewModel {
   readonly runIds: readonly string[];
   readonly mode: ConversationWorkCellMode;
   readonly status: ConversationWorkCellStatus;
+  readonly presentation?: "default" | "collaboration_task";
+  readonly kicker?: string;
+  readonly detailsLabel?: string;
+  readonly showDiagnostics?: boolean;
   readonly title: string;
   readonly summary: string;
   readonly stats: readonly ConversationWorkCellStat[];
   readonly activeRows: readonly ConversationWorkCellRow[];
+  readonly branchRows?: readonly ConversationWorkCellBranch[];
+  readonly finalReportRows?: readonly ConversationWorkCellRow[];
   readonly groups: readonly ConversationWorkCellGroup[];
   readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
   readonly updatedAt: string;

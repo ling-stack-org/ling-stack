@@ -20,6 +20,7 @@ import {
   type ChannelDecisionStatus,
   type ChannelExecutionProposalStep,
   type ChannelExecutionProposalStatus,
+  type ChannelRequirementShaping,
   type ChannelMessageFileRef,
   type ChannelMessageFileRefSource,
   type ChannelHandoffStatus,
@@ -30,6 +31,7 @@ import {
   type ChannelMessageIntent,
   type ChannelMessageKind,
   type ChannelMessageRouteDecisionStatus,
+  type ChannelProtocolSourceRef,
   type ChannelWorkspaceBinding,
   type ChannelWorkflowStatus,
   type ChannelWorkflowStepStartMode,
@@ -64,6 +66,7 @@ export interface ChannelExecutionProposalRequest {
   readonly requiredTools: readonly RunTool[];
   readonly riskSummary?: string;
   readonly responseLanguage?: ResponseLanguage;
+  readonly shaping?: ChannelRequirementShaping;
 }
 
 export interface ChannelDecisionRequest {
@@ -316,6 +319,7 @@ export function parseChannelExecutionProposalRequest(value: unknown): ChannelExe
     requiredTools: readOptionalRunTools(value, "requiredTools") ?? [],
     riskSummary: readOptionalString(value, "riskSummary"),
     responseLanguage: readOptionalResponseLanguage(value, "responseLanguage"),
+    shaping: readOptionalChannelRequirementShaping(value, "shaping"),
   };
   validateChannelExecutionProposalInput(input);
   return input;
@@ -334,6 +338,7 @@ export function parseChannelExecutionProposalUpdateInput(value: unknown): Update
     requiredTools: readOptionalRunTools(value, "requiredTools"),
     riskSummary: readNullableString(value, "riskSummary"),
     responseLanguage: readNullableResponseLanguage(value, "responseLanguage"),
+    shaping: readNullableChannelRequirementShaping(value, "shaping"),
     status: readOptionalChannelExecutionProposalStatus(value, "status"),
     linkedTaskId: readNullableString(value, "linkedTaskId"),
     linkedRunId: readNullableString(value, "linkedRunId"),
@@ -778,6 +783,142 @@ function readOptionalChannelExecutionProposalSteps(
       summary: readString(item, "summary"),
     };
   });
+}
+
+function readOptionalChannelRequirementShaping(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelRequirementShaping | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  return readChannelRequirementShaping(value, key);
+}
+
+function readNullableChannelRequirementShaping(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelRequirementShaping | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object or null`);
+  }
+  return readChannelRequirementShaping(value, key);
+}
+
+function readChannelRequirementShaping(record: Record<string, unknown>, label: string): ChannelRequirementShaping {
+  const status = readString(record, "status");
+  if (!isChannelRequirementShapingStatus(status)) {
+    throw new Error(`${label}.status must be a valid shaping status`);
+  }
+  const openQuestions = readOptionalStringArray(record, "openQuestions") ?? [];
+  const clarifications = readOptionalChannelRequirementShapingClarifications(record, "clarifications") ?? [];
+  const sourceRefs = readOptionalChannelProtocolSourceRefs(record, "sourceRefs") ?? [];
+  if (openQuestions.some((item) => !item.trim())) {
+    throw new Error(`${label}.openQuestions entries must be non-empty strings`);
+  }
+  return {
+    status,
+    summary: readOptionalString(record, "summary"),
+    openQuestions,
+    clarifications,
+    sourceRefs,
+    updatedAt: readOptionalString(record, "updatedAt"),
+  };
+}
+
+function readOptionalChannelRequirementShapingClarifications(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelRequirementShaping["clarifications"] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    const authorType = readString(item, "authorType");
+    if (!isChannelRequirementShapingClarificationAuthor(authorType)) {
+      throw new Error(`${key}[${index}].authorType must be one of: local-user, ai-teammate, system`);
+    }
+    const body = readString(item, "body");
+    if (!body.trim()) {
+      throw new Error(`${key}[${index}].body must be a non-empty string`);
+    }
+    return {
+      id: readString(item, "id"),
+      authorType,
+      authorId: readOptionalString(item, "authorId"),
+      body,
+      sourceMessageId: readOptionalString(item, "sourceMessageId"),
+      createdAt: readString(item, "createdAt"),
+    };
+  });
+}
+
+function readOptionalChannelProtocolSourceRefs(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelProtocolSourceRef[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    const type = readString(item, "type");
+    if (!isChannelProtocolSourceRefType(type)) {
+      throw new Error(`${key}[${index}].type must be a valid source ref type`);
+    }
+    return {
+      type,
+      id: readString(item, "id"),
+      label: readOptionalString(item, "label"),
+    };
+  });
+}
+
+function isChannelRequirementShapingStatus(value: string): value is ChannelRequirementShaping["status"] {
+  return value === "collecting_context" ||
+    value === "collecting_teammate_input" ||
+    value === "needs_user_clarification" ||
+    value === "ready_for_confirmation" ||
+    value === "converted_to_task" ||
+    value === "dismissed";
+}
+
+function isChannelRequirementShapingClarificationAuthor(value: string): value is ChannelRequirementShaping["clarifications"][number]["authorType"] {
+  return value === "local-user" || value === "ai-teammate" || value === "system";
+}
+
+function isChannelProtocolSourceRefType(value: string): value is ChannelProtocolSourceRef["type"] {
+  return value === "message" ||
+    value === "channel_decision" ||
+    value === "context_summary" ||
+    value === "task" ||
+    value === "run" ||
+    value === "workflow" ||
+    value === "workflow_step";
 }
 
 function readOptionalChannelExecutionProposalStatus(

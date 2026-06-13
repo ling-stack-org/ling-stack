@@ -134,6 +134,7 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
     linkedTaskId: null,
     linkedRunId: null,
     linkedWorkflowId: workflow.id,
+    ...(proposal.shaping ? { shaping: { ...proposal.shaping, status: "converted_to_task" as const, updatedAt: now } } : {}),
     errorMessage: null,
   }, now) ?? proposal;
 

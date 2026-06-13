@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { CheckCircle2, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, ChevronDown, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
-import type { ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import type { ConversationWorkCellBranch, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -30,12 +30,13 @@ export function ConversationWorkCell({
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const active = model.mode === "active";
-  const statusLabel = workCellStatusLabel(model.status, active, t);
+  const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
   const rootClassName = [
     "conversation-work-cell",
     active ? "active" : "completed",
     `status-${model.status}`,
-  ].join(" ");
+    model.presentation ? `presentation-${model.presentation}` : "",
+  ].filter(Boolean).join(" ");
   const currentDetailsState: ConversationWorkCellDetailsState = detailsState ?? {
     status: onLoadDetails ? "not_loaded" : "loaded",
     groups: model.groups,
@@ -75,24 +76,33 @@ export function ConversationWorkCell({
           ))}
         </div>
 
+        {model.branchRows && model.branchRows.length > 0 ? (
+          <BranchRows branches={model.branchRows} />
+        ) : null}
+
         {active ? (
           <ActiveTurnItemStream rows={model.activeRows} />
         ) : null}
 
+        {model.finalReportRows && model.finalReportRows.length > 0 ? (
+          <FinalReportRows rows={model.finalReportRows} />
+        ) : null}
+
         <div className="conversation-work-cell-actions">
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={() => onOpenRun?.(model.anchorRunId)}
-            disabled={!onOpenRun}
-          >
-            <History size={13} />
-            {t("Open diagnostics")}
-          </button>
+          {model.showDiagnostics === false || !onOpenRun ? null : (
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              onClick={() => onOpenRun(model.anchorRunId)}
+            >
+              <History size={13} />
+              {t("Open diagnostics")}
+            </button>
+          )}
           {onOpenDetails ? (
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenDetails(model.threadId)}>
               <FileText size={13} />
-              {t("Details")}
+              {model.detailsLabel ?? t("Details")}
             </button>
           ) : null}
           <button className="secondary-button compact-button" type="button" onClick={toggleDetails} aria-expanded={expanded}>
@@ -108,6 +118,53 @@ export function ConversationWorkCell({
         ) : null}
       </div>
     </article>
+  );
+}
+
+function BranchRows({ branches }: { readonly branches: readonly ConversationWorkCellBranch[] }): JSX.Element {
+  const { t } = useI18n();
+  const [expandedBranchId, setExpandedBranchId] = useState<string>();
+  return (
+    <section className="conversation-work-cell-branches" aria-label={t("Parallel branches")}>
+      <header>
+        <strong>{t("Parallel branches")}</strong>
+        <small>{t("{count} branches", { count: branches.length })}</small>
+      </header>
+      <div className="conversation-work-cell-branch-list">
+        {branches.map((branch) => {
+          const expanded = expandedBranchId === branch.id;
+          return (
+            <div key={branch.id} className={["conversation-work-cell-branch", branch.tone ?? "neutral", expanded ? "expanded" : ""].filter(Boolean).join(" ")}>
+              <button
+                className="conversation-work-cell-branch-head"
+                type="button"
+                aria-expanded={expanded}
+                onClick={() => setExpandedBranchId(expanded ? undefined : branch.id)}
+              >
+                <span className="conversation-work-cell-row-dot" aria-hidden="true" />
+                <span className="conversation-work-cell-branch-copy">
+                  <strong>{branch.label}</strong>
+                  {branch.summary ? <small>{branch.summary}</small> : null}
+                </span>
+                {branch.meta ? <code>{branch.meta}</code> : null}
+                <span className="conversation-work-cell-branch-toggle">
+                  <ChevronDown size={13} aria-hidden="true" />
+                  <span>{expanded ? t("Collapse branch") : t("Expand branch")}</span>
+                </span>
+              </button>
+              {expanded ? (
+                <div className="conversation-work-cell-branch-detail" aria-label={t("Branch steps")}>
+                  {branch.stateLabel ? <small>{branch.stateLabel}</small> : null}
+                  <div className="conversation-work-cell-row-list">
+                    {branch.rows.map((row) => <WorkCellRow key={row.id} row={row} compact />)}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -132,6 +189,21 @@ function workCellStatusLabel(
     return t("Task waiting for approval");
   }
   return active ? t("Task in progress") : t("Work result");
+}
+
+function FinalReportRows({ rows }: { readonly rows: readonly ConversationWorkCellRow[] }): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <section className="conversation-work-cell-final-report" aria-label={t("Final Ling report")}>
+      <header>
+        <ShieldCheck size={13} />
+        <strong>{t("Final Ling report")}</strong>
+      </header>
+      <div className="conversation-work-cell-row-list">
+        {rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
+      </div>
+    </section>
+  );
 }
 
 function WorkCellDetails({

@@ -59,6 +59,8 @@ import {
 } from "../features/channels/routes.js";
 import { assertChannelWorkspaceReady, handleChannelWorkspace } from "../features/channels/workspace.js";
 import {
+  handleChannelCollaborationCardsCollection,
+  handleChannelWorkflowCollaborationCard,
   handleChannelWorkflowEvidence,
   handleChannelWorkflowFromHandoff,
   handleChannelWorkflowItem,
@@ -1216,6 +1218,10 @@ export async function routeRequest(
         await handleChannelWorkflowEvidence(request, response, config, storeRegistry, workflowRoute.workflowId);
         return;
       }
+      if (workflowRoute.action === "collaboration-card") {
+        await handleChannelWorkflowCollaborationCard(request, response, config, storeRegistry, workflowRoute.workflowId);
+        return;
+      }
       await handleChannelWorkflowItem(request, response, config, storeRegistry, workflowRoute.workflowId);
       return;
     }
@@ -1399,6 +1405,10 @@ export async function routeRequest(
     }
     if (channelRoute.action === "workflows") {
       await handleChannelWorkflowsCollection(request, response, config, storeRegistry, channelRoute.channelId, runnerRegistry);
+      return;
+    }
+    if (channelRoute.action === "collaboration-cards") {
+      await handleChannelCollaborationCardsCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);

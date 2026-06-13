@@ -68,7 +68,9 @@ import type {
   ChannelWorkspaceHandoffRequest,
   ChannelWorkspaceMutationResponse,
   ChannelWorkspaceResponse,
+  ChannelCollaborationCardListResponse,
   WorkflowEvidenceResponse,
+  WorkflowCollaborationCardResponse,
   CreateChannelAttachmentRequest,
   CreateChannelBranchRequest,
   CreateChannelCollaborationProtocolDraftRequest,
@@ -1404,6 +1406,10 @@ export class LingDaemonClient {
     return this.get(`/workflows/${encodeURIComponent(workflowId)}/evidence`, { cwd });
   }
 
+  async getChannelWorkflowCollaborationCard(cwd: string, workflowId: string): Promise<WorkflowCollaborationCardResponse> {
+    return this.get(`/workflows/${encodeURIComponent(workflowId)}/collaboration-card`, { cwd });
+  }
+
   async updateChannelWorkflow(
     cwd: string,
     workflowId: string,
@@ -1466,6 +1472,17 @@ export class LingDaemonClient {
 
   async orchestrateChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
     return this.post(`/workflows/${encodeURIComponent(workflowId)}/orchestrate`, { cwd }, {});
+  }
+
+  async listChannelCollaborationCards(
+    cwd: string,
+    channelId: string,
+    options: { readonly limit?: number } = {},
+  ): Promise<ChannelCollaborationCardListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/collaboration-cards`, {
+      cwd,
+      limit: options.limit,
+    });
   }
 
   async listTasks(cwd: string, options: ListTasksRequest = {}): Promise<TaskListResponse> {

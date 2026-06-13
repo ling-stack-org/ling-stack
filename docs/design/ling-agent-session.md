@@ -15,6 +15,8 @@ Related docs:
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
 - [Thread-First Work History v2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Input Materialization Detailed Design](input-materialization-detailed-design.md)
+- [Channel Context Processing Layer](channel-context-processing-layer.md)
+- [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
 
 ## Summary
@@ -36,6 +38,7 @@ Target user experience:
 ```text
 user sends a turn with text, mentions, attachments, links, file refs, or guidance
 -> Ling Agent builds one TurnEnvelope
+-> Context Processing Layer builds the relevant Channel Context View
 -> Ling Agent understands whether this is chat, attachment work, executable work,
    continuation, or approval
 -> Ling Agent auto-starts clearly scoped safe work, or asks one clarifying question
@@ -75,9 +78,9 @@ Ling Agent owns the conversation session. It is the product-level coordinator th
 
 - receives every user turn in the active Ling collaboration surface as one structured
   envelope, not just the text body;
-- carries recent same-channel conversation context into ordinary replies so short
-  follow-ups like `400字`, `继续`, `改短点`, or `上面那个` resolve against the prior
-  user request and Ling Agent answer before asking for clarification;
+- consumes a layered channel context view produced by the Context Processing Layer.
+  Ling Agent decides how to collaborate and respond; it does not hand-build prompt
+  context from raw channel data;
 - appears as a built-in teammate in workspace roster, channel membership, mentions, and
   private chat;
 - decides whether the message is ordinary chat, executable work, a continuation, an
@@ -137,13 +140,32 @@ interface LingTurnAttachmentRef {
 }
 ```
 
-## Recent Conversation Context
+## Layered Channel Context
 
 The current turn envelope is necessary but not sufficient for ordinary conversation.
-The reply context pack must also include a bounded recent same-channel transcript before
-the latest user turn. This transcript is evidence, not a new instruction: it exists so a
-short follow-up can continue or revise the previous topic without forcing the user to
-repeat themselves.
+Ling Agent should answer from a bounded channel context pack, not a single latest-message
+prompt and not an unbounded shared transcript.
+
+The detailed source collection, filtering, log handling, per-agent views, and memory-use
+isolation are defined in [Channel Context Processing Layer](channel-context-processing-layer.md).
+
+Channel reply context layers:
+
+1. **Current turn envelope:** current text, mentions, attachments, links, file refs, and
+   materialized safe previews.
+2. **Channel state:** channel name, bound workspace/path, response language, collaboration
+   protocol, runtime policy summary, and the current teammate identity.
+3. **Recent visible conversation:** a bounded same-channel transcript before the latest
+   user turn.
+4. **Compacted channel context:** durable channel summaries, source refs, decisions,
+   handoffs, workflow packet summaries, and relevant artifact summaries.
+5. **Active work context:** active proposal, workflow, run, approval, queued follow-up, or
+   interrupt/redirect state when the latest turn is related to active work.
+6. **Relevant memory:** scoped teammate/channel memory recall, never wholesale memory dump.
+
+Recent visible conversation is evidence, not a new instruction. It exists so a short
+follow-up can continue or revise the previous topic without forcing the user to repeat
+themselves.
 
 Examples:
 
@@ -154,8 +176,12 @@ Examples:
 
 The context pack must exclude the current pending assistant placeholder so model input
 does not contain `Thinking...` or `AI teammate is preparing a reply...` as if it were
-real conversation history. If the context budget is tight, this recent transcript can be
-trimmed before the current turn itself is dropped.
+real conversation history. If the context budget is tight, optional layers are trimmed or
+compacted before the current turn itself is dropped.
+
+This boundary matches the behavior users expect from Codex, Claude, GPT, and Grok-style
+assistants: the visible conversation feels continuous, while the runtime still uses a
+budgeted and privacy-aware context pack instead of blindly replaying everything.
 
 Rules:
 
@@ -995,8 +1021,8 @@ Detailed implementation slices are tracked in
   one clarifying question instead of producing a Docs shell snippet.
 - A filename-only follow-up can resolve against recent same-session work context before
   ordinary chat routing.
-- A short ordinary follow-up can resolve against recent same-channel conversation history
-  before Ling Agent asks for a missing topic or treats it as a new request.
+- A short ordinary follow-up can resolve against the layered channel context pack before
+  Ling Agent asks for a missing topic or treats it as a new request.
 - Missing Engineer, Docs, QA, or Release teammates do not block safe work that Ling Agent
   can execute through current policy.
 - New channels include Ling Agent as a protected built-in teammate.

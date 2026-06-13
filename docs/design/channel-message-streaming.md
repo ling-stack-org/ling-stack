@@ -16,10 +16,16 @@ Sending a channel message from the composer should start a normal Ling Agent cha
 The existing JSON `POST /channels/:id/messages` remains supported for API compatibility. The Web app should prefer the streaming endpoint for composer sends.
 
 Streaming changes only the transport and UI cadence; it must not make the reply
-stateless. The daemon should build the same Ling Agent reply context for streamed and
-non-streamed sends, including bounded recent same-channel history before the latest turn.
-Short follow-ups such as `400字`, `继续`, or `改短点` should therefore continue the
-visible prior topic instead of being treated as isolated new prompts.
+stateless. The daemon should build the same Ling Agent layered channel context for
+streamed and non-streamed sends: current turn envelope, channel state, effective protocol,
+bounded recent visible conversation, compacted channel context, active work state when
+relevant, materialized inputs, and scoped memory recall. Short follow-ups such as `400字`,
+`继续`, or `改短点` should therefore continue the visible prior topic instead of being
+treated as isolated new prompts.
+
+That context is owned by the [Channel Context Processing Layer](channel-context-processing-layer.md),
+not by the streaming transport. SSE only delivers the visible body updates for the same
+durable Ling Agent turn.
 
 While a pending AI reply has no visible text yet, the Web feed should show a
 generic `Thinking...` status with a spinner. As soon as `delta.body` is non-empty,
@@ -65,6 +71,26 @@ Channel replies may contain hidden `<ling_task_proposal>...</ling_task_proposal>
 
 When a channel turn intentionally creates multiple AI replies, the stream may emit multiple `ready` events and `delta` events tagged by `messageId`. Clients should upsert by id instead of assuming a single assistant bubble.
 
+## Collaboration Stream Folding
+
+For multi-agent collaboration cards, streaming is still a live transport, not permanent
+process spam.
+
+Default rules:
+
+- requirement shaping streams update the same shaping card until Ling Agent posts a
+  compact summary or asks a clarifying question;
+- execution step streams update the active step row inside the collaboration task card;
+- when a step reaches terminal state, the stream folds into a step summary and optional
+  handoff card;
+- parallel branch streams are folded by default and exposed per branch only when the user
+  expands details;
+- raw runtime stream events stay in evidence/details, not the default feed.
+
+See
+[Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
+for the product-level card behavior.
+
 ## Acceptance
 
 - `POST /channels/:id/messages/stream` streams `ready -> delta -> done` for a normal Ling Agent reply.
@@ -74,4 +100,6 @@ When a channel turn intentionally creates multiple AI replies, the stream may em
 - The Web composer consumes the stream and updates the existing message bubble rather than inserting duplicate assistant messages.
 - Pending AI bubbles show `Thinking...` only before visible body text exists; they do not hide streamed body text behind a static pending label.
 - While pinned to latest, long streamed AI replies keep the message feed at the bottom without requiring manual scrolling.
-- Streamed and non-streamed channel replies include recent conversation context, while excluding the current pending assistant placeholder.
+- Streamed and non-streamed channel replies include the same layered channel context, while excluding the current pending assistant placeholder.
+- Multi-agent collaboration streams fold into task/step summaries after terminal state
+  instead of leaving raw process streams in the default feed.

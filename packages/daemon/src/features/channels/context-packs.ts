@@ -1,4 +1,4 @@
-import type { AiTeammate, Channel, ChannelAutoReplyMode, ChannelMessage, ChannelResponseLanguage, ChannelWorkflow, ChannelWorkflowStep, ProviderPreset, RunStore, SkillApprovalProfile } from "@ling-stack/core";
+import type { AiTeammate, Channel, ChannelAutoReplyMode, ChannelMessage, ChannelResponseLanguage, ProviderPreset, RunStore } from "@ling-stack/core";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { formatChannelDiscussionPrompt, type ChannelDiscussionPromptContext, type ChannelDiscussionPromptTeammate } from "./ai-prompts.js";
 import {
@@ -11,6 +11,29 @@ import {
   renderLingAgentTurnEnvelopeForPrompt,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
+import { promptSectionsFromContextView } from "./context-processing/render.js";
+import {
+  collectActiveWorkSources,
+  collectChannelStateSource,
+  collectMaterializedInputSources,
+  collectPriorConversationSources,
+  collectSelectorConversationSources,
+  collectTurnSource,
+  listChannelContextMessages,
+  listPriorChannelContextMessages,
+} from "./context-processing/sources.js";
+import { buildChannelContextView } from "./context-processing/views.js";
+import {
+  buildWorkflowStepContextView,
+  type WorkflowStepContextPackInput,
+} from "./context-processing/workflow-steps.js";
+import type {
+  ChannelContextSection,
+  ChannelContextSource,
+  ChannelContextSourceRef,
+  ChannelContextView,
+  ChannelContextViewKind,
+} from "./context-processing/types.js";
 
 export type ContextPackKind =
   | "channel_reply"
@@ -136,23 +159,7 @@ export interface ChannelCompactedDiscussionSummary {
   readonly sourceMessageIds: readonly string[];
 }
 
-export interface WorkflowStepContextPackInput {
-  readonly store: RunStore;
-  readonly channel: Channel;
-  readonly workflow: ChannelWorkflow;
-  readonly step: ChannelWorkflowStep;
-  readonly prompt: string;
-  readonly providerPresetId?: string;
-  readonly workflowSteps: readonly ChannelWorkflowStep[];
-  readonly compactedDependencySummary?: WorkflowStepCompactedDependencySummary;
-}
-
-export interface WorkflowStepCompactedDependencySummary {
-  readonly id: string;
-  readonly text: string;
-  readonly sourceRefs: readonly ContextSourceRef[];
-  readonly sourceRefIds: readonly string[];
-}
+export type { WorkflowStepCompactedDependencySummary, WorkflowStepContextPackInput } from "./context-processing/workflow-steps.js";
 
 const MODEL_UNKNOWN_CONTEXT_WINDOW_TOKENS = 8_192;
 const MODEL_ESTIMATED_CONTEXT_WINDOW_TOKENS = 32_768;
@@ -254,6 +261,121 @@ export function estimateTextTokens(text: string): number {
   return Math.max(1, Math.ceil(ascii / 4 + nonAscii / 1.6));
 }
 
+interface CompatContextView {
+  readonly kind: ContextPackKind;
+  readonly providerPreset?: ProviderPreset;
+  readonly view: ChannelContextView;
+  readonly legacySourceRefs: readonly ContextSourceRef[];
+}
+
+function buildCompatContextView(input: {
+  readonly viewKind: ChannelContextViewKind;
+  readonly kind: ContextPackKind;
+  readonly channel: Channel;
+  readonly providerPreset?: ProviderPreset;
+  readonly consumerTeammateId?: string;
+  readonly sections: readonly ContextSection[];
+  readonly sourceRefs: readonly ContextSourceRef[];
+  readonly sources?: readonly ChannelContextSource[];
+  readonly compactionIds?: readonly string[];
+}): CompatContextView {
+  const budget = resolveProviderContextBudget(input.providerPreset, input.kind);
+  return {
+    kind: input.kind,
+    providerPreset: input.providerPreset,
+    legacySourceRefs: input.sourceRefs,
+    view: buildChannelContextView({
+      kind: input.viewKind,
+      workspaceId: input.channel.workspaceId,
+      channelId: input.channel.id,
+      consumerTeammateId: input.consumerTeammateId,
+      sections: input.sections.map(contextSectionToChannelContextSection),
+      sourceRefs: input.sourceRefs,
+      sources: input.sources,
+      compactionIds: input.compactionIds,
+      budget: {
+        mode: budget.mode,
+        inputBudgetTokens: budget.inputBudgetTokens,
+      },
+    }),
+  };
+}
+
+function buildContextPackFromContextView(input: CompatContextView): ContextPack {
+  return buildContextPack({
+    kind: input.kind,
+    providerPreset: input.providerPreset,
+    sections: promptSectionsFromContextView(input.view).map(channelContextSectionToContextSection),
+    sourceRefs: uniqueContextSourceRefs(input.legacySourceRefs),
+    compactionIds: input.view.metadata.compactionIds,
+  });
+}
+
+function legacyContextSourceRefsFromContextView(view: ChannelContextView): readonly ContextSourceRef[] {
+  return uniqueContextSourceRefs(
+    view.sourceRefs.flatMap((ref): ContextSourceRef[] => {
+      if (!isLegacyContextSourceRefType(ref.type)) {
+        return [];
+      }
+      return [{
+        type: ref.type,
+        id: ref.id,
+        ...(ref.label ? { label: ref.label } : {}),
+      }];
+    }),
+  );
+}
+
+function isLegacyContextSourceRefType(type: string): type is ContextSourceRef["type"] {
+  return (
+    type === "message" ||
+    type === "channel" ||
+    type === "teammate" ||
+    type === "provider" ||
+    type === "memory" ||
+    type === "artifact" ||
+    type === "attachment" ||
+    type === "link_preview" ||
+    type === "run" ||
+    type === "decision" ||
+    type === "handoff" ||
+    type === "summary" ||
+    type === "workflow" ||
+    type === "workflow_step" ||
+    type === "workflow_selector_decision" ||
+    type === "workflow_handoff_intent" ||
+    type === "context_summary" ||
+    type === "workflow_packet_summary"
+  );
+}
+
+function contextSectionToChannelContextSection(section: ContextSection): ChannelContextSection {
+  return {
+    id: section.id,
+    role: section.role,
+    priority: section.priority,
+    title: section.id,
+    text: section.text,
+    sourceRefIds: section.sourceRefIds ?? [],
+    visibility: "prompt",
+    quotePolicy: section.role === "memory" ? "influence_only" : "public_ok",
+    estimatedTokens: section.estimatedTokens,
+    metadata: section.metadata,
+  };
+}
+
+function channelContextSectionToContextSection(section: ChannelContextSection): ContextSection {
+  return {
+    id: section.id,
+    role: section.role,
+    priority: section.priority,
+    text: section.text,
+    sourceRefIds: section.sourceRefIds,
+    estimatedTokens: section.estimatedTokens,
+    metadata: section.metadata,
+  };
+}
+
 export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput): ContextPack {
   const discussionPromptContext = buildChannelDiscussionPromptContext(input);
   const protocolSection = buildChannelProtocolContextSection(input);
@@ -272,34 +394,47 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
   const compactedSummarySection = input.compactedChannelSummary
     ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)]
     : [];
-  return buildContextPack({
+  const sections: readonly ContextSection[] = [
+    protocolSection,
+    ...compactedSummarySection,
+    ...(recentReplyContextSection ? [recentReplyContextSection] : []),
+    {
+      id: "channel_discussion",
+      role: "user",
+      priority: "must_keep",
+      text: formatChannelDiscussionPrompt(input.channel, sourceMessageForPrompt, discussionPromptContext),
+      sourceRefIds: [sourceMessage.id, input.channel.id],
+    },
+  ];
+  const sourceRefs: readonly ContextSourceRef[] = [
+    { type: "channel", id: input.channel.id, label: input.channel.name },
+    { type: "message", id: sourceMessage.id, label: "Source message" },
+    ...(recentReplyContextSection?.sourceRefIds ?? []).map((messageId): ContextSourceRef => ({
+      type: "message",
+      id: messageId,
+      label: "Recent context message",
+    })),
+    ...turnEnvelopeSourceRefs(envelope),
+    ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
+  ];
+  const view = buildCompatContextView({
+    viewKind: "ling_agent_channel_view",
     kind,
+    channel: input.channel,
     providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
-    sections: [
-      protocolSection,
-      ...compactedSummarySection,
-      ...(recentReplyContextSection ? [recentReplyContextSection] : []),
-      {
-        id: "channel_discussion",
-        role: "user",
-        priority: "must_keep",
-        text: formatChannelDiscussionPrompt(input.channel, sourceMessageForPrompt, discussionPromptContext),
-        sourceRefIds: [sourceMessage.id, input.channel.id],
-      },
-    ],
-    sourceRefs: [
-      { type: "channel", id: input.channel.id, label: input.channel.name },
-      { type: "message", id: sourceMessage.id, label: "Source message" },
-      ...(recentReplyContextSection?.sourceRefIds ?? []).map((messageId): ContextSourceRef => ({
-        type: "message",
-        id: messageId,
-        label: "Recent context message",
-      })),
-      ...turnEnvelopeSourceRefs(envelope),
-      ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
-    ],
+    consumerTeammateId: input.canonicalTeammateId,
+    sections,
+    sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
+    sources: [
+      collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
+      collectTurnSource({ channel: input.channel, envelope }),
+      ...collectMaterializedInputSources({ channel: input.channel, envelope }),
+      ...collectReplyRecentMessageSources(input, recentReplyContextSection),
+      ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
+    ],
   });
+  return buildContextPackFromContextView(view);
 }
 
 export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelectorContextPackInput): ContextPack {
@@ -316,55 +451,67 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
     .listAiTeammates({ status: "active", includeHidden: false, limit: 20 })
     .map((teammate) => ({ id: teammate.id, role: teammate.roleKey, label: teammate.displayName }))
     .slice(0, 12);
-  return buildContextPack({
+  const sections: readonly ContextSection[] = [
+    {
+      id: "selector_instructions",
+      role: "instruction",
+      priority: "must_keep",
+      text: [
+        "Classify the latest user channel message into exactly one Ling intent.",
+        "Return strict JSON only: {\"action\":\"no_reply|single_reply|visible_multi_reply|clarify|workflow_proposal|direct_workflow\",\"reason\":\"short reason\"}.",
+        "Use single_reply for ordinary questions one teammate should answer.",
+        "Use visible_multi_reply only for explicit discussion-only requests asking multiple teammates for visible opinions; do not use it for implementation, validation, publishing, merge, deploy, or tool-running work.",
+        "Use clarify for work-shaped requests missing target, scope, or acceptance checks.",
+        "Use workflow_proposal for multi-role work that needs proposal evidence before execution.",
+        "Use direct_workflow only when the user explicitly asks to start/run bounded known work; Ling Agent Session may auto-start after proposal evidence when scope is clear and required tools are not denied.",
+        "Use no_reply only to mean the message is not executable or collaborative work; Ling Agent still falls through to ordinary reply handling.",
+      ].join("\n"),
+    },
+    protocolSection,
+    ...(input.compactedChannelSummary ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)] : []),
+    {
+      id: "selector_source_message",
+      role: "user",
+      priority: "must_keep",
+      text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
+      sourceRefIds: [input.channel.id, sourceMessage.id],
+    },
+    {
+      id: "selector_recent_context",
+      role: "evidence",
+      priority: "low",
+      text: recentMessages ? `Recent context:\n${recentMessages}` : "Recent context: none",
+    },
+    {
+      id: "selector_teammate_roles",
+      role: "evidence",
+      priority: "high",
+      text: `Available teammate roles JSON: ${JSON.stringify(teammateRoles)}`,
+    },
+  ];
+  const sourceRefs: readonly ContextSourceRef[] = [
+    { type: "channel", id: input.channel.id, label: input.channel.name },
+    { type: "message", id: sourceMessage.id, label: "Latest user message" },
+    ...turnEnvelopeSourceRefs(envelope),
+    ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
+  ];
+  const view = buildCompatContextView({
+    viewKind: "selector_view",
     kind: "intent_selector",
+    channel: input.channel,
     providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
-    sections: [
-      {
-        id: "selector_instructions",
-        role: "instruction",
-        priority: "must_keep",
-        text: [
-          "Classify the latest user channel message into exactly one Ling intent.",
-          "Return strict JSON only: {\"action\":\"no_reply|single_reply|visible_multi_reply|clarify|workflow_proposal|direct_workflow\",\"reason\":\"short reason\"}.",
-          "Use single_reply for ordinary questions one teammate should answer.",
-          "Use visible_multi_reply only for explicit discussion-only requests asking multiple teammates for visible opinions; do not use it for implementation, validation, publishing, merge, deploy, or tool-running work.",
-          "Use clarify for work-shaped requests missing target, scope, or acceptance checks.",
-          "Use workflow_proposal for multi-role work that needs proposal evidence before execution.",
-          "Use direct_workflow only when the user explicitly asks to start/run bounded known work; Ling Agent Session may auto-start after proposal evidence when scope is clear and required tools are not denied.",
-          "Use no_reply only to mean the message is not executable or collaborative work; Ling Agent still falls through to ordinary reply handling.",
-        ].join("\n"),
-      },
-      protocolSection,
-      ...(input.compactedChannelSummary ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)] : []),
-      {
-        id: "selector_source_message",
-        role: "user",
-        priority: "must_keep",
-        text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
-        sourceRefIds: [input.channel.id, sourceMessage.id],
-      },
-      {
-        id: "selector_recent_context",
-        role: "evidence",
-        priority: "low",
-        text: recentMessages ? `Recent context:\n${recentMessages}` : "Recent context: none",
-      },
-      {
-        id: "selector_teammate_roles",
-        role: "evidence",
-        priority: "high",
-        text: `Available teammate roles JSON: ${JSON.stringify(teammateRoles)}`,
-      },
-    ],
-    sourceRefs: [
-      { type: "channel", id: input.channel.id, label: input.channel.name },
-      { type: "message", id: sourceMessage.id, label: "Latest user message" },
-      ...turnEnvelopeSourceRefs(envelope),
-      ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
-    ],
+    sections,
+    sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
+    sources: [
+      collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
+      collectTurnSource({ channel: input.channel, envelope }),
+      ...collectMaterializedInputSources({ channel: input.channel, envelope }),
+      ...collectSelectorRecentMessageSources(input),
+      ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
+    ],
   });
+  return buildContextPackFromContextView(view);
 }
 
 export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextPackInput): ContextPack {
@@ -374,67 +521,71 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
   const recentMessages = input.minimal
     ? ""
     : listRecentContextMessages(input.store, input.channel.id, input.sourceMessage)
-      .filter((message) => message.id !== input.sourceMessage.id)
-      .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
-      .join("\n");
-  return buildContextPack({
+    .filter((message) => message.id !== input.sourceMessage.id)
+    .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
+    .join("\n");
+  const sections: readonly ContextSection[] = [
+    {
+      id: "auto_route_instructions",
+      role: "instruction",
+      priority: "must_keep",
+      text: [
+        "Decide whether one AI teammate should reply to the latest user channel message.",
+        "Return strict JSON only with fields: action, teammateId, confidence, reason, alternativesConsidered.",
+        "Root local-user messages should produce a visible Ling outcome. Choose reply for acknowledgements, greetings, punctuation fragments, and short status messages; keep the reply concise.",
+        "Use action no_reply only for messages that are not a local-user root turn or cannot be handled as channel discussion.",
+        "Never create tasks, runs, workflows, approvals, memory authority changes, or multiple replies.",
+      ].join("\n"),
+    },
+    protocolSection,
+    ...(input.compactedChannelSummary ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)] : []),
+    {
+      id: "auto_route_source_message",
+      role: "user",
+      priority: "must_keep",
+      text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
+      sourceRefIds: [input.channel.id, sourceMessage.id],
+    },
+    {
+      id: "auto_route_recent_context",
+      role: "evidence",
+      priority: "low",
+      text: recentMessages ? `Recent context:\n${recentMessages}` : "Recent context: none",
+    },
+    {
+      id: "auto_route_candidates",
+      role: "evidence",
+      priority: "high",
+      text: `Candidates JSON: ${JSON.stringify(input.candidates)}`,
+    },
+  ];
+  const sourceRefs: readonly ContextSourceRef[] = [
+    { type: "channel", id: input.channel.id, label: input.channel.name },
+    { type: "message", id: sourceMessage.id, label: "Latest user message" },
+    ...turnEnvelopeSourceRefs(envelope),
+    ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
+  ];
+  const view = buildCompatContextView({
+    viewKind: "selector_view",
     kind: "auto_route_selector",
+    channel: input.channel,
     providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
-    sections: [
-      {
-        id: "auto_route_instructions",
-        role: "instruction",
-        priority: "must_keep",
-        text: [
-          "Decide whether one AI teammate should reply to the latest user channel message.",
-          "Return strict JSON only with fields: action, teammateId, confidence, reason, alternativesConsidered.",
-          "Root local-user messages should produce a visible Ling outcome. Choose reply for acknowledgements, greetings, punctuation fragments, and short status messages; keep the reply concise.",
-          "Use action no_reply only for messages that are not a local-user root turn or cannot be handled as channel discussion.",
-          "Never create tasks, runs, workflows, approvals, memory authority changes, or multiple replies.",
-        ].join("\n"),
-      },
-      protocolSection,
-      ...(input.compactedChannelSummary ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)] : []),
-      {
-        id: "auto_route_source_message",
-        role: "user",
-        priority: "must_keep",
-        text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
-        sourceRefIds: [input.channel.id, sourceMessage.id],
-      },
-      {
-        id: "auto_route_recent_context",
-        role: "evidence",
-        priority: "low",
-        text: recentMessages ? `Recent context:\n${recentMessages}` : "Recent context: none",
-      },
-      {
-        id: "auto_route_candidates",
-        role: "evidence",
-        priority: "high",
-        text: `Candidates JSON: ${JSON.stringify(input.candidates)}`,
-      },
-    ],
-    sourceRefs: [
-      { type: "channel", id: input.channel.id, label: input.channel.name },
-      { type: "message", id: sourceMessage.id, label: "Latest user message" },
-      ...turnEnvelopeSourceRefs(envelope),
-      ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
-    ],
+    sections,
+    sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
+    sources: [
+      collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
+      collectTurnSource({ channel: input.channel, envelope }),
+      ...collectMaterializedInputSources({ channel: input.channel, envelope }),
+      ...collectSelectorRecentMessageSources(input),
+      ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
+    ],
   });
+  return buildContextPackFromContextView(view);
 }
 
 function listRecentContextMessages(store: RunStore, channelId: string, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
-  const historicalGuidanceMessageIds = new Set(
-    store
-      .listRunInterventions({ limit: 500 })
-      .map((intervention) => parseChannelMessageGuidanceIdempotencyKey(intervention.idempotencyKey))
-      .filter((messageId): messageId is string => Boolean(messageId)),
-  );
-  return store
-    .listChannelMessages({ channelId, limit: 8 })
-    .filter((message) => message.id === sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+  return listChannelContextMessages({ store, channelId, sourceMessage, limit: 8 });
 }
 
 function buildRecentChannelReplyContextSection(
@@ -462,12 +613,34 @@ function buildRecentChannelReplyContextSection(
 }
 
 function listPriorChannelMessages(store: RunStore, channelId: string, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
-  const recentMessages = listRecentContextMessages(store, channelId, sourceMessage);
-  const sourceIndex = recentMessages.findIndex((message) => message.id === sourceMessage.id);
-  if (sourceIndex >= 0) {
-    return recentMessages.slice(0, sourceIndex);
+  return listPriorChannelContextMessages({ store, channelId, sourceMessage, limit: 8 });
+}
+
+function collectReplyRecentMessageSources(
+  input: ChannelReplyContextPackInput,
+  recentReplyContextSection: ContextSection | undefined,
+): readonly ChannelContextSource[] {
+  if (!recentReplyContextSection) {
+    return [];
   }
-  return recentMessages.filter((message) => message.id !== sourceMessage.id);
+  return collectPriorConversationSources({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    limit: CHANNEL_REPLY_RECENT_CONTEXT_LIMIT,
+  });
+}
+
+function collectSelectorRecentMessageSources(input: ChannelIntentSelectorContextPackInput): readonly ChannelContextSource[] {
+  if (input.minimal) {
+    return [];
+  }
+  return collectSelectorConversationSources({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    limit: 8,
+  });
 }
 
 function formatRecentContextMessage(store: RunStore, message: ChannelMessage): string {
@@ -528,105 +701,23 @@ function turnEnvelopeSourceRefs(envelope: LingAgentTurnEnvelope): readonly Conte
   ];
 }
 
-function parseChannelMessageGuidanceIdempotencyKey(idempotencyKey: string): string | undefined {
-  const prefix = "channel_message:";
-  const suffix = ":queue_followup";
-  if (!idempotencyKey.startsWith(prefix) || !idempotencyKey.endsWith(suffix)) {
-    return undefined;
-  }
-  return idempotencyKey.slice(prefix.length, -suffix.length) || undefined;
-}
-
 export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput): ContextPack {
-  const sourceRefs = buildWorkflowStepContextSourceRefs(input);
   const protocolSection = buildChannelProtocolContextSection(input);
-  const dependencySections = input.compactedDependencySummary
-    ? [buildCompactedWorkflowDependencySection(input.compactedDependencySummary)]
-    : buildWorkflowStepDependencySections(input);
-  const contextSummary = input.step.contextSummaryId
-    ? input.store.getChannelContextSummary(input.step.contextSummaryId)
-    : undefined;
-  return buildContextPack({
+  const providerPreset = input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined;
+  const budget = resolveProviderContextBudget(providerPreset, "workflow_step");
+  const view = buildWorkflowStepContextView({
+    ...input,
+    protocolSection: contextSectionToChannelContextSection(protocolSection),
+    budget: {
+      mode: budget.mode,
+      inputBudgetTokens: budget.inputBudgetTokens,
+    },
+  });
+  return buildContextPackFromContextView({
     kind: "workflow_step",
-    providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
-    sourceRefs: input.compactedDependencySummary
-      ? uniqueContextSourceRefs([...sourceRefs, ...input.compactedDependencySummary.sourceRefs])
-      : sourceRefs,
-    compactionIds: input.compactedDependencySummary ? [input.compactedDependencySummary.id] : undefined,
-    sections: [
-      {
-        id: "workflow_runtime_boundary",
-        role: "instruction",
-        priority: "must_keep",
-        text: [
-          "Workflow step runtime boundary:",
-          "- Complete this step only.",
-          "- Do not start, approve, skip, or mark later workflow steps.",
-          "- The Ling orchestrator owns sequencing, workflow state transitions, and approval gates.",
-          "- Do not self-approve tools, writes, releases, external sends, deploys, or other side effects.",
-          "- Return a concise terminal summary plus artifacts, blockers, decisions, or handoff needs for later steps.",
-        ].join("\n"),
-      },
-      {
-        id: "workflow_objective",
-        role: "user",
-        priority: "must_keep",
-        text: [
-          "Workflow objective:",
-          input.workflow.objective || "No objective provided.",
-          "",
-          `Workflow: ${input.workflow.title}`,
-          `Channel: ${input.channel.name}`,
-          input.channel.boundPath ? `Bound path: ${input.channel.boundPath}` : undefined,
-        ].filter((line): line is string => line !== undefined).join("\n"),
-        sourceRefIds: [input.workflow.id, input.channel.id],
-      },
-      {
-        id: "workflow_current_step",
-        role: "user",
-        priority: "must_keep",
-        text: [
-          "Current workflow step:",
-          `Title: ${input.step.title}`,
-          `Workflow step id: ${input.step.id}`,
-          input.step.metadata?.templateStepId ? `Template step id: ${input.step.metadata.templateStepId}` : undefined,
-          input.step.metadata?.graphNodeId ? `Graph node id: ${input.step.metadata.graphNodeId}` : undefined,
-          input.step.toParticipantId ? `Assigned teammate: ${input.step.toParticipantLabel ?? input.step.toParticipantId} (${input.step.toParticipantId})` : undefined,
-          input.step.metadata?.skillId ? `Skill: ${input.step.metadata.skillId}` : undefined,
-          "",
-          "Step instruction:",
-          input.prompt,
-        ].filter((line): line is string => line !== undefined).join("\n"),
-        sourceRefIds: [input.step.id],
-      },
-      {
-        id: "workflow_approval_gates",
-        role: "instruction",
-        priority: "high",
-        text: [
-          "Approval gates:",
-          ...formatWorkflowApprovalGatePromptLines(input.step),
-        ].join("\n"),
-        sourceRefIds: [input.step.id],
-      },
-      ...dependencySections,
-      ...formatWorkflowDecisionAndHandoffSections(input),
-      ...(contextSummary
-        ? [{
-            id: "workflow_context_summary",
-            role: "evidence" as const,
-            priority: "medium" as const,
-            text: [
-              "Channel context summary:",
-              contextSummary.summary,
-              contextSummary.acceptanceCriteria.length > 0 ? `Acceptance criteria: ${contextSummary.acceptanceCriteria.join("; ")}` : undefined,
-              contextSummary.openQuestions.length > 0 ? `Open questions: ${contextSummary.openQuestions.join("; ")}` : undefined,
-            ].filter((line): line is string => line !== undefined).join("\n"),
-            sourceRefIds: [contextSummary.id],
-          }]
-        : []),
-      protocolSection,
-    ],
+    providerPreset,
+    view,
+    legacySourceRefs: legacyContextSourceRefsFromContextView(view),
   });
 }
 
@@ -691,16 +782,6 @@ function contextSourceMessage(sourceMessage: ChannelMessage, maxBodyLength: numb
   return {
     ...sourceMessage,
     body: `${sourceMessage.body.slice(0, Math.max(0, maxBodyLength - 80))}\n\n[Message body truncated for no-tools context retry. Full text remains in the channel message record: ${sourceMessage.id}]`,
-  };
-}
-
-function buildCompactedWorkflowDependencySection(summary: WorkflowStepCompactedDependencySummary): ContextSection {
-  return {
-    id: "workflow_dependency_summary",
-    role: "evidence",
-    priority: "high",
-    text: summary.text,
-    sourceRefIds: summary.sourceRefIds,
   };
 }
 
@@ -791,147 +872,6 @@ function isChannelRosterQuestion(body: string): boolean {
   );
 }
 
-function buildWorkflowStepDependencySections(input: WorkflowStepContextPackInput): readonly ContextSection[] {
-  const stepsById = new Map(input.workflowSteps.map((candidate) => [candidate.id, candidate] as const));
-  const dependencies = (input.step.metadata?.dependsOnStepIds ?? [])
-    .map((stepId) => stepsById.get(stepId))
-    .filter((candidate): candidate is ChannelWorkflowStep => candidate !== undefined);
-  if (dependencies.length === 0) {
-    return [{
-      id: "workflow_dependencies",
-      role: "evidence",
-      priority: "high",
-      text: "Dependencies:\n- none",
-      sourceRefIds: [input.step.id],
-    }];
-  }
-  return dependencies.map((dependency, index) => {
-    const artifactIds = uniqueStrings([
-      dependency.metadata?.outputArtifactId,
-      ...(dependency.metadata?.outputArtifactIds ?? []),
-      ...(dependency.runId ? input.store.listArtifacts(dependency.runId).map((artifact) => artifact.id) : []),
-    ]);
-    return {
-      id: `workflow_dependency_${index + 1}`,
-      role: "evidence",
-      priority: "high",
-      text: [
-        "Dependency output:",
-        `- ${dependency.title} (${dependency.status})`,
-        `  workflowStepId: ${dependency.id}`,
-        `  runId: ${dependency.runId ?? "none"}`,
-        `  outputArtifactId: ${dependency.metadata?.outputArtifactId ?? "none"}`,
-        `  artifactIds: ${artifactIds.length > 0 ? artifactIds.join(", ") : "none"}`,
-        `  resultSummary: ${dependency.resultSummary ? truncateWorkflowPromptValue(dependency.resultSummary, 420) : "none"}`,
-      ].filter((line): line is string => line !== undefined).join("\n"),
-      sourceRefIds: [dependency.id, ...artifactIds],
-    };
-  });
-}
-
-function formatWorkflowDecisionAndHandoffSections(input: WorkflowStepContextPackInput): readonly ContextSection[] {
-  const selectorDecisionIds = input.step.metadata?.selectorDecisionIds ?? [];
-  const handoffIntentIds = input.step.metadata?.handoffIntentIds ?? [];
-  const sections: ContextSection[] = [];
-  if (selectorDecisionIds.length > 0) {
-    const lines = selectorDecisionIds.map((decisionId) => {
-      const decision = input.store.getWorkflowSelectorDecision(decisionId);
-      return decision
-        ? `- ${decision.targetKind}: ${decision.reason} (status=${decision.status}, createdBy=${decision.createdBy})`
-        : `- ${decisionId}: missing selector decision`;
-    });
-    sections.push({
-      id: "workflow_selector_decisions",
-      role: "evidence",
-      priority: "high",
-      text: ["Workflow selector decisions:", ...lines].join("\n"),
-      sourceRefIds: selectorDecisionIds,
-    });
-  }
-  if (handoffIntentIds.length > 0) {
-    const lines = handoffIntentIds.map((intentId) => {
-      const intent = input.store.getWorkflowHandoffIntent(intentId);
-      return intent
-        ? `- ${intent.fromParticipantLabel} -> ${intent.toParticipantLabel ?? intent.toParticipantId}: ${intent.reason} (status=${intent.status})`
-        : `- ${intentId}: missing handoff intent`;
-    });
-    sections.push({
-      id: "workflow_handoff_intents",
-      role: "evidence",
-      priority: "high",
-      text: ["Workflow handoff intents:", ...lines].join("\n"),
-      sourceRefIds: handoffIntentIds,
-    });
-  }
-  return sections;
-}
-
-function buildWorkflowStepContextSourceRefs(input: WorkflowStepContextPackInput): readonly ContextSourceRef[] {
-  const refs: ContextSourceRef[] = [
-    { type: "channel", id: input.channel.id, label: input.channel.name },
-    { type: "workflow", id: input.workflow.id, label: input.workflow.title },
-    { type: "workflow_step", id: input.step.id, label: input.step.title },
-  ];
-  if (input.step.contextSummaryId) {
-    const summary = input.store.getChannelContextSummary(input.step.contextSummaryId);
-    refs.push({ type: "context_summary", id: input.step.contextSummaryId, label: summary?.summary });
-  }
-  for (const stepId of input.step.metadata?.dependsOnStepIds ?? []) {
-    const dependency = input.workflowSteps.find((candidate) => candidate.id === stepId);
-    refs.push({ type: "workflow_step", id: stepId, label: dependency?.title });
-    if (dependency?.metadata?.outputArtifactId) {
-      const artifact = input.store.getArtifact(dependency.metadata.outputArtifactId);
-      refs.push({ type: "artifact", id: dependency.metadata.outputArtifactId, label: artifact?.title ?? artifact?.path });
-    }
-    for (const artifactId of dependency?.metadata?.outputArtifactIds ?? []) {
-      const artifact = input.store.getArtifact(artifactId);
-      refs.push({ type: "artifact", id: artifactId, label: artifact?.title ?? artifact?.path });
-    }
-    if (dependency?.runId) {
-      refs.push({ type: "run", id: dependency.runId, label: "Dependency run" });
-      for (const artifact of input.store.listArtifacts(dependency.runId)) {
-        refs.push({ type: "artifact", id: artifact.id, label: artifact.title ?? artifact.path });
-      }
-    }
-  }
-  for (const decisionId of input.step.metadata?.selectorDecisionIds ?? []) {
-    const decision = input.store.getWorkflowSelectorDecision(decisionId);
-    refs.push({ type: "workflow_selector_decision", id: decisionId, label: decision?.reason });
-  }
-  for (const intentId of input.step.metadata?.handoffIntentIds ?? []) {
-    const intent = input.store.getWorkflowHandoffIntent(intentId);
-    refs.push({ type: "workflow_handoff_intent", id: intentId, label: intent?.reason });
-  }
-  return uniqueContextSourceRefs(refs);
-}
-
-function formatWorkflowApprovalGatePromptLines(step: ChannelWorkflowStep): readonly string[] {
-  const lines: string[] = [];
-  if (step.metadata?.approvalGate) {
-    lines.push(`- pre-run: ${formatApprovalProfileSummary(step.metadata.approvalGate)}`);
-  }
-  for (const gate of step.metadata?.gates ?? []) {
-    lines.push(`- ${gate.stage}: ${gate.title} (${formatApprovalProfileSummary(gate.approvalProfile)})`);
-    lines.push(`  reason: ${truncateWorkflowPromptValue(gate.reason, 180)}`);
-    lines.push(`  requiredForStatuses: ${gate.requiredForStatuses?.join(", ") ?? "any"}`);
-  }
-  return lines.length > 0 ? lines : ["- none"];
-}
-
-function formatApprovalProfileSummary(profile: SkillApprovalProfile): string {
-  return [
-    `mode=${profile.mode}`,
-    profile.risk ? `risk=${profile.risk}` : undefined,
-    profile.requiredForTools?.length ? `tools=${profile.requiredForTools.join(",")}` : undefined,
-    profile.requiredForActions?.length ? `actions=${profile.requiredForActions.join(",")}` : undefined,
-  ].filter((item): item is string => Boolean(item)).join("; ");
-}
-
-function truncateWorkflowPromptValue(value: string, maxLength: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
-}
-
 function uniqueContextSourceRefs(refs: readonly ContextSourceRef[]): readonly ContextSourceRef[] {
   const seen = new Set<string>();
   const unique: ContextSourceRef[] = [];
@@ -965,8 +905,4 @@ function findDropSectionIndex(sections: readonly ContextSection[]): number {
     }
   }
   return -1;
-}
-
-function uniqueStrings(values: readonly (string | undefined)[]): readonly string[] {
-  return [...new Set(values.filter((value): value is string => Boolean(value && value.trim().length > 0)))];
 }

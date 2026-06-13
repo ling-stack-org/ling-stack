@@ -20,6 +20,8 @@ export interface ProviderTemplateGroup {
   readonly templates: readonly ProviderTemplate[];
 }
 
+export type ProviderCapabilityUiState = "auto" | "estimated" | "conservative" | "custom_override";
+
 export const defaultProviderForm: ProviderFormState = {
   kind: "openai-compatible",
   displayName: "Local Relay",
@@ -36,8 +38,8 @@ export const defaultProviderForm: ProviderFormState = {
   enabled: true,
   authHeader: true,
   reasoning: true,
-  contextWindow: "128000",
-  maxTokens: "16384",
+  contextWindow: "",
+  maxTokens: "",
 };
 
 export const customOpenAICompatibleForm: ProviderFormState = {
@@ -56,9 +58,47 @@ export const customOpenAICompatibleForm: ProviderFormState = {
   enabled: true,
   authHeader: true,
   reasoning: true,
-  contextWindow: "128000",
-  maxTokens: "16384",
+  contextWindow: "",
+  maxTokens: "",
 };
+
+export function deriveProviderCapabilityUiState(
+  provider: Pick<ProviderFormState | ProviderPreset, "api" | "kind" | "contextWindow" | "maxTokens">,
+): ProviderCapabilityUiState {
+  if (provider.contextWindow || provider.maxTokens) {
+    return "custom_override";
+  }
+  if (provider.api === "media-job") {
+    return "auto";
+  }
+  return provider.kind === "openai-compatible" ? "conservative" : "estimated";
+}
+
+export function providerCapabilityUiStateLabel(state: ProviderCapabilityUiState): string {
+  if (state === "auto") {
+    return "Provider capability auto";
+  }
+  if (state === "estimated") {
+    return "Provider capability estimated";
+  }
+  if (state === "conservative") {
+    return "Provider capability conservative";
+  }
+  return "Provider capability custom override";
+}
+
+export function providerCapabilityUiStateDescription(state: ProviderCapabilityUiState): string {
+  if (state === "auto") {
+    return "Ling reads capability metadata automatically.";
+  }
+  if (state === "estimated") {
+    return "Ling estimates a safe context profile for this model.";
+  }
+  if (state === "conservative") {
+    return "Unknown compatible models use conservative defaults unless overridden.";
+  }
+  return "Advanced token fields are overriding automatic capability detection.";
+}
 
 export function providerToForm(provider: ProviderPreset, templates: readonly ProviderTemplate[] = []): ProviderFormState {
   return {

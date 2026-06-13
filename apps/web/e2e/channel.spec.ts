@@ -1522,7 +1522,12 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
 
   const proposal = page.getByLabel("Task confirmation");
   await expect(proposal).toContainText("Refine channel workspace copy");
+  await expect(proposal).toContainText("Ling is shaping the task");
+  await expect(proposal).toContainText("Goal");
+  await expect(proposal).toContainText("Participants");
+  await expect(proposal).toContainText("Boundary");
   await expect(proposal).toContainText("Ling Engineer");
+  await expect(proposal).toContainText("Ling Designer");
   const collaboration = proposal.locator(".channel-proposal-collaboration");
   await expect(collaboration).not.toHaveAttribute("open", /.+/);
   await expect(collaboration.locator("summary")).toContainText("Collaboration 2 records");
@@ -1584,12 +1589,113 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Refine channel workspace copy" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Task in progress");
+  await expect(workCell).toContainText("Collaboration in progress");
+  await expect(workCell.getByLabel("Work summary")).toContainText("Mode");
+  await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
+  await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toBeVisible();
 
   await openChannelChatTools(page);
   const acceptedProposal = feed.getByLabel("Task confirmation").filter({ hasText: "Refine channel workspace copy" });
   await expect(acceptedProposal).toBeVisible();
   await expect(acceptedProposal.getByRole("button", { name: "Open workflow" })).toBeVisible();
+});
+
+test("requirement shaping proposal persists clarifications before confirmation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [
+    {
+      id: "msg_shaping_request",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Refine the workspace copy after clarifying scope.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:21:00.000Z",
+      updatedAt: "2026-05-25T00:21:00.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_shaping",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_shaping_request",
+      proposedByTeammateId: "ling_agent",
+      title: "Refine workspace copy",
+      prompt: "Refine the workspace copy after clarifying scope.",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["Workspace copy changes are scoped before execution."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Clarify the task, then prepare an executable proposal." }],
+      requiredTools: ["read", "edit"],
+      riskSummary: "Copy scope must be confirmed before file edits.",
+      shaping: {
+        status: "needs_user_clarification",
+        summary: "Clarify workspace copy scope before execution.",
+        openQuestions: ["Which copy sections are in scope?"],
+        clarifications: [
+          {
+            id: "clarification_1",
+            authorType: "local-user",
+            authorId: "tian",
+            body: "Only workspace drawer copy is in scope.",
+            sourceMessageId: "msg_shaping_request",
+            createdAt: "2026-05-25T00:21:10.000Z",
+          },
+        ],
+        sourceRefs: [{ type: "message", id: "msg_shaping_request" }],
+        updatedAt: "2026-05-25T00:21:10.000Z",
+      },
+      status: "draft",
+      createdAt: "2026-05-25T00:21:01.000Z",
+      updatedAt: "2026-05-25T00:21:10.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const proposal = page.getByLabel("Task confirmation");
+  await expect(proposal).toContainText("Needs user clarification");
+  await expect(proposal).toContainText("Which copy sections are in scope?");
+  await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
+
+  await page.reload();
+  await expect(proposal).toContainText("Needs user clarification");
+  await expect(proposal).toContainText("Which copy sections are in scope?");
+  await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
+
+  await proposal.getByRole("button", { name: "Edit" }).click();
+  const editForm = proposal.locator(".channel-proposal-edit-form");
+  await editForm.getByLabel("Open questions").fill("Which copy sections are in scope?\nShould QA cover mobile?");
+  await editForm.getByLabel("User clarifications").fill("Only workspace drawer copy is in scope.\nKeep provider checks out of this task.");
+  await proposal.getByRole("button", { name: "Save" }).click();
+  await expect(editForm).toHaveCount(0);
+  await expect(proposal).toContainText("Should QA cover mobile?");
+  await expect(proposal).toContainText("Keep provider checks out of this task.");
+  await expect.poll(() => {
+    const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
+    if (!isRecord(updated) || !isRecord(updated.shaping)) {
+      return "";
+    }
+    const openQuestions = Array.isArray(updated.shaping.openQuestions) ? updated.shaping.openQuestions.length : 0;
+    const clarifications = Array.isArray(updated.shaping.clarifications) ? updated.shaping.clarifications.length : 0;
+    return `${updated.shaping.status}|${openQuestions}|${clarifications}`;
+  }).toBe("needs_user_clarification|2|2");
+
+  await proposal.getByRole("button", { name: "Authorize and start task" }).click();
+  await expect.poll(() => {
+    const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
+    return isRecord(updated) && isRecord(updated.shaping) ? updated.shaping.status : "";
+  }).toBe("converted_to_task");
 });
 
 test("completed workflow hides accepted proposal and leaves final result in default chat", async ({ page }) => {
@@ -1731,8 +1837,19 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create /Users/tianxiao/ling-stack-test/README.md" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Task completed");
-  await expect(workCell).toContainText("Task completed: Created the requested README file.");
+  await expect(workCell).toContainText("Collaboration complete");
+  await expect(workCell).toContainText("Collaboration complete: Created the requested README file.");
+  await expect(workCell).toContainText("Final Ling report");
+  await expect(workCell).toContainText("Outcome");
+  await expect(workCell).toContainText("Changed");
+  await expect(workCell).toContainText("Changed: README.md. Evidence recorded: 1.");
+  await expect(workCell).toContainText("Validated");
+  await expect(workCell).toContainText("No validation commands recorded.");
+  await expect(workCell).toContainText("Blockers / risks");
+  await expect(workCell).toContainText("No blockers or risks recorded.");
+  await expect(workCell).toContainText("Next action");
+  await expect(workCell.locator(".conversation-work-cell-active-stream")).toHaveCount(0);
+  await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
 
   await openChannelChatTools(page);
@@ -1822,11 +1939,267 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create README.md" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Task blocked");
-  await expect(workCell).toContainText("Blocked: Write permission was not granted.");
+  await expect(workCell).toContainText("Collaboration blocked");
+  await expect(workCell).toContainText("Collaboration blocked: Write permission was not granted.");
+  await expect(workCell).toContainText("Final Ling report");
+  await expect(workCell).toContainText("Blockers / risks");
+  await expect(workCell).toContainText("Blocker: Write permission was not granted.");
+  await expect(workCell).toContainText("Next action");
+  await expect(workCell).toContainText("Resolve blocker");
+  await expect(workCell).toContainText("No changed files recorded. Evidence recorded: 0.");
+  await expect(workCell).toContainText("No validation commands recorded.");
 
   await openChannelChatTools(page);
   await expect(feed.getByLabel("Task confirmation")).toContainText("Create README.md");
+});
+
+test("right progress panel renders workflow collaboration task cards", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_running_ui",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Ship workflow UI",
+      objective: "Render collaboration task cards in the right progress panel.",
+      status: "running",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:45:00.000Z",
+      updatedAt: "2026-05-25T00:47:00.000Z",
+    },
+    {
+      id: "workflow_blocked_ui",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Create README.md",
+      objective: "Create the requested README file.",
+      status: "blocked",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:44:00.000Z",
+      updatedAt: "2026-05-25T00:48:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_design_done",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_running_ui",
+      position: 1,
+      title: "Design right panel card",
+      prompt: "Design the right panel task card.",
+      toParticipantId: "designer",
+      toParticipantLabel: "Designer",
+      status: "succeeded",
+      resultSummary: "Card shape accepted.",
+      metadata: {
+        branchGroupId: "branch_design",
+      },
+      createdAt: "2026-05-25T00:45:00.000Z",
+      updatedAt: "2026-05-25T00:46:00.000Z",
+    },
+    {
+      id: "workflow_step_engineer_active",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_running_ui",
+      position: 2,
+      title: "Implement card UI",
+      prompt: "Implement the collaboration card UI.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "running",
+      metadata: {
+        branchGroupId: "branch_engineer",
+      },
+      createdAt: "2026-05-25T00:46:00.000Z",
+      updatedAt: "2026-05-25T00:47:00.000Z",
+    },
+    {
+      id: "workflow_step_qa_waiting",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_running_ui",
+      position: 3,
+      title: "Validate progress panel",
+      prompt: "Validate the right panel task card.",
+      toParticipantId: "qa",
+      toParticipantLabel: "QA",
+      status: "queued",
+      metadata: {
+        branchGroupId: "branch_qa",
+      },
+      createdAt: "2026-05-25T00:47:00.000Z",
+      updatedAt: "2026-05-25T00:47:00.000Z",
+    },
+    {
+      id: "workflow_step_blocked_ui",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_blocked_ui",
+      position: 1,
+      title: "Ling Agent: Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "blocked",
+      blocker: "Write permission was not granted.",
+      createdAt: "2026-05-25T00:44:00.000Z",
+      updatedAt: "2026-05-25T00:48:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  const feedWorkCell = feed.locator(".conversation-work-cell").filter({ hasText: "Ship workflow UI" });
+  await expect(feedWorkCell).toContainText("Parallel branches");
+  await expect(feedWorkCell).toContainText("Engineer branch");
+  await expect(feedWorkCell).toContainText("QA branch");
+  await expect(feedWorkCell).not.toContainText("branch_engineer");
+  const engineerBranch = feedWorkCell.locator(".conversation-work-cell-branch").filter({ hasText: "Engineer branch" });
+  await expect(engineerBranch.locator(".conversation-work-cell-branch-detail")).toHaveCount(0);
+  await engineerBranch.locator(".conversation-work-cell-branch-head").click();
+  await expect(engineerBranch.locator(".conversation-work-cell-branch-detail")).toContainText("Engineer: Implement card UI");
+  await expect(engineerBranch.locator(".conversation-work-cell-branch-toggle")).toContainText("Collapse branch");
+
+  await openChannelTasksTab(page);
+
+  const panel = page.locator(".channel-side-panel");
+  const cards = panel.locator(".collaboration-task-card");
+  await expect(cards).toHaveCount(2);
+
+  const blockedCard = cards.filter({ hasText: "Create README.md" });
+  await expect(blockedCard).toContainText("Blocked");
+  await expect(blockedCard).toContainText("Write permission was not granted.");
+  await expect(blockedCard).toContainText("Ling Agent: Create README.md");
+  await expect(blockedCard).not.toContainText("workflow_blocked_ui");
+
+  const runningCard = cards.filter({ hasText: "Ship workflow UI" });
+  await expect(runningCard).toContainText("Running");
+  await expect(runningCard).toContainText("Parallel");
+  await expect(runningCard).toContainText("Owner: Engineer");
+  await expect(runningCard).toContainText("Engineer branch");
+  await expect(runningCard).toContainText("QA branch");
+  await expect(runningCard).not.toContainText("branch_engineer");
+  await expect(runningCard).not.toContainText("workflow_running_ui");
+
+  await runningCard.click();
+  await expect(panel).toContainText("Workflow evidence");
+  const evidenceWorkCell = panel.locator(".conversation-work-cell");
+  await expect(evidenceWorkCell).toContainText("Ship workflow UI");
+  await expect(evidenceWorkCell).toContainText("Parallel branches");
+});
+
+test("right progress panel prefers daemon collaboration card payload", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_daemon_card_source",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Local fallback workflow title",
+      daemonCardTitle: "Daemon collaboration card title",
+      objective: "Local fallback objective.",
+      daemonCardObjective: "Daemon-projected objective.",
+      status: "running",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:50:00.000Z",
+      updatedAt: "2026-05-25T00:51:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_daemon_card_active",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_daemon_card_source",
+      position: 1,
+      title: "Use daemon card",
+      prompt: "Render the daemon card payload.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "running",
+      createdAt: "2026-05-25T00:50:00.000Z",
+      updatedAt: "2026-05-25T00:51:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openChannelTasksTab(page);
+
+  const panel = page.locator(".channel-side-panel");
+  const card = panel.locator(".collaboration-task-card").filter({ hasText: "Daemon collaboration card title" });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Daemon-projected objective.");
+  await expect(card).toContainText("Owner: Ling Agent");
+  await expect(card).not.toContainText("Local fallback workflow title");
+});
+
+test("right progress panel falls back to local collaboration card derivation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_local_card_fallback",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Local fallback workflow title",
+      daemonCardTitle: "Hidden daemon-only title",
+      objective: "Local fallback objective.",
+      daemonCardObjective: "Hidden daemon-only objective.",
+      status: "running",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:52:00.000Z",
+      updatedAt: "2026-05-25T00:53:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_local_card_fallback",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_local_card_fallback",
+      position: 1,
+      title: "Use local fallback",
+      prompt: "Render the local fallback card.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "running",
+      createdAt: "2026-05-25T00:52:00.000Z",
+      updatedAt: "2026-05-25T00:53:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state, { collaborationCardsUnsupported: true });
+  await page.goto("/");
+  await openChannelTasksTab(page);
+
+  const panel = page.locator(".channel-side-panel");
+  const card = panel.locator(".collaboration-task-card").filter({ hasText: "Local fallback workflow title" });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Local fallback objective.");
+  await expect(card).toContainText("Owner: Ling Agent");
+  await expect(card).not.toContainText("Hidden daemon-only title");
 });
 
 test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {

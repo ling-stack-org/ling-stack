@@ -4,6 +4,7 @@ import type {
   ChannelIntentDecision,
   ChannelExecutionProposal,
   ChannelExecutionProposalStep,
+  ChannelRequirementShaping,
   ChannelMessage,
   ResponseLanguage,
   RunTool,
@@ -18,6 +19,7 @@ import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
+import { buildWorkflowProposalContextView, proposalSourceRefsFromContextView } from "./context-processing/proposals.js";
 import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import {
   buildLingAgentTurnEnvelope,
@@ -538,6 +540,7 @@ function createWorkflowProposal(
       requiredTools: deriveRequiredTools(participants),
       riskSummary,
       responseLanguage,
+      shaping: buildProposalShaping(input, buildProposalTitle(input.sourceMessage.body, reasonCode), now),
       status: "draft",
     },
     now,
@@ -608,6 +611,7 @@ function createSingleStepExecutableProposal(
       requiredTools: executableIntent.requiredTools,
       riskSummary,
       responseLanguage,
+      ...(blocker ? {} : { shaping: buildProposalShaping(input, executableIntent.title, now) }),
       status: blocker ? "blocked" : "draft",
       errorMessage: blocker?.userMessage,
     },
@@ -624,6 +628,28 @@ function createSingleStepExecutableProposal(
     createdBy,
   });
   return { action: "workflow_proposal", proposal, intentDecisionId: decision.id };
+}
+
+function buildProposalShaping(
+  input: ChannelIntentSelectorInput,
+  summary: string,
+  now: string,
+): ChannelRequirementShaping {
+  const view = buildWorkflowProposalContextView({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    turnEnvelope: input.turnEnvelope,
+  });
+  const sourceRefs = proposalSourceRefsFromContextView(view);
+  return {
+    status: "ready_for_confirmation",
+    summary,
+    openQuestions: [],
+    clarifications: [],
+    sourceRefs: sourceRefs.length > 0 ? sourceRefs : [{ type: "message", id: input.sourceMessage.id }],
+    updatedAt: now,
+  };
 }
 
 function createClarifyReply(

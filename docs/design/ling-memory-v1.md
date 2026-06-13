@@ -250,6 +250,67 @@ Designer in Engineering channel:
   - workspace shared memory
 ```
 
+## Context View Isolation
+
+Memory recall isolation and context-view isolation are related but separate.
+
+Recall isolation answers:
+
+```text
+Which memory objects may this request retrieve?
+```
+
+Context-view isolation answers:
+
+```text
+How may retrieved memory influence this model prompt or public reply?
+```
+
+Ling already stores memory with scoped ownership:
+
+```text
+workspace
+channel
+teammate
+task
+run
+```
+
+That is the right base. The Context Processing Layer must add the second boundary so a
+memory item that is allowed for a teammate is not automatically public channel context.
+
+Rules:
+
+- Workspace memory may be used in channel and task views when active, relevant, and not
+  secret-adjacent.
+- Channel memory may be used only for that channel or explicitly linked tasks/runs.
+- Teammate private memory may be used only by that teammate. In a public channel reply it
+  may guide behavior, tone, or working preference, but sensitive private excerpts should
+  not be quoted or revealed by default.
+- Task/run memory may be used for linked work and evidence/review surfaces.
+- Secret-adjacent memory is excluded from ordinary model context and belongs in review or
+  health surfaces.
+- Candidate memory is not recalled unless review policy explicitly allows it.
+
+Example:
+
+```text
+Designer replying in Engineering channel:
+  may use:
+    - workspace memory
+    - Engineering channel memory
+    - Designer private memory
+  must not use:
+    - Engineer private memory
+    - another channel's memory
+    - secret-adjacent memory
+  must not quote:
+    - private Designer memory into the public channel unless it is shareable and relevant
+```
+
+This keeps the useful part of private teammate memory without turning it into accidental
+cross-agent or public-channel leakage.
+
 ## Retrieval Pipeline
 
 ```text

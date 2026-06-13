@@ -4010,6 +4010,102 @@ test("workflow handoff intents validate, accept, and stay visible as workflow ev
   }
 });
 
+test("workflow collaboration card endpoints derive compact product cards", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-collaboration-card-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Ship collaboration card read model",
+      objective: "Expose a compact collaboration card without raw workflow internals.",
+      status: "running",
+      createdBy: "ling_agent",
+    }, "2026-06-13T00:00:00.000Z");
+    const designStep = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      position: 1,
+      title: "Design API boundary",
+      prompt: "Define the daemon API contract.",
+      toParticipantId: "teammate_builtin_architect",
+      toParticipantLabel: "Architect",
+      status: "succeeded",
+      metadata: { branchGroupId: "design" },
+    }, "2026-06-13T00:01:00.000Z");
+    store.updateChannelWorkflowStep(designStep.id, { resultSummary: "Contract boundary is ready." }, "2026-06-13T00:02:00.000Z");
+    const implementationStep = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      position: 2,
+      title: "Implement endpoint",
+      prompt: "Implement the daemon endpoint and client facade.",
+      toParticipantId: "teammate_builtin_engineer",
+      toParticipantLabel: "Engineer",
+      status: "waiting_for_approval",
+      metadata: { branchGroupId: "implementation", maxParallelSiblings: 2 },
+    }, "2026-06-13T00:03:00.000Z");
+    const run = store.createRun({
+      id: "run_collaboration_card_waiting",
+      cwd,
+      taskId: "task_collaboration_card_waiting",
+      channelId: channel.id,
+      teammateId: "teammate_builtin_engineer",
+      workflowStepId: implementationStep.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_collaboration_card_waiting", title: "Implement endpoint" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-13T00:04:00.000Z",
+    });
+    store.markRunWaitingForApproval(run.id, "2026-06-13T00:05:00.000Z");
+    store.updateChannelWorkflowStep(implementationStep.id, { runId: run.id }, "2026-06-13T00:05:00.000Z");
+    store.createApprovalRequest({
+      runId: run.id,
+      taskId: run.taskId,
+      channelId: channel.id,
+      actionType: "write",
+      risk: "medium",
+      title: "Approve endpoint edit",
+      description: "Allow editing daemon endpoint files.",
+      payload: { type: "file_write", path: `${cwd}/packages/daemon/src/features/channels/collaboration-cards.ts`, bytes: 128 },
+      expiresAt: "2999-01-01T00:00:00.000Z",
+    }, "2026-06-13T00:06:00.000Z");
+
+    const listed = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/collaboration-cards?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.channelId, channel.id);
+    assert.equal(listed.cards.length, 1);
+    const card = listed.cards[0];
+    assert.equal(card.workflowId, workflow.id);
+    assert.equal(card.mode, "waiting");
+    assert.equal(card.executionMode, "parallel");
+    assert.equal(card.currentOwnerLabel, "Engineer");
+    assert.equal(card.pendingApprovalCount, 1);
+    assert.equal(card.completedStepCount, 1);
+    assert.equal(card.totalStepCount, 2);
+    assert.equal(card.branches.length, 2);
+    assert.equal(card.branches.some((branch) => branch.ownerLabels.includes("Architect")), true);
+    assert.equal(card.branches.some((branch) => branch.ownerLabels.includes("Engineer")), true);
+    assert.equal(JSON.stringify(card).includes("selector"), false);
+    assert.equal(JSON.stringify(card).includes("contextPack"), false);
+
+    const single = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/collaboration-card?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(single.workflowId, workflow.id);
+    assert.deepEqual(single.card, card);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("autoplan-lite workflow compiles durable steps and orchestrates them through the runner", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-orchestrator-"));
   const runner = new RecordingRunner();

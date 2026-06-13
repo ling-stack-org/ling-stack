@@ -2920,6 +2920,14 @@ function maybeCreateMockWorkflowProposal(
     riskSummary: allTeammates
       ? "Converted an all-teammates request into one workflow proposal instead of visible group chat."
       : "Non-direct multi-agent collaboration waits for confirmation and continues through existing workflow/run approvals.",
+    shaping: {
+      status: "ready_for_confirmation",
+      summary: body,
+      openQuestions: [],
+      clarifications: [],
+      sourceRefs: typeof message.id === "string" ? [{ type: "message", id: message.id }] : [],
+      updatedAt: "2026-05-25T00:18:02.000Z",
+    },
     status: "draft",
     createdAt: "2026-05-25T00:18:02.000Z",
     updatedAt: "2026-05-25T00:18:02.000Z",
@@ -3064,6 +3072,14 @@ function maybeCreateMockSingleStepExecutableProposal(
     requiredTools: [action],
     riskSummary: `Need ${action} permission for ${target}. Ling Agent can handle this bounded task now.`,
     responseLanguage: /[\u3400-\u9fff]/u.test(body) ? "zh-CN" : "en-US",
+    shaping: {
+      status: "ready_for_confirmation",
+      summary: `${verb} ${target}`,
+      openQuestions: [],
+      clarifications: [],
+      sourceRefs: typeof message.id === "string" ? [{ type: "message", id: message.id }] : [],
+      updatedAt: "2026-05-25T00:18:02.000Z",
+    },
     status: "draft",
     createdAt: "2026-05-25T00:18:02.000Z",
     updatedAt: "2026-05-25T00:18:02.000Z",
@@ -3156,6 +3172,9 @@ function mockAutoStartExecutionProposalWorkflow(state: MockState, proposal: Reco
     linkedWorkflowId: workflow.id,
     linkedTaskId: undefined,
     linkedRunId: undefined,
+    shaping: isRecord(proposal.shaping)
+      ? { ...proposal.shaping, status: "converted_to_task", updatedAt: "2026-05-25T00:32:00.000Z" }
+      : undefined,
     errorMessage: undefined,
     updatedAt: "2026-05-25T00:32:00.000Z",
   };
@@ -3367,6 +3386,7 @@ export async function mockDaemon(
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
+    readonly collaborationCardsUnsupported?: boolean;
   } = {},
 ): Promise<void> {
   await page.route("http://127.0.0.1:17891/**", async (route) => {
@@ -3383,6 +3403,7 @@ export async function handleDaemonRoute(
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
+    readonly collaborationCardsUnsupported?: boolean;
   },
 ): Promise<void> {
   const request = route.request();
@@ -5380,6 +5401,16 @@ export async function handleDaemonRoute(
       collaborationSteps: Array.isArray(body.collaborationSteps) ? body.collaborationSteps : [],
       requiredTools: Array.isArray(body.requiredTools) ? body.requiredTools : [],
       riskSummary: typeof body.riskSummary === "string" ? body.riskSummary : undefined,
+      shaping: isRecord(body.shaping)
+        ? body.shaping
+        : {
+            status: "ready_for_confirmation",
+            summary: typeof body.title === "string" ? body.title : "Proposed task",
+            openQuestions: [],
+            clarifications: [],
+            sourceRefs: typeof body.sourceMessageId === "string" ? [{ type: "message", id: body.sourceMessageId }] : [],
+            updatedAt: "2026-05-25T00:18:03.000Z",
+          },
       status: "draft",
       createdAt: "2026-05-25T00:18:03.000Z",
       updatedAt: "2026-05-25T00:18:03.000Z",
@@ -5401,6 +5432,7 @@ export async function handleDaemonRoute(
         ...proposal,
         ...body,
         riskSummary: body.riskSummary === null ? undefined : body.riskSummary ?? proposal.riskSummary,
+        shaping: body.shaping === null ? undefined : body.shaping ?? proposal.shaping,
         linkedTaskId: body.linkedTaskId === null ? undefined : body.linkedTaskId ?? proposal.linkedTaskId,
         linkedRunId: body.linkedRunId === null ? undefined : body.linkedRunId ?? proposal.linkedRunId,
         linkedWorkflowId: body.linkedWorkflowId === null ? undefined : body.linkedWorkflowId ?? proposal.linkedWorkflowId,
@@ -5468,6 +5500,9 @@ export async function handleDaemonRoute(
       linkedWorkflowId: workflow.id,
       linkedTaskId: undefined,
       linkedRunId: undefined,
+      shaping: isRecord(proposal.shaping)
+        ? { ...proposal.shaping, status: "converted_to_task", updatedAt: "2026-05-25T00:32:00.000Z" }
+        : undefined,
       errorMessage: undefined,
       updatedAt: "2026-05-25T00:32:00.000Z",
     };
@@ -5736,6 +5771,22 @@ export async function handleDaemonRoute(
     await route.fulfill({ status: 201, json: { workflow, workflowStep } });
     return;
   }
+  const channelCollaborationCardsMatch = /^\/channels\/([^/]+)\/collaboration-cards$/.exec(path);
+  if (channelCollaborationCardsMatch && request.method() === "GET") {
+    if (options.collaborationCardsUnsupported) {
+      await route.fulfill({ status: 404, json: { error: "not_found" } });
+      return;
+    }
+    const channelId = decodeURIComponent(channelCollaborationCardsMatch[1]);
+    const limit = Number(url.searchParams.get("limit") ?? 100);
+    const cards = state.channelWorkflows
+      .filter((workflow) => isRecord(workflow) && workflow.channelId === channelId)
+      .map((workflow) => buildMockCollaborationTaskCard(state, workflow))
+      .filter((card): card is Record<string, unknown> => Boolean(card))
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 100);
+    await route.fulfill({ json: { cwd, channelId, cards } });
+    return;
+  }
   const channelWorkflowsMatch = /^\/channels\/([^/]+)\/workflows$/.exec(path);
   if (channelWorkflowsMatch && request.method() === "GET") {
     const channelId = decodeURIComponent(channelWorkflowsMatch[1]);
@@ -5746,6 +5797,21 @@ export async function handleDaemonRoute(
       (!status || workflow.status === status)
     );
     await route.fulfill({ json: { cwd, channelId, workflows } });
+    return;
+  }
+  const workflowCollaborationCardMatch = /^\/workflows\/([^/]+)\/collaboration-card$/.exec(path);
+  if (workflowCollaborationCardMatch && request.method() === "GET") {
+    if (options.collaborationCardsUnsupported) {
+      await route.fulfill({ status: 404, json: { error: "not_found" } });
+      return;
+    }
+    const workflowId = decodeURIComponent(workflowCollaborationCardMatch[1]);
+    const workflow = state.channelWorkflows.find((item) => isRecord(item) && item.id === workflowId);
+    if (!isRecord(workflow)) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found" } });
+      return;
+    }
+    await route.fulfill({ json: { cwd, workflowId, card: buildMockCollaborationTaskCard(state, workflow) } });
     return;
   }
   const workflowMatch = /^\/workflows\/([^/]+)$/.exec(path);
@@ -7548,6 +7614,227 @@ export function listOpenMockTeammateDirectInterventions(
     item.threadId === threadId &&
     (item.status === "queued" || item.status === "cancelling_source" || item.status === "starting_continuation")
   );
+}
+
+function buildMockCollaborationTaskCard(state: MockState, workflow: Record<string, unknown>): Record<string, unknown> | undefined {
+  const workflowId = typeof workflow.id === "string" ? workflow.id : "";
+  if (!workflowId) {
+    return undefined;
+  }
+  const steps = state.channelWorkflowSteps
+    .filter((step) => isRecord(step) && step.workflowId === workflowId)
+    .sort((left, right) => readNumber(left, "position") - readNumber(right, "position") || readString(left, "createdAt").localeCompare(readString(right, "createdAt")));
+  if (steps.length === 0) {
+    return undefined;
+  }
+  const stepIds = new Set(steps.map((step) => readString(step, "id")).filter(Boolean));
+  const stepRunIds = new Set(steps.map((step) => readString(step, "runId")).filter(Boolean));
+  const pendingApprovals = state.approvals.filter((approval) => {
+    if (approval.status !== "pending") {
+      return false;
+    }
+    const approvalRecord = approval as unknown as Record<string, unknown>;
+    const workflowStepId = readString(approvalRecord, "workflowStepId");
+    return (approval.runId ? stepRunIds.has(approval.runId) : false) || (workflowStepId ? stepIds.has(workflowStepId) : false);
+  });
+  const blockedStep = steps.find((step) => readString(step, "status") === "blocked");
+  const failedStep = steps.find((step) => readString(step, "status") === "failed");
+  const waitingStep = steps.find((step) => readString(step, "status") === "waiting_for_approval");
+  const activeStep = steps.find((step) => readString(step, "status") === "running" || readString(step, "status") === "claimed");
+  const queuedStep = steps.find((step) => readString(step, "status") === "queued");
+  const focusStep = blockedStep ?? failedStep ?? waitingStep ?? activeStep ?? queuedStep;
+  const cardSteps = steps.map((step) => ({
+    id: readString(step, "id"),
+    title: readString(step, "title"),
+    ownerLabel: readString(step, "toParticipantLabel"),
+    state: mockCollaborationStepState(readString(step, "status")),
+    summary: readOptionalString(step, "resultSummary") ?? readOptionalString(step, "blocker") ?? (readString(step, "status") === "succeeded" || readString(step, "status") === "skipped" ? undefined : truncateMockPreview(readString(step, "prompt"), 120)),
+    branchGroupId: readNestedString(step.metadata, ["branchGroupId"]),
+    joinGroupId: readNestedString(step.metadata, ["joinGroupId"]),
+    updatedAt: readString(step, "updatedAt"),
+  }));
+  const executionMode = mockCollaborationExecutionMode(steps);
+  const completedStepCount = steps.filter((step) => readString(step, "status") === "succeeded" || readString(step, "status") === "skipped").length;
+  const mode = mockCollaborationCardMode(readString(workflow, "status"), steps, pendingApprovals.length);
+  return {
+    id: `collaboration-task-card:${workflowId}`,
+    workflowId,
+    title: readOptionalString(workflow, "daemonCardTitle") ?? readString(workflow, "title"),
+    objective: readOptionalString(workflow, "daemonCardObjective") ?? readString(workflow, "objective"),
+    mode,
+    executionMode,
+    currentOwnerLabel: focusStep ? readString(focusStep, "toParticipantLabel") : undefined,
+    blocker: readOptionalString(blockedStep, "blocker") ?? readOptionalString(failedStep, "blocker"),
+    nextAction: mockCollaborationNextAction(mode, focusStep ? readString(focusStep, "status") : "", pendingApprovals.length),
+    completedStepCount,
+    totalStepCount: steps.length,
+    pendingApprovalCount: pendingApprovals.length,
+    steps: cardSteps,
+    branches: buildMockCollaborationBranches(cardSteps, executionMode),
+    updatedAt: readString(workflow, "updatedAt"),
+  };
+}
+
+function buildMockCollaborationBranches(
+  steps: readonly Record<string, unknown>[],
+  executionMode: string,
+): readonly Record<string, unknown>[] {
+  if (executionMode === "serial") {
+    return [];
+  }
+  const groups = new Map<string, Record<string, unknown>[]>();
+  for (const step of steps) {
+    const joinGroupId = readOptionalString(step, "joinGroupId");
+    const branchGroupId = readOptionalString(step, "branchGroupId");
+    if (joinGroupId && !branchGroupId) {
+      continue;
+    }
+    const groupId = branchGroupId ?? readString(step, "id");
+    groups.set(groupId, [...(groups.get(groupId) ?? []), step]);
+  }
+  return [...groups.entries()].map(([groupId, groupSteps], index) => {
+    const ownerLabels = [...new Set(groupSteps.map((step) => readString(step, "ownerLabel")).filter(Boolean))];
+    const completedStepCount = groupSteps.filter((step) => readString(step, "state") === "done").length;
+    const focusStep =
+      groupSteps.find((step) => readString(step, "state") === "blocked") ??
+      groupSteps.find((step) => readString(step, "state") === "failed") ??
+      groupSteps.find((step) => readString(step, "state") === "active") ??
+      groupSteps.find((step) => readString(step, "state") === "waiting" || readString(step, "state") === "queued") ??
+      groupSteps.at(-1);
+    return {
+      id: `branch:${groupId}`,
+      label: ownerLabels.length > 0 ? `${ownerLabels.slice(0, 2).join(", ")} branch` : `Branch ${index + 1}`,
+      state: mockCollaborationBranchState(groupSteps),
+      summary: readOptionalString(focusStep, "summary") ?? readOptionalString(focusStep, "title"),
+      completedStepCount,
+      totalStepCount: groupSteps.length,
+      ownerLabels,
+      steps: groupSteps,
+    };
+  });
+}
+
+function mockCollaborationCardMode(workflowStatus: string, steps: readonly Record<string, unknown>[], pendingApprovalCount: number): string {
+  if (workflowStatus === "cancelled") {
+    return "cancelled";
+  }
+  if (workflowStatus === "succeeded") {
+    return "completed";
+  }
+  if (workflowStatus === "failed" || steps.some((step) => readString(step, "status") === "failed")) {
+    return "failed";
+  }
+  if (workflowStatus === "blocked" || steps.some((step) => readString(step, "status") === "blocked")) {
+    return "blocked";
+  }
+  if (workflowStatus === "waiting_for_approval" || pendingApprovalCount > 0 || steps.some((step) => readString(step, "status") === "waiting_for_approval")) {
+    return "waiting";
+  }
+  if (workflowStatus === "draft" || workflowStatus === "ready") {
+    return "ready_for_confirmation";
+  }
+  return "running";
+}
+
+function mockCollaborationExecutionMode(steps: readonly Record<string, unknown>[]): string {
+  const hasParallelMetadata = steps.some((step) => Boolean(readNestedString(step.metadata, ["branchGroupId"]) || readNestedString(step.metadata, ["joinGroupId"]) || readNestedNumber(step.metadata, ["maxParallelSiblings"])));
+  const runningCount = steps.filter((step) => readString(step, "status") === "running" || readString(step, "status") === "claimed").length;
+  const hasDependencies = steps.some((step) => Array.isArray(isRecord(step.metadata) ? step.metadata.dependsOnStepIds : undefined));
+  if (hasParallelMetadata && hasDependencies) {
+    return "mixed";
+  }
+  if (hasParallelMetadata || runningCount > 1) {
+    return "parallel";
+  }
+  return "serial";
+}
+
+function mockCollaborationStepState(status: string): string {
+  if (status === "succeeded" || status === "skipped") {
+    return "done";
+  }
+  if (status === "running" || status === "claimed") {
+    return "active";
+  }
+  if (status === "waiting_for_approval") {
+    return "waiting";
+  }
+  if (status === "blocked" || status === "failed" || status === "cancelled") {
+    return status;
+  }
+  return "queued";
+}
+
+function mockCollaborationBranchState(steps: readonly Record<string, unknown>[]): string {
+  if (steps.some((step) => readString(step, "state") === "blocked")) {
+    return "blocked";
+  }
+  if (steps.some((step) => readString(step, "state") === "failed")) {
+    return "failed";
+  }
+  if (steps.some((step) => readString(step, "state") === "active")) {
+    return "active";
+  }
+  if (steps.some((step) => readString(step, "state") === "waiting" || readString(step, "state") === "queued")) {
+    return "waiting";
+  }
+  if (steps.every((step) => readString(step, "state") === "done")) {
+    return "done";
+  }
+  return "waiting";
+}
+
+function mockCollaborationNextAction(mode: string, stepStatus: string, pendingApprovalCount: number): string | undefined {
+  if (pendingApprovalCount > 0) {
+    return "Review approval request";
+  }
+  if (mode === "blocked" || stepStatus === "blocked") {
+    return "Resolve blocker";
+  }
+  if (mode === "failed" || stepStatus === "failed") {
+    return "Review failed step";
+  }
+  if (mode === "ready_for_confirmation") {
+    return "Start task";
+  }
+  if (stepStatus === "running" || stepStatus === "claimed") {
+    return "Waiting for agent result";
+  }
+  return undefined;
+}
+
+function readString(record: Record<string, unknown> | undefined, key: string): string {
+  const value = record?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+function readOptionalString(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" ? value : 0;
+}
+
+function readNestedNumber(value: unknown, path: readonly string[]): number | undefined {
+  let current = value;
+  for (const key of path) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return typeof current === "number" ? current : undefined;
+}
+
+function truncateMockPreview(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

@@ -40,7 +40,9 @@ import type {
   ChannelWorkspaceHandoffRequest,
   ChannelWorkspaceMutationResponse,
   ChannelWorkspaceResponse,
+  ChannelCollaborationCardListResponse,
   WorkflowEvidenceResponse,
+  WorkflowCollaborationCardResponse,
   CreateChannelBranchRequest,
   CreateChannelCollaborationProtocolDraftRequest,
   CreateChannelContextSummaryRequest,
@@ -377,6 +379,10 @@ export async function getChannelWorkflowEvidence(cwd: string, workflowId: string
   return daemonClient.getChannelWorkflowEvidence(cwd, workflowId);
 }
 
+export async function getChannelWorkflowCollaborationCard(cwd: string, workflowId: string): Promise<WorkflowCollaborationCardResponse> {
+  return daemonClient.getChannelWorkflowCollaborationCard(cwd, workflowId);
+}
+
 export async function cancelChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowCancelResponse> {
   return daemonClient.cancelChannelWorkflow(cwd, workflowId);
 }
@@ -423,6 +429,14 @@ export async function retryChannelWorkflowStep(cwd: string, workflowStepId: stri
 
 export async function orchestrateChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
   return daemonClient.orchestrateChannelWorkflow(cwd, workflowId);
+}
+
+export async function listChannelCollaborationCards(
+  cwd: string,
+  channelId: string,
+  options: { readonly limit?: number } = {},
+): Promise<ChannelCollaborationCardListResponse> {
+  return daemonClient.listChannelCollaborationCards(cwd, channelId, options);
 }
 
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {

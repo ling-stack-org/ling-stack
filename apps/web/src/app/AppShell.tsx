@@ -2577,7 +2577,10 @@ export function AppShell(): JSX.Element {
   }
 
   async function cancelChannelExecutionProposal(proposal: ChannelExecutionProposal): Promise<void> {
-    await markChannelExecutionProposal(proposal, { status: "cancelled" });
+    await markChannelExecutionProposal(proposal, {
+      status: "cancelled",
+      ...(proposal.shaping ? { shaping: { ...proposal.shaping, status: "dismissed", updatedAt: new Date().toISOString() } } : {}),
+    });
   }
 
   async function runPersistedTask(
