@@ -4,6 +4,16 @@ Ling Stack must treat task, run, approval, media job, and multi-teammate workflo
 
 This matters before multi-agent orchestration. Once several AI teammates, channels, providers, and approval gates can operate at the same time, plain status fields are not enough. The system needs explicit state machines so it can survive network drops, browser refreshes, daemon restarts, duplicate requests, and interrupted approval waits.
 
+Related docs:
+
+- [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
+- [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
+
+Collaboration task cards are product read models over these state machines. They may
+derive compact states such as `shaping`, `running`, `waiting_for_approval`, or
+`completed`, but they must not bypass workflow, step, run, approval, or lease transition
+rules.
+
 ## Goals
 
 - Prevent two agents from claiming or completing the same work item inconsistently.

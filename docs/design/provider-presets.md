@@ -4,6 +4,12 @@
 
 Draft for Milestone 2: Provider Presets.
 
+Related docs:
+
+- [Channel Context Budget Manager](channel-context-budget-manager.md)
+- [Channel Context Processing Layer](channel-context-processing-layer.md)
+- [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
+
 This design follows `session-persistence`. Session persistence keeps a redacted request snapshot for direct `/runs` calls. Provider presets replace repeated inline provider JSON with reusable, user-facing configurations.
 
 ## Goal
@@ -72,6 +78,8 @@ This slice does not include:
 - Media providers such as Jimeng, Seedream, and Seedance should not be forced through chat abstractions.
 - API keys must not be stored in SQLite, JSONL, summaries, events, or logs.
 - Inline provider config remains useful for development but should not be the normal product path.
+- Model context window and output-token limits are runtime capabilities. They should be
+  automatically inferred by default and exposed to users only as advanced overrides.
 
 ## Web Model Workbench UI
 
@@ -97,6 +105,30 @@ Add/edit uses a right-side sheet. The sheet owns template selection, API key ent
 URL, API protocol, model discovery, capability flags, and save validation. Closing or
 saving the sheet returns the user to the workbench table. Provider repair handoffs from
 failed runs still open the same sheet for the affected preset.
+
+Context-window and max-output-token fields should not be primary required fields in the
+sheet. The default product behavior is:
+
+```text
+choose provider/model
+  -> Ling resolves model capabilities automatically
+  -> Context Budget Manager builds per-call effective budgets
+  -> Context Processing auto-compacts when needed
+```
+
+The sheet should show a compact model-capability state instead:
+
+| State | Main UI copy | Behavior |
+| --- | --- | --- |
+| `known` | `Context: Auto` or `Context: 128k detected` | Use registry/provider metadata/user template values. |
+| `estimated` | `Context: Estimated` | Use conservative provider-family defaults. |
+| `unknown` | `Context: Conservative` | Use small safe budget and compact early. |
+| `override` | `Context: Custom override` | User explicitly set advanced values. |
+
+Manual `contextWindow` and `maxTokens` inputs belong in an `Advanced` section labeled as
+overrides, not in the default setup path. Leaving them blank means automatic, not
+misconfigured. This keeps Codex-like automatic compaction as the normal user experience
+while preserving a precise escape hatch for private relays and unusual gateways.
 
 The UI must stay strict-daylight and low decoration: white surface, `#111111` primary
 text, `#6B6B6B` secondary text, `#E5E5E5` borders, `#F5F5F5` selected/hover surface,
@@ -178,7 +210,15 @@ interface ProviderPreset {
   authHeader?: boolean;
   reasoning?: boolean;
   input: ("text" | "image")[];
+  /**
+   * Optional user override. Blank means "auto".
+   * Runtime budgets should prefer the effective capability resolver rather than treating
+   * this as required setup.
+   */
   contextWindow?: number;
+  /**
+   * Optional user override for max model output. Blank means "auto".
+   */
   maxTokens?: number;
   compat?: Record<string, unknown>;
   capabilities: ProviderCapability[];
@@ -198,8 +238,62 @@ Field notes:
 - `apiKeyRef`: secret reference, never raw key.
 - `headers`: static non-secret headers only. Secret headers should use a future secret reference model.
 - `authHeader`: passed through to Pi for compatible providers when needed.
+- `contextWindow`: optional advanced override for the model context window. Blank means
+  automatic capability resolution.
+- `maxTokens`: optional advanced override for reserved model output tokens. Blank means
+  automatic capability resolution.
 - `compat`: protocol compatibility options forwarded to Pi when needed.
 - `enabled`: disabled presets remain stored but cannot be used for new runs.
+
+## Model Capability Auto-Detection
+
+Provider presets store user intent and manual overrides. Runtime prompt budgeting should
+use an effective capability resolver:
+
+```ts
+type ProviderCapabilitySource =
+  | "user_override"
+  | "template"
+  | "model_registry"
+  | "provider_metadata"
+  | "health_check"
+  | "runtime_observed"
+  | "conservative_default";
+
+interface ProviderModelCapabilitySnapshot {
+  providerPresetId: string;
+  model: string;
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
+  tokenizer?: "openai-compatible" | "anthropic-compatible" | "estimated";
+  supportsStructuredOutput?: boolean;
+  source: ProviderCapabilitySource;
+  confidence: "known" | "estimated" | "unknown";
+  checkedAt?: string;
+  notes?: string[];
+}
+```
+
+Resolution order:
+
+1. User advanced overrides on the preset.
+2. Built-in template/model registry for known GPT, Claude, domestic, and media models.
+3. Provider/model metadata discovered from supported model-list or health-check APIs.
+4. Runtime-observed downgrades from context-length failures.
+5. Conservative defaults for unknown custom OpenAI-compatible APIs.
+
+Rules:
+
+- The user should not have to know or type context windows for common models.
+- A successful health check may refresh an effective capability snapshot, but should not
+  silently overwrite user override fields.
+- A `context_length_exceeded` or equivalent provider error may lower the effective
+  runtime budget for future calls or mark the preset `estimated`, but must not mutate the
+  user's configured model id, API key, channel protocol, or approval policy.
+- Unknown custom providers use a small safe budget and early compaction rather than
+  pretending to support long context.
+- Model capability snapshots are diagnostics and budgeting inputs. They are not
+  permission grants.
 
 ## Secret References
 
@@ -475,6 +569,11 @@ Mapping:
 | `maxTokens` | `maxTokens` |
 | `compat` | `compat` |
 
+`contextWindow` and `maxTokens` should be passed to the runner only when the user has
+set explicit advanced overrides or when the daemon has a safe effective capability
+snapshot to pass through. Blank preset values mean automatic runtime budgeting, not an
+invalid provider configuration.
+
 If `api` is `media-job`, the preset cannot be used with `POST /runs` for Pi coding sessions. The daemon should return `unsupported_capability`.
 
 ## API Design
@@ -572,6 +671,9 @@ Editable fields:
 - `capabilities`
 - `enabled`
 
+`contextWindow` and `maxTokens` are advanced overrides. `null`, missing, or empty values
+mean automatic capability resolution and must not block saving the preset.
+
 ### Delete Provider
 
 ```http
@@ -605,6 +707,10 @@ Check levels:
 4. Live network/model call for `openai-completions`, `openai-responses`, and `anthropic-messages`.
 
 For Milestone 2, provider health checks are conservative: fail missing key/base URL/model, perform a lightweight model request for the supported chat protocols, and keep media-job checks static until media execution exists.
+
+When the protocol exposes model metadata or the check path can safely infer capability,
+the check may refresh the effective capability snapshot used by Context Budget Manager.
+It must not overwrite user-entered `contextWindow` or `maxTokens` overrides.
 
 ## `/runs` Integration
 
@@ -694,6 +800,8 @@ Web Model Workbench should expose:
 - a compact repair queue ordered by next action,
 - `Check all` for enabled chat providers,
 - per-provider `Check`, `Edit`, and `Use` actions.
+- model capability status (`Auto`, `Estimated`, `Conservative`, or `Custom override`)
+  without requiring token fields in the default setup path.
 
 Repair queue rules:
 
@@ -717,6 +825,8 @@ Provider preset validation:
 - `api` must be compatible with `kind`.
 - `baseUrl` is required for `openai-compatible` and most domestic compatible presets.
 - `apiKeyRef` must use a supported scheme: `env:` or `keychain:`.
+- `contextWindow` and `maxTokens`, when provided, must be positive integers within a
+  sane implementation limit. They are optional and blank values mean automatic.
 - `capabilities` must be non-empty.
 - `media-job` presets must include at least one media capability.
 - non-media coding presets must include `chat`.
@@ -782,6 +892,8 @@ Provider Settings page:
 - Add/edit/delete provider preset.
 - Check provider health.
 - Mark unsupported provider capability clearly.
+- Hide context-window and max-output-token inputs behind Advanced, labeled as optional
+  overrides.
 
 The UI must not show raw API keys.
 
@@ -913,14 +1025,16 @@ curl -N http://127.0.0.1:17891/runs \
 7. Add public response mapper with redaction.
 8. Add provider routes.
 9. Add provider health check route.
-10. Update `POST /runs` parsing for `providerPresetId`.
-11. Resolve presets into `PiRunnerProviderConfig`.
-12. Persist redacted provider snapshots through session persistence.
-13. Add daemon run preflight for `providerPresetId`.
-14. Add unit tests.
-15. Add daemon route tests.
-16. Run `corepack pnpm typecheck`.
-17. Run `corepack pnpm build`.
+10. Add effective model capability resolver and capability snapshot mapping.
+11. Move Web token fields into Advanced as optional overrides.
+12. Update `POST /runs` parsing for `providerPresetId`.
+13. Resolve presets into `PiRunnerProviderConfig`.
+14. Persist redacted provider snapshots through session persistence.
+15. Add daemon run preflight for `providerPresetId`.
+16. Add unit tests.
+17. Add daemon route tests.
+18. Run `corepack pnpm typecheck`.
+19. Run `corepack pnpm build`.
 
 ## Open Decisions
 

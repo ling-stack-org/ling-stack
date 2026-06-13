@@ -30,12 +30,13 @@ export function ConversationWorkCell({
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const active = model.mode === "active";
-  const statusLabel = workCellStatusLabel(model.status, active, t);
+  const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
   const rootClassName = [
     "conversation-work-cell",
     active ? "active" : "completed",
     `status-${model.status}`,
-  ].join(" ");
+    model.presentation ? `presentation-${model.presentation}` : "",
+  ].filter(Boolean).join(" ");
   const currentDetailsState: ConversationWorkCellDetailsState = detailsState ?? {
     status: onLoadDetails ? "not_loaded" : "loaded",
     groups: model.groups,
@@ -79,20 +80,25 @@ export function ConversationWorkCell({
           <ActiveTurnItemStream rows={model.activeRows} />
         ) : null}
 
+        {model.finalReportRows && model.finalReportRows.length > 0 ? (
+          <FinalReportRows rows={model.finalReportRows} />
+        ) : null}
+
         <div className="conversation-work-cell-actions">
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={() => onOpenRun?.(model.anchorRunId)}
-            disabled={!onOpenRun}
-          >
-            <History size={13} />
-            {t("Open diagnostics")}
-          </button>
+          {model.showDiagnostics === false || !onOpenRun ? null : (
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              onClick={() => onOpenRun(model.anchorRunId)}
+            >
+              <History size={13} />
+              {t("Open diagnostics")}
+            </button>
+          )}
           {onOpenDetails ? (
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenDetails(model.threadId)}>
               <FileText size={13} />
-              {t("Details")}
+              {model.detailsLabel ?? t("Details")}
             </button>
           ) : null}
           <button className="secondary-button compact-button" type="button" onClick={toggleDetails} aria-expanded={expanded}>
@@ -132,6 +138,21 @@ function workCellStatusLabel(
     return t("Task waiting for approval");
   }
   return active ? t("Task in progress") : t("Work result");
+}
+
+function FinalReportRows({ rows }: { readonly rows: readonly ConversationWorkCellRow[] }): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <section className="conversation-work-cell-final-report" aria-label={t("Final Ling report")}>
+      <header>
+        <ShieldCheck size={13} />
+        <strong>{t("Final Ling report")}</strong>
+      </header>
+      <div className="conversation-work-cell-row-list">
+        {rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
+      </div>
+    </section>
+  );
 }
 
 function WorkCellDetails({

@@ -10,10 +10,12 @@ Date: 2026-06-10
 Related docs:
 
 - [Channel Workspace Design](channel-workspace.md)
+- [Channel Context Processing Layer](channel-context-processing-layer.md)
+- [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
+- [Provider Presets](provider-presets.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
 - [Ling Memory v1](ling-memory-v1.md)
-- [Provider Presets](provider-presets.md)
 
 ## Purpose
 
@@ -22,10 +24,13 @@ AutoGen-style shared long-context group chat. The runtime needs one independent 
 that decides what context a teammate or workflow step may see, how much can fit in the
 selected model, and what gets summarized when the budget is tight.
 
-The `Context Budget Manager` is that layer.
+The broader [Channel Context Processing Layer](channel-context-processing-layer.md)
+collects, filters, and renders per-agent Context Views. The `Context Budget Manager` is
+the provider-budget and compaction sublayer inside that system.
 
 ```text
 channel message / workflow step / private chat
+  -> Context Processing Layer
   -> Context Budget Manager
   -> bounded Context Pack
   -> runner or no-tools reply path
@@ -36,20 +41,28 @@ provider APIs whose context windows and tokenizer behavior may differ.
 
 ## Current State
 
-Current Ling context assembly is intentionally narrow:
+Current Ling context assembly is bounded, but it should not be single-message-only:
 
-- ordinary channel AI replies use the current source message plus scoped memory recall;
+- ordinary channel AI replies use a `channel_reply_context` pack: current turn envelope,
+  effective channel protocol, bounded recent visible conversation, compacted channel
+  context/source refs, active work state when relevant, materialized inputs, and scoped
+  memory recall;
 - private teammate chat uses a recent message window plus scoped memory recall;
 - workflow steps use task prompts, skill fragments, selected memory, step summaries, and
   workflow packet/source-ref design;
 - channel collaboration records already exist conceptually as context summaries,
   decisions, handoffs, workflow packets, source refs, and review-gated memory candidates.
 
-Missing pieces:
+Remaining design pressure:
 
-- no demand-driven channel-history summary compaction yet;
-- no no-tools context-length retry yet;
-- no channel protocol AI draft/apply flow yet;
+- reply, selector, workflow proposal, workflow step, and active-run follow-up paths should
+  share the same channel context section builders where possible;
+- Context Views should be generated from shared source collectors instead of bespoke
+  prompt assembly in each consumer;
+- recent visible conversation is only a layer inside channel context, not the whole
+  product boundary;
+- UI should keep this invisible by default. Users see a continuous conversation and final
+  results, not context-pack diagnostics.
 
 Implemented foundation:
 
@@ -79,6 +92,7 @@ Implemented foundation:
 | Term | Meaning |
 | --- | --- |
 | Channel Collaboration Protocol | A thin, user-editable channel rule layer. It describes how the channel should collaborate; it is not shared memory and does not store history. |
+| Channel Context | The product-level context Ling Agent may use for a channel turn: current turn, channel state, recent visible conversation, compacted summaries, active work, materialized inputs, and relevant memory. |
 | Context Pack | The bounded runtime bundle passed to one teammate reply, one private reply, one selector, or one workflow step. |
 | Context Budget Manager | The service that builds, ranks, estimates, trims, and compacts a Context Pack for a selected provider/model. |
 | Compaction | Replacing long raw context with summaries, decisions, handoffs, packet source refs, or artifact references. |
@@ -90,6 +104,8 @@ Implemented foundation:
 - Make context visibility explicit and auditable.
 - Support different context budgets for channel replies, private teammate chat, selectors,
   and workflow steps.
+- Resolve budgets per Context View, per consumer teammate, and per provider/model call.
+  Do not use one global workspace token limit for all agents.
 - Automatically compact runtime context when needed without silently changing channel
   rules or active memory.
 - Preserve source references so compressed context can be inspected later.
@@ -107,7 +123,7 @@ Implemented foundation:
 
 | Level | Used by | Includes | Excludes |
 | --- | --- | --- | --- |
-| `minimal` | ordinary single teammate replies | channel id/name, current message, current teammate identity, resolved language, scoped memory recall | full roster, channel history, peer replies |
+| `channel_reply_context` | ordinary single teammate replies | current turn envelope, channel id/name/bound path, effective protocol, current teammate identity, bounded recent visible conversation, compacted channel summaries/source refs, active work state when relevant, materialized inputs, scoped memory recall | full raw channel transcript, private teammate chats, hidden prompts, provider secrets, unrelated peer replies |
 | `roster_compact` | `visible_multi_reply`, roster questions | current teammate identity, compact channel roster, selected visible participants, presence disclaimer | online/presence state, hidden peer replies, future peer replies |
 | `capability_routing` | intent selector, workflow proposal builder | eligible teammates, roles, runnable provider status, relevant skills/capability summaries | private chats, hidden prompt text, raw provider secrets |
 | `workflow_packet` | workflow step runs | objective, step metadata, acceptance criteria, decisions, handoffs, prior step summaries, source refs, selected memory | raw full transcript by default, unrelated private chat |
@@ -186,6 +202,10 @@ the auditable planning layer before rendering.
 
 Ling supports custom APIs, so context budgeting cannot depend on one tokenizer.
 
+The product should feel Codex-like: users configure a model and Ling automatically keeps
+the context inside that model's usable window. That does not remove the need for budgets;
+it moves budgets from user-facing setup into an internal capability resolver.
+
 Budget modes:
 
 | Mode | Source | Behavior |
@@ -205,6 +225,40 @@ interface ProviderContextCapabilities {
 }
 ```
 
+Capability resolution order:
+
+1. User advanced overrides from the provider preset.
+2. Built-in model registry or provider template values.
+3. Provider metadata/model-list or health-check results when available.
+4. Runtime-observed downgrades after context-length errors.
+5. Conservative defaults for unknown custom APIs.
+
+Effective budget is resolved at the point of use:
+
+```text
+Context View kind
+  + consumer teammate
+  + provider preset
+  + model id
+  + capability snapshot
+  -> effective ContextBudget
+```
+
+This matters for multi-agent work:
+
+| Consumer | Budget source |
+| --- | --- |
+| Ling Agent coordinator reply | Ling Agent or channel default provider preset. |
+| Selector / auto-route | Selector provider if configured, otherwise coordinator provider with selector reserves. |
+| Specialist teammate | That teammate's selected provider preset. |
+| Workflow step runner | The step executor's provider preset and runner capability snapshot. |
+| Fan-in / condenser call | Prefer the same provider/model that will consume the compacted view; use smaller caps for `model_unknown`. |
+
+The same channel may produce several different Context Views and budgets in a single
+turn. A selector can receive a small lightweight view while an Engineer step gets a
+larger tool-running workflow view. Automatic compaction is per-view/per-call, not one
+global channel summary shared by every model.
+
 Fallback rules:
 
 - unknown providers should never receive unbounded channel history;
@@ -214,20 +268,34 @@ Fallback rules:
   on after-failure retries;
 - provider errors must not trigger protocol rewrites or memory authority changes.
 
+Provider UI boundary:
+
+- `contextWindow` and `maxTokens` remain optional advanced overrides in Provider Presets.
+- Blank values mean automatic capability resolution.
+- Model Workbench should show a compact capability state such as `Auto`, `Estimated`, or
+  `Conservative`, not require users to hand-enter token limits.
+- Developer/evidence surfaces may show the effective budget mode, context window,
+  reserved output, and dropped/compacted section ids after the user opens details.
+
 ## Section Priority
 
-Context Pack assembly should preserve context in this order:
+Context Pack assembly should preserve context in this order. Not every consumer includes
+every layer, but ordinary channel replies should include the channel context layers that
+are relevant and within budget:
 
 1. hard runtime/safety instructions and approval boundaries;
-2. current user message or workflow objective;
-3. explicit user references selected for this turn;
-4. channel collaboration protocol rules relevant to this kind;
-5. current teammate persona and selected skill fragments;
-6. acceptance criteria, open questions, and current gate instructions;
-7. active decisions and handoffs relevant to the channel/task;
-8. source refs and artifact summaries;
-9. scoped memory recall;
-10. recent visible channel messages;
+2. current turn envelope or workflow objective;
+3. explicit user references and materialized inputs selected for this turn;
+4. channel identity, bound workspace/path, and collaboration protocol rules relevant to
+   this kind;
+5. active work state, including proposal, workflow, run, approval, queued follow-up, or
+   interrupt/redirect state when relevant;
+6. current teammate persona and selected skill fragments;
+7. acceptance criteria, open questions, and current gate instructions;
+8. recent visible channel messages needed for short follow-ups and revisions;
+9. compacted channel summaries, decisions, handoffs, workflow packet summaries, source
+   refs, and artifact summaries;
+10. scoped memory recall;
 11. older raw discussion messages.
 
 When the pack is over budget, trim from the bottom first, then compact medium-priority
@@ -525,8 +593,8 @@ P6C rules:
 - The retry should persist or log compacted decision metadata only if that path already
   persists route/selector evidence.
 - Implementation status: implemented as a single retry after a provider context-length
-  error, with a smaller/minimal Context Pack and compaction ids recorded only in existing
-  route/selector evidence metadata.
+  error, with a smaller degraded Context Pack and compaction ids recorded only in
+  existing route/selector evidence metadata.
 
 Compaction model call:
 
@@ -545,8 +613,8 @@ Failure behavior:
 
 - If compaction fails before a run starts, block the workflow step with an actionable
   reason instead of starting an under-specified run.
-- If compaction fails for an ordinary reply, continue with the minimal current-message
-  pack when safe.
+- If compaction fails for an ordinary reply, continue with a current-turn-only degraded
+  pack only when safe; this is a fallback, not the default product context.
 - If a provider lacks structured output support, accept a plain-text summary only after
   local validation confirms non-empty summary and source refs.
 

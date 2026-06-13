@@ -1522,7 +1522,12 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
 
   const proposal = page.getByLabel("Task confirmation");
   await expect(proposal).toContainText("Refine channel workspace copy");
+  await expect(proposal).toContainText("Ling is shaping the task");
+  await expect(proposal).toContainText("Goal");
+  await expect(proposal).toContainText("Participants");
+  await expect(proposal).toContainText("Boundary");
   await expect(proposal).toContainText("Ling Engineer");
+  await expect(proposal).toContainText("Ling Designer");
   const collaboration = proposal.locator(".channel-proposal-collaboration");
   await expect(collaboration).not.toHaveAttribute("open", /.+/);
   await expect(collaboration.locator("summary")).toContainText("Collaboration 2 records");
@@ -1584,7 +1589,10 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Refine channel workspace copy" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Task in progress");
+  await expect(workCell).toContainText("Collaboration in progress");
+  await expect(workCell.getByLabel("Work summary")).toContainText("Mode");
+  await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
+  await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toBeVisible();
 
   await openChannelChatTools(page);
   const acceptedProposal = feed.getByLabel("Task confirmation").filter({ hasText: "Refine channel workspace copy" });
@@ -1731,8 +1739,13 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create /Users/tianxiao/ling-stack-test/README.md" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Task completed");
-  await expect(workCell).toContainText("Task completed: Created the requested README file.");
+  await expect(workCell).toContainText("Collaboration complete");
+  await expect(workCell).toContainText("Collaboration complete: Created the requested README file.");
+  await expect(workCell).toContainText("Final Ling report");
+  await expect(workCell).toContainText("Outcome");
+  await expect(workCell).toContainText("Evidence and changes");
+  await expect(workCell.locator(".conversation-work-cell-active-stream")).toHaveCount(0);
+  await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
 
   await openChannelChatTools(page);
@@ -1822,11 +1835,132 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create README.md" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Task blocked");
-  await expect(workCell).toContainText("Blocked: Write permission was not granted.");
+  await expect(workCell).toContainText("Collaboration blocked");
+  await expect(workCell).toContainText("Collaboration blocked: Write permission was not granted.");
+  await expect(workCell).toContainText("Final Ling report");
+  await expect(workCell).toContainText("Next action");
 
   await openChannelChatTools(page);
   await expect(feed.getByLabel("Task confirmation")).toContainText("Create README.md");
+});
+
+test("right progress panel renders workflow collaboration task cards", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_running_ui",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Ship workflow UI",
+      objective: "Render collaboration task cards in the right progress panel.",
+      status: "running",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:45:00.000Z",
+      updatedAt: "2026-05-25T00:47:00.000Z",
+    },
+    {
+      id: "workflow_blocked_ui",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Create README.md",
+      objective: "Create the requested README file.",
+      status: "blocked",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:44:00.000Z",
+      updatedAt: "2026-05-25T00:48:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_design_done",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_running_ui",
+      position: 1,
+      title: "Design right panel card",
+      prompt: "Design the right panel task card.",
+      toParticipantId: "designer",
+      toParticipantLabel: "Designer",
+      status: "succeeded",
+      resultSummary: "Card shape accepted.",
+      createdAt: "2026-05-25T00:45:00.000Z",
+      updatedAt: "2026-05-25T00:46:00.000Z",
+    },
+    {
+      id: "workflow_step_engineer_active",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_running_ui",
+      position: 2,
+      title: "Implement card UI",
+      prompt: "Implement the collaboration card UI.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "running",
+      createdAt: "2026-05-25T00:46:00.000Z",
+      updatedAt: "2026-05-25T00:47:00.000Z",
+    },
+    {
+      id: "workflow_step_qa_waiting",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_running_ui",
+      position: 3,
+      title: "Validate progress panel",
+      prompt: "Validate the right panel task card.",
+      toParticipantId: "qa",
+      toParticipantLabel: "QA",
+      status: "queued",
+      createdAt: "2026-05-25T00:47:00.000Z",
+      updatedAt: "2026-05-25T00:47:00.000Z",
+    },
+    {
+      id: "workflow_step_blocked_ui",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_blocked_ui",
+      position: 1,
+      title: "Ling Agent: Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "blocked",
+      blocker: "Write permission was not granted.",
+      createdAt: "2026-05-25T00:44:00.000Z",
+      updatedAt: "2026-05-25T00:48:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openChannelTasksTab(page);
+
+  const panel = page.locator(".channel-side-panel");
+  const cards = panel.locator(".collaboration-task-card");
+  await expect(cards).toHaveCount(2);
+
+  const blockedCard = cards.filter({ hasText: "Create README.md" });
+  await expect(blockedCard).toContainText("Blocked");
+  await expect(blockedCard).toContainText("Write permission was not granted.");
+  await expect(blockedCard).toContainText("Ling Agent: Create README.md");
+  await expect(blockedCard).not.toContainText("workflow_blocked_ui");
+
+  const runningCard = cards.filter({ hasText: "Ship workflow UI" });
+  await expect(runningCard).toContainText("Running");
+  await expect(runningCard).toContainText("Serial");
+  await expect(runningCard).toContainText("Owner: Engineer");
+  await expect(runningCard).toContainText("Engineer: Implement card UI");
+  await expect(runningCard).not.toContainText("workflow_running_ui");
+
+  await runningCard.click();
+  await expect(panel).toContainText("Workflow evidence");
+  await expect(panel.locator(".conversation-work-cell")).toContainText("Ship workflow UI");
 });
 
 test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {

@@ -8,6 +8,7 @@ Related docs:
 - [Channel Workspace Design](channel-workspace.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
+- [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
@@ -865,6 +866,11 @@ CREATE TABLE IF NOT EXISTS channel_intent_decisions (
 
 Default UI should show only the accepted outcome. Suppressed/failed outcomes, raw JSON,
 and prompt text are audit data, not normal conversation content.
+
+For shaping-stage multi-agent collaboration, `visible_multi_reply` evidence may render as
+a compact requirement shaping card instead of separate teammate messages. The default
+surface should communicate who contributed and what Ling Agent summarized; detailed
+teammate text, selector evidence, and route metadata remain expandable.
 
 ## Safety Rules
 

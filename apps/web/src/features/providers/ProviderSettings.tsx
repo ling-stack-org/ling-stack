@@ -37,6 +37,8 @@ import {
   providerCheckMessage,
   providerCheckStatusLabel,
   providerCodingTaskLabel,
+  providerCapabilityUiStateDescription,
+  providerCapabilityUiStateLabel,
   providerFormToTemplate,
   providerFormWithSelectedModel,
   providerLastCheckClass,
@@ -48,6 +50,7 @@ import {
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
   providerTemplateKindLabel,
+  deriveProviderCapabilityUiState,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
 import type {
@@ -209,6 +212,7 @@ export function ProviderSettings({
     matchingFixedTemplate.api === form.api &&
     normalizeProviderEndpoint(matchingFixedTemplate.baseUrl ?? "") === normalizeProviderEndpoint(form.baseUrl);
   const canEditCustomProviderFields = selectedTemplateIsCustom || !fixedTemplateMatchesCurrentShape;
+  const providerCapabilityState = deriveProviderCapabilityUiState(form);
   const repairProviderId = repairRun ? readRunProviderPresetId(repairRun) : "";
   const repairProvider = repairProviderId ? providers.find((provider) => provider.id === repairProviderId) : undefined;
   const filteredProviders = useMemo(
@@ -859,15 +863,32 @@ export function ProviderSettings({
               </select>
             </label>
           ) : null}
-          <label className="field">
-            <span>{t("Context")}</span>
-            <input value={form.contextWindow} inputMode="numeric" onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />
-          </label>
-          <label className="field">
-            <span>{t("Max tokens")}</span>
-            <input value={form.maxTokens} inputMode="numeric" onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} />
-          </label>
         </div>
+
+        <div className={`provider-capability-state ${providerCapabilityState}`}>
+          <span>
+            <strong>{t("Model capability")}</strong>
+            <small>{t(providerCapabilityUiStateDescription(providerCapabilityState))}</small>
+          </span>
+          <em>{t(providerCapabilityUiStateLabel(providerCapabilityState))}</em>
+        </div>
+
+        <details className="provider-advanced-detail">
+          <summary>
+            <span>{t("Advanced model limits")}</span>
+            <small>{t("Optional manual override")}</small>
+          </summary>
+          <div className="provider-advanced-grid">
+            <label className="field">
+              <span>{t("Context")}</span>
+              <input value={form.contextWindow} inputMode="numeric" placeholder={t("Auto")} onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>{t("Max tokens")}</span>
+              <input value={form.maxTokens} inputMode="numeric" placeholder={t("Auto")} onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} />
+            </label>
+          </div>
+        </details>
 
         <label className="field wide">
           <span>{t("Capabilities")}</span>

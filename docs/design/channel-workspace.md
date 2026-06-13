@@ -38,11 +38,15 @@ Related docs:
 - [Channel Workspace v1.26 Channel Branches](channel-workspace-v1.26.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
+- [Channel Context Processing Layer](channel-context-processing-layer.md)
+- [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
+- [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
+- [Multi-Agent Collaboration Cards Implementation Plan](multi-agent-collaboration-cards-implementation-plan.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
 - [Runtime Supervisor](runtime-supervisor.md)
@@ -115,7 +119,7 @@ not messaging a bot in a stateless chat client.
 - Keep provider, tools, approval profile, and runtime lock state inspectable before a run,
   with execution configuration following the assigned agent.
 - Let files and run artifacts be reached from the channel without opening run history first.
-- Preserve decisions, task context, and recent conversation context so agents can continue
+- Preserve decisions, task context, and layered channel context so agents can continue
   work or ordinary chat without making the user restate the previous topic.
 - Preserve the current local-first daemon contract and avoid implying cloud/team sync.
 - Keep the implementation small enough to land in slices.
@@ -791,20 +795,23 @@ workflow packets, source refs, and review-gated memory candidates instead.
 ### Context Pack and Budget
 
 Each teammate reply or workflow step should receive a bounded Context Pack, not the whole
-channel transcript.
+channel transcript and not only the latest message. Ordinary replies should feel
+continuous because Ling Agent sees a layered channel context pack.
 
 Context Pack levels:
 
 | Level | Used by | Notes |
 | --- | --- | --- |
-| `minimal` | ordinary single teammate replies | current message, current teammate, channel name, scoped memory recall |
+| `channel_reply_context` | ordinary single teammate replies | current turn envelope, channel state, effective protocol, bounded recent visible conversation, compacted channel summaries/source refs, active work state when relevant, materialized inputs, scoped memory recall |
 | `roster_compact` | visible multi-reply and roster questions | compact channel roster, selected visible participants, no online/presence claim |
 | `capability_routing` | selector/proposal routing | eligible teammates, roles, runnable provider state, skill summaries |
 | `workflow_packet` | workflow step execution | objective, step metadata, decisions, handoffs, summaries, source refs |
 
-The [Channel Context Budget Manager](channel-context-budget-manager.md) owns provider-aware
-budgeting and compaction. It may automatically compact runtime context, but it must not
-silently edit channel protocol or activate shared memory.
+The [Channel Context Processing Layer](channel-context-processing-layer.md) owns context
+source collection, filtering, per-agent views, evidence/log noise control, and memory-use
+isolation. The [Channel Context Budget Manager](channel-context-budget-manager.md) owns
+provider-aware budgeting and compaction inside that layer. It may automatically compact
+runtime context, but it must not silently edit channel protocol or activate shared memory.
 
 ### Collaboration Stages
 
@@ -1584,7 +1591,8 @@ open channel
 
 Execution boundary:
 
-- AI discussion can read channel context and prior messages.
+- AI discussion can read the layered channel context pack and prior visible messages
+  selected for that turn.
 - AI discussion should not perform side effects.
 - If the user asks the AI teammate to inspect files, run commands, edit files, or create
   artifacts, the UI should convert that request into a task/run flow.
@@ -2381,6 +2389,12 @@ Current MVP implementation status:
 
 - [x] Define the compatibility and experience boundary in
   `docs/design/multi-agent-orchestration-experience.md`.
+- [x] Define smart collaboration cards, stream folding, and ambient audit boundaries in
+  `docs/design/multi-agent-collaboration-cards-and-ambient-audit.md`.
+- [x] Define collaboration task card state-machine boundary as a read model over workflow,
+  step, run, approval, and lease state machines.
+- [x] Add first implementation slice plan in
+  `docs/design/multi-agent-collaboration-cards-implementation-plan.md`.
 - [x] Split the first implementation-ready plans into
   `docs/design/multi-agent-orchestration-p1-workflow-graph-implementation-plan.md`,
   `docs/design/multi-agent-orchestration-p2-packets-implementation-plan.md`, and
@@ -2391,6 +2405,11 @@ Current MVP implementation status:
   rebuilding the channel feed.
 - [ ] Add expandable evidence for selector decisions, structured handoff intents, step
   output packets, approvals, artifacts, and raw runtime events.
+- [ ] Add requirement shaping cards for unresolved multi-agent collaboration.
+- [ ] Add collaboration task cards and step handoff cards over workflow/proposal records.
+- [ ] Add compact progress projection in the right floating panel for active collaboration
+  task cards.
+- [ ] Add stream folding for serial steps and compact parallel branch progress.
 - [ ] Add targeted browser checks for visible live progress, terminal folding, and
   evidence expansion.
 
@@ -2422,9 +2441,16 @@ Current MVP implementation status:
 
 - [x] Define the context protocol, budget manager, compaction boundary, and implementation
   slices in `docs/design/channel-context-budget-manager.md`.
+- [x] Add `docs/design/channel-context-processing-layer.md` as the product-level context
+  processing boundary above Context Pack assembly.
+- [x] Add `docs/design/channel-context-processing-layer-implementation-plan.md` as the
+  implementation-ready slice plan for source collectors, Context Views, evidence
+  filtering, condenser policy, memory isolation, inspect metadata, and E2E coverage.
 - [x] Add compact roster/visible participant context to `visible_multi_reply` prompts.
 - [x] Add provider budget metadata and conservative estimation for custom provider APIs
   using existing provider preset context fields.
+- [x] Define automatic model capability resolution so context window and max output token
+  fields are advanced overrides, while runtime budgets remain per-view/per-provider.
 - [x] Add minimal internal prompt context assembly for channel replies, including current
   teammate identity and roster-question detection.
 - [x] Add internal Context Pack assembly for ordinary channel replies and selectors.

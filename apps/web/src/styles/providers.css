@@ -554,7 +554,101 @@
 }
 
 .provider-number-row {
-  grid-template-columns: minmax(0, 1fr) 120px 120px;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 0.45fr);
+}
+
+.provider-capability-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fafafa;
+  color: var(--text);
+}
+
+.provider-capability-state span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.provider-capability-state strong {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.provider-capability-state small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.provider-capability-state em {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid #cfd8d3;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4f5e59;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.provider-capability-state.custom_override em {
+  border-color: #d8c28a;
+  background: #fff8e6;
+  color: #725018;
+}
+
+.provider-advanced-detail {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+}
+
+.provider-advanced-detail summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 12px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.provider-advanced-detail summary::-webkit-details-marker {
+  display: none;
+}
+
+.provider-advanced-detail summary span {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.provider-advanced-detail summary small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.provider-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+  padding: 0 12px 12px;
 }
 
 .provider-toggle-row {
@@ -1670,6 +1764,7 @@
   .provider-toolbar,
   .provider-row,
   .field-row,
+  .provider-advanced-grid,
   .provider-number-row {
     grid-template-columns: 1fr;
   }

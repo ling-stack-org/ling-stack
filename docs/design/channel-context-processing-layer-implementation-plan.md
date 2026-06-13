@@ -1,0 +1,1004 @@
+# Channel Context Processing Layer Implementation Plan
+
+Status: detailed implementation plan.
+Date: 2026-06-13
+
+Related docs:
+
+- [Channel Context Processing Layer](channel-context-processing-layer.md)
+- [Channel Context Budget Manager](channel-context-budget-manager.md)
+- [Ling Agent Session Control Plane](ling-agent-session.md)
+- [Ling Agent Session Implementation Plan](ling-agent-session-implementation-plan.md)
+- [Input Materialization Detailed Design](input-materialization-detailed-design.md)
+- [Ling Memory v1](ling-memory-v1.md)
+- [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
+- [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
+
+## Purpose
+
+This plan turns the product-level Channel Context Processing Layer into small
+implementation slices.
+
+The goal is not to create another agent runtime, another permission system, or another
+large transcript store. The goal is to make every prompt-producing path consume one
+shared context pipeline:
+
+```text
+durable channel/workflow/memory/evidence state
+  -> source collectors
+  -> policy filters
+  -> ranked candidate sections
+  -> per-consumer Context View
+  -> Context Pack renderer / runner packet
+```
+
+## Implementation Principles
+
+- Prefer pure helpers before new storage.
+- Reuse existing channel messages, summaries, materializations, artifacts, workflow
+  packets, route metadata, and memory records.
+- Keep Context Processing read-oriented. It may build temporary summaries or write
+  auditable compaction artifacts only through existing summary/artifact paths.
+- Keep permissions on approval/run layers. A Context View never grants a tool, file,
+  shell, network, or memory-write permission.
+- Keep runner behavior on the existing embedded Pi runner path.
+- Keep default UI intelligent rather than diagnostic. Metadata belongs in explicit
+  inspect/details surfaces.
+- Keep raw logs and raw artifact bodies out of ordinary prompts by default.
+- Separate memory recall eligibility from public quoting/display eligibility.
+- Migrate consumers gradually, with compatibility wrappers until the old Context Pack
+  builders are fully replaced.
+
+## Current Code Anchors
+
+| Area | Current anchor |
+| --- | --- |
+| Channel message entry | `packages/daemon/src/features/channels/messages.ts` |
+| Turn envelope | `packages/daemon/src/features/channels/ling-agent-turn-envelope.ts` |
+| Current Context Pack builders | `packages/daemon/src/features/channels/context-packs.ts` |
+| Existing compaction helpers | `packages/daemon/src/features/channels/context-compaction.ts` |
+| Ordinary AI replies | `packages/daemon/src/features/channels/ai-replies.ts` |
+| Intent selector | `packages/daemon/src/features/channels/channel-intent-selector.ts` |
+| Auto-route selector | `packages/daemon/src/features/channels/channel-message-router.ts` |
+| Workflow orchestration | `packages/daemon/src/features/channels/orchestrator.ts` |
+| Workflow selector decisions | `packages/daemon/src/features/channels/workflow-selector.ts` |
+| Workflow step packets | `packages/daemon/src/features/channels/workflow-step-packets.ts` |
+| Input materialization | `packages/daemon/src/features/channels/materialization/` |
+| Memory prompt helpers | `packages/daemon/src/features/memory/prompt.ts` |
+| Memory types | `packages/core/src/memory-types.ts` |
+| Workflow evidence Web model | `apps/web/src/lib/workflow-progress.ts` |
+| Channel activity drilldown | `apps/web/src/lib/channel-activity-drilldown.ts` |
+| Channel E2E tests | `apps/web/e2e/channel.spec.ts` |
+| Daemon channel tests | `packages/daemon/test/channel-workspace.test.mjs` |
+
+## Target Contracts
+
+Start in daemon-local modules. Move contracts to `packages/contracts` only after the
+shape is stable across daemon and Web.
+
+Suggested module:
+
+```text
+packages/daemon/src/features/channels/context-processing/
+  sources.ts
+  policies.ts
+  views.ts
+  render.ts
+  evidence.ts
+  memory.ts
+  condenser.ts
+```
+
+### Source Contract
+
+```ts
+type ChannelContextSourceKind =
+  | "turn"
+  | "channel_state"
+  | "recent_message"
+  | "channel_summary"
+  | "decision"
+  | "handoff"
+  | "active_work"
+  | "materialized_input"
+  | "memory"
+  | "evidence"
+  | "artifact"
+  | "workflow_packet";
+
+interface ChannelContextSource {
+  readonly id: string;
+  readonly kind: ChannelContextSourceKind;
+  readonly workspaceId: string;
+  readonly channelId?: string;
+  readonly teammateId?: string;
+  readonly sourceRefIds: readonly string[];
+  readonly title: string;
+  readonly text?: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly sensitivity: "normal" | "private" | "secret_adjacent";
+  readonly freshness: "current_turn" | "recent" | "durable" | "archival";
+}
+```
+
+### View Contract
+
+```ts
+type ChannelContextViewKind =
+  | "ling_agent_channel_view"
+  | "specialist_task_view"
+  | "selector_view"
+  | "workflow_proposal_view"
+  | "workflow_step_view"
+  | "private_chat_view"
+  | "evidence_inspect_view";
+
+interface ChannelContextView {
+  readonly id: string;
+  readonly kind: ChannelContextViewKind;
+  readonly workspaceId: string;
+  readonly channelId?: string;
+  readonly consumerTeammateId?: string;
+  readonly sections: readonly ChannelContextSection[];
+  readonly sourceRefs: readonly ChannelContextSourceRef[];
+  readonly dropped: readonly ChannelContextDroppedSource[];
+  readonly budget: ChannelContextBudgetSnapshot;
+  readonly metadata: ChannelContextViewMetadata;
+}
+```
+
+### Section Contract
+
+```ts
+interface ChannelContextSection {
+  readonly id: string;
+  readonly role: "system" | "instruction" | "user" | "memory" | "evidence";
+  readonly title: string;
+  readonly text: string;
+  readonly sourceRefIds: readonly string[];
+  readonly visibility: "prompt" | "inspect_only";
+  readonly quotePolicy: "public_ok" | "influence_only" | "inspect_only";
+}
+```
+
+The `quotePolicy` field is the important addition over the current Context Pack shape:
+memory or private context can influence a model without becoming text that Ling should
+quote publicly.
+
+## C0: Documentation And Compatibility Inventory
+
+Type: design and read-only inventory.
+
+### Goal
+
+Keep design docs aligned before code changes and identify every current prompt assembly
+path that must migrate.
+
+### Work
+
+- Keep this plan linked from the product-level Context Processing design.
+- List all consumers currently calling `build*ContextPack` or hand-building prompt
+  strings.
+- Classify each consumer by target view kind.
+- Identify any prompt path that bypasses `LingAgentTurnEnvelope`, materialization,
+  protocol resolution, or memory audit events.
+
+### Acceptance
+
+- The implementation plan names all first-pass consumers.
+- No code behavior changes in C0.
+- `git diff --check` passes.
+
+### Non-goals
+
+- No refactor of prompt builders.
+- No UI changes.
+- No storage migration.
+
+## C1: Source Collectors
+
+Type: daemon pure helpers.
+
+### Goal
+
+Extract shared collectors for candidate context sources without changing rendered
+prompts.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/context-processing/sources.ts
+packages/daemon/src/features/channels/context-processing/sources.test.mjs
+```
+
+### Collectors
+
+| Collector | Source data | Notes |
+| --- | --- | --- |
+| `collectTurnSource` | `LingAgentTurnEnvelope` | Current message, mentions, file refs, links, materialization statuses. |
+| `collectChannelStateSource` | channel record, protocol resolver | Id/name/path, effective protocol, language, roster identity. |
+| `collectRecentConversationSources` | channel messages | Bounded visible conversation only; exclude pending assistant placeholders. |
+| `collectActiveWorkSources` | proposals, workflows, steps, runs, approvals, interventions | Active or recently terminal work relevant to the current channel. |
+| `collectMaterializedInputSources` | materialization registry/cache | Bounded previews and source refs; no raw binary dumps. |
+| `collectEvidenceSources` | artifacts, route metadata, workflow packets | Metadata and safe snippets only. |
+| `collectMemorySources` | memory recall result | Memory ids and rendered snippets after memory policy filtering. |
+
+### Migration rule
+
+Existing `context-packs.ts` may call the collectors internally while still returning the
+old `ContextPack` shape. That avoids a broad first PR.
+
+### Tests
+
+- Current turn source includes attachment/link/file refs when present.
+- Recent conversation excludes unrelated channels and pending assistant placeholders.
+- Active work source includes pending approval ids for the current workflow/run.
+- Materialized input source includes available text previews and metadata-only refs
+  without pretending to have body text.
+- Evidence source summarizes run/artifact metadata without raw full stdout.
+
+### Acceptance
+
+- No prompt text changes are required in C1.
+- Source ids are stable and include enough data for future inspect surfaces.
+- Collectors are deterministic for the same store snapshot.
+
+## C2: Policy Filters And View Builder
+
+Type: daemon pure helpers.
+
+### Goal
+
+Add the shared `buildChannelContextView` API and encode per-consumer visibility rules in
+one place.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/context-processing/views.ts
+packages/daemon/src/features/channels/context-processing/policies.ts
+packages/daemon/src/features/channels/context-processing/views.test.mjs
+```
+
+### API
+
+```ts
+interface BuildChannelContextViewInput {
+  readonly kind: ChannelContextViewKind;
+  readonly workspaceId: string;
+  readonly channelId?: string;
+  readonly consumerTeammateId?: string;
+  readonly sourceMessageId?: string;
+  readonly sources: readonly ChannelContextSource[];
+  readonly providerBudget?: ChannelContextProviderBudget;
+  readonly now: string;
+}
+
+function buildChannelContextView(input: BuildChannelContextViewInput): ChannelContextView;
+```
+
+### Policy matrix
+
+| View | Must include | Must exclude |
+| --- | --- | --- |
+| `ling_agent_channel_view` | current turn, channel state, recent visible conversation, active work, safe materialized inputs, scoped memory | raw logs, private chat bodies, selector internals |
+| `selector_view` | current turn, channel state, lightweight recent context, capability summaries | long history, raw memory text, raw evidence |
+| `workflow_proposal_view` | current user goal, channel protocol, active decisions, materialized inputs | private memory, unrelated chatter, raw command output |
+| `workflow_step_view` | workflow objective, step instruction, dependencies, output packets, selected memory | full discussion, unrelated branch transcripts |
+| `specialist_task_view` | task objective, acceptance criteria, role-specific evidence summaries | all-agent prompt history, other teammate private memory |
+| `private_chat_view` | private thread, teammate persona, teammate memory, explicit referenced channel refs | channel history by default |
+| `evidence_inspect_view` | source refs, metadata, compact summaries, selected raw snippets | secrets and private content without explicit permission |
+
+### Acceptance
+
+- Each view kind has focused tests for allowed and excluded source classes.
+- No view changes approval state or tool availability.
+- A source may be dropped with a safe reason such as `budget`, `scope`, `sensitivity`,
+  `raw_evidence`, or `unrelated`.
+
+## C3: Render Compatibility Layer
+
+Type: daemon prompt compatibility.
+
+### Goal
+
+Render a `ChannelContextView` into the existing `ContextPack`/prompt shape so current
+consumers can migrate without rewriting model-call code all at once.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/context-processing/render.ts
+packages/daemon/src/features/channels/context-processing/render.test.mjs
+```
+
+### Work
+
+- Add `renderChannelContextView(view)` for plain prompt text.
+- Add `contextViewToContextPack(view, kind)` as a temporary adapter.
+- Preserve existing safe metadata fields: provider/model ids, section ids, dropped ids,
+  source-ref counts, compaction ids.
+- Keep raw prompts out of persistent ordinary reply metadata.
+
+### Consumer order
+
+1. `buildChannelReplyContextPack` internally builds `ling_agent_channel_view`.
+2. `buildChannelIntentSelectorContextPack` internally builds `selector_view`.
+3. `buildChannelAutoRouteContextPack` internally builds `selector_view` with stricter
+   ordinary-reply constraints.
+4. `buildWorkflowStepContextPack` internally builds `workflow_step_view`.
+
+### Acceptance
+
+- Existing model call sites can still receive rendered prompt text.
+- Existing inspect metadata does not start storing raw prompts.
+- Golden tests prove section ordering is stable.
+
+## C4: Reply And Selector Migration
+
+Type: daemon behavior migration.
+
+### Goal
+
+Move ordinary Ling Agent replies, intent selector, and auto-route selector onto Context
+Views while preserving user-visible behavior.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/ai-replies.ts
+packages/daemon/src/features/channels/channel-intent-selector.ts
+packages/daemon/src/features/channels/channel-message-router.ts
+packages/daemon/src/features/channels/context-packs.ts
+```
+
+### Work
+
+- Replace bespoke recent-context assembly with `ling_agent_channel_view`.
+- Ensure short follow-ups such as `400字`, `继续`, `改短点`, and attachment-only
+  continuations see the same channel context as longer ordinary replies.
+- Keep selector prompts lightweight with `selector_view`.
+- Keep auto-route unable to create tasks, workflows, approvals, or memory authority
+  changes.
+- Record used-memory audit events exactly as before.
+
+### Tests
+
+- Short follow-up resolves against the previous topic.
+- Attachment-dependent ordinary reply uses materialized input when available.
+- Selector and final reply do not diverge on active work state.
+- Ordinary reply does not include raw route internals or full logs.
+- Memory usage events still record memory ids, channel id, teammate id, response id, and
+  recall query.
+
+### Acceptance
+
+- The user never sees "no reply" solely because a message is short or contextual.
+- The default visible author remains Ling Agent/coordinator unless a deliberate
+  specialist-visible reply path is chosen.
+- Context inspect metadata remains optional and compact.
+
+## C5: Workflow Proposal And Step Migration
+
+Type: daemon workflow migration.
+
+### Goal
+
+Move proposal generation and workflow step execution context onto Context Views without
+changing workflow/run state machines.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/ai-proposals.ts
+packages/daemon/src/features/channels/proposal-workflows.ts
+packages/daemon/src/features/channels/orchestrator.ts
+packages/daemon/src/features/channels/workflow-step-packets.ts
+packages/daemon/src/features/channels/context-packs.ts
+```
+
+### Work
+
+- Build proposals from `workflow_proposal_view`.
+- Build step runner packets from `workflow_step_view`.
+- Convert dependency outputs into packet summaries and source refs before prompt use.
+- Keep approval requests and run permissions outside Context Processing.
+- Preserve workflow selector decisions as evidence/source refs, not prompt internals.
+
+### Tests
+
+- Proposal generation includes current user goal, materialized inputs, and active
+  channel decisions.
+- Workflow step context includes dependency output packets, not raw branch transcripts.
+- Failed command evidence contributes exit code, concise error, tail, and artifact refs.
+- Retry step context includes the relevant failure summary without replaying full logs.
+
+### Acceptance
+
+- No workflow state machine migration is required.
+- Workflow evidence remains expandable after terminal state.
+- Context Processing does not auto-start work by itself; it only prepares context for
+  the existing orchestration path.
+
+## C6: Log And Evidence Filtering
+
+Type: daemon evidence policy.
+
+### Goal
+
+Centralize how logs, command output, artifacts, and workflow evidence become prompt-safe
+sources.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/context-processing/evidence.ts
+packages/daemon/src/features/channels/context-processing/evidence.test.mjs
+```
+
+### Rules
+
+- Successful commands default to command name, exit code, changed-file summary, and
+  artifact refs.
+- Failed commands may include concise error summary and bounded stderr tail.
+- Full stdout/stderr remains in durable artifacts and evidence inspect surfaces.
+- Provider secrets, environment variables, tokens, and credential-adjacent strings are
+  redacted before any prompt section.
+- Repeated runtime heartbeats and route JSON are dropped from ordinary views.
+
+### Tests
+
+- Large stdout is replaced by summary and artifact ref.
+- Failed stderr tail is bounded and redacted.
+- Secret-like strings are not present in rendered prompt text.
+- Evidence inspect view can include selected raw snippets only when policy allows it.
+
+### Acceptance
+
+- Normal replies do not become log replays.
+- Evidence remains durable and inspectable on demand.
+- Web default conversation UI does not gain new diagnostic rows.
+
+## C7: Context Condenser
+
+Type: daemon compaction policy.
+
+### Goal
+
+Add a condenser that can replace older or oversized sources with summaries/source refs
+before provider context limits are exceeded.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/context-processing/condenser.ts
+packages/daemon/src/features/channels/context-processing/condenser.test.mjs
+```
+
+### Work
+
+- Reuse existing provider budget estimation from Context Budget Manager.
+- Keep current turn, approval/safety boundary, and active protocol immutable.
+- Compact older visible conversation into temporary or durable channel summaries.
+- Compact workflow dependency outputs into packet summaries.
+- Compact long logs into error summary, tail, and artifact refs.
+- Report dropped source ids and compaction ids for inspect surfaces.
+
+### Storage boundary
+
+Default first slice should prefer temporary in-request summaries. Durable summaries can be
+written only through existing channel-summary or artifact mechanisms when already
+available and auditable.
+
+### Tests
+
+- Current turn is never dropped.
+- Channel protocol and teammate persona are never rewritten by compaction.
+- Oversized logs are summarized before conversation history is dropped.
+- `no-tools context-length retry` uses the same condenser policy.
+
+### Acceptance
+
+- Prompt size can be reduced without losing source attribution.
+- The condenser does not mutate active memory or approval policy.
+- Ordinary UI does not expose token counts by default.
+
+## C8: Memory Use Isolation
+
+Type: daemon memory policy.
+
+### Goal
+
+Separate "memory can be recalled for this agent" from "memory can be publicly quoted in
+this surface".
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/context-processing/memory.ts
+packages/daemon/src/features/channels/context-processing/memory.test.mjs
+```
+
+### Policy
+
+| Memory scope | Recall eligibility | Public quote eligibility |
+| --- | --- | --- |
+| Workspace | Relevant workspace/channel/task views | Usually public if sensitivity allows. |
+| Channel | Same channel or linked task/run | Public in that channel if sensitivity allows. |
+| Teammate private | Owning teammate only | Influence-only by default in public channel. |
+| Task/run | Linked workflow/run/step | Public only through task/run evidence rules. |
+| Secret-adjacent | Review/health surfaces only | Never in ordinary prompt text. |
+| Candidate | Review policy only | Not public until promoted/accepted. |
+
+### Work
+
+- Convert recalled memory into `ChannelContextSource` values with `sensitivity` and
+  `quotePolicy`.
+- Update prompt rendering so `influence_only` memory is not instructed to be quoted.
+- Preserve existing used-memory audit events.
+- Do not add a "memory off" toggle; memory remains enabled by default per teammate.
+
+### Tests
+
+- Ling Agent can use relevant workspace/channel memory in ordinary replies.
+- Private teammate memory does not appear verbatim in public channel prompt sections.
+- Secret-adjacent memory is excluded from ordinary Context Views.
+- Used-memory audit events still include source ids and policy version.
+
+### Acceptance
+
+- Memory isolation remains per workspace/channel/teammate/task/run.
+- Public channel replies do not leak private teammate memory excerpts by default.
+
+## C9: Inspect Metadata And Web Surfaces
+
+Type: daemon metadata plus Web optional details.
+
+### Goal
+
+Expose enough context evidence for debugging and user trust without adding default UI
+noise.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/channels/workflow-coordination-routes.ts
+apps/web/src/lib/workflow-progress.ts
+apps/web/src/lib/channel-activity-drilldown.ts
+apps/web/src/features/workspace/WorkspaceClientView.tsx
+```
+
+### Work
+
+- Persist or expose safe metadata for route decisions and workflow evidence:
+  context view kind, section ids, dropped ids, source-ref counts, compaction ids,
+  provider/model ids when already stored.
+- Keep raw prompts, hidden prompts, private chat content, provider secrets, and raw
+  artifact bodies out of ordinary metadata.
+- Render metadata only in explicit inspect/evidence/details surfaces.
+
+### Tests
+
+- Default conversation feed does not show section ids, token budgets, selector scores,
+  or route JSON.
+- Inspect/details can show compact section/source metadata.
+- Mobile layout keeps evidence details behind explicit expansion.
+
+### Acceptance
+
+- The UI stays product-oriented by default.
+- Developers can still inspect why a reply/workflow saw particular sources.
+
+## C10: Direct Message And Private Chat Context
+
+Type: daemon follow-up slice.
+
+### Goal
+
+Bring teammate direct messages and Ling Agent private chat onto the same Context View
+model without making private chat part of public channel context.
+
+### Suggested files
+
+```text
+packages/daemon/src/features/teammates/direct-messages.ts
+packages/daemon/src/features/channels/context-processing/views.ts
+```
+
+### Work
+
+- Build `private_chat_view` for teammate DMs.
+- Include teammate persona, private thread history, and teammate private memory.
+- Allow explicit referenced channel/workflow/task refs to enter as source refs.
+- Do not implicitly promote private chat into channel summaries.
+
+### Tests
+
+- Private chat does not see unrelated channel history by default.
+- Explicitly referenced channel work can be summarized into private chat context.
+- Private memory remains scoped to the teammate.
+
+### Acceptance
+
+- Ling Agent can be private-chatted like a protected teammate.
+- Private conversations do not leak into channel context unless explicitly referenced or
+  promoted through an approved flow.
+
+## C11: Browser And E2E Acceptance
+
+Type: Web/e2e verification.
+
+### Goal
+
+Verify product behavior, not internal debug details.
+
+### Suggested tests
+
+```text
+apps/web/e2e/channel.spec.ts
+```
+
+### Scenarios
+
+- A short follow-up after a previous channel topic produces a contextual Ling reply.
+- A current-turn PDF/DOCX/text/image attachment is treated as conversation material when
+  materialized.
+- An active workflow follow-up sees the active work state.
+- A completed workflow shows final report and expandable evidence, not raw process spam.
+- Context inspect/details are hidden until opened.
+- Mobile viewport does not expose diagnostic rows by default.
+
+### Acceptance
+
+- Product UX matches "one Ling Agent session" from the user's perspective.
+- Context metadata is available only after explicit expansion.
+- No browser test asserts raw prompt text.
+
+## C12: Provider Capability Auto-Detection
+
+Type: provider settings plus daemon budget resolver.
+
+### Goal
+
+Make automatic compaction feel like the default product behavior. Users should not have
+to type context-window and max-output-token values for normal model setup, but the
+runtime still needs effective per-model budgets before each Context View is rendered.
+
+### Suggested files
+
+```text
+packages/core/src/provider-types.ts
+packages/core/src/provider-templates.ts
+packages/daemon/src/features/providers/schemas.ts
+packages/daemon/src/features/providers/routes.ts
+packages/daemon/src/features/channels/context-packs.ts
+apps/web/src/features/providers/ProviderSettings.tsx
+apps/web/src/lib/providers.ts
+```
+
+### Work
+
+- Treat `contextWindow` and `maxTokens` as optional user overrides, not required setup
+  fields.
+- Add or derive a `ProviderModelCapabilitySnapshot` for effective runtime budgeting:
+  registry/template value, provider metadata, health-check result, user override,
+  runtime-observed downgrade, or conservative default.
+- Show model capability state in Model Workbench as `Auto`, `Estimated`, `Conservative`,
+  or `Custom override`.
+- Move token inputs into an Advanced section and label them as overrides.
+- Keep existing API fields backward-compatible so existing presets continue to load.
+- Do not silently overwrite user override fields when health checks or runtime errors
+  learn better capabilities.
+- Feed the effective snapshot into Context Budget Manager for each Context View.
+
+### Budget behavior
+
+| Capability source | Budget mode | Behavior |
+| --- | --- | --- |
+| user override | `model_known` | Use the explicit override and mark the UI `Custom override`. |
+| model registry/template | `model_known` | Use known values automatically. |
+| provider metadata/check | `model_known` or `model_estimated` | Use detected values when confidence is high; otherwise reserve conservatively. |
+| runtime observed context-length error | `model_estimated` | Lower effective budget for future calls; do not mutate user config. |
+| no data for custom provider | `model_unknown` | Use small safe budget and compact early. |
+
+### Tests
+
+- Creating a custom provider with blank context/max-token fields succeeds.
+- Known templates show automatic capability state without requiring manual token input.
+- Advanced override values still produce `model_known` budgets.
+- Unknown OpenAI-compatible providers resolve to `model_unknown` and compact early.
+- A simulated context-length error lowers effective runtime budget for no-tools retry
+  without changing persisted user override fields.
+- Web E2E verifies the default sheet does not expose context/max-token inputs until the
+  Advanced section is opened.
+
+### Acceptance
+
+- Model Workbench does not make users hand-enter token limits by default.
+- Runtime budgeting remains deterministic and auditable.
+- Multi-agent turns can resolve different budgets for Ling Agent, selectors,
+  specialists, workflow steps, and condenser calls.
+- Provider capability detection never grants tool permissions or changes approval policy.
+
+## Recommended PR Sequence
+
+| PR | Scope | Risk |
+| --- | --- | --- |
+| CP0 | Docs and compatibility inventory | Low |
+| CP1 | Source collectors behind current Context Pack builders | Low |
+| CP2 | View builder and render adapter, no behavior change | Medium |
+| CP3 | Reply/selector migration | Medium |
+| CP4 | Workflow proposal/step migration | Medium |
+| CP5 | Evidence filtering and condenser | Medium-high |
+| CP6 | Memory quote policy and audit hardening | Medium |
+| CP7 | Inspect metadata/Web details and E2E | Medium |
+| CP8 | Provider/model capability auto-detection and advanced overrides | Medium |
+| CP9 | Private chat/direct-message context view | Medium |
+
+## Follow-Up Implementation Slices
+
+These are intentionally separate from the collaboration-card UI slices. They should not
+be mixed into CCI8/CCI9 because they affect runtime prompt construction, caching, or
+developer diagnostics.
+
+### CP10: Daemon Collaboration Card Read Model
+
+Goal: expose a stable daemon-side read model for collaboration cards and final reports
+only after the Web-derived model proves stable.
+
+Scope:
+
+- derive from existing proposal/workflow/step/run/approval/artifact records;
+- cache only product fields needed by Web/mobile clients;
+- invalidate on workflow, step, run, approval, and artifact changes;
+- keep Web derivation as compatibility fallback.
+
+Non-goals:
+
+- no new workflow state machine;
+- no permission or approval changes;
+- no raw prompt/log/context persistence in the card payload.
+
+Detailed design:
+
+The daemon read model should be a product projection, not a new source of truth.
+
+Suggested endpoint shape:
+
+```text
+GET /channels/:channelId/collaboration-cards
+GET /workflows/:workflowId/collaboration-card
+```
+
+Suggested payload:
+
+```ts
+interface DaemonCollaborationCard {
+  readonly id: string;
+  readonly source: "proposal" | "workflow";
+  readonly proposalId?: string;
+  readonly workflowId?: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly mode: CollaborationTaskCardMode;
+  readonly executionMode: "serial" | "parallel" | "mixed";
+  readonly participants: readonly CollaborationParticipantView[];
+  readonly steps: readonly CollaborationStepView[];
+  readonly finalReport?: CollaborationFinalReportView;
+  readonly blocker?: string;
+  readonly nextAction?: string;
+  readonly updatedAt: string;
+}
+```
+
+Invalidation:
+
+- proposal created/updated/cancelled/accepted;
+- workflow created/status updated;
+- workflow step status/run/link/summary/blocker updated;
+- run terminal state updated;
+- approval created/resolved;
+- artifact attached to a linked run/step;
+- final report packet created/updated if introduced later.
+
+Compatibility:
+
+- Web keeps its local derivation as fallback until daemon projection is proven stable;
+- daemon and Web schemas should share labels and mode rules;
+- API must not expose raw context section ids, token budgets, route JSON, selector
+  scores, or log paths by default.
+
+Acceptance:
+
+- daemon card matches current Web-derived card for active, blocked, completed, and failed
+  workflows;
+- cache invalidates when step/run/approval/artifact state changes;
+- Web can render from daemon payload without changing user-visible behavior;
+- no permission grants or approval state transitions are performed by the read model.
+
+### CP11: Full Context Processing Migration
+
+Goal: migrate Ling replies, selectors, proposals, workflow steps, and specialist tasks
+onto shared source collectors and context view builders.
+
+Scope:
+
+- source collectors for channel history, durable turns, attachments, links, files,
+  workflow evidence, memory, and compacted summaries;
+- role-specific views for Ling Agent, specialists, selectors, and condensers;
+- model-aware budget planning with graceful compaction;
+- strict isolation for private teammate memory.
+
+Non-goals:
+
+- no new `agent_sessions` runtime;
+- no hidden cross-channel context transfer;
+- no default UI token counters or selector scores.
+
+Detailed design:
+
+The migration should happen by runtime surface, not as a single rewrite.
+
+Shared pipeline:
+
+```text
+source collectors
+  -> source refs
+  -> context sections
+  -> model-aware budget planner
+  -> compaction / condensation
+  -> role-specific context view
+  -> prompt/render adapter
+```
+
+Collectors:
+
+- channel messages and durable Ling turns;
+- topic replies;
+- attachments and materialized file/link summaries;
+- workflow/proposal/decision/handoff evidence;
+- run artifacts and concise terminal summaries;
+- channel memory and teammate-private memory with isolation rules;
+- compacted channel summaries.
+
+Context views:
+
+| View | Consumer | Includes | Excludes |
+| --- | --- | --- | --- |
+| `ling_agent_reply` | default Ling replies | recent channel context, user turn, relevant materialized inputs, allowed memories | raw logs, private teammate memory not addressed to Ling |
+| `selector` | speaker/route selection | intent signals, mentions, membership, compact channel state | raw attachments, long logs, generated answers |
+| `proposal` | executable task proposal | user request, relevant constraints, materialized inputs, channel policy | full channel transcript when summarized context is enough |
+| `workflow_step` | specialist execution | objective, scoped step input, dependencies, evidence refs, allowed memory | unrelated channel chatter, other teammate private memory |
+| `condenser` | compaction | old context window and source refs | provider secrets, raw private memory unless explicitly allowed |
+
+Budget rules:
+
+- infer provider/model context limits where available;
+- use conservative defaults only as internal planner input;
+- never require users to configure context window in default provider setup;
+- drop/debug metadata must be inspectable, not shown by default.
+
+Migration sequence:
+
+1. Add collector interfaces behind existing Context Pack builders.
+2. Build view adapters that emit the same prompt content as today.
+3. Migrate ordinary Ling replies.
+4. Migrate selector/proposal generation.
+5. Migrate workflow-step packets.
+6. Add condenser/compaction integration.
+7. Add inspect coverage and regression E2E.
+
+Acceptance:
+
+- short follow-up messages resolve against same-channel context;
+- attachments/materialized inputs are available to the relevant agent without user asking
+  again;
+- specialist prompts receive scoped views, not full raw channel history;
+- token-heavy logs are summarized or excluded unless specifically relevant;
+- memory isolation remains per teammate and per visibility boundary.
+
+### CP12: Developer Inspect And Debug Surfaces
+
+Goal: make context/route/budget evidence available on demand without polluting the
+default conversation.
+
+Scope:
+
+- explicit inspect actions for workflow step context packs;
+- debug-only reply/selector metadata when enabled;
+- developer budget diagnostics behind advanced surfaces;
+- E2E coverage that default UI stays clean.
+
+Non-goals:
+
+- no default persistence of every ordinary chat reply snapshot;
+- no raw logs in product cards;
+- no provider secrets or credential-adjacent values in inspect payloads.
+
+Detailed design:
+
+Inspect surfaces should answer developer questions without becoming the product UI.
+
+Surfaces:
+
+- workflow evidence drawer: context pack summaries for workflow steps;
+- developer diagnostics panel: budget planner details and source-ref counts;
+- explicit "Inspect context" action on advanced/details rows;
+- route/selector inspect only when debug evidence is enabled or a decision was suppressed.
+
+Default hidden fields:
+
+- token budget numbers;
+- raw context section ids;
+- selector scores and route JSON;
+- raw prompt text;
+- log paths;
+- provider secrets;
+- private teammate memory body.
+
+Allowed inspect fields:
+
+- source type and human label;
+- source count and estimated size;
+- kept/dropped section category;
+- compaction id or summary title when available;
+- model/provider selected for a context view;
+- safety/policy reason for excluded sources;
+- linked evidence/artifact ids only inside developer surfaces.
+
+UX rules:
+
+- product cards link to evidence/details, not directly to raw debug;
+- developer inspect affordances are secondary and visually quiet;
+- missing evidence should say what is missing and how the runtime can capture it later;
+- failed materialization/context extraction should show a natural summary first, detailed
+  reason only in inspect.
+
+Acceptance:
+
+- default channel feed contains no route/debug/token/context ids;
+- workflow evidence can show a readable context summary for each step;
+- developer view can answer "why did this context get included/dropped?";
+- E2E covers both clean default UI and explicit inspect visibility.
+
+## Global Acceptance Criteria
+
+- Ling Agent ordinary replies, selectors, proposals, workflow steps, and specialist task
+  packets use shared source collectors where practical.
+- Short contextual user turns resolve against the relevant channel context instead of
+  being treated as isolated chat.
+- Default prompts do not include full raw logs, repeated runtime events, route JSON, or
+  raw artifact bodies.
+- Failed runs can contribute concise failure context while preserving full evidence in
+  artifacts.
+- Specialists receive role/task-specific Context Views, not full shared prompt history.
+- Private teammate memory can influence only the allowed teammate and is not publicly
+  quoted by default.
+- Context Processing never grants permissions, starts tools, edits files, mutates memory,
+  or changes runner policy.
+- Default UI stays clean; inspect/details surfaces carry metadata only on demand.
+
+## Explicit Non-Goals
+
+- No new `agent_sessions` runtime.
+- No replacement of workflow/run/approval storage.
+- No separate prompt-history table in the first implementation.
+- No hidden cross-channel context transfer.
+- No automatic publication of private teammate chat into channel context.
+- No default UI token counters, selector scores, route internals, or context section
+  debug rows.
+- No migration away from the embedded Pi library runner.
+- No new permission model.
+
+## Open Decisions
+
+- Whether `ChannelContextView` contracts should move to `packages/contracts` after CP2
+  or stay daemon-local through CP4.
+- Exact provider-class thresholds for recent visible conversation before condenser
+  activation.
+- Whether durable context summaries should be created during ordinary replies or only
+  during workflow/run evidence paths.
+- Whether memory public quote eligibility needs a stored field or can derive from
+  existing sensitivity/review policy in v1.
+- Whether evidence redaction belongs permanently in Context Processing or should migrate
+  into the artifact/evidence layer after the first implementation.
