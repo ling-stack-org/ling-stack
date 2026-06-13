@@ -1,17 +1,19 @@
 import type { AiTeammate, TeammateDirectMessage, TeammatePrivateAttachment } from "@ling-stack/core";
+import type { TeammateDirectAttachmentMaterialization } from "./direct-materialization.js";
 
 export function formatTeammateDirectPrompt(
   teammate: AiTeammate,
   messages: readonly TeammateDirectMessage[],
   sourceMessage: TeammateDirectMessage,
   attachmentsById: ReadonlyMap<string, TeammatePrivateAttachment> = new Map(),
+  materializationsByAttachmentId: ReadonlyMap<string, TeammateDirectAttachmentMaterialization> = new Map(),
 ): string {
   const history = messages
     .filter((message) => message.status === "ready" && message.id !== sourceMessage.id && !isHistoricalGuidanceMessage(message))
     .slice(-20)
-    .map((message) => renderDirectMessageLine(teammate, message, attachmentsById))
+    .map((message) => renderDirectMessageLine(teammate, message, attachmentsById, new Map()))
     .join("\n");
-  const latestMessage = renderDirectMessageLine(teammate, sourceMessage, attachmentsById);
+  const latestMessage = renderDirectMessageLine(teammate, sourceMessage, attachmentsById, materializationsByAttachmentId);
   return [
     `Teammate: ${teammate.displayName}`,
     `Role: ${teammate.roleKey}`,
@@ -24,7 +26,7 @@ export function formatTeammateDirectPrompt(
     latestMessage,
     "",
     "Reply to the Latest message to answer now. Use older conversation only as context.",
-    "If the latest message includes attachments, this runtime currently exposes attachment metadata only, not image or file bytes. Do not infer unseen attachment contents; say that you cannot inspect the attachment content directly unless the user provides the content or enables a future vision/file-reading flow.",
+    "If the latest message includes attachments, use only attachment content explicitly listed under Attachment content. Metadata-only attachments do not expose their body. Do not infer unseen attachment contents, including image, PDF, Office, or file contents.",
   ].join("\n");
 }
 
@@ -40,6 +42,7 @@ function renderDirectMessageLine(
   teammate: AiTeammate,
   message: TeammateDirectMessage,
   attachmentsById: ReadonlyMap<string, TeammatePrivateAttachment>,
+  materializationsByAttachmentId: ReadonlyMap<string, TeammateDirectAttachmentMaterialization>,
 ): string {
   const author = message.authorType === "ai-teammate"
     ? teammate.displayName
@@ -51,10 +54,27 @@ function renderDirectMessageLine(
     .map((attachmentId) => attachmentsById.get(attachmentId))
     .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
     .map((attachment) => `${attachment.fileName} (${attachment.kind}, ${attachment.contentType}, ${formatBytes(attachment.sizeBytes)})`);
+  const attachmentContent = message.attachmentIds
+    .map((attachmentId) => materializationsByAttachmentId.get(attachmentId))
+    .filter(hasDirectAttachmentPromptContent)
+    .map((materialization) => [
+      `- ${materialization.fileName}${materialization.truncated ? " (truncated)" : ""}:`,
+      materialization.contentText?.trim(),
+    ].filter(Boolean).join("\n"));
   if (attachments.length === 0) {
     return `${author}: ${body}`;
   }
-  return `${author}: ${body}\nAttachments: ${attachments.join("; ")}`;
+  return [
+    `${author}: ${body}`,
+    `Attachments: ${attachments.join("; ")}`,
+    attachmentContent.length > 0 ? `Attachment content:\n${attachmentContent.join("\n")}` : undefined,
+  ].filter(Boolean).join("\n");
+}
+
+function hasDirectAttachmentPromptContent(
+  materialization: TeammateDirectAttachmentMaterialization | undefined,
+): materialization is TeammateDirectAttachmentMaterialization & { readonly contentText: string } {
+  return Boolean(materialization?.status === "available" && materialization.contentText?.trim());
 }
 
 function formatBytes(sizeBytes: number): string {
