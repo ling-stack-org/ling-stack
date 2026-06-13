@@ -38,6 +38,10 @@ import {
   readWorkflowStepOutputPacketArtifact,
 } from "./workflow-step-packets.js";
 import {
+  buildChannelCollaborationCardsFromStore,
+  buildWorkflowCollaborationCardFromStore,
+} from "./collaboration-cards.js";
+import {
   parseChannelWorkflowFromHandoffRequest,
   parseChannelWorkflowRequest,
   parseChannelWorkflowStepRequest,
@@ -161,6 +165,44 @@ export async function handleChannelWorkflowsCollection(
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workflows` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+export async function handleChannelCollaborationCardsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel collaboration cards` });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+    writeJson(response, 200, {
+      cwd,
+      channelId,
+      cards: buildChannelCollaborationCardsFromStore({
+        store,
+        channelId,
+        limit: readOptionalIntegerQuery(url, "limit", 50),
+      }),
+    });
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
@@ -386,6 +428,42 @@ export async function handleChannelWorkflowEvidence(
     const store = storeRegistry.getStore(cwd);
     const evidence = buildWorkflowEvidence(store, workflowId);
     writeJson(response, 200, evidence);
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleChannelWorkflowCollaborationCard(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  workflowId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow collaboration card` });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const workflow = store.getChannelWorkflow(workflowId);
+    if (!workflow) {
+      throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);
+    }
+    writeJson(response, 200, {
+      cwd,
+      workflowId,
+      card: buildWorkflowCollaborationCardFromStore({ store, workflow }),
+    });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",

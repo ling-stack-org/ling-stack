@@ -231,7 +231,7 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "workspace" | "protocol" | "branches";
+  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "workspace" | "protocol" | "branches";
   readonly branchId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft";
   readonly protocolDraftId?: string;
@@ -288,6 +288,7 @@ export function parseChannelRoute(
       segments[2] === "handoffs" ||
       segments[2] === "context-summaries" ||
       segments[2] === "workflows" ||
+      segments[2] === "collaboration-cards" ||
       segments[2] === "protocol"
     )
   ) {
@@ -454,7 +455,7 @@ export function parseChannelHandoffRoute(pathname: string): { readonly handoffId
 export function parseChannelWorkflowRoute(
   pathname: string,
 ):
-  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" }
+  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "collaboration-card" }
   | { readonly kind: "steps"; readonly workflowId: string }
   | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" | "evidence" }
   | undefined {
@@ -470,6 +471,9 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "evidence") {
     return { kind: "workflow", workflowId: segments[1], action: "evidence" };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "collaboration-card") {
+    return { kind: "workflow", workflowId: segments[1], action: "collaboration-card" };
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "steps") {
     return { kind: "steps", workflowId: segments[1] };

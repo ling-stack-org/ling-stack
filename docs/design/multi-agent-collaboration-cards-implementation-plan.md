@@ -183,7 +183,7 @@ export interface CollaborationTaskCardModel {
 
 - Ready proposal maps to `ready_for_confirmation`.
 - Running workflow maps to `running` with current owner.
-- Pending approval maps to `waiting_for_approval`.
+- Pending approval maps to `waiting`.
 - Blocked required step maps to `blocked` and exposes one blocker.
 - Succeeded workflow maps to `completed`.
 - Parallel workflow produces branch summary rows without exposing raw ids.
@@ -777,6 +777,80 @@ Non-goals:
 - no separate agent session runtime;
 - no replacement of `ChannelExecutionProposal`;
 - no automatic execution from shaping state without explicit executable intent/confirmation.
+
+### CCI13: Daemon-Side Collaboration Card Read Model
+
+Goal: make the collaboration task-card model available from the daemon/API so Web and
+future clients can consume one product read model instead of each surface rebuilding the
+same workflow summary.
+
+This is a derived read model over existing workflow records. It must not introduce a new
+workflow state machine, proposal state machine, permission model, or persistent cache in
+the first slice.
+
+API surface:
+
+```text
+GET /channels/:channelId/collaboration-cards?cwd=...&limit=...
+GET /workflows/:workflowId/collaboration-card?cwd=...
+```
+
+Contract:
+
+- `CollaborationTaskCardModel` moves into shared contracts and stays aligned with the
+  existing Web model.
+- `ChannelCollaborationCardListResponse` returns compact cards for recent workflows in a
+  channel.
+- `WorkflowCollaborationCardResponse` returns one workflow-backed card, or no card when
+  the workflow has no steps yet.
+
+Source of truth:
+
+- `ChannelWorkflow`
+- `ChannelWorkflowStep`
+- linked `RunSession`
+- linked `ApprovalRequest`
+- step metadata for branch and fan-in grouping
+
+Derivation rules:
+
+- `ready_for_confirmation`: draft/ready workflow with queued steps.
+- `running`: active workflow without pending approval/blocker/failure.
+- `waiting`: pending workflow-step or run approval exists.
+- `blocked`: workflow or required visible step is blocked.
+- `completed`: workflow succeeded.
+- `failed`: workflow or visible step failed.
+- `cancelled`: workflow cancelled.
+- execution mode derives from branch/join/dependency metadata and active parallel runs.
+
+Data boundaries:
+
+- include product fields: title, objective, owner label, mode, branch summaries, one
+  blocker, one next action, and compact step states;
+- exclude raw logs, context pack ids, token budgets, selector decisions, route JSON,
+  private memory text, and raw audit payloads;
+- keep evidence/details available through the existing workflow evidence endpoint.
+
+Caching:
+
+- first slice is daemon-side derived on request and not persisted;
+- add persistent caching only when profiling shows repeated derivation cost matters;
+- any future cache must invalidate on workflow, step, run, approval, and artifact writes.
+
+Web integration:
+
+- first slice adds the API/client contract and endpoint tests;
+- Web may continue deriving cards locally until the daemon read model is proven stable;
+- later slices can switch right panel/feed reads to the daemon card list without changing
+  workflow/run/approval behavior.
+
+Acceptance:
+
+- channel card list returns workflow-backed collaboration cards without raw debug fields;
+- workflow card endpoint returns the same compact product state for one workflow;
+- pending run approval maps the card to `waiting`;
+- parallel branch metadata produces branch rows;
+- no write/mutation occurs while reading cards.
 
 Implementation note, 2026-06-13:
 

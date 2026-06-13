@@ -1,58 +1,26 @@
-import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, RunSession } from "../types.js";
+import type {
+  ApprovalRequest,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
+  CollaborationExecutionMode,
+  CollaborationTaskBranch,
+  CollaborationTaskCardMode,
+  CollaborationTaskCardModel,
+  CollaborationTaskCardStep,
+  CollaborationTaskStepState,
+  RunSession,
+} from "../types.js";
 import type { Translate } from "../i18n.js";
 import { truncatePreview } from "./data.js";
 
-export type CollaborationTaskCardMode =
-  | "ready_for_confirmation"
-  | "running"
-  | "waiting"
-  | "blocked"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export type CollaborationExecutionMode = "serial" | "parallel" | "mixed";
-export type CollaborationTaskStepState = "queued" | "active" | "waiting" | "blocked" | "done" | "failed" | "cancelled";
-
-export interface CollaborationTaskCardStep {
-  readonly id: string;
-  readonly title: string;
-  readonly ownerLabel: string;
-  readonly state: CollaborationTaskStepState;
-  readonly summary?: string;
-  readonly branchGroupId?: string;
-  readonly joinGroupId?: string;
-  readonly updatedAt: string;
-}
-
-export interface CollaborationTaskBranch {
-  readonly id: string;
-  readonly label: string;
-  readonly state: CollaborationTaskStepState;
-  readonly summary?: string;
-  readonly completedStepCount: number;
-  readonly totalStepCount: number;
-  readonly ownerLabels: readonly string[];
-  readonly steps: readonly CollaborationTaskCardStep[];
-}
-
-export interface CollaborationTaskCardModel {
-  readonly id: string;
-  readonly workflowId: string;
-  readonly title: string;
-  readonly objective: string;
-  readonly mode: CollaborationTaskCardMode;
-  readonly executionMode: CollaborationExecutionMode;
-  readonly currentOwnerLabel?: string;
-  readonly blocker?: string;
-  readonly nextAction?: string;
-  readonly completedStepCount: number;
-  readonly totalStepCount: number;
-  readonly pendingApprovalCount: number;
-  readonly steps: readonly CollaborationTaskCardStep[];
-  readonly branches: readonly CollaborationTaskBranch[];
-  readonly updatedAt: string;
-}
+export type {
+  CollaborationExecutionMode,
+  CollaborationTaskBranch,
+  CollaborationTaskCardMode,
+  CollaborationTaskCardModel,
+  CollaborationTaskCardStep,
+  CollaborationTaskStepState,
+} from "../types.js";
 
 export interface BuildCollaborationTaskCardInput {
   readonly workflow: ChannelWorkflow;
