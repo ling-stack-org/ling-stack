@@ -55,7 +55,7 @@ import type {
 const DEFAULT_WORKSPACE_ID = "workspace_default";
 
 type CreateDialog = "" | "templates" | "manual" | "chat";
-type CreateMode = "chat" | "manual";
+type CreateMode = "chat" | "manual" | "templates";
 type RuntimeChoice = AutomationExecutionEnvironment | "thread";
 type ScheduleChoice = "daily" | "workdays" | "weekly" | "custom";
 
@@ -192,7 +192,7 @@ export function AutomationsPage({
   function openCreateDialog(mode: CreateMode): void {
     setCreateMode(mode);
     setCreateMenuOpen(false);
-    setDialog(mode === "manual" ? "manual" : "chat");
+    setDialog(mode === "manual" ? "manual" : mode === "templates" ? "templates" : "chat");
   }
 
   async function createManualAutomation(automation: CreateAutomationRequest): Promise<void> {
@@ -220,8 +220,8 @@ export function AutomationsPage({
         </div>
         <div className="automation-create-dropdown">
           <button className="automation-create-trigger" type="button" onClick={() => openCreateDialog(createMode)} disabled={isLoading}>
-            {createMode === "chat" ? <MessageSquare size={15} /> : <CalendarClock size={15} />}
-            {createMode === "chat" ? t("Create through chat") : t("Manual create")}
+            {createMode === "chat" ? <MessageSquare size={15} /> : createMode === "templates" ? <Layers size={15} /> : <CalendarClock size={15} />}
+            {createMode === "chat" ? t("Create through chat") : createMode === "templates" ? t("Use template") : t("Manual create")}
           </button>
           <button
             className="automation-create-caret"
@@ -237,10 +237,17 @@ export function AutomationsPage({
               <button type="button" role="menuitem" onClick={() => openCreateDialog("chat")}>
                 <MessageSquare size={15} />
                 {t("Create through chat")}
+                {createMode === "chat" ? <Check size={14} /> : null}
               </button>
               <button type="button" role="menuitem" onClick={() => openCreateDialog("manual")}>
                 <CalendarClock size={15} />
                 {t("Manual create")}
+                {createMode === "manual" ? <Check size={14} /> : null}
+              </button>
+              <button type="button" role="menuitem" onClick={() => openCreateDialog("templates")}>
+                <Layers size={15} />
+                {t("Use template")}
+                {createMode === "templates" ? <Check size={14} /> : null}
               </button>
             </div>
           ) : null}
@@ -397,6 +404,7 @@ export function AutomationsPage({
       ) : null}
       {dialog === "chat" ? (
         <AutomationChatCreateModal
+          onUseTemplate={() => setDialog("templates")}
           onCreate={createChatDraft}
           onClose={() => setDialog("")}
         />
@@ -1100,16 +1108,18 @@ function AutomationManualSetupModal({
 }
 
 function AutomationChatCreateModal({
+  onUseTemplate,
   onCreate,
   onClose,
 }: {
+  readonly onUseTemplate: () => void;
   readonly onCreate: (prompt: string) => Promise<void>;
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [prompt, setPrompt] = useState("");
   return (
-    <AutomationModal title={t("Create through chat")} icon={<Bot size={18} />} onClose={onClose}>
+    <AutomationModal title={t("Create through chat")} icon={<Bot size={18} />} actionLabel={t("Use template")} onAction={onUseTemplate} onClose={onClose}>
       <form
         className="automation-modal-form"
         onSubmit={(event) => {

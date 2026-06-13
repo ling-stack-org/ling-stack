@@ -42,6 +42,7 @@ test("automations page uses Codex-style inbox, manual composer, templates, and a
 
   await page.getByLabel("选择创建方式").click();
   await expect(page.getByRole("menuitem", { name: /通过聊天创建/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /使用模板/ })).toBeVisible();
   await page.getByRole("menuitem", { name: /手动创建/ }).click();
 
   const manualDialog = page.getByRole("dialog", { name: "手动创建" });
@@ -72,9 +73,8 @@ test("automations page uses Codex-style inbox, manual composer, templates, and a
   await expect(createdRow.getByText("每天 09:00")).toBeVisible();
   await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
 
-  await page.getByRole("button", { name: /手动创建/ }).click();
-  const secondManualDialog = page.getByRole("dialog", { name: "手动创建" });
-  await secondManualDialog.getByRole("button", { name: "使用模板" }).click();
+  await page.getByLabel("选择创建方式").click();
+  await page.getByRole("menuitem", { name: /使用模板/ }).click();
   const templateDialog = page.getByRole("dialog", { name: "自动化模板" });
   await expect(templateDialog.getByRole("button", { name: /Bug 扫描/ })).toBeVisible();
   await expect(templateDialog.getByRole("button", { name: /迷你游戏/ })).toBeVisible();
