@@ -1600,6 +1600,104 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(acceptedProposal.getByRole("button", { name: "Open workflow" })).toBeVisible();
 });
 
+test("requirement shaping proposal persists clarifications before confirmation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [
+    {
+      id: "msg_shaping_request",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Refine the workspace copy after clarifying scope.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:21:00.000Z",
+      updatedAt: "2026-05-25T00:21:00.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_shaping",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_shaping_request",
+      proposedByTeammateId: "ling_agent",
+      title: "Refine workspace copy",
+      prompt: "Refine the workspace copy after clarifying scope.",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["Workspace copy changes are scoped before execution."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Clarify the task, then prepare an executable proposal." }],
+      requiredTools: ["read", "edit"],
+      riskSummary: "Copy scope must be confirmed before file edits.",
+      shaping: {
+        status: "needs_user_clarification",
+        summary: "Clarify workspace copy scope before execution.",
+        openQuestions: ["Which copy sections are in scope?"],
+        clarifications: [
+          {
+            id: "clarification_1",
+            authorType: "local-user",
+            authorId: "tian",
+            body: "Only workspace drawer copy is in scope.",
+            sourceMessageId: "msg_shaping_request",
+            createdAt: "2026-05-25T00:21:10.000Z",
+          },
+        ],
+        sourceRefs: [{ type: "message", id: "msg_shaping_request" }],
+        updatedAt: "2026-05-25T00:21:10.000Z",
+      },
+      status: "draft",
+      createdAt: "2026-05-25T00:21:01.000Z",
+      updatedAt: "2026-05-25T00:21:10.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const proposal = page.getByLabel("Task confirmation");
+  await expect(proposal).toContainText("Needs user clarification");
+  await expect(proposal).toContainText("Which copy sections are in scope?");
+  await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
+
+  await page.reload();
+  await expect(proposal).toContainText("Needs user clarification");
+  await expect(proposal).toContainText("Which copy sections are in scope?");
+  await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
+
+  await proposal.getByRole("button", { name: "Edit" }).click();
+  const editForm = proposal.locator(".channel-proposal-edit-form");
+  await editForm.getByLabel("Open questions").fill("Which copy sections are in scope?\nShould QA cover mobile?");
+  await editForm.getByLabel("User clarifications").fill("Only workspace drawer copy is in scope.\nKeep provider checks out of this task.");
+  await proposal.getByRole("button", { name: "Save" }).click();
+  await expect(editForm).toHaveCount(0);
+  await expect(proposal).toContainText("Should QA cover mobile?");
+  await expect(proposal).toContainText("Keep provider checks out of this task.");
+  await expect.poll(() => {
+    const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
+    if (!isRecord(updated) || !isRecord(updated.shaping)) {
+      return "";
+    }
+    const openQuestions = Array.isArray(updated.shaping.openQuestions) ? updated.shaping.openQuestions.length : 0;
+    const clarifications = Array.isArray(updated.shaping.clarifications) ? updated.shaping.clarifications.length : 0;
+    return `${updated.shaping.status}|${openQuestions}|${clarifications}`;
+  }).toBe("needs_user_clarification|2|2");
+
+  await proposal.getByRole("button", { name: "Authorize and start task" }).click();
+  await expect.poll(() => {
+    const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
+    return isRecord(updated) && isRecord(updated.shaping) ? updated.shaping.status : "";
+  }).toBe("converted_to_task");
+});
+
 test("completed workflow hides accepted proposal and leaves final result in default chat", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

@@ -2920,6 +2920,14 @@ function maybeCreateMockWorkflowProposal(
     riskSummary: allTeammates
       ? "Converted an all-teammates request into one workflow proposal instead of visible group chat."
       : "Non-direct multi-agent collaboration waits for confirmation and continues through existing workflow/run approvals.",
+    shaping: {
+      status: "ready_for_confirmation",
+      summary: body,
+      openQuestions: [],
+      clarifications: [],
+      sourceRefs: typeof message.id === "string" ? [{ type: "message", id: message.id }] : [],
+      updatedAt: "2026-05-25T00:18:02.000Z",
+    },
     status: "draft",
     createdAt: "2026-05-25T00:18:02.000Z",
     updatedAt: "2026-05-25T00:18:02.000Z",
@@ -3064,6 +3072,14 @@ function maybeCreateMockSingleStepExecutableProposal(
     requiredTools: [action],
     riskSummary: `Need ${action} permission for ${target}. Ling Agent can handle this bounded task now.`,
     responseLanguage: /[\u3400-\u9fff]/u.test(body) ? "zh-CN" : "en-US",
+    shaping: {
+      status: "ready_for_confirmation",
+      summary: `${verb} ${target}`,
+      openQuestions: [],
+      clarifications: [],
+      sourceRefs: typeof message.id === "string" ? [{ type: "message", id: message.id }] : [],
+      updatedAt: "2026-05-25T00:18:02.000Z",
+    },
     status: "draft",
     createdAt: "2026-05-25T00:18:02.000Z",
     updatedAt: "2026-05-25T00:18:02.000Z",
@@ -3156,6 +3172,9 @@ function mockAutoStartExecutionProposalWorkflow(state: MockState, proposal: Reco
     linkedWorkflowId: workflow.id,
     linkedTaskId: undefined,
     linkedRunId: undefined,
+    shaping: isRecord(proposal.shaping)
+      ? { ...proposal.shaping, status: "converted_to_task", updatedAt: "2026-05-25T00:32:00.000Z" }
+      : undefined,
     errorMessage: undefined,
     updatedAt: "2026-05-25T00:32:00.000Z",
   };
@@ -5380,6 +5399,16 @@ export async function handleDaemonRoute(
       collaborationSteps: Array.isArray(body.collaborationSteps) ? body.collaborationSteps : [],
       requiredTools: Array.isArray(body.requiredTools) ? body.requiredTools : [],
       riskSummary: typeof body.riskSummary === "string" ? body.riskSummary : undefined,
+      shaping: isRecord(body.shaping)
+        ? body.shaping
+        : {
+            status: "ready_for_confirmation",
+            summary: typeof body.title === "string" ? body.title : "Proposed task",
+            openQuestions: [],
+            clarifications: [],
+            sourceRefs: typeof body.sourceMessageId === "string" ? [{ type: "message", id: body.sourceMessageId }] : [],
+            updatedAt: "2026-05-25T00:18:03.000Z",
+          },
       status: "draft",
       createdAt: "2026-05-25T00:18:03.000Z",
       updatedAt: "2026-05-25T00:18:03.000Z",
@@ -5401,6 +5430,7 @@ export async function handleDaemonRoute(
         ...proposal,
         ...body,
         riskSummary: body.riskSummary === null ? undefined : body.riskSummary ?? proposal.riskSummary,
+        shaping: body.shaping === null ? undefined : body.shaping ?? proposal.shaping,
         linkedTaskId: body.linkedTaskId === null ? undefined : body.linkedTaskId ?? proposal.linkedTaskId,
         linkedRunId: body.linkedRunId === null ? undefined : body.linkedRunId ?? proposal.linkedRunId,
         linkedWorkflowId: body.linkedWorkflowId === null ? undefined : body.linkedWorkflowId ?? proposal.linkedWorkflowId,
@@ -5468,6 +5498,9 @@ export async function handleDaemonRoute(
       linkedWorkflowId: workflow.id,
       linkedTaskId: undefined,
       linkedRunId: undefined,
+      shaping: isRecord(proposal.shaping)
+        ? { ...proposal.shaping, status: "converted_to_task", updatedAt: "2026-05-25T00:32:00.000Z" }
+        : undefined,
       errorMessage: undefined,
       updatedAt: "2026-05-25T00:32:00.000Z",
     };

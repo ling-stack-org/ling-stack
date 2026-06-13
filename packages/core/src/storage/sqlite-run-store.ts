@@ -139,6 +139,7 @@ import {
   type ChannelResponseLanguage,
   type ChannelRuntimePolicy,
   type ChannelStatus,
+  type ChannelRequirementShaping,
   type ChannelUpdateInput,
   type ChannelWorkspaceBinding,
   type ChannelWorkflow,
@@ -651,6 +652,8 @@ const CHANNEL_MESSAGE_FILE_REFS_MIGRATION_VERSION = 62;
 const CHANNEL_MESSAGE_FILE_REFS_MIGRATION_NAME = "add_channel_message_file_refs";
 const CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_VERSION = 63;
 const CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_NAME = "create_channel_input_materializations";
+const CHANNEL_EXECUTION_PROPOSAL_SHAPING_MIGRATION_VERSION = 64;
+const CHANNEL_EXECUTION_PROPOSAL_SHAPING_MIGRATION_NAME = "add_channel_execution_proposal_shaping";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -5657,6 +5660,7 @@ export class SqliteRunStore implements RunStore {
     if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
       throw new Error(`Source message does not belong to channel: ${input.sourceMessageId}`);
     }
+    const shaping = input.shaping ?? defaultChannelRequirementShaping(input, now);
     const proposal: ChannelExecutionProposal = {
       id: createChannelExecutionProposalId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -5671,6 +5675,7 @@ export class SqliteRunStore implements RunStore {
       requiredTools: input.requiredTools ?? [],
       riskSummary: input.riskSummary,
       responseLanguage: input.responseLanguage,
+      ...(shaping ? { shaping } : {}),
       status: input.status ?? "draft",
       linkedTaskId: input.linkedTaskId,
       linkedRunId: input.linkedRunId,
@@ -5696,6 +5701,7 @@ export class SqliteRunStore implements RunStore {
           required_tools_json,
           risk_summary,
           response_language,
+          shaping_json,
           status,
           linked_task_id,
           linked_run_id,
@@ -5703,7 +5709,7 @@ export class SqliteRunStore implements RunStore {
           error_message,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         proposal.id,
@@ -5719,6 +5725,7 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(proposal.requiredTools),
         proposal.riskSummary ?? null,
         proposal.responseLanguage ?? null,
+        proposal.shaping ? stringifyJson(proposal.shaping) : null,
         proposal.status,
         proposal.linkedTaskId ?? null,
         proposal.linkedRunId ?? null,
@@ -5768,8 +5775,10 @@ export class SqliteRunStore implements RunStore {
     if (!existing) {
       return undefined;
     }
+    const { shaping: existingShaping, ...existingWithoutShaping } = existing;
+    const nextShaping = nullableUpdate(input.shaping, existingShaping);
     const next: ChannelExecutionProposal = {
-      ...existing,
+      ...existingWithoutShaping,
       title: input.title ?? existing.title,
       prompt: input.prompt ?? existing.prompt,
       assigneeTeammateId: input.assigneeTeammateId ?? existing.assigneeTeammateId,
@@ -5778,6 +5787,7 @@ export class SqliteRunStore implements RunStore {
       requiredTools: input.requiredTools ?? existing.requiredTools,
       riskSummary: nullableUpdate(input.riskSummary, existing.riskSummary),
       responseLanguage: nullableUpdate(input.responseLanguage, existing.responseLanguage),
+      ...(nextShaping ? { shaping: nextShaping } : {}),
       status: input.status ?? existing.status,
       linkedTaskId: nullableUpdate(input.linkedTaskId, existing.linkedTaskId),
       linkedRunId: nullableUpdate(input.linkedRunId, existing.linkedRunId),
@@ -5798,6 +5808,7 @@ export class SqliteRunStore implements RunStore {
           required_tools_json = ?,
           risk_summary = ?,
           response_language = ?,
+          shaping_json = ?,
           status = ?,
           linked_task_id = ?,
           linked_run_id = ?,
@@ -5815,6 +5826,7 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(next.requiredTools),
         next.riskSummary ?? null,
         next.responseLanguage ?? null,
+        next.shaping ? stringifyJson(next.shaping) : null,
         next.status,
         next.linkedTaskId ?? null,
         next.linkedRunId ?? null,
@@ -11775,6 +11787,7 @@ export class SqliteRunStore implements RunStore {
           required_tools_json TEXT NOT NULL,
           risk_summary TEXT,
           response_language TEXT,
+          shaping_json TEXT,
           status TEXT NOT NULL,
           linked_task_id TEXT,
           linked_run_id TEXT,
@@ -11892,6 +11905,19 @@ export class SqliteRunStore implements RunStore {
       }
       if (!hasResponseLanguageContextMigration) {
         this.recordMigration(RESPONSE_LANGUAGE_CONTEXT_MIGRATION_VERSION, RESPONSE_LANGUAGE_CONTEXT_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelExecutionProposalShapingMigration = this.hasMigration(CHANNEL_EXECUTION_PROPOSAL_SHAPING_MIGRATION_VERSION);
+    if (
+      !hasChannelExecutionProposalShapingMigration ||
+      !this.hasColumn("channel_execution_proposals", "shaping_json")
+    ) {
+      if (this.hasTable("channel_execution_proposals") && !this.hasColumn("channel_execution_proposals", "shaping_json")) {
+        this.database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN shaping_json TEXT;");
+      }
+      if (!hasChannelExecutionProposalShapingMigration) {
+        this.recordMigration(CHANNEL_EXECUTION_PROPOSAL_SHAPING_MIGRATION_VERSION, CHANNEL_EXECUTION_PROPOSAL_SHAPING_MIGRATION_NAME);
       }
     }
 
@@ -15401,6 +15427,7 @@ function mapChannelExecutionProposal(row: Record<string, SQLOutputValue>): Chann
     requiredTools: parseJsonStringArray(readString(row, "required_tools_json")) as ChannelExecutionProposal["requiredTools"],
     riskSummary: readNullableString(row, "risk_summary"),
     responseLanguage: parseOptionalResponseLanguage(readNullableString(row, "response_language")),
+    shaping: parseOptionalChannelRequirementShaping(readNullableString(row, "shaping_json")),
     status: readString(row, "status") as ChannelExecutionProposalStatus,
     linkedTaskId: readNullableString(row, "linked_task_id"),
     linkedRunId: readNullableString(row, "linked_run_id"),
@@ -17006,6 +17033,7 @@ function channelExecutionProposalSelectSql(whereClause: string): string {
       required_tools_json,
       risk_summary,
       response_language,
+      shaping_json,
       status,
       linked_task_id,
       linked_run_id,
@@ -19063,6 +19091,97 @@ function parseChannelExecutionProposalSteps(value: string): ChannelExecutionProp
       summary: item.summary,
     };
   });
+}
+
+function defaultChannelRequirementShaping(input: CreateChannelExecutionProposalInput, now: string): ChannelRequirementShaping | undefined {
+  if ((input.status ?? "draft") !== "draft") {
+    return undefined;
+  }
+  return {
+    status: "ready_for_confirmation",
+    summary: input.title.trim() || input.prompt.trim(),
+    openQuestions: [],
+    clarifications: [],
+    sourceRefs: [{ type: "message", id: input.sourceMessageId }],
+    updatedAt: now,
+  };
+}
+
+function parseOptionalChannelRequirementShaping(value: string | undefined): ChannelRequirementShaping | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return normalizeChannelRequirementShaping(parseJson(value));
+}
+
+function normalizeChannelRequirementShaping(value: unknown): ChannelRequirementShaping | undefined {
+  if (!isJsonRecord(value)) {
+    return undefined;
+  }
+  const status = readOptionalStringValue(value.status);
+  if (!isChannelRequirementShapingStatusValue(status)) {
+    return undefined;
+  }
+  return omitUndefined({
+    status,
+    summary: readOptionalStringValue(value.summary),
+    openQuestions: readOptionalStringListValue(value.openQuestions) ?? [],
+    clarifications: normalizeChannelRequirementShapingClarifications(value.clarifications),
+    sourceRefs: Array.isArray(value.sourceRefs) ? normalizeChannelProtocolSourceRefs(value.sourceRefs) : [],
+    updatedAt: readOptionalStringValue(value.updatedAt),
+  });
+}
+
+function normalizeChannelRequirementShapingClarifications(value: unknown): ChannelRequirementShaping["clarifications"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item) => {
+    if (!isJsonRecord(item)) {
+      return [];
+    }
+    const authorType = readOptionalStringValue(item.authorType);
+    const body = readOptionalStringValue(item.body);
+    const createdAt = readOptionalStringValue(item.createdAt);
+    const id = readOptionalStringValue(item.id);
+    if (!isChannelRequirementShapingClarificationAuthorValue(authorType) || !body?.trim() || !createdAt?.trim() || !id?.trim()) {
+      return [];
+    }
+    return [omitUndefined({
+      id,
+      authorType,
+      authorId: readOptionalStringValue(item.authorId),
+      body,
+      sourceMessageId: readOptionalStringValue(item.sourceMessageId),
+      createdAt,
+    })];
+  });
+}
+
+function normalizeChannelProtocolSourceRefs(value: readonly unknown[]): ChannelProtocolSourceRef[] {
+  return value.flatMap((item) => {
+    if (!isJsonRecord(item) || !isChannelProtocolSourceRefTypeValue(item.type) || typeof item.id !== "string" || item.id.trim().length === 0) {
+      return [];
+    }
+    return [omitUndefined({
+      type: item.type,
+      id: item.id,
+      label: readOptionalStringValue(item.label),
+    })];
+  });
+}
+
+function isChannelRequirementShapingStatusValue(value: unknown): value is ChannelRequirementShaping["status"] {
+  return value === "collecting_context" ||
+    value === "collecting_teammate_input" ||
+    value === "needs_user_clarification" ||
+    value === "ready_for_confirmation" ||
+    value === "converted_to_task" ||
+    value === "dismissed";
+}
+
+function isChannelRequirementShapingClarificationAuthorValue(value: unknown): value is ChannelRequirementShaping["clarifications"][number]["authorType"] {
+  return value === "local-user" || value === "ai-teammate" || value === "system";
 }
 
 function parseApprovalProfile(value: string): SkillApprovalProfile {

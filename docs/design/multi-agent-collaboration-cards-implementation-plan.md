@@ -777,3 +777,19 @@ Non-goals:
 - no separate agent session runtime;
 - no replacement of `ChannelExecutionProposal`;
 - no automatic execution from shaping state without explicit executable intent/confirmation.
+
+Implementation note, 2026-06-13:
+
+- First persistence slice keeps `ChannelExecutionProposal` as the durable source of
+  truth and adds optional `shaping` metadata instead of a new table or second proposal
+  state machine.
+- The daemon stores shaping metadata in `channel_execution_proposals.shaping_json`.
+  New draft proposals default to `ready_for_confirmation` shaping with a source-message
+  reference.
+- Web proposal edit now saves requirement summary, open questions, and user
+  clarifications through the existing proposal `PATCH` path. The card renders those
+  fields after reload before task confirmation.
+- Confirming a proposal still uses the existing `confirm-workflow` path and marks
+  shaping as `converted_to_task`; cancelling marks it `dismissed`.
+- Permission grants, runtime approvals, workflow execution, and source messages stay
+  outside shaping metadata.

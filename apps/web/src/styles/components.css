@@ -5064,7 +5064,8 @@ code,
 }
 
 .requirement-shaping-grid,
-.requirement-shaping-participants {
+.requirement-shaping-participants,
+.requirement-shaping-notes {
   display: grid;
   gap: 7px;
   min-width: 0;
@@ -5075,7 +5076,8 @@ code,
 }
 
 .requirement-shaping-grid span,
-.requirement-shaping-participants span {
+.requirement-shaping-participants span,
+.requirement-shaping-notes section {
   display: grid;
   gap: 3px;
   min-width: 0;
@@ -5096,7 +5098,8 @@ code,
 }
 
 .requirement-shaping-grid small,
-.requirement-shaping-participants small {
+.requirement-shaping-participants small,
+.requirement-shaping-notes small {
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
@@ -5108,6 +5111,20 @@ code,
   color: var(--text);
   font-size: 12px;
   font-weight: 620;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+.requirement-shaping-notes ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.requirement-shaping-notes li {
+  color: var(--text);
+  font-size: 12px;
   line-height: 17px;
   overflow-wrap: anywhere;
 }

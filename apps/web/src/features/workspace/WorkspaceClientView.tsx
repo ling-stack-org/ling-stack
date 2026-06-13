@@ -222,6 +222,9 @@ type ChannelProposalEditDraft = {
   readonly prompt: string;
   readonly assigneeTeammateId: string;
   readonly acceptanceCriteriaText: string;
+  readonly shapingSummaryText: string;
+  readonly shapingOpenQuestionsText: string;
+  readonly shapingClarificationsText: string;
   readonly collaborationSteps: readonly ChannelProposalStepDraft[];
 };
 type RequirementShapingRow = {
@@ -7798,7 +7801,7 @@ function ChannelExecutionProposalCard({
     setSaving(true);
     setEditError("");
     try {
-      const updated = await onUpdate(proposal, proposalDraftToUpdateInput(draft));
+      const updated = await onUpdate(proposal, proposalDraftToUpdateInput(proposal, draft));
       if (updated) {
         setEditing(false);
       }
@@ -7873,6 +7876,18 @@ function ChannelExecutionProposalCard({
             <span>{t("Acceptance criteria")}</span>
             <textarea rows={3} value={draft.acceptanceCriteriaText} onChange={(event) => setDraft({ ...draft, acceptanceCriteriaText: event.currentTarget.value })} />
           </label>
+          <label>
+            <span>{t("Requirement summary")}</span>
+            <textarea rows={3} value={draft.shapingSummaryText} onChange={(event) => setDraft({ ...draft, shapingSummaryText: event.currentTarget.value })} />
+          </label>
+          <label>
+            <span>{t("Open questions")}</span>
+            <textarea rows={3} value={draft.shapingOpenQuestionsText} onChange={(event) => setDraft({ ...draft, shapingOpenQuestionsText: event.currentTarget.value })} />
+          </label>
+          <label>
+            <span>{t("User clarifications")}</span>
+            <textarea rows={3} value={draft.shapingClarificationsText} onChange={(event) => setDraft({ ...draft, shapingClarificationsText: event.currentTarget.value })} />
+          </label>
           <div className="channel-proposal-edit-steps">
             <div className="channel-proposal-edit-steps-head">
               <strong>{t("Steps")}</strong>
@@ -7914,6 +7929,7 @@ function ChannelExecutionProposalCard({
       ) : isRequirementShaping ? (
         <RequirementShapingSummary
           rows={shapingRows}
+          shaping={proposal.shaping}
           collaborationSteps={proposal.collaborationSteps}
           teammates={teammates}
         />
@@ -8046,15 +8062,19 @@ function ChannelExecutionProposalCard({
 
 function RequirementShapingSummary({
   rows,
+  shaping,
   collaborationSteps,
   teammates,
 }: {
   readonly rows: readonly RequirementShapingRow[];
+  readonly shaping: ChannelExecutionProposal["shaping"];
   readonly collaborationSteps: ChannelExecutionProposal["collaborationSteps"];
   readonly teammates: readonly ChannelMention[];
 }): JSX.Element {
   const { t } = useI18n();
   const visibleSteps = collaborationSteps.slice(0, 4);
+  const openQuestions = shaping?.openQuestions.slice(0, 4) ?? [];
+  const clarifications = shaping?.clarifications.slice(0, 4) ?? [];
   return (
     <section className="requirement-shaping-summary" aria-label={t("Requirement shaping")}>
       <header>
@@ -8062,7 +8082,7 @@ function RequirementShapingSummary({
           <ListChecks size={15} />
           <strong>{t("Ling is shaping the task")}</strong>
         </span>
-        <small>{t("Ready for confirmation")}</small>
+        <small>{t(requirementShapingStatusLabel(shaping?.status ?? "ready_for_confirmation"))}</small>
       </header>
       <div className="requirement-shaping-grid">
         {rows.map((row) => (
@@ -8072,6 +8092,30 @@ function RequirementShapingSummary({
           </span>
         ))}
       </div>
+      {openQuestions.length > 0 || clarifications.length > 0 ? (
+        <div className="requirement-shaping-notes">
+          {openQuestions.length > 0 ? (
+            <section aria-label={t("Open questions")}>
+              <small>{t("Open questions")}</small>
+              <ul>
+                {openQuestions.map((question) => (
+                  <li key={question}>{question}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {clarifications.length > 0 ? (
+            <section aria-label={t("User clarifications")}>
+              <small>{t("User clarifications")}</small>
+              <ul>
+                {clarifications.map((clarification) => (
+                  <li key={clarification.id}>{clarification.body}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
       {visibleSteps.length > 0 ? (
         <div className="requirement-shaping-participants" aria-label={t("Shaping participants")}>
           {visibleSteps.map((step, index) => (
@@ -9479,6 +9523,9 @@ function proposalToEditDraft(proposal: ChannelExecutionProposal): ChannelProposa
     prompt: proposal.prompt,
     assigneeTeammateId: proposal.assigneeTeammateId,
     acceptanceCriteriaText: proposal.acceptanceCriteria.join("\n"),
+    shapingSummaryText: proposal.shaping?.summary ?? "",
+    shapingOpenQuestionsText: proposal.shaping?.openQuestions.join("\n") ?? "",
+    shapingClarificationsText: proposal.shaping?.clarifications.map((clarification) => clarification.body).join("\n") ?? "",
     collaborationSteps,
   };
 }
@@ -9492,7 +9539,7 @@ function proposalDraftIsValid(draft: ChannelProposalEditDraft): boolean {
     draft.collaborationSteps.every((step) => step.teammateId.trim().length > 0 && step.summary.trim().length > 0);
 }
 
-function proposalDraftToUpdateInput(draft: ChannelProposalEditDraft): UpdateChannelExecutionProposalRequest {
+function proposalDraftToUpdateInput(proposal: ChannelExecutionProposal, draft: ChannelProposalEditDraft): UpdateChannelExecutionProposalRequest {
   return {
     title: draft.title.trim(),
     prompt: draft.prompt.trim(),
@@ -9503,6 +9550,7 @@ function proposalDraftToUpdateInput(draft: ChannelProposalEditDraft): UpdateChan
       action: step.action,
       summary: step.summary.trim(),
     })),
+    shaping: proposalShapingFromEditDraft(proposal, draft),
   };
 }
 
@@ -9513,11 +9561,14 @@ function buildRequirementShapingRows(input: {
 }): readonly RequirementShapingRow[] {
   const participantCount = Math.max(1, input.proposal.collaborationSteps.length);
   const firstCriterion = input.proposal.acceptanceCriteria[0];
+  const openQuestionCount = input.proposal.shaping?.openQuestions.length ?? 0;
+  const clarificationCount = input.proposal.shaping?.clarifications.length ?? 0;
+  const shapingSummary = input.proposal.shaping?.summary;
   return [
     {
       id: "goal",
       label: input.t("Goal"),
-      value: truncatePreview(input.proposal.prompt, 180),
+      value: truncatePreview(shapingSummary || input.proposal.prompt, 180),
     },
     {
       id: "acceptance",
@@ -9544,11 +9595,53 @@ function buildRequirementShapingRows(input: {
       tone: input.proposal.riskSummary ? "attention" : "neutral",
     },
     {
+      id: "questions",
+      label: input.t("Open questions"),
+      value: openQuestionCount > 0
+        ? input.t("{count} open question(s)", { count: openQuestionCount })
+        : clarificationCount > 0
+          ? input.t("{count} clarification(s) recorded", { count: clarificationCount })
+          : input.t("No open questions recorded."),
+      tone: openQuestionCount > 0 ? "attention" : clarificationCount > 0 ? "success" : "neutral",
+    },
+    {
       id: "next",
       label: input.t("Next action"),
       value: input.t("Authorize when the scope looks right, or edit the card first."),
     },
   ];
+}
+
+function proposalShapingFromEditDraft(
+  proposal: ChannelExecutionProposal,
+  draft: ChannelProposalEditDraft,
+): NonNullable<UpdateChannelExecutionProposalRequest["shaping"]> {
+  const openQuestions = parseProposalLines(draft.shapingOpenQuestionsText);
+  const clarificationBodies = parseProposalLines(draft.shapingClarificationsText);
+  const existingClarifications = proposal.shaping?.clarifications ?? [];
+  const now = new Date().toISOString();
+  return {
+    status: openQuestions.length > 0 ? "needs_user_clarification" : "ready_for_confirmation",
+    summary: draft.shapingSummaryText.trim() || draft.title.trim(),
+    openQuestions,
+    clarifications: clarificationBodies.map((body, index) => {
+      const existing = existingClarifications[index];
+      if (existing?.body === body) {
+        return existing;
+      }
+      return {
+        id: `clarification_${proposal.id}_${index + 1}`,
+        authorType: "local-user",
+        body,
+        sourceMessageId: proposal.sourceMessageId,
+        createdAt: now,
+      };
+    }),
+    sourceRefs: proposal.shaping?.sourceRefs.length
+      ? proposal.shaping.sourceRefs
+      : [{ type: "message", id: proposal.sourceMessageId }],
+    updatedAt: now,
+  };
 }
 
 function parseProposalLines(value: string): readonly string[] {
@@ -9681,6 +9774,25 @@ function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]
     return "Superseded";
   }
   return "Cancelled";
+}
+
+function requirementShapingStatusLabel(status: NonNullable<ChannelExecutionProposal["shaping"]>["status"]): string {
+  if (status === "collecting_context") {
+    return "Collecting context";
+  }
+  if (status === "collecting_teammate_input") {
+    return "Collecting teammate input";
+  }
+  if (status === "needs_user_clarification") {
+    return "Needs user clarification";
+  }
+  if (status === "converted_to_task") {
+    return "Converted to task";
+  }
+  if (status === "dismissed") {
+    return "Dismissed";
+  }
+  return "Ready for confirmation";
 }
 
 function proposalStepActionLabel(action: ChannelExecutionProposal["collaborationSteps"][number]["action"]): string {

@@ -989,6 +989,34 @@ export interface ChannelExecutionProposalStep {
   readonly summary: string;
 }
 
+export type ChannelRequirementShapingStatus =
+  | "collecting_context"
+  | "collecting_teammate_input"
+  | "needs_user_clarification"
+  | "ready_for_confirmation"
+  | "converted_to_task"
+  | "dismissed";
+
+export type ChannelRequirementShapingClarificationAuthor = "local-user" | "ai-teammate" | "system";
+
+export interface ChannelRequirementShapingClarification {
+  readonly id: string;
+  readonly authorType: ChannelRequirementShapingClarificationAuthor;
+  readonly authorId?: string;
+  readonly body: string;
+  readonly sourceMessageId?: string;
+  readonly createdAt: string;
+}
+
+export interface ChannelRequirementShaping {
+  readonly status: ChannelRequirementShapingStatus;
+  readonly summary?: string;
+  readonly openQuestions: readonly string[];
+  readonly clarifications: readonly ChannelRequirementShapingClarification[];
+  readonly sourceRefs: readonly ChannelProtocolSourceRef[];
+  readonly updatedAt?: string;
+}
+
 export interface ChannelExecutionProposal {
   readonly id: string;
   readonly workspaceId: string;
@@ -1003,6 +1031,7 @@ export interface ChannelExecutionProposal {
   readonly requiredTools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "edit" | "write")[];
   readonly riskSummary?: string;
   readonly responseLanguage?: ResponseLanguage;
+  readonly shaping?: ChannelRequirementShaping;
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
@@ -1024,6 +1053,7 @@ export interface CreateChannelExecutionProposalInput {
   readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
   readonly riskSummary?: string;
   readonly responseLanguage?: ResponseLanguage;
+  readonly shaping?: ChannelRequirementShaping;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
@@ -1040,6 +1070,7 @@ export interface UpdateChannelExecutionProposalInput {
   readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
   readonly riskSummary?: string | null;
   readonly responseLanguage?: ResponseLanguage | null;
+  readonly shaping?: ChannelRequirementShaping | null;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;
   readonly linkedRunId?: string | null;
