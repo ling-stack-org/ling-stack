@@ -23,7 +23,7 @@ still giving external work a durable routing and execution queue.
 - [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
 - [External Work Orchestration](external-work-orchestration.md)
 - [External Work Status Surface](external-work-status-surface.md)
-- [Channel Workspace v1.25 Codex-Inspired Attention Popover](channel-workspace-v1.25.md)
+- [Channel Workspace v1.25 Codex-Inspired Progress Popover](channel-workspace-v1.25.md)
 
 ## Problem
 
@@ -344,9 +344,9 @@ Channel Work Board should be the main daily execution view for agent work:
 The channel board can feel like "this channel's board" while still being backed by the
 global ledger.
 
-### Attention Popover
+### Progress Popover
 
-The channel attention popover should stay lightweight:
+The channel progress popover should stay lightweight:
 
 - show top active waiting items;
 - link into the Channel Work Board, approval detail, or run drawer;

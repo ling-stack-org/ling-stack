@@ -79,7 +79,6 @@ import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProg
 import {
   allChannelActivitySavedViewId,
   applyActivityViewFilter,
-  buildAttentionQueueItems,
   builtinChannelActivitySavedViews,
   createCustomChannelActivitySavedView,
   maxCustomChannelActivitySavedViews,
@@ -91,8 +90,6 @@ import {
   type ChannelActivityViewAttentionFilter,
   type ChannelActivityViewCategoryFilter,
   type ChannelActivityViewFilter,
-  type ChannelAttentionQueueItem,
-  type ChannelAttentionQueueTarget,
 } from "../../lib/channel-activity-views.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
@@ -727,7 +724,7 @@ export function WorkspaceClientView({
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
-  const [attentionQueueOpen, setAttentionQueueOpen] = useState(true);
+  const [progressPopoverOpen, setProgressPopoverOpen] = useState(true);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [activityToolsOpen, setActivityToolsOpen] = useState(false);
   const [activitySearch, setActivitySearch] = useState("");
@@ -1666,7 +1663,6 @@ export function WorkspaceClientView({
       frameIds.forEach((frameId) => globalThis.cancelAnimationFrame(frameId));
     };
   }, [channelMessagesLoadingOlder, messageFeedItems, messageFeedVirtualizer]);
-  const attentionQueueItems = useMemo(() => buildAttentionQueueItems(activityItems), [activityItems]);
   const activityDrilldown = useMemo(() => {
     const item = activityItems.find((candidate) => candidate.id === activityDrilldownItemId);
     return item
@@ -2248,26 +2244,6 @@ export function WorkspaceClientView({
     }
   }
 
-  function openAttentionQueueItem(item: ChannelAttentionQueueItem): void {
-    openAttentionQueueTarget(item.target);
-  }
-
-  function openAttentionQueueTarget(target: ChannelAttentionQueueTarget): void {
-    if (target.kind === "task") {
-      openTaskFromActivity(target.taskId);
-      return;
-    }
-    if (target.kind === "run") {
-      openRunInPanel(target.runId);
-      return;
-    }
-    if (target.kind === "approval") {
-      openApprovalInPanel(pendingChannelApprovals.find((approval) => approval.runId === target.runId));
-      return;
-    }
-    openProtocolFromActivity(target.mode);
-  }
-
   function openActivityDrilldownTarget(target: ChannelActivityDrilldownTarget): void {
     setActivityDrilldownItemId("");
     if (target.kind === "task") {
@@ -2523,7 +2499,7 @@ export function WorkspaceClientView({
     setSidePanelView("task");
     setSidePanelOpen(true);
     setActivityToolsOpen(false);
-    setAttentionQueueOpen(false);
+    setProgressPopoverOpen(false);
     setTeammateManagerOpen(false);
   }
 
@@ -4202,7 +4178,6 @@ export function WorkspaceClientView({
   );
 
   const channelHasChatContent = channelMessages.length > 0 || channelContextSummaries.length > 0;
-  const channelHasProgressContent = channelHasChatContent || workflowProgressByWorkflowId.size > 0;
   const attentionContextRowCandidates: readonly (AttentionContextRow | undefined)[] = [
     effectiveProvider ? {
       id: "provider",
@@ -4228,43 +4203,35 @@ export function WorkspaceClientView({
     }),
     onOpen: () => openSidePanelView("context"),
   });
-  const attentionProgressRowCandidates: readonly (AttentionProgressRow | undefined)[] = channelHasProgressContent
-    ? [
-        ...workflowAttentionProgressRows,
-        selectedTask ? {
-          id: "current-task",
-          icon: <SquareTerminal size={18} />,
-          tone: selectedTask.status === "blocked" ? "blocked" : selectedTask.status === "failed" ? "failed" : selectedTask.status === "done" ? "success" : selectedTask.status === "running" ? "running" : "neutral",
-          primary: selectedTask.title,
-          secondary: `${t("Current task")} · ${t(selectedTask.status)}`,
-          onOpen: () => selectTask(selectedTask.id),
-        } : undefined,
-        latestRun ? {
-          id: "latest-run",
-          icon: runProgressIcon(latestRun.status),
-          tone: runProgressTone(latestRun.status),
-          primary: `${t("Latest run")} · ${t(latestRun.status)}`,
-          secondary: readRunTitle(latestRun),
-          onOpen: () => openRunInPanel(latestRun.id),
-        } : undefined,
-        pendingApprovalCount > 0 ? {
-          id: "pending-approval",
-          icon: <ShieldCheck size={18} />,
-          tone: "waiting",
-          primary: t("Approval needed"),
-          secondary: t("{count} pending approvals", { count: pendingApprovalCount }),
-          onOpen: () => openApprovalInPanel(selectedApproval),
-        } : {
-          id: "proposal-confirmation",
-          icon: <Clock3 size={18} />,
-          tone: "waiting",
-          primary: t("Waiting for proposal confirmation"),
-        },
-      ]
-    : [];
-  const attentionProgressRows: readonly AttentionProgressRow[] = channelHasProgressContent
-    ? attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined)
-    : [];
+  const attentionProgressRowCandidates: readonly (AttentionProgressRow | undefined)[] = [
+    ...workflowAttentionProgressRows,
+    selectedTask ? {
+      id: "current-task",
+      icon: <SquareTerminal size={18} />,
+      tone: selectedTask.status === "blocked" ? "blocked" : selectedTask.status === "failed" ? "failed" : selectedTask.status === "done" ? "success" : selectedTask.status === "running" ? "running" : "neutral",
+      primary: selectedTask.title,
+      secondary: `${t("Current task")} · ${t(selectedTask.status)}`,
+      onOpen: () => selectTask(selectedTask.id),
+    } : undefined,
+    latestRun ? {
+      id: "latest-run",
+      icon: runProgressIcon(latestRun.status),
+      tone: runProgressTone(latestRun.status),
+      primary: `${t("Latest run")} · ${t(latestRun.status)}`,
+      secondary: readRunTitle(latestRun),
+      onOpen: () => openRunInPanel(latestRun.id),
+    } : undefined,
+    pendingApprovalCount > 0 ? {
+      id: "pending-approval",
+      icon: <ShieldCheck size={18} />,
+      tone: "waiting",
+      primary: t("Approval needed"),
+      secondary: t("{count} pending approvals", { count: pendingApprovalCount }),
+      onOpen: () => openApprovalInPanel(selectedApproval),
+    } : undefined,
+  ];
+  const attentionProgressRows: readonly AttentionProgressRow[] = attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined);
+  const channelHasProgressContent = attentionProgressRows.length > 0;
 
   function openSidePanelView(view: ChannelDrawerRootView): void {
     setSidePanelView(view);
@@ -4417,7 +4384,6 @@ export function WorkspaceClientView({
       selectedTask={selectedTask}
       latestRun={latestRun}
       pendingApprovals={pendingChannelApprovals}
-      attentionItems={attentionQueueItems}
       collaborationTaskCards={[...collaborationTaskCardByWorkflowId.values()]}
       proposals={channelExecutionProposals}
       teammates={teammateOptions}
@@ -4518,7 +4484,7 @@ export function WorkspaceClientView({
       {taskDetailContent}
     </section>
   );
-  const attentionQueueVisible = attentionQueueOpen && !teammateManagerOpen && !sidePanelOpen && (activityToolsOpen || channelHasProgressContent) && attentionQueueItems.length > 0;
+  const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !sidePanelOpen && channelHasProgressContent;
 
   return (
     <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
@@ -4596,7 +4562,7 @@ export function WorkspaceClientView({
               const nextOpen = !teammateManagerOpen;
               setTeammateManagerOpen(nextOpen);
               if (nextOpen) {
-                setAttentionQueueOpen(false);
+                setProgressPopoverOpen(false);
               }
               setWorkspaceSettingsOpen(false);
               setActivityToolsOpen(false);
@@ -4621,16 +4587,16 @@ export function WorkspaceClientView({
             <SlidersHorizontal size={15} />
           </button>
           <button
-            className={attentionQueueVisible || (sidePanelOpen && sidePanelView === "progress") ? "icon-button active task-toolbar-attention" : "icon-button task-toolbar-attention"}
+            className={progressPopoverVisible || (sidePanelOpen && sidePanelView === "progress") ? "icon-button active task-toolbar-attention" : "icon-button task-toolbar-attention"}
             type="button"
-            aria-label={t("Attention queue")}
-            title={t("Attention queue")}
+            aria-label={t("Progress")}
+            title={t("Progress")}
             onClick={() => {
-              if (sidePanelOpen || attentionQueueItems.length === 0) {
+              if (sidePanelOpen || !channelHasProgressContent) {
                 openProgressPanel();
                 return;
               }
-              setAttentionQueueOpen((current) => !current);
+              setProgressPopoverOpen((current) => !current);
             }}
           >
             <ListChecks size={15} />
@@ -4654,15 +4620,13 @@ export function WorkspaceClientView({
             {sidePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
           </button>
         </div>
-        {attentionQueueVisible ? (
+        {progressPopoverVisible ? (
           <div className="channel-attention-popover">
-            <AttentionQueue
+            <ProgressPopover
               contextRows={attentionContextRows}
-              items={attentionQueueItems}
               expanded={attentionProgressExpanded}
               onExpandedChange={setAttentionProgressExpanded}
               progressRows={attentionProgressRows}
-              onOpenItem={openAttentionQueueItem}
             />
           </div>
         ) : null}
@@ -4781,7 +4745,7 @@ export function WorkspaceClientView({
         className={[
           "task-workbench-main",
           sidePanelOpen ? "with-channel-side-panel" : "",
-          attentionQueueVisible ? "attention-open" : "",
+          progressPopoverVisible ? "attention-open" : "",
         ].filter(Boolean).join(" ")}
       >
         <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>
@@ -7039,7 +7003,6 @@ function ChannelProgressPanel({
   selectedTask,
   latestRun,
   pendingApprovals,
-  attentionItems,
   collaborationTaskCards,
   proposals,
   teammates,
@@ -7060,7 +7023,6 @@ function ChannelProgressPanel({
   readonly selectedTask: Task | undefined;
   readonly latestRun: RunSession | undefined;
   readonly pendingApprovals: readonly ApprovalRequest[];
-  readonly attentionItems: readonly ChannelAttentionQueueItem[];
   readonly collaborationTaskCards: readonly CollaborationTaskCardModel[];
   readonly proposals: readonly ChannelExecutionProposal[];
   readonly teammates: readonly ChannelMention[];
@@ -7091,12 +7053,10 @@ function ChannelProgressPanel({
       })),
     )
     .slice(0, 4);
-  const visibleAttentionItems = attentionItems.slice(0, 5);
   const hasProgress = Boolean(
     selectedTask ||
       latestRun ||
       pendingApprovals.length > 0 ||
-      visibleAttentionItems.length > 0 ||
       visibleCollaborationTaskCards.length > 0 ||
       collaborationRows.length > 0 ||
       Boolean(selectedWorkflowWorkCell) ||
@@ -7190,29 +7150,6 @@ function ChannelProgressPanel({
           </button>
         ) : null}
       </div>
-
-      {visibleAttentionItems.length > 0 ? (
-        <section className="channel-progress-section">
-          <div className="task-strip-head">
-            <span>
-              <ListChecks size={15} />
-              <strong>{t("Attention")}</strong>
-            </span>
-            <small>{visibleAttentionItems.length}</small>
-          </div>
-          <div className="channel-progress-list">
-            {visibleAttentionItems.map((item) => (
-              <button key={item.id} className={`channel-progress-row ${item.attention}`} type="button" onClick={() => openProgressTarget(item.target, onOpenTask, onOpenRun, onOpenApproval, onOpenContext, pendingApprovals)}>
-                <span>
-                  <strong>{t(item.title)}</strong>
-                  <small>{t(item.description)}</small>
-                </span>
-                <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
 
       {collaborationRows.length > 0 ? (
         <section className="channel-progress-section">
@@ -7309,10 +7246,11 @@ function CollaborationTaskProgressCard({
   readonly onOpen: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const visibleSteps = visibleCollaborationTaskSteps(card);
-  const hiddenStepCount = Math.max(0, card.steps.length - visibleSteps.length);
-  const visibleBranches = card.branches.slice(0, 3);
-  const hiddenBranchCount = Math.max(0, card.branches.length - visibleBranches.length);
+  const showProgressDetails = shouldShowCollaborationTaskProgressDetails(card);
+  const visibleSteps = showProgressDetails ? visibleCollaborationTaskSteps(card) : [];
+  const hiddenStepCount = showProgressDetails ? Math.max(0, card.steps.length - visibleSteps.length) : 0;
+  const visibleBranches = showProgressDetails ? card.branches.slice(0, 3) : [];
+  const hiddenBranchCount = showProgressDetails ? Math.max(0, card.branches.length - visibleBranches.length) : 0;
   return (
     <button className={`collaboration-task-card ${card.mode}`} type="button" onClick={onOpen}>
       <span className="collaboration-task-card-head">
@@ -7331,7 +7269,14 @@ function CollaborationTaskProgressCard({
         <small>{t("{done} of {total} steps complete", { done: card.completedStepCount, total: card.totalStepCount })}</small>
         {card.pendingApprovalCount > 0 ? <small>{t("{count} pending approvals", { count: card.pendingApprovalCount })}</small> : null}
       </span>
-      {card.blocker ? (
+      {isTerminalCollaborationTaskCard(card) ? (
+        <span className={`collaboration-task-card-callout ${card.mode}`}>
+          {collaborationTaskCardIcon(card.mode)}
+          <small>
+            {t(collaborationTaskCardModeLabel(card.mode))}: {t("{done} of {total} steps complete", { done: card.completedStepCount, total: card.totalStepCount })}
+          </small>
+        </span>
+      ) : card.blocker ? (
         <span className="collaboration-task-card-callout blocked">
           <CircleAlert size={14} />
           <small>{card.blocker}</small>
@@ -7342,49 +7287,51 @@ function CollaborationTaskProgressCard({
           <small>{card.nextAction}</small>
         </span>
       ) : null}
-      {visibleBranches.length > 0 ? (
-        <span className="collaboration-task-branch-list" aria-label={t("Parallel branches")}>
-          {visibleBranches.map((branch) => (
-            <span key={branch.id} className={`collaboration-task-branch ${branch.state}`}>
-              <i aria-hidden="true" />
-              <span>
-                <strong>{branch.label}</strong>
-                {branch.summary ? <small>{branch.summary}</small> : null}
+      {showProgressDetails ? (
+        visibleBranches.length > 0 ? (
+          <span className="collaboration-task-branch-list" aria-label={t("Parallel branches")}>
+            {visibleBranches.map((branch) => (
+              <span key={branch.id} className={`collaboration-task-branch ${branch.state}`}>
+                <i aria-hidden="true" />
+                <span>
+                  <strong>{branch.label}</strong>
+                  {branch.summary ? <small>{branch.summary}</small> : null}
+                </span>
+                <small>{branch.completedStepCount}/{branch.totalStepCount}</small>
               </span>
-              <small>{branch.completedStepCount}/{branch.totalStepCount}</small>
-            </span>
-          ))}
-          {hiddenBranchCount > 0 ? (
-            <span className="collaboration-task-branch more">
-              <i aria-hidden="true" />
-              <span>
-                <strong>{t("+{count} more branches", { count: hiddenBranchCount })}</strong>
+            ))}
+            {hiddenBranchCount > 0 ? (
+              <span className="collaboration-task-branch more">
+                <i aria-hidden="true" />
+                <span>
+                  <strong>{t("+{count} more branches", { count: hiddenBranchCount })}</strong>
+                </span>
               </span>
-            </span>
-          ) : null}
-        </span>
-      ) : (
-        <span className="collaboration-task-step-list" aria-label={t("Collaboration steps")}>
-          {visibleSteps.map((step) => (
-            <span key={step.id} className={`collaboration-task-step ${step.state}`}>
-              <i aria-hidden="true" />
-              <span>
-                <strong>{step.ownerLabel}: {step.title}</strong>
-                {step.summary ? <small>{step.summary}</small> : null}
+            ) : null}
+          </span>
+        ) : (
+          <span className="collaboration-task-step-list" aria-label={t("Collaboration steps")}>
+            {visibleSteps.map((step) => (
+              <span key={step.id} className={`collaboration-task-step ${step.state}`}>
+                <i aria-hidden="true" />
+                <span>
+                  <strong>{step.ownerLabel}: {step.title}</strong>
+                  {step.summary ? <small>{step.summary}</small> : null}
+                </span>
+                <small>{t(collaborationTaskStepStateLabel(step.state))}</small>
               </span>
-              <small>{t(collaborationTaskStepStateLabel(step.state))}</small>
-            </span>
-          ))}
-          {hiddenStepCount > 0 ? (
-            <span className="collaboration-task-step more">
-              <i aria-hidden="true" />
-              <span>
-                <strong>{t("+{count} more steps", { count: hiddenStepCount })}</strong>
+            ))}
+            {hiddenStepCount > 0 ? (
+              <span className="collaboration-task-step more">
+                <i aria-hidden="true" />
+                <span>
+                  <strong>{t("+{count} more steps", { count: hiddenStepCount })}</strong>
+                </span>
               </span>
-            </span>
-          ) : null}
-        </span>
-      )}
+            ) : null}
+          </span>
+        )
+      ) : null}
       <span className="collaboration-task-card-footer">
         <small>{t("Open workflow evidence")}</small>
       </span>
@@ -7393,10 +7340,17 @@ function CollaborationTaskProgressCard({
 }
 
 function prioritizeCollaborationTaskCards(cards: readonly CollaborationTaskCardModel[]): readonly CollaborationTaskCardModel[] {
-  return [...cards].sort((left, right) =>
+  const sortedCards = [...cards].sort((left, right) =>
     collaborationTaskCardPriority(right) - collaborationTaskCardPriority(left) ||
     right.updatedAt.localeCompare(left.updatedAt),
   );
+  const actionableCards = sortedCards.filter((card) => !isTerminalCollaborationTaskCard(card));
+  const terminalCards = sortedCards
+    .filter(isTerminalCollaborationTaskCard)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return actionableCards.length > 0
+    ? [...actionableCards, ...terminalCards.slice(0, 1)]
+    : terminalCards.slice(0, 1);
 }
 
 function collaborationTaskCardPriority(card: CollaborationTaskCardModel): number {
@@ -7422,6 +7376,14 @@ function collaborationTaskCardPriority(card: CollaborationTaskCardModel): number
     return 10;
   }
   return 0;
+}
+
+function shouldShowCollaborationTaskProgressDetails(card: CollaborationTaskCardModel): boolean {
+  return !isTerminalCollaborationTaskCard(card);
+}
+
+function isTerminalCollaborationTaskCard(card: CollaborationTaskCardModel): boolean {
+  return card.mode === "completed" || card.mode === "cancelled";
 }
 
 function visibleCollaborationTaskSteps(card: CollaborationTaskCardModel): readonly CollaborationTaskCardModel["steps"][number][] {
@@ -7498,29 +7460,6 @@ function collaborationTaskCardIcon(mode: CollaborationTaskCardModel["mode"]): JS
     return <Loader2 className="spin" size={15} />;
   }
   return <X size={15} />;
-}
-
-function openProgressTarget(
-  target: ChannelAttentionQueueTarget,
-  onOpenTask: (taskId: string) => void,
-  onOpenRun: (runId: string) => void,
-  onOpenApproval: (approval: ApprovalRequest | undefined) => void,
-  onOpenContext: () => void,
-  pendingApprovals: readonly ApprovalRequest[],
-): void {
-  if (target.kind === "task") {
-    onOpenTask(target.taskId);
-    return;
-  }
-  if (target.kind === "run") {
-    onOpenRun(target.runId);
-    return;
-  }
-  if (target.kind === "approval") {
-    onOpenApproval(pendingApprovals.find((approval) => approval.runId === target.runId));
-    return;
-  }
-  onOpenContext();
 }
 
 function workflowIdFromWorkCellThreadId(value: string): string {
@@ -8719,28 +8658,23 @@ function ActivityFilterToolbar({
   );
 }
 
-function AttentionQueue({
+function ProgressPopover({
   contextRows,
-  items,
   expanded,
   onExpandedChange,
   progressRows,
-  onOpenItem,
 }: {
   readonly contextRows: readonly AttentionContextRow[];
-  readonly items: readonly ChannelAttentionQueueItem[];
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly progressRows: readonly AttentionProgressRow[];
-  readonly onOpenItem: (item: ChannelAttentionQueueItem) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
-  const blockedCount = items.filter((item) => item.attention === "blocked").length;
-  const failedCount = items.filter((item) => item.attention === "failed").length;
-  const pendingCount = items.filter((item) => item.attention === "pending").length;
-  const visibleItems = items.slice(0, 5);
+  if (contextRows.length === 0 && progressRows.length === 0) {
+    return null;
+  }
   return (
-    <section className="attention-queue compact" aria-label={t("Attention queue")}>
+    <section className="attention-queue compact" aria-label={t("Progress")}>
       {contextRows.length > 0 ? (
         <div className="attention-context-section">
           <div className="attention-section-head">
@@ -8786,7 +8720,7 @@ function AttentionQueue({
             </button>
           </div>
           {expanded ? (
-            <div className="attention-progress-list" aria-label={t("Progress")}>
+            <div className="attention-progress-list" aria-label={t("Progress rows")}>
               {progressRows.slice(0, 6).map((row) => {
                 const content = (
                   <>
@@ -8811,38 +8745,6 @@ function AttentionQueue({
           ) : null}
         </div>
       ) : null}
-      <div className="attention-section-head attention-queue-head">
-        <strong>{t("Attention")}</strong>
-        <small>{items.length}</small>
-      </div>
-      <div className="attention-queue-counts" aria-label={t("Attention counts")}>
-        <small className="blocked">{t("Blocked")} {blockedCount}</small>
-        <small className="failed">{t("Failed")} {failedCount}</small>
-        <small className="pending">{t("Pending")} {pendingCount}</small>
-      </div>
-      <div className="attention-queue-list" aria-label={t("Top attention items")}>
-        {visibleItems.length === 0 ? (
-          <div className="client-empty-state compact attention-empty-state">
-            <ListChecks size={16} />
-            <span>{t("No attention items")}</span>
-          </div>
-        ) : visibleItems.map((item) => (
-          <div
-            key={item.id}
-            className={`attention-queue-item ${item.attention}`}
-          >
-            <button className="attention-queue-item-open" type="button" onClick={() => onOpenItem(item)}>
-              <span className="attention-queue-item-main">
-                <strong>{t(item.title)}</strong>
-                <small>{t(item.description)}</small>
-              </span>
-              <span className="attention-queue-item-meta">
-                <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
-              </span>
-            </button>
-          </div>
-        ))}
-      </div>
     </section>
   );
 }

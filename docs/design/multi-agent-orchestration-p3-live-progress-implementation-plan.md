@@ -9,7 +9,7 @@ Implemented scope:
 - Shows one workflow-level live progress cell in the default channel feed.
 - Suppresses represented workflow step/run noise in the default feed while preserving audit
   visibility under activity tooling.
-- Adds workflow progress rows to the existing attention popover.
+- Adds workflow progress rows to the existing progress popover.
 
 Deferred:
 
@@ -21,7 +21,7 @@ Source design:
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
-- [Channel Workspace v1.25 Codex-Inspired Attention Popover](channel-workspace-v1.25.md)
+- [Channel Workspace v1.25 Codex-Inspired Progress Popover](channel-workspace-v1.25.md)
 
 ## Purpose
 
@@ -34,10 +34,13 @@ work should fold into a compact summary with expandable evidence.
 ```text
 running workflow
   -> one live progress object in the channel
-  -> progress rows / attention popover
+  -> progress rows / progress popover
   -> right drawer detail
   -> terminal compact summary
   -> expandable evidence
+new workflow starts
+  -> new workflow becomes the primary progress projection
+  -> older terminal workflows remain as summaries/details, not expanded progress rows
 ```
 
 ## Guardrails
@@ -60,7 +63,7 @@ running workflow
 | Channel workspace assembly | `apps/web/src/features/workspace/WorkspaceClientView.tsx` |
 | Channel activity derivation | `apps/web/src/lib/channel-activity.ts` |
 | Activity drilldown | `apps/web/src/lib/channel-activity-drilldown.ts` |
-| Attention progress popover | `apps/web/src/features/workspace/WorkspaceClientView.tsx` |
+| Progress popover | `apps/web/src/features/workspace/WorkspaceClientView.tsx` |
 | Work item read model | `apps/web/src/lib/work-items.ts` |
 | Workflow state | `ChannelWorkflow`, `ChannelWorkflowStep` from `apps/web/src/types.ts` |
 | E2E channel checks | `apps/web/e2e/channel.spec.ts` |
@@ -69,7 +72,7 @@ Current Web already has:
 
 - active/completed conversation work cells;
 - active row streams inside `ConversationWorkCell`;
-- attention popover progress rows;
+- progress popover rows;
 - right drawer workflow/task/run detail surfaces;
 - channel activity cards for workflow and workflow-step records.
 
@@ -92,7 +95,7 @@ Manual/browser checks:
 
 - active run work cell is visible while a run is in progress;
 - completed run work cell folds evidence by default;
-- attention popover shows context, progress, and attention rows;
+- progress popover shows context and progress rows, while attention history stays in Activity;
 - opening the right drawer does not move the user out of channel context.
 
 ## Phase LP1: Workflow Progress View Model
@@ -156,6 +159,11 @@ Current rows should prefer user-visible work states:
 5. completed count,
 6. artifact count.
 
+Terminal workflows should not keep their prior active row stream visible. For
+`succeeded`, `failed`, `blocked`, or `cancelled`, `currentRows` should collapse to a
+small terminal summary plus optional evidence count; step-by-step detail belongs in
+`groups` and the right drawer.
+
 ## Phase LP2: Reuse ConversationWorkCell
 
 Type: Web component integration.
@@ -181,7 +189,8 @@ Rules:
 
 - `mode === "active"` while workflow is `ready`, `running`, or `waiting_for_approval`;
 - `mode === "completed"` for `succeeded`, `failed`, `blocked`, or `cancelled`;
-- active rows show current teammate/step/progress;
+- active rows show current teammate/step/progress only while the workflow is active;
+- completed rows show final result/evidence summary, not the prior active checklist;
 - groups map to existing `changed`, `checked`, `evidence`, `attention`;
 - evidence links point to packet/artifact ids where available.
 
@@ -217,7 +226,7 @@ but remain available through workflow evidence and right drawer drilldown.
 
 Do not delete data or hide diagnostics globally. This is only default feed presentation.
 
-## Phase LP4: Attention Popover Progress Rows
+## Phase LP4: Progress Popover Rows
 
 Type: presentation model extension.
 
@@ -240,13 +249,17 @@ Architect is defining implementation boundary
 Engineer is running implementation
 QA is validating 2 checks
 Blocked: waiting for approval to write files
-Done: 3 steps completed, 1 artifact generated
+Done: task completed, 3 steps, 1 artifact
 ```
 
 Rules:
 
 - progress rows are compact and icon-led;
-- show at most one row per active workflow by default;
+- show at most one summary row per workflow by default;
+- prefer active/waiting/blocked/failed workflows over completed workflows;
+- if a newer workflow is active, it replaces older completed workflows as the primary
+  Progress projection;
+- completed workflows appear only as terminal summaries unless the user opens details;
 - if multiple workflows are active, show the highest-priority one and a count;
 - click opens the workflow detail drawer, not raw runtime logs;
 - approval/blocker states take priority over normal running states.
@@ -327,9 +340,12 @@ Cases:
 - active workflow shows one live progress cell in Chat;
 - active progress row updates when step status changes;
 - terminal workflow folds into compact summary;
+- terminal workflow does not keep active checklist rows visible;
+- starting a new workflow replaces older completed workflow rows in the Progress
+  projection;
 - expanding evidence shows step list and packet/artifact links;
 - linked step run diagnostics remain reachable;
-- attention popover shows workflow progress and opens drawer;
+- progress popover shows workflow progress and opens drawer;
 - no duplicate per-step run cells appear in default feed when workflow cell represents them.
 
 ## Non-Goals

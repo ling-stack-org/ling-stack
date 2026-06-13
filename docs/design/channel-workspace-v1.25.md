@@ -1,4 +1,4 @@
-# Channel Workspace v1.25 Codex-Inspired Attention Popover
+# Channel Workspace v1.25 Codex-Inspired Progress Popover
 
 ## Status
 
@@ -7,9 +7,9 @@ refinement: no daemon API, database table, or browser-side Git probe was added.
 
 ## Summary
 
-v1.25 refines the channel attention/progress popover by borrowing the strongest part of
-the Codex floating status panel: a compact operational glance that starts with context,
-then shows current progress, then shows the attention queue.
+v1.25 refines the channel progress popover by borrowing the strongest part of the Codex
+floating status panel: a compact operational glance that starts with context, then shows
+current progress.
 
 The goal is not to copy Codex's dark surface or single-agent repository model. Ling's
 popover must stay channel-scoped, multi-agent-aware, approval-aware, and consistent with
@@ -18,25 +18,23 @@ the existing strict channel workspace.
 ```text
 workspace context
 -> current progress
--> attention counts
--> top actionable items
 ```
 
 ## Problem
 
-The current attention popover is accurate but visually reads like a backend queue. It
-uses many bordered cards, repeats status labels, and gives equal weight to progress,
-counts, and every attention item. That makes the user do the hierarchy work.
+The previous attention popover was accurate but visually read like a backend queue. It
+used many bordered cards, repeated status labels, and gave equal weight to progress,
+counts, and historical attention items. That made the user do the hierarchy work.
 
 The popover should answer three questions immediately:
 
 1. Where is this work running?
 2. What happened last, and what is waiting now?
-3. Which items need a user action first?
+3. Is there current progress worth keeping in view?
 
 If the user needs raw audit detail, task detail, approval detail, CI triage, or run
-evidence, the popover should route them into the right drawer. It should not become the
-detail surface itself.
+evidence, the Activity log and right drawer own that detail. The popover should not
+become the detail surface itself.
 
 ## Reference Boundary
 
@@ -44,10 +42,8 @@ Useful Codex-inspired patterns:
 
 - Put environment/work context at the top before progress.
 - Use icon-led rows for status instead of large summary cards.
-- Separate progress from attention with a thin divider.
-- Put count chips near the attention heading, not in the header icon.
-- Keep the top few attention items scannable with one title, one secondary line, and one
-  status pill.
+- Keep progress rows lightweight and icon-led.
+- Hide the popover when there is no real progress row.
 
 Do not borrow:
 
@@ -55,6 +51,7 @@ Do not borrow:
 - A repo-only model where branch and commit/push are always primary.
 - Large dark rounded panels inside the strict daylight channel workspace.
 - A second persistent drawer disguised as a popover.
+- Attention/history queues in the floating surface; those stay in Activity/audit logs.
 - Raw run IDs, workflow IDs, audit payloads, or JSON in the default popover.
 
 ## Product Model
@@ -62,12 +59,10 @@ Do not borrow:
 The popover is a temporary channel work glance.
 
 ```text
-header attention icon
+header progress icon
   -> transient popover
     -> context rows
     -> progress rows
-    -> attention list
-      -> click opens drawer drill-down
 ```
 
 The right drawer remains the durable detail surface. Opening a task, run, approval,
@@ -109,22 +104,14 @@ Run settings
 divider
 Progress
   progress rows
-divider
-Attention + total count
-  count chips
-  top attention rows
-divider
-Source
-  source rows
 ```
 
 Rules:
 
 - Hide empty optional sections instead of rendering placeholder copy.
-- Keep `Attention` visible when there are attention items, even if `Progress` is
-  collapsed.
-- If all sections are empty, the attention icon should route to the Progress drawer page
-  or stay inactive according to existing header behavior.
+- Do not render an `Attention` section, counts, or top attention rows in the popover.
+- If there are no progress rows, the header icon routes to the Progress drawer page
+  according to existing header behavior instead of opening an empty popover.
 - The first visible section starts without a top divider.
 - The last visible section ends without an extra divider.
 
@@ -156,11 +143,16 @@ pretend every channel is a Git repository.
 
 Progress is a short list, not a card grid.
 
+Progress is also not a completed-task history. It should project the current or most
+recently actionable task. When a new task starts, the progress section refreshes around
+that task. Completed work collapses to a one-line terminal summary and remains available
+through details/history instead of keeping every completed step expanded in the popover.
+
 Rows:
 
 - latest run status when a channel run exists,
 - current task status when an explicit task is selected or active,
-- pending approval/proposal confirmation when work is waiting on the user,
+- pending approval when work is waiting on the user,
 - active workflow step when the channel has workflow state.
 
 Each row has:
@@ -174,30 +166,27 @@ The last incomplete row should use a waiting/running icon. Completed rows use a 
 icon. Failed and blocked rows use failure/blocking icons. Do not show raw status strings
 when a user-facing label exists.
 
-### Attention
+Ordering:
 
-The attention section keeps the count visible:
+1. blocked or failed actionable work,
+2. waiting approval,
+3. running/current task rows,
+4. queued next work,
+5. one-line completion summaries.
 
-```text
-Attention                                      12
-[Blocked 2] [Failed 0] [Pending 10]
-```
+Completed step rows should not crowd out active/waiting rows. If all visible work is
+terminal, show the most recent completion summary plus a details affordance.
 
-Rules:
+### Attention Boundary
 
-- `Blocked`, `Failed`, and `Pending` chips stay near the section heading.
-- Zero counts may remain visible when needed for stability, but must be visually quiet.
-- The list shows the first five actionable items.
-- Items are sorted by blocked, failed, pending, then recency.
-- Each row is one clickable target.
-- Each row shows title, secondary source/status copy, and one status pill.
-
-The row should be lighter than the current card style. Use a single soft border and
-neutral background, with hover/focus as the only strong emphasis.
+Attention-derived items remain available as Activity filters, saved views, details, and
+audit history. They do not render in the floating progress popover. Terminal events such
+as cancelled, denied, expired, and completed belong in the Activity/audit trail unless a
+separate current approval or blocker needs user action.
 
 ### Source
 
-An optional `Source` section may appear at the bottom when the attention item set comes
+An optional `Source` section may appear at the bottom when the progress row set comes
 from a recognizable external source:
 
 - external work provider,
@@ -217,7 +206,6 @@ CSS or row rendering.
 interface AttentionPopoverModel {
   readonly contextRows: readonly PopoverContextRow[];
   readonly progressRows: readonly PopoverProgressRow[];
-  readonly attention: PopoverAttentionSection;
   readonly sourceRows: readonly PopoverSourceRow[];
 }
 
@@ -236,23 +224,6 @@ interface PopoverProgressRow {
   readonly primary: string;
   readonly secondary?: string;
   readonly target?: PopoverTarget;
-}
-
-interface PopoverAttentionSection {
-  readonly total: number;
-  readonly blocked: number;
-  readonly failed: number;
-  readonly pending: number;
-  readonly rows: readonly PopoverAttentionRow[];
-}
-
-interface PopoverAttentionRow {
-  readonly id: string;
-  readonly attention: "blocked" | "failed" | "pending";
-  readonly title: string;
-  readonly secondary: string;
-  readonly statusLabel: string;
-  readonly target: PopoverTarget;
 }
 
 interface PopoverSourceRow {
@@ -284,20 +255,21 @@ Rendering rules:
 
 ## State Matrix
 
-| State | Run settings | Progress | Attention | Primary action |
-| --- | --- | --- | --- | --- |
-| No channel selected | hidden | hidden | hidden | existing empty state |
-| Channel has no chat/work content | available rows only | hidden | hidden | open Progress drawer only if user asks |
-| Channel has chat but no work | provider/permission rows | `Waiting for proposal confirmation` only when proposals can exist | hidden | open Progress drawer |
-| Latest run succeeded | context rows | `Last run · Succeeded` with success icon | current attention rows if any | open linked task/run drawer |
-| Latest run running | context rows | running row with spinner/clock | pending approval rows if any | open linked task/run drawer |
-| Pending approval exists | context rows | approval-needed row | pending chip and approval rows | open approval detail |
-| Workflow blocked | context rows | blocked workflow row | blocked chip and workflow rows | open task/context detail |
-| Failed work exists | context rows | latest failed row if it is current | failed chip and failed rows | open task/run detail |
-| Right drawer open | no popover | Progress drawer page owns detail | Progress drawer page owns detail | header icon switches to drawer behavior |
-| Teammate manager open | no popover | hidden | hidden | teammate manager owns focus |
-| Mobile viewport | same section order | compact rows | compact rows | fixed bottom sheet |
-| Chinese locale | same section order | labels may wrap | chips stay compact | no horizontal overflow |
+| State | Run settings | Progress | Primary action |
+| --- | --- | --- | --- |
+| No channel selected | hidden | hidden | existing empty state |
+| Channel has no chat/work content | available rows only | hidden | open Progress drawer only if user asks |
+| Channel has chat but no work | provider/permission rows | hidden | open Progress drawer only if user asks |
+| Latest run succeeded | context rows | `Last run · Succeeded` with success icon | open linked task/run drawer |
+| Latest run running | context rows | running row with spinner/clock | open linked task/run drawer |
+| Pending approval exists | context rows | approval-needed row | open approval detail |
+| Workflow blocked | context rows | blocked workflow row | open task/context detail |
+| New workflow starts after completion | context rows | new workflow row replaces prior completion rows | open workflow detail |
+| Failed work exists | context rows | latest failed row if it is current | open task/run detail |
+| Right drawer open | no popover | Progress drawer page owns detail | header icon switches to drawer behavior |
+| Teammate manager open | no popover | hidden | teammate manager owns focus |
+| Mobile viewport | same section order | compact rows | fixed bottom sheet |
+| Chinese locale | same section order | labels may wrap | no horizontal overflow |
 
 State priority:
 
@@ -308,8 +280,8 @@ State priority:
 5. `success`
 6. `neutral`
 
-This priority applies to attention row ordering and to choosing the strongest progress
-summary when multiple states exist.
+This priority applies to choosing the strongest progress summary when multiple states
+exist. Attention row ordering remains an Activity/audit-log concern.
 
 ## Visual Rules
 
@@ -318,31 +290,29 @@ summary when multiple states exist.
 - Background: keep the strict channel workspace surface in the channel UI. Dark mode
   should use semantic tokens only when the surrounding surface already uses dark tokens.
 - Shadow: one panel shadow is enough. Do not add nested shadows to rows.
-- Dividers: use one divider between Context, Progress, Attention, and Source sections.
+- Dividers: use one divider between Context, Progress, and Source sections.
 - Cards: avoid nested card-in-card treatment. The popover shell is the panel; rows are
   rows.
 - Icons: use lucide icons already present in the app. Status icons should share 18px
   size and 2.4px stroke with existing channel header icon rules.
-- Typography: preserve the accepted attention popover scale:
+- Typography: preserve the accepted progress popover scale:
   - section titles: 14px / 600,
   - progress rows: 12px / 500,
   - secondary copy: 12px / 400,
-  - attention item titles: 13px / 600,
-  - status/meta chips: 11px / 600.
+  - status/meta chips in Activity surfaces: 11px / 600.
 
 ## Interaction Rules
 
-- The header attention icon remains icon-only and does not show a numeric badge.
-- If the right drawer is open, the attention icon opens the Progress drawer page.
-- If the drawer is hidden and attention/progress exists, the icon opens the popover.
+- The header progress icon remains icon-only and does not show a numeric badge.
+- If the right drawer is open, the progress icon opens the Progress drawer page.
+- If the drawer is hidden and progress exists, the icon opens the popover.
 - Opening the right drawer hides the popover.
 - Opening teammate management hides the popover.
 - Escape and outside click close the popover.
 - Clicking a progress row opens the most specific drawer target available.
-- Clicking an attention row opens task detail, approval detail, context detail, or the
-  Progress drawer page according to its existing target.
-- The progress section may collapse, but attention remains visible when progress is
-  collapsed.
+- Attention/audit rows open from Activity, not from the popover.
+- The progress section may collapse; the popover does not reveal hidden attention rows
+  when collapsed.
 - The popover must not cover the composer on mobile; it becomes the existing fixed bottom
   sheet behavior with the same section hierarchy.
 
@@ -353,7 +323,6 @@ Use user-facing action language instead of database status language.
 Preferred examples:
 
 - `Last run · Succeeded`
-- `Waiting for proposal confirmation`
 - `Approval needed`
 - `Workflow blocked`
 - `Open approval`
@@ -376,7 +345,6 @@ Allowed current sources:
 - selected task,
 - latest channel run,
 - pending channel approvals,
-- derived attention queue items,
 - channel execution proposals,
 - workflow/workflow step summaries,
 - existing external work CI triage read model.
@@ -397,17 +365,18 @@ from paths.
 | Latest run | `latestRun` | Use user-facing status label and linked task/run target |
 | Current task | `selectedTask` or active task state | Show only explicit/current task, not first historical task |
 | Pending approvals | `pendingChannelApprovals` | Count and rows open approval detail |
-| Attention rows | `buildAttentionQueueItems(activityItems)` | Reuse existing target routing; restyle only |
-| Proposals | `channelExecutionProposals` | Show waiting row when proposal confirmation is relevant |
+| Attention rows | `activityItems` / `buildAttentionQueueItems(activityItems)` | Activity/audit-log only; do not render in the popover |
+| Proposals | `channelExecutionProposals` | Do not synthesize a Progress row without an actual waiting proposal/approval surface |
 | Workflow step | workflow/workflow step arrays | Use visible user-facing title and status label |
 | CI triage source | existing external work CI triage read model | Show source only when rows are from CI triage |
 
 ## Implementation Cut
 
-1. Add a small presentation model for the attention popover inside the channel workspace
+1. Add a small presentation model for the progress popover inside the channel workspace
    path, or keep it local to `WorkspaceClientView.tsx` if the shape remains simple.
 2. Replace the current progress preview with context + progress sections.
-3. Restyle attention items from heavy cards into lighter rows.
+3. Remove floating attention counts/items from the popover; keep those records in
+   Activity/audit surfaces.
 4. Add missing English and Chinese labels for `Run settings`, row labels, and source
    labels.
 5. Keep the right drawer navigation behavior unchanged.
@@ -416,13 +385,12 @@ from paths.
 Recommended file sequence:
 
 1. `apps/web/src/features/workspace/WorkspaceClientView.tsx`
-   - add the presentation model builder near `AttentionQueue`,
-   - derive context rows, progress rows, attention section, and source rows before JSX,
-   - keep existing `openAttentionQueueItem` and target routing behavior,
+   - add the presentation model builder near the progress popover component,
+   - derive context rows, progress rows, and source rows before JSX,
+   - remove popover-only attention item routing,
    - avoid broad component extraction until duplication proves real.
 2. `apps/web/src/styles/components.css`
-   - replace heavy `.attention-progress-preview` and `.attention-queue-item` treatment
-     with section and row styling,
+   - keep progress rows as lightweight section rows,
    - keep existing desktop lane and mobile fixed sheet behavior,
    - add overflow constraints for long Chinese labels.
 3. `apps/web/src/i18n.tsx`
@@ -455,12 +423,12 @@ Implementation guardrails:
 
 ## Acceptance Criteria
 
-- The popover first shows available context, then progress, then attention.
-- The attention icon still has no numeric badge.
+- The popover first shows available context, then progress.
+- The progress icon still has no numeric badge.
 - Progress rows are not rendered as summary cards.
-- Attention rows are lighter than the current card-heavy treatment.
-- Blocked, failed, and pending counts stay visible inside the popover.
-- Clicking rows routes to existing task, approval, context, run, or Progress drawer
+- Attention rows, blocked/failed/pending chips, and terminal audit history do not render
+  inside the popover.
+- Clicking progress rows routes to existing task, approval, context, run, or Progress drawer
   destinations.
 - Raw IDs and audit payloads stay out of the default popover.
 - Channels without current work do not show invented progress.
@@ -478,22 +446,22 @@ git diff --check
 
 Focused browser checks:
 
-- desktop channel with right drawer hidden and attention items present,
+- desktop channel with right drawer hidden and current progress present,
 - desktop channel with right drawer open,
 - desktop channel with no current-channel work,
-- mobile viewport with attention popover open,
+- mobile viewport with progress popover open,
 - Chinese locale with the longest blocked/pending labels.
 
 Detailed QA matrix:
 
 | Scenario | Expected result |
 | --- | --- |
-| Drawer hidden, attention items present | Header icon opens popover with Run settings, Progress if present, and Attention |
+| Drawer hidden, progress present | Header icon opens popover with Run settings and Progress |
 | Drawer open | Header icon opens or focuses the Progress drawer page instead of overlaying the popover |
-| Teammate manager open | Attention popover is hidden and does not stack under the teammate manager |
+| Teammate manager open | Progress popover is hidden and does not stack under the teammate manager |
 | No current work | Popover does not invent latest run/current task rows from another channel |
-| Pending approval | Pending chip count increments and clicking row opens approval detail |
-| Blocked workflow | Blocked row sorts above failed and pending rows |
+| Pending approval | Progress row opens approval detail |
+| Blocked workflow | Progress row opens workflow/context detail |
 | Long Chinese labels | Row text wraps or truncates without horizontal scroll and without covering status pills |
 | Mobile | Bottom sheet preserves section order and remains dismissible by Escape/outside click |
 | Future Git state unavailable | Branch/change/commit rows are omitted, not shown as empty placeholders |

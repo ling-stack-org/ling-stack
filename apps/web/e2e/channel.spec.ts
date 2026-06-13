@@ -432,7 +432,7 @@ test("channel drawer uses unread dots instead of count badges and clears on chan
   await expect(research.locator(".channel-unread")).toHaveCount(0);
 });
 
-test("wide channel attention popover keeps the accepted HTML spacing", async ({ page }) => {
+test("wide channel progress popover keeps the accepted HTML spacing", async ({ page }) => {
   await page.setViewportSize({ width: 2048, height: 1140 });
   const state = createBaseState({ approvalStatus: "pending" });
   state.channelMessages = [
@@ -2308,6 +2308,138 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
   await expect(evidenceWorkCell).toContainText("Parallel branches");
 });
 
+test("progress surfaces fold completed workflow steps behind summaries", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_current_blocked",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Current implementation",
+      objective: "Fix the active progress projection.",
+      status: "blocked",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T01:00:00.000Z",
+      updatedAt: "2026-05-25T01:03:00.000Z",
+    },
+    {
+      id: "workflow_completed_history",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Completed docs review",
+      objective: "Keep completed details behind evidence.",
+      status: "succeeded",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:55:00.000Z",
+      updatedAt: "2026-05-25T01:02:00.000Z",
+    },
+    {
+      id: "workflow_completed_older",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Older completed review",
+      objective: "This terminal workflow should stay behind history.",
+      status: "succeeded",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:40:00.000Z",
+      updatedAt: "2026-05-25T00:45:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_current_blocked",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_current_blocked",
+      position: 1,
+      title: "Resolve active blocker",
+      prompt: "Resolve the current blocker.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "blocked",
+      blocker: "Waiting for write permission.",
+      createdAt: "2026-05-25T01:00:00.000Z",
+      updatedAt: "2026-05-25T01:03:00.000Z",
+    },
+    {
+      id: "workflow_step_completed_docs",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_completed_history",
+      position: 1,
+      title: "Docs: Draft completed summary",
+      prompt: "Draft a completed summary.",
+      toParticipantId: "docs",
+      toParticipantLabel: "Docs",
+      status: "succeeded",
+      resultSummary: "Drafted the completed summary.",
+      createdAt: "2026-05-25T00:55:00.000Z",
+      updatedAt: "2026-05-25T01:00:00.000Z",
+    },
+    {
+      id: "workflow_step_completed_qa",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_completed_history",
+      position: 2,
+      title: "QA: Check completed summary",
+      prompt: "Check the completed summary.",
+      toParticipantId: "qa",
+      toParticipantLabel: "QA",
+      status: "succeeded",
+      resultSummary: "Checked the completed summary.",
+      createdAt: "2026-05-25T01:00:00.000Z",
+      updatedAt: "2026-05-25T01:02:00.000Z",
+    },
+    {
+      id: "workflow_step_completed_older",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_completed_older",
+      position: 1,
+      title: "Docs: Older completed step",
+      prompt: "Keep this older completed step out of Progress.",
+      toParticipantId: "docs",
+      toParticipantLabel: "Docs",
+      status: "succeeded",
+      resultSummary: "Older completion.",
+      createdAt: "2026-05-25T00:40:00.000Z",
+      updatedAt: "2026-05-25T00:45:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const attentionPopover = page.locator(".channel-attention-popover");
+  const progressList = attentionPopover.locator(".attention-progress-list");
+  await expect(attentionPopover).toBeVisible();
+  await expect(progressList).toContainText("Collaboration blocked");
+  await expect(progressList).toContainText("Collaboration complete");
+  await expect(progressList).toContainText("Completed docs review");
+  await expect(progressList).not.toContainText("Older completed review");
+  await expect(progressList).not.toContainText("Docs: Draft completed summary");
+  await expect(progressList).not.toContainText("QA: Check completed summary");
+  await expect(progressList).not.toContainText("Docs: Older completed step");
+  await expect(progressList).not.toContainText("Waiting for proposal confirmation");
+
+  await openChannelTasksTab(page);
+  const panel = page.locator(".channel-side-panel");
+  const completedCard = panel.locator(".collaboration-task-card.completed").filter({ hasText: "Completed docs review" });
+  await expect(completedCard).toBeVisible();
+  await expect(completedCard).toContainText("Completed: 2 of 2 steps complete");
+  await expect(completedCard).not.toContainText("Docs: Draft completed summary");
+  await expect(completedCard).not.toContainText("QA: Check completed summary");
+  await expect(completedCard.getByText("Open workflow evidence")).toBeVisible();
+  await expect(panel.locator(".collaboration-task-card.completed").filter({ hasText: "Older completed review" })).toHaveCount(0);
+});
+
 test("right progress panel prefers daemon collaboration card payload", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -3718,20 +3850,15 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(categoryChip("Protocol")).toContainText("0");
   await expect(categoryChip("Runtime")).toContainText("3");
 
-  const attentionQueue = page.getByRole("region", { name: "Attention queue" });
-  const runSettings = attentionQueue.getByLabel("Run settings");
+  const progressPopover = page.getByRole("region", { name: "Progress" });
+  const runSettings = progressPopover.getByLabel("Run settings");
   await expect(runSettings).toContainText("Permission mode");
   await expect(runSettings.getByText("Current channel", { exact: true })).toHaveCount(0);
   await expect(runSettings.getByText("Local", { exact: true })).toHaveCount(0);
   await expect(runSettings.getByText("Preferred teammate reply", { exact: true })).toHaveCount(0);
-  await expect(attentionQueue).toContainText("Attention");
-  await expect(attentionQueue).toContainText("5");
-  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Blocked 1");
-  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Failed 3");
-  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Pending 1");
-  const topAttentionItems = attentionQueue.getByLabel("Top attention items");
-  await expect(topAttentionItems.locator(".attention-queue-item")).toHaveCount(5);
-  await expect(topAttentionItems.locator(".attention-queue-item-open").first()).toContainText("Blocked timeline step");
+  await expect(progressPopover.getByLabel("Attention counts")).toHaveCount(0);
+  await expect(progressPopover.getByLabel("Top attention items")).toHaveCount(0);
+  await expect(progressPopover.locator(".attention-queue-item")).toHaveCount(0);
   const attentionTypography = await page.evaluate(() => {
     const read = (selector: string) => {
       const element = document.querySelector(selector);
@@ -3764,14 +3891,8 @@ test("channel activity derives task run approval transition and workflow events"
       progressPrimary: read(".attention-progress-copy strong"),
       progressSecondary: read(".attention-progress-copy small"),
       progressIcon: readIcon(".attention-progress-list svg"),
-      attentionTitle: read(".attention-queue-head strong"),
-      attentionCount: read(".attention-queue-head small"),
-      countChip: read(".attention-queue-counts small"),
-      itemTitle: read(".attention-queue-item-main strong"),
-      itemCopy: read(".attention-queue-item-main small"),
-      itemMetaChipCount: document.querySelector(".attention-queue-item-meta")?.querySelectorAll("small").length ?? 0,
-      itemTimeCount: document.querySelectorAll(".attention-queue-item-meta time").length,
-      detailsButtonCount: document.querySelectorAll(".attention-queue-details").length,
+      queueItemCount: document.querySelectorAll(".attention-queue-item").length,
+      attentionCountsCount: document.querySelectorAll(".attention-queue-counts").length,
     };
   });
   expect(attentionTypography.runSettingsTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
@@ -3779,43 +3900,8 @@ test("channel activity derives task run approval transition and workflow events"
   expect(attentionTypography.progressPrimary).toEqual({ fontSize: "12px", fontWeight: "500", lineHeight: "17px" });
   expect(attentionTypography.progressSecondary).toEqual({ fontSize: "12px", fontWeight: "400", lineHeight: "17px" });
   expect(attentionTypography.progressIcon).toEqual({ width: 18, height: 18, strokeWidth: "2.4px" });
-  expect(attentionTypography.attentionTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
-  expect(attentionTypography.attentionCount).toEqual({ fontSize: "12px", fontWeight: "500", lineHeight: "17px" });
-  expect(attentionTypography.countChip).toEqual({ fontSize: "11px", fontWeight: "600", lineHeight: "16px" });
-  expect(attentionTypography.itemTitle).toEqual({ fontSize: "13px", fontWeight: "600", lineHeight: "18px" });
-  expect(attentionTypography.itemCopy).toEqual({ fontSize: "12px", fontWeight: "400", lineHeight: "17px" });
-  expect(attentionTypography.itemMetaChipCount).toBe(1);
-  expect(attentionTypography.itemTimeCount).toBe(0);
-  expect(attentionTypography.detailsButtonCount).toBe(0);
-  const expandQueueIfNeeded = async () => {
-    const hideDetails = page.getByRole("button", { name: "Hide details" });
-    if (await hideDetails.isVisible().catch(() => false)) {
-      await hideDetails.click();
-    }
-    await openChannelChatTools(page);
-    await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
-  };
-  const attentionQueueItemByTitle = (title: string) =>
-    attentionQueue.locator(".attention-queue-item").filter({
-      has: page.locator(".attention-queue-item-main strong").filter({ hasText: title }),
-    });
-  const blockedQueueItem = attentionQueueItemByTitle("Blocked timeline step");
-  await blockedQueueItem.locator(".attention-queue-item-open").click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Context");
-  await expandQueueIfNeeded();
-  await attentionQueueItemByTitle("Run run_failed").locator(".attention-queue-item-open").click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
-  await expect(page.locator("article.task-detail")).toContainText("Latest run");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  await expandQueueIfNeeded();
-  await attentionQueueItemByTitle("Approve shell command").locator(".attention-queue-item-open").click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Approval details");
-  await expect(page.locator(".channel-approval-detail-panel")).toContainText("Approve shell command");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  await expandQueueIfNeeded();
-  await attentionQueueItemByTitle("Inspect workspace").locator(".attention-queue-item-open").click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
-  await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
+  expect(attentionTypography.queueItemCount).toBe(0);
+  expect(attentionTypography.attentionCountsCount).toBe(0);
 
   await selectSavedView("Blocked");
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
@@ -3883,15 +3969,14 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await searchInput.fill("run_failed");
-  await expandQueueIfNeeded();
   await expect(runEventBubble).toBeVisible();
   await runEventBubble.getByRole("button", { name: "Details" }).click();
   await expect(activityDetails).toContainText("Run run_failed");
   await expect(searchInput).toHaveValue("run_failed");
-  await expect(attentionQueue.locator(".attention-queue-item")).toHaveCount(5);
+  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
   await activityDetails.getByLabel("Close details").click();
   await expect(searchInput).toHaveValue("run_failed");
-  await expect(attentionQueue.locator(".attention-queue-item")).toHaveCount(5);
+  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe("Saved view name");
     await dialog.accept("Run failures");
@@ -4097,10 +4182,9 @@ test("channel activity triage actions create follow-up records and preserve loca
   const activityFilters = channelEventFilters(page);
   const searchInput = activityFilters.getByPlaceholder("Search activity");
   const composer = page.getByPlaceholder("Message this channel or @ an AI teammate");
-  const attentionQueue = page.getByLabel("Attention queue");
   await searchInput.fill("Blocked triage");
   await composer.fill("Composer draft survives triage");
-  await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
+  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
   await openTriageActions();
   await activityDetails.getByRole("button", { name: "Create context summary" }).click();
@@ -4111,7 +4195,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await activityDetails.getByLabel("Close details").click();
   await expect(searchInput).toHaveValue("Blocked triage");
   await expect(composer).toHaveValue("Composer draft survives triage");
-  await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
+  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
   const summaryBubble = page.locator(".message-bubble").filter({ hasText: "Context summary" }).filter({ hasText: "Summary from Blocked triage step" });
   await expect(summaryBubble).toBeVisible();
   const taskCount = state.tasks.length;
@@ -4120,7 +4204,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(page.locator("article.task-detail")).toHaveCount(0);
 });
 
-test("channel activity hides the attention queue when no items need attention", async ({ page }) => {
+test("channel activity keeps attention items out of the progress popover", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -4138,8 +4222,9 @@ test("channel activity hides the attention queue when no items need attention", 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await expect(page.getByRole("button", { name: "Attention queue" }).locator(".toolbar-count")).toHaveCount(0);
-  await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Progress" }).locator(".toolbar-count")).toHaveCount(0);
+  await expect(page.locator(".channel-attention-popover .attention-queue-item")).toHaveCount(0);
+  await expect(page.locator(".channel-attention-popover").getByLabel("Attention counts")).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await expect(page.locator("article.task-detail")).toHaveCount(0);
