@@ -25,7 +25,7 @@ records, context packets, output packets, approvals, runs, artifacts, and logs.
 ```text
 durable orchestration evidence
   -> smart collaboration cards
-  -> compact default progress
+  -> active-task progress projection
   -> optional details
   -> advanced audit/debug only when requested
 ```
@@ -332,6 +332,11 @@ only if derived views become too expensive or need user edits.
 - The default feed shows one collaboration card per active shaping/execution thread.
 - Running cards are mutable: update status in place rather than appending process spam.
 - Terminal cards fold into a compact final summary.
+- The right floating Progress surface is not a completed-work history list. It is a
+  projection of the current or most recently actionable task.
+- A newly started task takes over the Progress surface. Older completed work moves to
+  final summaries, evidence, or history/detail surfaces instead of staying expanded in
+  the Progress list.
 - Expand actions are explicit: `Details`, `Evidence`, `View steps`, or right drawer.
 - Permission prompts stay visible because they require user action.
 - Blockers stay visible because they change the next action.
@@ -343,6 +348,20 @@ only if derived views become too expensive or need user edits.
 The channel right-side floating panel should not be a full workflow inspector by
 default. It should be a compact projection of the active `CollaborationTaskCard`, similar
 to a concise task progress checklist.
+
+It should also not behave like an append-only list of completed workflow steps. The
+projection is recalculated from current workflow/card state:
+
+```text
+new task starts
+  -> Progress shows that task's checklist
+task runs
+  -> rows update in place: done / active / waiting / blocked
+task completes
+  -> Progress folds it into one completion summary row
+next task starts
+  -> new task takes over Progress; completed work remains available in details/history
+```
 
 It answers only:
 
@@ -384,12 +403,20 @@ interface CollaborationProgressItem {
 Display rules:
 
 - show 3-6 progress items by default;
+- show active, waiting, blocked, or failed work before completed work;
+- completed work should normally occupy one summary row per task, not one row per
+  completed step;
+- step-level completed rows are visible only while they provide useful orientation for
+  the current active task, and otherwise belong in details;
+- if there is a current active task, older completed task summaries must not crowd out
+  that task's active/waiting/blocker rows;
 - prefer human-readable step summaries over teammate ids or workflow ids;
 - show a single active item when possible;
 - show only one blocker or next action;
 - show a detail affordance rather than all evidence;
 - hide context packet ids, selector ids, token budgets, and raw logs;
-- collapse completed serial steps into checkmarked rows;
+- collapse completed serial steps into checkmarked rows only inside the active task's
+  short checklist;
 - summarize parallel branches as one row per branch or branch group.
 
 Example:

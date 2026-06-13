@@ -38,7 +38,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await channelEventFilterToggle(page).click();
   await expect(page.getByLabel("动态类别").getByRole("button", { name: /全部/ })).toBeVisible();
   await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
-  await expect(page.getByRole("region", { name: "关注队列" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "进度" })).toBeVisible();
   await page.locator(".message-bubble").filter({ hasText: "任务事件" }).first().getByRole("button", { name: "详情" }).click();
   const chineseDetails = page.getByRole("complementary", { name: "动态详情" });
   await expect(chineseDetails).toContainText("来源摘要");
@@ -68,7 +68,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await channelEventFilterToggle(page).click();
   await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
   await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Attention queue" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Progress" })).toBeVisible();
   await page.locator(".message-bubble").filter({ hasText: "Task event" }).first().getByRole("button", { name: "Details" }).click();
   const englishDetails = page.getByRole("complementary", { name: "Activity details" });
   await expect(englishDetails).toContainText("Source summary");

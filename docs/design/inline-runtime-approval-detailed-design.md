@@ -33,7 +33,7 @@ point for active local work.
 - [Approval Policy](approval-policy.md)
 - [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
 - [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
-- [Channel Workspace v1.25 Codex-Inspired Attention Popover](channel-workspace-v1.25.md)
+- [Channel Workspace v1.25 Codex-Inspired Progress Popover](channel-workspace-v1.25.md)
 - [Codex-Like Execution Experience](codex-like-execution.md)
 
 ## Current Implementation Anchors
@@ -117,10 +117,11 @@ Rules:
 - Do not use a full card layout inside the composer area.
 - Keep the row action-led: approve, deny, open details.
 
-### 2. Channel Attention Popover
+### 2. Channel Progress Popover
 
-The attention popover should show approval attention, but not duplicate the full
-approval card.
+The progress popover should show current approval-needed progress rows, but not
+duplicate the full approval card. Resolved approval history remains in Activity/audit
+logs.
 
 Rules:
 

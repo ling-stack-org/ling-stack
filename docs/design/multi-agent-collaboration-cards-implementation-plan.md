@@ -63,7 +63,7 @@ Type: read-only.
 ### Work
 
 - Confirm current provider preset form behavior for `contextWindow` and `maxTokens`.
-- Confirm existing workflow progress model rows and attention popover rendering.
+- Confirm existing workflow progress model rows and progress popover rendering.
 - Confirm existing workflow evidence/right-drawer drilldown remains available.
 
 ### Acceptance
@@ -200,7 +200,7 @@ Type: Web presentation model.
 
 ### Goal
 
-Render the right floating panel / attention popover as a compact progress summary for the
+Render the right floating panel / progress popover as a compact progress summary for the
 active collaboration task card.
 
 ### Suggested files
@@ -229,6 +229,12 @@ export interface CollaborationProgressProjection {
 - Show 3-6 progress rows.
 - Use check/running/waiting/blocked states.
 - Show at most one blocker or next action.
+- Treat the projection as the current task's checklist, not an append-only task history.
+- A new active task replaces the prior task as the primary projection.
+- Completed tasks fold to one summary row and rank below active, waiting, blocked, and
+  failed tasks.
+- Completed step rows may appear only inside the current task's short checklist; once the
+  task is terminal, step detail moves to workflow evidence/details.
 - Hide audit/debug fields.
 - Clicking opens smart details, not raw debug.
 
@@ -237,7 +243,10 @@ export interface CollaborationProgressProjection {
 - Long workflow is capped to 6 rows.
 - Active step is included.
 - Blocker is visible when present.
-- Completed steps render before active/waiting rows.
+- Completed steps do not crowd out active/waiting rows.
+- Terminal workflows render as one completion summary row in the projection.
+- Starting a newer active workflow makes the newer workflow the primary projection while
+  older completed workflow details remain reachable.
 - No raw ids appear in projection labels.
 
 ## Phase CCI4: Conversation Work Cell Integration
@@ -255,7 +264,7 @@ rebuilding the feed.
 - Keep existing `WorkflowProgressModel` as the source for workflow evidence/details until
   the new model proves stable.
 - Deduplicate represented step/run rows from the default feed as P3 already does.
-- Add compact progress projection to the right floating panel or attention popover.
+- Add compact progress projection to the right floating panel or progress popover.
 
 ### Tests
 
@@ -353,7 +362,6 @@ Collaboration task
   click -> Workflow evidence
 
 Task / latest run / approvals
-Attention
 Approvals
 CI triage
 ```
@@ -367,6 +375,11 @@ entry point.
 - Show at most 3 task cards in the right panel, sorted by actionable priority then
   updated time.
 - For each card, show at most 6 step rows.
+- Prefer current active/waiting/blocked cards. Completed cards are recent summaries, not
+  expanded histories.
+- When a newer active card exists, older completed cards must not consume the main
+  Progress checklist rows. They may remain as one-line recent summaries or move behind
+  details/history.
 - Step row labels use teammate label, step title, optional summary, and product state.
 - Use product labels:
   - `Ready`
@@ -398,6 +411,10 @@ entry point.
 - Active/blocked/completed workflow cards appear in the right Progress panel.
 - The card shows owner, execution mode, progress count, next action or blocker, and up
   to 6 step rows.
+- Completed workflow cards do not expand every completed step in the main Progress
+  surface.
+- A newly active workflow becomes the primary Progress card even when previous workflows
+  completed moments earlier.
 - Clicking the card opens the existing workflow evidence details.
 - Default panel text contains no raw workflow ids, run ids, context ids, token budgets,
   or route/debug vocabulary.

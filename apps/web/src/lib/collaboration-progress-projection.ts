@@ -20,9 +20,16 @@ export function buildCollaborationProgressProjection(input: {
   readonly limit?: number;
 }): readonly CollaborationProgressProjectionItem[] {
   const limit = Math.max(1, Math.min(input.limit ?? 6, 6));
-  const cards = [...input.cards]
+  const sortedCards = [...input.cards]
     .filter((card) => card.mode !== "completed" || card.steps.some((step) => step.state === "done"))
     .sort((left, right) => collaborationCardPriority(right) - collaborationCardPriority(left) || right.updatedAt.localeCompare(left.updatedAt));
+  const actionableCards = sortedCards.filter((card) => !isTerminalSummaryCard(card));
+  const terminalCards = sortedCards
+    .filter(isTerminalSummaryCard)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const cards = actionableCards.length > 0
+    ? [...actionableCards, ...terminalCards.slice(0, 1)]
+    : terminalCards.slice(0, 1);
   const rows: CollaborationProgressProjectionItem[] = [];
 
   for (const card of cards) {
@@ -42,6 +49,9 @@ export function buildCollaborationProgressProjection(input: {
     if (rows.length >= limit) {
       break;
     }
+    if (!shouldProjectStepRows(card)) {
+      continue;
+    }
     for (const step of prioritizedSteps(card).slice(0, limit - rows.length)) {
       rows.push({
         id: `${card.id}:step:${step.id}`,
@@ -56,6 +66,14 @@ export function buildCollaborationProgressProjection(input: {
   }
 
   return rows.slice(0, limit);
+}
+
+function shouldProjectStepRows(card: CollaborationTaskCardModel): boolean {
+  return !isTerminalSummaryCard(card);
+}
+
+function isTerminalSummaryCard(card: CollaborationTaskCardModel): boolean {
+  return card.mode === "completed" || card.mode === "cancelled";
 }
 
 function collaborationCardPriority(card: CollaborationTaskCardModel): number {
@@ -142,7 +160,7 @@ function prioritizedSteps(card: CollaborationTaskCardModel): readonly Collaborat
   if (open.length > 0) {
     return open.sort((left, right) => stepStatePriority(right.state) - stepStatePriority(left.state) || right.updatedAt.localeCompare(left.updatedAt));
   }
-  return card.steps.slice(-2).reverse();
+  return [];
 }
 
 function stepStatePriority(state: CollaborationTaskStepState): number {
