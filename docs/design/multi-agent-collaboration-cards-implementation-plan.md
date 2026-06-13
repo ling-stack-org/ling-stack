@@ -852,6 +852,50 @@ Acceptance:
 - parallel branch metadata produces branch rows;
 - no write/mutation occurs while reading cards.
 
+### CCI14: Web Consume Daemon Collaboration Cards
+
+Goal: switch Web collaboration-card surfaces to prefer the daemon read model from CCI13
+while preserving the existing Web-derived card as compatibility fallback.
+
+This slice is a data-flow migration only. It should not change visible product copy,
+workflow transitions, approval behavior, or evidence/detail navigation.
+
+Scope:
+
+- load `GET /channels/:channelId/collaboration-cards` for the selected channel;
+- use daemon cards as the primary `collaborationTaskCardByWorkflowId` source when the
+  endpoint succeeds;
+- fall back to local Web derivation when the endpoint fails or returns no card for a
+  known workflow;
+- refresh daemon cards after workflow/proposal/start/orchestrate mutations that can
+  change collaboration-card state;
+- keep workflow progress/evidence details on existing local/evidence models for now.
+
+Non-goals:
+
+- no daemon cache or invalidation table;
+- no final report daemon generation;
+- no mobile-specific layout changes;
+- no removal of the Web fallback builder;
+- no new workflow/run/approval state transitions.
+
+Fallback rules:
+
+- if the channel daemon-card request succeeds, cards from that response win by
+  `workflowId`;
+- for workflows missing from the daemon response, Web can still derive a card locally;
+- if the request fails, Web silently uses local cards and may show no debug UI in the
+  default product surface;
+- raw route/debug/context fields stay hidden regardless of source.
+
+Acceptance:
+
+- right panel and feed cards render from daemon card payload when available;
+- existing UI stays functional against older daemons that do not implement the endpoint;
+- changing workflow step/approval state refreshes daemon cards through existing reload
+  paths;
+- e2e covers daemon-card payload consumption and fallback to Web derivation.
+
 Implementation note, 2026-06-13:
 
 - First persistence slice keeps `ChannelExecutionProposal` as the durable source of

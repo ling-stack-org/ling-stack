@@ -2098,6 +2098,110 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
   await expect(evidenceWorkCell).toContainText("Parallel branches");
 });
 
+test("right progress panel prefers daemon collaboration card payload", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_daemon_card_source",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Local fallback workflow title",
+      daemonCardTitle: "Daemon collaboration card title",
+      objective: "Local fallback objective.",
+      daemonCardObjective: "Daemon-projected objective.",
+      status: "running",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:50:00.000Z",
+      updatedAt: "2026-05-25T00:51:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_daemon_card_active",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_daemon_card_source",
+      position: 1,
+      title: "Use daemon card",
+      prompt: "Render the daemon card payload.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "running",
+      createdAt: "2026-05-25T00:50:00.000Z",
+      updatedAt: "2026-05-25T00:51:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openChannelTasksTab(page);
+
+  const panel = page.locator(".channel-side-panel");
+  const card = panel.locator(".collaboration-task-card").filter({ hasText: "Daemon collaboration card title" });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Daemon-projected objective.");
+  await expect(card).toContainText("Owner: Ling Agent");
+  await expect(card).not.toContainText("Local fallback workflow title");
+});
+
+test("right progress panel falls back to local collaboration card derivation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_local_card_fallback",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Local fallback workflow title",
+      daemonCardTitle: "Hidden daemon-only title",
+      objective: "Local fallback objective.",
+      daemonCardObjective: "Hidden daemon-only objective.",
+      status: "running",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:52:00.000Z",
+      updatedAt: "2026-05-25T00:53:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_local_card_fallback",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_local_card_fallback",
+      position: 1,
+      title: "Use local fallback",
+      prompt: "Render the local fallback card.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "running",
+      createdAt: "2026-05-25T00:52:00.000Z",
+      updatedAt: "2026-05-25T00:53:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state, { collaborationCardsUnsupported: true });
+  await page.goto("/");
+  await openChannelTasksTab(page);
+
+  const panel = page.locator(".channel-side-panel");
+  const card = panel.locator(".collaboration-task-card").filter({ hasText: "Local fallback workflow title" });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Local fallback objective.");
+  await expect(card).toContainText("Owner: Ling Agent");
+  await expect(card).not.toContainText("Hidden daemon-only title");
+});
+
 test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

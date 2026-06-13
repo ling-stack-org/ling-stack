@@ -51,7 +51,7 @@ import {
 import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
-import { createChannelWorktree, handoffChannelWorkspace, refreshChannelWorkspace } from "../../api/channels.js";
+import { createChannelWorktree, handoffChannelWorkspace, listChannelCollaborationCards, refreshChannelWorkspace } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -784,6 +784,12 @@ export function WorkspaceClientView({
   const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
   const [channelWorkspaceNotice, setChannelWorkspaceNotice] = useState("");
   const [channelWorkspaceError, setChannelWorkspaceError] = useState("");
+  const [channelCollaborationCardsState, setChannelCollaborationCardsState] = useState<{
+    readonly channelId: string;
+    readonly signature: string;
+    readonly status: "idle" | "loaded" | "error";
+    readonly cards: readonly CollaborationTaskCardModel[];
+  }>({ channelId: "", signature: "", status: "idle", cards: [] });
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
@@ -817,6 +823,58 @@ export function WorkspaceClientView({
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
   );
+  const channelCollaborationCardRefreshSignature = useMemo(() => {
+    const workflowsSignature = channelWorkflows
+      .filter((workflow) => workflow.channelId === selectedChannelId)
+      .map((workflow) => [workflow.id, workflow.status, workflow.updatedAt].join(":"))
+      .join("|");
+    const stepsSignature = channelWorkflowSteps
+      .filter((step) => step.channelId === selectedChannelId)
+      .map((step) => [step.id, step.workflowId, step.status, step.runId ?? "", step.blocker ?? "", step.resultSummary ?? "", step.updatedAt].join(":"))
+      .join("|");
+    const runsSignature = channelRuns
+      .map((run) => [run.id, run.status, run.workflowStepId ?? "", run.updatedAt, run.startedAt ?? "", run.endedAt ?? ""].join(":"))
+      .join("|");
+    const approvalsSignature = approvals
+      .filter((approval) => approval.channelId === selectedChannelId || channelRuns.some((run) => run.id === approval.runId))
+      .map((approval) => [approval.id, approval.runId ?? "", approval.workflowStepId ?? "", approval.status, approval.resolvedAt ?? "", approval.expiresAt ?? "", approval.createdAt].join(":"))
+      .join("|");
+    return [workflowsSignature, stepsSignature, runsSignature, approvalsSignature].join("\n");
+  }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId]);
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      setChannelCollaborationCardsState({ channelId: "", signature: "", status: "idle", cards: [] });
+      return;
+    }
+    let cancelled = false;
+    void listChannelCollaborationCards(workspaceCwd, selectedChannelId, { limit: 100 })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setChannelCollaborationCardsState({
+          channelId: selectedChannelId,
+          signature: channelCollaborationCardRefreshSignature,
+          status: "loaded",
+          cards: response.cards,
+        });
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setChannelCollaborationCardsState({
+          channelId: selectedChannelId,
+          signature: channelCollaborationCardRefreshSignature,
+          status: "error",
+          cards: [],
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelCollaborationCardRefreshSignature, cwd, selectedChannelId]);
   const derivedChannelWorkThreads = useMemo(
     () => deriveWorkspaceThreadsFromRuns(channelRuns),
     [channelRuns],
@@ -918,7 +976,7 @@ export function WorkspaceClientView({
     }
     return cells;
   }, [approvals, channelArtifactsByRun, channelRuns, channelWorkflowSteps, channelWorkflows, cwd, selectedChannelId, t]);
-  const collaborationTaskCardByWorkflowId = useMemo(() => {
+  const localCollaborationTaskCardByWorkflowId = useMemo(() => {
     const cards = new Map<string, CollaborationTaskCardModel>();
     for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
       const card = buildCollaborationTaskCardModel({
@@ -934,6 +992,19 @@ export function WorkspaceClientView({
     }
     return cards;
   }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId, t]);
+  const collaborationTaskCardByWorkflowId = useMemo(() => {
+    const cards = new Map(localCollaborationTaskCardByWorkflowId);
+    if (
+      channelCollaborationCardsState.status === "loaded" &&
+      channelCollaborationCardsState.channelId === selectedChannelId &&
+      channelCollaborationCardsState.signature === channelCollaborationCardRefreshSignature
+    ) {
+      for (const card of channelCollaborationCardsState.cards) {
+        cards.set(card.workflowId, card);
+      }
+    }
+    return cards;
+  }, [channelCollaborationCardRefreshSignature, channelCollaborationCardsState, localCollaborationTaskCardByWorkflowId, selectedChannelId]);
   const selectedWorkflowProgressModel = selectedWorkflowEvidenceWorkflowId
     ? workflowProgressByWorkflowId.get(selectedWorkflowEvidenceWorkflowId)
     : undefined;
