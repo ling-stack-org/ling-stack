@@ -15,6 +15,7 @@ import {
   workflowPacketKindForArtifact,
 } from "../dist/features/channels/context-processing/evidence.js";
 import { condenseChannelContextSources } from "../dist/features/channels/context-processing/condenser.js";
+import { buildWorkflowContextInspectSummary } from "../dist/features/channels/context-processing/inspect.js";
 import {
   buildWorkflowProposalContextView,
   proposalSourceRefsFromContextView,
@@ -417,6 +418,66 @@ test("context view opt-in condenser records metadata without changing prompt sec
   assert.equal(view.metadata.condenser.condensedSourceCount, 1);
   assert.equal(view.metadata.condenser.droppedSourceCount, 1);
   assert.equal(view.metadata.sourceCount, 1);
+});
+
+test("workflow context inspect summary exposes metadata without raw prompt text", () => {
+  const missing = buildWorkflowContextInspectSummary({
+    step: createWorkflowStep({ metadata: {} }),
+  });
+  assert.equal(missing.availability, "missing_context_artifact");
+  assert.equal(missing.safety.rawPromptTextIncluded, false);
+
+  const inspect = buildWorkflowContextInspectSummary({
+    step: createWorkflowStep({ id: "step_1", metadata: { contextArtifactId: "artifact_context" } }),
+    contextPacket: {
+      schemaVersion: 1,
+      workflowId: "workflow_1",
+      workflowStepId: "step_1",
+      objective: "Inspect context.",
+      stepTitle: "Implementation",
+      stepPrompt: "RAW PROMPT TEXT SHOULD NOT LEAK",
+      dependencies: [],
+      priorOutputArtifactIds: [],
+      contextPack: {
+        kind: "workflow_step",
+        providerPresetId: "provider_1",
+        modelId: "model_1",
+        budget: {
+          mode: "model_known",
+          contextWindowTokens: 4096,
+          reservedOutputTokens: 512,
+          reservedRuntimeOverheadTokens: 512,
+          inputBudgetTokens: 3072,
+          tokenizer: "openai-compatible",
+        },
+        estimatedInputTokens: 1200,
+        overBudget: false,
+        droppedSectionIds: ["workflow_dependency_1"],
+        compactionIds: ["workflow_packet_summary_1"],
+        sections: [{
+          id: "workflow_current_step",
+          role: "user",
+          priority: "must_keep",
+          estimatedTokens: 120,
+          sourceRefIds: ["step_1"],
+          metadata: { graphNodeId: "impl" },
+        }],
+        sourceRefs: [{ type: "workflow_step", id: "step_1", label: "Implementation" }],
+      },
+      generatedAt: now,
+    },
+  });
+
+  assert.equal(inspect.availability, "available");
+  assert.equal(inspect.contextArtifactId, "artifact_context");
+  assert.equal(inspect.budget.inputBudgetTokens, 3072);
+  assert.deepEqual(inspect.sections.map((section) => section.id), ["workflow_current_step"]);
+  assert.deepEqual(inspect.sections[0].metadataKeys, ["graphNodeId"]);
+  assert.deepEqual(inspect.droppedSectionIds, ["workflow_dependency_1"]);
+  assert.deepEqual(inspect.compactionIds, ["workflow_packet_summary_1"]);
+  assert.equal(inspect.sourceRefCount, 1);
+  assert.doesNotMatch(JSON.stringify(inspect), /RAW PROMPT TEXT SHOULD NOT LEAK/);
+  assert.equal(inspect.safety.rawLogsIncluded, false);
 });
 
 test("workflow proposal context view maps supported source refs for shaping evidence", () => {

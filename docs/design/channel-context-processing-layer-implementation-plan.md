@@ -1232,6 +1232,54 @@ Acceptance:
 - developer view can answer "why did this context get included/dropped?";
 - E2E covers both clean default UI and explicit inspect visibility.
 
+#### CP12A: Workflow Context Inspect Payload
+
+Status: first implementation slice for CP12.
+
+Goal: expose a prompt-safe, structured context inspect summary on workflow evidence
+responses so developers can answer "what context did this step receive?" without reading
+raw prompt text or log artifacts.
+
+Scope:
+
+- derive inspect data from the existing workflow step context packet artifact;
+- attach `contextInspect` to each workflow evidence step and workflow-step evidence
+  response;
+- include product-safe metadata: availability, context artifact id, generated time,
+  provider/model ids, budget summary, section ids, source-ref labels, dropped section ids,
+  and compaction ids;
+- explicitly record that raw prompt text and raw logs are not included;
+- keep the existing evidence endpoints and details navigation as the inspect surface.
+
+Non-goals:
+
+- no new default feed/right-panel debug UI;
+- no raw prompt section text;
+- no raw artifact body/log reads;
+- no route JSON or selector score dump;
+- no persistent inspect cache;
+- no workflow state-machine, runner, approval, or permission behavior change.
+
+Payload rules:
+
+- if no context artifact exists, return `availability=missing_context_artifact`;
+- if the artifact exists but cannot be parsed, return `availability=unreadable_context_packet`;
+- if the packet exists but lacks a context pack snapshot, return
+  `availability=missing_context_pack`;
+- if the snapshot exists, return `availability=available` with bounded metadata only;
+- source refs include type/id/label because the explicit workflow evidence surface is an
+  inspect surface, but raw source bodies remain excluded.
+
+Acceptance:
+
+- workflow evidence includes `contextInspect` for every step;
+- available inspect payloads show kept section ids, dropped section ids, compaction ids,
+  source-ref count, and budget summary;
+- missing/unreadable contexts produce a natural availability state instead of an empty
+  object;
+- default collaboration cards remain free of raw context/debug fields;
+- tests cover available and missing context inspect payloads.
+
 ## Global Acceptance Criteria
 
 - Ling Agent ordinary replies, selectors, proposals, workflow steps, and specialist task

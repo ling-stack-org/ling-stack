@@ -434,6 +434,59 @@ export interface WorkflowEvidenceDiagnostic {
   readonly message: string;
 }
 
+export type WorkflowContextInspectAvailability =
+  | "available"
+  | "missing_context_artifact"
+  | "unreadable_context_packet"
+  | "missing_context_pack";
+
+export interface WorkflowContextInspectSection {
+  readonly id: string;
+  readonly role: string;
+  readonly priority: string;
+  readonly estimatedTokens?: number;
+  readonly sourceRefIds: readonly string[];
+  readonly metadataKeys: readonly string[];
+}
+
+export interface WorkflowContextInspectSourceRef {
+  readonly type: string;
+  readonly id: string;
+  readonly label?: string;
+}
+
+export interface WorkflowContextInspectBudget {
+  readonly mode: string;
+  readonly inputBudgetTokens: number;
+  readonly estimatedInputTokens: number;
+  readonly overBudget: boolean;
+  readonly tokenizer?: string;
+}
+
+export interface WorkflowContextInspectSummary {
+  readonly schemaVersion: 1;
+  readonly availability: WorkflowContextInspectAvailability;
+  readonly contextArtifactId?: string;
+  readonly generatedAt?: string;
+  readonly kind?: string;
+  readonly providerPresetId?: string;
+  readonly modelId?: string;
+  readonly budget?: WorkflowContextInspectBudget;
+  readonly sectionCount: number;
+  readonly sourceRefCount: number;
+  readonly droppedSectionCount: number;
+  readonly compactionCount: number;
+  readonly sections: readonly WorkflowContextInspectSection[];
+  readonly droppedSectionIds: readonly string[];
+  readonly compactionIds: readonly string[];
+  readonly sourceRefs: readonly WorkflowContextInspectSourceRef[];
+  readonly safety: {
+    readonly rawPromptTextIncluded: false;
+    readonly rawLogsIncluded: false;
+    readonly rawArtifactBodiesIncluded: false;
+  };
+}
+
 export interface WorkflowMemoryCandidateSummary {
   readonly memory: MemoryObject;
   readonly sourceWorkflowId: string;
@@ -443,6 +496,7 @@ export interface WorkflowMemoryCandidateSummary {
 export interface WorkflowEvidenceStep {
   readonly step: ChannelWorkflowStep;
   readonly contextPacket?: ChannelWorkflowStepContextPacket;
+  readonly contextInspect: WorkflowContextInspectSummary;
   readonly outputPacket?: ChannelWorkflowStepOutputPacket;
   readonly linkedRun?: RunSession;
   readonly packetArtifacts: readonly RunArtifact[];
