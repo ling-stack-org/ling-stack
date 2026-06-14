@@ -57,8 +57,9 @@ part of the classifier input.
 The current implementation is deterministic by default and uses Ling-native persistence.
 It is still partially text-first and should be migrated behind a TurnEnvelope boundary:
 
-- non-mentioned root channel messages pass through `selectChannelWorkflowIntent` before
-  the ordinary answer router;
+- root channel messages, including explicit AI mentions, pass through Ling Agent
+  Coordinator and the executable/collaboration classifier before the ordinary answer
+  router. A mention is a participant/responder hint, not a reason to skip work handling;
 - current deterministic checks mostly inspect `sourceMessage.body`; follow-up work must
   move them to envelope-aware predicates so attachment-only, link-only, and guidance
   turns do not disappear;
@@ -334,7 +335,9 @@ When in doubt, use `workflow_proposal` or `clarify`.
 persist local-user message
   -> Ling Agent Session builds TurnEnvelope
   -> deterministic safety and spam filters
-  -> explicit mention handling
+  -> active-session intake and approval response handling
+  -> TargetResolver resolves current-turn, prior-message, asset, workflow, run,
+     proposal, and approval targets
   -> channel intent selector consumes TurnEnvelope
      -> no_reply
      -> single_reply
@@ -368,8 +371,11 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 | `频道里面都有谁？` | `single_reply` | One coordinator/default teammate can answer. |
 | `这个 auto_route 为什么没回复？` | `single_reply` | One teammate explains current channel behavior. |
 | `谁能处理这个？` | `single_reply` or `workflow_proposal` | If context is simple, answer. If there is a concrete work artifact, propose workflow. |
+| `@Designer 你好` | `single_reply` | Mention is a responder hint because the turn is not executable. |
 | `所有队友都回复我一下` | `visible_multi_reply` | Pure visible discussion request; bounded one-round replies, no workflow. |
 | `大家都说下这个设计的风险` | `visible_multi_reply` | Multiple role opinions change the user's decision, but no execution has started. |
+| `@Ling Agent 在工作区创建 login.html` | `direct_workflow` | Mention does not force ordinary reply; the clear file target and create action win. |
+| after Ling says `login.html`, user says `可以直接在工作区帮我做好吗？` | `direct_workflow` or `clarify` | Resolve the one recent file target. If multiple targets are plausible, ask one question. |
 | `在 /Users/tianxiao/ling-stack-test 下创建 README.md` | `direct_workflow` or blocked proposal | If target and action are clear, prefill one file-write workflow. A read-only channel may still start it with task-scoped `write`; block only when the assignee, provider, runner, or workspace policy cannot support it. |
 | `把这个 README 写进去，内容是 ...` | `direct_workflow` | Concrete file-write request; do not answer with a shell snippet as ordinary `ai_reply`. |
 | `帮我跑测试看一下` | `direct_workflow` or `clarify` | If the target test command or project context is known, prefill an approved command workflow; otherwise ask for the target. |
@@ -555,6 +561,12 @@ Decision rules:
 
 - if the target path or command and the intended content/action are clear, choose
   `direct_workflow` and prefill one executable step;
+- resolve the target before ordinary answer routing. Valid target sources are current
+  turn text, explicit file refs, attachments/link previews, active session state, recent
+  proposal/workflow/run evidence, and a recent same-session message with exactly one
+  file target;
+- if a follow-up target can be resolved from exactly one recent source, keep that source
+  ref in proposal evidence. If two or more targets are plausible, choose `clarify`;
 - if a file-create request has a clear target but no content, still choose
   `direct_workflow`; the generated task must not invent content beyond the file creation
   requested by the user;

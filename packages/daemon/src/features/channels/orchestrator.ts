@@ -13,6 +13,7 @@ import { HttpError } from "../../errors.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
 import {
   completeWorkflowIfStepsFinished,
+  maybeCreateWorkflowTerminalCoordinatorReply,
   prepareWorkflowStepStart,
 } from "./workflows.js";
 import { maybeCreateWorkflowFanInEvidence } from "./workflow-fanin.js";
@@ -468,6 +469,7 @@ export function finalizeOrchestratedWorkflowStepRun(
   } catch {
     // Output packets and fan-in summaries are audit evidence; terminal workflow state remains authoritative if artifact IO fails.
   }
+  maybeCreateWorkflowTerminalCoordinatorReply(store, step.workflowId, { linkedRunId: run.id, now });
   store.releaseResourceLeasesForOwner("workflow_step", workflowStepId, now);
   return store.getChannelWorkflowStep(workflowStepId);
 }
@@ -949,6 +951,7 @@ function applyWorkflowStepFailurePolicy(input: {
       throw new HttpError(409, blocked.code, `Workflow step block failed: ${blocked.code}`);
     }
     transitionWorkflowAfterStepPolicy(input.store, workflow, "step_blocked", input.actor, input.reason, input.now);
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id, { linkedRunId: input.runId, now: input.now });
     return;
   }
   if (input.policy === "fail_workflow") {
@@ -966,6 +969,7 @@ function applyWorkflowStepFailurePolicy(input: {
       throw new HttpError(409, failed.code, `Workflow step fail failed: ${failed.code}`);
     }
     transitionWorkflowAfterStepPolicy(input.store, workflow, "step_failed", input.actor, input.reason, input.now);
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id, { linkedRunId: input.runId, now: input.now });
     return;
   }
   if (input.policy === "cancel_workflow") {
@@ -995,6 +999,7 @@ function applyWorkflowStepFailurePolicy(input: {
         throw new HttpError(409, workflowCancel.code, `Workflow cancel failed: ${workflowCancel.code}`);
       }
     }
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id, { linkedRunId: input.runId, now: input.now });
     return;
   }
   const skipped = input.store.transitionChannelWorkflowStepStatus({

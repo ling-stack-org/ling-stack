@@ -1,5 +1,6 @@
 import type { Translate } from "../i18n.js";
 import type { ConversationWorkCellBranch, ConversationWorkCellRow, ConversationWorkCellRowTone, ConversationWorkCellViewModel } from "./conversation-work-cell.js";
+import { normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import type { CollaborationTaskCardModel, CollaborationTaskStepState } from "./collaboration-task-card.js";
 import { workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "./workflow-progress.js";
 
@@ -9,58 +10,68 @@ export function collaborationTaskCardToConversationWorkCell(input: {
   readonly t: Translate;
 }): ConversationWorkCellViewModel {
   const base = workflowProgressToConversationWorkCell(input.progress);
-  return {
+  const branchRows = buildCollaborationBranchRows(input.card, input.t);
+  const operationRows = input.card.mode === "completed"
+    ? []
+    : branchRows && branchRows.length > 0
+      ? buildCollaborationAttentionRows(input.card, input.t)
+      : buildCollaborationActiveRows(input.card, input.t);
+  const terminalReportRows = buildFinalLingReportRows(input.card, base, input.t);
+  return normalizeConversationOperationCell({
     ...base,
     id: `collaboration-work-cell:${input.card.workflowId}`,
+    sourceKind: "collaboration_task",
     presentation: "collaboration_task",
     kicker: collaborationTaskWorkCellKicker(input.card, input.t),
-    detailsLabel: input.t("Open workflow evidence"),
     showDiagnostics: false,
     title: input.card.title,
     summary: collaborationTaskWorkCellSummary(input.card, base.summary, input.t),
     stats: buildCollaborationWorkCellStats(input.card, input.t),
-    activeRows: input.card.mode === "completed" ? [] : buildCollaborationActiveRows(input.card, input.t),
-    branchRows: buildCollaborationBranchRows(input.card, input.t),
-    finalReportRows: buildFinalLingReportRows(input.card, base, input.t),
-  };
+    operationRows,
+    agentBranches: branchRows ?? [],
+    terminalReportRows,
+  });
 }
 
 function collaborationTaskWorkCellKicker(card: CollaborationTaskCardModel, t: Translate): string {
   if (card.mode === "completed") {
-    return t("Collaboration complete");
+    return t("Work complete");
   }
   if (card.mode === "blocked") {
-    return t("Collaboration blocked");
+    return t("Work blocked");
   }
   if (card.mode === "failed") {
-    return t("Collaboration failed");
+    return t("Work failed");
   }
   if (card.mode === "cancelled") {
-    return t("Collaboration cancelled");
+    return t("Work cancelled");
   }
   if (card.mode === "waiting") {
-    return t("Collaboration waiting");
+    return t("Work waiting");
   }
   if (card.mode === "ready_for_confirmation") {
     return t("Ready to start");
   }
-  return t("Collaboration in progress");
+  return t("Work in progress");
 }
 
 function collaborationTaskWorkCellSummary(card: CollaborationTaskCardModel, fallbackSummary: string, t: Translate): string {
   if (card.mode === "completed") {
     const summary = readFinalStepSummary(card);
-    return summary ? t("Collaboration complete: {summary}", { summary }) : t("Collaboration complete.");
+    if (summary && !isGenericRunSuccessSummary(summary)) {
+      return t("Completed: {summary}", { summary });
+    }
+    return t("I finished {title}. Expand the evidence summary below for exact files, checks, and run details.", { title: card.title });
   }
   if (card.mode === "blocked") {
-    return t("Collaboration blocked: {reason}", { reason: card.blocker ?? fallbackSummary });
+    return t("Blocked: {reason}", { reason: card.blocker ?? fallbackSummary });
   }
   if (card.mode === "failed") {
     const summary = readFailedStepSummary(card) ?? card.blocker ?? fallbackSummary;
-    return t("Collaboration failed: {summary}", { summary });
+    return t("Failed: {summary}", { summary });
   }
   if (card.mode === "cancelled") {
-    return t("Collaboration cancelled.");
+    return t("Work cancelled.");
   }
   if (card.pendingApprovalCount > 0 || card.mode === "waiting") {
     return card.nextAction ?? fallbackSummary;
@@ -77,6 +88,10 @@ function collaborationTaskWorkCellSummary(card: CollaborationTaskCardModel, fall
   return fallbackSummary;
 }
 
+function isGenericRunSuccessSummary(summary: string): boolean {
+  return /^(run\s+succeeded|succeeded|completed)\.?$/iu.test(summary.trim());
+}
+
 function buildCollaborationWorkCellStats(card: CollaborationTaskCardModel, t: Translate): ConversationWorkCellViewModel["stats"] {
   return [
     { id: "mode", label: t("Mode"), value: t(collaborationExecutionModeLabel(card.executionMode)) },
@@ -91,6 +106,7 @@ function buildCollaborationActiveRows(card: CollaborationTaskCardModel, t: Trans
   for (const step of visibleSteps) {
     rows.push({
       id: `collaboration-step:${step.id}`,
+      kind: "handoff",
       title: `${step.ownerLabel}: ${step.title}`,
       description: step.summary,
       meta: t(collaborationTaskStepStateLabel(step.state)),
@@ -100,6 +116,7 @@ function buildCollaborationActiveRows(card: CollaborationTaskCardModel, t: Trans
   if (card.blocker && !visibleSteps.some((step) => step.state === "blocked" || step.state === "failed")) {
     rows.push({
       id: "collaboration-blocker",
+      kind: "watch",
       title: t("Collaboration blocked"),
       description: card.blocker,
       tone: "failed",
@@ -108,12 +125,45 @@ function buildCollaborationActiveRows(card: CollaborationTaskCardModel, t: Trans
   if (card.pendingApprovalCount > 0) {
     rows.push({
       id: "collaboration-approvals",
+      kind: "approval",
       title: t("Waiting for approval"),
       description: t("{count} pending approvals", { count: card.pendingApprovalCount }),
       tone: "waiting",
     });
   }
   return rows.slice(0, 5);
+}
+
+function buildCollaborationAttentionRows(card: CollaborationTaskCardModel, t: Translate): readonly ConversationWorkCellRow[] {
+  const rows: ConversationWorkCellRow[] = [];
+  if (card.blocker) {
+    rows.push({
+      id: "collaboration-blocker",
+      kind: "watch",
+      title: t("Work blocked"),
+      description: card.blocker,
+      tone: "failed",
+    });
+  }
+  if (card.pendingApprovalCount > 0) {
+    rows.push({
+      id: "collaboration-approvals",
+      kind: "approval",
+      title: t("Waiting for approval"),
+      description: t("{count} pending approvals", { count: card.pendingApprovalCount }),
+      tone: "waiting",
+    });
+  }
+  if (card.nextAction && rows.length > 0) {
+    rows.push({
+      id: "collaboration-next-action",
+      kind: "watch",
+      title: t("Next action"),
+      description: card.nextAction,
+      tone: card.pendingApprovalCount > 0 ? "waiting" : "neutral",
+    });
+  }
+  return rows.slice(0, 3);
 }
 
 function buildCollaborationBranchRows(card: CollaborationTaskCardModel, t: Translate): readonly ConversationWorkCellBranch[] | undefined {
@@ -129,6 +179,7 @@ function buildCollaborationBranchRows(card: CollaborationTaskCardModel, t: Trans
     stateLabel: t(collaborationTaskStepStateLabel(branch.state)),
     rows: branch.steps.slice(0, 6).map((step) => ({
       id: `branch-step:${step.id}`,
+      kind: "handoff" as const,
       title: `${step.ownerLabel}: ${step.title}`,
       description: step.summary,
       meta: t(collaborationTaskStepStateLabel(step.state)),
@@ -157,6 +208,7 @@ function buildFinalLingReportRows(
   const blocker = readFailedStepSummary(card) ?? card.blocker;
   const rows: ConversationWorkCellRow[] = [{
     id: "final-outcome",
+    kind: "verify",
     title: t("Outcome"),
     description: buildFinalOutcomeSummary(card, base, t),
     meta: t(collaborationTaskCardModeLabel(card.mode)),
@@ -170,6 +222,7 @@ function buildFinalLingReportRows(
 
   rows.push({
     id: "final-changed",
+    kind: "edit",
     title: t("Changed"),
     description: changedRows.length > 0
       ? t("Changed: {items}. Evidence recorded: {evidence}.", { items: summarizeFinalReportRows(changedRows, t), evidence: evidenceCount })
@@ -180,6 +233,7 @@ function buildFinalLingReportRows(
 
   rows.push({
     id: "final-validated",
+    kind: "verify",
     title: t("Validated"),
     description: validationRows.length > 0
       ? t("{count} validation records: {items}", { count: validationRows.length, items: summarizeFinalReportRows(validationRows, t) })
@@ -204,7 +258,10 @@ function buildFinalOutcomeSummary(
   t: Translate,
 ): string {
   if (card.mode === "completed") {
-    return readFinalStepSummary(card) ?? t("No completion summary was recorded.");
+    const summary = readFinalStepSummary(card);
+    return summary && !isGenericRunSuccessSummary(summary)
+      ? summary
+      : t("Task finished successfully.");
   }
   if (card.mode === "blocked") {
     return t("Collaboration blocked: {reason}", { reason: card.blocker ?? readFailedStepSummary(card) ?? base.summary });
@@ -225,6 +282,7 @@ function buildFinalBlockerRow(input: {
   const isHealthy = input.card.mode === "completed" && !input.blocker && !attentionSummary;
   return {
     id: "final-blockers-risks",
+    kind: "watch",
     title: input.t("Blockers / risks"),
     description: input.blocker
       ? input.t("Blocker: {reason}", { reason: input.blocker })
@@ -239,23 +297,26 @@ function buildFinalNextActionRow(card: CollaborationTaskCardModel, t: Translate)
   if (card.mode === "blocked") {
     return {
       id: "final-next-action",
+      kind: "watch",
       title: t("Next action"),
-      description: card.nextAction ?? t("Review the blocker, then open workflow evidence for source records."),
+      description: card.nextAction ?? t("Review the blocker, then expand the evidence summary for source records."),
       tone: "waiting",
     };
   }
   if (card.mode === "failed") {
     return {
       id: "final-next-action",
+      kind: "watch",
       title: t("Next action"),
-      description: card.nextAction ?? t("Review the failure, then open workflow evidence for source records."),
+      description: card.nextAction ?? t("Review the failure, then expand the evidence summary for source records."),
       tone: "failed",
     };
   }
   return {
     id: "final-next-action",
+    kind: "watch",
     title: t("Next action"),
-    description: t("Open workflow evidence for details if needed."),
+    description: t("Expand the evidence summary for details if needed."),
     tone: "neutral",
   };
 }

@@ -35,6 +35,8 @@ import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
 import { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../runtime/supervisor.js";
+import { ensureStartupReadyForRun } from "../../startup/run-gate.js";
+import type { StartupStateRegistry } from "../../startup/state.js";
 import {
   isActiveWorkUnitStatus,
   isTerminalWorkUnitStatus,
@@ -91,6 +93,7 @@ export interface ExecuteRunRequestOptions {
   readonly onRunReady?: (runId: string) => void;
   readonly afterRunTerminal?: (run: RunSession) => void;
   readonly controlPlaneEvents?: ControlPlaneEventHub;
+  readonly startupState?: StartupStateRegistry;
 }
 
 export interface RunExecutionSink {
@@ -200,6 +203,13 @@ export async function executeRunRequest(
   let workspaceCwd = "";
   try {
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
+    await ensureStartupReadyForRun({
+      cwd: workspaceCwd,
+      startupState: options.startupState,
+      storeRegistry,
+      runnerRegistry,
+      secretResolver,
+    });
     store = storeRegistry.getStore(workspaceCwd);
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);

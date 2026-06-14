@@ -22,6 +22,7 @@ import type {
   RunEventEnvelope,
   RunFormState,
   SessionPermissionMode,
+  StartupStatusResponse,
   TaskRunActionState,
 } from "../types.js";
 import {
@@ -65,6 +66,7 @@ import {
 import { deriveChannelRuns } from "../lib/channel-artifacts.js";
 import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammates.js";
 import { readDataString } from "../lib/data.js";
+import { getStartupStatus, refreshStartupStatus } from "../api/startup.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
 import {
   readRunWorkspaceCwd,
@@ -157,6 +159,10 @@ export function AppShell(): JSX.Element {
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
+  const [startupStatus, setStartupStatus] = useState<StartupStatusResponse | undefined>();
+  const [startupStatusLoading, setStartupStatusLoading] = useState(false);
+  const [startupStatusAction, setStartupStatusAction] = useState<"refresh" | undefined>();
+  const [startupStatusError, setStartupStatusError] = useState("");
   const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -658,8 +664,58 @@ export function AppShell(): JSX.Element {
       resetRuntimeForCwd();
       resetSettingsForCwd();
       resetDurableWorkItemsForCwd();
+      setStartupStatus(undefined);
+      setStartupStatusError("");
+      setStartupStatusAction(undefined);
     },
   });
+
+  async function loadStartupStatus(workspaceCwd = form.cwd.trim()): Promise<void> {
+    if (!workspaceCwd) {
+      setStartupStatus(undefined);
+      setStartupStatusError("");
+      return;
+    }
+    setStartupStatusLoading(true);
+    setStartupStatusError("");
+    try {
+      const response = await getStartupStatus(workspaceCwd);
+      setStartupStatus(response);
+    } catch (caught) {
+      setStartupStatus(undefined);
+      setStartupStatusError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setStartupStatusLoading(false);
+    }
+  }
+
+  async function refreshStartupDiagnostics(workspaceCwd = form.cwd.trim()): Promise<void> {
+    if (!workspaceCwd) {
+      return;
+    }
+    setStartupStatusAction("refresh");
+    setStartupStatusLoading(true);
+    setStartupStatusError("");
+    try {
+      const response = await refreshStartupStatus(workspaceCwd);
+      setStartupStatus(response);
+    } catch (caught) {
+      setStartupStatusError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setStartupStatusAction(undefined);
+      setStartupStatusLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    const workspaceCwd = form.cwd.trim();
+    if (daemonHealthy !== true || !workspaceCwd) {
+      setStartupStatus(undefined);
+      setStartupStatusError("");
+      return;
+    }
+    void loadStartupStatus(workspaceCwd);
+  }, [daemonHealthy, form.cwd]);
 
   function markChannelRead(channelId: string): void {
     setChannelUnreadById((current) => current[channelId] ? removeRecordKey(current, channelId) : current);
@@ -1231,6 +1287,7 @@ export function AppShell(): JSX.Element {
           refreshRuntimeState(defaultWorkspaceCwd),
           refreshUsedMemoryAudit(defaultWorkspaceCwd),
           refreshWorkItems(defaultWorkspaceCwd),
+          loadStartupStatus(defaultWorkspaceCwd),
         ]).catch((error: unknown) => {
           setErrorMessage(error instanceof Error ? error.message : String(error));
         });
@@ -1813,6 +1870,7 @@ export function AppShell(): JSX.Element {
                     runtimeSettingsForm={runtimeSettingsForm}
                     skillLibraryRefreshToken={skillLibraryRefreshToken}
                     effectiveConfig={effectiveConfig}
+                    startupStatus={startupStatus}
                     workspaceResponseLanguage={workspaceSettings?.responseLanguage ?? effectiveConfig?.values.responseLanguage.value ?? "follow_user"}
                     selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
                     externalWorkStatus={externalWorkStatus}
@@ -1834,6 +1892,9 @@ export function AppShell(): JSX.Element {
                     runtimeSettingsLoading={runtimeSettingsLoading}
                     runtimeSettingsAction={runtimeSettingsAction}
                     runtimeSettingsError={runtimeSettingsError}
+                    startupStatusLoading={startupStatusLoading}
+                    startupStatusAction={startupStatusAction}
+                    startupStatusError={startupStatusError}
                     externalWorkStatusLoading={externalWorkStatusLoading}
                     externalWorkStatusAction={externalWorkStatusAction}
                     externalWorkSecretAction={externalWorkSecretAction}
@@ -1844,6 +1905,7 @@ export function AppShell(): JSX.Element {
                     onRefresh={() => void refreshApprovalPolicy()}
                     onSave={() => void saveApprovalPolicy()}
                     onWorkspaceResponseLanguageChange={(responseLanguage) => patchWorkspaceSettings({ responseLanguage })}
+                    onRefreshStartup={() => void refreshStartupDiagnostics()}
                     onRuntimeSettingsFormChange={setRuntimeSettingsForm}
                     onToggleAllowedRunner={toggleAllowedRunner}
                     onRefreshRuntimeSettings={() => void refreshRuntimeSettings()}

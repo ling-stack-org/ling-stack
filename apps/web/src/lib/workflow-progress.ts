@@ -8,6 +8,7 @@ import type {
   ConversationWorkCellRowTone,
   ConversationWorkCellViewModel,
 } from "./conversation-work-cell.js";
+import { normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import { truncatePreview } from "./data.js";
 
 export type WorkflowProgressMode = "active" | "completed";
@@ -49,9 +50,16 @@ export interface BuildWorkflowProgressInput {
 export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): WorkflowProgressModel {
   const orderedSteps = [...input.steps].sort((left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt));
   const stepRunIds = orderedSteps.map((step) => step.runId).filter((runId): runId is string => Boolean(runId));
+  const stepIds = new Set(orderedSteps.map((step) => step.id));
   const runById = new Map(input.runs.map((run) => [run.id, run]));
-  const workflowRuns = stepRunIds.map((runId) => runById.get(runId)).filter((run): run is RunSession => Boolean(run));
-  const artifacts = stepRunIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
+  const workflowRuns = input.runs.filter((run) =>
+    stepRunIds.includes(run.id) || Boolean(run.workflowStepId && stepIds.has(run.workflowStepId)),
+  );
+  const runIds = uniqueStrings([
+    ...stepRunIds,
+    ...workflowRuns.map((run) => run.id),
+  ]);
+  const artifacts = runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
   const workflowApprovals = input.approvals.filter((approval) => approvalBelongsToWorkflow(approval, orderedSteps, workflowRuns));
   const pendingApprovals = workflowApprovals.filter((approval) => approval.status === "pending");
   const completedSteps = orderedSteps.filter((step) => step.status === "succeeded" || step.status === "skipped").length;
@@ -74,7 +82,6 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const mode: WorkflowProgressMode = input.workflow.status === "draft" || input.workflow.status === "ready" || input.workflow.status === "running" || input.workflow.status === "waiting_for_approval"
     ? "active"
     : "completed";
-  const runIds = uniqueStrings(stepRunIds);
   const anchorRunId = latestRun(workflowRuns)?.id ?? `workflow:${input.workflow.id}`;
   const evidenceLinks = artifacts.slice(0, 5).map((artifact) => ({
     id: artifact.id,
@@ -126,8 +133,9 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
 }
 
 export function workflowProgressToConversationWorkCell(model: WorkflowProgressModel): ConversationWorkCellViewModel {
-  return {
+  return normalizeConversationOperationCell({
     id: model.id,
+    sourceKind: "workflow",
     threadId: `workflow:${model.workflowId}`,
     anchorRunId: model.anchorRunId,
     runIds: model.runIds,
@@ -136,11 +144,13 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
     title: model.title,
     summary: model.summary,
     stats: model.stats,
-    activeRows: model.currentRows,
+    operationRows: model.currentRows,
+    agentBranches: [],
+    terminalReportRows: [],
     groups: model.groups,
     evidenceLinks: model.evidenceLinks,
     updatedAt: model.updatedAt,
-  };
+  });
 }
 
 export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
@@ -156,6 +166,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
   const changedArtifacts = artifacts.filter((artifact) => artifact.type === "diff" || artifact.type === "file");
   const changedRows: ConversationWorkCellRow[] = uniqueBy(changedArtifacts, (artifact) => artifact.path || artifact.id).slice(0, 10).map((artifact) => ({
     id: `changed:${artifact.id}`,
+    kind: "edit",
     title: artifact.title || artifact.path || artifact.id,
     description: artifact.path,
     meta: artifact.type,
@@ -163,6 +174,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
   }));
   const checkedRows: ConversationWorkCellRow[] = input.evidence.steps.slice(0, 16).map(({ step, diagnostics }) => ({
     id: `step:${step.id}`,
+    kind: "verify",
     title: `${step.toParticipantLabel}: ${step.title}`,
     description: step.resultSummary ?? step.blocker ?? truncatePreview(step.prompt, 160),
     meta: diagnostics.length > 0 ? `${step.status} · ${diagnostics.length} diagnostics` : step.status,
@@ -172,6 +184,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
   const evidenceRows: ConversationWorkCellRow[] = [
     ...artifacts.slice(0, 10).map((artifact) => ({
       id: `artifact:${artifact.id}`,
+      kind: artifact.type === "diff" || artifact.type === "file" || artifact.path ? "edit" as const : "verify" as const,
       title: artifact.title || artifact.path || artifact.id,
       description: artifact.path,
       meta: artifact.type,
@@ -179,6 +192,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     })),
     ...input.evidence.selectorDecisions.slice(0, 8).map((decision) => ({
       id: `selector:${decision.id}`,
+      kind: "handoff" as const,
       title: t("Speaker selection"),
       description: decision.reason,
       meta: decision.status,
@@ -186,6 +200,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     })),
     ...input.evidence.handoffIntents.slice(0, 8).map((intent) => ({
       id: `handoff-intent:${intent.id}`,
+      kind: "handoff" as const,
       title: t("Handoff intent"),
       description: `${intent.fromParticipantLabel} -> ${intent.toParticipantLabel ?? intent.toParticipantId}: ${intent.reason}`,
       meta: intent.status,
@@ -193,6 +208,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     })),
     ...input.evidence.memoryCandidates.slice(0, 8).map((candidate) => ({
       id: `memory-candidate:${candidate.memory.id}`,
+      kind: "read" as const,
       title: t("Memory candidate"),
       description: candidate.memory.title,
       meta: candidate.memory.reviewState,
@@ -202,6 +218,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
   const diagnosticRows: ConversationWorkCellRow[] = input.evidence.steps.flatMap(({ step, diagnostics }) =>
     diagnostics.slice(0, 4).map((diagnostic) => ({
       id: `diagnostic:${step.id}:${diagnostic.kind}:${diagnostic.message}`,
+      kind: "watch" as const,
       title: step.title,
       description: diagnostic.message,
       meta: diagnostic.severity,
@@ -212,6 +229,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     .slice(0, 8)
     .map((approval) => ({
       id: `approval:${approval.id}`,
+      kind: "approval" as const,
       title: approval.title,
       description: approval.description,
       meta: approval.status === "pending" ? t("Waiting for approval") : t(approval.status),
@@ -222,6 +240,7 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     .slice(0, 8)
     .map(({ step }) => ({
       id: `attention-step:${step.id}`,
+      kind: "watch" as const,
       title: step.title,
       description: step.blocker ?? step.resultSummary ?? t("Needs attention"),
       meta: step.status,
@@ -314,6 +333,7 @@ function buildWorkflowContextPackRows(
 
   const rows: ConversationWorkCellRow[] = [{
     id: `context-pack:${step.id}`,
+    kind: "read",
     title: stepTitle,
     description: [
       `${t("Kind")}: ${pack.kind}`,
@@ -327,6 +347,7 @@ function buildWorkflowContextPackRows(
 
   rows.push({
     id: `context-sections:${step.id}`,
+    kind: "read",
     title: t("Kept sections"),
     description: pack.sections.length > 0
       ? truncatePreview(pack.sections.map(formatContextPackSection).join(", "), 220)
@@ -337,6 +358,7 @@ function buildWorkflowContextPackRows(
 
   rows.push({
     id: `context-dropped:${step.id}`,
+    kind: "read",
     title: t("Dropped sections"),
     description: pack.droppedSectionIds.length > 0
       ? truncatePreview(pack.droppedSectionIds.join(", "), 220)
@@ -347,6 +369,7 @@ function buildWorkflowContextPackRows(
 
   rows.push({
     id: `context-source-refs:${step.id}`,
+    kind: "read",
     title: t("Source refs"),
     description: pack.sourceRefs.length > 0
       ? truncatePreview(summarizeContextPackSourceRefs(pack.sourceRefs), 220)
@@ -358,6 +381,7 @@ function buildWorkflowContextPackRows(
   if (pack.compactionIds.length > 0) {
     rows.push({
       id: `context-compactions:${step.id}`,
+      kind: "watch",
       title: t("Compactions"),
       description: truncatePreview(pack.compactionIds.join(", "), 220),
       meta: String(pack.compactionIds.length),
@@ -369,6 +393,7 @@ function buildWorkflowContextPackRows(
   if (protocolSummary) {
     rows.push({
       id: `context-protocol:${step.id}`,
+      kind: "handoff",
       title: t("Collaboration protocol"),
       description: protocolSummary,
       meta: "channel_collaboration_protocol",
@@ -389,6 +414,7 @@ function buildWorkflowContextInspectRows(input: {
   if (inspect.availability !== "available") {
     return [{
       id: `context-inspect:${stepId}`,
+      kind: "read",
       title: stepTitle,
       description: workflowContextInspectAvailabilityLabel(inspect.availability, t),
       meta: inspect.contextArtifactId ? `artifact:${inspect.contextArtifactId}` : t("missing"),
@@ -398,6 +424,7 @@ function buildWorkflowContextInspectRows(input: {
 
   const rows: ConversationWorkCellRow[] = [{
     id: `context-inspect:${stepId}`,
+    kind: "read",
     title: stepTitle,
     description: [
       `${t("Kind")}: ${inspect.kind ?? "unknown"}`,
@@ -411,6 +438,7 @@ function buildWorkflowContextInspectRows(input: {
 
   rows.push({
     id: `context-inspect-sections:${stepId}`,
+    kind: "read",
     title: t("Kept sections"),
     description: inspect.sections.length > 0
       ? truncatePreview(inspect.sections.map(formatContextInspectSection).join(", "), 220)
@@ -421,6 +449,7 @@ function buildWorkflowContextInspectRows(input: {
 
   rows.push({
     id: `context-inspect-dropped:${stepId}`,
+    kind: "read",
     title: t("Dropped sections"),
     description: inspect.droppedSectionIds.length > 0
       ? truncatePreview(inspect.droppedSectionIds.join(", "), 220)
@@ -431,6 +460,7 @@ function buildWorkflowContextInspectRows(input: {
 
   rows.push({
     id: `context-inspect-source-refs:${stepId}`,
+    kind: "read",
     title: t("Source refs"),
     description: inspect.sourceRefs.length > 0
       ? truncatePreview(summarizeContextPackSourceRefs(inspect.sourceRefs), 220)
@@ -442,6 +472,7 @@ function buildWorkflowContextInspectRows(input: {
   if (inspect.compactionIds.length > 0) {
     rows.push({
       id: `context-inspect-compactions:${stepId}`,
+      kind: "watch",
       title: t("Compactions"),
       description: truncatePreview(inspect.compactionIds.join(", "), 220),
       meta: String(inspect.compactionCount),
@@ -451,6 +482,7 @@ function buildWorkflowContextInspectRows(input: {
 
   rows.push({
     id: `context-inspect-safety:${stepId}`,
+    kind: "watch",
     title: t("Safety boundary"),
     description: workflowContextInspectSafetyLabel(inspect, t),
     meta: t("Developer diagnostics"),
@@ -634,6 +666,7 @@ function buildCurrentRows(input: {
   if (prioritized) {
     rows.push({
       id: `step:${prioritized.id}`,
+      kind: "handoff",
       title: workflowStepProgressTitle(prioritized, input.t),
       description: prioritized.blocker ?? prioritized.prompt,
       meta: prioritized.status,
@@ -643,6 +676,7 @@ function buildCurrentRows(input: {
   if (input.pendingApprovalCount > 0) {
     rows.push({
       id: "approvals",
+      kind: "approval",
       title: input.t("Waiting for approval"),
       description: input.t("{count} pending approvals", { count: input.pendingApprovalCount }),
       tone: "waiting",
@@ -650,6 +684,7 @@ function buildCurrentRows(input: {
   }
   rows.push({
     id: "completed",
+    kind: "verify",
     title: input.t("Step progress"),
     description: input.t("{done} of {total} steps complete", { done: input.completedSteps, total: input.totalSteps }),
     tone: input.completedSteps === input.totalSteps && input.totalSteps > 0 ? "success" : "neutral",
@@ -657,6 +692,7 @@ function buildCurrentRows(input: {
   if (input.artifactCount > 0) {
     rows.push({
       id: "artifacts",
+      kind: "edit",
       title: input.t("Evidence captured"),
       description: input.t("{count} evidence items", { count: input.artifactCount }),
       tone: "success",
@@ -674,6 +710,7 @@ function buildWorkflowProgressGroups(input: {
   const changedArtifacts = input.artifacts.filter((artifact) => artifact.type === "diff" || artifact.type === "file");
   const changedRows = uniqueBy(changedArtifacts, (artifact) => artifact.path || artifact.id).slice(0, 8).map((artifact) => ({
     id: `changed:${artifact.id}`,
+    kind: "edit" as const,
     title: artifact.title || artifact.path || artifact.id,
     description: artifact.path,
     meta: artifact.type,
@@ -681,6 +718,7 @@ function buildWorkflowProgressGroups(input: {
   }));
   const checkedRows = input.steps.slice(0, 12).map((step) => ({
     id: `step:${step.id}`,
+    kind: "verify" as const,
     title: `${step.toParticipantLabel}: ${step.title}`,
     description: step.resultSummary ?? step.blocker ?? truncatePreview(step.prompt, 140),
     meta: step.status,
@@ -688,6 +726,7 @@ function buildWorkflowProgressGroups(input: {
   }));
   const evidenceRows: ConversationWorkCellRow[] = input.artifacts.slice(0, 10).map((artifact) => ({
     id: `artifact:${artifact.id}`,
+    kind: artifact.type === "diff" || artifact.type === "file" ? "edit" as const : "verify" as const,
     title: artifact.title || artifact.path || artifact.id,
     description: artifact.path,
     meta: artifact.type,
@@ -695,6 +734,7 @@ function buildWorkflowProgressGroups(input: {
   }));
   evidenceRows.push(...input.approvals.slice(0, 8).map((approval) => ({
     id: `approval-evidence:${approval.id}`,
+    kind: "approval" as const,
     title: approval.title,
     description: approval.description,
     meta: approval.status,
@@ -704,6 +744,7 @@ function buildWorkflowProgressGroups(input: {
     if (step.metadata?.contextArtifactId) {
       evidenceRows.push({
         id: `context-packet:${step.id}`,
+        kind: "read",
         title: input.t("Context packet"),
         description: step.title,
         meta: step.metadata.contextArtifactId,
@@ -713,6 +754,7 @@ function buildWorkflowProgressGroups(input: {
     if (step.metadata?.outputArtifactId) {
       evidenceRows.push({
         id: `output-packet:${step.id}`,
+        kind: "verify",
         title: input.t("Output packet"),
         description: step.title,
         meta: step.metadata.outputArtifactId,
@@ -726,6 +768,7 @@ function buildWorkflowProgressGroups(input: {
       .slice(0, 5)
       .map((approval) => ({
       id: `approval:${approval.id}`,
+      kind: "approval" as const,
       title: approval.title,
       description: approval.description,
       meta: approval.status === "pending" ? input.t("Waiting for approval") : input.t(approval.status),
@@ -733,6 +776,7 @@ function buildWorkflowProgressGroups(input: {
     })),
     ...input.steps.filter((step) => step.status === "blocked" || step.status === "failed").slice(0, 5).map((step) => ({
       id: `attention-step:${step.id}`,
+      kind: "watch" as const,
       title: step.title,
       description: step.blocker ?? step.resultSummary ?? input.t("Needs attention"),
       meta: step.status,

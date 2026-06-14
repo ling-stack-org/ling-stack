@@ -9,6 +9,7 @@ Related docs:
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Codex-Like Execution Experience](codex-like-execution.md)
+- [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Inline Runtime Approval Detailed Design](inline-runtime-approval-detailed-design.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
@@ -39,16 +40,40 @@ Target user experience:
 user sends a turn with text, mentions, attachments, links, file refs, or guidance
 -> Ling Agent builds one TurnEnvelope
 -> Context Processing Layer builds the relevant Channel Context View
--> Ling Agent understands whether this is chat, attachment work, executable work,
-   continuation, or approval
+-> TargetResolver resolves the referenced thing: current text, prior message,
+   attachment, file ref, active proposal, workflow, run, or approval
+-> IntentRouter decides one outcome: answer, clarify, direct workflow, workflow
+   proposal, visible multi-reply, active-session follow-up, approval response, or no-reply
+-> @mentions, selected teammates, and requestAiReply are preference signals, not
+   top-level route branches
 -> Ling Agent auto-starts clearly scoped safe work, or asks one clarifying question
 -> Ling Agent shows confirmation only when scope or policy requires it
 -> Ling Agent uses specialists when useful and available
 -> execution flows through workflow/run/approval
--> active process stays visible while running
--> terminal process collapses into a final result report
+-> active process stays visible as one operation cell while running
+-> terminal process commits once and collapses into a final result report
 -> evidence remains expandable
 ```
+
+## Conversation Projection Boundary
+
+The concrete Web projection is defined in
+[Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md).
+
+That document merges two product concerns:
+
+- `CoordinatorMessageCell`: Ling Agent owns user-facing narration, clarification,
+  blocked-state explanation, and final synthesis.
+- `OperationCell`: executable work appears as one visible work object that mutates while
+  active and commits once when terminal.
+- `AgentBranchRow`: specialist teammates appear as compact branches inside the operation
+  unless the user is directly chatting with that teammate.
+- `EvidenceDetail`: commands, stdout/stderr, raw events, workflow packets, JSON, provider
+  metadata, and ids remain in expandable evidence or diagnostic detail.
+
+This boundary prevents the same task from rendering as a Ling Agent message, workflow
+card, run card, collaboration card, right-drawer duplicate, and raw log row at the same
+time.
 
 ## Problem
 
@@ -83,8 +108,9 @@ Ling Agent owns the conversation session. It is the product-level coordinator th
   context from raw channel data;
 - appears as a built-in teammate in workspace roster, channel membership, mentions, and
   private chat;
-- decides whether the message is ordinary chat, executable work, a continuation, an
-  approval-related response, or a clarification;
+- resolves what the user is referring to before deciding how to respond;
+- decides one structured turn outcome: answer, clarify, direct workflow, workflow
+  proposal, visible multi-reply, active-session follow-up, approval response, no-reply;
 - chooses one or more specialist teammates when they improve the work;
 - falls back to direct execution when no specialist is required or available;
 - turns executable intent into an auditable proposal, task, or workflow;
@@ -93,6 +119,77 @@ Ling Agent owns the conversation session. It is the product-level coordinator th
 - keeps running process visible without making internals the default transcript;
 - reports terminal results in user language;
 - links evidence for audit.
+
+## Coordinator Decision Contract
+
+Ling Agent Coordinator is the only first-class channel turn entry point. "Ordinary chat"
+is not an entry mode. It is the `answer` outcome after higher-priority session, target,
+execution, approval, and clarification paths decline the turn.
+
+```ts
+type TurnDecision =
+  | { kind: "answer"; responderHint?: string }
+  | { kind: "clarify"; question: string; missing: readonly string[] }
+  | { kind: "direct_workflow"; target: ResolvedTarget; requiredTools: readonly RunTool[] }
+  | { kind: "workflow_proposal"; target?: ResolvedTarget; steps: readonly WorkflowStepDraft[] }
+  | { kind: "visible_multi_reply"; teammateIds: readonly string[] }
+  | { kind: "active_session_followup"; mode: "queue" | "interrupt"; targetRunId: string }
+  | { kind: "approval_response"; approvalId: string; decision: "approve" | "deny" | "revise" }
+  | { kind: "no_reply"; reason: "system_noise" | "duplicate" | "non_root" };
+```
+
+The names above are design roles, not required exported TypeScript names. The invariant is
+that every user-visible response is derived from one coordinator decision. Lower-level
+selector, router, workflow, run, approval, and evidence records may be created, but they
+must not become competing top-level conversation concepts.
+
+### TargetResolver
+
+Target resolution runs before answer routing. It may resolve targets from:
+
+- explicit current-turn text, such as `login.html`, `/Users/.../README.md`, a command, or
+  a quoted file ref;
+- uploaded or pasted assets in the TurnEnvelope;
+- the latest active proposal, workflow step, run, pending approval, or queued
+  intervention;
+- recent same-session messages when the current turn is a follow-up such as "直接做好",
+  "落到工作区", "按刚才那个改", or "帮我保存";
+- recent workflow/proposal evidence when the user gives a filename-only follow-up such
+  as "在 README.md 里加一句".
+
+TargetResolver must be conservative:
+
+- one clear target -> pass it to IntentRouter with a source ref;
+- multiple plausible targets -> `clarify`;
+- no target and the request is execution-shaped -> `clarify`;
+- no target and the request is informational -> `answer`;
+- never infer broad workspace mutation from a vague acknowledgement.
+
+### IntentRouter
+
+IntentRouter consumes the resolved target, TurnEnvelope, active-session state, mentions,
+and policy hints. It returns a `TurnDecision`; it does not execute tools. It may use
+deterministic rules first and model-assisted classification behind strict JSON
+validation, but model output cannot grant tools, approvals, secrets, provider access,
+deploy authority, external-send authority, or memory authority.
+
+`@Ling Agent`, `@Designer`, selected teammate chips, and `requestAiReply` are input
+signals. They may influence `responderHint`, participant selection, or whether an
+ordinary `answer` is expected. They must not short-circuit executable intent handling.
+
+### Policy Gate
+
+Policy Gate converts a work decision into one of:
+
+- auto-start through the existing workflow/run path when scope is clear and required
+  tools are not denied;
+- confirmation card when scope is clear but user confirmation is required;
+- inline runtime approval when the run reaches a side-effecting tool;
+- blocked task explanation when provider, runner, workspace, or policy prevents work;
+- clarification when target or acceptance is missing.
+
+Policy Gate is the only layer that decides whether execution can start. IntentRouter can
+say "this is work"; it cannot say "this write is approved."
 
 The user should not need to understand:
 
@@ -179,9 +276,9 @@ does not contain `Thinking...` or `AI teammate is preparing a reply...` as if it
 real conversation history. If the context budget is tight, optional layers are trimmed or
 compacted before the current turn itself is dropped.
 
-This boundary matches the behavior users expect from Codex, Claude, GPT, and Grok-style
-assistants: the visible conversation feels continuous, while the runtime still uses a
-budgeted and privacy-aware context pack instead of blindly replaying everything.
+This boundary matches the behavior users expect from modern agent assistants: the visible
+conversation feels continuous, while the runtime still uses a budgeted and privacy-aware
+context pack instead of blindly replaying everything.
 
 Rules:
 

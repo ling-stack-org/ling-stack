@@ -208,3 +208,22 @@ test("work unit transitions enforce supervisor lifecycle and terminal guards", (
     },
   );
 });
+
+test("work unit can finish if approval resume event was already consumed", () => {
+  const waiting = transitionWorkUnit({
+    entityId: "wu_approval",
+    currentStatus: "running",
+    event: "approval_requested",
+    actor: "system",
+  });
+  assert.deepEqual(waiting, { ok: true, from: "running", to: "waiting_for_approval" });
+
+  const succeeded = transitionWorkUnit({
+    entityId: "wu_approval",
+    currentStatus: waiting.to,
+    expectedStatus: "waiting_for_approval",
+    event: "runner_succeeded",
+    actor: "runner",
+  });
+  assert.deepEqual(succeeded, { ok: true, from: "waiting_for_approval", to: "succeeded" });
+});

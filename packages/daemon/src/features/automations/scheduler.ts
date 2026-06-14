@@ -10,6 +10,7 @@ import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
+import type { StartupStateRegistry } from "../../startup/state.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
@@ -57,40 +58,56 @@ export class AutomationSchedulerRegistry {
     private readonly secretResolver: SecretResolver,
     private readonly mcpBroker: McpBroker,
     private readonly controlPlaneEvents: ControlPlaneEventHub,
+    private readonly startupState?: StartupStateRegistry,
   ) {}
 
   start(cwd: string): { readonly scheduler: AutomationSchedulerState; readonly duplicate: boolean } {
+    this.startupState?.setPhase(cwd, "automation_scheduler", "warming");
     const existing = this.entriesByCwd.get(cwd);
     if (existing?.state.status === "running") {
+      this.startupState?.setPhase(cwd, "automation_scheduler", "ready");
       return { scheduler: existing.state, duplicate: true };
     }
-    if (existing) {
-      this.clearTimers(existing);
-      this.entriesByCwd.delete(cwd);
-    }
+    try {
+      if (existing) {
+        this.clearTimers(existing);
+        this.entriesByCwd.delete(cwd);
+      }
 
-    const now = new Date().toISOString();
-    const store = this.storeRegistry.getStore(cwd);
-    const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
-    const entry: AutomationSchedulerEntry = {
-      state: {
-        id: `automation_scheduler_${randomUUID()}`,
-        cwd,
-        status: "running",
-        startedAt: now,
-        automationCount: automations.length,
-        tickCount: 0,
-        items: [],
-      },
-      timers: new Map(),
-      runningAutomationIds: new Set(),
-    };
-    this.entriesByCwd.set(cwd, entry);
-    for (const automation of automations) {
-      this.scheduleAutomation(entry, automation, new Date());
+      const now = new Date().toISOString();
+      const store = this.storeRegistry.getStore(cwd);
+      const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
+      const entry: AutomationSchedulerEntry = {
+        state: {
+          id: `automation_scheduler_${randomUUID()}`,
+          cwd,
+          status: "running",
+          startedAt: now,
+          automationCount: automations.length,
+          tickCount: 0,
+          items: [],
+        },
+        timers: new Map(),
+        runningAutomationIds: new Set(),
+      };
+      this.entriesByCwd.set(cwd, entry);
+      for (const automation of automations) {
+        this.scheduleAutomation(entry, automation, new Date());
+      }
+      this.refreshStateSummary(entry);
+      this.startupState?.setPhase(cwd, "automation_scheduler", "ready");
+      return { scheduler: entry.state, duplicate: false };
+    } catch (error) {
+      this.startupState?.setPhase(cwd, "automation_scheduler", "degraded");
+      this.startupState?.addDiagnostic(cwd, {
+        level: "warning",
+        code: "automation_scheduler_start_failed",
+        phase: "automation_scheduler",
+        message: error instanceof Error ? error.message : String(error),
+        nextAction: "Inspect automation definitions and scheduler logs.",
+      });
+      throw error;
     }
-    this.refreshStateSummary(entry);
-    return { scheduler: entry.state, duplicate: false };
   }
 
   list(cwd: string): AutomationSchedulerState[] {
@@ -205,6 +222,7 @@ export class AutomationSchedulerRegistry {
                 this.maybeContinueRunInterventions(terminalRun);
               },
               controlPlaneEvents: this.controlPlaneEvents,
+              startupState: this.startupState,
             },
           ),
       });
@@ -261,6 +279,7 @@ export class AutomationSchedulerRegistry {
       secretResolver: this.secretResolver,
       mcpBroker: this.mcpBroker,
       controlPlaneEvents: this.controlPlaneEvents,
+      startupState: this.startupState,
     });
   }
 

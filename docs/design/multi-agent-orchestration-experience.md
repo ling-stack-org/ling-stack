@@ -12,6 +12,7 @@ Related docs:
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Message Streaming](channel-message-streaming.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 
 P0-P3 implementation status as of 2026-06-09:
 
@@ -78,6 +79,11 @@ The product surface should follow
 requirement shaping appears as a compact shaping card, executable work appears as a task
 card, step outputs fold into handoff cards, and audit/debug details stay behind explicit
 expansion.
+
+For the default channel feed, those cards are projections inside the unified operation
+cell model in [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md). They should
+not render as a second first-level surface next to a run summary or Ling Agent completion
+message.
 
 ## Existing Boundaries
 
@@ -153,10 +159,11 @@ QA: I will start checking now.
 
 The live surface should reuse the existing Codex-inspired conversation model:
 
-- one active mutable run/work summary row,
-- one collaboration task card for the active workflow or shaping thread,
+- one active mutable `OperationCell` for the active workflow or shaping thread,
+- collaboration task fields rendered inside that operation cell rather than as a
+  duplicate first-level card,
 - the channel progress or attention popover for compact operational state,
-- the right drawer for detail,
+- the right drawer only for smart detail and raw/deep evidence,
 - folded evidence for runtime, memory, tools, files, lineage, approvals, and raw events.
 
 Step streams should fold when a step reaches terminal state. Serial workflows may show
@@ -396,8 +403,9 @@ Allowed by default:
 - user messages,
 - coordinator or mentioned-teammate replies,
 - execution proposals,
-- active mutable workflow/run progress rows,
-- terminal workflow/run summaries,
+- active mutable operation cells,
+- terminal operation summaries,
+- compact branch rows for visible specialist work,
 - blocked and approval-needed summaries.
 
 Not allowed by default:
@@ -439,6 +447,9 @@ The right drawer remains the smart detail surface. It should expose:
 - raw runtime evidence when opened.
 
 Raw audit/debug data should stay one level deeper than the default right drawer summary.
+If inline evidence on the operation cell already exposes the same smart detail, the main
+feed should not also show a separate button whose only purpose is to open the duplicate
+drawer view.
 
 ## Implementation Slices
 
@@ -469,7 +480,8 @@ Raw audit/debug data should stay one level deeper than the default right drawer 
 
 ### P3: Live Multi-Agent Progress Presentation
 
-- Extend existing active run/work summary presentation to multi-step workflows.
+- Extend existing active run/work summary presentation into operation cells for
+  multi-step workflows.
 - Show current teammate, current phase, completed step count, blockers, and artifacts.
 - Reuse the existing conversation row, attention/progress popover, and right drawer
   patterns.
@@ -517,8 +529,8 @@ Raw audit/debug data should stay one level deeper than the default right drawer 
 ### P8: Collaboration Cards And Ambient Audit
 
 - Add product-level requirement shaping cards before scope is executable.
-- Render confirmed workflows as collaboration task cards over existing workflow/proposal
-  records.
+- Render confirmed workflows as operation cells whose collaboration-task fields are
+  derived from existing workflow/proposal records.
 - Fold serial step streams into summaries and handoff cards after terminal state.
 - Keep parallel branch streams compact by default, with per-branch expansion.
 - Keep audit/debug details out of the default feed.

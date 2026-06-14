@@ -48,6 +48,12 @@ Runtime settings are resolved field by field:
 
 Invalid user runtime defaults are non-fatal diagnostics. Workspace runtime settings remain strict and may reject invalid fields because they are execution policy.
 
+At daemon startup, this same resolution runs for the default workspace as part of the
+startup readiness chain. User defaults are re-read on each process start, then merged
+with workspace runtime settings into an in-memory effective config snapshot. That
+snapshot is explanatory state only; run creation still validates runtime policy before
+claiming work and rejects invalid workspace runtime policy fail-closed.
+
 ## Provider Profiles
 
 The provider split uses two product nouns:
@@ -123,3 +129,9 @@ Provider and secrets follow-up coverage:
 - run creation snapshots the workspace preset and redacts secret refs/status,
 - `keychain:` reports unavailable without a resolver and never returns a value,
 - `local:` provider secrets remain readable only through the existing provider compatibility path.
+
+## Related
+
+- [Two-Layer Configuration](two-layer-configuration.md)
+- [Startup Readiness Chain](startup-readiness-chain.md)
+- [Secrets and Keychain](secrets-keychain.md)

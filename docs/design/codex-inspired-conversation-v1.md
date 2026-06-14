@@ -27,6 +27,7 @@ thread, expand the work that matters, and inspect exact evidence when needed.
 This document connects existing Ling Stack designs:
 
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Codex-Inspired File And Text Display v1](codex-inspired-file-text-display-v1.md)
 - [Channel Workspace v1.21 Codex-Style Chat Workspace](channel-workspace-v1.21.md)
 - [Channel Workspace v1.22 Long Conversation Virtual Feed](channel-workspace-v1.22.md)
@@ -113,6 +114,13 @@ Ling translations:
 Ling must not inherit Codex's single-agent assumption. Any Codex-style row that says
 "assistant worked" becomes a Ling row that names the teammate, selected skill, provider
 state, approval state, and memory scope when those facts matter.
+
+The current implementation boundary is defined in
+[Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md): Ling Agent owns
+coordinator narration and final synthesis, while multi-agent work appears as compact
+branch rows inside a single operation cell. This prevents the feed from duplicating the
+same task as coordinator messages, workflow rows, run rows, collaboration cards, and
+raw logs.
 
 ## Design Details To Borrow
 

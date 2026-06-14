@@ -5,6 +5,17 @@ import { truncatePreview } from "./data.js";
 
 export type ConversationWorkCellMode = "active" | "completed";
 export type ConversationWorkCellStatus = RunSession["status"] | LingTurn["status"] | ChannelWorkflow["status"];
+export type ConversationOperationCellSourceKind = "run_thread" | "workflow" | "collaboration_task";
+export type ConversationOperationKind =
+  | "plan"
+  | "read"
+  | "edit"
+  | "run_command"
+  | "search"
+  | "approval"
+  | "verify"
+  | "handoff"
+  | "watch";
 export type ConversationWorkCellGroupKind = "changed" | "checked" | "context" | "evidence" | "attention";
 export type ConversationWorkCellRowTone = "neutral" | "running" | "waiting" | "success" | "failed";
 
@@ -16,6 +27,7 @@ export interface ConversationWorkCellStat {
 
 export interface ConversationWorkCellRow {
   readonly id: string;
+  readonly kind?: ConversationOperationKind;
   readonly title: string;
   readonly description?: string;
   readonly meta?: string;
@@ -46,8 +58,9 @@ export interface ConversationWorkCellGroup {
   readonly rows: readonly ConversationWorkCellRow[];
 }
 
-export interface ConversationWorkCellViewModel {
+export interface ConversationOperationCellViewModel {
   readonly id: string;
+  readonly sourceKind: ConversationOperationCellSourceKind;
   readonly threadId: string;
   readonly turnId?: string;
   readonly anchorRunId: string;
@@ -56,17 +69,39 @@ export interface ConversationWorkCellViewModel {
   readonly status: ConversationWorkCellStatus;
   readonly presentation?: "default" | "collaboration_task";
   readonly kicker?: string;
-  readonly detailsLabel?: string;
   readonly showDiagnostics?: boolean;
   readonly title: string;
   readonly summary: string;
   readonly stats: readonly ConversationWorkCellStat[];
+  readonly operationRows: readonly ConversationWorkCellRow[];
+  readonly agentBranches: readonly ConversationWorkCellBranch[];
+  readonly terminalReportRows: readonly ConversationWorkCellRow[];
+  /** @deprecated Use operationRows. Kept while call sites migrate. */
   readonly activeRows: readonly ConversationWorkCellRow[];
+  /** @deprecated Use agentBranches. Kept while call sites migrate. */
   readonly branchRows?: readonly ConversationWorkCellBranch[];
+  /** @deprecated Use terminalReportRows. Kept while call sites migrate. */
   readonly finalReportRows?: readonly ConversationWorkCellRow[];
   readonly groups: readonly ConversationWorkCellGroup[];
   readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
   readonly updatedAt: string;
+}
+
+export type ConversationWorkCellViewModel = ConversationOperationCellViewModel;
+
+type ConversationOperationCellDraft =
+  Omit<ConversationOperationCellViewModel, "activeRows" | "branchRows" | "finalReportRows"> &
+  Partial<Pick<ConversationOperationCellViewModel, "activeRows" | "branchRows" | "finalReportRows">>;
+
+export function normalizeConversationOperationCell(
+  draft: ConversationOperationCellDraft,
+): ConversationOperationCellViewModel {
+  return {
+    ...draft,
+    activeRows: draft.activeRows ?? draft.operationRows,
+    branchRows: draft.branchRows ?? draft.agentBranches,
+    finalReportRows: draft.finalReportRows ?? draft.terminalReportRows,
+  };
 }
 
 export interface ConversationWorkCellDetailsModel {
@@ -119,8 +154,9 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     href: input.artifactHref?.(artifact),
   }));
 
-  return {
+  return normalizeConversationOperationCell({
     id: turnContext ? `work-cell:turn:${turnContext.turn.id}` : `work-cell:${input.threadId}`,
+    sourceKind: "run_thread",
     threadId: input.threadId,
     turnId: turnContext?.turn.id,
     anchorRunId: latestRun.id,
@@ -141,11 +177,13 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
       { id: "artifacts", label: input.t("Evidence"), value: String(artifacts.length) },
       { id: "approvals", label: input.t("Approvals"), value: String(approvals.length) },
     ],
-    activeRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
+    operationRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
+    agentBranches: [],
+    terminalReportRows: [],
     groups: buildWorkCellGroups({ t: input.t, runs, approvals, artifacts, actions, failedRuns, failedActions, pendingApprovals }),
     evidenceLinks,
     updatedAt: turnContext?.turn.updatedAt ?? latestRun.endedAt ?? latestRun.startedAt ?? latestRun.updatedAt,
-  };
+  });
 }
 
 export function groupRunsByThreadId(runs: readonly RunSession[]): ReadonlyMap<string, readonly RunSession[]> {
@@ -275,6 +313,7 @@ function buildActiveRows(input: {
   const rows: ConversationWorkCellRow[] = [];
   rows.push({
     id: `run:${input.latestRun.id}`,
+    kind: "watch",
     title: input.latestRun.status === "waiting_for_approval"
       ? input.t("Waiting for approval")
       : input.latestRun.status === "queued"
@@ -288,6 +327,7 @@ function buildActiveRows(input: {
   for (const approval of input.pendingApprovals.slice(0, 3)) {
     rows.push({
       id: `approval:${approval.id}`,
+      kind: "approval",
       title: approval.title,
       description: approval.description,
       meta: input.t("Approval required"),
@@ -298,6 +338,7 @@ function buildActiveRows(input: {
   for (const action of input.actions.slice(0, 4)) {
     rows.push({
       id: `action:${action.id}`,
+      kind: operationKindForExecutionAction(action),
       title: action.title,
       description: action.summary,
       meta: action.status,
@@ -314,6 +355,7 @@ function buildActiveRows(input: {
   if (input.artifacts.length > 0) {
     rows.push({
       id: "artifacts",
+      kind: "edit",
       title: input.t("Evidence captured"),
       description: input.t("{count} artifacts", { count: input.artifacts.length }),
       tone: "success",
@@ -323,6 +365,7 @@ function buildActiveRows(input: {
   if (input.runs.length > 1) {
     rows.push({
       id: "attempts",
+      kind: "watch",
       title: input.t("Prior attempts"),
       description: input.t("{count} attempts", { count: input.runs.length - 1 }),
       tone: "neutral",
@@ -345,6 +388,7 @@ function buildWorkCellGroups(input: {
   const changedArtifacts = input.artifacts.filter((artifact) => artifact.type === "diff" || artifact.type === "file" || Boolean(artifact.path));
   const changedRows = uniqueBy(changedArtifacts, (artifact) => artifact.path || artifact.id).slice(0, 8).map((artifact) => ({
     id: `artifact:${artifact.id}`,
+    kind: "edit" as const,
     title: artifact.title || artifact.path || artifact.id,
     description: artifact.path,
     meta: artifact.type,
@@ -352,21 +396,27 @@ function buildWorkCellGroups(input: {
   }));
   const checkedRows = input.runs.slice(0, 8).map((run) => ({
     id: `run:${run.id}`,
+    kind: "verify" as const,
     title: readRunTitle(run),
     description: run.errorMessage ? truncatePreview(run.errorMessage, 160) : run.providerName ? `${run.providerName} · ${run.providerModel}` : undefined,
     meta: run.status,
     tone: runStatusTone(run.status),
   }));
   const evidenceRows: ConversationWorkCellRow[] = [
-    ...input.artifacts.slice(0, 8).map((artifact) => ({
-      id: `evidence:${artifact.id}`,
-      title: artifact.title || artifact.path || artifact.id,
-      description: artifact.path,
-      meta: artifact.type,
-      tone: "neutral" as const,
-    })),
+    ...input.artifacts.slice(0, 8).map((artifact) => {
+      const kind: ConversationOperationKind = artifact.type === "diff" || artifact.type === "file" || artifact.path ? "edit" : "verify";
+      return {
+        id: `evidence:${artifact.id}`,
+        kind,
+        title: artifact.title || artifact.path || artifact.id,
+        description: artifact.path,
+        meta: artifact.type,
+        tone: "neutral" as const,
+      };
+    }),
     ...input.approvals.slice(0, 5).map((approval) => ({
       id: `approval:${approval.id}`,
+      kind: "approval" as const,
       title: approval.title,
       description: approval.description,
       meta: effectiveApprovalStatus(approval),
@@ -376,6 +426,7 @@ function buildWorkCellGroups(input: {
   const attentionRows: ConversationWorkCellRow[] = [
     ...input.pendingApprovals.slice(0, 5).map((approval) => ({
       id: `pending:${approval.id}`,
+      kind: "approval" as const,
       title: approval.title,
       description: approval.description,
       meta: input.t("Waiting for approval"),
@@ -383,6 +434,7 @@ function buildWorkCellGroups(input: {
     })),
     ...input.failedRuns.slice(0, 5).map((run) => ({
       id: `failed-run:${run.id}`,
+      kind: "watch" as const,
       title: readRunTitle(run),
       description: run.errorMessage ? truncatePreview(run.errorMessage, 180) : input.t("Run failed without a captured error message."),
       meta: run.status,
@@ -390,6 +442,7 @@ function buildWorkCellGroups(input: {
     })),
     ...input.failedActions.slice(0, 5).map((action) => ({
       id: `failed-action:${action.id}`,
+      kind: operationKindForExecutionAction(action),
       title: action.title,
       description: action.summary,
       meta: action.status,
@@ -503,6 +556,25 @@ function runStatusTone(status: RunSession["status"]): ConversationWorkCellRowTon
     return "running";
   }
   return "neutral";
+}
+
+function operationKindForExecutionAction(action: ExecutionAction): ConversationOperationKind {
+  if (action.actionType === "read" || action.actionType === "grep" || action.actionType === "find" || action.actionType === "ls") {
+    return "read";
+  }
+  if (action.actionType === "write" || action.actionType === "edit") {
+    return "edit";
+  }
+  if (action.actionType === "bash" || action.targetRefs.some((target) => target.type === "command")) {
+    return "run_command";
+  }
+  if (action.actionType === "workflow_step") {
+    return "handoff";
+  }
+  if (action.actionType === "mcp_tool_call") {
+    return "search";
+  }
+  return "approval";
 }
 
 function formatBytes(value: number): string {

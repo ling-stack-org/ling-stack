@@ -809,6 +809,7 @@ export function WorkspaceClientView({
   const activeRun = activeRunId ? runById.get(activeRunId) : undefined;
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const taskChannelById = useMemo(() => new Map(tasks.map((task) => [task.id, task.channelId])), [tasks]);
+  const workflowStepById = useMemo(() => new Map(channelWorkflowSteps.map((step) => [step.id, step])), [channelWorkflowSteps]);
   const channelAttachmentById = useMemo(
     () => new Map(channelAttachments.map((attachment) => [attachment.id, attachment])),
     [channelAttachments],
@@ -1173,7 +1174,10 @@ export function WorkspaceClientView({
   const providerBlocker = providerRunPreflightBlocker(effectiveProvider, t);
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
   const taskActionPending = activeTaskRunAction !== undefined;
-  const activeConversationRun = activeRun && runCanBeStopped(activeRun) ? activeRun : channelRuns.find(runCanBeStopped);
+  const activeConversationRun = activeRun && runCanBeStoppedInComposer(activeRun, workflowStepById)
+    ? activeRun
+    : channelRuns.find((candidate) => runCanBeStoppedInComposer(candidate, workflowStepById));
+  const activeConversationRunHasWorkflowStep = Boolean(activeConversationRun?.workflowStepId);
   const activeConversationSourceRunId = activeConversationRun ? activeConversationRun.parentRunId ?? activeConversationRun.id : "";
   const activeConversationTask = activeConversationRun?.taskId ? taskById.get(activeConversationRun.taskId) : undefined;
   const visibleRunGuidanceInterventions = useMemo(
@@ -1227,7 +1231,7 @@ export function WorkspaceClientView({
       }),
     [activeConversationRun, channelAttachmentById, channelLinkPreviewById, openRunGuidanceInterventions, runGuidanceCancelingId, runGuidancePromotingId, runGuidanceSubmitting, t],
   );
-  const channelActiveStatusStrip = activeConversationRun ? (
+  const channelActiveStatusStrip = activeConversationRun && !activeConversationRunHasWorkflowStep ? (
     <ConversationStatusStrip
       className="channel-active-status-strip"
       icon={<Workflow size={15} />}
@@ -3579,7 +3583,6 @@ export function WorkspaceClientView({
             model={workCell}
             detailsState={conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
             onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
-            onOpenDetails={openWorkflowEvidencePanel}
             onLoadDetails={loadWorkflowWorkCellDetails}
           />
         );
@@ -4429,8 +4432,6 @@ export function WorkspaceClientView({
       latestRun={latestRun}
       pendingApprovals={pendingChannelApprovals}
       collaborationTaskCards={[...collaborationTaskCardByWorkflowId.values()]}
-      proposals={channelExecutionProposals}
-      teammates={teammateOptions}
       selectedWorkflowWorkCell={selectedWorkflowWorkCell}
       selectedWorkflowDetailsState={selectedWorkflowEvidenceWorkflowId ? conversationWorkCellDetailsByKey[workflowWorkCellDetailsCacheKey(selectedWorkflowEvidenceWorkflowId)] ?? { status: "not_loaded" } : undefined}
       externalWorkCiTriage={externalWorkCiTriage}
@@ -7050,8 +7051,6 @@ function ChannelProgressPanel({
   latestRun,
   pendingApprovals,
   collaborationTaskCards,
-  proposals,
-  teammates,
   selectedWorkflowWorkCell,
   selectedWorkflowDetailsState,
   externalWorkCiTriage,
@@ -7070,8 +7069,6 @@ function ChannelProgressPanel({
   readonly latestRun: RunSession | undefined;
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly collaborationTaskCards: readonly CollaborationTaskCardModel[];
-  readonly proposals: readonly ChannelExecutionProposal[];
-  readonly teammates: readonly ChannelMention[];
   readonly selectedWorkflowWorkCell?: ConversationWorkCellViewModel;
   readonly selectedWorkflowDetailsState?: ConversationWorkCellDetailsState;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
@@ -7088,23 +7085,11 @@ function ChannelProgressPanel({
 }): JSX.Element {
   const { t } = useI18n();
   const visibleCollaborationTaskCards = prioritizeCollaborationTaskCards(collaborationTaskCards).slice(0, 3);
-  const activeProposals = proposals.filter((proposal) => proposal.status !== "cancelled" && proposal.status !== "superseded");
-  const collaborationRows = activeProposals
-    .flatMap((proposal) =>
-      proposal.collaborationSteps.slice(0, 2).map((step) => ({
-        id: `${proposal.id}:${step.teammateId}:${step.action}:${step.summary}`,
-        title: proposal.title,
-        teammate: teammateLabel(step.teammateId, teammates, t("Deleted teammate")),
-        summary: step.summary.trim() || t(proposalStepActionLabel(step.action)),
-      })),
-    )
-    .slice(0, 4);
   const hasProgress = Boolean(
     selectedTask ||
       latestRun ||
       pendingApprovals.length > 0 ||
       visibleCollaborationTaskCards.length > 0 ||
-      collaborationRows.length > 0 ||
       Boolean(selectedWorkflowWorkCell) ||
       externalWorkCiTriage.length > 0,
   );
@@ -7196,29 +7181,6 @@ function ChannelProgressPanel({
           </button>
         ) : null}
       </div>
-
-      {collaborationRows.length > 0 ? (
-        <section className="channel-progress-section">
-          <div className="task-strip-head">
-            <span>
-              <History size={15} />
-              <strong>{t("Collaboration")}</strong>
-            </span>
-            <small>{collaborationRows.length}</small>
-          </div>
-          <div className="channel-progress-list">
-            {collaborationRows.map((row) => (
-              <div key={row.id} className="channel-progress-row passive">
-                <span>
-                  <strong>{row.teammate}</strong>
-                  <small>{row.title}</small>
-                </span>
-                <p>{row.summary}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
 
       {pendingApprovals.length > 0 ? (
         <section className="channel-progress-section">
@@ -7335,7 +7297,7 @@ function CollaborationTaskProgressCard({
       ) : null}
       {showProgressDetails ? (
         visibleBranches.length > 0 ? (
-          <span className="collaboration-task-branch-list" aria-label={t("Parallel branches")}>
+          <span className="collaboration-task-branch-list" aria-label={t("Agent branches")}>
             {visibleBranches.map((branch) => (
               <span key={branch.id} className={`collaboration-task-branch ${branch.state}`}>
                 <i aria-hidden="true" />
@@ -7379,7 +7341,7 @@ function CollaborationTaskProgressCard({
         )
       ) : null}
       <span className="collaboration-task-card-footer">
-        <small>{t("Open workflow evidence")}</small>
+        <small>{t("Details")}</small>
       </span>
     </button>
   );
@@ -8050,6 +8012,24 @@ function TaskDetailPanel({
 
 function runCanBeStopped(run: RunSession): boolean {
   return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
+function runCanBeStoppedInComposer(
+  run: RunSession,
+  workflowStepById: ReadonlyMap<string, ChannelWorkflowStep>,
+): boolean {
+  if (!runCanBeStopped(run)) {
+    return false;
+  }
+  if (!run.workflowStepId) {
+    return true;
+  }
+  const workflowStep = workflowStepById.get(run.workflowStepId);
+  return !workflowStep || !workflowStepIsTerminal(workflowStep);
+}
+
+function workflowStepIsTerminal(step: ChannelWorkflowStep): boolean {
+  return step.status === "succeeded" || step.status === "failed" || step.status === "skipped" || step.status === "cancelled";
 }
 
 function ChannelExecutionProposalCard({

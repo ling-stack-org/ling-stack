@@ -76,11 +76,21 @@ Then it sends:
 requestAiReply: shouldRequestAi
 ```
 
-The daemon now applies the channel-level auto reply router after it persists the user
-message:
+Under Ling Agent Session, `requestAiReply` is a compatibility signal meaning "the user
+explicitly asked an AI teammate to participate." It is not an instruction to bypass
+executable intent detection. The daemon must persist the user message, build the
+TurnEnvelope, run active-session and executable/collaboration handling first, and call
+this router only when the coordinator returns the ordinary `answer` outcome.
 
-- `@ProductStrategy hello` creates an explicit AI reply and records route evidence with
-  `createdBy: "explicit_mention"`;
+- `@ProductStrategy hello` can create an explicit AI reply and record route evidence with
+  `createdBy: "explicit_mention"` after the coordinator classifies the turn as
+  `answer`;
+- `@Ling Agent 在工作区创建 login.html` must not be swallowed by this router. It should
+  become `direct_workflow`, confirmation, clarification, or blocked work before ordinary
+  answer routing;
+- `可以直接在工作区帮我做好吗？` after a prior reply naming one file target, such as
+  `login.html`, should resolve that target through TargetResolver before this router is
+  considered;
 - `hello`, short acknowledgements, and punctuation fragments create a visible Ling reply
   or a visible blocked Ling reply if the channel has no runnable provider;
 - `What is the acceptance scope?` creates one ordinary `ai_reply` even in legacy
@@ -773,7 +783,7 @@ export type ChannelMessageRouteResult =
     };
 ```
 
-`handleChannelMessagesCollection` flow:
+Legacy pre-session flow, no longer valid as the product contract:
 
 ```text
 create local-user message
@@ -781,6 +791,19 @@ create local-user message
 -> else routeChannelMessageReply(...)
 -> if route.action == reply, call createAiReply(proposalMode=disabled)
 -> return { message, aiReply? }
+```
+
+Current coordinator contract:
+
+```text
+create local-user message
+-> build LingAgentTurnEnvelope
+-> Ling Agent Coordinator resolves active-session state and target
+-> executable/collaboration/approval/clarification paths run first
+-> if and only if coordinator returns answer:
+   -> routeChannelMessageReply(...)
+   -> createAiReply(proposalMode=disabled unless explicit answer needs proposal extraction)
+-> return { message, aiReply?, proposal?, autoStartedWorkflow?, intervention? }
 ```
 
 Provider resolution should stay in or near the existing reply path. The router chooses a

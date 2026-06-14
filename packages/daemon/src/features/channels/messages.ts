@@ -12,6 +12,7 @@ import {
 } from "./channel-message-router.js";
 import { selectChannelWorkflowIntent } from "./channel-intent-selector.js";
 import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-agent-auto-start.js";
+import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { buildLingAgentSessionViewForChannel } from "./ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope, type LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 import { materializeInlineChannelInputs } from "./materialization/inline.js";
@@ -389,30 +390,6 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     return activeSession;
   }
 
-  if (input.requestAiReply) {
-    const route = routeExplicitChannelMention({
-      ...input.routeDependencies,
-      store: input.store,
-      channel: input.channel,
-      sourceMessage: input.sourceMessage,
-      turnEnvelope,
-      requestedProviderPresetId: input.requestedProviderPresetId,
-      requestedTeammateId: input.requestedTeammateId,
-    });
-    return {
-      routeDecisionId: route.decisionId,
-      aiReply: await input.createAiReply({
-        store: input.store,
-        channel: input.channel,
-        sourceMessage: input.sourceMessage,
-        turnEnvelope,
-        providerPresetId: route.action === "reply" ? route.providerPresetId ?? input.requestedProviderPresetId : input.requestedProviderPresetId,
-        teammateId: route.action === "reply" ? route.teammateId : input.requestedTeammateId,
-        proposalMode: "allow",
-      }),
-    };
-  }
-
   const workflowIntent = await selectChannelWorkflowIntent({
     store: input.store,
     channel: input.channel,
@@ -431,6 +408,12 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
       proposal: workflowIntent.proposal,
     });
     if (autoStartDecision.allowed && input.startExecutionProposalWorkflow) {
+      let coordinatorReply = createCoordinatorWorkflowStartReply({
+        store: input.store,
+        channel: input.channel,
+        sourceMessage: input.sourceMessage,
+        proposal: workflowIntent.proposal,
+      });
       try {
         const autoStartedWorkflow = await input.startExecutionProposalWorkflow({
           store: input.store,
@@ -447,8 +430,17 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
           status: "accepted",
           createdBy: "deterministic",
         }, new Date().toISOString());
-        return { autoStartedWorkflow };
+        return { aiReply: coordinatorReply, autoStartedWorkflow };
       } catch (error) {
+        coordinatorReply = input.store.updateChannelMessageRuntime(
+          coordinatorReply.id,
+          {
+            body: coordinatorWorkflowStartFailedBody(workflowIntent.proposal, error),
+            status: "failed",
+            errorMessage: error instanceof Error ? error.message : String(error),
+          },
+          new Date().toISOString(),
+        ) ?? coordinatorReply;
         input.store.createChannelIntentDecision({
           channelId: input.channel.id,
           sourceMessageId: input.sourceMessage.id,
@@ -459,6 +451,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
           createdBy: "deterministic",
           errorMessage: error instanceof Error ? error.message : String(error),
         }, new Date().toISOString());
+        return { aiReply: coordinatorReply };
       }
     }
     if (!autoStartDecision.allowed && autoStartDecision.blockReason === "tool_denied") {
@@ -505,6 +498,30 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     return { aiReply: workflowIntent.aiReply };
   }
 
+  if (input.requestAiReply) {
+    const route = routeExplicitChannelMention({
+      ...input.routeDependencies,
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      turnEnvelope,
+      requestedProviderPresetId: input.requestedProviderPresetId,
+      requestedTeammateId: input.requestedTeammateId,
+    });
+    return {
+      routeDecisionId: route.decisionId,
+      aiReply: await input.createAiReply({
+        store: input.store,
+        channel: input.channel,
+        sourceMessage: input.sourceMessage,
+        turnEnvelope,
+        providerPresetId: route.action === "reply" ? route.providerPresetId ?? input.requestedProviderPresetId : input.requestedProviderPresetId,
+        teammateId: route.action === "reply" ? route.teammateId : input.requestedTeammateId,
+        proposalMode: "allow",
+      }),
+    };
+  }
+
   const route = await routeChannelMessageReply({
     ...input.routeDependencies,
     store: input.store,
@@ -529,6 +546,47 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
       proposalMode: "disabled",
     }),
   };
+}
+
+function createCoordinatorWorkflowStartReply(input: {
+  readonly store: RunStore;
+  readonly channel: Channel;
+  readonly sourceMessage: ChannelMessage;
+  readonly proposal: ChannelExecutionProposal;
+}): ChannelMessage {
+  const now = new Date().toISOString();
+  return input.store.createChannelMessage(
+    {
+      channelId: input.channel.id,
+      threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: LING_AGENT_EXECUTOR_ID,
+      body: coordinatorWorkflowStartBody(input.proposal, input.sourceMessage),
+      status: "ready",
+    },
+    now,
+  );
+}
+
+function coordinatorWorkflowStartBody(
+  proposal: ChannelExecutionProposal,
+  sourceMessage: ChannelMessage,
+): string {
+  const title = proposal.title.trim() || sourceMessage.body.trim() || "this task";
+  if (proposal.responseLanguage === "en-US") {
+    return `I have enough context to start "${title}". I will keep the main thread focused on key status and the final result; files, checks, and run details stay in the folded evidence summary.`;
+  }
+  return `我已确认任务边界，开始处理「${title}」。我会在主会话同步关键状态和最终结果；具体文件、检查和运行细节放在折叠证据摘要里。`;
+}
+
+function coordinatorWorkflowStartFailedBody(proposal: ChannelExecutionProposal, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (proposal.responseLanguage === "en-US") {
+    return `I tried to start this workflow, but it was blocked before execution: ${message}`;
+  }
+  return `我尝试开始这次 workflow，但执行前被阻塞：${message}`;
 }
 
 function maybeHandleActiveSessionMessage(input: LingAgentChannelMessageInput): LingAgentChannelMessageResult | undefined {

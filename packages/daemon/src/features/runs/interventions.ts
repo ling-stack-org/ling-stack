@@ -29,6 +29,7 @@ import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
+import type { StartupStateRegistry } from "../../startup/state.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
@@ -53,6 +54,7 @@ export async function handleRunInterventions(
   secretResolver: SecretResolver,
   mcpBroker: McpBroker,
   controlPlaneEvents: ControlPlaneEventHub,
+  startupState: StartupStateRegistry | undefined,
   sourceRunId: string,
 ): Promise<void> {
   const store = storeRegistry.findStoreForRun(sourceRunId, url.searchParams.get("cwd") ?? undefined);
@@ -133,6 +135,7 @@ export async function handleRunInterventions(
         secretResolver,
         mcpBroker,
         controlPlaneEvents,
+        startupState,
       });
     }
     writeJson(response, 201, { cwd: store.paths.cwd, intervention: store.getRunIntervention(intervention.id) ?? intervention });
@@ -206,6 +209,7 @@ export function handleRunInterventionPromote(
   secretResolver: SecretResolver,
   mcpBroker: McpBroker,
   controlPlaneEvents: ControlPlaneEventHub,
+  startupState: StartupStateRegistry | undefined,
   interventionId: string,
 ): void {
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
@@ -248,6 +252,7 @@ export function handleRunInterventionPromote(
       secretResolver,
       mcpBroker,
       controlPlaneEvents,
+      startupState,
     });
     writeJson(response, 202, {
       cwd: resolved.cwd,
@@ -284,6 +289,7 @@ export function handleRunInterventionPromote(
     secretResolver,
     mcpBroker,
     controlPlaneEvents,
+    startupState,
   });
 
   writeJson(response, 200, {
@@ -304,6 +310,7 @@ export function maybeStartNextRunInterventionContinuation(input: {
   readonly secretResolver: SecretResolver;
   readonly mcpBroker: McpBroker;
   readonly controlPlaneEvents: ControlPlaneEventHub;
+  readonly startupState?: StartupStateRegistry;
 }): void {
   const sourceRun = input.store.getRun(input.sourceRunId);
   if (!sourceRun || !isTerminalRunStatus(sourceRun.status)) {
@@ -342,6 +349,7 @@ export function maybeStartNextRunInterventionContinuation(input: {
       input.mcpBroker,
       {
         controlPlaneEvents: input.controlPlaneEvents,
+        startupState: input.startupState,
         onRunReady: (runId) => {
           const run = input.store.getRun(runId);
           input.store.updateRunInterventionStatus({

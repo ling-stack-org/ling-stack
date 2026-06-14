@@ -73,6 +73,7 @@ export interface DaemonHealthResponse {
   readonly ok: boolean;
   readonly service?: string;
   readonly defaultWorkspaceCwd?: string;
+  readonly readiness?: "starting" | "ready" | "degraded" | "failed";
   readonly features?: DaemonFeatureFlags;
 }
 

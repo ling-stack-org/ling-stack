@@ -279,6 +279,8 @@ import type {
   TeammatePersonaDraftRequest,
   TeammatePersonaDraftResponse,
   TeammateSkillBindingListResponse,
+  StartupRefreshResponse,
+  StartupStatusResponse,
   UpdateAiTeammateRequest,
   UpdateAutomationDraftRequest,
   UpdateAutomationRequest,
@@ -340,12 +342,14 @@ export class LingDaemonClient {
       ok?: unknown;
       service?: unknown;
       defaultWorkspaceCwd?: unknown;
+      readiness?: unknown;
       features?: unknown;
     };
     return {
       ok: body.ok === true,
       service: typeof body.service === "string" ? body.service : undefined,
       defaultWorkspaceCwd: typeof body.defaultWorkspaceCwd === "string" ? body.defaultWorkspaceCwd : undefined,
+      readiness: readStartupReadiness(body.readiness),
       features: readDaemonFeatureFlags(body.features),
     };
   }
@@ -360,6 +364,14 @@ export class LingDaemonClient {
 
   async getEffectiveConfig(cwd: string): Promise<EffectiveConfigResponse> {
     return this.get("/config/effective", { cwd });
+  }
+
+  async getStartupStatus(cwd?: string): Promise<StartupStatusResponse> {
+    return this.get("/startup/status", { cwd });
+  }
+
+  async refreshStartupStatus(cwd?: string): Promise<StartupRefreshResponse> {
+    return this.post("/startup/refresh", { cwd });
   }
 
   async getControlPlaneSnapshot(
@@ -2015,6 +2027,12 @@ function readDaemonFeatureFlags(value: unknown): DaemonHealthResponse["features"
       localWebSocketRpc: transportRecord.localWebSocketRpc === true,
     },
   };
+}
+
+function readStartupReadiness(value: unknown): DaemonHealthResponse["readiness"] {
+  return value === "starting" || value === "ready" || value === "degraded" || value === "failed"
+    ? value
+    : undefined;
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
