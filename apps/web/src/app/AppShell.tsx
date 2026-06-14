@@ -8,57 +8,21 @@ import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
   getBuiltinSkillPack,
 } from "@ling-stack/core/builtin-skill-packs";
-import { clearSavedLocale, readSavedLocale, useI18n, type Locale } from "../i18n.js";
-import { clearSavedThemePreference, readSavedThemePreference, useTheme, type ThemePreference } from "../theme.js";
+import { useI18n } from "../i18n.js";
+import { useTheme } from "../theme.js";
 import type {
-  ApprovalRequest,
-  AiTeammate,
-  ChannelAttachment,
   Channel,
   ChannelBranch,
   ChannelCollaborationProtocolResponse,
-  ChannelContextSummary,
-  ChannelCreateFormState,
-  ChannelDecision,
-  ChannelFormState,
-  ChannelHandoff,
-  ChannelHandoffStatus,
-  ChannelLinkPreview,
   ChannelMessage,
-  ChannelMessageFileRef,
-  ChannelMessageStreamBlockedEvent,
-  ChannelMessageStreamDeltaEvent,
-  ChannelMessageStreamDoneEvent,
-  ChannelMessageStreamErrorEvent,
-  ChannelMessageStreamReadyEvent,
-  ChannelExecutionProposal,
-  ChannelWorkflow,
-  ChannelWorkflowStep,
-  ChannelWorkflowStepStartMode,
-  ControlPlaneDomain,
   DaemonFeatureFlags,
-  EffectiveConfigResponse,
   ExternalWorkActionView,
   MediaJob,
-  ProviderCheckResult,
-  ProviderFormState,
-  ProviderPreset,
-  ProviderTemplate,
   RunArtifact,
   RunEventEnvelope,
   RunFormState,
-  RunSession,
   SessionPermissionMode,
-  StateEntityType,
-  Task,
-  TaskEditFormState,
-  TaskFormState,
   TaskRunActionState,
-  UpdateChannelBriefRequest,
-  UpdateChannelCollaborationProtocolRequest,
-  UpdateWorkspaceSettingsRequest,
-  WorkItemView,
-  WorkspaceSettings,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -73,11 +37,7 @@ import {
 import type { DomainEvent } from "./domain-events.js";
 import type { ApprovalResolution } from "../features/approvals/types.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
-import { SidebarNavigation, type SidebarNotification } from "../features/navigation/SidebarNavigation.js";
-import type {
-  LocalTeammateCreateInput,
-  LocalTeammateDraft,
-} from "../features/teammates/index.js";
+import { SidebarNavigation } from "../features/navigation/SidebarNavigation.js";
 import {
   LazyAutomationsPage as AutomationsPage,
   LazyAiTeammatesPage as AiTeammatesPage,
@@ -102,27 +62,11 @@ import {
   defaultChannelCreateForm,
   defaultChannelEditForm,
 } from "../lib/channels.js";
-import { deriveChannelRuns, deriveChannelTasks } from "../lib/channel-artifacts.js";
+import { deriveChannelRuns } from "../lib/channel-artifacts.js";
 import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammates.js";
-import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "../lib/channel-activity-triage.js";
 import { readDataString } from "../lib/data.js";
-import { titleFromPrompt } from "../lib/formatting.js";
-import { clearSavedWorkspaceCwd, getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
-import { readSseResponse } from "../sse.js";
-import { getControlPlaneSnapshot } from "../api/control-plane.js";
-import { routeExternalWork } from "../api/external-work.js";
-import { claimWorkItem, heartbeatWorkItem, listWorkItems } from "../api/work-items.js";
-import { getEffectiveConfig } from "../api/config.js";
-import { updateWorkspaceSettings } from "../api/workspace-settings.js";
+import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
 import {
-  controlPlaneStreamUrl,
-  controlPlaneRpcStreamUrl,
-  controlPlaneSummaryDomains,
-  parseControlPlaneEventMessage,
-  parseControlPlaneRpcEventMessage,
-} from "../lib/control-plane.js";
-import {
-  readRunProviderPresetId,
   readRunWorkspaceCwd,
 } from "../lib/run-evidence.js";
 import { useApprovalsDomain } from "../domains/approvals/use-approvals-domain.js";
@@ -138,6 +82,7 @@ import { useRunsDomain } from "../domains/runs/use-runs-domain.js";
 import { useSettingsCommandController } from "../domains/settings/use-settings-command-controller.js";
 import { useSettingsDomain } from "../domains/settings/use-settings-domain.js";
 import { useTeammatesDomain } from "../domains/teammates/use-teammates-domain.js";
+import { useDurableWorkItemsDomain } from "../domains/work-items/use-durable-work-items-domain.js";
 import { useWorkspaceCommandController } from "../domains/workspace/use-workspace-command-controller.js";
 import {
   defaultTaskEditForm,
@@ -146,17 +91,26 @@ import {
 } from "../domains/workspace/use-workspace-domain.js";
 import { defaultTools } from "../lib/tools.js";
 import {
-  canUseProviderForRun,
   customOpenAICompatibleForm,
   providerFormToTemplate,
-  providerPreflightReady,
-  providerRunBlockerLabel,
-  providerRunPreflightBlocker,
-  providerEffectiveBaseUrl,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
 import { inferPermissionPreset } from "../lib/session-permissions.js";
 import { StatusBadge } from "../shared/components/index.js";
+import {
+  aiTeammateToLocalDraft,
+  buildChannelTransitionEntities,
+  buildSidebarChannelNotifications,
+  buildSidebarTeammateNotifications,
+  latestChannelMessageTimestamp,
+} from "./app-shell-selectors.js";
+import { useAppNavigationController } from "./use-app-navigation-controller.js";
+import { useChannelActionsController } from "./use-channel-actions-controller.js";
+import { useChannelWorkflowController } from "./use-channel-workflow-controller.js";
+import { useControlPlaneInvalidation } from "./use-control-plane-invalidation.js";
+import { useProviderUsageController } from "./use-provider-usage-controller.js";
+import { useTaskRunController } from "./use-task-run-controller.js";
+import { useWorkspaceSettingsController } from "./use-workspace-settings-controller.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
@@ -176,27 +130,6 @@ const defaultForm: RunFormState = {
   permissionMode: "balanced",
   permissionPreset: "custom",
 };
-
-function buildContextTaskPrompt(summary: ChannelContextSummary, decisions: readonly ChannelDecision[]): string {
-  const activeDecisions = decisions.filter((decision) => summary.decisionIds.includes(decision.id) && decision.status === "active");
-  const decisionText = activeDecisions.length > 0
-    ? `\n\nActive decisions:\n${activeDecisions.map((decision) => `- ${decision.title}: ${decision.decision}`).join("\n")}`
-    : "";
-  const criteriaText = summary.acceptanceCriteria.length > 0
-    ? `\n\nAcceptance criteria:\n${summary.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`
-    : "";
-  const questionText = summary.openQuestions.length > 0
-    ? `\n\nOpen questions:\n${summary.openQuestions.map((item) => `- ${item}`).join("\n")}`
-    : "";
-  return `Context summary:\n${summary.summary}${decisionText}${criteriaText}${questionText}`;
-}
-
-function splitTextLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
 
 export function AppShell(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
@@ -224,12 +157,6 @@ export function AppShell(): JSX.Element {
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
-  const [routingExternalWorkId, setRoutingExternalWorkId] = useState("");
-  const [durableWorkItems, setDurableWorkItems] = useState<readonly WorkItemView[]>([]);
-  const [durableWorkItemsLoading, setDurableWorkItemsLoading] = useState(false);
-  const [busyWorkItemId, setBusyWorkItemId] = useState("");
-  const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings | undefined>();
-  const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();
   const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -239,10 +166,6 @@ export function AppShell(): JSX.Element {
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
-  const workspaceSettingsLoadedCwdRef = useRef("");
-  const interfaceSettingsSyncRef = useRef<{ readonly cwd: string; readonly theme: ThemePreference; readonly locale: Locale } | undefined>(undefined);
-  const currentLocaleRef = useRef(locale);
-  const controlPlaneInvalidationRef = useRef<(domains: readonly ControlPlaneDomain[]) => void>(() => undefined);
   const {
     buildRerunRequest,
     buildRunRequest,
@@ -254,37 +177,16 @@ export function AppShell(): JSX.Element {
     cancelChannelWorkflow,
     channelAttachmentContentUrl,
     confirmChannelExecutionProposalWorkflow,
-    createChannel,
-    createChannelBranch,
-    createChannelContextSummary,
-    createChannelDecision,
-    createChannelHandoff,
-    createChannelLinkPreview,
-    createChannelWorkflowFromHandoff,
     createChannelWorkflowFromTemplate,
-    createTask,
-    deleteChannel,
-    deleteChannelBranch,
-    deleteChannelAttachment,
     deleteTask,
     orchestrateChannelWorkflow,
-    patchChannel,
     retryChannelWorkflowStep,
     startChannelWorkflowStep,
-    streamChannelMessage,
     updateChannel,
-    updateChannelBranch,
-    updateChannelBrief,
-    updateChannelCollaborationProtocol,
-    updateChannelContextSummary,
-    updateChannelDecision,
     updateChannelExecutionProposal,
-    updateChannelHandoff,
     updateChannelWorkflowStep,
     updateTask,
     updateTaskStatus,
-    uploadChannelAttachment,
-    revertChannelCollaborationProtocol,
   } = useWorkspaceCommandController();
   const workspaceDomain = useWorkspaceDomain({
     cwd: form.cwd.trim(),
@@ -417,44 +319,21 @@ export function AppShell(): JSX.Element {
     stopScheduler: stopAutomationSchedulerAction,
     resetForCwd: resetAutomationsForCwd,
   } = automationsDomain.actions;
-  async function clearProviderUsage(providerId: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (taskRunProviderId === providerId) {
-      setTaskRunProviderId("");
-    }
-    if (form.providerPresetId === providerId) {
-      setForm((current) => ({ ...current, providerPresetId: "" }));
-    }
-
-    const channelsUsingProvider = channels.filter((channel) => channel.defaultProviderPresetId === providerId);
-    if (!workspaceCwd || channelsUsingProvider.length === 0) {
-      return;
-    }
-
-    setChannels((current) =>
-      current.map((channel) =>
-        channel.defaultProviderPresetId === providerId ? { ...channel, defaultProviderPresetId: undefined } : channel,
-      ),
-    );
-    setChannelEditForm((current) =>
-      current.defaultProviderPresetId === providerId ? { ...current, defaultProviderPresetId: "" } : current,
-    );
-    await Promise.all(
-      channelsUsingProvider.map((channel) =>
-        updateChannel(workspaceCwd, channel.id, {
-          ...channelToForm(channel, workspaceCwd),
-          defaultProviderPresetId: "",
-        }),
-      ),
-    );
-    await refreshChannels(workspaceCwd);
-  }
-
+  const { clearProviderUsage } = useProviderUsageController({
+    form,
+    taskRunProviderId,
+    channels,
+    setForm,
+    setTaskRunProviderId,
+    setChannels,
+    setChannelEditForm,
+    updateChannel,
+    refreshChannels,
+  });
   const providersDomain = useProvidersDomain({
     cwd: form.cwd.trim(),
     translate: t,
     setErrorMessage,
-    applyProviderToRun,
     clearSelectedProvider: (providerId) => {
       if (form.providerPresetId === providerId) {
         setForm((current) => ({ ...current, providerPresetId: "" }));
@@ -649,6 +528,28 @@ export function AppShell(): JSX.Element {
     resetSelectedChannel: resetExternalWorkSelectedChannel,
     resetForCwd: resetExternalWorkForCwd,
   } = externalWorkDomain.actions;
+  const durableWorkItemsDomain = useDurableWorkItemsDomain({
+    cwd: form.cwd.trim(),
+    setErrorMessage,
+    refreshExternalActionDetailsByIds,
+    refreshExternalWorkCiTriage,
+    refreshExternalWorkStatus,
+    refreshChannelProtocol,
+    refreshApprovals,
+  });
+  const {
+    durableWorkItems,
+    durableWorkItemsLoading,
+    busyWorkItemId,
+    routingExternalWorkId,
+  } = durableWorkItemsDomain.state;
+  const {
+    refreshWorkItems,
+    claimDurableWorkItem,
+    heartbeatDurableWorkItem,
+    routeExternalWorkToChannel,
+    resetForCwd: resetDurableWorkItemsForCwd,
+  } = durableWorkItemsDomain.actions;
   const runtimeDomain = useRuntimeDomain({
     cwd: form.cwd.trim(),
     setErrorMessage,
@@ -700,9 +601,6 @@ export function AppShell(): JSX.Element {
     saveRuntimeSettings,
     resetForCwd: resetSettingsForCwd,
   } = settingsDomain.actions;
-  useEffect(() => {
-    currentLocaleRef.current = locale;
-  }, [locale]);
   const runsDomain = useRunsDomain({
     cwd: form.cwd.trim(),
     confirmFullAccessRunIfNeeded,
@@ -737,63 +635,30 @@ export function AppShell(): JSX.Element {
     abortCurrentRun,
     cancelRunOrWorkUnit,
   } = runsDomain.actions;
-
-  function openPlainView(view: ViewId): void {
-    if (view === "approvals") {
-      setApprovalRepairRunId("");
-    }
-    setThreadPageTargetId("");
-    setChannelCreateOpen(false);
-    setSelectedChannelBranchId("");
-    setActiveView(view);
-    setActiveSidebarTarget(view);
-  }
-
-  function openRunDiagnosticsView(): void {
-    setThreadPageTargetId("");
-    setChannelCreateOpen(false);
-    setActiveView("runs");
-    setActiveSidebarTarget("settings");
-  }
-
-  function openSelectedChannelProtocolEditor(): void {
-    if (!selectedChannelId) {
-      return;
-    }
-    setThreadPageTargetId("");
-    setChannelCreateOpen(false);
-    setSelectedChannelBranchId("");
-    setActiveView("workspace");
-    setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
-    setChannelContextOpenRequest({ channelId: selectedChannelId, mode: "protocol", nonce: Date.now() });
-  }
-
-  function selectWorkspaceChannel(channelId: string): void {
-    setChannelCreateOpen(false);
-    setSelectedChannelBranchId("");
-    markChannelRead(channelId);
-    setSelectedChannelId(channelId);
-    setTaskRunProviderId("");
-    setActiveView("workspace");
-    setActiveSidebarTarget(channelSidebarTarget(channelId));
-  }
-
-  function selectWorkspaceChannelBranch(channelId: string, branchId: string): void {
-    setChannelCreateOpen(false);
-    setSelectedChannelBranchId(branchId);
-    markChannelRead(channelId);
-    setSelectedChannelId(channelId);
-    setTaskRunProviderId("");
-    setActiveView("workspace");
-    setActiveSidebarTarget(channelSidebarTarget(channelId));
-  }
-
-  function selectAiTeammate(teammateId: string): void {
-    setChannelCreateOpen(false);
-    setSelectedChannelBranchId("");
-    setActiveView("teammates");
-    setActiveSidebarTarget(teammateSidebarTarget(teammateId));
-  }
+  const { workspaceSettings, effectiveConfig, patchWorkspaceSettings } = useWorkspaceSettingsController({
+    daemonHealthy,
+    form,
+    setForm,
+    locale,
+    setLocale,
+    themePreference,
+    setThemePreference,
+    setChannelForm,
+    setErrorMessage,
+    resetForCwd: (cwd) => {
+      resetWorkspaceForCwd(cwd);
+      resetProvidersForCwd();
+      resetTeammatesForCwd();
+      resetAutomationsForCwd();
+      resetMediaForCwd();
+      resetMcpForCwd();
+      resetPluginsForCwd();
+      resetExternalWorkForCwd();
+      resetRuntimeForCwd();
+      resetSettingsForCwd();
+      resetDurableWorkItemsForCwd();
+    },
+  });
 
   function markChannelRead(channelId: string): void {
     setChannelUnreadById((current) => current[channelId] ? removeRecordKey(current, channelId) : current);
@@ -952,198 +817,229 @@ export function AppShell(): JSX.Element {
   const taskRepairRun = taskRepairRunId ? runById.get(taskRepairRunId) : undefined;
   const approvalRepairRun = approvalRepairRunId ? runById.get(approvalRepairRunId) : undefined;
   const memoryById = useMemo(() => new Map(memoryObjects.map((item) => [item.id, item])), [memoryObjects]);
-  controlPlaneInvalidationRef.current = (domains) => {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      return;
-    }
-    const changed = new Set(domains);
-    const refreshes: Promise<unknown>[] = [];
-    if (changed.has("runs")) {
-      refreshes.push(refreshRuns(workspaceCwd));
-      if (selectedChannelId) {
-        refreshes.push(refreshChannelActivity());
-        refreshes.push(refreshRuntimeState(workspaceCwd));
-      }
-    }
-    if (changed.has("work_units")) {
-      refreshes.push(refreshRuntimeState(workspaceCwd));
-    }
-    if (changed.has("approvals")) {
-      refreshes.push(refreshApprovals(workspaceCwd));
-      refreshes.push(refreshApprovalPolicy());
-    }
-    if (changed.has("providers")) {
-      refreshes.push(refreshProviders(workspaceCwd));
-    }
-    if (changed.has("mcp")) {
-      refreshes.push(refreshMcp(workspaceCwd));
-    }
-    if (changed.has("runners")) {
-      refreshes.push(refreshRuntimeSettings());
-    }
-    if (changed.has("teammates")) {
-      refreshes.push(refreshAiTeammates(workspaceCwd));
-    }
-    if (changed.has("memory")) {
-      refreshes.push(refreshUsedMemoryAudit(workspaceCwd));
-    }
-    if (changed.has("skills")) {
-      setSkillLibraryRefreshToken((current) => current + 1);
-    }
-    if (changed.has("artifacts") && selectedChannelId) {
-      refreshes.push(refreshChannelRunArtifacts(workspaceCwd, selectedChannelId, channelRunsForArtifacts));
-    }
-    if (refreshes.length > 0) {
-      void Promise.all(refreshes).catch((error: unknown) => {
-        setErrorMessage(error instanceof Error ? error.message : String(error));
-      });
-    }
-  };
-
-  useEffect(() => {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd || daemonHealthy !== true) {
-      return undefined;
-    }
-    let closed = false;
-    let source: EventSource | undefined;
-    let ws: WebSocket | undefined;
-    let retryTimer: number | undefined;
-    let flushTimer: number | undefined;
-    let latestSeq = 0;
-    const pendingDomains = new Set<ControlPlaneDomain>();
-    const flushDomains = (): void => {
-      flushTimer = undefined;
-      if (pendingDomains.size === 0) {
-        return;
-      }
-      const domains = [...pendingDomains];
-      pendingDomains.clear();
-      controlPlaneInvalidationRef.current(domains);
-    };
-    const enqueueDomain = (domain: ControlPlaneDomain): void => {
-      pendingDomains.add(domain);
-      if (flushTimer !== undefined) {
-        return;
-      }
-      flushTimer = window.setTimeout(flushDomains, 150);
-    };
-    const scheduleRetry = (): void => {
-      if (closed || retryTimer !== undefined) {
-        return;
-      }
-      retryTimer = window.setTimeout(() => {
-        retryTimer = undefined;
-        void openStream();
-      }, 2_000);
-    };
-    const openSseStream = (): void => {
-      if (closed) {
-        return;
-      }
-      source = new EventSource(controlPlaneStreamUrl(daemonBaseUrl, workspaceCwd, {
-        afterSeq: latestSeq,
-        domains: controlPlaneSummaryDomains,
-      }));
-      source.addEventListener("control_plane_event", (message) => {
-        const event = parseControlPlaneEventMessage((message as MessageEvent<string>).data);
-        if (!event || event.seq <= latestSeq) {
-          return;
-        }
-        latestSeq = event.seq;
-        enqueueDomain(event.domain);
-      });
-      source.addEventListener("error", () => {
-        source?.close();
-        scheduleRetry();
-      });
-    };
-    const openRpcStream = (): void => {
-      if (daemonFeatures.transports?.localWebSocketRpc !== true || typeof WebSocket === "undefined") {
-        openSseStream();
-        return;
-      }
-      let subscribed = false;
-      let fellBack = false;
-      const fallbackToSse = (): void => {
-        if (fellBack || subscribed || closed) {
-          return;
-        }
-        fellBack = true;
-        openSseStream();
-      };
-      ws = new WebSocket(controlPlaneRpcStreamUrl(daemonBaseUrl, workspaceCwd));
-      ws.addEventListener("open", () => {
-        ws?.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { cwd: workspaceCwd } }));
-        ws?.send(JSON.stringify({
-          jsonrpc: "2.0",
-          id: 2,
-          method: "controlPlane.subscribe",
-          params: {
-            cwd: workspaceCwd,
-            afterSeq: latestSeq,
-            domains: controlPlaneSummaryDomains,
-          },
-        }));
-      });
-      ws.addEventListener("message", (message) => {
-        const text = typeof message.data === "string" ? message.data : "";
-        if (text.includes("\"id\":2")) {
-          subscribed = !text.includes("\"error\"");
-          if (!subscribed) {
-            ws?.close();
-            fallbackToSse();
-          }
-          return;
-        }
-        const event = parseControlPlaneRpcEventMessage(text);
-        if (!event || event.seq <= latestSeq) {
-          return;
-        }
-        latestSeq = event.seq;
-        enqueueDomain(event.domain);
-      });
-      ws.addEventListener("error", () => {
-        ws?.close();
-        if (!subscribed) {
-          fallbackToSse();
-          return;
-        }
-        scheduleRetry();
-      });
-      ws.addEventListener("close", () => {
-        if (closed) {
-          return;
-        }
-        if (!subscribed) {
-          fallbackToSse();
-          return;
-        }
-        scheduleRetry();
-      });
-    };
-    const openStream = async (): Promise<void> => {
-      const snapshot = await getControlPlaneSnapshot(workspaceCwd, ["runs"]).catch(() => undefined);
-      if (closed) {
-        return;
-      }
-      latestSeq = snapshot?.latestEventSeq ?? 0;
-      openRpcStream();
-    };
-    void openStream();
-    return () => {
-      closed = true;
-      source?.close();
-      ws?.close();
-      if (retryTimer !== undefined) {
-        window.clearTimeout(retryTimer);
-      }
-      if (flushTimer !== undefined) {
-        window.clearTimeout(flushTimer);
-      }
-    };
-  }, [daemonBaseUrl, daemonFeatures.transports?.localWebSocketRpc, daemonHealthy, form.cwd]);
+  const {
+    removeTask,
+    moveTaskToReview,
+    saveTaskEdit,
+    resolveChannelMessageProviderPresetId,
+    markChannelExecutionProposal,
+    confirmChannelExecutionProposal,
+    cancelChannelExecutionProposal,
+    runPersistedTask,
+    checkThenRunPersistedTask,
+    runUpdatedTaskFromRepair,
+    checkThenRunUpdatedTaskFromRepair,
+    rerunRun,
+    applyProviderToRun,
+    clearProviderFromRun,
+  } = useTaskRunController({
+    form,
+    taskEditForm,
+    taskRunProviderId,
+    selectedChannelId,
+    selectedTaskId,
+    channels,
+    aiTeammates,
+    providers,
+    providerTemplates,
+    setForm,
+    setTaskRepairRunId,
+    setTaskRunProviderId,
+    setActiveTaskRunAction,
+    setSelectedTaskId,
+    setTasks,
+    setChannels,
+    setChannelEditForm,
+    setChannelWorkflows,
+    setChannelWorkflowSteps,
+    setErrorMessage,
+    t,
+    buildRerunRequest,
+    buildTaskRunRequest,
+    runWithRequest,
+    checkProviderForRun,
+    clearProviderUsage,
+    confirmChannelExecutionProposalWorkflow,
+    deleteTask,
+    updateChannel,
+    updateChannelExecutionProposal,
+    updateTask,
+    updateTaskStatus,
+    upsertChannelExecutionProposal,
+    refreshChannels,
+    refreshTasks,
+    refreshRuns,
+    refreshChannelProtocol,
+    refreshChannelExecutionProposals,
+    refreshUsedMemoryAudit,
+  });
+  const {
+    openPlainView,
+    openRunDiagnosticsView,
+    openSelectedChannelProtocolEditor,
+    selectWorkspaceChannel,
+    selectWorkspaceChannelBranch,
+    selectAiTeammate,
+    openTaskFromWorkBoard,
+    openApprovalsFromWorkspace,
+    openProvidersFromRun,
+    openTaskFromRun,
+  } = useAppNavigationController({
+    activeRunId,
+    formCwd: form.cwd.trim(),
+    selectedChannelId,
+    tasks,
+    setActiveView,
+    setActiveSidebarTarget,
+    setApprovalRepairRunId,
+    setChannelContextOpenRequest,
+    setChannelCreateOpen,
+    setSelectedChannelBranchId,
+    setSelectedChannelId,
+    setSelectedTaskId,
+    setTaskRepairRunId,
+    setTaskRunProviderId,
+    setThreadPageTargetId,
+    setErrorMessage,
+    markChannelRead,
+    loadRun,
+    refreshApprovals,
+    refreshTasks,
+    handleDomainEvent,
+  });
+  const {
+    saveChannel,
+    saveDefaultChannel,
+    saveChannelEdit,
+    saveChannelBranch,
+    archiveSidebarChannel,
+    archiveSidebarChannelBranch,
+    removeChannel,
+    saveTask,
+    sendChannelMessage,
+    uploadChannelFiles,
+    addChannelLinkPreview,
+    removeChannelAttachment,
+    saveChannelBrief,
+    saveChannelProtocolPatch,
+    revertChannelProtocolSettings,
+    supersedeChannelDecision,
+    rejectChannelDecision,
+    createHandoffFromTask,
+    updateHandoffStatusValue,
+    startWorkflowFromHandoff,
+    createTaskFromContextSummary,
+    runActivityTriageAction,
+  } = useChannelActionsController({
+    form,
+    setForm,
+    channels,
+    channelForm,
+    channelEditForm,
+    taskForm,
+    providers,
+    providerTemplates,
+    selectedChannelId,
+    activeSidebarTarget,
+    channelDecisions,
+    setActiveView,
+    setActiveSidebarTarget,
+    setSelectedChannelId,
+    setSelectedChannelBranchId,
+    setSelectedTaskId,
+    setTaskRunProviderId,
+    setChannelCreateOpen,
+    setChannelForm,
+    setChannelEditForm,
+    setChannels,
+    setChannelBranches,
+    setTaskForm,
+    setTasks,
+    setChannelMessages,
+    setChannelExecutionProposals,
+    setChannelAttachments,
+    setChannelLinkPreviews,
+    setChannelFilesLoading,
+    setChannelBrief,
+    setChannelCollaborationProtocol,
+    setChannelDecisions,
+    setChannelHandoffs,
+    setChannelContextSummaries,
+    setChannelWorkflows,
+    setChannelWorkflowSteps,
+    setErrorMessage,
+    t,
+    addChannelTeammate,
+    setDefaultChannelTeammate,
+    resolveChannelMessageProviderPresetId,
+    refreshChannels,
+    refreshTasks,
+    refreshChannelExecutionProposals,
+    refreshChannelFiles,
+    refreshChannelProtocol,
+    refreshExternalWorkCiTriage,
+    refreshUsedMemoryAudit,
+    refreshChannelMessageRouteDecisions,
+    refreshChannelIntentDecisions,
+    refreshChannelActivity,
+  });
+  const {
+    startAutoplanWorkflow,
+    orchestrateWorkflowAction,
+    cancelWorkflowAction,
+    retryWorkflowStepAction,
+    startWorkflowStepAction,
+    updateWorkflowStepStatus,
+  } = useChannelWorkflowController({
+    form,
+    channels,
+    providers,
+    selectedChannelId,
+    taskRunProviderId,
+    channelBrief,
+    channelWorkflows,
+    daemonBaseUrl,
+    setOrchestratingWorkflowId,
+    setRunningWorkflowStepId,
+    setChannelWorkflows,
+    setChannelWorkflowSteps,
+    setSelectedTaskId,
+    setTasks,
+    setErrorMessage,
+    createChannelWorkflowFromTemplate,
+    orchestrateChannelWorkflow,
+    cancelChannelWorkflow,
+    retryChannelWorkflowStep,
+    startChannelWorkflowStep,
+    updateChannelWorkflowStep,
+    streamRunRequest,
+    upsertApprovalRecord,
+    refreshTasks,
+    refreshChannelProtocol,
+    refreshRuntimeState,
+    emitDomainEvent: handleDomainEvent,
+  });
+  useControlPlaneInvalidation({
+    daemonBaseUrl,
+    daemonHealthy,
+    localWebSocketRpcEnabled: daemonFeatures.transports?.localWebSocketRpc === true,
+    workspaceCwd: form.cwd.trim(),
+    selectedChannelId,
+    channelRunsForArtifacts,
+    setSkillLibraryRefreshToken,
+    setErrorMessage,
+    refreshRuns,
+    refreshRuntimeState,
+    refreshApprovals,
+    refreshApprovalPolicy,
+    refreshProviders,
+    refreshMcp,
+    refreshRuntimeSettings,
+    refreshAiTeammates,
+    refreshUsedMemoryAudit,
+    refreshChannelRunArtifacts,
+    refreshChannelActivity,
+  });
 
   useEffect(() => {
     void refreshHealth();
@@ -1300,177 +1196,6 @@ export function AppShell(): JSX.Element {
     setSelectedApprovalId(approvals[0]?.id ?? "");
   }, [approvals, selectedApprovalId]);
 
-  function updateWorkspaceCwd(cwd: string): void {
-    const previousCwd = form.cwd;
-    if (cwd.trim()) {
-      void updateWorkspaceSettings(cwd.trim(), { workspaceCwd: cwd.trim() })
-        .then((response) => {
-          setWorkspaceSettings(response.settings);
-          clearSavedWorkspaceCwd();
-        })
-        .catch(() => undefined);
-    }
-    setForm({ ...form, cwd });
-    resetWorkspaceForCwd(cwd);
-    resetProvidersForCwd();
-    resetTeammatesForCwd();
-    resetAutomationsForCwd();
-    resetMediaForCwd();
-    resetMcpForCwd();
-    resetPluginsForCwd();
-    resetExternalWorkForCwd();
-    resetRuntimeForCwd();
-    resetSettingsForCwd();
-    setDurableWorkItems([]);
-    setBusyWorkItemId("");
-    setChannelForm((current) => ({
-      ...current,
-      boundPath: current.boundPath === previousCwd || !current.boundPath ? cwd : current.boundPath,
-    }));
-  }
-
-  function patchWorkspaceSettings(patch: UpdateWorkspaceSettingsRequest): void {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      return;
-    }
-    void updateWorkspaceSettings(workspaceCwd, patch)
-      .then((response) => {
-        setWorkspaceSettings(response.settings);
-        setEffectiveConfig((current) =>
-          current && current.cwd === workspaceCwd
-            ? { ...current, layers: { ...current.layers, workspaceSettings: response.settings } }
-            : current,
-        );
-      })
-      .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)));
-  }
-
-  useEffect(() => {
-    const workspaceCwd = form.cwd.trim();
-    if (daemonHealthy !== true || !workspaceCwd) {
-      setWorkspaceSettings(undefined);
-      setEffectiveConfig(undefined);
-      workspaceSettingsLoadedCwdRef.current = "";
-      interfaceSettingsSyncRef.current = undefined;
-      return;
-    }
-    let cancelled = false;
-    workspaceSettingsLoadedCwdRef.current = workspaceCwd;
-    void getEffectiveConfig(workspaceCwd)
-      .then((response) => {
-        if (cancelled || workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
-          return;
-        }
-        const workspaceLayer = response.layers.workspaceSettings;
-        const legacyTheme = readSavedThemePreference();
-        const legacyLocale = readSavedLocale();
-        const nextTheme =
-          !workspaceLayer.theme && response.values.theme.source === "built_in" && legacyTheme
-            ? legacyTheme
-            : response.values.theme.value;
-        const nextLocale =
-          !workspaceLayer.locale && response.values.locale.source === "built_in" && legacyLocale
-            ? legacyLocale
-            : isWorkspaceSettingsLocale(response.values.locale.value)
-              ? response.values.locale.value
-              : currentLocaleRef.current;
-        setWorkspaceSettings(workspaceLayer);
-        setEffectiveConfig(response);
-        setThemePreference(nextTheme);
-        setLocale(nextLocale);
-        interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: nextTheme, locale: nextLocale };
-
-        const migrationPatch: {
-          workspaceCwd?: string;
-          theme?: ThemePreference;
-          locale?: Locale;
-        } = {};
-        if (workspaceLayer.workspaceCwd !== workspaceCwd) {
-          migrationPatch.workspaceCwd = workspaceCwd;
-        }
-        if (!workspaceLayer.theme && response.values.theme.source === "built_in" && legacyTheme && legacyTheme !== response.values.theme.value) {
-          migrationPatch.theme = legacyTheme;
-        }
-        if (!workspaceLayer.locale && response.values.locale.source === "built_in" && legacyLocale && legacyLocale !== response.values.locale.value) {
-          migrationPatch.locale = legacyLocale;
-        }
-        const shouldClearLegacyTheme = legacyTheme !== undefined && (migrationPatch.theme !== undefined || response.values.theme.source !== "built_in" || legacyTheme === response.values.theme.value);
-        const shouldClearLegacyLocale = legacyLocale !== undefined && (migrationPatch.locale !== undefined || response.values.locale.source !== "built_in" || legacyLocale === response.values.locale.value);
-        const shouldClearLegacyCwd = readSavedWorkspaceCwd() === workspaceCwd && (migrationPatch.workspaceCwd !== undefined || workspaceLayer.workspaceCwd === workspaceCwd);
-
-        if (Object.keys(migrationPatch).length > 0) {
-          void updateWorkspaceSettings(workspaceCwd, migrationPatch)
-            .then((updated) => {
-              if (!cancelled && workspaceSettingsLoadedCwdRef.current === workspaceCwd) {
-                setWorkspaceSettings(updated.settings);
-                setEffectiveConfig((current) =>
-                  current && current.cwd === workspaceCwd
-                    ? { ...current, layers: { ...current.layers, workspaceSettings: updated.settings } }
-                    : current,
-                );
-                if (shouldClearLegacyTheme) {
-                  clearSavedThemePreference();
-                }
-                if (shouldClearLegacyLocale) {
-                  clearSavedLocale();
-                }
-                if (shouldClearLegacyCwd) {
-                  clearSavedWorkspaceCwd();
-                }
-              }
-            })
-            .catch(() => undefined);
-        } else {
-          if (shouldClearLegacyTheme) {
-            clearSavedThemePreference();
-          }
-          if (shouldClearLegacyLocale) {
-            clearSavedLocale();
-          }
-          if (shouldClearLegacyCwd) {
-            clearSavedWorkspaceCwd();
-          }
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setWorkspaceSettings(undefined);
-          setEffectiveConfig(undefined);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [daemonHealthy, form.cwd, setLocale, setThemePreference]);
-
-  useEffect(() => {
-    const workspaceCwd = form.cwd.trim();
-    if (daemonHealthy !== true || !workspaceCwd || workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
-      return;
-    }
-    const synced = interfaceSettingsSyncRef.current;
-    if (synced?.cwd !== workspaceCwd || (synced.theme === themePreference && synced.locale === locale)) {
-      return;
-    }
-    const timeout = globalThis.setTimeout(() => {
-      void updateWorkspaceSettings(workspaceCwd, { theme: themePreference, locale })
-        .then((response) => {
-          setWorkspaceSettings(response.settings);
-          setEffectiveConfig((current) =>
-            current && current.cwd === workspaceCwd
-              ? { ...current, layers: { ...current.layers, workspaceSettings: response.settings } }
-              : current,
-          );
-          interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: themePreference, locale };
-          clearSavedThemePreference();
-          clearSavedLocale();
-        })
-        .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)));
-    }, 250);
-    return () => globalThis.clearTimeout(timeout);
-  }, [daemonHealthy, form.cwd, locale, themePreference]);
-
   async function refreshHealth(): Promise<void> {
     try {
       const health = await getDaemonHealth();
@@ -1575,659 +1300,6 @@ export function AppShell(): JSX.Element {
     void refreshChannelActivityTransitions(form.cwd.trim(), channelId, channelRunsForArtifacts);
   }
 
-  async function refreshWorkItems(cwd = form.cwd.trim()): Promise<void> {
-    if (!cwd) {
-      setDurableWorkItems([]);
-      return;
-    }
-    setDurableWorkItemsLoading(true);
-    try {
-      const response = await listWorkItems(cwd);
-      setDurableWorkItems(response.workItems);
-    } catch (caught) {
-      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setDurableWorkItemsLoading(false);
-    }
-  }
-
-  async function claimDurableWorkItem(workItemId: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd || !workItemId || busyWorkItemId) {
-      return;
-    }
-    setBusyWorkItemId(workItemId);
-    try {
-      const response = await claimWorkItem(workspaceCwd, workItemId, {
-        ownerId: "web-user",
-        leaseMs: 5 * 60_000,
-      });
-      setDurableWorkItems((current) => [response.workItem, ...current.filter((item) => item.id !== response.workItem.id)]);
-      if (response.blocker) {
-        setErrorMessage(response.blocker.message);
-      } else {
-        setErrorMessage("");
-      }
-    } catch (caught) {
-      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setBusyWorkItemId("");
-    }
-  }
-
-  async function heartbeatDurableWorkItem(workItemId: string, claimToken: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd || !workItemId || !claimToken || busyWorkItemId) {
-      return;
-    }
-    setBusyWorkItemId(workItemId);
-    try {
-      const response = await heartbeatWorkItem(workspaceCwd, workItemId, {
-        claimToken,
-        leaseMs: 5 * 60_000,
-      });
-      setDurableWorkItems((current) => [response.workItem, ...current.filter((item) => item.id !== response.workItem.id)]);
-      setErrorMessage("");
-    } catch (caught) {
-      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setBusyWorkItemId("");
-    }
-  }
-
-  async function routeExternalWorkToChannel(externalWorkId: string, channelId: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd || !externalWorkId || !channelId || routingExternalWorkId) {
-      return;
-    }
-    setRoutingExternalWorkId(externalWorkId);
-    try {
-      setErrorMessage("");
-      const response = await routeExternalWork(workspaceCwd, externalWorkId, { channelId });
-      const actionIds = response.actions.map((item) => item.action.id);
-      await Promise.all([
-        refreshExternalActionDetailsByIds(workspaceCwd, actionIds),
-        refreshExternalWorkCiTriage(workspaceCwd, channelId),
-        refreshExternalWorkStatus(workspaceCwd, channelId),
-        refreshChannelProtocol(channelId),
-        refreshApprovals(workspaceCwd),
-        refreshWorkItems(workspaceCwd),
-      ]);
-    } catch (caught) {
-      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setRoutingExternalWorkId("");
-    }
-  }
-
-  function buildChannelCreatePayload(input: ChannelCreateFormState): ChannelFormState {
-    const defaultTeammateId = input.defaultResponderTeammateId || input.defaultTeammateId;
-    return {
-      name: input.name,
-      status: input.status,
-      boundPath: input.boundPath,
-      defaultProviderPresetId: input.defaultProviderPresetId,
-      defaultTeammateId,
-      autoReplyMode: input.autoReplyMode,
-      responseLanguage: input.responseLanguage,
-      allowedTools: input.allowedTools,
-      runtimePolicy: input.runtimePolicy,
-    };
-  }
-
-  function selectedCreateTeammateIds(input: ChannelCreateFormState): readonly string[] {
-    const ids = new Set(input.selectedTeammateIds.filter(Boolean));
-    if (input.defaultResponderTeammateId) {
-      ids.add(input.defaultResponderTeammateId);
-    }
-    return [...ids];
-  }
-
-  async function applyCreatedChannelTeammates(channelId: string, input: ChannelCreateFormState): Promise<void> {
-    const defaultTeammateId = input.defaultResponderTeammateId || input.defaultTeammateId;
-    const teammateIds = selectedCreateTeammateIds(input);
-    if (defaultTeammateId) {
-      await setDefaultChannelTeammate(channelId, defaultTeammateId);
-    }
-    for (const teammateId of teammateIds) {
-      if (teammateId !== defaultTeammateId) {
-        await addChannelTeammate(channelId, teammateId);
-      }
-    }
-  }
-
-  async function saveChannel(): Promise<void> {
-    if (!form.cwd.trim()) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-    if (!channelForm.name.trim()) {
-      setErrorMessage("请输入 channel name");
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      const response = await createChannel(form.cwd.trim(), buildChannelCreatePayload(channelForm));
-      await applyCreatedChannelTeammates(response.channel.id, channelForm);
-      setSelectedChannelId(response.channel.id);
-      setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
-      setChannelCreateOpen(false);
-      setChannelForm((current) => ({
-        ...current,
-        name: "",
-        defaultProviderPresetId: (current.defaultProviderPresetId || response.channel.defaultProviderPresetId) ?? "",
-        selectedTeammateIds: [],
-        defaultResponderTeammateId: "",
-        defaultTeammateId: "",
-      }));
-      await refreshChannels();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function saveDefaultChannel(): Promise<void> {
-    if (!form.cwd.trim()) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-
-    const readyProvider = providers.find(providerPreflightReady);
-    try {
-      setErrorMessage("");
-      const response = await createChannel(form.cwd.trim(), {
-        name: channelForm.name.trim() || "Engineering",
-        status: channelForm.status,
-        boundPath: channelForm.boundPath.trim() || form.cwd.trim(),
-        defaultProviderPresetId: readyProvider?.id ?? channelForm.defaultProviderPresetId,
-        defaultTeammateId: channelForm.defaultResponderTeammateId || channelForm.defaultTeammateId,
-        autoReplyMode: channelForm.autoReplyMode,
-        responseLanguage: channelForm.responseLanguage,
-        allowedTools: channelForm.allowedTools.length > 0 ? channelForm.allowedTools : defaultTools,
-        runtimePolicy: channelForm.runtimePolicy,
-      });
-      await applyCreatedChannelTeammates(response.channel.id, channelForm);
-      setSelectedChannelId(response.channel.id);
-      setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
-      setChannelCreateOpen(false);
-      setTaskRunProviderId("");
-      if (readyProvider) {
-        setForm((current) => ({
-          ...current,
-          providerPresetId: readyProvider.id,
-          provider: readyProvider.providerId,
-          model: readyProvider.model,
-          baseUrl: providerEffectiveBaseUrl(readyProvider, providerTemplates),
-          api: readyProvider.api,
-        }));
-      }
-      setChannelForm((current) => ({
-        ...current,
-        name: "",
-        boundPath: current.boundPath || form.cwd.trim(),
-        defaultProviderPresetId: readyProvider?.id ?? current.defaultProviderPresetId,
-        defaultTeammateId: "",
-        selectedTeammateIds: [],
-        defaultResponderTeammateId: "",
-      }));
-      await refreshChannels();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function saveChannelEdit(channelId: string): Promise<void> {
-    if (!form.cwd.trim()) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-    if (!channelEditForm.name.trim()) {
-      setErrorMessage("请输入 channel name");
-      return;
-    }
-    if (channelEditForm.allowedTools.length === 0) {
-      setErrorMessage("请至少选择一个 allowed tool");
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      const response = await updateChannel(form.cwd.trim(), channelId, channelEditForm);
-      setSelectedChannelId(response.channel.id);
-      setTaskRunProviderId("");
-      setChannelEditForm(channelToForm(response.channel, form.cwd));
-      await refreshChannels();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function saveChannelBranch(channelId: string, name: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-    try {
-      setErrorMessage("");
-      const response = await createChannelBranch(workspaceCwd, channelId, { name, status: "active" });
-      setSelectedChannelId(channelId);
-      setSelectedChannelBranchId(response.branch.id);
-      setActiveView("workspace");
-      setActiveSidebarTarget(channelSidebarTarget(channelId));
-      await refreshChannels(workspaceCwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function archiveSidebarChannel(channelId: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    const channel = channels.find((item) => item.id === channelId);
-    if (!workspaceCwd || !channel) {
-      return;
-    }
-    try {
-      setErrorMessage("");
-      await patchChannel(workspaceCwd, channelId, { status: "archived" });
-      setChannels((current) => current.filter((item) => item.id !== channelId));
-      setChannelBranches((current) => current.filter((branch) => branch.channelId !== channelId));
-      if (selectedChannelId === channelId) {
-        setSelectedChannelId("");
-        setSelectedChannelBranchId("");
-        setActiveSidebarTarget("workspace");
-      }
-      await refreshChannels(workspaceCwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function archiveSidebarChannelBranch(channelId: string, branchId: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      return;
-    }
-    try {
-      setErrorMessage("");
-      await updateChannelBranch(workspaceCwd, channelId, branchId, { status: "archived" });
-      setChannelBranches((current) => current.filter((branch) => branch.id !== branchId));
-      if (selectedChannelBranchId === branchId) {
-        setSelectedChannelBranchId("");
-      }
-      await refreshChannels(workspaceCwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function removeChannel(channelId: string): Promise<void> {
-    try {
-      setErrorMessage("");
-      await deleteChannel(form.cwd.trim(), channelId);
-      if (selectedChannelId === channelId) {
-        setSelectedChannelId("");
-      }
-      if (activeSidebarTarget === channelSidebarTarget(channelId)) {
-        setActiveSidebarTarget("workspace");
-      }
-      await refreshChannels();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function saveTask(): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    if (!taskForm.prompt.trim()) {
-      setErrorMessage("请输入 task prompt");
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      const response = await createTask(form.cwd.trim(), selectedChannelId, {
-        title: taskForm.title.trim() || titleFromPrompt(taskForm.prompt),
-        prompt: taskForm.prompt,
-        assigneeTeammateId: taskForm.assigneeTeammateId || channels.find((channel) => channel.id === selectedChannelId)?.defaultTeammateId,
-      });
-      setSelectedTaskId(response.task.id);
-      setTaskForm(defaultTaskForm);
-      await refreshTasks(selectedChannelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function sendChannelMessage(input: {
-    readonly threadId?: string;
-    readonly body: string;
-    readonly mentions: readonly { readonly id: string; readonly label: string; readonly kind: "ai-teammate" | "local-user" | "channel" }[];
-    readonly attachmentIds: readonly string[];
-    readonly linkPreviewIds: readonly string[];
-    readonly fileRefs: readonly ChannelMessageFileRef[];
-    readonly requestAiReply: boolean;
-  }): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    const firstAiMention = input.mentions.find((mention) => mention.kind === "ai-teammate");
-    const providerPresetId = resolveChannelMessageProviderPresetId(
-      selectedChannel,
-      firstAiMention?.id || selectedChannel?.defaultTeammateId,
-    );
-    try {
-      setErrorMessage("");
-      let receivedAiReply = false;
-      let autoStartedWorkflow = false;
-      const response = await streamChannelMessage(form.cwd.trim(), selectedChannelId, {
-        threadId: input.threadId,
-        body: input.body,
-        mentions: input.mentions,
-        attachmentIds: input.attachmentIds,
-        linkPreviewIds: input.linkPreviewIds,
-        fileRefs: input.fileRefs,
-        requestAiReply: input.requestAiReply,
-        providerPresetId: providerPresetId || undefined,
-        teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
-      });
-      await readSseResponse(response, (event) => {
-        if (event.event === "ready") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamReadyEvent;
-          const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
-          receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
-          return;
-        }
-        if (event.event === "delta") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamDeltaEvent;
-          setChannelMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, body: data.body, status: "pending" } : message));
-          return;
-        }
-        if (event.event === "done") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamDoneEvent;
-          const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
-          receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          autoStartedWorkflow = Boolean(data.autoStartedWorkflow);
-          setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
-          return;
-        }
-        if (event.event === "blocked") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamBlockedEvent;
-          const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
-          receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
-          if (data.error) {
-            setErrorMessage(data.error);
-          }
-          return;
-        }
-        if (event.event === "error") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamErrorEvent;
-          const messages = [data.message, ...(data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [])]
-            .filter((message): message is ChannelMessage => Boolean(message));
-          receivedAiReply = receivedAiReply || messages.some((message) => message.kind === "ai_reply");
-          if (messages.length > 0) {
-            setChannelMessages((current) => upsertChannelMessages(current, messages));
-          }
-          if (data.error) {
-            setErrorMessage(data.error);
-          }
-        }
-      });
-      await refreshChannelExecutionProposals(selectedChannelId);
-      await refreshChannelIntentDecisions(selectedChannelId);
-      if (receivedAiReply) {
-        await refreshUsedMemoryAudit(form.cwd.trim());
-      }
-      await refreshChannelMessageRouteDecisions(selectedChannelId);
-      await refreshChannelFiles(selectedChannelId);
-      if (autoStartedWorkflow) {
-        await refreshChannelActivity();
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function uploadChannelFiles(files: readonly File[]): Promise<readonly ChannelAttachment[]> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return [];
-    }
-    if (files.length === 0) {
-      return [];
-    }
-
-    setChannelFilesLoading(true);
-    try {
-      setErrorMessage("");
-      const responses = await Promise.all(files.map((file) => uploadChannelAttachment(form.cwd.trim(), selectedChannelId, file)));
-      const uploaded = responses.map((response) => response.attachment);
-      setChannelAttachments((current) => [...uploaded, ...current]);
-      return uploaded;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    } finally {
-      setChannelFilesLoading(false);
-    }
-  }
-
-  async function addChannelLinkPreview(url: string): Promise<ChannelLinkPreview | undefined> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return undefined;
-    }
-    try {
-      setErrorMessage("");
-      const response = await createChannelLinkPreview(form.cwd.trim(), selectedChannelId, { url });
-      setChannelLinkPreviews((current) => [
-        response.linkPreview,
-        ...current.filter((preview) => preview.id !== response.linkPreview.id),
-      ]);
-      return response.linkPreview;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function removeChannelAttachment(attachmentId: string): Promise<void> {
-    try {
-      setErrorMessage("");
-      await deleteChannelAttachment(form.cwd.trim(), attachmentId);
-      setChannelAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function saveChannelBrief(input: UpdateChannelBriefRequest): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    try {
-      setErrorMessage("");
-      const response = await updateChannelBrief(form.cwd.trim(), selectedChannelId, input);
-      setChannelBrief(response.brief);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function saveChannelProtocolPatch(input: UpdateChannelCollaborationProtocolRequest): Promise<ChannelCollaborationProtocolResponse | undefined> {
-    if (!selectedChannelId) {
-      const error = new Error("请先选择 channel");
-      setErrorMessage(error.message);
-      throw error;
-    }
-    try {
-      setErrorMessage("");
-      const response = await updateChannelCollaborationProtocol(form.cwd.trim(), selectedChannelId, input);
-      setChannelCollaborationProtocol(response);
-      await refreshChannels();
-      return response;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function revertChannelProtocolSettings(): Promise<ChannelCollaborationProtocolResponse | undefined> {
-    if (!selectedChannelId) {
-      const error = new Error("请先选择 channel");
-      setErrorMessage(error.message);
-      throw error;
-    }
-    try {
-      setErrorMessage("");
-      const response = await revertChannelCollaborationProtocol(form.cwd.trim(), selectedChannelId);
-      setChannelCollaborationProtocol(response);
-      await refreshChannels();
-      return response;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function supersedeChannelDecision(decision: ChannelDecision): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    try {
-      setErrorMessage("");
-      await createChannelDecision(form.cwd.trim(), selectedChannelId, {
-        title: `${decision.title} update`,
-        decision: decision.decision,
-        rationale: "Supersedes the previous active decision.",
-        alternatives: decision.alternatives,
-        supersedesDecisionId: decision.id,
-        createdBy: "local-user",
-      });
-      await refreshChannelProtocol(selectedChannelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function rejectChannelDecision(decision: ChannelDecision): Promise<void> {
-    try {
-      setErrorMessage("");
-      const response = await updateChannelDecision(form.cwd.trim(), decision.id, { status: "rejected" });
-      setChannelDecisions((current) => current.map((item) => item.id === response.decision.id ? response.decision : item));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function createHandoffFromTask(task: Task): Promise<ChannelHandoff | undefined> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return undefined;
-    }
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    const teammateId = task.assigneeTeammateId ?? selectedChannel?.defaultTeammateId ?? "engineer";
-    try {
-      setErrorMessage("");
-      const response = await createChannelHandoff(form.cwd.trim(), selectedChannelId, {
-        sourceTaskId: task.id,
-        fromParticipantId: "local-user",
-        fromParticipantLabel: t("You"),
-        toParticipantId: teammateId,
-        toParticipantLabel: teammateId,
-        reason: task.title,
-        requiredInput: task.prompt,
-        expectedOutput: "Complete or report blocker for this task.",
-        createdBy: "local-user",
-      });
-      setChannelHandoffs((current) => [response.handoff, ...current]);
-      return response.handoff;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return undefined;
-    }
-  }
-
-  async function updateHandoffStatusValue(handoff: ChannelHandoff, status: ChannelHandoffStatus): Promise<void> {
-    try {
-      setErrorMessage("");
-      const response = await updateChannelHandoff(form.cwd.trim(), handoff.id, { status });
-      setChannelHandoffs((current) => current.map((item) => item.id === response.handoff.id ? response.handoff : item));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function startWorkflowFromHandoff(handoff: ChannelHandoff): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      const response = await createChannelWorkflowFromHandoff(form.cwd.trim(), handoff.id, {
-        title: `${handoff.reason || "Handoff"} workflow`,
-        objective: handoff.expectedOutput || handoff.requiredInput || handoff.reason,
-        createdBy: "local-user",
-      });
-      setChannelWorkflows((current) => [response.workflow, ...current.filter((item) => item.id !== response.workflow.id)]);
-      const createdStep = response.workflowStep;
-      if (createdStep) {
-        setChannelWorkflowSteps((current) => [createdStep, ...current.filter((item) => item.id !== createdStep.id)]);
-      }
-      await refreshChannelProtocol(selectedChannelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function startAutoplanWorkflow(): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd || !selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    const providerPresetId = taskRunProviderId || selectedChannel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id;
-    const objective = (channelBrief?.objective || selectedChannel?.name || "Run the built-in autoplan-lite workflow.").trim();
-    setOrchestratingWorkflowId("new:autoplan-lite");
-    try {
-      setErrorMessage("");
-      const response = await createChannelWorkflowFromTemplate(workspaceCwd, selectedChannelId, {
-        templateId: "autoplan-lite",
-        title: `${selectedChannel?.name ?? "Channel"} autoplan`,
-        objective,
-        createdBy: "local-user",
-        providerPresetId: providerPresetId || undefined,
-        autoStart: true,
-      });
-      setChannelWorkflows((current) => [response.workflow, ...current.filter((item) => item.id !== response.workflow.id)]);
-      setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
-      await orchestrateWorkflowById(response.workflow.id, response.workflow.channelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setOrchestratingWorkflowId((current) => current === "new:autoplan-lite" ? "" : current);
-    }
-  }
-
   async function handleDomainEvent(event: DomainEvent): Promise<void> {
     const workspaceCwd = form.cwd.trim();
     switch (event.type) {
@@ -2285,572 +1357,6 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function orchestrateWorkflowById(workflowId: string, channelId?: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-
-    setOrchestratingWorkflowId(workflowId);
-    try {
-      setErrorMessage("");
-      const result = await orchestrateChannelWorkflow(workspaceCwd, workflowId);
-      setChannelWorkflows((current) => [result.workflow, ...current.filter((item) => item.id !== result.workflow.id)]);
-      const workflowStep = "workflowStep" in result ? result.workflowStep : undefined;
-      if (workflowStep) {
-        setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [workflowStep]));
-      }
-      if ("approval" in result && result.approval) {
-        upsertApprovalRecord(result.approval);
-      }
-      if (result.status === "blocked" || result.status === "failed") {
-        setErrorMessage(result.blocker);
-      } else if (result.status === "idle" && result.reason) {
-        setErrorMessage(result.reason);
-      }
-      await handleDomainEvent({
-        type: "workflow.advanced",
-        workflowId,
-        channelId: channelId ?? selectedChannelId,
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setOrchestratingWorkflowId((current) => current === workflowId ? "" : current);
-    }
-  }
-
-  async function orchestrateWorkflowAction(workflow: ChannelWorkflow): Promise<void> {
-    await orchestrateWorkflowById(workflow.id, workflow.channelId);
-  }
-
-  async function cancelWorkflowAction(workflow: ChannelWorkflow): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-
-    setOrchestratingWorkflowId(workflow.id);
-    try {
-      setErrorMessage("");
-      const response = await cancelChannelWorkflow(workspaceCwd, workflow.id);
-      setChannelWorkflows((current) => [response.workflow, ...current.filter((item) => item.id !== response.workflow.id)]);
-      setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
-      await handleDomainEvent({
-        type: "workflow.cancelled",
-        workflowId: workflow.id,
-        channelId: workflow.channelId,
-        runIds: [],
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setOrchestratingWorkflowId((current) => current === workflow.id ? "" : current);
-    }
-  }
-
-  async function retryWorkflowStepAction(step: ChannelWorkflowStep): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-
-    setRunningWorkflowStepId(step.id);
-    try {
-      setErrorMessage("");
-      const result = await retryChannelWorkflowStep(workspaceCwd, step.id);
-      setChannelWorkflows((current) => [result.workflow, ...current.filter((item) => item.id !== result.workflow.id)]);
-      const workflowStep = "workflowStep" in result ? result.workflowStep : undefined;
-      if (workflowStep) {
-        setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [workflowStep]));
-      }
-      if ("approval" in result && result.approval) {
-        upsertApprovalRecord(result.approval);
-      }
-      if (result.status === "blocked" || result.status === "failed") {
-        setErrorMessage(result.blocker);
-      } else if (result.status === "idle" && result.reason) {
-        setErrorMessage(result.reason);
-      }
-      await handleDomainEvent({
-        type: "workflowStep.retried",
-        workflowId: step.workflowId,
-        workflowStepId: step.id,
-        channelId: step.channelId,
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRunningWorkflowStepId((current) => current === step.id ? "" : current);
-    }
-  }
-
-  async function startWorkflowStepAction(step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-    const workflow = channelWorkflows.find((item) => item.id === step.workflowId);
-    const channel = workflow ? channels.find((item) => item.id === workflow.channelId) : channels.find((item) => item.id === step.channelId);
-    const providerPresetId = taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id;
-    const request = {
-      mode,
-      providerPresetId,
-      assigneeTeammateId: step.toParticipantId,
-    };
-
-    setRunningWorkflowStepId(step.id);
-    try {
-      setErrorMessage("");
-      if (mode === "create_task") {
-        const response = await startChannelWorkflowStep(workspaceCwd, step.id, request);
-        if (response.workflow) {
-          setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
-        }
-        setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
-        const createdTask = response.task;
-        if (createdTask) {
-          setSelectedTaskId(createdTask.id);
-          setTasks((current) => [createdTask, ...current.filter((item) => item.id !== createdTask.id)]);
-        }
-        if (response.blocker) {
-          setErrorMessage(response.blocker);
-        }
-        await Promise.all([refreshTasks(step.channelId), refreshChannelProtocol(step.channelId), refreshRuntimeState(workspaceCwd)]);
-        return;
-      }
-
-      const url = `${daemonBaseUrl}/workflow-steps/${encodeURIComponent(step.id)}/start?cwd=${encodeURIComponent(workspaceCwd)}`;
-      await streamRunRequest(url, request, workspaceCwd, async () => {
-        await Promise.all([
-          refreshTasks(step.channelId),
-          refreshChannelProtocol(step.channelId),
-        ]);
-      });
-      await Promise.all([refreshTasks(step.channelId), refreshChannelProtocol(step.channelId), refreshRuntimeState(workspaceCwd)]);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRunningWorkflowStepId((current) => current === step.id ? "" : current);
-    }
-  }
-
-  async function updateWorkflowStepStatus(step: ChannelWorkflowStep, status: "skipped" | "cancelled"): Promise<void> {
-    try {
-      setErrorMessage("");
-      const response = await updateChannelWorkflowStep(form.cwd.trim(), step.id, { status });
-      setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
-      if (response.workflow) {
-        setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
-      }
-      await handleDomainEvent({
-        type: "workflowStep.updated",
-        workflowId: step.workflowId,
-        workflowStepId: step.id,
-        channelId: step.channelId,
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function createTaskFromContextSummary(summary: ChannelContextSummary): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    try {
-      setErrorMessage("");
-      const response = await createTask(form.cwd.trim(), selectedChannelId, {
-        title: titleFromPrompt(summary.summary),
-        prompt: buildContextTaskPrompt(summary, channelDecisions),
-        assigneeTeammateId: selectedChannel?.defaultTeammateId,
-      });
-      setSelectedTaskId("");
-      setTasks((current) => [response.task, ...current.filter((task) => task.id !== response.task.id)]);
-      await refreshTasks(selectedChannelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function runActivityTriageAction(draft: ChannelActivityTriageDraft): Promise<ChannelActivityTriageResult> {
-    if (!selectedChannelId) {
-      const error = new Error("请先选择 channel");
-      setErrorMessage(error.message);
-      throw error;
-    }
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    const sourceRefs = draft.sourceRefs;
-    try {
-      setErrorMessage("");
-      if (draft.actionKind === "follow_up_task") {
-        const response = await createTask(form.cwd.trim(), selectedChannelId, {
-          title: draft.title.trim(),
-          prompt: draft.prompt,
-          assigneeTeammateId: draft.assigneeTeammateId || selectedChannel?.defaultTeammateId,
-        });
-        setSelectedTaskId(response.task.id);
-        setTasks((current) => [response.task, ...current.filter((task) => task.id !== response.task.id)]);
-        return { kind: "task", task: response.task };
-      }
-
-      if (draft.actionKind === "handoff") {
-        const response = await createChannelHandoff(form.cwd.trim(), selectedChannelId, {
-          ...(sourceRefs.sourceMessageId ? { sourceMessageId: sourceRefs.sourceMessageId } : {}),
-          ...(sourceRefs.sourceTaskId ? { sourceTaskId: sourceRefs.sourceTaskId } : {}),
-          ...(sourceRefs.sourceRunId ? { sourceRunId: sourceRefs.sourceRunId } : {}),
-          fromParticipantId: "local-user",
-          fromParticipantLabel: t("You"),
-          toParticipantId: draft.toParticipantId.trim(),
-          toParticipantLabel: draft.toParticipantLabel.trim(),
-          reason: draft.reason.trim(),
-          requiredInput: draft.requiredInput,
-          expectedOutput: draft.expectedOutput,
-          createdBy: "local-user",
-        });
-        setChannelHandoffs((current) => [response.handoff, ...current.filter((handoff) => handoff.id !== response.handoff.id)]);
-        return { kind: "handoff", handoff: response.handoff };
-      }
-
-      if (draft.actionKind === "decision") {
-        const response = await createChannelDecision(form.cwd.trim(), selectedChannelId, {
-          ...(sourceRefs.sourceMessageId ? { sourceMessageId: sourceRefs.sourceMessageId } : {}),
-          ...(sourceRefs.sourceTaskId ? { sourceTaskId: sourceRefs.sourceTaskId } : {}),
-          ...(sourceRefs.sourceRunId ? { sourceRunId: sourceRefs.sourceRunId } : {}),
-          title: draft.title.trim(),
-          decision: draft.decision,
-          rationale: draft.rationale,
-          alternatives: [],
-          createdBy: "local-user",
-        });
-        setChannelDecisions((current) => [response.decision, ...current.filter((decision) => decision.id !== response.decision.id)]);
-        return { kind: "decision", decision: response.decision };
-      }
-
-      const response = await createChannelContextSummary(form.cwd.trim(), selectedChannelId, {
-        targetType: sourceRefs.contextTargetType,
-        targetId: sourceRefs.contextTargetId,
-        sourceMessageIds: sourceRefs.sourceMessageIds,
-        decisionIds: draft.decisionIds,
-        summary: draft.summary,
-        acceptanceCriteria: splitTextLines(draft.acceptanceCriteria),
-        openQuestions: splitTextLines(draft.openQuestions),
-        authorType: "local-user",
-        authorId: "local-user",
-      });
-      setChannelContextSummaries((current) => [
-        response.contextSummary,
-        ...current.filter((summary) => summary.id !== response.contextSummary.id),
-      ]);
-      return { kind: "context_summary", contextSummary: response.contextSummary };
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  async function removeTask(taskId: string): Promise<void> {
-    try {
-      setErrorMessage("");
-      await deleteTask(form.cwd.trim(), taskId);
-      if (selectedTaskId === taskId) {
-        setSelectedTaskId("");
-      }
-      await refreshTasks();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function moveTaskToReview(taskId: string): Promise<void> {
-    try {
-      setErrorMessage("");
-      await updateTaskStatus(form.cwd.trim(), taskId, "review");
-      await refreshTasks();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function saveTaskEdit(taskId: string): Promise<Task | undefined> {
-    if (!taskEditForm.title.trim()) {
-      setErrorMessage("请输入 task title");
-      return undefined;
-    }
-    if (!taskEditForm.prompt.trim()) {
-      setErrorMessage("请输入 task prompt");
-      return undefined;
-    }
-
-    try {
-      setErrorMessage("");
-      const response = await updateTask(form.cwd.trim(), taskId, {
-        ...taskEditForm,
-        title: taskEditForm.title.trim(),
-        prompt: taskEditForm.prompt.trim(),
-      });
-      await refreshTasks();
-      return response.task;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return undefined;
-    }
-  }
-
-  function resolveTaskRunProviderPresetId(channel: Channel | undefined): string {
-    return taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id || "";
-  }
-
-  function resolveChannelMessageProviderPresetId(channel: Channel | undefined, teammateId: string | undefined): string {
-    const teammateProviderPresetId = findAiTeammateByReference(teammateId)?.providerPresetId;
-    return teammateProviderPresetId || taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id || "";
-  }
-
-  function findAiTeammateByReference(teammateId: string | undefined): AiTeammate | undefined {
-    if (!teammateId) {
-      return undefined;
-    }
-    return aiTeammates.find((teammate) => teammate.id === teammateId || teammate.templateId === teammateId);
-  }
-
-  async function markChannelExecutionProposal(
-    proposal: ChannelExecutionProposal,
-    input: Parameters<typeof updateChannelExecutionProposal>[2],
-  ): Promise<ChannelExecutionProposal | undefined> {
-    try {
-      const response = await updateChannelExecutionProposal(form.cwd.trim(), proposal.id, input);
-      upsertChannelExecutionProposal(response.proposal);
-      return response.proposal;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return undefined;
-    }
-  }
-
-  async function blockChannelExecutionProposal(proposal: ChannelExecutionProposal, message: string): Promise<void> {
-    setErrorMessage(message);
-    await markChannelExecutionProposal(proposal, { status: "blocked", errorMessage: message });
-  }
-
-  async function confirmChannelExecutionProposal(proposal: ChannelExecutionProposal): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage(t("Local workspace is not ready."));
-      return;
-    }
-    try {
-      setErrorMessage("");
-      const response = await confirmChannelExecutionProposalWorkflow(workspaceCwd, proposal.id);
-      upsertChannelExecutionProposal(response.proposal);
-      setChannelWorkflows((current) => [response.workflow, ...current.filter((workflow) => workflow.id !== response.workflow.id)]);
-      setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
-      await Promise.all([
-        refreshRuns(workspaceCwd),
-        refreshChannelProtocol(proposal.channelId),
-        refreshChannelExecutionProposals(proposal.channelId),
-        refreshUsedMemoryAudit(workspaceCwd),
-      ]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setErrorMessage(message);
-      await blockChannelExecutionProposal(proposal, message);
-    }
-  }
-
-  async function cancelChannelExecutionProposal(proposal: ChannelExecutionProposal): Promise<void> {
-    await markChannelExecutionProposal(proposal, {
-      status: "cancelled",
-      ...(proposal.shaping ? { shaping: { ...proposal.shaping, status: "dismissed", updatedAt: new Date().toISOString() } } : {}),
-    });
-  }
-
-  async function runPersistedTask(
-    task: Task,
-    options: {
-      readonly skipPreflight?: boolean;
-      readonly action?: TaskRunActionState["action"];
-      readonly providerPresetIdOverride?: string;
-      readonly toolsOverride?: readonly Channel["allowedTools"][number][];
-      readonly approvalProfileOverride?: AiTeammate["approvalProfile"];
-      readonly afterRunLoaded?: (runId: string) => Promise<void>;
-    } = {},
-  ): Promise<boolean> {
-    const action = options.action ?? "run";
-    setActiveTaskRunAction({ taskId: task.id, action });
-    try {
-      const channel = channels.find((item) => item.id === task.channelId);
-      if (!channel) {
-        setErrorMessage(t("Task channel not found."));
-        return false;
-      }
-      if (channel.status !== "active") {
-        setErrorMessage(t("Channel is {status}; resume it before starting a new run.", { status: t(channel.status) }));
-        return false;
-      }
-      const providerPresetId = options.providerPresetIdOverride || resolveTaskRunProviderPresetId(channel);
-      if (!providerPresetId) {
-        setErrorMessage(t("No provider preset is selected for this task run."));
-        return false;
-      }
-      const provider = providers.find((item) => item.id === providerPresetId);
-      if (!provider || !canUseProviderForRun(provider)) {
-        setErrorMessage(provider
-          ? t("Provider preset is not runnable: {reason}", { reason: providerRunBlockerLabel(provider, t) })
-          : t("Provider preset not found"));
-        return false;
-      }
-      if (!options.skipPreflight) {
-        const blocker = providerRunPreflightBlocker(provider, t);
-        if (blocker) {
-          setErrorMessage(blocker);
-          return false;
-        }
-      }
-
-      const runCwd = form.cwd.trim();
-      await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId, {
-        tools: options.toolsOverride,
-        approvalProfile: options.approvalProfileOverride,
-        permissionPreset: form.permissionPreset,
-        permissionMode: form.permissionMode,
-      }), runCwd, async (runId) => {
-        await refreshTasks(task.channelId);
-        await options.afterRunLoaded?.(runId);
-      });
-      return true;
-    } finally {
-      setActiveTaskRunAction((current) =>
-        current?.taskId === task.id && current.action === action ? undefined : current,
-      );
-    }
-  }
-
-  async function checkThenRunPersistedTask(task: Task): Promise<boolean> {
-    setActiveTaskRunAction({ taskId: task.id, action: "check" });
-    const channel = channels.find((item) => item.id === task.channelId);
-    const providerPresetId = resolveTaskRunProviderPresetId(channel);
-    const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
-    if (!provider) {
-      setErrorMessage(providerPresetId ? t("Provider preset not found") : t("No provider preset is selected for this task run."));
-      setActiveTaskRunAction(undefined);
-      return false;
-    }
-    if (!(await checkProviderForRun(provider))) {
-      setActiveTaskRunAction(undefined);
-      return false;
-    }
-    return await runPersistedTask(task, { skipPreflight: true, action: "check" });
-  }
-
-  async function runUpdatedTaskFromRepair(task: Task): Promise<void> {
-    const updatedTask = await saveTaskEdit(task.id);
-    if (!updatedTask) {
-      return;
-    }
-    if (await runPersistedTask(updatedTask)) {
-      setTaskRepairRunId("");
-    }
-  }
-
-  async function checkThenRunUpdatedTaskFromRepair(task: Task): Promise<void> {
-    const updatedTask = await saveTaskEdit(task.id);
-    if (!updatedTask) {
-      return;
-    }
-    if (await checkThenRunPersistedTask(updatedTask)) {
-      setTaskRepairRunId("");
-    }
-  }
-
-  async function rerunRun(sourceRun: RunSession): Promise<void> {
-    try {
-      const workspaceCwd = readRunWorkspaceCwd(sourceRun, form.cwd.trim());
-      await runWithRequest(buildRerunRequest(sourceRun), workspaceCwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function applyProviderToRun(provider: ProviderPreset): Promise<void> {
-    setTaskRunProviderId(provider.id);
-    setForm((current) => ({
-      ...current,
-      providerPresetId: provider.id,
-      provider: provider.providerId,
-      model: provider.model,
-      baseUrl: providerEffectiveBaseUrl(provider, providerTemplates),
-      api: provider.api,
-    }));
-
-    const workspaceCwd = form.cwd.trim();
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    if (!workspaceCwd || !selectedChannel) {
-      return;
-    }
-
-    const nextChannelForm = {
-      ...channelToForm(selectedChannel, workspaceCwd),
-      defaultProviderPresetId: provider.id,
-    };
-    setChannels((current) =>
-      current.map((channel) =>
-        channel.id === selectedChannel.id ? { ...channel, defaultProviderPresetId: provider.id } : channel
-      )
-    );
-    setChannelEditForm((current) =>
-      selectedChannelId === selectedChannel.id ? { ...current, defaultProviderPresetId: provider.id } : current
-    );
-    try {
-      await updateChannel(workspaceCwd, selectedChannel.id, nextChannelForm);
-      await refreshChannels(workspaceCwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      await refreshChannels(workspaceCwd);
-    }
-  }
-
-  async function clearProviderFromRun(provider?: ProviderPreset): Promise<void> {
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    setForm((current) => ({
-      ...current,
-      providerPresetId: "",
-    }));
-    setTaskRunProviderId("");
-    if (provider) {
-      await clearProviderUsage(provider.id);
-      return;
-    }
-    if (!selectedChannel?.defaultProviderPresetId || !form.cwd.trim()) {
-      return;
-    }
-
-    const clearedChannelForm = {
-      ...channelToForm(selectedChannel, form.cwd),
-      defaultProviderPresetId: "",
-    };
-    setChannels((current) =>
-      current.map((channel) =>
-        channel.id === selectedChannel.id ? { ...channel, defaultProviderPresetId: undefined } : channel
-      )
-    );
-    setChannelEditForm((current) =>
-      selectedChannelId === selectedChannel.id ? { ...current, defaultProviderPresetId: "" } : current
-    );
-    try {
-      await updateChannel(form.cwd.trim(), selectedChannel.id, clearedChannelForm);
-      await refreshChannels();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      await refreshChannels();
-    }
-  }
-
   async function selectRun(runId: string): Promise<void> {
     await loadRun(runId);
     void refreshApprovals(form.cwd.trim(), runId);
@@ -2859,52 +1365,6 @@ export function AppShell(): JSX.Element {
   async function openRunFromWorkspace(runId: string): Promise<void> {
     await selectRun(runId);
     openRunDiagnosticsView();
-  }
-
-  function openTaskFromWorkBoard(taskId: string): void {
-    const task = tasks.find((item) => item.id === taskId);
-    if (task?.channelId) {
-      setSelectedChannelId(task.channelId);
-      setActiveSidebarTarget(channelSidebarTarget(task.channelId));
-    }
-    setSelectedTaskId(taskId);
-    setActiveView("workspace");
-  }
-
-  function openApprovalsFromWorkspace(runId?: string): void {
-    const targetRunId = runId || activeRunId || "";
-    setApprovalRepairRunId(targetRunId);
-    if (targetRunId) {
-      void loadRun(targetRunId, form.cwd.trim());
-    }
-    void refreshApprovals(form.cwd.trim(), targetRunId || undefined);
-    setActiveView("approvals");
-    setActiveSidebarTarget("approvals");
-  }
-
-  function openProvidersFromRun(runToRepair?: RunSession): void {
-    void handleDomainEvent({
-      type: "provider.repairRequested",
-      providerPresetId: runToRepair ? readRunProviderPresetId(runToRepair) : undefined,
-      sourceRunId: runToRepair?.id,
-    });
-  }
-
-  async function openTaskFromRun(runToRepair: RunSession): Promise<void> {
-    if (!runToRepair.channelId || !runToRepair.taskId) {
-      setErrorMessage("This run is not linked to an editable channel task.");
-      return;
-    }
-
-    setErrorMessage("");
-    setTaskRepairRunId(runToRepair.id);
-    setSelectedChannelId(runToRepair.channelId);
-    setSelectedTaskId(runToRepair.taskId);
-    setTaskRunProviderId("");
-    setActiveView("workspace");
-    setActiveSidebarTarget(channelSidebarTarget(runToRepair.channelId));
-    await refreshTasks(runToRepair.channelId);
-    setSelectedTaskId(runToRepair.taskId);
   }
 
   const showInspector = !["workspace", "providers", "teammates", "runs", "threads", "automations", "approvals", "work_board", "media", "settings"].includes(activeView);
@@ -3545,123 +2005,6 @@ export function AppShell(): JSX.Element {
   );
 }
 
-function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly ProviderPreset[]): LocalTeammateDraft {
-  const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
-  return {
-    id: teammate.id,
-    workspaceId: teammate.workspaceId,
-    templateId: teammate.templateId,
-    kind: teammate.kind,
-    systemRole: teammate.systemRole,
-    protectedProfile: teammate.protectedProfile,
-    editableFields: teammate.editableFields,
-    roleKey: teammate.roleKey,
-    displayName: teammate.displayName,
-    description: teammate.description,
-    avatarTone: teammate.avatarTone,
-    avatarImageAttachmentId: teammate.avatarImageAttachmentId,
-    providerPresetId: teammate.providerPresetId,
-    runnerId: teammate.runnerId,
-    systemPrompt: teammate.systemPrompt,
-    appendSystemPrompt: teammate.appendSystemPrompt,
-    allowedTools: teammate.allowedTools,
-    approvalProfile: teammate.approvalProfile,
-    status: teammate.status,
-    modelLabel: provider ? `${provider.displayName} / ${provider.model}` : "No model selected",
-    channelIds: [],
-    pinned: teammate.pinned,
-    hidden: teammate.hidden,
-    disabled: teammate.status === "disabled",
-    createdAt: teammate.createdAt,
-    updatedAt: teammate.updatedAt,
-  };
-}
-
-function buildSidebarChannelNotifications(
-  approvals: readonly ApprovalRequest[],
-  runs: readonly RunSession[],
-  tasks: readonly Task[],
-  selectedChannelId: string,
-  channelUnreadById: Readonly<Record<string, boolean>>,
-): Readonly<Record<string, SidebarNotification>> {
-  const runById = new Map(runs.map((item) => [item.id, item]));
-  const taskById = new Map(tasks.map((item) => [item.id, item]));
-  const unread = new Set<string>();
-
-  for (const approval of approvals) {
-    if (effectiveApprovalStatus(approval) !== "pending") {
-      continue;
-    }
-    const channelId = approval.channelId
-      ?? (approval.runId ? runById.get(approval.runId)?.channelId : undefined)
-      ?? (approval.taskId ? taskById.get(approval.taskId)?.channelId : undefined);
-    if (channelId && channelId !== selectedChannelId) {
-      unread.add(channelId);
-    }
-  }
-
-  for (const [channelId, hasUnread] of Object.entries(channelUnreadById)) {
-    if (hasUnread && channelId !== selectedChannelId) {
-      unread.add(channelId);
-    }
-  }
-
-  return Object.fromEntries([...unread].map((channelId) => [channelId, { unread: true }]));
-}
-
-function latestChannelMessageTimestamp(messages: readonly ChannelMessage[]): string {
-  return messages.reduce((latest, message) => message.updatedAt > latest ? message.updatedAt : latest, "");
-}
-
-function upsertChannelMessages(
-  current: readonly ChannelMessage[],
-  incoming: readonly ChannelMessage[],
-): ChannelMessage[] {
-  const byId = new Map(current.map((message) => [message.id, message]));
-  const order = current.map((message) => message.id);
-  for (const message of incoming) {
-    if (!byId.has(message.id)) {
-      order.push(message.id);
-    }
-    byId.set(message.id, message);
-  }
-  return order.map((id) => byId.get(id)!);
-}
-
-function buildSidebarTeammateNotifications(
-  approvals: readonly ApprovalRequest[],
-  tasks: readonly Task[],
-): Readonly<Record<string, SidebarNotification>> {
-  const taskById = new Map(tasks.map((item) => [item.id, item]));
-  const counts = new Map<string, number>();
-
-  for (const approval of approvals) {
-    if (effectiveApprovalStatus(approval) !== "pending" || !approval.taskId) {
-      continue;
-    }
-    const assigneeTeammateId = taskById.get(approval.taskId)?.assigneeTeammateId;
-    if (assigneeTeammateId) {
-      counts.set(assigneeTeammateId, (counts.get(assigneeTeammateId) ?? 0) + 1);
-    }
-  }
-
-  return Object.fromEntries([...counts.entries()].map(([teammateId, count]) => [teammateId, { count }]));
-}
-
-function mergeWorkflowSteps(
-  current: readonly ChannelWorkflowStep[],
-  next: readonly ChannelWorkflowStep[],
-): readonly ChannelWorkflowStep[] {
-  const byId = new Map(current.map((step) => [step.id, step]));
-  for (const step of next) {
-    byId.set(step.id, step);
-  }
-  return [...byId.values()].sort((left, right) => {
-    const workflowOrder = right.updatedAt.localeCompare(left.updatedAt);
-    return workflowOrder !== 0 ? workflowOrder : left.position - right.position;
-  });
-}
-
 function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode | undefined {
   if (!requestBody || typeof requestBody !== "object") {
     return undefined;
@@ -3670,50 +2013,4 @@ function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode 
   return value === "ask_everything" || value === "balanced" || value === "workspace_write" || value === "full_access" || value === "custom"
     ? value
     : undefined;
-}
-
-function isWorkspaceSettingsLocale(value: string | undefined): value is "en-US" | "zh-CN" {
-  return value === "en-US" || value === "zh-CN";
-}
-
-interface ChannelTransitionEntity {
-  readonly entityType: StateEntityType;
-  readonly entityId: string;
-  readonly updatedAt: string;
-}
-
-function buildChannelTransitionEntities(
-  channelId: string,
-  tasks: readonly Task[],
-  runs: readonly RunSession[],
-  workflows: readonly ChannelWorkflow[],
-  workflowSteps: readonly ChannelWorkflowStep[],
-): readonly ChannelTransitionEntity[] {
-  if (!channelId) {
-    return [];
-  }
-
-  const channelTasks = deriveChannelTasks(channelId, tasks);
-  const channelTaskIds = new Set(channelTasks.map((task) => task.id));
-  const items: ChannelTransitionEntity[] = [
-    ...channelTasks.map((task) => ({ entityType: "task" as const, entityId: task.id, updatedAt: task.updatedAt })),
-    ...runs
-      .filter((run) => run.channelId === channelId || channelTaskIds.has(run.taskId))
-      .map((run) => ({ entityType: "run" as const, entityId: run.id, updatedAt: run.updatedAt })),
-    ...workflows
-      .filter((workflow) => workflow.channelId === channelId)
-      .map((workflow) => ({ entityType: "workflow" as const, entityId: workflow.id, updatedAt: workflow.updatedAt })),
-    ...workflowSteps
-      .filter((step) => step.channelId === channelId)
-      .map((step) => ({ entityType: "workflow_step" as const, entityId: step.id, updatedAt: step.updatedAt })),
-  ];
-
-  const deduped = new Map<string, ChannelTransitionEntity>();
-  for (const item of items) {
-    deduped.set(`${item.entityType}:${item.entityId}`, item);
-  }
-
-  return [...deduped.values()]
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, 20);
 }

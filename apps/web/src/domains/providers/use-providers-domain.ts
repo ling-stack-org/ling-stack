@@ -82,7 +82,6 @@ export function useProvidersDomain(input: {
   readonly cwd: string;
   readonly translate: (value: string, params?: Record<string, string | number>) => string;
   readonly setErrorMessage: (message: string) => void;
-  readonly applyProviderToRun: (provider: ProviderPreset) => Promise<void>;
   readonly clearSelectedProvider: (providerId: string) => void;
   readonly clearProviderUsage: (providerId: string) => Promise<void>;
 }): ProvidersController {
