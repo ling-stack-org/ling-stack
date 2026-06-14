@@ -166,6 +166,33 @@ test("builds control-plane snapshot, events, and stream endpoints", async () => 
   assert.deepEqual(calls[2].headers, { Accept: "text/event-stream" });
 });
 
+test("builds runner list and readiness endpoints", async () => {
+  const responses = [
+    { cwd: "/repo", runners: [] },
+    {
+      cwd: "/repo",
+      readiness: {
+        runnerId: "openclaw-acp",
+        status: "blocked",
+        checkedAt: "2026-06-14T00:00:00.000Z",
+        featureFlagEnabled: false,
+        conformancePassed: false,
+        blockingReasons: [],
+      },
+    },
+  ];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  assert.deepEqual(await client.listRunners("/repo path"), responses[0]);
+  assert.deepEqual(await client.getRunnerReadiness("/repo path", "openclaw-acp"), responses[1]);
+
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/runners?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].method, "GET");
+  assert.equal(mock.calls[1].url, "http://daemon.test/runners/openclaw-acp/readiness?cwd=%2Frepo+path");
+});
+
 test("builds automation draft endpoints without transforming daemon responses", async () => {
   const responses = [
     { cwd: "/repo", drafts: [] },
@@ -347,6 +374,28 @@ test("configures external work workflow without transforming daemon responses", 
     sourceKind: "github",
     repository: "owner/repo",
   });
+});
+
+test("sends provider model import requests", async () => {
+  const response = { providers: [], createdCount: 2, updatedCount: 0, warnings: [] };
+  const mock = createFetchMock(response);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  assert.deepEqual(await client.importProviderModels("/repo", {
+    kind: "openai-compatible",
+    displayName: "Relay",
+    providerId: "relay",
+    api: "openai-completions",
+    baseUrl: "https://relay.example.com/v1",
+    apiKey: "secret",
+    capabilities: ["chat", "tool_call"],
+    input: ["text"],
+    models: [{ id: "relay-gpt" }, { id: "relay-image", capabilities: ["image_generate"] }],
+  }), response);
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/providers/import-models?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[0].body).models.map((model) => model.id), ["relay-gpt", "relay-image"]);
 });
 
 test("sends mutation bodies for channel, task, provider, policy, media, and approval requests", async () => {

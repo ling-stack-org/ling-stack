@@ -1,8 +1,10 @@
 import {
   builtinMediaModelCandidates,
-  filterMediaModelOptions,
   normalizeProviderBaseUrlForAdapter,
   providerMediaKind,
+  providerApis,
+  providerCapabilities,
+  type ProviderApi,
   type ProviderModelListRequest,
   type ProviderModelListResponse,
   type ProviderModelOption,
@@ -104,7 +106,7 @@ async function listMediaProviderModels(
       );
     }
     const body = await response.json() as unknown;
-    const models = filterMediaModelOptions(parseProviderModelsResponse(body), mediaKind);
+    const models = parseProviderModelsResponse(body);
     return {
       source,
       models: models.length > 0 ? models : builtin,
@@ -235,5 +237,22 @@ function parseProviderModelOption(value: unknown): ProviderModelOption | undefin
     displayName: typeof value.display_name === "string" ? value.display_name : typeof value.displayName === "string" ? value.displayName : undefined,
     ownedBy: typeof value.owned_by === "string" ? value.owned_by : typeof value.ownedBy === "string" ? value.ownedBy : undefined,
     createdAt: typeof value.created_at === "string" ? value.created_at : undefined,
+    api: typeof value.api === "string" && providerApis.includes(value.api as ProviderApi) ? value.api as ProviderApi : undefined,
+    input: parseProviderModelStringArray(value.input, ["text", "image"]),
+    capabilities: parseProviderModelStringArray(value.capabilities, providerCapabilities),
   });
+}
+
+function parseProviderModelStringArray<T extends string>(value: unknown, allowed: readonly T[]): readonly T[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const result: T[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !allowed.includes(item as T)) {
+      continue;
+    }
+    result.push(item as T);
+  }
+  return result.length > 0 ? result : undefined;
 }

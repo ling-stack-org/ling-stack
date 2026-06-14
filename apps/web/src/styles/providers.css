@@ -663,6 +663,30 @@
   margin-bottom: 16px;
 }
 
+.provider-template-board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.provider-template-board-header > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.provider-template-board-header strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.provider-template-board-header small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .provider-template-tabs {
   display: flex;
   align-items: center;
@@ -798,6 +822,13 @@
   gap: 10px;
 }
 
+.provider-model-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .provider-model-discovery-header > span {
   display: grid;
   gap: 2px;
@@ -814,6 +845,33 @@
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.provider-model-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel-strong);
+}
+
+.provider-model-search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.provider-model-search small {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .provider-model-grid {
@@ -862,6 +920,15 @@
 .provider-model-card small {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.provider-model-card em {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-fetch-error {
@@ -1185,6 +1252,46 @@
 
 .provider-table tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.provider-group-row td {
+  padding: 9px 14px;
+  background: #f8faf9;
+  color: #40524c;
+}
+
+.provider-group-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(160px, 0.45fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.provider-group-summary > span:not(.provider-avatar) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.provider-group-summary strong,
+.provider-group-summary small,
+.provider-group-summary em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-group-summary strong {
+  color: #1f2f2a;
+  font-size: 13px;
+}
+
+.provider-group-summary small,
+.provider-group-summary em {
+  color: #687872;
+  font-size: 11px;
+  font-style: normal;
 }
 
 .provider-table th:nth-child(1),

@@ -29,7 +29,8 @@ import { createSystemKeychainSecretStore } from "./features/providers/keychain-s
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
-import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RegisteredRunner, type RunnerRegistry } from "./runtime/runners.js";
+import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
+import { listExternalRunnerRegistrations } from "./runtime/external-runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { routeRequest } from "./server/router.js";
@@ -173,8 +174,6 @@ export function createDefaultRunnerRegistry(
   config: (Pick<ResolvedDaemonConfig, "runners" | "runtimeTools"> | Pick<DaemonConfig, "runners" | "runtimeTools">) = {},
 ): RunnerRegistry {
   const extension = getPiRunnerExtension();
-  const codexConfig = config.runners?.codexAppServer;
-  const openclawConfig = config.runners?.openclawAcp;
   const piCapabilities = [
     ...extension.manifest.capabilities,
     ...(config.runtimeTools?.requestPermissions ? ["runtime:request-permissions"] : []),
@@ -192,63 +191,8 @@ export function createDefaultRunnerRegistry(
       supportedTools: extension.supportedTools,
       capabilities: piCapabilities,
     },
-    createDisabledRunnerRegistration("codex-app-server", "Codex App Server", {
-      supportedProviderApis: ["openai-responses", "openai-completions"],
-      supportedTools: ["read", "grep", "find", "ls"],
-      capabilities: ["stream_text", "tool_events", "approval_interception", "artifacts", "native_resume"],
-      featureFlag: "runners.codexAppServer.enabled",
-      disabledReason: futureRunnerDisabledReason("Codex App Server", codexConfig?.enabled, codexConfig?.conformancePassed),
-    }),
-    createDisabledRunnerRegistration("openclaw-acp", "OpenClaw ACP", {
-      supportedProviderApis: ["openai-responses", "openai-completions", "anthropic-messages"],
-      supportedTools: ["read", "grep", "find", "ls"],
-      capabilities: ["stream_text", "tool_events", "approval_interception", "artifacts", "mcp_tools"],
-      featureFlag: "runners.openclawAcp.enabled",
-      disabledReason: futureRunnerDisabledReason("OpenClaw ACP", openclawConfig?.enabled, openclawConfig?.conformancePassed),
-    }),
+    ...listExternalRunnerRegistrations(config),
   ], DEFAULT_RUNNER_ID);
-}
-
-function createDisabledRunnerRegistration(
-  id: string,
-  displayName: string,
-  options: {
-    readonly supportedProviderApis?: readonly string[];
-    readonly supportedTools?: readonly string[];
-    readonly capabilities?: readonly string[];
-    readonly featureFlag?: string;
-    readonly disabledReason?: string;
-  } = {},
-): RegisteredRunner {
-  return {
-    id,
-    displayName,
-    status: "disabled" as const,
-    adapter: createDisabledRunnerAdapter(id),
-    supportedProviderApis: options.supportedProviderApis,
-    supportedTools: options.supportedTools,
-    capabilities: options.capabilities,
-    featureFlag: options.featureFlag,
-    disabledReason: options.disabledReason,
-  };
-}
-
-function futureRunnerDisabledReason(displayName: string, enabled: boolean | undefined, conformancePassed: boolean | undefined): string {
-  if (!enabled) {
-    return "Feature flag is disabled.";
-  }
-  if (!conformancePassed) {
-    return `${displayName} feature flag is enabled, but runner conformance has not passed.`;
-  }
-  return `${displayName} feature flag is enabled, but the adapter is not implemented in this build.`;
-}
-
-function createDisabledRunnerAdapter(id: string): RunnerAdapter {
-  return {
-    async runTask() {
-      throw new Error(`Runner ${id} is disabled. Enable and pass conformance before use.`);
-    },
-  };
 }
 
 export function createDefaultLingExtensionRegistry(): LingExtensionRegistry {

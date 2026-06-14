@@ -1,6 +1,5 @@
 import {
   normalizeProviderBaseUrlForAdapter,
-  isMediaOnlyModelId,
   type ProviderCheckResult,
   type ProviderPreset,
   type ResolvedSecret,
@@ -45,9 +44,6 @@ export async function checkProviderPreset(
   }
   if (preset.api !== "media-job" && !preset.capabilities.includes("chat")) {
     return { ok: false, code: "unsupported_capability", message: "Provider preset cannot run chat tasks.", checkedAt };
-  }
-  if (preset.api !== "media-job" && isMediaOnlyModelId(preset.model)) {
-    throw new Error("This is a media model. Choose a media task protocol or select a chat model.");
   }
   if (!preset.enabled) {
     return { ok: false, code: "provider_disabled", message: "Provider preset is disabled.", checkedAt };

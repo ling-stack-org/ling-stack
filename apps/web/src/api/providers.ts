@@ -1,7 +1,10 @@
 import type {
   ProviderCheckResult,
+  ProviderCapability,
   ProviderFormState,
   ProviderListResponse,
+  ProviderModelImportResponse,
+  ProviderModelOption,
   ProviderModelListResponse,
   ProviderMutationResponse,
   ProviderSecretResponse,
@@ -52,5 +55,19 @@ export async function listProviderModels(cwd: string, form: ProviderFormState): 
     apiKey: form.apiKey.trim() || undefined,
     apiKeyRef: form.apiKeyRef || undefined,
     authHeader: form.authHeader,
+  });
+}
+
+export async function importProviderModels(
+  cwd: string,
+  form: ProviderFormState,
+  models: readonly ProviderModelOption[],
+): Promise<ProviderModelImportResponse> {
+  const payload = providerFormToPayload(form);
+  return daemonClient.importProviderModels(cwd, {
+    ...payload,
+    capabilities: (payload.capabilities ?? []) as readonly ProviderCapability[],
+    input: (payload.input ?? ["text"]) as readonly ("text" | "image")[],
+    models,
   });
 }

@@ -364,6 +364,7 @@ export function AppShell(): JSX.Element {
     refreshProviderTemplates,
     checkProviderForRun,
     saveProviderWithPreflight,
+    importModelsFromProviderForm,
     removeProvider,
     runProviderCheck,
     runProviderBatchCheck,
@@ -1737,6 +1738,7 @@ export function AppShell(): JSX.Element {
                   startNewProviderFromTemplate(customTemplate);
                 }}
                 onSave={saveProviderWithPreflight}
+                onImportModels={importModelsFromProviderForm}
                 onRefresh={() => void refreshProviders()}
                 onEdit={editProvider}
                 onDelete={(providerId) => void removeProvider(providerId)}

@@ -249,4 +249,5 @@ export interface RunnerSummary {
   readonly experimental: boolean;
   readonly capabilities: readonly string[];
   readonly blocker?: string;
+  readonly readiness?: import("./runner-readiness.js").RunnerReadinessSummary;
 }

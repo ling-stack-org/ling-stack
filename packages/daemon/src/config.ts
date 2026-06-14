@@ -36,6 +36,7 @@ export interface CodexAppServerRunnerConfig {
   readonly enabled?: boolean;
   readonly baseUrl?: string;
   readonly launchMode?: "external";
+  readonly readinessPassed?: boolean;
   readonly conformancePassed?: boolean;
 }
 
@@ -43,6 +44,7 @@ export interface OpenClawAcpRunnerConfig {
   readonly enabled?: boolean;
   readonly endpoint?: string;
   readonly workspaceMode?: "bound_path";
+  readonly readinessPassed?: boolean;
   readonly conformancePassed?: boolean;
 }
 

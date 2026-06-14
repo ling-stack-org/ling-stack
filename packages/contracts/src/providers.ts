@@ -108,6 +108,37 @@ export interface ProviderModelOption {
   readonly displayName?: string;
   readonly ownedBy?: string;
   readonly createdAt?: string;
+  readonly api?: ProviderApi;
+  readonly input?: readonly ("text" | "image")[];
+  readonly capabilities?: readonly ProviderCapability[];
+}
+
+export interface ProviderModelImportRequest {
+  readonly kind: ProviderKind;
+  readonly displayName: string;
+  readonly providerId: string;
+  readonly api: ProviderApi;
+  readonly providerTransport?: ProviderTransport;
+  readonly baseUrl?: string;
+  readonly apiKeyRef?: string;
+  readonly apiKey?: string;
+  readonly headers?: Record<string, string>;
+  readonly authHeader?: boolean;
+  readonly reasoning?: boolean;
+  readonly input?: readonly ("text" | "image")[];
+  readonly contextWindow?: number;
+  readonly maxTokens?: number;
+  readonly compat?: Record<string, unknown>;
+  readonly capabilities: readonly ProviderCapability[];
+  readonly enabled?: boolean;
+  readonly models: readonly ProviderModelOption[];
+}
+
+export interface ProviderModelImportResponse {
+  readonly providers: readonly ProviderPreset[];
+  readonly createdCount: number;
+  readonly updatedCount: number;
+  readonly warnings: readonly string[];
 }
 
 export interface ProviderModelListRequest {

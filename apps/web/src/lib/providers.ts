@@ -254,39 +254,10 @@ export function providerFormWithSelectedModel(
   model: Pick<ProviderModelOption, "id" | "displayName">,
   sourceForm?: ProviderFormState,
 ): { readonly form: ProviderFormState; readonly notice?: string } {
-  const mediaMatch = inferMediaModelProtocol(model.id);
-  if (!mediaMatch) {
-    if (sourceForm && form.api === "media-job") {
-      return {
-        form: { ...sourceForm, model: model.id },
-        notice: "Selected a chat model. API protocol was restored to the source provider.",
-      };
-    }
-    return { form: { ...form, model: model.id } };
+  if (sourceForm) {
+    return { form: { ...sourceForm, model: model.id } };
   }
-
-  return {
-    form: {
-      ...form,
-      kind: mediaMatch.kind,
-      displayName: shouldReplaceProviderDisplayName(form.displayName, form.providerId)
-        ? mediaMatch.displayName
-        : form.displayName,
-      providerId: mediaMatch.providerId,
-      model: model.id,
-      api: "media-job",
-      providerTransport: "",
-      baseUrl: form.baseUrl || mediaMatch.baseUrl,
-      capabilitiesText: mediaMatch.capabilitiesText,
-      inputText: mediaMatch.inputText,
-      reasoning: false,
-      contextWindow: "",
-      maxTokens: "",
-      enabled: true,
-      authHeader: true,
-    },
-    notice: "Selected a media model. API protocol was switched to Media job automatically.",
-  };
+  return { form: { ...form, model: model.id } };
 }
 
 export function splitProviderCsv(value: string): readonly string[] {
@@ -455,16 +426,10 @@ export function secretRefSetupGuidance(_ref: string | undefined, t?: ProviderTra
 }
 
 export function providerTemplateKindLabel(template: ProviderTemplate): string {
-  if (template.api === "media-job") {
-    return "media";
-  }
-  if (template.kind === "openai" || template.kind === "anthropic") {
-    return "global";
-  }
   if (template.kind === "openai-compatible") {
     return template.templateId.includes("local") || template.providerId.includes("relay") ? "relay" : "custom";
   }
-  return "domestic";
+  return "supplier";
 }
 
 export function groupProviderTemplates(templates: readonly ProviderTemplate[]): readonly ProviderTemplateGroup[] {
@@ -476,48 +441,6 @@ export function groupProviderTemplates(templates: readonly ProviderTemplate[]): 
     { label: "Media", templates: templates.filter((template) => providerTemplateKindLabel(template) === "media") },
   ];
   return groups.filter((group) => group.templates.length > 0);
-}
-
-function inferMediaModelProtocol(modelId: string): {
-  readonly kind: ProviderFormState["kind"];
-  readonly displayName: string;
-  readonly providerId: string;
-  readonly baseUrl: string;
-  readonly capabilitiesText: string;
-  readonly inputText: string;
-} | undefined {
-  const kind = mediaModelKind(modelId);
-  if (kind === "seedream") {
-    return {
-      kind: "seedream",
-      displayName: "Seedream Image",
-      providerId: "seedream",
-      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-      capabilitiesText: "image_generate, image_edit",
-      inputText: "text, image",
-    };
-  }
-  if (kind === "seedance") {
-    return {
-      kind: "seedance",
-      displayName: "Seedance Video",
-      providerId: "seedance",
-      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-      capabilitiesText: "video_generate",
-      inputText: "text, image",
-    };
-  }
-  if (kind === "jimeng") {
-    return {
-      kind: "jimeng",
-      displayName: "Jimeng Image",
-      providerId: "jimeng",
-      baseUrl: "https://visual.volcengineapi.com",
-      capabilitiesText: "image_generate, image_edit",
-      inputText: "text, image",
-    };
-  }
-  return undefined;
 }
 
 export function isMediaModelOption(model: Pick<ProviderModelOption, "id">): boolean {
@@ -543,16 +466,6 @@ export function hiddenNonMatchingMediaModelCount(
   return mediaCount - filterMediaModelOptions(models, form).length;
 }
 
-function shouldReplaceProviderDisplayName(displayName: string, providerId: string): boolean {
-  const value = `${displayName} ${providerId}`.toLowerCase();
-  return (
-    !displayName.trim() ||
-    value.includes("doubao") ||
-    value.includes("ark") ||
-    value.includes("custom") ||
-    value.includes("openai-compatible")
-  );
-}
 
 export function providerCheckStatusLabel(result: ProviderCheckResult, t?: ProviderTranslate): string {
   if (result.ok) {

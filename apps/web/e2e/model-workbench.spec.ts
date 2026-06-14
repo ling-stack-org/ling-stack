@@ -49,8 +49,9 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(workbenchBounds ? workbenchBounds.workspaceContent.right - workbenchBounds.workbench.right : 0).toBeLessThanOrEqual(1.5);
   await expect(page.locator(".workspace-head .status-badge")).toHaveCount(0);
   await expect(page.getByText("已保存")).toBeVisible();
-  await expect(page.getByText("聊天模型")).toBeVisible();
-  await expect(page.getByText("媒体模型")).toBeVisible();
+  await expect(page.locator(".provider-capability-summary")).toContainText("供应商");
+  await expect(page.locator(".provider-capability-summary")).not.toContainText("聊天模型");
+  await expect(page.locator(".provider-capability-summary")).not.toContainText("媒体模型");
   await expect(page.getByText("Chat-capable")).toHaveCount(0);
   await expect(page.locator(".provider-capability-summary")).not.toContainText("模板");
   await expect(page.getByRole("button", { name: "添加模型" })).toBeVisible();
@@ -125,40 +126,39 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   const savePresetButton = editor.getByRole("button", { name: "保存" });
   const templatePanel = editor.locator(".provider-template-panel");
 
-  await expect(editor.getByRole("tab", { name: /自定义接入/ })).toHaveAttribute("aria-selected", "true");
+  await expect(editor.getByRole("tab")).toHaveCount(0);
+  await expect(editor.getByText("选择模型供应商")).toBeVisible();
   await expect(editor).toContainText("自定义 OpenAI-compatible");
-  await expect(editor).not.toContainText("本地 OpenAI-compatible Relay");
+  await expect(editor).toContainText("OpenAI GPT");
+  await expect(editor).toContainText("Claude");
+  await expect(editor).toContainText("豆包 Ark");
+  await expect(editor).toContainText("Seedream 图片");
   await expect(editor.getByRole("tab", { name: /OpenAI-compatible 中转/ })).toHaveCount(0);
 
-  await editor.getByRole("tab", { name: /^GPT/ }).click();
   await expect(templatePanel).toContainText("OpenAI GPT");
-  await expect(templatePanel).not.toContainText("Claude");
   await page.getByRole("button", { name: /OpenAI GPT/ }).click();
   await expect(page.getByLabel("API 协议")).toBeDisabled();
 
-  await editor.getByRole("tab", { name: /^Claude/ }).click();
   await expect(templatePanel).toContainText("Claude");
-  await expect(templatePanel).not.toContainText("OpenAI GPT");
   await page.getByRole("button", { name: /Claude/ }).click();
   await expect(page.getByLabel("API 协议")).toBeDisabled();
 
-  await editor.getByRole("tab", { name: /国内模型/ }).click();
   await expect(editor).toContainText("豆包 Ark");
   await expect(editor).toContainText("智谱 GLM");
-  await expect(editor).not.toContainText("Seedream 图片");
+  await expect(editor).toContainText("Seedream 图片");
+  await page.getByRole("button", { name: /豆包 Ark/ }).click();
   await expect(page.getByLabel("提供商名称")).toHaveValue("豆包 Ark");
   await expect(page.getByLabel("提供商 ID")).toHaveValue("doubao");
   await expect(page.getByLabel("API 协议")).toBeDisabled();
 
-  await editor.getByRole("tab", { name: /媒体/ }).click();
   await expect(editor).toContainText("Seedream 图片");
   await expect(editor).toContainText("Seedance 视频");
-  await expect(editor).not.toContainText("豆包 Ark");
+  await expect(editor).toContainText("豆包 Ark");
+  await page.getByRole("button", { name: /Seedream 图片/ }).click();
   await expect(page.getByLabel("提供商名称")).toHaveValue("Seedream 图片");
   await expect(page.getByLabel("Base URL")).toHaveValue("https://ark.cn-beijing.volces.com/api/v3");
   await expect(page.getByLabel("API 协议")).toBeDisabled();
 
-  await editor.getByRole("tab", { name: /自定义接入/ }).click();
   await page.getByRole("button", { name: /自定义 OpenAI-compatible/ }).click();
   await expect(page.locator(".provider-template-card.selected")).toContainText("自定义 OpenAI-compatible");
   await expect(page.getByLabel("提供商名称")).toHaveValue("自定义 OpenAI-compatible");
@@ -193,14 +193,6 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(Math.abs((titleAfterScroll?.y ?? 0) - (titleBeforeScroll?.y ?? 0))).toBeLessThanOrEqual(2);
   expect(Math.abs((closeAfterScroll?.y ?? 0) - (closeBeforeScroll?.y ?? 0))).toBeLessThanOrEqual(2);
   expect(Math.abs((saveAfterScroll?.y ?? 0) - (saveBeforeScroll?.y ?? 0))).toBeLessThanOrEqual(2);
-  await expect(editor).not.toContainText("Local OpenAI-Compatible Relay");
-  await expect(editor).not.toContainText("Doubao Ark");
-  await expect(editor).not.toContainText("GLM Zhipu");
-  await expect(editor).not.toContainText("Jimeng Image");
-  await expect(editor).not.toContainText("Seedream Image");
-  await expect(editor).not.toContainText("Seedance Video");
-  await expect(editor).not.toContainText("Official Anthropic Messages API endpoint.");
-  await expect(editor).not.toContainText("Volcengine Ark OpenAI-compatible chat endpoint for Doubao models.");
   await expect(page.getByText("Check provider")).toHaveCount(0);
   await expect(editor.getByRole("button", { name: "保存" })).toHaveCount(1);
   await expect(editor.getByRole("button", { name: "创建预设" })).toHaveCount(0);
@@ -229,7 +221,6 @@ test("model workbench capability state follows automatic snapshots and advanced 
   await editor.getByLabel("Context").fill("64000");
   await expect(capabilityState).toContainText("Custom override");
 
-  await editor.getByRole("tab", { name: /^GPT/ }).click();
   await page.getByRole("button", { name: /OpenAI GPT/ }).click();
   await expect(capabilityState).toContainText("Auto");
   await expect(editor.getByLabel("Context")).toHaveValue("");
@@ -282,7 +273,7 @@ test("model workbench save validates before persisting and keeps errors inside t
   ).toBe(false);
 });
 
-test("model workbench saves Doubao chat presets when live model check is inconclusive", async ({ page }) => {
+test("model workbench imports Doubao supplier models without hiding media-looking IDs", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
@@ -296,35 +287,39 @@ test("model workbench saves Doubao chat presets when live model check is inconcl
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
   await page.getByRole("button", { name: "添加模型" }).first().click();
   const editor = page.getByRole("dialog", { name: "新建预设" });
-  await page.getByRole("tab", { name: /国内模型/ }).click();
   await page.getByRole("button", { name: /豆包 Ark/ }).click();
   await page.getByLabel("API Key", { exact: true }).fill("ark-test-key");
   await page.getByRole("button", { name: "获取模型" }).click();
 
   const modelCards = page.locator(".provider-model-card");
   await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toBeVisible();
-  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toHaveCount(0);
-  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toHaveCount(0);
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toBeVisible();
   await modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" }).click();
+  await modelCards.filter({ hasText: "doubao-seedream-5-0-260128" }).click();
+  await expect(page.getByText("已选 2 个")).toBeVisible();
+  await expect(page.getByText("已隐藏", { exact: false })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByRole("button", { name: "保存选中模型" }).click();
 
   await expect(editor).toHaveCount(0);
-  await expect(page.locator(".provider-batch-result.warning")).toContainText("已保存，但模型检查未通过。请确认 Base URL、模型权限或推理接入点。");
+  await expect(page.locator(".provider-batch-result.ok")).toContainText("已导入 2 个模型预设。");
   await expect(page.getByText(/Provider rejected the endpoint or model/)).toHaveCount(0);
-  const doubaoRow = page.locator(".provider-row").filter({ hasText: "豆包 Ark" });
-  await expect(doubaoRow).toBeVisible();
-  await expect(doubaoRow).toContainText("模型不支持");
-  await expect(doubaoRow).not.toContainText("当前默认");
+  const doubaoChatRow = page.locator(".provider-row").filter({ hasText: "doubao-1-5-pro-32k-250115" });
+  const doubaoImageRow = page.locator(".provider-row").filter({ hasText: "doubao-seedream-5-0-260128" });
+  await expect(doubaoChatRow).toBeVisible();
+  await expect(doubaoImageRow).toBeVisible();
+  await expect(doubaoChatRow).not.toContainText("当前默认");
   await expect.poll(() =>
-    state.providers.some((provider) =>
+    state.providers.filter((provider) =>
       isRecord(provider) &&
       provider.providerId === "doubao" &&
-      provider.model === "doubao-1-5-pro-32k-250115" &&
+      typeof provider.model === "string" &&
+      provider.model.startsWith("doubao-") &&
       typeof provider.apiKeyRef === "string" &&
       provider.apiKeyRef.startsWith("local:")
-    )
-  ).toBe(true);
+    ).length
+  ).toBe(2);
   await expect.poll(() =>
     state.channels.every((channel) =>
       !isRecord(channel) ||
@@ -333,7 +328,7 @@ test("model workbench saves Doubao chat presets when live model check is inconcl
   ).toBe(true);
 });
 
-test("model workbench media templates can fetch media-only model candidates", async ({ page }) => {
+test("model workbench media suppliers stay in the unified supplier picker", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
@@ -343,7 +338,7 @@ test("model workbench media templates can fetch media-only model candidates", as
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
   await page.getByRole("button", { name: "添加模型" }).first().click();
-  await page.getByRole("tab", { name: /^媒体/ }).click();
+  await expect(page.getByRole("tab")).toHaveCount(0);
   await page.getByRole("button", { name: /Seedream 图片/ }).click();
   await page.getByLabel("API Key", { exact: true }).fill("ark-media-key");
 
@@ -354,9 +349,9 @@ test("model workbench media templates can fetch media-only model candidates", as
   const modelCards = page.locator(".provider-model-card");
   await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
   await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-turbo-260128" })).toBeVisible();
-  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toHaveCount(0);
-  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toHaveCount(0);
-  await expect(page.getByText("已隐藏 1 个其他媒体模型，请切换到对应媒体提供商查看。")).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toBeVisible();
+  await expect(page.getByText("已隐藏", { exact: false })).toHaveCount(0);
 
   await page.getByRole("button", { name: /Seedance 视频/ }).click();
   await expect(page.getByLabel("API Key", { exact: true })).toHaveValue("ark-media-key");
@@ -364,11 +359,11 @@ test("model workbench media templates can fetch media-only model candidates", as
   await expect(page.getByLabel("能力")).toHaveValue("video_generate");
   await fetchModels.click();
   await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toBeVisible();
-  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toHaveCount(0);
-  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toHaveCount(0);
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toBeVisible();
 });
 
-test("model workbench edits media presets in the matching media template group", async ({ page }) => {
+test("model workbench edits media presets from the unified supplier picker", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
@@ -397,7 +392,7 @@ test("model workbench edits media presets in the matching media template group",
   const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
   await seedreamRow.getByRole("button", { name: "编辑" }).click();
   const editor = page.getByRole("dialog", { name: "编辑预设" });
-  await expect(editor.getByRole("tab", { name: /媒体/ })).toHaveAttribute("aria-selected", "true");
+  await expect(editor.getByRole("tab")).toHaveCount(0);
   await expect(editor.getByRole("button", { name: /Seedream 图片/ })).toBeVisible();
   await expect(editor.getByLabel("提供商 ID")).toHaveValue("seedream");
   await page.getByRole("button", { name: "关闭模型预设编辑器" }).click();
@@ -405,7 +400,7 @@ test("model workbench edits media presets in the matching media template group",
   const seedanceRow = page.locator(".provider-row").filter({ hasText: "Seedance Video" });
   await seedanceRow.getByRole("button", { name: "编辑" }).click();
   const seedanceEditor = page.getByRole("dialog", { name: "编辑预设" });
-  await expect(seedanceEditor.getByRole("tab", { name: /媒体/ })).toHaveAttribute("aria-selected", "true");
+  await expect(seedanceEditor.getByRole("tab")).toHaveCount(0);
   await expect(seedanceEditor.getByRole("button", { name: /Seedance 视频/ })).toBeVisible();
   await expect(seedanceEditor.getByLabel("提供商 ID")).toHaveValue("seedance");
 });
@@ -516,8 +511,9 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
   await expect(page.getByText("Saved presets")).toBeVisible();
-  await expect(page.getByText("Chat models")).toBeVisible();
-  await expect(page.getByText("Media models")).toBeVisible();
+  await expect(page.locator(".provider-capability-summary")).toContainText("Suppliers");
+  await expect(page.locator(".provider-capability-summary")).not.toContainText("Chat models");
+  await expect(page.locator(".provider-capability-summary")).not.toContainText("Media models");
   await expect(page.getByText("Coding ready")).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
@@ -592,20 +588,18 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await page.getByRole("button", { name: /Custom OpenAI-compatible/ }).click();
   await expect(page.locator(".provider-template-card.selected")).toContainText("Custom OpenAI-compatible");
   await expect(page.getByRole("tab", { name: /OpenAI-compatible relay/ })).toHaveCount(0);
-  await page.getByRole("tab", { name: /^GPT/ }).click();
+  await expect(page.getByRole("tab")).toHaveCount(0);
   await page.getByRole("button", { name: /OpenAI GPT/ }).click();
   await expect(page.locator(".provider-template-card.selected")).toContainText("OpenAI GPT");
-  await expect(page.locator(".provider-template-panel")).not.toContainText("Claude");
+  await expect(page.locator(".provider-template-panel")).toContainText("Claude");
   await expect(page.getByLabel("Base URL")).toHaveValue("https://api.openai.com/v1");
   await expect(page.getByLabel("API protocol")).toBeDisabled();
-  await page.getByRole("tab", { name: /^Claude/ }).click();
   await page.getByRole("button", { name: /Claude/ }).click();
   await expect(page.locator(".provider-template-card.selected")).toContainText("Claude");
-  await expect(page.locator(".provider-template-panel")).not.toContainText("OpenAI GPT");
+  await expect(page.locator(".provider-template-panel")).toContainText("OpenAI GPT");
   await expect(page.getByLabel("Base URL")).toHaveValue("https://api.anthropic.com/v1");
   await expect(page.getByLabel("API protocol")).toBeDisabled();
   await expect(page.getByLabel("Enabled")).toBeChecked();
-  await page.getByRole("tab", { name: /Custom access/ }).click();
   await page.getByRole("button", { name: /Custom OpenAI-compatible/ }).click();
   await expect(page.locator(".provider-template-card.selected")).toContainText("Custom OpenAI-compatible");
   await expect(page.getByLabel("Provider name")).toHaveValue("Custom OpenAI-compatible");
@@ -630,27 +624,26 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByText("env:CUSTOM_MODEL_API_KEY")).toHaveCount(0);
   await page.getByRole("button", { name: "Fetch models" }).click();
   const modelCards = page.locator(".provider-model-card");
-  await expect(modelCards).toHaveCount(3);
+  await expect(modelCards).toHaveCount(5);
   await expect(modelCards.filter({ hasText: "Custom model" })).toHaveCount(0);
   await expect(modelCards.filter({ hasText: "cliproxy-gpt-4o" })).toBeVisible();
-  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toHaveCount(0);
-  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toHaveCount(0);
-  await expect(page.getByText("2 media models are hidden. Add media models separately from the Media templates.")).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toBeVisible();
+  await expect(page.getByText("media models are hidden", { exact: false })).toHaveCount(0);
   await modelCards.filter({ hasText: "cliproxy-gpt-4o" }).click();
-  await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("cliproxy-gpt-4o");
-  await expect(page.getByLabel("API protocol")).toHaveValue("openai-completions");
-  await expect(page.getByLabel("Capabilities")).toHaveValue("chat, tool_call, reasoning");
-  await expect(modelCards).toHaveCount(3);
   await modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" }).click();
-  await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("doubao-1-5-pro-32k-250115");
+  await expect(page.getByText("2 selected")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("your-model-id");
   await expect(page.getByLabel("API protocol")).toHaveValue("openai-completions");
   await expect(page.getByLabel("Capabilities")).toHaveValue("chat, tool_call, reasoning");
 
-  await page.getByRole("button", { name: "Save" }).click();
-  const customProviderRow = page.locator(".provider-row").filter({ hasText: "Custom OpenAI-compatible" });
+  await page.getByRole("button", { name: "Save selected models" }).click();
+  const customProviderRow = page.locator(".provider-row").filter({ hasText: "cliproxy-gpt-4o" });
+  const customDoubaoRow = page.locator(".provider-row").filter({ hasText: "doubao-1-5-pro-32k-250115" });
   await expect(customProviderRow).not.toContainText("Saved locally");
   await expect(customProviderRow).toContainText("key ready");
   await expect(customProviderRow).toContainText("check ready");
+  await expect(customDoubaoRow).toBeVisible();
   await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("Model:");
   await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("API protocol:");
   await expect(customProviderRow.locator(".provider-meta-line").first()).not.toContainText("custom-openai-compatible");
@@ -662,15 +655,15 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(customProviderRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "New preset" })).toHaveCount(0);
   await expect.poll(() =>
-    state.providers.some((provider) =>
+    state.providers.filter((provider) =>
       isRecord(provider) &&
-      provider.displayName === "Custom OpenAI-compatible" &&
+      provider.providerId === "custom-openai-compatible" &&
       typeof provider.apiKeyRef === "string" &&
       provider.apiKeyRef.startsWith("local:provider_created_") &&
       provider.apiKeyConfigured === true &&
       !("apiKey" in provider)
-    )
-  ).toBe(true);
+    ).length
+  ).toBe(2);
 
   await customProviderRow.getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
@@ -724,8 +717,9 @@ test("model workbench status counts align with saved chat and media presets", as
   await expect(statusTabs.getByRole("button", { name: /Disabled providers 0/ })).toBeVisible();
   const summary = page.locator(".provider-capability-summary");
   await expect(summary).toContainText("Saved presets 3");
-  await expect(summary).toContainText("Chat models 1");
-  await expect(summary).toContainText("Media models 2");
+  await expect(summary).toContainText("Suppliers 3");
+  await expect(summary).not.toContainText("Chat models");
+  await expect(summary).not.toContainText("Media models");
   await expect(summary).toContainText("Coding ready 1");
   await expect(summary).toContainText("Missing secrets 0");
   await expect(summary).not.toContainText("Templates");
