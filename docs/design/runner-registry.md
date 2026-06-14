@@ -19,6 +19,12 @@ Ling session / work unit
     -> openclaw-acp         future, external delegation backend
 ```
 
+Provider/model selection is a separate layer. OpenAI, Anthropic/Claude, Google/Gemini,
+and compatible model endpoints remain provider presets when Ling is only choosing a
+model API. They become runner concerns only when the integration exposes an external
+agent runtime with its own session, tools, artifacts, cancellation, approval semantics,
+and resume handles.
+
 This document covers Slices 1-4 only:
 
 - Slice 1: RunnerRegistry + Pi only, no behavior change.
@@ -67,6 +73,9 @@ Adapter follow-up design:
 - [Runner Adapters](runner-adapters.md) defines the feature-flagged Codex app-server
   and OpenClaw/ACP adapter slices, shared conformance requirements, session-handle
   rules, and approval/security boundaries.
+- [External Agent Runner Adapters Implementation Plan](external-agent-runner-adapters-implementation-plan.md)
+  defines the modular implementation shape, readiness gates, fake ACP harness, bridge
+  modules, and Codex/OpenClaw/Hermes PR-sized slices.
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
   defines why runner-supported tools are metadata and approval-policy inputs, not
   Plugin Manager entries.
@@ -158,6 +167,11 @@ Recommended ids:
 | Embedded Pi coding agent | `pi` | Default, enabled now |
 | Codex app-server | `codex-app-server` | Reserved, disabled until later slice |
 | OpenClaw ACP/external delegation | `openclaw-acp` | Reserved, out of scope |
+
+Do not add runner ids for model providers alone. `claude`, `gemini`, `openai`, and
+similar names belong in provider presets unless they refer to a concrete external agent
+server contract. Hermes likewise remains a context/memory integration unless it exposes
+an executable agent session that can satisfy the runner conformance contract.
 
 The current runtime value `pi-coding-agent` should be treated as a legacy alias for `pi`
 during migration.
