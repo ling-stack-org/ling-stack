@@ -1708,7 +1708,7 @@ test("provider local API keys are edited from sqlite without leaking in provider
     }
   });
 
-  test("provider draft check blocks media models selected with chat protocols", async () => {
+  test("provider draft check allows provider-exposed model ids with chat protocols", async () => {
     const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-draft-media-mismatch-"));
     const openai = await startMockOpenAICompatibleServer();
     const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -1717,7 +1717,7 @@ test("provider local API keys are edited from sqlite without leaking in provider
       input: { command: "echo unused" },
     }));
     try {
-      const mismatch = await postJsonExpectError(`${daemon.url}/provider-check?cwd=${encodeURIComponent(cwd)}`, {
+      const mediaNamedModel = await postJson(`${daemon.url}/provider-check?cwd=${encodeURIComponent(cwd)}`, {
         kind: "doubao",
         displayName: "Doubao Ark",
         providerId: "doubao",
@@ -1729,10 +1729,8 @@ test("provider local API keys are edited from sqlite without leaking in provider
         enabled: true,
       });
 
-      assert.equal(mismatch.status, 400);
-      assert.equal(mismatch.body.error, "bad_request");
-      assert.match(mismatch.body.message, /media model/);
-      assert.equal(openai.requests.length, 0);
+      assert.equal(mediaNamedModel.ok, true);
+      assert.equal(openai.requests.length, 1);
 
       const chatModel = await postJson(`${daemon.url}/provider-check?cwd=${encodeURIComponent(cwd)}`, {
         kind: "doubao",
@@ -1747,7 +1745,7 @@ test("provider local API keys are edited from sqlite without leaking in provider
       });
 
       assert.equal(chatModel.ok, true);
-      assert.equal(openai.requests.length, 1);
+      assert.equal(openai.requests.length, 2);
     } finally {
       await daemon.close();
       await openai.close();
@@ -1815,7 +1813,65 @@ test("provider model listing normalizes OpenAI-compatible endpoint paths", async
   }
 });
 
-test("media provider model listing returns media-only candidates", async () => {
+test("provider model import creates and updates supplier model presets", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-model-import-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_model_import",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const imported = await postJson(`${daemon.url}/providers/import-models?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "中转站",
+      providerId: "relay",
+      api: "openai-completions",
+      baseUrl: "https://relay.example.com/v1",
+      apiKey: "import-secret",
+      authHeader: true,
+      reasoning: true,
+      capabilities: ["chat", "tool_call", "reasoning"],
+      input: ["text", "image"],
+      models: [
+        { id: "relay-gpt", displayName: "Relay GPT" },
+        { id: "relay-image", capabilities: ["image_generate"], input: ["text", "image"], api: "media-job" },
+      ],
+    });
+
+    assert.equal(imported.createdCount, 2);
+    assert.equal(imported.updatedCount, 0);
+    assert.equal(imported.providers.length, 2);
+    assert.ok(imported.providers.every((provider) => provider.apiKeyConfigured));
+    assert.doesNotMatch(JSON.stringify(imported), /import-secret/);
+
+    const updated = await postJson(`${daemon.url}/providers/import-models?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "中转站",
+      providerId: "relay",
+      api: "openai-completions",
+      baseUrl: "https://relay.example.com/v1",
+      authHeader: true,
+      reasoning: true,
+      capabilities: ["chat", "tool_call", "reasoning"],
+      input: ["text"],
+      models: [
+        { id: "relay-gpt", displayName: "Relay GPT Updated" },
+      ],
+    });
+
+    assert.equal(updated.createdCount, 0);
+    assert.equal(updated.updatedCount, 1);
+    assert.equal(updated.providers[0].displayName, "中转站 · Relay GPT Updated");
+
+    const listed = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.providers.length, 2);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media provider model listing returns provider-exposed candidates without category filtering", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-media-models-"));
   const openai = await startMockOpenAICompatibleServer({
     models: [
@@ -1841,7 +1897,11 @@ test("media provider model listing returns media-only candidates", async () => {
 
     assert.equal(openai.requests[0].method, "GET");
     assert.equal(openai.requests[0].path, "/api/v3/models");
-    assert.deepEqual(seedreamResult.models.map((model) => model.id), ["doubao-seedream-5-0-260128"]);
+    assert.deepEqual(seedreamResult.models.map((model) => model.id), [
+      "doubao-seed-2-0-lite-260215",
+      "doubao-seedream-5-0-260128",
+      "doubao-seedance-1-0-pro-250528",
+    ]);
 
     const seedanceResult = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
       kind: "seedance",
@@ -1851,7 +1911,11 @@ test("media provider model listing returns media-only candidates", async () => {
       authHeader: true,
       apiKey: "ark-media-secret",
     });
-    assert.deepEqual(seedanceResult.models.map((model) => model.id), ["doubao-seedance-1-0-pro-250528"]);
+    assert.deepEqual(seedanceResult.models.map((model) => model.id), [
+      "doubao-seed-2-0-lite-260215",
+      "doubao-seedream-5-0-260128",
+      "doubao-seedance-1-0-pro-250528",
+    ]);
 
     const jimengResult = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
       kind: "jimeng",

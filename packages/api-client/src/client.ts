@@ -206,6 +206,8 @@ import type {
   ProviderCheckResult,
   ProviderDraftCheckRequest,
   ProviderListResponse,
+  ProviderModelImportRequest,
+  ProviderModelImportResponse,
   ProviderModelListRequest,
   ProviderModelListResponse,
   ProviderMutationRequest,
@@ -215,6 +217,7 @@ import type {
   PreviewContentResponse,
   ResourceLeaseListResponse,
   RunnerListResponse,
+  RunnerReadinessResponse,
   RuntimeExtensionListResponse,
   RuntimeDiagnosticsResponse,
   RuntimeResponse,
@@ -756,6 +759,10 @@ export class LingDaemonClient {
 
   async listRunners(cwd: string): Promise<RunnerListResponse> {
     return this.get("/runners", { cwd });
+  }
+
+  async getRunnerReadiness(cwd: string, runnerId: string): Promise<RunnerReadinessResponse> {
+    return this.get(`/runners/${encodeURIComponent(runnerId)}/readiness`, { cwd });
   }
 
   async listRuntimeExtensions(cwd: string): Promise<RuntimeExtensionListResponse> {
@@ -1540,6 +1547,10 @@ export class LingDaemonClient {
 
   async listProviderModels(cwd: string, input: ProviderModelListRequest): Promise<ProviderModelListResponse> {
     return this.post("/provider-models", { cwd }, input);
+  }
+
+  async importProviderModels(cwd: string, input: ProviderModelImportRequest): Promise<ProviderModelImportResponse> {
+    return this.post("/providers/import-models", { cwd }, input);
   }
 
   async listMcpServers(cwd: string): Promise<McpServerListResponse> {

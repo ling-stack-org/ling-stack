@@ -17,6 +17,7 @@ import { mcpServerSecretRefs } from "../mcp/secrets.js";
 import { getSkillRegistryGeneration, listEffectiveSkillRegistryEntries } from "../skills/registry.js";
 import { listActiveWorkUnits, isStuckWorkUnit } from "../../runtime/work-units.js";
 import { listRunnerItems, loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
+import { listRunnerReadinessSummaries } from "../../runtime/runner-readiness.js";
 
 export function readControlPlaneDomainSnapshot(
   domain: ControlPlaneDomain,
@@ -419,7 +420,9 @@ function readRunnersSnapshot(store: RunStore, context: DaemonContext): unknown {
   return {
     defaultRunnerId: settings.defaultRunnerId,
     allowedRunnerIds: settings.allowedRunnerIds,
-    runners: listRunnerItems(context.runnerRegistry).map((runner) => ({
+    runners: listRunnerItems(context.runnerRegistry, {
+      readinessByRunnerId: listRunnerReadinessSummaries(context.runnerRegistry, context.config),
+    }).map((runner) => ({
       id: runner.id,
       displayName: runner.displayName,
       enabled: runner.status === "enabled",
@@ -427,6 +430,7 @@ function readRunnersSnapshot(store: RunStore, context: DaemonContext): unknown {
       experimental: runner.id !== "pi",
       capabilities: runner.capabilities ?? [],
       blocker: runner.disabledReason,
+      readiness: runner.readiness,
     })),
   };
 }

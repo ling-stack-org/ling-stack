@@ -185,6 +185,62 @@ test("future runner feature flags do not enable adapters without conformance", (
   );
 });
 
+test("future runner conformance flag still fails closed until readiness is confirmed", () => {
+  const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
+    runners: {
+      codexAppServer: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:12345",
+        conformancePassed: true,
+      },
+      openclawAcp: {
+        enabled: true,
+        endpoint: "http://127.0.0.1:23456",
+        conformancePassed: true,
+      },
+    },
+  });
+
+  for (const runnerId of ["codex-app-server", "openclaw-acp"]) {
+    const runner = registry.list().find((item) => item.id === runnerId);
+    assert.equal(runner.status, "disabled");
+    assert.match(runner.disabledReason, /readiness has not been confirmed/i);
+    assert.throws(
+      () => registry.resolve({ requestedRunnerId: runnerId, explicitFallbackPolicy: "disabled" }),
+      (error) =>
+        error instanceof UnsupportedRunnerError &&
+        error.fallbackReason.code === "disabled_requested_runner",
+    );
+  }
+});
+
+test("future runner adapters become selectable only after all static gates pass", () => {
+  const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
+    runners: {
+      codexAppServer: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:12345",
+        readinessPassed: true,
+        conformancePassed: true,
+      },
+      openclawAcp: {
+        enabled: true,
+        endpoint: "http://127.0.0.1:23456",
+        readinessPassed: true,
+        conformancePassed: true,
+      },
+    },
+  });
+
+  for (const runnerId of ["codex-app-server", "openclaw-acp"]) {
+    const runner = registry.list().find((item) => item.id === runnerId);
+    assert.equal(runner.status, "enabled");
+    const resolution = registry.resolve({ requestedRunnerId: runnerId, explicitFallbackPolicy: "disabled" });
+    assert.equal(resolution.effectiveRunnerId, runnerId);
+    assert.equal(resolution.runner.adapter, runner.adapter);
+  }
+});
+
 test("runner registry enforces workspace allowed runners before fallback", () => {
   const registry = createRunnerRegistry([
     { id: "pi", displayName: "Pi", status: "enabled", adapter: new RecordingRunner() },

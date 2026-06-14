@@ -13,6 +13,7 @@ import {
   type RegisteredRunner,
   type RunnerRegistry,
 } from "./runners.js";
+import type { RunnerReadinessSummary } from "./runner-readiness.js";
 
 const RUNTIME_SETTINGS_FILE = "runtime-settings.json";
 const DEFAULT_UPDATED_AT = "1970-01-01T00:00:00.000Z";
@@ -35,9 +36,13 @@ export interface RunnerListItem {
   readonly capabilities?: readonly string[];
   readonly featureFlag?: string;
   readonly disabledReason?: string;
+  readonly readiness?: RunnerReadinessSummary;
 }
 
-export function listRunnerItems(runnerRegistry: RunnerRegistry): RunnerListItem[] {
+export function listRunnerItems(
+  runnerRegistry: RunnerRegistry,
+  options: { readonly readinessByRunnerId?: ReadonlyMap<string, RunnerReadinessSummary> } = {},
+): RunnerListItem[] {
   return runnerRegistry.list().map((runner) => ({
     id: runner.id,
     displayName: runner.displayName,
@@ -48,6 +53,7 @@ export function listRunnerItems(runnerRegistry: RunnerRegistry): RunnerListItem[
     capabilities: runner.capabilities,
     featureFlag: runner.featureFlag,
     disabledReason: runner.disabledReason,
+    readiness: options.readinessByRunnerId?.get(runner.id),
   }));
 }
 

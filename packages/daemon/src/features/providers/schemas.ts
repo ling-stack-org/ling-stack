@@ -1,5 +1,4 @@
 import {
-  isMediaOnlyModelId,
   providerApis,
   providerCapabilities,
   providerKinds,
@@ -7,6 +6,8 @@ import {
   type ProviderApi,
   type ProviderCapability,
   type ProviderKind,
+  type ProviderModelImportRequest,
+  type ProviderModelOption,
   type ProviderTransport,
   type ProviderModelListRequest,
   type ProviderPreset,
@@ -80,6 +81,49 @@ export function parseProviderModelListRequest(value: unknown): ProviderModelList
     headers: readOptionalStringRecord(value, "headers"),
     authHeader: readOptionalBoolean(value, "authHeader"),
   };
+}
+
+export function parseProviderModelImportRequest(value: unknown): ProviderModelImportRequest {
+  if (!isRecord(value)) {
+    throw new Error("Provider model import request must be a JSON object");
+  }
+  const modelsValue = value.models;
+  if (!Array.isArray(modelsValue) || modelsValue.length === 0) {
+    throw new Error("models must contain at least one model");
+  }
+  const request: ProviderModelImportRequest = {
+    kind: readProviderKind(value, "kind"),
+    displayName: readString(value, "displayName"),
+    providerId: readString(value, "providerId"),
+    api: readProviderApi(value, "api"),
+    providerTransport: readOptionalProviderTransport(value, "providerTransport"),
+    baseUrl: readOptionalString(value, "baseUrl"),
+    apiKeyRef: readOptionalApiKeyRef(value),
+    apiKey: readOptionalApiKey(value),
+    headers: readOptionalStringRecord(value, "headers"),
+    authHeader: readOptionalBoolean(value, "authHeader"),
+    reasoning: readOptionalBoolean(value, "reasoning"),
+    input: readOptionalStringArray(value, "input", ["text", "image"]),
+    contextWindow: readOptionalNumber(value, "contextWindow"),
+    maxTokens: readOptionalNumber(value, "maxTokens"),
+    compat: isRecord(value.compat) ? value.compat : undefined,
+    capabilities: readProviderCapabilities(value, "capabilities"),
+    enabled: readOptionalBoolean(value, "enabled"),
+    models: modelsValue.map((model, index) => parseProviderImportModel(model, index)),
+  };
+  for (const model of request.models) {
+    validateProviderPresetShape({
+      kind: request.kind,
+      displayName: providerModelDisplayName(request.displayName, model),
+      providerId: request.providerId,
+      model: model.id,
+      api: model.api ?? request.api,
+      baseUrl: request.baseUrl,
+      apiKeyRef: request.apiKeyRef,
+      capabilities: model.capabilities ?? request.capabilities,
+    });
+  }
+  return request;
 }
 
 export function providerUpdateWithSecretRef(providerId: string, input: ProviderPresetUpdateRequest): ProviderPresetUpdateInput {
@@ -206,12 +250,33 @@ function validateProviderPresetShape(input: {
     }
     return;
   }
-  if (isMediaOnlyModelId(input.model)) {
-    throw new Error("This is a media model. Choose a media task protocol or select a chat model.");
-  }
   if (!input.capabilities.includes("chat")) {
     throw new Error("coding provider presets must include chat capability");
   }
+}
+
+function parseProviderImportModel(value: unknown, index: number): ProviderModelOption {
+  if (!isRecord(value)) {
+    throw new Error(`models[${index}] must be an object`);
+  }
+  const id = readString(value, "id").trim();
+  if (!id) {
+    throw new Error(`models[${index}].id must be a non-empty string`);
+  }
+  return {
+    id,
+    displayName: readOptionalString(value, "displayName"),
+    ownedBy: readOptionalString(value, "ownedBy"),
+    createdAt: readOptionalString(value, "createdAt"),
+    api: value.api === undefined ? undefined : readProviderApi(value, "api"),
+    input: readOptionalStringArray(value, "input", ["text", "image"]),
+    capabilities: value.capabilities === undefined ? undefined : readProviderCapabilities(value, "capabilities"),
+  };
+}
+
+function providerModelDisplayName(providerDisplayName: string, model: Pick<ProviderModelOption, "displayName" | "id">): string {
+  const modelName = model.displayName?.trim() || model.id;
+  return `${providerDisplayName.trim()} · ${modelName}`;
 }
 
 function readOptionalApiKey(record: Record<string, unknown>): string | undefined {

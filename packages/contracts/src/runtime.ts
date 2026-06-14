@@ -1,5 +1,6 @@
 import type { RunStatus, RunTool } from "./shared.js";
 import type { ResourceLease } from "./workflows.js";
+import type { RunnerReadinessSummary } from "./runner-readiness.js";
 
 export type RuntimePermissionRequestKind =
   | "core_tool"
@@ -204,6 +205,7 @@ export interface RunnerListItem {
   readonly capabilities?: readonly string[];
   readonly featureFlag?: string;
   readonly disabledReason?: string;
+  readonly readiness?: RunnerReadinessSummary;
 }
 
 export interface RunnerListResponse {

@@ -24,10 +24,6 @@ import {
   canWorkbenchBatchCheckProvider,
   canUseProviderForRun,
   customOpenAICompatibleForm,
-  filterChatModelOptions,
-  filterMediaModelOptions,
-  groupProviderTemplates,
-  hiddenNonMatchingMediaModelCount,
   isMediaProvider,
   isWorkbenchNeedsConfigProvider,
   isWorkbenchReadyProvider,
@@ -95,6 +91,7 @@ export function ProviderSettings({
   onTemplateSelect,
   onNew,
   onSave,
+  onImportModels,
   onRefresh,
   onEdit,
   onDelete,
@@ -130,6 +127,7 @@ export function ProviderSettings({
   readonly onTemplateSelect: (template: ProviderTemplate) => void;
   readonly onNew: () => void;
   readonly onSave: () => Promise<ProviderSaveResult>;
+  readonly onImportModels: (models: readonly ProviderModelOption[]) => Promise<{ readonly ok: boolean; readonly errorMessage?: string }>;
   readonly onRefresh: () => void;
   readonly onEdit: (provider: ProviderPreset) => void;
   readonly onDelete: (providerId: string) => void;
@@ -145,43 +143,32 @@ export function ProviderSettings({
 }): JSX.Element {
   const { t } = useI18n();
   const savedProviderCount = providers.length;
-  const chatProviderCount = providers.filter((provider) => !isMediaProvider(provider)).length;
-  const mediaProviderCount = providers.filter(isMediaProvider).length;
   const workbenchReadyProviderCount = providers.filter(isWorkbenchReadyProvider).length;
   const preflightReadyProviderCount = providers.filter(providerPreflightReady).length;
   const batchCheckProviderCount = providers.filter(canWorkbenchBatchCheckProvider).length;
   const missingSecretCount = providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length;
   const disabledProviderCount = providers.filter((provider) => !provider.enabled).length;
   const needsAttentionProviderCount = providers.filter(isWorkbenchNeedsConfigProvider).length;
-  const templateGroups = useMemo(() => groupProviderTemplates(templates), [templates]);
-  const templateTabs = useMemo(() => {
-    const groupedTemplates = new Map<string, ProviderTemplate[]>();
-    groupedTemplates.set("Custom access", [providerFormToTemplate(customOpenAICompatibleForm)]);
-    for (const group of templateGroups) {
-      groupedTemplates.set(group.label, [...(groupedTemplates.get(group.label) ?? []), ...group.templates]);
-    }
-    return ["Custom access", "GPT", "Claude", "Domestic AI", "Media"].flatMap((label) => {
-      const groupTemplates = groupedTemplates.get(label) ?? [];
-      return groupTemplates.length > 0 ? [{ label, templates: groupTemplates }] : [];
-    });
-  }, [templateGroups]);
+  const supplierTemplates = useMemo(
+    () => dedupeProviderTemplates([providerFormToTemplate(customOpenAICompatibleForm), ...templates]),
+    [templates],
+  );
   const editingProvider = editingProviderId ? providers.find((provider) => provider.id === editingProviderId) : undefined;
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [providerSearch, setProviderSearch] = useState("");
   const [providerStatusFilter, setProviderStatusFilter] = useState<ProviderStatusFilter>("all");
-  const [activeTemplateGroupLabel, setActiveTemplateGroupLabel] = useState("Custom access");
   const [showApiKey, setShowApiKey] = useState(true);
   const [modelOptions, setModelOptions] = useState<readonly ProviderModelOption[]>([]);
   const [modelOptionsContext, setModelOptionsContext] = useState<ProviderFormState | undefined>(undefined);
   const [modelOptionsSource, setModelOptionsSource] = useState("");
-  const [hiddenMediaModelCount, setHiddenMediaModelCount] = useState(0);
+  const [modelSearch, setModelSearch] = useState("");
+  const [selectedModelIds, setSelectedModelIds] = useState<readonly string[]>([]);
   const [modelFetchError, setModelFetchError] = useState("");
   const [modelSelectionNotice, setModelSelectionNotice] = useState("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [editorErrorMessage, setEditorErrorMessage] = useState("");
   const [editorWarningMessage, setEditorWarningMessage] = useState("");
   const skipNextModelDiscoveryResetRef = useRef(false);
-  const activeTemplateGroup = templateTabs.find((group) => group.label === activeTemplateGroupLabel) ?? templateTabs[0];
   const nextActionProvider =
     providers.find(
       (provider) =>
@@ -233,30 +220,26 @@ export function ProviderSettings({
       }),
     [providerSearch, providerStatusFilter, providers],
   );
+  const providerGroups = useMemo(() => groupProvidersBySupplier(filteredProviders, templates), [filteredProviders, templates]);
+  const visibleModelOptions = useMemo(() => {
+    const query = modelSearch.trim().toLowerCase();
+    if (!query) {
+      return modelOptions;
+    }
+    return modelOptions.filter((model) =>
+      [model.id, model.displayName ?? "", model.ownedBy ?? ""].some((value) => value.toLowerCase().includes(query)),
+    );
+  }, [modelOptions, modelSearch]);
+  const selectedImportModels = useMemo(
+    () => modelOptions.filter((model) => selectedModelIds.includes(model.id)),
+    [modelOptions, selectedModelIds],
+  );
 
   useEffect(() => {
     if (repairRun && editingProviderId) {
       setIsEditorOpen(true);
     }
   }, [editingProviderId, repairRun]);
-
-  useEffect(() => {
-    if (!templateTabs.some((group) => group.label === activeTemplateGroupLabel) && templateTabs[0]) {
-      setActiveTemplateGroupLabel(templateTabs[0].label);
-    }
-  }, [activeTemplateGroupLabel, templateTabs]);
-
-  useEffect(() => {
-    if (!selectedTemplateId) {
-      return;
-    }
-    const matchingGroup = templateTabs.find((group) =>
-      group.templates.some((template) => template.templateId === selectedTemplateId),
-    );
-    if (matchingGroup) {
-      setActiveTemplateGroupLabel(matchingGroup.label);
-    }
-  }, [selectedTemplateId, templateTabs]);
 
   useEffect(() => {
     if (checkScope !== "row" || !checkedProviderId || !checkResult) {
@@ -284,7 +267,8 @@ export function ProviderSettings({
     setModelOptions([]);
     setModelOptionsContext(undefined);
     setModelOptionsSource("");
-    setHiddenMediaModelCount(0);
+    setModelSearch("");
+    setSelectedModelIds([]);
     setModelFetchError("");
     setModelSelectionNotice("");
     setEditorWarningMessage("");
@@ -300,7 +284,6 @@ export function ProviderSettings({
 
   function openNewProviderSheet(): void {
     onNew();
-    setActiveTemplateGroupLabel("Custom access");
     setShowApiKey(true);
     setEditorErrorMessage("");
     setEditorWarningMessage("");
@@ -317,17 +300,6 @@ export function ProviderSettings({
     setIsEditorOpen(true);
   }
 
-  function selectTemplateGroup(label: string): void {
-    const group = templateTabs.find((item) => item.label === label);
-    setActiveTemplateGroupLabel(label);
-    setEditorErrorMessage("");
-    setEditorWarningMessage("");
-    resetModelDiscovery();
-    if (group?.templates[0]) {
-      onTemplateSelect(group.templates[0]);
-    }
-  }
-
   function closeProviderSheet(): void {
     setEditorErrorMessage("");
     setEditorWarningMessage("");
@@ -337,6 +309,19 @@ export function ProviderSettings({
   async function handleSaveProvider(): Promise<void> {
     setEditorErrorMessage("");
     setEditorWarningMessage("");
+    if (!editingProviderId && modelOptions.length > 0) {
+      if (selectedImportModels.length === 0) {
+        setEditorErrorMessage("Select at least one model.");
+        return;
+      }
+      const result = await onImportModels(selectedImportModels);
+      if (result.ok) {
+        closeProviderSheet();
+        return;
+      }
+      setEditorErrorMessage(result.errorMessage ?? "Import failed.");
+      return;
+    }
     const result = await onSave();
     if (result.ok) {
       closeProviderSheet();
@@ -350,20 +335,16 @@ export function ProviderSettings({
       setIsFetchingModels(true);
       setModelFetchError("");
       const response = await listProviderModels(cwd.trim(), form);
-      const nextModels = form.api === "media-job"
-        ? filterMediaModelOptions(response.models, form)
-        : filterChatModelOptions(response.models);
+      const nextModels = response.models;
       setModelOptions(nextModels);
       setModelOptionsContext({ ...form });
       setModelOptionsSource(response.source);
-      setHiddenMediaModelCount(form.api === "media-job"
-        ? hiddenNonMatchingMediaModelCount(response.models, form)
-        : response.models.length - nextModels.length);
+      setSelectedModelIds([]);
       setModelSelectionNotice(response.source === "builtin:media-models"
-        ? t("Could not read models from the provider. Built-in media model candidates are shown.")
+        ? t("Could not read models from the provider. Built-in model candidates are shown.")
         : "");
       if (nextModels.length === 0) {
-        setModelFetchError(t(form.api === "media-job" ? "No media models returned by this endpoint." : "No chat models returned by this endpoint."));
+        setModelFetchError(t("No models returned by this endpoint."));
       }
     } catch (error) {
       setModelOptions([]);
@@ -384,6 +365,26 @@ export function ProviderSettings({
       result.form.apiKey !== form.apiKey;
     onFormChange(result.form);
     setModelSelectionNotice(result.notice ? t(result.notice) : "");
+  }
+
+  function toggleImportModel(model: ProviderModelOption): void {
+    setSelectedModelIds((current) =>
+      current.includes(model.id)
+        ? current.filter((id) => id !== model.id)
+        : [...current, model.id],
+    );
+  }
+
+  function selectAllVisibleModels(): void {
+    const next = new Set(selectedModelIds);
+    for (const model of visibleModelOptions) {
+      next.add(model.id);
+    }
+    setSelectedModelIds([...next]);
+  }
+
+  function clearSelectedModels(): void {
+    setSelectedModelIds([]);
   }
 
   return (
@@ -463,8 +464,7 @@ export function ProviderSettings({
 
         <div className="provider-capability-summary" aria-label={t("Provider workbench status")}>
           <span>{t("Saved presets")} <strong>{savedProviderCount}</strong></span>
-          <span>{t("Chat models")} <strong>{chatProviderCount}</strong></span>
-          <span>{t("Media models")} <strong>{mediaProviderCount}</strong></span>
+          <span>{t("Suppliers")} <strong>{providerGroups.length}</strong></span>
           <span>{t("Coding ready")} <strong>{preflightReadyProviderCount}</strong></span>
           <span>{t("Missing secrets")} <strong>{missingSecretCount}</strong></span>
         </div>
@@ -507,7 +507,7 @@ export function ProviderSettings({
           {providers.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <PlugZap />}
-              <span>{isLoading ? t("Loading providers...") : t("Create a model preset from GPT, Claude, domestic, relay, or custom OpenAI-compatible entries")}</span>
+              <span>{isLoading ? t("Loading providers...") : t("Configure a supplier endpoint, fetch its exposed models, and save selected presets.")}</span>
               {!isLoading ? (
                 <button className="primary-button compact-button" type="button" onClick={openNewProviderSheet}>
                   <Plus size={14} />
@@ -524,7 +524,7 @@ export function ProviderSettings({
             <table className="provider-table">
               <thead>
                 <tr>
-                  <th>{t("Name")}</th>
+                  <th>{t("Supplier")}</th>
                   <th>{t("Model")}</th>
                   <th>{t("Base URL")}</th>
                   <th>{t("API key status")}</th>
@@ -534,7 +534,21 @@ export function ProviderSettings({
                 </tr>
               </thead>
               <tbody>
-                {filteredProviders.map((provider) => {
+                {providerGroups.map((group) => (
+                  <Fragment key={group.key}>
+                    <tr className="provider-group-row">
+                      <td colSpan={7}>
+                        <div className="provider-group-summary">
+                          <span className="provider-avatar" aria-hidden="true">{providerInitial(group.label)}</span>
+                          <span>
+                            <strong>{group.label}</strong>
+                            <small>{group.providerId} · {group.modelCount} {t("models")} · {group.api}</small>
+                          </span>
+                          <em>{group.endpoint || t("default endpoint")}</em>
+                        </div>
+                      </td>
+                    </tr>
+                    {group.providers.map((provider) => {
                   const providerMissingApiKey = providerNeedsSecret(provider) && !provider.apiKeyConfigured;
                   const providerSelectedForRun = provider.id === selectedProviderId;
                   const providerIsMedia = provider.api === "media-job";
@@ -693,6 +707,8 @@ export function ProviderSettings({
                     </Fragment>
                   );
                 })}
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           )}
@@ -721,31 +737,22 @@ export function ProviderSettings({
         </div>
 
         <div className="provider-sheet-body">
-        <div className="provider-template-board" aria-label={t("Model templates")}>
-          <div className="provider-template-tabs" role="tablist" aria-label={t("Choose model supplier")}>
-            {templateTabs.map((group) => (
-              <button
-                key={group.label}
-                className={group.label === activeTemplateGroup?.label ? "provider-template-tab selected" : "provider-template-tab"}
-                    type="button"
-                    role="tab"
-                    aria-selected={group.label === activeTemplateGroup?.label}
-                    onClick={() => selectTemplateGroup(group.label)}
-              >
-                <span>{t(group.label)}</span>
-                <small>{group.templates.length}</small>
-              </button>
-            ))}
+        <div className="provider-template-board" aria-label={t("Choose model supplier")}>
+          <div className="provider-template-board-header">
+            <span>
+              <strong>{t("Choose model supplier")}</strong>
+              <small>{t("Configure a supplier first, then fetch the models exposed by its endpoint.")}</small>
+            </span>
           </div>
-          {!activeTemplateGroup ? (
+          {supplierTemplates.length === 0 ? (
             <div className="empty-state compact-empty">
               <PlugZap />
               <span>{t("No templates available.")}</span>
             </div>
           ) : (
-            <div className="provider-template-panel" role="tabpanel" aria-label={t(activeTemplateGroup.label)}>
+            <div className="provider-template-panel">
               <div className="provider-template-grid">
-                {activeTemplateGroup.templates.map((template) => (
+                {supplierTemplates.map((template) => (
                   <button
                     key={template.templateId}
                     className={[
@@ -899,37 +906,71 @@ export function ProviderSettings({
           <div className="provider-model-discovery-header">
             <span>
               <strong>{t("Available models")}</strong>
-              <small>{modelOptionsSource ? t("Loaded from {source}", { source: modelOptionsSource }) : t("Fetch models from the configured endpoint.")}</small>
+              <small>{modelOptionsSource ? t("Loaded from {source}", { source: modelOptionsSource }) : t("Fetch models from the configured supplier endpoint.")}</small>
             </span>
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              disabled={isFetchingModels}
-              onClick={() => void fetchProviderModels()}
-            >
-              {isFetchingModels ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-              {t("Fetch models")}
-            </button>
+            <span className="provider-model-actions">
+              {modelOptions.length > 0 && !editingProviderId ? (
+                <>
+                  <button className="secondary-button compact-button" type="button" onClick={selectAllVisibleModels}>
+                    {t("Select visible")}
+                  </button>
+                  <button className="secondary-button compact-button" type="button" onClick={clearSelectedModels} disabled={selectedModelIds.length === 0}>
+                    {t("Clear selection")}
+                  </button>
+                </>
+              ) : null}
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                disabled={isFetchingModels}
+                onClick={() => void fetchProviderModels()}
+              >
+                {isFetchingModels ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                {t("Fetch models")}
+              </button>
+            </span>
           </div>
           {modelOptions.length > 0 ? (
+            <label className="provider-model-search">
+              <Search size={14} />
+              <input
+                aria-label={t("Search provider models")}
+                value={modelSearch}
+                placeholder={t("Search provider models")}
+                onChange={(event) => setModelSearch(event.target.value)}
+              />
+              {!editingProviderId ? <small>{t("{count} selected", { count: selectedModelIds.length })}</small> : null}
+            </label>
+          ) : null}
+          {modelOptions.length > 0 ? (
             <div className="provider-model-grid" aria-label={t("Available models")}>
-              {modelOptions.map((model) => (
+              {visibleModelOptions.map((model) => {
+                const modelSelected = editingProviderId ? model.id === form.model : selectedModelIds.includes(model.id);
+                return (
                 <button
                   key={model.id}
-                  className={model.id === form.model ? "provider-model-card selected" : "provider-model-card"}
+                  className={modelSelected ? "provider-model-card selected" : "provider-model-card"}
                   type="button"
-                  onClick={() => selectProviderModel(model)}
+                  onClick={() => {
+                    if (editingProviderId) {
+                      selectProviderModel(model);
+                      return;
+                    }
+                    toggleImportModel(model);
+                  }}
                 >
                   <strong>{model.displayName ?? model.id}</strong>
                   <small>{model.ownedBy ?? model.id}</small>
+                  {model.capabilities?.length ? <em>{model.capabilities.join(", ")}</em> : null}
                 </button>
-              ))}
+                );
+              })}
             </div>
           ) : null}
-          {hiddenMediaModelCount > 0 ? (
-            <div className="model-fetch-error neutral">
-              <CircleAlert size={15} />
-              <span>{t(form.api === "media-job" ? "Hidden other media model options" : "Hidden media model options", { count: hiddenMediaModelCount })}</span>
+          {modelOptions.length > 0 && visibleModelOptions.length === 0 ? (
+            <div className="empty-state compact-empty">
+              <Search />
+              <span>{t("No provider models match the current search")}</span>
             </div>
           ) : null}
           {modelFetchError ? (
@@ -992,9 +1033,14 @@ export function ProviderSettings({
           <button className="secondary-button" type="button" onClick={closeProviderSheet}>
             {t("Cancel")}
           </button>
-          <button className="primary-button" type="button" disabled={isCheckingProviders} onClick={() => void handleSaveProvider()}>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={isCheckingProviders || (!editingProviderId && modelOptions.length > 0 && selectedImportModels.length === 0)}
+            onClick={() => void handleSaveProvider()}
+          >
             {isSaveChecking ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
-            {t("Save")}
+            {t(!editingProviderId && modelOptions.length > 0 ? "Save selected models" : "Save")}
           </button>
         </div>
         </div>
@@ -1003,6 +1049,65 @@ export function ProviderSettings({
       ) : null}
     </div>
   );
+}
+
+interface ProviderWorkbenchGroup {
+  readonly key: string;
+  readonly label: string;
+  readonly providerId: string;
+  readonly api: string;
+  readonly endpoint: string;
+  readonly modelCount: number;
+  readonly providers: readonly ProviderPreset[];
+}
+
+function dedupeProviderTemplates(templates: readonly ProviderTemplate[]): readonly ProviderTemplate[] {
+  const seen = new Set<string>();
+  const result: ProviderTemplate[] = [];
+  for (const template of templates) {
+    if (seen.has(template.templateId)) {
+      continue;
+    }
+    seen.add(template.templateId);
+    result.push(template);
+  }
+  return result;
+}
+
+function groupProvidersBySupplier(
+  providers: readonly ProviderPreset[],
+  templates: readonly ProviderTemplate[],
+): readonly ProviderWorkbenchGroup[] {
+  const groups = new Map<string, ProviderPreset[]>();
+  for (const provider of providers) {
+    const key = [
+      provider.providerId,
+      provider.api,
+      normalizeProviderEndpoint(providerEffectiveBaseUrl(provider, templates)),
+      provider.apiKeyRef ?? "",
+    ].join("\u0000");
+    const entries = groups.get(key) ?? [];
+    entries.push(provider);
+    groups.set(key, entries);
+  }
+  return [...groups.entries()].map(([key, entries]) => {
+    const first = entries[0];
+    return {
+      key,
+      label: providerSupplierLabel(first),
+      providerId: first.providerId,
+      api: first.api,
+      endpoint: providerEffectiveBaseUrl(first, templates),
+      modelCount: entries.length,
+      providers: entries,
+    };
+  });
+}
+
+function providerSupplierLabel(provider: ProviderPreset): string {
+  const displayName = provider.displayName.trim();
+  const separator = displayName.indexOf(" · ");
+  return separator > 0 ? displayName.slice(0, separator) : displayName || provider.providerId;
 }
 
 function ProviderNextAction({

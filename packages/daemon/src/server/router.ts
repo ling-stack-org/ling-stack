@@ -126,6 +126,7 @@ import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work
 import {
   handleProviderDraftCheck,
   handleProviderItem,
+  handleProviderModelImport,
   handleProviderModelsProbe,
   handleProvidersCollection,
   handleSecretStatus,
@@ -188,6 +189,7 @@ import {
 import {
   handleGetRuntime,
   handleGetRuntimeSupervisor,
+  handleGetRunnerReadiness,
   handleListResourceLeases,
   handleListRuntimeExtensions,
   handleListRuntimeActive,
@@ -205,6 +207,7 @@ import {
 } from "../runtime/work-units.js";
 import {
   matchSingleSegmentRoute,
+  parseRunnerReadinessRoute,
   parseMemoryRoute,
   parseApprovalRoute,
   parseArtifactRoute,
@@ -352,6 +355,11 @@ export async function routeRequest(
 
   if (url.pathname === "/providers") {
     await handleProvidersCollection(request, response, config, storeRegistry, secretResolver, controlPlaneEvents);
+    return;
+  }
+
+  if (url.pathname === "/providers/import-models") {
+    await handleProviderModelImport(request, response, config, storeRegistry, secretResolver, controlPlaneEvents);
     return;
   }
 
@@ -821,7 +829,17 @@ export async function routeRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/runners") {
-    handleListRunners(response, url, storeRegistry, runnerRegistry);
+    handleListRunners(response, url, storeRegistry, runnerRegistry, config);
+    return;
+  }
+
+  const runnerReadinessRoute = parseRunnerReadinessRoute(url.pathname);
+  if (runnerReadinessRoute) {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for runner readiness` });
+      return;
+    }
+    await handleGetRunnerReadiness(response, url, storeRegistry, runnerRegistry, config, runnerReadinessRoute.runnerId);
     return;
   }
 

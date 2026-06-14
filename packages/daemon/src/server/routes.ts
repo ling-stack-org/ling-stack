@@ -10,6 +10,14 @@ export function matchSingleSegmentRoute(pathname: string, prefix: string): strin
   return decodeURIComponent(segment);
 }
 
+export function parseRunnerReadinessRoute(pathname: string): { readonly runnerId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "runners" && segments[2] === "readiness") {
+    return { runnerId: segments[1] };
+  }
+  return undefined;
+}
+
 export function parseMemoryRoute(pathname: string): { readonly kind: "review"; readonly memoryId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 3 && segments[0] === "memory" && segments[2] === "review") {

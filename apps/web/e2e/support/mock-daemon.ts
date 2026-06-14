@@ -4829,6 +4829,65 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "POST" && path === "/providers/import-models") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const models = Array.isArray(body.models) ? body.models.filter(isRecord) : [];
+    const providers: Record<string, unknown>[] = [];
+    let createdCount = 0;
+    let updatedCount = 0;
+    for (const model of models) {
+      const modelId = typeof model.id === "string" ? model.id : "";
+      if (!modelId) {
+        continue;
+      }
+      const modelDisplayName = typeof model.displayName === "string" && model.displayName.trim() ? model.displayName : modelId;
+      const displayName = `${typeof body.displayName === "string" ? body.displayName : "Provider"} · ${modelDisplayName}`;
+      const modelApi = typeof model.api === "string" ? model.api : body.api;
+      const providerIndex = state.providers.findIndex((item) =>
+        isRecord(item) &&
+        item.providerId === body.providerId &&
+        item.api === modelApi &&
+        item.baseUrl === body.baseUrl &&
+        item.model === modelId
+      );
+      const providerBody = {
+        ...body,
+        displayName,
+        model: modelId,
+        api: modelApi,
+        input: Array.isArray(model.input) ? model.input : body.input,
+        capabilities: Array.isArray(model.capabilities) ? model.capabilities : body.capabilities,
+      };
+      if (providerIndex >= 0) {
+        const existing = state.providers[providerIndex];
+        const provider = isRecord(existing)
+          ? { ...existing, ...createProviderFromBody(providerBody, String(existing.id), existing), id: existing.id }
+          : createProviderFromBody(providerBody, `provider_created_${state.providers.length + 1}`);
+        if (provider.api !== "media-job") {
+          provider.lastCheck = buildProviderCheckResult(provider);
+        }
+        state.providers[providerIndex] = provider;
+        providers.push(provider);
+        updatedCount += 1;
+        if (typeof body.apiKey === "string" && body.apiKey.trim()) {
+          state.providerSecrets[String(provider.id)] = body.apiKey;
+        }
+        continue;
+      }
+      const provider = createProviderFromBody(providerBody, `provider_created_${state.providers.length + 1}`);
+      if (provider.api !== "media-job") {
+        provider.lastCheck = buildProviderCheckResult(provider);
+      }
+      state.providers.push(provider);
+      providers.push(provider);
+      createdCount += 1;
+      if (typeof body.apiKey === "string" && body.apiKey.trim()) {
+        state.providerSecrets[String(provider.id)] = body.apiKey;
+      }
+    }
+    await route.fulfill({ json: { providers, createdCount, updatedCount, warnings: [] } });
+    return;
+  }
   if (request.method() === "POST" && path === "/providers") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const provider = createProviderFromBody(body, `provider_created_${state.providers.length + 1}`);

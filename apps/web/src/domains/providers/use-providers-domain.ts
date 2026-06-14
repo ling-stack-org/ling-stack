@@ -5,6 +5,7 @@ import {
   createProvider,
   deleteProvider,
   getProviderSecret,
+  importProviderModels,
   listProviderTemplates,
   listProviders,
   updateProvider,
@@ -29,6 +30,8 @@ import {
 import type {
   ProviderCheckResult,
   ProviderFormState,
+  ProviderModelImportResponse,
+  ProviderModelOption,
   ProviderPreset,
   ProviderTemplate,
 } from "../../types.js";
@@ -64,6 +67,7 @@ export interface ProvidersActions {
   readonly refreshProviderTemplates: () => Promise<void>;
   readonly checkProviderForRun: (provider: ProviderPreset) => Promise<boolean>;
   readonly saveProviderWithPreflight: () => Promise<{ readonly ok: boolean; readonly errorMessage?: string; readonly warningMessage?: string }>;
+  readonly importModelsFromProviderForm: (models: readonly ProviderModelOption[]) => Promise<{ readonly ok: boolean; readonly response?: ProviderModelImportResponse; readonly errorMessage?: string }>;
   readonly removeProvider: (providerId: string) => Promise<void>;
   readonly runProviderCheck: (providerId: string) => Promise<void>;
   readonly runProviderBatchCheck: () => Promise<void>;
@@ -230,6 +234,41 @@ export function useProvidersDomain(input: {
       return { ok: false, errorMessage: message };
     } finally {
       setCheckingProviderIds([]);
+    }
+  }
+
+  async function importModelsFromProviderForm(
+    models: readonly ProviderModelOption[],
+  ): Promise<{ readonly ok: boolean; readonly response?: ProviderModelImportResponse; readonly errorMessage?: string }> {
+    const workspaceCwd = input.cwd.trim();
+    if (!workspaceCwd) {
+      return { ok: false, errorMessage: "本地工作区未就绪" };
+    }
+    if (models.length === 0) {
+      return { ok: false, errorMessage: input.translate("Select at least one model.") };
+    }
+
+    try {
+      setProviderSaveMessage("");
+      setProviderCheck(undefined);
+      setProviderCheckScope("save");
+      setProviderCheckTargetId("provider_model_import");
+      setProviderBatchResult(undefined);
+      setCheckingProviderIds(["provider_model_import"]);
+      setError(undefined);
+      const response = await importProviderModels(workspaceCwd, { ...providerForm, enabled: true }, models);
+      await refreshProviders();
+      setProviderSaveMessageTone(response.warnings.length > 0 ? "warning" : "ok");
+      setProviderSaveMessage(input.translate("Imported {count} model presets.", { count: response.createdCount + response.updatedCount }));
+      return { ok: true, response };
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "mutation", message });
+      return { ok: false, errorMessage: message };
+    } finally {
+      setCheckingProviderIds([]);
+      setProviderCheckScope(undefined);
+      setProviderCheckTargetId("");
     }
   }
 
@@ -502,6 +541,7 @@ export function useProvidersDomain(input: {
       refreshProviderTemplates,
       checkProviderForRun,
       saveProviderWithPreflight,
+      importModelsFromProviderForm,
       removeProvider,
       runProviderCheck,
       runProviderBatchCheck,

@@ -15,6 +15,7 @@ import type {
 } from "@ling-stack/core";
 import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
 import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/plugin-sdk";
+import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
 import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import type { ControlPlaneEventHub } from "../features/control-plane/events.js";
@@ -29,6 +30,10 @@ import {
   patchWorkspaceRuntimeSettings,
   type WorkspaceRuntimeSettingsPatch,
 } from "./runner-settings.js";
+import {
+  buildRunnerReadinessReport,
+  listRunnerReadinessSummaries,
+} from "./runner-readiness.js";
 import type { RunnerRegistry } from "./runners.js";
 import type { RunStoreRegistry } from "./store-registry.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
@@ -222,15 +227,50 @@ export function handleListWorkUnits(response: ServerResponse, url: URL, storeReg
   });
 }
 
-export function handleListRunners(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry, runnerRegistry: RunnerRegistry): void {
+export function handleListRunners(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  runnerRegistry: RunnerRegistry,
+  config: ResolvedDaemonConfig,
+): void {
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
   if (!resolved) {
     return;
   }
   writeJson(response, 200, {
     cwd: resolved.cwd,
-    runners: listRunnerItems(runnerRegistry),
+    runners: listRunnerItems(runnerRegistry, {
+      readinessByRunnerId: listRunnerReadinessSummaries(runnerRegistry, config),
+    }),
   });
+}
+
+export async function handleGetRunnerReadiness(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  runnerRegistry: RunnerRegistry,
+  config: ResolvedDaemonConfig,
+  runnerId: string,
+): Promise<void> {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  const runner = runnerRegistry.get(runnerId);
+  if (!runner) {
+    writeJson(response, 404, { error: "runner_not_found", message: `Runner not found: ${runnerId}` });
+    return;
+  }
+  try {
+    writeJson(response, 200, {
+      cwd: resolved.cwd,
+      readiness: await buildRunnerReadinessReport(runner, config),
+    });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 export function handleListRuntimeExtensions(
