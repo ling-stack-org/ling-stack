@@ -15,12 +15,21 @@ Current boundary:
 - `codex-app-server` and `openclaw-acp` are registered as disabled placeholder runners
   so settings, fallback, and audit can fail closed before real adapters are enabled.
 - No Codex app-server or OpenClaw/ACP backend is enabled today.
+- Model-provider integrations such as OpenAI, Anthropic/Claude, and Google/Gemini are
+  not runner adapters by themselves. They remain provider presets unless they expose an
+  external agent runtime with its own session, tools, events, artifacts, and approval
+  semantics.
 
 This document covers:
 
 1. `codex-app-server` adapter;
 2. `openclaw-acp` adapter;
-3. shared adapter conformance, security, audit, and rollout rules.
+3. the provider-vs-agent-runtime decision boundary for future Codex, OpenClaw, Hermes,
+   Claude, Gemini, and similar integrations;
+4. shared adapter conformance, security, audit, and rollout rules.
+
+Detailed implementation slices live in
+[External Agent Runner Adapters Implementation Plan](external-agent-runner-adapters-implementation-plan.md).
 
 ## Implementation Status
 
@@ -46,6 +55,8 @@ Still future:
 - real Codex app-server health probe, stream adapter, approval bridge, and resume handle;
 - real OpenClaw/ACP capability negotiation, client bridge, violation handling, and
   workspace-bound session lifecycle;
+- adapter decision records for Hermes, Claude, Gemini, or other future runtimes only when
+  they expose an executable agent session rather than only a model API;
 - feature-flag UI that enables a non-Pi runner only after conformance passes.
 
 ## Principles
@@ -57,6 +68,23 @@ Still future:
   truth for Ling state.
 - Feature flags must keep new adapters disabled by default.
 - Pi remains the fallback/default until a workspace explicitly enables another runner.
+
+## Provider vs Agent Runtime Boundary
+
+Ling has two integration layers. Do not collapse them.
+
+| Integration target | Use provider preset when... | Use runner adapter when... | Planned shape |
+| --- | --- | --- | --- |
+| OpenAI / Claude / Gemini model APIs | Ling only needs a model endpoint, model id, base URL, API key, and provider API compatibility. | A vendor or wrapper exposes a full agent session with tool events, artifacts, cancellation, approval proposals, and resume handles. | Provider preset first; adapter only for a real agent server. |
+| Codex server | Not applicable if the target is the Codex agent runtime rather than just an OpenAI model. | Ling delegates execution to a Codex app-server session and normalizes its stream/tool/artifact events. | Dedicated `codex-app-server` adapter, not ACP by default. |
+| OpenClaw | Not applicable if OpenClaw is used as an external agent runtime. | OpenClaw exposes an ACP-compatible endpoint with capability negotiation and interceptable side effects. | `openclaw-acp` adapter through an ACP client bridge. |
+| Hermes | Hermes only contributes memory/context files or runtime-native overlay content. | Hermes exposes an executable agent session API with stream events, tool proposals, workspace bounds, and resume/cancel support. | No runner id until a concrete Hermes agent protocol exists. |
+| Other agent servers | They only proxy model calls with no durable session or tool lifecycle. | They own an agent session and can run tasks outside Ling unless bridged through Ling policy. | Add a dedicated adapter or ACP-compatible adapter after conformance. |
+
+The rule is simple: providers supply model capability; runners execute work. Provider
+presets can be selected per teammate, channel, or run without changing the runner.
+Runner adapters change who owns task execution and therefore must pass the full
+approval, workspace, artifact, cancellation, and audit contract.
 
 ## Shared Runner Contract
 
@@ -347,13 +375,18 @@ OpenClaw/ACP native sessions are optional:
 
 ## Shared Rollout Plan
 
-1. Extend runner conformance harness with adapter capability fixtures.
-2. Add disabled registrations for `codex-app-server` and `openclaw-acp`.
-3. Add health/capability routes for registered disabled runners.
-4. Implement Codex app-server adapter behind feature flag.
-5. Implement fake ACP conformance harness before real OpenClaw endpoint.
-6. Add OpenClaw/ACP adapter behind feature flag.
-7. Expose picker only for enabled, healthy, conformant runners.
+Use the detailed implementation plan as the source of truth for PR-sized slices. The
+high-level order is:
+
+1. keep disabled registrations for `codex-app-server` and `openclaw-acp`;
+2. add shared readiness/doctor contracts before real adapters;
+3. extract reusable runner conformance helpers;
+4. implement a fake ACP server before wiring real OpenClaw;
+5. add shared approval, workspace-boundary, tool-surface, and artifact bridges;
+6. implement `openclaw-acp` behind feature flag, readiness, and conformance gates;
+7. implement `codex-app-server` as a dedicated adapter, not ACP by default;
+8. write a Hermes decision record before adding any Hermes runner id;
+9. expose picker options only for enabled, healthy, conformant runners.
 
 ## Security Requirements
 
