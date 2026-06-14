@@ -257,6 +257,7 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
     approval_approved: "running",
     approval_denied: "failed",
     approval_expired: "failed",
+    runner_succeeded: "succeeded",
     runner_failed: "failed",
     idle_timeout: "cancelling",
     hard_timeout: "cancelling",

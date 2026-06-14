@@ -8,12 +8,13 @@
     "ling-stack-daemon": "./dist/cli.js"
   },
   "scripts": {
-    "build": "corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && tsc -p tsconfig.json",
-    "typecheck": "corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && tsc -p tsconfig.json --noEmit",
+    "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && tsc -p tsconfig.json",
+    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
-    "test": "corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && tsc -p tsconfig.json && node --test test/*.test.mjs"
+    "test": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && tsc -p tsconfig.json && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@ling-stack/contracts": "workspace:*",
     "@ling-stack/core": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
     "@ling-stack/providers": "workspace:*",

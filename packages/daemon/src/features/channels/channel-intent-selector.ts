@@ -29,6 +29,7 @@ import {
 } from "./ling-agent-turn-envelope.js";
 import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
+import { extractFileTargetCandidate, resolveExecutableFileTarget } from "./target-resolver.js";
 
 export interface ChannelIntentSelectorInput {
   readonly store: RunStore;
@@ -77,6 +78,7 @@ type IntentReasonCode =
 type ClarifyReasonCode =
   | "missing_target"
   | "missing_acceptance"
+  | "ambiguous_target"
   | "approval_sensitive_target";
 
 interface MaterializationClarifyReason {
@@ -119,6 +121,12 @@ interface SingleStepExecutableIntent {
 interface SingleStepExecutableBlocker {
   readonly userMessage: string;
   readonly technicalReason?: string;
+}
+
+interface SingleStepExecutableClarify {
+  readonly reasonCode: ClarifyReasonCode;
+  readonly userMessage?: string;
+  readonly technicalReason: string;
 }
 
 const roleMatches: readonly RoleMatch[] = [
@@ -179,6 +187,28 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
   const materializationClarify = detectMaterializationClarify(input);
   if (materializationClarify) {
     return createMaterializationClarifyReply(input, materializationClarify);
+  }
+  const executableClarify = detectSingleStepExecutableClarify(input);
+  if (executableClarify) {
+    return createClarifyReply(
+      input,
+      executableClarify.reasonCode,
+      "deterministic",
+      executableClarify.technicalReason,
+      executableClarify.userMessage,
+    );
+  }
+  const executableIntent = detectSingleStepExecutableIntent(input);
+  if (executableIntent) {
+    return createSingleStepExecutableProposal(
+      input,
+      executableIntent,
+      "deterministic",
+      "Bounded executable request resolved by Ling Agent coordinator.",
+    );
+  }
+  if (hasNonLingExplicitAiMention(input.sourceMessage)) {
+    return { action: "continue" };
   }
   const modelIntent = await maybeSelectModelAssistedIntent(input);
   if (modelIntent) {
@@ -626,10 +656,9 @@ function createSingleStepExecutableProposal(
   const decision = persistIntentDecision(input, {
     action: "direct_workflow",
     proposalId: proposal.id,
-    reason: decisionReason
-      ?? (blocker?.technicalReason
-        ? `Direct single-step executable proposal blocked for ${executableIntent.kind}: ${blocker.technicalReason}`
-        : `Direct single-step executable proposal created for ${executableIntent.kind}.`),
+    reason: blocker?.technicalReason
+      ? `Direct single-step executable proposal blocked for ${executableIntent.kind}: ${blocker.technicalReason}`
+      : decisionReason ?? `Direct single-step executable proposal created for ${executableIntent.kind}.`,
     status: "accepted",
     createdBy,
   });
@@ -663,6 +692,7 @@ function createClarifyReply(
   reasonCode: ClarifyReasonCode,
   createdBy: "deterministic" | "model" = "deterministic",
   modelReason?: string,
+  bodyOverride?: string,
 ): ChannelIntentSelectorResult {
   const existingReply = input.store
     .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
@@ -697,7 +727,7 @@ function createClarifyReply(
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: teammate.id,
-      body: buildClarifyQuestion(reasonCode, responseLanguage),
+      body: bodyOverride ?? buildClarifyQuestion(reasonCode, responseLanguage),
       status: "ready",
     },
     now,
@@ -773,9 +803,6 @@ function messageCanCreateWorkflowProposal(input: ChannelIntentSelectorInput): bo
   if (message.threadId) {
     return false;
   }
-  if (message.mentions.some((mention) => mention.kind === "ai-teammate")) {
-    return false;
-  }
   if (input.channel.status !== "active") {
     return false;
   }
@@ -785,6 +812,10 @@ function messageCanCreateWorkflowProposal(input: ChannelIntentSelectorInput): bo
     sourceMessage: message,
   });
   return turnEnvelopeHasUserInput(envelope);
+}
+
+function hasNonLingExplicitAiMention(message: ChannelMessage): boolean {
+  return message.mentions.some((mention) => mention.kind === "ai-teammate" && !isLingAgentExecutorId(mention.id));
 }
 
 function detectWorkflowIntentReason(message: ChannelMessage): IntentReasonCode | undefined {
@@ -828,15 +859,63 @@ function detectSingleStepExecutableIntent(input: ChannelIntentSelectorInput): Si
     ?? detectCommandExecutableIntent(text);
 }
 
-function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: string): SingleStepExecutableIntent | undefined {
-  const fileAction = detectFileAction(text);
+function detectSingleStepExecutableClarify(input: ChannelIntentSelectorInput): SingleStepExecutableClarify | undefined {
+  const text = normalizeWhitespace(input.sourceMessage.body);
+  if (!text || asksForInstructionsOnly(text)) {
+    return undefined;
+  }
+  const implicitFileAction = detectImplicitRecentFileAction(text);
+  const fileAction = detectFileAction(text) ?? implicitFileAction;
   if (!fileAction) {
     return undefined;
   }
-  const target = resolveExecutableFileTarget(input, extractFileTarget(text));
-  if (!target) {
+  const explicitTarget = extractFileTargetCandidate(text);
+  const targetResolution = resolveExecutableFileTarget({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    target: explicitTarget,
+    allowRecentMessageTarget: Boolean(implicitFileAction && !explicitTarget),
+  });
+  if (targetResolution.status === "ambiguous") {
+    const responseLanguage = resolveChannelResponseLanguage({
+      store: input.store,
+      channel: input.channel,
+      sourceText: input.sourceMessage.body,
+    }).language;
+    return {
+      reasonCode: "ambiguous_target",
+      userMessage: buildAmbiguousFileTargetClarifyBody(targetResolution.candidates, responseLanguage),
+      technicalReason: targetResolution.reason,
+    };
+  }
+  if (targetResolution.status === "missing" && implicitFileAction) {
+    return {
+      reasonCode: "missing_target",
+      technicalReason: targetResolution.reason,
+    };
+  }
+  return undefined;
+}
+
+function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: string): SingleStepExecutableIntent | undefined {
+  const implicitFileAction = detectImplicitRecentFileAction(text);
+  const fileAction = detectFileAction(text) ?? implicitFileAction;
+  if (!fileAction) {
     return undefined;
   }
+  const explicitTarget = extractFileTargetCandidate(text);
+  const targetResolution = resolveExecutableFileTarget({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    target: explicitTarget,
+    allowRecentMessageTarget: Boolean(implicitFileAction && !explicitTarget),
+  });
+  if (targetResolution.status !== "resolved") {
+    return undefined;
+  }
+  const target = targetResolution.target;
   const content = extractRequestedFileContent(text) ?? extractMaterializedAttachmentContentForFileRequest(input, text);
   const requiredTools = fileAction === "file_edit" ? ["edit"] as const : ["write"] as const;
   const rolePreferences: readonly AiTeammate["roleKey"][] = target.toLowerCase().endsWith(".md")
@@ -942,106 +1021,24 @@ function detectFileAction(text: string): "file_create" | "file_edit" | undefined
   return undefined;
 }
 
-function looksLikeFileTarget(text: string): boolean {
-  return Boolean(extractFileTarget(text));
-}
-
-function extractFileTarget(text: string): string | undefined {
-  const absolutePath = extractAbsoluteOrRelativePath(text);
-  if (absolutePath && hasFileExtension(absolutePath)) {
-    return stripTrailingPunctuation(absolutePath);
-  }
-  const fileName = extractFileName(text);
-  if (absolutePath && fileName) {
-    return `${stripTrailingSlash(stripTrailingPunctuation(absolutePath))}/${fileName}`;
-  }
-  return fileName;
-}
-
-function resolveExecutableFileTarget(input: ChannelIntentSelectorInput, target: string | undefined): string | undefined {
-  if (!target) {
+function detectImplicitRecentFileAction(text: string): "file_create" | "file_edit" | undefined {
+  if (!/(工作区|workspace|文件|file)/iu.test(text)) {
     return undefined;
   }
-  const normalizedTarget = normalizeExecutablePathCandidate(stripTrailingPunctuation(target));
-  if (isPathLikeFileTarget(normalizedTarget)) {
-    return normalizedTarget;
+  if (/(修改|编辑|更新|替换|改好|改完|patch|edit|update|replace)/iu.test(text)) {
+    return "file_edit";
   }
-  return resolveRecentChannelFileTarget(input, normalizedTarget) ?? normalizedTarget;
-}
-
-function resolveRecentChannelFileTarget(input: ChannelIntentSelectorInput, fileName: string): string | undefined {
-  const wanted = fileBasename(fileName).toLowerCase();
-  if (!wanted) {
-    return undefined;
+  if (/(直接|现在|可以|能不能|可不可以|帮我|请|麻烦).{0,40}(做好|做完|落盘|保存|写入|写进去|创建|新建|生成|create|write|save)/iu.test(text)) {
+    return "file_create";
   }
-  for (const candidate of recentChannelFileTargetCandidates(input)) {
-    if (fileBasename(candidate).toLowerCase() === wanted) {
-      return candidate;
-    }
+  if (/(做好|做完|落盘|保存|写入|写进去|创建|新建|生成|create|write|save).{0,40}(工作区|workspace|文件|file)/iu.test(text)) {
+    return "file_create";
   }
   return undefined;
 }
 
-function recentChannelFileTargetCandidates(input: ChannelIntentSelectorInput): readonly string[] {
-  const textSources: string[] = [];
-  const sourceCreatedAt = input.sourceMessage.createdAt;
-  const workflows = input.store
-    .listChannelWorkflows({ channelId: input.channel.id, limit: 20 })
-    .filter((workflow) => workflow.createdAt <= sourceCreatedAt);
-  for (const workflow of workflows) {
-    textSources.push(workflow.title, workflow.objective);
-    for (const step of input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 50 })) {
-      textSources.push(step.title, step.prompt);
-      if (step.resultSummary) {
-        textSources.push(step.resultSummary);
-      }
-    }
-  }
-  const proposals = input.store
-    .listChannelExecutionProposals({ channelId: input.channel.id, limit: 20 })
-    .filter((proposal) => proposal.createdAt <= sourceCreatedAt);
-  for (const proposal of proposals) {
-    textSources.push(proposal.title, proposal.prompt);
-    if (proposal.riskSummary) {
-      textSources.push(proposal.riskSummary);
-    }
-    textSources.push(...proposal.acceptanceCriteria);
-    textSources.push(...proposal.collaborationSteps.map((step) => step.summary));
-  }
-  return uniqueStrings(textSources.flatMap(extractFilePathCandidates));
-}
-
-function extractFilePathCandidates(text: string): readonly string[] {
-  const paths: string[] = [];
-  const pattern = /(?:^|[\s"'`([{（，。:：])((?:\/(?!\/)|\.{1,2}\/|Users\/)[^\s"'`，。；;：:!?！？)）\]}]*?[\w.-]+\.(?:md|txt|json|jsonl|yaml|yml|toml|ts|tsx|js|jsx|mjs|cjs|py|go|rs|swift|kt|sql|css|scss|html|xml|csv|env|example))/giu;
-  for (const match of text.matchAll(pattern)) {
-    const candidate = match[1];
-    if (candidate) {
-      paths.push(normalizeExecutablePathCandidate(stripTrailingPunctuation(candidate)));
-    }
-  }
-  return paths;
-}
-
-function isPathLikeFileTarget(value: string): boolean {
-  return value.includes("/") || value.startsWith(".");
-}
-
-function fileBasename(value: string): string {
-  return stripTrailingPunctuation(value).split("/").filter(Boolean).at(-1) ?? "";
-}
-
-function extractAbsoluteOrRelativePath(text: string): string | undefined {
-  const matches = text.match(/(?:^|[\s"'`([{（，。:：])((?:\/(?!\/)|\.{1,2}\/|Users\/)[^\s"'`，。；;：:!?！？)）\]}]+)/u);
-  const candidate = matches?.[1];
-  if (!candidate || candidate.startsWith("//")) {
-    return undefined;
-  }
-  return normalizeExecutablePathCandidate(stripTrailingPunctuation(candidate));
-}
-
-function normalizeExecutablePathCandidate(value: string): string {
-  return value.replace(/^Users\//u, "/Users/");
+function looksLikeFileTarget(text: string): boolean {
+  return Boolean(extractFileTargetCandidate(text));
 }
 
 function uniqueStrings(values: readonly string[]): readonly string[] {
@@ -1054,23 +1051,6 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
     }
   }
   return unique;
-}
-
-function extractFileName(text: string): string | undefined {
-  const match = /\b([\w.-]+\.(?:md|txt|json|jsonl|yaml|yml|toml|ts|tsx|js|jsx|mjs|cjs|py|go|rs|swift|kt|sql|css|scss|html|xml|csv|env|example))\b/iu.exec(text);
-  return match?.[1];
-}
-
-function hasFileExtension(value: string): boolean {
-  return /\.[a-z0-9][a-z0-9_-]*$/iu.test(stripTrailingPunctuation(value));
-}
-
-function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/u, "");
-}
-
-function stripTrailingPunctuation(value: string): string {
-  return value.replace(/[，。；;:：!?！？)）\]}]+$/u, "");
 }
 
 function extractRequestedFileContent(text: string): string | undefined {
@@ -1681,9 +1661,28 @@ function buildClarifyQuestion(reasonCode: ClarifyReasonCode, responseLanguage: R
       ? "我需要先确认目标：要处理的具体对象是什么？完成后用什么结果判断通过？"
       : "I need to clarify the target first: what exactly should be changed, and what result should count as done?";
   }
+  if (reasonCode === "ambiguous_target") {
+    return chinese
+      ? "我看到多个可能目标。请指定要处理哪一个文件。"
+      : "I found multiple possible targets. Please specify which file I should handle.";
+  }
   return chinese
     ? "我需要先确认范围：你希望我处理哪个具体目标？完成后用哪几个检查项验收？"
     : "I need to clarify scope first: what specific target should I handle, and which checks should verify the result?";
+}
+
+function buildAmbiguousFileTargetClarifyBody(candidates: readonly string[], responseLanguage: ResponseLanguage): string {
+  const listedCandidates = candidates.slice(0, 5).map((candidate) => `- ${candidate}`).join("\n");
+  if (responseLanguage === "zh-CN") {
+    return [
+      "我看到多个可能的文件目标。请指定要落到哪一个：",
+      listedCandidates,
+    ].join("\n");
+  }
+  return [
+    "I found multiple possible file targets. Specify which one I should use:",
+    listedCandidates,
+  ].join("\n");
 }
 
 function buildProposalTitle(messageBody: string, reasonCode: IntentReasonCode): string {

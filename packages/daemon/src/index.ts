@@ -36,6 +36,9 @@ import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { routeRequest } from "./server/router.js";
 import { attachRpcWebSocketServer } from "./server/rpc.js";
 import { writeJson } from "./shared/response.js";
+import { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
+import { StartupStateRegistry } from "./startup/state.js";
+import { warmDefaultWorkspaceStartup } from "./startup/warmup.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
@@ -56,6 +59,7 @@ export { ActiveRunRegistry } from "./runtime/active-runs.js";
 export { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 export { RunStoreRegistry } from "./runtime/store-registry.js";
 export { RuntimeSupervisor } from "./runtime/supervisor.js";
+export { StartupStateRegistry } from "./startup/state.js";
 export type { RunStoreFactory } from "./runtime/store-registry.js";
 export type { RunRequest } from "./features/runs/schemas.js";
 
@@ -63,6 +67,7 @@ export interface DaemonServer {
   readonly server: Server;
   readonly config: ResolvedDaemonConfig;
   readonly extensionRegistry: LingExtensionRegistry;
+  readonly startupState: StartupStateRegistry;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -80,12 +85,13 @@ export function createDaemonServer(
   const imageVisionSummarizer = dependencies.imageVisionSummarizer;
   const mcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
   const controlPlaneEvents = new ControlPlaneEventHub();
-  const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents });
+  const startupState = new StartupStateRegistry();
+  const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
   let automationSchedulers: AutomationSchedulerRegistry;
+  let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore, {
     onStoreInitialized: (cwd, store) => {
-      void providerStartupRefresh.start(cwd, store);
-      automationSchedulers?.start(cwd);
+      startupOptionalWarmups?.start(cwd, store);
     },
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
@@ -99,7 +105,13 @@ export function createDaemonServer(
     secretResolver,
     mcpBroker,
     controlPlaneEvents,
+    startupState,
   );
+  startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
+    startupState,
+    providerStartupRefresh,
+    automationSchedulers,
+  });
   const activeDirectReplies = new ActiveDirectReplyRegistry();
   const context: DaemonContext = {
     config: resolvedConfig,
@@ -118,6 +130,8 @@ export function createDaemonServer(
     automationSchedulers,
     controlPlaneEvents,
     providerStartupRefresh,
+    startupState,
+    startupOptionalWarmups,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -139,14 +153,24 @@ export function createDaemonServer(
     server,
     config: resolvedConfig,
     extensionRegistry,
-    start: () =>
-      new Promise<void>((resolve, reject) => {
+    startupState,
+    start: async () => {
+      await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
         server.listen(resolvedConfig.port, resolvedConfig.host, () => {
           server.off("error", reject);
           resolve();
         });
-      }),
+      });
+      await warmDefaultWorkspaceStartup({
+        cwd: resolvedConfig.defaultWorkspaceCwd,
+        startupState,
+        storeRegistry,
+        runnerRegistry,
+        secretResolver,
+      });
+      startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+    },
     stop: () =>
       new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();

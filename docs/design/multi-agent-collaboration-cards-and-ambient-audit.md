@@ -12,6 +12,7 @@ Related docs:
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Message Streaming](channel-message-streaming.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [State Machines and Recovery](state-machine-recovery.md)
 
 ## Purpose
@@ -24,7 +25,7 @@ records, context packets, output packets, approvals, runs, artifacts, and logs.
 
 ```text
 durable orchestration evidence
-  -> smart collaboration cards
+  -> operation cell collaboration projection
   -> active-task progress projection
   -> optional details
   -> advanced audit/debug only when requested
@@ -33,6 +34,13 @@ durable orchestration evidence
 The user should see work being shaped, handed off, and completed. They should not have
 to understand selector ids, context packet ids, route JSON, token budgets, or raw runtime
 logs unless they explicitly open details.
+
+Compatibility note: in the channel feed, collaboration cards should render through the
+unified `OperationCell` contract from
+[Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md). `Requirement Shaping
+Card`, `Execution Task Card`, and `Step Handoff Card` are product read models and
+sections inside that operation surface. They must not become extra first-level rows that
+duplicate the Ling Agent summary, run summary, or evidence drawer.
 
 ## Product Principle
 
@@ -141,7 +149,9 @@ interface CollaborationTaskCard {
 ```
 
 Default UI should show a compact task card in the channel feed and reuse the existing
-right drawer for details.
+operation cell/evidence disclosure in the channel feed. The right drawer is only for
+deeper drilldown or cross-task work-board context, not for duplicating the same expanded
+evidence.
 
 ## Card State Machine Boundary
 
@@ -329,7 +339,9 @@ only if derived views become too expensive or need user edits.
 
 ## UI Rules
 
-- The default feed shows one collaboration card per active shaping/execution thread.
+- The default feed shows one operation cell per active shaping/execution thread.
+- Collaboration-card content lives inside that operation cell as sections, rows, or
+  folded evidence.
 - Running cards are mutable: update status in place rather than appending process spam.
 - Terminal cards fold into a compact final summary.
 - The right floating Progress surface is not a completed-work history list. It is a
@@ -338,6 +350,8 @@ only if derived views become too expensive or need user edits.
   final summaries, evidence, or history/detail surfaces instead of staying expanded in
   the Progress list.
 - Expand actions are explicit: `Details`, `Evidence`, `View steps`, or right drawer.
+  Do not show both an inline evidence expansion and a drawer button for the same evidence
+  bundle in the default card chrome.
 - Permission prompts stay visible because they require user action.
 - Blockers stay visible because they change the next action.
 - Raw audit/debug data is never the first thing shown.
@@ -462,7 +476,8 @@ Do not show these by default:
 
 - A shaping-stage multi-agent discussion appears as one compact requirement shaping card,
   not a flood of teammate messages.
-- A confirmed workflow appears as one execution task card with step progress.
+- A confirmed workflow appears as one operation cell with execution-task sections and
+  step progress.
 - The right-side floating panel shows a compact progress projection, not a full workflow
   inspector.
 - Serial step streams fold into summaries and handoff cards after completion.

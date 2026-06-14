@@ -24,6 +24,8 @@ import type { RunStoreFactory } from "./runtime/store-registry.js";
 import type { RunStoreRegistry } from "./runtime/store-registry.js";
 import type { RunnerRegistry } from "./runtime/runners.js";
 import type { RuntimeSupervisor } from "./runtime/supervisor.js";
+import type { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
+import type { StartupStateRegistry } from "./startup/state.js";
 
 export interface RunnerAdapter {
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
@@ -88,4 +90,6 @@ export interface DaemonContext {
   readonly automationSchedulers: AutomationSchedulerRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly providerStartupRefresh: ProviderStartupRefreshService;
+  readonly startupState: StartupStateRegistry;
+  readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
 }

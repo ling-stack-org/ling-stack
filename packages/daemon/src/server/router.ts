@@ -244,6 +244,7 @@ import {
 } from "./routes.js";
 import { RunControlService } from "../run-control.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
+import { handleStartupStatus } from "../startup/routes.js";
 
 export async function routeRequest(
   request: IncomingMessage,
@@ -267,6 +268,7 @@ export async function routeRequest(
     automationSchedulers,
     controlPlaneEvents,
     providerStartupRefresh,
+    startupState,
   } = context;
   const directReplyControl = new DirectReplyControlService({
     runnerRegistry,
@@ -302,6 +304,7 @@ export async function routeRequest(
       secretResolver,
       mcpBroker,
       controlPlaneEvents,
+      startupState,
     });
   };
 
@@ -310,6 +313,7 @@ export async function routeRequest(
       ok: true,
       service: "ling-stack-daemon",
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
+      readiness: startupState.snapshot(config.defaultWorkspaceCwd)?.state ?? "starting",
       features: {
         channels: {
           autoRoute: config.channels.autoRoute === true,
@@ -325,6 +329,11 @@ export async function routeRequest(
   }
 
   if (await handleControlPlaneRoute(request, response, context)) {
+    return;
+  }
+
+  if (url.pathname === "/startup/status" || url.pathname === "/startup/refresh") {
+    await handleStartupStatus(request, response, context);
     return;
   }
 
@@ -432,6 +441,7 @@ export async function routeRequest(
                 maybeContinueRunInterventions(terminalRun);
               },
               controlPlaneEvents,
+              startupState,
             },
           )),
       automationSchedulers,
@@ -586,6 +596,7 @@ export async function routeRequest(
             ...hooks,
             afterRunTerminal: maybeContinueRunInterventions,
             controlPlaneEvents,
+            startupState,
           },
         );
       },
@@ -734,6 +745,7 @@ export async function routeRequest(
               onRunReady,
               afterRunTerminal: maybeContinueRunInterventions,
               controlPlaneEvents,
+              startupState,
             },
           )),
       startForkRun: async (runRequest) =>
@@ -751,6 +763,7 @@ export async function routeRequest(
               onRunReady,
               afterRunTerminal: maybeContinueRunInterventions,
               controlPlaneEvents,
+              startupState,
             },
           )),
     });
@@ -902,6 +915,7 @@ export async function routeRequest(
         {
           afterRunTerminal: maybeContinueRunInterventions,
           controlPlaneEvents,
+          startupState,
         },
       ));
     return;
@@ -929,6 +943,7 @@ export async function routeRequest(
       secretResolver,
       mcpBroker,
       controlPlaneEvents,
+      startupState,
       runRoute.runId,
     );
     return;
@@ -968,6 +983,7 @@ export async function routeRequest(
         secretResolver,
         mcpBroker,
         controlPlaneEvents,
+        startupState,
         runInterventionRoute.interventionId,
       );
       return;
@@ -1103,6 +1119,7 @@ export async function routeRequest(
               }
             },
             controlPlaneEvents,
+            startupState,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });
@@ -1311,6 +1328,7 @@ export async function routeRequest(
             {
               afterRunTerminal: maybeContinueRunInterventions,
               controlPlaneEvents,
+              startupState,
             },
           ),
       );
@@ -1659,6 +1677,7 @@ export async function routeRequest(
             {
               afterRunTerminal: maybeContinueRunInterventions,
               controlPlaneEvents,
+              startupState,
             },
           );
         },

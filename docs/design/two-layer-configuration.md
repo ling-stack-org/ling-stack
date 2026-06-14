@@ -245,6 +245,33 @@ Detailed field-level runtime inheritance, provider profile import boundaries, an
 secret/keychain split rules are tracked in
 [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md).
 
+### Startup Loading Contract
+
+The daemon should load the two-layer configuration on every process start for the
+default workspace. The startup chain is:
+
+```text
+process config
+-> user config/settings
+-> workspace store/settings
+-> effective config snapshot
+-> runtime policy validation
+-> secret resolver capability status
+-> optional provider/scheduler/plugin warmups
+```
+
+The contract is intentionally not "HTTP listen means all settings are ready." `/health`
+stays process-focused; richer readiness belongs to the startup status surface described
+in [Startup Readiness Chain](startup-readiness-chain.md).
+
+Restart behavior:
+
+- a daemon restart discards in-memory effective config snapshots,
+- the default workspace snapshot is recomputed from current disk state,
+- malformed optional user config creates diagnostics but does not kill the process,
+- invalid workspace runtime policy blocks run creation for that workspace,
+- optional warmups may leave the workspace degraded without blocking the daemon.
+
 ### Provider Profiles and Presets
 
 Use two names deliberately:
@@ -586,5 +613,6 @@ from user defaults, workspace overrides, or built-ins.
 - [Provider Presets Design](provider-presets.md)
 - [Secrets and Keychain](secrets-keychain.md)
 - [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md)
+- [Startup Readiness Chain](startup-readiness-chain.md)
 - [Execution And Orchestration Hardening](execution-orchestration-hardening.md)
 - [CLI v0.1](cli-v0.1.md)

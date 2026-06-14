@@ -86,6 +86,9 @@ importers:
 
   packages/daemon:
     dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../core

@@ -6,13 +6,20 @@ import {
   type ResourceLease,
   type RuntimeInstance,
   type RuntimeSemaphoreSlot,
+  type RunSession,
   type RunStore,
   type WorkUnit,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
-import { isStuckWorkUnit, listActiveWorkUnits, markWorkUnitStale } from "./work-units.js";
+import {
+  isStuckWorkUnit,
+  listActiveWorkUnits,
+  markWorkUnitStale,
+  releaseWorkUnitRuntimeResources,
+  transitionWorkUnitTerminal,
+} from "./work-units.js";
 
 const RUNTIME_SCHEMA_VERSION = 22;
 
@@ -169,12 +176,88 @@ export class RuntimeSupervisor {
     const candidates = [
       ...store.listWorkUnits({ status: "claimed", limit: 500 }),
       ...store.listWorkUnits({ status: "running", limit: 500 }),
+      ...store.listWorkUnits({ status: "waiting_for_approval", limit: 500 }),
       ...store.listWorkUnits({ status: "cancelling", limit: 500 }),
     ];
     for (const workUnit of candidates) {
+      if (reconcileActiveWorkUnitFromLinkedTerminalRun(store, workUnit, now)) {
+        continue;
+      }
       markWorkUnitStale(store, workUnit, now, "runtime-startup-reconcile");
     }
   }
+}
+
+function reconcileActiveWorkUnitFromLinkedTerminalRun(store: RunStore, workUnit: WorkUnit, now: string): boolean {
+  if (!workUnit.linkedRunId) {
+    return false;
+  }
+  const run = store.getRun(workUnit.linkedRunId);
+  const terminal = run ? terminalWorkUnitTransitionForRun(run) : undefined;
+  if (!terminal) {
+    return false;
+  }
+  const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
+  if (!attemptId) {
+    return false;
+  }
+
+  transitionWorkUnitTerminal(store, {
+    workUnitId: workUnit.id,
+    attemptId,
+    event: terminal.event,
+    attemptStatus: terminal.attemptStatus,
+    runtimeEventType: terminal.runtimeEventType,
+    actor: "system",
+    now,
+    errorCode: terminal.errorCode,
+    errorMessage: terminal.errorMessage,
+  });
+  const reconciled = store.getWorkUnit(workUnit.id);
+  if (reconciled?.status !== terminal.workUnitStatus) {
+    return false;
+  }
+  releaseWorkUnitRuntimeResources(store, reconciled, now, "linked-terminal-run-reconcile");
+  return true;
+}
+
+function terminalWorkUnitTransitionForRun(run: RunSession):
+  | {
+    readonly workUnitStatus: "succeeded";
+    readonly event: "runner_succeeded";
+    readonly attemptStatus: "succeeded";
+    readonly runtimeEventType: "work_unit_succeeded";
+    readonly errorCode?: undefined;
+    readonly errorMessage?: undefined;
+  }
+  | {
+    readonly workUnitStatus: "failed";
+    readonly event: "runner_failed";
+    readonly attemptStatus: "failed";
+    readonly runtimeEventType: "work_unit_failed";
+    readonly errorCode: "linked_run_failed";
+    readonly errorMessage: string;
+  }
+  | undefined {
+  if (run.status === "succeeded") {
+    return {
+      workUnitStatus: "succeeded",
+      event: "runner_succeeded",
+      attemptStatus: "succeeded",
+      runtimeEventType: "work_unit_succeeded",
+    };
+  }
+  if (run.status === "failed") {
+    return {
+      workUnitStatus: "failed",
+      event: "runner_failed",
+      attemptStatus: "failed",
+      runtimeEventType: "work_unit_failed",
+      errorCode: "linked_run_failed",
+      errorMessage: run.errorMessage ?? "Linked run failed before runtime startup reconcile.",
+    };
+  }
+  return undefined;
 }
 
 function parseRuntimeLock(value: string): { readonly runtimeInstanceId?: string; readonly pid: number; readonly host: string; readonly port: number } | undefined {

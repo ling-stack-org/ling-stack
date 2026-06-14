@@ -15,6 +15,7 @@ export interface LocalEndpointStatus {
   readonly ok: boolean;
   readonly status?: number;
   readonly service?: string;
+  readonly readiness?: string;
   readonly error?: string;
   readonly elapsedMs: number;
 }
@@ -38,10 +39,36 @@ export interface LocalServiceStatus {
   readonly endpoint: LocalEndpointStatus;
 }
 
+export interface LocalStartupDiagnostic {
+  readonly level: string;
+  readonly code: string;
+  readonly phase: string;
+  readonly message: string;
+  readonly path?: string;
+  readonly nextAction?: string;
+  readonly count?: number;
+}
+
+export interface LocalStartupStatus {
+  readonly url: string;
+  readonly ok: boolean;
+  readonly status?: number;
+  readonly cwd?: string;
+  readonly state?: string;
+  readonly startupAttemptId?: string;
+  readonly phases: Readonly<Record<string, string>>;
+  readonly diagnostics: readonly LocalStartupDiagnostic[];
+  readonly terminal: boolean;
+  readonly failedRequiredPhase?: string;
+  readonly error?: string;
+  readonly elapsedMs: number;
+}
+
 export interface LocalStackStatus {
   readonly ok: boolean;
   readonly daemon: LocalServiceStatus;
   readonly web: LocalServiceStatus;
+  readonly startup?: LocalStartupStatus;
 }
 
 export interface LocalRestartResult {
@@ -94,17 +121,24 @@ export async function restartLocalStack(input: {
     const webReason = webReady.ok ? "ok" : webReady.error ?? `HTTP ${webReady.status ?? "unknown"}`;
     throw new CliError(4, "local_service_not_ready", `Local restart completed, but readiness failed. daemon=${daemonReason}; web=${webReason}`);
   }
+  await waitForStartupStatus({
+    daemonUrl: input.daemonUrl,
+    cwd: input.cwd,
+    timeoutMs: input.timeoutMs,
+  });
 
+  const status = await readLocalStackStatus(input);
   return {
-    ok: true,
+    ok: status.ok,
     build,
     daemonRestarted: true,
     webRestarted: true,
-    status: await readLocalStackStatus(input),
+    status,
   };
 }
 
 export async function readLocalStackStatus(input: {
+  readonly cwd: string;
   readonly daemonUrl: string;
   readonly webUrl: string;
   readonly timeoutMs?: number;
@@ -116,12 +150,95 @@ export async function readLocalStackStatus(input: {
     probeEndpoint(input.daemonUrl, timeoutMs, "ling-stack-daemon"),
     probeEndpoint(input.webUrl, timeoutMs),
   ]);
+  const startup = daemonEndpoint.ok
+    ? await probeStartupStatus({ daemonUrl: input.daemonUrl, cwd: input.cwd, timeoutMs })
+    : undefined;
   const daemon: LocalServiceStatus = { name: "daemon", launchd: daemonLaunchd, endpoint: daemonEndpoint };
   const web: LocalServiceStatus = { name: "web", launchd: webLaunchd, endpoint: webEndpoint };
   return {
-    ok: daemon.endpoint.ok && web.endpoint.ok,
+    ok: daemon.endpoint.ok &&
+      web.endpoint.ok &&
+      startupReadyForLocalStack(startup),
     daemon,
     web,
+    startup,
+  };
+}
+
+export async function probeStartupStatus(input: {
+  readonly daemonUrl: string;
+  readonly cwd: string;
+  readonly timeoutMs?: number;
+}): Promise<LocalStartupStatus> {
+  const timeoutMs = input.timeoutMs ?? 1500;
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const url = new URL("/startup/status", `${input.daemonUrl.replace(/\/$/, "")}/`);
+  if (input.cwd.trim()) {
+    url.searchParams.set("cwd", input.cwd);
+  }
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    const elapsedMs = Date.now() - startedAt;
+    const body = await response.json().catch(() => ({})) as unknown;
+    const phases = readPhaseRecord(readRecordField(body, "phases"));
+    const state = readStringField(body, "state");
+    return {
+      url: url.toString(),
+      ok: response.ok,
+      status: response.status,
+      cwd: readStringField(body, "cwd"),
+      state,
+      startupAttemptId: readStringField(body, "startupAttemptId"),
+      phases,
+      diagnostics: readStartupDiagnostics(readRecordField(body, "diagnostics")),
+      terminal: response.ok && startupRequiredPhasesTerminal(state, phases),
+      failedRequiredPhase: failedRequiredPhase(phases),
+      error: response.ok ? undefined : `${response.status} ${response.statusText}`,
+      elapsedMs,
+    };
+  } catch (error) {
+    return {
+      url: url.toString(),
+      ok: false,
+      phases: {},
+      diagnostics: [],
+      terminal: false,
+      error: errorMessage(error),
+      elapsedMs: Date.now() - startedAt,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function waitForStartupStatus(input: {
+  readonly daemonUrl: string;
+  readonly cwd: string;
+  readonly timeoutMs: number;
+}): Promise<LocalStartupStatus> {
+  const deadline = Date.now() + input.timeoutMs;
+  let last: LocalStartupStatus | undefined;
+  while (Date.now() <= deadline) {
+    last = await probeStartupStatus({
+      daemonUrl: input.daemonUrl,
+      cwd: input.cwd,
+      timeoutMs: Math.min(1000, Math.max(100, deadline - Date.now())),
+    });
+    if (last.ok && last.terminal) {
+      return last;
+    }
+    await delay(100);
+  }
+  return last ?? {
+    url: new URL("/startup/status", `${input.daemonUrl.replace(/\/$/, "")}/`).toString(),
+    ok: false,
+    phases: {},
+    diagnostics: [],
+    terminal: false,
+    error: "startup readiness timeout",
+    elapsedMs: input.timeoutMs,
   };
 }
 
@@ -275,11 +392,13 @@ async function probeEndpoint(url: string, timeoutMs: number, expectedService?: s
     if (expectedService) {
       const body = await response.json().catch(() => ({})) as unknown;
       const service = isRecord(body) && typeof body.service === "string" ? body.service : undefined;
+      const readiness = isRecord(body) && typeof body.readiness === "string" ? body.readiness : undefined;
       return {
         url,
         ok: response.ok && service === expectedService,
         status: response.status,
         service,
+        readiness,
         elapsedMs,
         error: response.ok && service !== expectedService ? `unexpected service: ${service ?? "unknown"}` : undefined,
       };
@@ -340,4 +459,84 @@ function delay(ms: number): Promise<void> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const REQUIRED_STARTUP_PHASES = [
+  "process_config",
+  "user_config",
+  "workspace_store",
+  "effective_config",
+  "runtime_policy",
+  "secret_resolver",
+] as const;
+
+const TERMINAL_STARTUP_PHASE_STATUSES = new Set(["ready", "degraded", "failed"]);
+
+function startupReadyForLocalStack(status: LocalStartupStatus | undefined): boolean {
+  return status !== undefined && status.ok && status.terminal && status.state !== "failed";
+}
+
+function startupRequiredPhasesTerminal(
+  state: string | undefined,
+  phases: Readonly<Record<string, string>>,
+): boolean {
+  if (state && state !== "starting") {
+    return true;
+  }
+  return REQUIRED_STARTUP_PHASES.every((phase) => TERMINAL_STARTUP_PHASE_STATUSES.has(phases[phase] ?? ""));
+}
+
+function failedRequiredPhase(phases: Readonly<Record<string, string>>): string | undefined {
+  return REQUIRED_STARTUP_PHASES.find((phase) => phases[phase] === "failed");
+}
+
+function readStartupDiagnostics(value: unknown): readonly LocalStartupDiagnostic[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry): LocalStartupDiagnostic | undefined => {
+      if (!isRecord(entry)) {
+        return undefined;
+      }
+      const code = readStringField(entry, "code");
+      const phase = readStringField(entry, "phase");
+      const message = readStringField(entry, "message");
+      if (!code || !phase || !message) {
+        return undefined;
+      }
+      return {
+        level: readStringField(entry, "level") ?? "warning",
+        code,
+        phase,
+        message,
+        path: readStringField(entry, "path"),
+        nextAction: readStringField(entry, "nextAction"),
+        count: readNumberField(entry, "count"),
+      };
+    })
+    .filter((entry): entry is LocalStartupDiagnostic => entry !== undefined);
+}
+
+function readPhaseRecord(value: unknown): Readonly<Record<string, string>> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+function readRecordField(value: unknown, key: string): unknown {
+  return isRecord(value) ? value[key] : undefined;
+}
+
+function readStringField(value: unknown, key: string): string | undefined {
+  const field = readRecordField(value, key);
+  return typeof field === "string" ? field : undefined;
+}
+
+function readNumberField(value: unknown, key: string): number | undefined {
+  const field = readRecordField(value, key);
+  return typeof field === "number" && Number.isFinite(field) ? field : undefined;
 }

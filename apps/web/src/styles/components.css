@@ -2624,6 +2624,322 @@ button.message-local-file-link {
   white-space: nowrap;
 }
 
+/* Strict Daylight v3 transcript treatment for work summaries. */
+.conversation-work-cell {
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  width: min(780px, 100%);
+}
+
+.conversation-work-cell-rail {
+  width: 30px;
+  height: 30px;
+  margin-top: 0;
+  border-color: #e5e5e5;
+  border-radius: 6px;
+  background: #111111;
+  color: #ffffff;
+}
+
+.conversation-work-cell.status-succeeded .conversation-work-cell-rail,
+.conversation-work-cell.status-failed .conversation-work-cell-rail,
+.conversation-work-cell.status-cancelled .conversation-work-cell-rail,
+.conversation-work-cell.status-waiting_for_approval .conversation-work-cell-rail,
+.conversation-work-cell.active .conversation-work-cell-rail {
+  color: #ffffff;
+}
+
+.conversation-work-cell-body {
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.conversation-work-cell.presentation-collaboration_task .conversation-work-cell-body,
+.conversation-work-cell.presentation-collaboration_task.status-succeeded .conversation-work-cell-body,
+.conversation-work-cell.presentation-collaboration_task.status-blocked .conversation-work-cell-body,
+.conversation-work-cell.presentation-collaboration_task.status-waiting_for_approval .conversation-work-cell-body,
+.conversation-work-cell.presentation-collaboration_task.status-failed .conversation-work-cell-body,
+.conversation-work-cell.presentation-collaboration_task.status-cancelled .conversation-work-cell-body {
+  border-color: transparent;
+  background: transparent;
+}
+
+.conversation-work-cell-head {
+  gap: 8px;
+}
+
+.conversation-work-cell-kicker {
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+}
+
+.conversation-work-cell-head strong {
+  color: #111111;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.conversation-work-cell-summary {
+  color: #111111;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.conversation-work-cell-evidence-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #6b6b6b;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: left;
+}
+
+.conversation-work-cell-evidence-summary svg {
+  flex: 0 0 auto;
+  transition: transform 140ms ease;
+}
+
+.conversation-work-cell-evidence-summary[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.conversation-work-cell-evidence-summary:hover {
+  color: #111111;
+}
+
+.conversation-work-cell-branches {
+  gap: 6px;
+  padding: 8px 10px;
+  border-color: #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.conversation-work-cell-branches > header strong {
+  color: #111111;
+  font-size: 12px;
+}
+
+.conversation-work-cell-branches > header small,
+.conversation-work-cell-branch-copy small,
+.conversation-work-cell-branch-detail > small {
+  color: #6b6b6b;
+}
+
+.conversation-work-cell-branch {
+  border-color: #e5e5e5;
+}
+
+.conversation-work-cell-branch-copy strong {
+  color: #111111;
+}
+
+.conversation-work-cell-active-stream {
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.conversation-work-cell-active-stream.empty {
+  color: #6b6b6b;
+}
+
+.conversation-work-cell-final-report {
+  gap: 8px;
+  padding: 10px 0 10px 14px;
+  border: 0;
+  border-left: 2px solid #e5e5e5;
+  border-radius: 0;
+  background: transparent;
+}
+
+.conversation-work-cell-final-report header {
+  color: #111111;
+}
+
+.conversation-work-cell-final-report header strong {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.conversation-work-cell-row {
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.conversation-work-cell-row-dot {
+  width: 5px;
+  height: 5px;
+  background: #111111;
+}
+
+.conversation-work-cell-row.running .conversation-work-cell-row-dot,
+.conversation-work-cell-row.waiting .conversation-work-cell-row-dot,
+.conversation-work-cell-row.success .conversation-work-cell-row-dot,
+.conversation-work-cell-row.failed .conversation-work-cell-row-dot {
+  background: #111111;
+}
+
+.conversation-work-cell-row-copy strong {
+  color: #111111;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.conversation-work-cell-row-copy small,
+.conversation-work-cell-group header small,
+.conversation-work-cell-evidence-links small {
+  color: #6b6b6b;
+  font-size: 12px;
+}
+
+.conversation-work-cell-row code {
+  max-width: 180px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f5f5f5;
+  color: #111111;
+  font-size: 11px;
+}
+
+.conversation-work-cell-actions {
+  gap: 6px;
+}
+
+.conversation-work-cell-actions .compact-button {
+  min-height: 26px;
+  border-color: #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+}
+
+.conversation-work-cell-actions .compact-button:hover {
+  background: #f5f5f5;
+}
+
+.conversation-work-cell-details {
+  gap: 8px;
+  padding: 8px 0 0;
+  border-top: 1px solid #e5e5e5;
+}
+
+.conversation-work-cell-details-state,
+.conversation-work-cell-group,
+.conversation-work-cell-evidence-links a,
+.conversation-work-cell-evidence-links > span {
+  border-color: #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.conversation-work-cell-details-state {
+  color: #6b6b6b;
+}
+
+.conversation-work-cell-group {
+  padding: 8px 10px;
+}
+
+.conversation-work-cell-group header strong {
+  color: #111111;
+  font-size: 12px;
+}
+
+.conversation-work-cell-evidence-links a,
+.conversation-work-cell-evidence-links > span {
+  color: #111111;
+}
+
+.conversation-work-cell-evidence-links a:hover {
+  border-color: #111111;
+  color: #111111;
+  background: #f5f5f5;
+}
+
+@media (max-width: 520px) {
+  .conversation-work-cell {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .conversation-work-cell-rail {
+    width: 24px;
+    height: 24px;
+  }
+
+  .conversation-work-cell-row,
+  .conversation-work-cell-row.compact {
+    grid-template-columns: 7px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .conversation-work-cell-row code {
+    grid-column: 2;
+    justify-self: start;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+.channel-composer > .channel-active-status-strip {
+  border-color: #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.channel-composer > .channel-active-status-strip .conversation-status-icon {
+  border-color: #e5e5e5;
+  background: #ffffff;
+  color: #111111;
+}
+
+.channel-composer > .channel-active-status-strip .conversation-status-title strong {
+  color: #111111;
+}
+
+.channel-composer > .channel-active-status-strip .conversation-status-main p,
+.channel-composer > .channel-active-status-strip .conversation-status-meta small {
+  color: #6b6b6b;
+}
+
+.channel-composer > .channel-active-status-strip .conversation-status-meta > span {
+  border-color: #e5e5e5;
+  border-radius: 6px;
+  background: #f5f5f5;
+}
+
+.channel-composer > .channel-active-status-strip .conversation-status-actions .compact-button {
+  border-color: #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+}
+
+.channel-composer > .channel-active-status-strip .conversation-status-actions .compact-button:hover {
+  background: #f5f5f5;
+}
+
 pre,
 code,
 .provider-meta-line.mono,

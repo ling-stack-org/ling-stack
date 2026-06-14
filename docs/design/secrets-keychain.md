@@ -19,6 +19,7 @@ Related docs:
 
 - [Two-Layer Configuration](two-layer-configuration.md)
 - [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md)
+- [Startup Readiness Chain](startup-readiness-chain.md)
 - [Provider Presets Design](provider-presets.md)
 
 ## Implementation Status
@@ -140,6 +141,15 @@ export interface SecretResolver {
 - returns `secret_store_unavailable` when daemon is running without keychain support,
 - returns configured/missing status without value to API clients,
 - returns value only inside trusted daemon execution paths.
+
+Startup behavior:
+
+- daemon startup constructs the composite resolver and reports resolver capability
+  status through startup readiness,
+- startup does not resolve every configured provider, MCP, GitHub, Linear, or
+  automation secret value,
+- `secret_store_unavailable` degrades startup status but does not make `/health` fail,
+- provider/run preflight remains responsible for purpose-specific secret resolution.
 
 ## Daemon Integration
 

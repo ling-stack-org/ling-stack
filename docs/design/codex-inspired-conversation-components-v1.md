@@ -13,6 +13,8 @@ implementable UI detail.
 [Codex-Inspired File And Text Display v1](codex-inspired-file-text-display-v1.md)
 extends this component model for message body rendering, local file links, artifact
 previews, and diff/file-change evidence.
+[Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md) defines the merged
+main-agent and multi-agent projection model used by the channel feed.
 
 The Codex-style pattern to borrow is not the terminal look. It is the information shape:
 
@@ -25,6 +27,11 @@ main conversation
 
 For Ling Stack, this must support multiple AI teammates, channels, private teammate
 threads, skill-aware runs, scoped memory, approvals, and hard delete placeholders.
+
+The multi-agent pattern to borrow from Grok-like agent surfaces is not a separate
+subagent transcript. It is compact branch visibility: several specialist agents can run
+in parallel, but the default feed shows one coordinated work object with branch rows and
+one Ling Agent synthesis.
 
 ## Current Web Anchors
 
@@ -109,6 +116,33 @@ Ling should implement the same shape with Web-native components:
 There should never be two visible assistant rows for one streamed reply. There should
 never be both a raw run timeline and a compact run summary in the default feed for the
 same event.
+
+### Unified Operation Cell
+
+For channel execution, `ConversationSummaryRow` should converge into the operation cell
+contract defined in [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md).
+
+The visible hierarchy is:
+
+```text
+CoordinatorMessageCell
+OperationCell
+  AgentBranchRow[]
+  OperationRow[]
+  EvidenceDisclosure
+EvidenceDetail / RightDrawer, only for raw or cross-task drilldown
+```
+
+Rules:
+
+- Ling Agent is the narrator and final synthesizer.
+- Specialist teammates are branch rows unless the user is directly chatting with them.
+- `Workflow`, `Run`, `WorkUnit`, `Attempt`, `Packet`, and `RouteDecision` are evidence
+  terms, not default feed labels.
+- One terminal task should not produce a coordinator completion message, a collaboration
+  completion card, and a raw run completion row that all say the same thing.
+- If inline evidence is already expandable, the card should not render a separate button
+  that opens the same evidence in a drawer.
 
 ### Active Cell State Machine
 

@@ -201,7 +201,9 @@ feed. The daemon now builds a `LingAgentTurnEnvelope` for channel turns, passes 
 active-session handling, intent selection, ordinary routing, and AI reply context packs,
 allows attachment-only messages through the root turn path, materializes bounded text
 attachment previews, and blocks attachment-dependent executable work when required
-content is unavailable.
+content is unavailable. Next hardening slice: demote `requestAiReply` and explicit
+mentions to coordinator signals, then add TargetResolver so executable follow-ups do not
+fall into ordinary chat.
 
 ### Goal
 
@@ -215,6 +217,8 @@ persist user message
 -> build LingAgentTurnEnvelope from body, mentions, attachments, links, file refs, and guidance
 -> active-session handling
 -> materialize attachment/link/file-ref context needed for the decision
+-> TargetResolver resolves current-turn, recent-message, asset, active proposal/workflow,
+   run, and pending approval targets
 -> executable intent selector
 -> workflow/collaboration selector
 -> ordinary chat auto-route
@@ -241,6 +245,40 @@ async function handleLingAgentChannelMessage(input: LingAgentChannelMessageInput
 ```
 
 This is a shape, not the exact API. The important change is ownership and ordering.
+
+### P2A: Coordinator Signal Demotion And TargetResolver
+
+The P2A implementation should remove the last user-visible dependency on "ordinary chat
+vs executable work" as a first branch.
+
+Required changes:
+
+- Treat `requestAiReply`, `@Ling Agent`, selected teammate chips, and explicit teammate
+  mentions as `TurnSignal`s. They may influence responder, participant, or answer
+  expectation, but they must not skip executable intent handling.
+- Add a TargetResolver helper before ordinary answer routing. It should return a resolved
+  target with source refs or a reason to clarify.
+- Target sources, in priority order:
+  1. current-turn explicit path, file name, command, attachment, link preview, or file ref;
+  2. active approval, active run, active workflow step, queued intervention, or proposal;
+  3. recent same-session Ling/user messages with exactly one file target;
+  4. recent workflow/proposal/run evidence for filename-only edits.
+- If multiple targets are plausible, return `clarify`. If no target exists and the user
+  asks "how/why", return `answer`. If no target exists but the phrasing is execution-shaped,
+  return `clarify`.
+- `answer` is the last ordinary outcome, not the first branch. The coordinator should not
+  create "I cannot directly modify files" replies for turns that can become
+  `direct_workflow`, confirmation, clarification, or blocked work.
+
+Regression tests:
+
+- `@Ling Agent 在工作区创建 login.html` creates `direct_workflow`, not an ordinary reply.
+- After Ling mentions one file target, `可以直接在工作区帮我做好吗？` resolves that file and
+  creates `direct_workflow`.
+- `@Designer 你好` remains an ordinary explicit reply.
+- If the previous context contains two possible file targets, the same follow-up asks one
+  clarifying question.
+- A "how do I create login.html?" question remains `answer`, not `direct_workflow`.
 
 ### Turn Envelope Contract
 

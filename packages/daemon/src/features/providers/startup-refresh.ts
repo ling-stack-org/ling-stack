@@ -5,6 +5,7 @@ import {
   type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
+import type { StartupStateRegistry } from "../../startup/state.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import { checkProviderPreset } from "./preflight.js";
@@ -13,30 +14,39 @@ import { providerSecretStatus } from "./secrets.js";
 const STARTUP_CHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export class ProviderStartupRefreshService {
-  private readonly refreshesByCwd = new Map<string, Promise<void>>();
+  private readonly refreshesByCwd = new Map<string, Promise<readonly ProviderCheckResult[]>>();
 
   constructor(
     private readonly dependencies: {
       readonly secretResolver: SecretResolver;
       readonly controlPlaneEvents: ControlPlaneEventHub;
+      readonly startupState?: StartupStateRegistry;
     },
   ) {}
 
-  start(cwd: string, store: RunStore): Promise<void> {
+  start(cwd: string, store: RunStore, options: { readonly force?: boolean } = {}): Promise<readonly ProviderCheckResult[]> {
     const existing = this.refreshesByCwd.get(cwd);
-    if (existing) {
+    if (existing && !options.force) {
+      this.markWarming(cwd);
+      void existing.then((results) => this.markFinished(cwd, results));
       return existing;
     }
+    this.markWarming(cwd);
     const refresh = refreshProvidersOnStartup({
       cwd,
       store,
       secretResolver: this.dependencies.secretResolver,
       controlPlaneEvents: this.dependencies.controlPlaneEvents,
     })
-      .then(() => undefined)
-      .catch(() => {
+      .then((results) => {
+        this.markFinished(cwd, results);
+        return results;
+      })
+      .catch((error) => {
         // Startup refresh is best-effort. Individual provider failures are recorded as
         // check results; unexpected service errors must not block daemon startup.
+        this.markUnexpectedError(cwd, error);
+        return [];
       });
     this.refreshesByCwd.set(cwd, refresh);
     return refresh;
@@ -54,7 +64,38 @@ export class ProviderStartupRefreshService {
     if (!provider || !shouldRefreshProviderOnStartup(input.store, provider, this.dependencies.secretResolver)) {
       return;
     }
-    await this.start(input.cwd, input.store);
+    await this.start(input.cwd, input.store, { force: true });
+  }
+
+  private markWarming(cwd: string): void {
+    this.dependencies.startupState?.setPhase(cwd, "provider_warmup", "warming");
+  }
+
+  private markFinished(cwd: string, results: readonly ProviderCheckResult[]): void {
+    const failures = results.filter((result) => !result.ok);
+    if (failures.length === 0) {
+      this.dependencies.startupState?.setPhase(cwd, "provider_warmup", "ready");
+      return;
+    }
+    this.dependencies.startupState?.setPhase(cwd, "provider_warmup", "degraded");
+    this.dependencies.startupState?.addDiagnostic(cwd, {
+      level: "warning",
+      code: "provider_startup_check_failed",
+      phase: "provider_warmup",
+      message: `${failures.length} provider startup check(s) failed.`,
+      nextAction: "Open Model Workbench and run Check on failed providers.",
+    });
+  }
+
+  private markUnexpectedError(cwd: string, error: unknown): void {
+    this.dependencies.startupState?.setPhase(cwd, "provider_warmup", "degraded");
+    this.dependencies.startupState?.addDiagnostic(cwd, {
+      level: "warning",
+      code: "provider_startup_refresh_failed",
+      phase: "provider_warmup",
+      message: error instanceof Error ? error.message : String(error),
+      nextAction: "Open Model Workbench and run Check manually.",
+    });
   }
 }
 

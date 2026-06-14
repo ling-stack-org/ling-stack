@@ -1724,10 +1724,11 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Refine channel workspace copy" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Collaboration in progress");
-  await expect(workCell.getByLabel("Work summary")).toContainText("Mode");
-  await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
-  await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toBeVisible();
+  await expect(workCell).toHaveAttribute("data-operation-source", "collaboration_task");
+  await expect(workCell).toContainText("Work in progress");
+  await expect(workCell.locator(".conversation-work-cell-evidence-summary")).toBeVisible();
+  await expect(workCell.getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
+  await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
 
   await openChannelChatTools(page);
   const acceptedProposal = feed.getByLabel("Task confirmation").filter({ hasText: "Refine channel workspace copy" });
@@ -1972,9 +1973,10 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create /Users/tianxiao/ling-stack-test/README.md" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Collaboration complete");
-  await expect(workCell).toContainText("Collaboration complete: Created the requested README file.");
-  await expect(workCell).toContainText("Final Ling report");
+  await expect(workCell).toHaveAttribute("data-operation-source", "collaboration_task");
+  await expect(workCell).toContainText("Work complete");
+  await expect(workCell).toContainText("Completed: Created the requested README file.");
+  await expect(workCell).toContainText("Ling summary");
   await expect(workCell).toContainText("Outcome");
   await expect(workCell).toContainText("Changed");
   await expect(workCell).toContainText("Changed: README.md. Evidence recorded: 1.");
@@ -1984,11 +1986,150 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(workCell).toContainText("No blockers or risks recorded.");
   await expect(workCell).toContainText("Next action");
   await expect(workCell.locator(".conversation-work-cell-active-stream")).toHaveCount(0);
-  await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
+  await expect(workCell.getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
+  await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
 
   await openChannelChatTools(page);
   await expect(feed.getByLabel("Task confirmation")).toContainText("Create /Users/tianxiao/ling-stack-test/README.md");
+});
+
+test("terminal workflow step suppresses stale running run surfaces", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const completedAt = "2026-05-25T00:41:00.000Z";
+  const staleRun = {
+    ...state.runs[0],
+    id: "run_stale_running_workflow",
+    status: "running",
+    threadId: "thread_stale_running_workflow",
+    taskId: "task_stale_running_workflow",
+    workflowStepId: "workflow_step_stale_terminal",
+    taskSnapshot: {
+      id: "task_stale_running_workflow",
+      title: "Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      workflowStepId: "workflow_step_stale_terminal",
+      task: {
+        id: "task_stale_running_workflow",
+        title: "Create README.md",
+        prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+        channelId: "channel_engineering",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_stale_running_workflow.jsonl",
+    errorMessage: undefined,
+    createdAt: "2026-05-25T00:40:00.000Z",
+    startedAt: "2026-05-25T00:40:05.000Z",
+    endedAt: undefined,
+    updatedAt: completedAt,
+  };
+  state.approvals = [];
+  state.channelMessages = [
+    {
+      id: "msg_stale_running_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "/Users/tianxiao/ling-stack-test 下面，帮我创建一个 README.md",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:39:00.000Z",
+      updatedAt: "2026-05-25T00:39:00.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_stale_running_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_stale_running_workflow",
+      proposedByTeammateId: "docs",
+      title: "Create /Users/tianxiao/ling-stack-test/README.md",
+      prompt: "Create the requested README file with the declared file tool scope.",
+      assigneeTeammateId: "docs",
+      acceptanceCriteria: ["Target file is created."],
+      collaborationSteps: [{ teammateId: "docs", action: "coordinated", summary: "Created the requested file." }],
+      requiredTools: ["write"],
+      status: "accepted",
+      linkedWorkflowId: "workflow_stale_terminal",
+      createdAt: "2026-05-25T00:39:01.000Z",
+      updatedAt: "2026-05-25T00:39:05.000Z",
+    },
+  ];
+  state.tasks = [
+    {
+      id: "task_stale_running_workflow",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      status: "done",
+      currentRunId: staleRun.id,
+      createdAt: "2026-05-25T00:40:00.000Z",
+      updatedAt: completedAt,
+    },
+  ];
+  state.runs = [staleRun];
+  state.channelWorkflows = [
+    {
+      id: "workflow_stale_terminal",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Create /Users/tianxiao/ling-stack-test/README.md",
+      objective: "Create the requested README file with the declared file tool scope.",
+      status: "succeeded",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:39:05.000Z",
+      updatedAt: completedAt,
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_stale_terminal",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_stale_terminal",
+      taskId: "task_stale_running_workflow",
+      position: 1,
+      title: "Docs: Create README.md",
+      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      toParticipantId: "docs",
+      toParticipantLabel: "Docs",
+      status: "succeeded",
+      resultSummary: "Created the requested README file.",
+      createdAt: "2026-05-25T00:39:05.000Z",
+      updatedAt: completedAt,
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create /Users/tianxiao/ling-stack-test/README.md" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toHaveAttribute("data-operation-source", "collaboration_task");
+  await expect(workCell).toContainText("Work complete");
+  await expect(workCell).toContainText("Completed: Created the requested README file.");
+  await expect(workCell.locator(".conversation-work-cell-active-stream")).toHaveCount(0);
+  await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
+  await expect(page.getByLabel("Run guidance")).toHaveCount(0);
+  const composer = page.getByLabel("Channel composer");
+  await expect(composer.getByRole("button", { name: "Stop run" })).toHaveCount(0);
+  await expect(composer).not.toContainText("Task in progress");
+  await expect(composer).not.toContainText("Run in progress");
 });
 
 test("workflow context inspect details stay hidden until explicitly expanded", async ({ page }) => {
@@ -2060,9 +2201,9 @@ test("workflow context inspect details stay hidden until explicitly expanded", a
   await expect(workCell).not.toContainText("workflow_runtime_boundary");
   await expect(workCell).not.toContainText("old_verbose_log_tail");
   await expect(workCell).not.toContainText("raw prompt text excluded");
-  await expect(workCell.getByRole("button", { name: "Open diagnostics" })).toHaveCount(0);
+  await expect(workCell.getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
 
-  await workCell.getByRole("button", { name: "Show details" }).click();
+  await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell).toContainText("Kept sections");
   await expect(workCell).toContainText("workflow_runtime_boundary");
   await expect(workCell).toContainText("Dropped sections");
@@ -2158,9 +2299,10 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Create README.md" });
   await expect(workCell).toBeVisible();
-  await expect(workCell).toContainText("Collaboration blocked");
-  await expect(workCell).toContainText("Collaboration blocked: Write permission was not granted.");
-  await expect(workCell).toContainText("Final Ling report");
+  await expect(workCell).toHaveAttribute("data-operation-source", "collaboration_task");
+  await expect(workCell).toContainText("Work blocked");
+  await expect(workCell).toContainText("Blocked: Write permission was not granted.");
+  await expect(workCell).toContainText("Ling summary");
   await expect(workCell).toContainText("Blockers / risks");
   await expect(workCell).toContainText("Blocker: Write permission was not granted.");
   await expect(workCell).toContainText("Next action");
@@ -2279,7 +2421,8 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
 
   const feed = page.getByLabel("Channel message feed");
   const feedWorkCell = feed.locator(".conversation-work-cell").filter({ hasText: "Ship workflow UI" });
-  await expect(feedWorkCell).toContainText("Parallel branches");
+  await expect(feedWorkCell).toHaveAttribute("data-operation-source", "collaboration_task");
+  await expect(feedWorkCell).toContainText("Agent branches");
   await expect(feedWorkCell).toContainText("Engineer branch");
   await expect(feedWorkCell).toContainText("QA branch");
   await expect(feedWorkCell).not.toContainText("branch_engineer");
@@ -2314,7 +2457,7 @@ test("right progress panel renders workflow collaboration task cards", async ({ 
   await expect(panel).toContainText("Workflow evidence");
   const evidenceWorkCell = panel.locator(".conversation-work-cell");
   await expect(evidenceWorkCell).toContainText("Ship workflow UI");
-  await expect(evidenceWorkCell).toContainText("Parallel branches");
+  await expect(evidenceWorkCell).toContainText("Agent branches");
 });
 
 test("progress surfaces fold completed workflow steps behind summaries", async ({ page }) => {
@@ -2441,12 +2584,21 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
 
   await openChannelTasksTab(page);
   const panel = page.locator(".channel-side-panel");
+  await expect(panel).toHaveAttribute("aria-label", "Progress");
+  await expect(panel).toContainText("Current implementation");
+  await expect(panel).toContainText("Completed docs review");
+  await expect(panel).not.toContainText("Older completed review");
+  await expect(panel).not.toContainText("Docs: Draft completed summary");
+  await expect(panel).not.toContainText("QA: Check completed summary");
+  await expect(panel).not.toContainText("Docs: Older completed step");
+  await expect(panel).not.toContainText("Waiting for proposal confirmation");
+
   const completedCard = panel.locator(".collaboration-task-card.completed").filter({ hasText: "Completed docs review" });
   await expect(completedCard).toBeVisible();
   await expect(completedCard).toContainText("Completed: 2 of 2 steps complete");
   await expect(completedCard).not.toContainText("Docs: Draft completed summary");
   await expect(completedCard).not.toContainText("QA: Check completed summary");
-  await expect(completedCard.getByText("Open workflow evidence")).toBeVisible();
+  await expect(completedCard.locator(".collaboration-task-card-footer")).toContainText("Details");
   await expect(panel.locator(".collaboration-task-card.completed").filter({ hasText: "Older completed review" })).toHaveCount(0);
 });
 
@@ -3315,14 +3467,15 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
 
   const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell").filter({ hasText: "Inspect workspace" });
   await expect(workCell).toBeVisible();
+  await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
   await expect(workCell).toContainText("Task completed");
   await expect(workCell).toContainText("Completed 1 attempts with 1 evidence items.");
-  await expect(workCell).toContainText("Attempts");
+  await expect(workCell.locator(".conversation-work-cell-evidence-summary")).toContainText("1 changed items");
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
   await expect(workCell).not.toContainText(".ling-stack/sessions/run_failed.jsonl");
   expect(threadEvidenceRequests).toHaveLength(0);
 
-  await workCell.getByRole("button", { name: "Show details" }).click();
+  await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
   await expect(workCell.getByLabel("Checked work")).toContainText("succeeded");
   await expect(workCell.getByRole("region", { name: "Evidence" })).toContainText("diff");
@@ -3331,12 +3484,12 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
   await expect(workCell.getByRole("link", { name: /WorkspaceClientView\.tsx/ })).toHaveAttribute("href", /\/artifacts\/artifact_thread_diff\/content/);
   expect(threadEvidenceRequests).toHaveLength(1);
 
-  await workCell.getByRole("button", { name: "Hide details" }).click();
-  await workCell.getByRole("button", { name: "Show details" }).click();
+  await workCell.locator(".conversation-work-cell-evidence-summary").click();
+  await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
   expect(threadEvidenceRequests).toHaveLength(1);
 
-  await workCell.getByRole("button", { name: "Open diagnostics" }).click();
+  await workCell.getByRole("button", { name: "Diagnostics" }).click();
   await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Latest run");
 });
@@ -3423,13 +3576,12 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Durable inspect turn" });
   await expect(workCell).toBeVisible();
+  await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
   await expect(workCell).toContainText("Task completed");
   await expect(workCell).toContainText("Completed 2 attempts with 1 evidence items.");
-  await expect(workCell.getByLabel("Work summary")).toContainText("Attempts");
-  await expect(workCell.getByLabel("Work summary")).toContainText("2");
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
 
-  await workCell.getByRole("button", { name: "Show details" }).click();
+  await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Checked work")).toContainText("failed");
   await expect(workCell.getByLabel("Checked work")).toContainText("succeeded");
   await expect(workCell.getByRole("region", { name: "Evidence" })).toContainText("diff");
@@ -3476,10 +3628,12 @@ test("active conversation work cell renders sparse rows while runtime approvals 
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Inspect workspace" });
   await expect(workCell).toBeVisible();
+  await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
   await expect(workCell).toContainText("Task waiting for approval");
   await expect(workCell).toContainText("Waiting for 1 approvals before continuing.");
   await expect(workCell.getByLabel("Active work stream")).toContainText("Waiting for approval");
   await expect(workCell.getByLabel("Active work stream")).toContainText("Approve shell command");
+  await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
   await expect(feed.getByRole("button", { name: "Approve" })).toHaveCount(0);
   await expect(feed.getByRole("button", { name: "Deny" })).toHaveCount(0);
 

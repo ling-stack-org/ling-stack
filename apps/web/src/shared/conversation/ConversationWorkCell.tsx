@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { CheckCircle2, ChevronDown, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
-import type { ConversationWorkCellBranch, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import type { ConversationOperationCellViewModel, ConversationWorkCellBranch, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../lib/conversation-work-cell.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -13,10 +13,9 @@ export interface ConversationWorkCellDetailsState {
 }
 
 export interface ConversationWorkCellProps {
-  readonly model: ConversationWorkCellViewModel;
+  readonly model: ConversationOperationCellViewModel;
   readonly detailsState?: ConversationWorkCellDetailsState;
   readonly onOpenRun?: (runId: string) => void;
-  readonly onOpenDetails?: (threadId: string) => void;
   readonly onLoadDetails?: (threadId: string) => void;
 }
 
@@ -24,12 +23,14 @@ export function ConversationWorkCell({
   model,
   detailsState,
   onOpenRun,
-  onOpenDetails,
   onLoadDetails,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const active = model.mode === "active";
+  const operationRows = model.operationRows;
+  const agentBranches = model.agentBranches;
+  const terminalReportRows = model.terminalReportRows;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
   const rootClassName = [
     "conversation-work-cell",
@@ -52,7 +53,7 @@ export function ConversationWorkCell({
   }
 
   return (
-    <article className={rootClassName} data-thread-id={model.threadId} aria-label={statusLabel}>
+    <article className={rootClassName} data-thread-id={model.threadId} data-operation-source={model.sourceKind} aria-label={statusLabel}>
       <div className="conversation-work-cell-rail" aria-hidden="true">
         <WorkCellStatusIcon status={model.status} active={active} />
       </div>
@@ -62,30 +63,25 @@ export function ConversationWorkCell({
             <span className="conversation-work-cell-kicker">{statusLabel}</span>
             <strong>{model.title}</strong>
           </div>
-          <span className={`status-badge ${model.status}`}>{t(model.status)}</span>
         </header>
 
         <p className="conversation-work-cell-summary">{model.summary}</p>
 
-        <div className="conversation-work-cell-stats" aria-label={t("Work summary")}>
-          {model.stats.map((stat) => (
-            <span key={stat.id}>
-              <small>{stat.label}</small>
-              <strong>{stat.value}</strong>
-            </span>
-          ))}
-        </div>
+        <button className="conversation-work-cell-evidence-summary" type="button" onClick={toggleDetails} aria-expanded={expanded}>
+          <ChevronDown size={14} aria-hidden="true" />
+          <span>{buildEvidenceSummary(model, t)}</span>
+        </button>
 
-        {model.branchRows && model.branchRows.length > 0 ? (
-          <BranchRows branches={model.branchRows} />
+        {agentBranches.length > 0 ? (
+          <BranchRows branches={agentBranches} />
         ) : null}
 
         {active ? (
-          <ActiveTurnItemStream rows={model.activeRows} />
+          <ActiveTurnItemStream rows={operationRows} />
         ) : null}
 
-        {model.finalReportRows && model.finalReportRows.length > 0 ? (
-          <FinalReportRows rows={model.finalReportRows} />
+        {terminalReportRows.length > 0 ? (
+          <FinalReportRows rows={terminalReportRows} />
         ) : null}
 
         <div className="conversation-work-cell-actions">
@@ -96,18 +92,9 @@ export function ConversationWorkCell({
               onClick={() => onOpenRun(model.anchorRunId)}
             >
               <History size={13} />
-              {t("Open diagnostics")}
+              {t("Diagnostics")}
             </button>
           )}
-          {onOpenDetails ? (
-            <button className="secondary-button compact-button" type="button" onClick={() => onOpenDetails(model.threadId)}>
-              <FileText size={13} />
-              {model.detailsLabel ?? t("Details")}
-            </button>
-          ) : null}
-          <button className="secondary-button compact-button" type="button" onClick={toggleDetails} aria-expanded={expanded}>
-            {expanded ? t("Hide details") : t("Show details")}
-          </button>
         </div>
 
         {expanded ? (
@@ -121,13 +108,44 @@ export function ConversationWorkCell({
   );
 }
 
+function buildEvidenceSummary(model: ConversationOperationCellViewModel, t: Translate): string {
+  const changedCount = model.groups.find((group) => group.id === "changed")?.rows.length ?? 0;
+  const checkedCount = model.groups.find((group) => group.id === "checked")?.rows.length ?? 0;
+  const evidenceCount = model.groups.find((group) => group.id === "evidence")?.rows.length ?? 0;
+  const attentionCount = model.groups.find((group) => group.id === "attention")?.rows.length ?? 0;
+  const approvalStat = model.stats.find((stat) => stat.id === "approvals");
+  const approvalCount = approvalStat ? Number.parseInt(approvalStat.value, 10) : 0;
+  const pieces: string[] = [];
+
+  if (attentionCount > 0) {
+    pieces.push(t("{count} attention items", { count: attentionCount }));
+  }
+  if (approvalCount > 0) {
+    pieces.push(t("{count} approvals", { count: approvalCount }));
+  }
+  if (changedCount > 0) {
+    pieces.push(t("{count} changed items", { count: changedCount }));
+  }
+  if (checkedCount > 0) {
+    pieces.push(t("{count} checks", { count: checkedCount }));
+  }
+  if (evidenceCount > 0) {
+    pieces.push(t("{count} evidence items", { count: evidenceCount }));
+  }
+  if (model.evidenceLinks.length > 0) {
+    pieces.push(t("{count} evidence links", { count: model.evidenceLinks.length }));
+  }
+
+  return pieces.length > 0 ? pieces.join(" · ") : t("Evidence folded");
+}
+
 function BranchRows({ branches }: { readonly branches: readonly ConversationWorkCellBranch[] }): JSX.Element {
   const { t } = useI18n();
   const [expandedBranchId, setExpandedBranchId] = useState<string>();
   return (
-    <section className="conversation-work-cell-branches" aria-label={t("Parallel branches")}>
+    <section className="conversation-work-cell-branches" aria-label={t("Agent branches")}>
       <header>
-        <strong>{t("Parallel branches")}</strong>
+        <strong>{t("Agent branches")}</strong>
         <small>{t("{count} branches", { count: branches.length })}</small>
       </header>
       <div className="conversation-work-cell-branch-list">
@@ -169,7 +187,7 @@ function BranchRows({ branches }: { readonly branches: readonly ConversationWork
 }
 
 function workCellStatusLabel(
-  status: ConversationWorkCellViewModel["status"],
+  status: ConversationOperationCellViewModel["status"],
   active: boolean,
   t: Translate,
 ): string {
@@ -196,8 +214,7 @@ function FinalReportRows({ rows }: { readonly rows: readonly ConversationWorkCel
   return (
     <section className="conversation-work-cell-final-report" aria-label={t("Final Ling report")}>
       <header>
-        <ShieldCheck size={13} />
-        <strong>{t("Final Ling report")}</strong>
+        <strong>{t("Ling summary")}</strong>
       </header>
       <div className="conversation-work-cell-row-list">
         {rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
@@ -328,7 +345,7 @@ function WorkCellRow({ row, compact = false }: { readonly row: ConversationWorkC
   );
 }
 
-function WorkCellStatusIcon({ status, active }: { readonly status: ConversationWorkCellViewModel["status"]; readonly active: boolean }): JSX.Element {
+function WorkCellStatusIcon({ status, active }: { readonly status: ConversationOperationCellViewModel["status"]; readonly active: boolean }): JSX.Element {
   if (status === "succeeded") {
     return <CheckCircle2 size={17} />;
   }

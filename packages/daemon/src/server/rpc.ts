@@ -258,6 +258,7 @@ class RpcConnection {
       {
         afterRunTerminal: (terminalRun) => this.maybeContinueRunInterventions(terminalRun),
         controlPlaneEvents: this.context.controlPlaneEvents,
+        startupState: this.context.startupState,
       },
     );
     return { accepted: true };
@@ -315,6 +316,7 @@ class RpcConnection {
       secretResolver: this.context.secretResolver,
       mcpBroker: this.context.mcpBroker,
       controlPlaneEvents: this.context.controlPlaneEvents,
+      startupState: this.context.startupState,
     });
   }
 

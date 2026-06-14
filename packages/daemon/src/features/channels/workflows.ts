@@ -3,6 +3,7 @@ import {
   DEFAULT_WORKSPACE_ID,
   type ChannelWorkflow,
   type ChannelHandoff,
+  type ChannelMessage,
   type ChannelWorkflowStatus,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepStatus,
@@ -54,6 +55,7 @@ import {
   readOptionalChannelWorkflowStepStatusQuery,
 } from "./schemas.js";
 import { assertChannelWorkspaceReady } from "./workspace.js";
+import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -977,6 +979,111 @@ export function completeWorkflowIfStepsFinished(store: RunStore, workflowId: str
     actor: "system",
     now,
   });
+  maybeCreateWorkflowTerminalCoordinatorReply(store, workflowId, { now });
+}
+
+export function maybeCreateWorkflowTerminalCoordinatorReply(
+  store: RunStore,
+  workflowId: string,
+  input: {
+    readonly now?: string;
+    readonly linkedRunId?: string;
+  } = {},
+): ChannelMessage | undefined {
+  const workflow = store.getChannelWorkflow(workflowId);
+  if (!workflow || !workflowCoordinatorReplyStatusIsTerminal(workflow.status)) {
+    return undefined;
+  }
+  const sourceMessageId = workflow.metadata?.sourceMessageId;
+  if (!sourceMessageId) {
+    return undefined;
+  }
+  const sourceMessage = store.getChannelMessage(sourceMessageId);
+  if (!sourceMessage) {
+    return undefined;
+  }
+  const threadId = sourceMessage.threadId ?? sourceMessage.id;
+  const existing = store.listChannelMessages({ channelId: workflow.channelId, threadId, limit: 100 }).find((message) =>
+    message.kind === "ai_reply" &&
+    message.authorId === LING_AGENT_EXECUTOR_ID &&
+    workflowTerminalCoordinatorReplyBodyIsPresent(message.body)
+  );
+  if (existing) {
+    return existing;
+  }
+  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  return store.createChannelMessage(
+    {
+      channelId: workflow.channelId,
+      threadId,
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: LING_AGENT_EXECUTOR_ID,
+      body: workflowTerminalCoordinatorReplyBody(workflow, steps),
+      status: "ready",
+      linkedRunId: input.linkedRunId,
+    },
+    input.now ?? new Date().toISOString(),
+  );
+}
+
+function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus): boolean {
+  return status === "succeeded" || status === "blocked" || status === "failed" || status === "cancelled";
+}
+
+function workflowTerminalCoordinatorReplyBodyIsPresent(body: string): boolean {
+  return (
+    /\b(I finished|I stopped|I could not finish)\b/i.test(body) ||
+    /我已完成|我已停止|我没能完成/u.test(body)
+  ) && (
+    /\bevidence summary\b/i.test(body) ||
+    /打开工作证据|展开下方证据摘要/u.test(body)
+  );
+}
+
+function workflowTerminalCoordinatorReplyBody(
+  workflow: ChannelWorkflow,
+  steps: readonly ChannelWorkflowStep[],
+): string {
+  const language = workflow.metadata?.responseLanguage === "en-US" ? "en-US" : "zh-CN";
+  const title = workflow.title.trim() || (language === "en-US" ? "this task" : "这次任务");
+  const blocker = workflowTerminalBlocker(workflow, steps, language);
+  if (language === "en-US") {
+    if (workflow.status === "succeeded") {
+      return `I finished "${title}". The main result is here; expand the evidence summary below for files, checks, and run details.`;
+    }
+    if (workflow.status === "cancelled") {
+      return `I stopped "${title}". Expand the evidence summary below for files, checks, and run details.`;
+    }
+    return `I could not finish "${title}". Reason: ${blocker}. Expand the evidence summary below for files, checks, and run details.`;
+  }
+  if (workflow.status === "succeeded") {
+    return `我已完成「${title}」。主结果已收束到这里；需要核对具体文件、检查和运行细节时，展开下方证据摘要即可查看。`;
+  }
+  if (workflow.status === "cancelled") {
+    return `我已停止「${title}」。需要核对具体文件、检查和运行细节时，展开下方证据摘要即可查看。`;
+  }
+  return `我没能完成「${title}」。原因：${blocker}。需要核对具体文件、检查和运行细节时，展开下方证据摘要即可查看。`;
+}
+
+function workflowTerminalBlocker(
+  workflow: ChannelWorkflow,
+  steps: readonly ChannelWorkflowStep[],
+  language: "en-US" | "zh-CN",
+): string {
+  const blockedStep = steps.find((step) => step.status === "blocked" || step.status === "failed" || step.status === "cancelled");
+  const blocker = blockedStep?.blocker?.trim();
+  if (blocker) {
+    return blocker;
+  }
+  if (workflow.status === "failed") {
+    return language === "en-US" ? "Workflow failed." : "工作流执行失败。";
+  }
+  if (workflow.status === "blocked") {
+    return language === "en-US" ? "Workflow is blocked." : "工作流已阻塞。";
+  }
+  return language === "en-US" ? "No additional reason was recorded." : "没有记录更多原因。";
 }
 
 export function buildWorkflowEvidence(store: RunStore, workflowId: string): {

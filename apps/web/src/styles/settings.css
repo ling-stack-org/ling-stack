@@ -119,6 +119,121 @@
   max-width: none;
 }
 
+.startup-summary-grid,
+.startup-phase-grid,
+.startup-warmup-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.startup-warmup-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.startup-phase-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-panel-strong);
+}
+
+.startup-phase-row > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.startup-phase-row strong,
+.startup-phase-row small {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.startup-phase-row strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.startup-phase-row small {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.startup-phase-row.ready {
+  border-color: #b7dfcc;
+  background: #f1faf5;
+}
+
+.startup-phase-row.degraded,
+.startup-phase-row.loading {
+  border-color: #e6d39d;
+  background: #fffaf0;
+}
+
+.startup-phase-row.failed {
+  border-color: #f0b9aa;
+  background: #fff4f1;
+}
+
+.startup-diagnostic-list {
+  display: grid;
+  gap: 8px;
+}
+
+.startup-diagnostic {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-panel-strong);
+}
+
+.startup-diagnostic > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.startup-diagnostic strong,
+.startup-diagnostic span,
+.startup-diagnostic small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.startup-diagnostic strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.startup-diagnostic span,
+.startup-diagnostic small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.startup-diagnostic.error {
+  border-color: #f0b9aa;
+  background: #fff4f1;
+}
+
+.startup-diagnostic.warning {
+  border-color: #e6d39d;
+  background: #fffaf0;
+}
+
+.startup-empty {
+  min-height: 96px;
+}
+
 .interface-preference-grid {
   display: grid;
   gap: 10px;
@@ -1030,6 +1145,9 @@
   }
 
   .external-work-status-grid,
+  .startup-summary-grid,
+  .startup-phase-grid,
+  .startup-warmup-list,
   .policy-meta,
   .policy-tool-grid {
     grid-template-columns: 1fr;

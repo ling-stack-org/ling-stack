@@ -1,0 +1,389 @@
+import { readFile } from "node:fs/promises";
+import {
+  resolveConfigPaths,
+  type RunStore,
+  type UpdateWorkspaceSettingsInput,
+  type WorkspaceSettings,
+} from "@ling-stack/core";
+import type {
+  EffectiveConfigDiagnostic,
+  EffectiveConfigResponse,
+  EffectiveConfigSource,
+  EffectiveConfigValue,
+} from "@ling-stack/contracts";
+import type { RunnerRegistry } from "../../runtime/runners.js";
+import {
+  loadWorkspaceRuntimeSettingsWithSources,
+  normalizeUserRuntimeDefaults,
+  type RuntimeSettingsSourceInfo,
+  type UserRuntimeDefaults,
+} from "../../runtime/runner-settings.js";
+
+interface UserSettingsLayer {
+  readonly theme?: "light" | "dark" | "system";
+  readonly locale?: string;
+  readonly responseLanguage?: WorkspaceSettings["responseLanguage"];
+}
+
+interface UserConfigLayer {
+  readonly runtimeDefaults?: UserRuntimeDefaults;
+}
+
+export async function buildEffectiveConfigResponse(input: {
+  readonly cwd: string;
+  readonly store: RunStore;
+  readonly runnerRegistry: RunnerRegistry;
+}): Promise<EffectiveConfigResponse> {
+  const paths = resolveConfigPaths(input.cwd);
+  const diagnostics: EffectiveConfigDiagnostic[] = [];
+  const [userConfig, userSettings] = await Promise.all([
+    readUserConfigLayer(paths.user.configPath, diagnostics, input.runnerRegistry),
+    readUserSettingsLayer(paths.user.settingsPath, diagnostics),
+  ]);
+  const workspaceSettings = input.store.getWorkspaceSettings();
+  const runtimeResolution = loadWorkspaceRuntimeSettingsWithSources(input.store, input.runnerRegistry, {
+    userConfigPath: paths.user.configPath,
+    userRuntimeDefaults: userConfig?.runtimeDefaults,
+    diagnostics,
+  });
+  const runtimeSettings = runtimeResolution.settings;
+
+  return {
+    cwd: paths.cwd,
+    paths: {
+      user: {
+        rootDir: paths.user.rootDir,
+        configPath: paths.user.configPath,
+        settingsPath: paths.user.settingsPath,
+        providerProfilesPath: paths.user.providerProfilesPath,
+        pluginCacheDir: paths.user.pluginCacheDir,
+        logsDir: paths.user.logsDir,
+      },
+      workspace: {
+        rootDir: paths.workspace.rootDir,
+        configPath: paths.workspace.configPath,
+        databasePath: paths.workspace.databasePath,
+        runtimeSettingsPath: paths.workspace.runtimeSettingsPath,
+        sessionsDir: paths.workspace.sessionsDir,
+        artifactsDir: paths.workspace.artifactsDir,
+        attachmentsDir: paths.workspace.attachmentsDir,
+        pluginCacheDir: paths.workspace.pluginCacheDir,
+        logsDir: paths.workspace.logsDir,
+      },
+    },
+    values: {
+      workspaceCwd: effectiveValue(
+        workspaceSettings.workspaceCwd,
+        "workspace",
+        paths.workspace.databasePath,
+        "workspaceCwd",
+        undefined,
+        "user",
+        undefined,
+        paths.cwd,
+      ),
+      theme: effectiveValue(
+        workspaceSettings.theme,
+        "workspace",
+        paths.workspace.databasePath,
+        "theme",
+        userSettings?.theme,
+        "user",
+        paths.user.settingsPath,
+        "system",
+      ),
+      locale: effectiveValue(
+        workspaceSettings.locale,
+        "workspace",
+        paths.workspace.databasePath,
+        "locale",
+        userSettings?.locale,
+        "user",
+        paths.user.settingsPath,
+        "system",
+      ),
+      responseLanguage: effectiveValue(
+        workspaceSettings.responseLanguage,
+        "workspace",
+        paths.workspace.databasePath,
+        "responseLanguage",
+        userSettings?.responseLanguage,
+        "user",
+        paths.user.settingsPath,
+        "follow_user",
+      ),
+      runtime: {
+        defaultRunnerId: runtimeEffectiveValue(runtimeSettings.defaultRunnerId, runtimeResolution.sources.defaultRunnerId, "runtime.defaultRunnerId"),
+        explicitRunnerFallback: runtimeEffectiveValue(runtimeSettings.explicitRunnerFallback, runtimeResolution.sources.explicitRunnerFallback, "runtime.explicitRunnerFallback"),
+        implicitRunnerFallback: runtimeEffectiveValue(runtimeSettings.implicitRunnerFallback, runtimeResolution.sources.implicitRunnerFallback, "runtime.implicitRunnerFallback"),
+      },
+    },
+    layers: {
+      userConfig: toOptionalRecord(userConfig),
+      userSettings: toOptionalRecord(userSettings),
+      workspaceSettings,
+    },
+    diagnostics,
+  };
+}
+
+export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSettingsInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Workspace settings update must be a JSON object");
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    workspaceCwd: readNullableString(record.workspaceCwd, "workspaceCwd"),
+    theme: readNullableTheme(record.theme),
+    locale: readNullableString(record.locale, "locale"),
+    responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
+    channelNotifications: readNullableStringRecord(record.channelNotifications, "channelNotifications"),
+    channelActivityViews: readNullableUnknownRecord(record.channelActivityViews, "channelActivityViews"),
+  };
+}
+
+function effectiveValue<T>(
+  workspaceValue: T | undefined,
+  workspaceSource: EffectiveConfigSource,
+  workspacePath: string | undefined,
+  key: string,
+  userValue: T | undefined,
+  userSource: EffectiveConfigSource,
+  userPath: string | undefined,
+  builtInValue: T,
+): EffectiveConfigValue<T> {
+  if (workspaceValue !== undefined) {
+    return { value: workspaceValue, source: workspaceSource, path: workspacePath, key };
+  }
+  if (userValue !== undefined) {
+    return { value: userValue, source: userSource, path: userPath, key };
+  }
+  return { value: builtInValue, source: "built_in", key };
+}
+
+function runtimeEffectiveValue<T>(
+  value: T,
+  source: RuntimeSettingsSourceInfo,
+  key: string,
+): EffectiveConfigValue<T> {
+  return { value, source: source.source, path: source.path, key };
+}
+
+async function readUserConfigLayer(
+  path: string,
+  diagnostics: EffectiveConfigDiagnostic[],
+  runnerRegistry: RunnerRegistry,
+): Promise<UserConfigLayer | undefined> {
+  const record = await readOptionalJsonObject(path, "user_config", diagnostics);
+  if (!record) {
+    return undefined;
+  }
+  const runtimeDefaults = normalizeUserRuntimeDefaults(runnerRegistry, record.runtimeDefaults, path, diagnostics);
+  return runtimeDefaults ? { runtimeDefaults } : {};
+}
+
+async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigDiagnostic[]): Promise<UserSettingsLayer | undefined> {
+  const record = await readOptionalJsonObject(path, "user_settings", diagnostics);
+  if (!record) {
+    return undefined;
+  }
+  const result: {
+    theme?: "light" | "dark" | "system";
+    locale?: string;
+    responseLanguage?: WorkspaceSettings["responseLanguage"];
+  } = {};
+  const theme = readOptionalTheme(record.theme, path, diagnostics);
+  if (theme) {
+    result.theme = theme;
+  }
+  const locale = readOptionalNonEmptyString(record.locale, "locale", path, diagnostics, "user_settings_invalid_locale");
+  if (locale) {
+    result.locale = locale;
+  }
+  const responseLanguage = readOptionalResponseLanguage(record.responseLanguage, path, diagnostics);
+  if (responseLanguage) {
+    result.responseLanguage = responseLanguage;
+  }
+  return Object.keys(result).length > 0 ? result : {};
+}
+
+async function readOptionalJsonObject(path: string, code: string, diagnostics: EffectiveConfigDiagnostic[]): Promise<Record<string, unknown> | undefined> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return undefined;
+    }
+    diagnostics.push({
+      level: "warning",
+      code: `${code}_unreadable`,
+      message: error instanceof Error ? error.message : String(error),
+      path,
+    });
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!isRecord(parsed)) {
+      diagnostics.push({
+        level: "warning",
+        code: `${code}_invalid`,
+        message: "Config file must contain a JSON object.",
+        path,
+      });
+      return undefined;
+    }
+    return parsed;
+  } catch (error) {
+    diagnostics.push({
+      level: "warning",
+      code: `${code}_invalid_json`,
+      message: error instanceof Error ? error.message : String(error),
+      path,
+    });
+    return undefined;
+  }
+}
+
+function readNullableString(value: unknown, key: string): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string or null`);
+  }
+  return value;
+}
+
+function readNullableTheme(value: unknown): UpdateWorkspaceSettingsInput["theme"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "light" && value !== "dark" && value !== "system") {
+    throw new Error("theme must be light, dark, system, or null");
+  }
+  return value;
+}
+
+function readNullableResponseLanguagePreference(value: unknown): UpdateWorkspaceSettingsInput["responseLanguage"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "follow_user" && value !== "zh-CN" && value !== "en-US") {
+    throw new Error("responseLanguage must be follow_user, zh-CN, en-US, or null");
+  }
+  return value;
+}
+
+function readNullableStringRecord(value: unknown, key: string): Record<string, string> | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${key} must be an object or null`);
+  }
+  const result: Record<string, string> = {};
+  for (const [entryKey, entryValue] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entryValue !== "string") {
+      throw new Error(`${key}.${entryKey} must be a string`);
+    }
+    result[entryKey] = entryValue;
+  }
+  return result;
+}
+
+function readNullableUnknownRecord(value: unknown, key: string): Record<string, unknown> | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${key} must be an object or null`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function readOptionalTheme(value: unknown, path: string, diagnostics: EffectiveConfigDiagnostic[]): "light" | "dark" | "system" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "light" || value === "dark" || value === "system") {
+    return value;
+  }
+  diagnostics.push({
+    level: "warning",
+    code: "user_settings_invalid_theme",
+    message: "theme must be light, dark, or system.",
+    path,
+  });
+  return undefined;
+}
+
+function readOptionalResponseLanguage(value: unknown, path: string, diagnostics: EffectiveConfigDiagnostic[]): WorkspaceSettings["responseLanguage"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "follow_user" || value === "zh-CN" || value === "en-US") {
+    return value;
+  }
+  diagnostics.push({
+    level: "warning",
+    code: "user_settings_invalid_response_language",
+    message: "responseLanguage must be follow_user, zh-CN, or en-US.",
+    path,
+  });
+  return undefined;
+}
+
+function readOptionalNonEmptyString(
+  value: unknown,
+  key: string,
+  path: string,
+  diagnostics: EffectiveConfigDiagnostic[],
+  code = "user_config_invalid_string",
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  diagnostics.push({
+    level: "warning",
+    code,
+    message: `${key} must be a non-empty string.`,
+    path,
+  });
+  return undefined;
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return isNodeError(error) && error.code === "ENOENT";
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function toOptionalRecord(value: object | undefined): Record<string, unknown> | undefined {
+  return value ? { ...value } as Record<string, unknown> : undefined;
+}

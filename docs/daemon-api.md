@@ -40,15 +40,71 @@ Response:
 {
   "ok": true,
   "service": "ling-stack-daemon",
-  "defaultWorkspaceCwd": "/path/to/workspace"
+  "defaultWorkspaceCwd": "/path/to/workspace",
+  "readiness": "ready"
 }
 ```
 
 This endpoint is the live process reachability check. The current implementation does
-not expose lifecycle metadata such as pid, version, started time, host, port, state
-path, or log path. The P0 daemon lifecycle design may extend `/health` with those
-fields after `.ling-stack/daemon/daemon.json` and `.ling-stack/logs/daemon.log` exist.
-Until then, clients must treat those fields as optional and unavailable.
+not expose full startup diagnostics. `readiness` is a lightweight aggregate for the
+default workspace and may be `starting`, `ready`, `degraded`, or `failed`. Clients that
+need phase diagnostics should call `/startup/status`.
+
+The current implementation does not expose lifecycle metadata such as pid, version,
+started time, host, port, state path, or log path. The P0 daemon lifecycle design may
+extend `/health` with those fields after `.ling-stack/daemon/daemon.json` and
+`.ling-stack/logs/daemon.log` exist. Until then, clients must treat those fields as
+optional and unavailable.
+
+## Startup Readiness
+
+```http
+GET /startup/status?cwd=/path/to/project
+```
+
+Returns memory-only startup status for the requested workspace. Missing `cwd` defaults
+to the daemon default workspace. If no status exists yet, the daemon performs a
+best-effort required-phase warmup for that workspace.
+
+```json
+{
+  "startupAttemptId": "startup_20260614_000000_abc123",
+  "cwd": "/path/to/project",
+  "state": "degraded",
+  "startedAt": "2026-06-14T00:00:00.000Z",
+  "updatedAt": "2026-06-14T00:00:01.000Z",
+  "phases": {
+    "process_config": "ready",
+    "user_config": "ready",
+    "workspace_store": "ready",
+    "effective_config": "ready",
+    "runtime_policy": "ready",
+    "secret_resolver": "degraded",
+    "provider_warmup": "ready",
+    "automation_scheduler": "ready",
+    "external_work_scheduler": "ready",
+    "plugin_warmup": "ready"
+  },
+  "diagnostics": [],
+  "effectiveConfigLoadedAt": "2026-06-14T00:00:00.900Z"
+}
+```
+
+```http
+POST /startup/refresh?cwd=/path/to/project
+```
+
+Clears the in-memory workspace startup record, recomputes required phases, and returns
+the same response shape. It does not create, repair, or rewrite user/workspace config
+files and never returns secret values.
+
+Runs started through the daemon check required startup phases before durable work-unit
+claim. Invalid workspace runtime policy rejects with `runtime_policy_invalid`; startup
+that is still loading rejects with `startup_not_ready`.
+
+Optional warmup failures do not make `/health` fail. Failed provider startup checks or
+plugin descriptor checks move the workspace status to `degraded` and add bounded
+diagnostics; action-specific preflight still owns the final run/provider/plugin block.
 
 ## Effective Configuration
 

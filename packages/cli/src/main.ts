@@ -44,6 +44,7 @@ import {
   readLocalServiceLogs,
   readLocalStackStatus,
   restartLocalStack,
+  type LocalStartupStatus,
   type LocalServiceLog,
   type LocalServiceName,
   type LocalServiceStatus,
@@ -324,6 +325,7 @@ async function handleDaemonStatus(options: GlobalOptions): Promise<number> {
     console.log(`Health: ${daemon.error}`);
   } else {
     console.log(`Service: ${daemon.service}`);
+    console.log(`Readiness: ${readString(daemon.health, "readiness") ?? "unknown"}`);
   }
   console.log(`Latency: ${daemon.elapsedMs}ms`);
   return stateStatus === "stale" || stateStatus === "conflict" ? 4 : daemon.ok ? 0 : 3;
@@ -356,6 +358,7 @@ async function handleLocalRestart(args: readonly string[], options: GlobalOption
   console.log("Local stack restarted");
   console.log(`Daemon build: ${result.build.ran ? "ok" : `skipped (${result.build.skippedReason ?? "not requested"})`}`);
   printLocalServiceStatus(result.status.daemon);
+  printStartupStatusSummary(result.status.startup);
   printLocalServiceStatus(result.status.web);
   return result.ok ? 0 : 4;
 }
@@ -367,6 +370,7 @@ async function handleLocalStatus(args: readonly string[], options: GlobalOptions
   assertNoPositionals(parsed.positionals, "status");
   const timeoutMs = readTimeoutMs(parsed, 1500);
   const status = await readLocalStackStatus({
+    cwd: options.cwd,
     daemonUrl: options.daemonUrl,
     webUrl: normalizeDaemonUrl(getFlag(parsed, "web-url") ?? DEFAULT_LOCAL_WEB_URL),
     timeoutMs,
@@ -420,6 +424,7 @@ function readLocalLogService(value: string): LocalServiceName | "all" {
 function printLocalStackStatus(status: LocalStackStatus): void {
   console.log(`Local stack: ${status.ok ? "ready" : "not ready"}`);
   printLocalServiceStatus(status.daemon);
+  printStartupStatusSummary(status.startup);
   printLocalServiceStatus(status.web);
 }
 
@@ -435,12 +440,66 @@ function printLocalServiceStatus(service: LocalServiceStatus): void {
   if (service.endpoint.service) {
     console.log(`  Service: ${service.endpoint.service}`);
   }
+  if (service.endpoint.readiness) {
+    console.log(`  Readiness: ${service.endpoint.readiness}`);
+  }
   if (!service.endpoint.ok && service.endpoint.error) {
     console.log(`  Health: ${service.endpoint.error}`);
   }
   if (service.launchd.stdoutPath) {
     console.log(`  Log: ${service.launchd.stdoutPath}`);
   }
+}
+
+const REQUIRED_STARTUP_PHASES = [
+  "process_config",
+  "user_config",
+  "workspace_store",
+  "effective_config",
+  "runtime_policy",
+  "secret_resolver",
+] as const;
+
+const OPTIONAL_STARTUP_PHASES = [
+  "provider_warmup",
+  "automation_scheduler",
+  "external_work_scheduler",
+  "plugin_warmup",
+] as const;
+
+function printStartupStatusSummary(status: LocalStartupStatus | undefined): void {
+  if (!status) {
+    console.log("Startup: unavailable");
+    return;
+  }
+  const state = status.ok ? status.state ?? "unknown" : "unavailable";
+  const cwd = status.cwd ? ` ${status.cwd}` : "";
+  console.log(`Startup: ${state}${cwd}`);
+  if (!status.ok) {
+    console.log(`  Status: ${status.error ?? "unavailable"}`);
+    return;
+  }
+  console.log(`  Required: ${formatStartupPhaseSummary(status, REQUIRED_STARTUP_PHASES)}`);
+  console.log(`  Warmup: ${formatStartupPhaseSummary(status, OPTIONAL_STARTUP_PHASES)}`);
+  if (status.failedRequiredPhase) {
+    console.log(`  Failed phase: ${status.failedRequiredPhase}`);
+  }
+  for (const diagnostic of status.diagnostics.slice(0, 3)) {
+    const count = diagnostic.count && diagnostic.count > 1 ? ` x${diagnostic.count}` : "";
+    console.log(`  ${diagnostic.level}: ${diagnostic.phase}/${diagnostic.code}${count} - ${diagnostic.message}`);
+    if (diagnostic.nextAction) {
+      console.log(`    Next: ${diagnostic.nextAction}`);
+    }
+  }
+}
+
+function formatStartupPhaseSummary(
+  status: LocalStartupStatus,
+  phases: readonly string[],
+): string {
+  return phases
+    .map((phase) => `${phase}=${status.phases[phase] ?? "not_started"}`)
+    .join(", ");
 }
 
 function printLocalServiceLogs(logs: readonly LocalServiceLog[]): void {
@@ -841,6 +900,10 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
 async function buildDoctorConfigReport(options: GlobalOptions): Promise<DoctorReport> {
   const snapshot = await readDaemonStateSnapshot(options.cwd);
   const paths = resolveConfigPaths(options.cwd);
+  const daemon = await probeDaemonHealth(options);
+  const startupResult = daemon.ok
+    ? await requestDoctorJson(options, "GET", "/startup/status", { cwd: options.cwd })
+    : undefined;
   const checks: DoctorCheck[] = [
     await checkWorkspacePaths(options.cwd),
     await checkUserConfigRoot(paths.user.rootDir),
@@ -857,6 +920,7 @@ async function buildDoctorConfigReport(options: GlobalOptions): Promise<DoctorRe
     await checkPathExists("config.plugins_cache", "config", "plugin cache is under .ling-stack", paths.workspace.pluginCacheDir, "directory", "Run ling-stack init."),
     await checkPathExists("config.logs", "config", "logs directory is under .ling-stack", snapshot.paths.logsDir, "directory", "Run ling-stack daemon start."),
     checkDaemonProcessState(snapshot),
+    ...(startupResult ? buildStartupConfigChecks(startupResult) : []),
     await checkRootLogsLeak(options.cwd),
   ];
   return {
@@ -871,6 +935,66 @@ async function buildDoctorConfigReport(options: GlobalOptions): Promise<DoctorRe
 
 async function checkConfigFile(rootDir: string): Promise<DoctorCheck> {
   return checkPathExists("config.workspace_config", "config", ".ling-stack/config.json exists", join(rootDir, "config.json"), "file", "Run ling-stack init.");
+}
+
+function buildStartupConfigChecks(result: DoctorDependencyResult): readonly DoctorCheck[] {
+  if (!result.ok) {
+    return [
+      warningCheck("startup.status", "startup", "startup status could not be read", {
+        error: result.error,
+      }, result.error?.code === "daemon_unreachable" ? "Run ling-stack daemon start." : "Inspect /startup/status."),
+    ];
+  }
+  const phases = readField(result.body, "phases");
+  const diagnostics = readArray(result.body, "diagnostics");
+  const body = result.body;
+  const checks = [
+    startupPhaseCheck("startup.user_config", "user_config", phases, diagnostics),
+    startupPhaseCheck("startup.workspace_store", "workspace_store", phases, diagnostics),
+    startupPhaseCheck("startup.effective_config", "effective_config", phases, diagnostics),
+    startupPhaseCheck("startup.runtime_policy", "runtime_policy", phases, diagnostics),
+    startupPhaseCheck("startup.secret_resolver", "secret_resolver", phases, diagnostics),
+  ];
+  for (const phase of OPTIONAL_STARTUP_PHASES) {
+    const status = readString(phases, phase) ?? "not_started";
+    if (status !== "ready") {
+      checks.push(startupPhaseCheck(`startup.${phase}`, phase, phases, diagnostics));
+    }
+  }
+  checks.unshift(okCheck("startup.snapshot", "startup", `startup snapshot is ${readString(body, "state") ?? "unknown"}`, {
+    cwd: readString(body, "cwd"),
+    state: readString(body, "state"),
+    startupAttemptId: readString(body, "startupAttemptId"),
+    effectiveConfigLoadedAt: readString(body, "effectiveConfigLoadedAt"),
+  }));
+  return checks;
+}
+
+function startupPhaseCheck(
+  id: string,
+  phase: string,
+  phases: unknown,
+  diagnostics: readonly unknown[],
+): DoctorCheck {
+  const status = readString(phases, phase) ?? "not_started";
+  const phaseDiagnostics = diagnostics
+    .filter((diagnostic) => isRecord(diagnostic) && readString(diagnostic, "phase") === phase)
+    .map((diagnostic) => ({
+      level: readString(diagnostic, "level"),
+      code: readString(diagnostic, "code"),
+      message: readString(diagnostic, "message"),
+      nextAction: readString(diagnostic, "nextAction"),
+    }));
+  const details = { phase, status, diagnostics: phaseDiagnostics };
+  if (status === "ready") {
+    return okCheck(id, "startup", `${phase} is ready`, details);
+  }
+  const remediation = phaseDiagnostics.find((diagnostic) => diagnostic.nextAction)?.nextAction ??
+    (status === "failed" ? "Inspect /startup/status diagnostics." : "Refresh startup status after the daemon settles.");
+  if (status === "failed") {
+    return failCheck(id, "startup", `${phase} failed`, details, remediation);
+  }
+  return warningCheck(id, "startup", `${phase} is ${status}`, details, remediation);
 }
 
 async function checkRuntimeSettingsFile(rootDir: string): Promise<DoctorCheck> {
