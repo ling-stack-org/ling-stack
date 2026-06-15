@@ -13,7 +13,7 @@ import type {
   ProviderPreset,
   RunArtifact,
 } from "../../types.js";
-import { canUseMediaProviderForOperation } from "../../lib/providers.js";
+import { canUseGenerationProviderForOperation } from "../../lib/providers.js";
 
 export const defaultMediaJobForm: MediaJobFormState = {
   providerPresetId: "",
@@ -72,11 +72,11 @@ export function useMediaDomain(input: {
     setMediaJobForm((current) => {
       if (
         current.providerPresetId &&
-        input.providers.some((provider) => provider.id === current.providerPresetId && canUseMediaProviderForOperation(provider, current.operation))
+        input.providers.some((provider) => provider.id === current.providerPresetId && canUseGenerationProviderForOperation(provider, current.operation))
       ) {
         return current;
       }
-      const firstMediaProvider = input.providers.find((provider) => canUseMediaProviderForOperation(provider, current.operation));
+      const firstMediaProvider = input.providers.find((provider) => canUseGenerationProviderForOperation(provider, current.operation));
       return firstMediaProvider ? { ...current, providerPresetId: firstMediaProvider.id } : current;
     });
   }, [input.providers]);
@@ -110,16 +110,16 @@ export function useMediaDomain(input: {
       return;
     }
     if (!mediaJobForm.providerPresetId) {
-      input.setErrorMessage("请选择 media provider preset");
+      input.setErrorMessage("请选择生成模型");
       return;
     }
     if (!mediaJobForm.prompt.trim()) {
-      input.setErrorMessage("请输入 media prompt");
+      input.setErrorMessage("请输入生成提示词");
       return;
     }
     const selectedProvider = input.providers.find((provider) => provider.id === mediaJobForm.providerPresetId);
-    if (!selectedProvider || !canUseMediaProviderForOperation(selectedProvider, mediaJobForm.operation)) {
-      input.setErrorMessage("当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。");
+    if (!selectedProvider || !canUseGenerationProviderForOperation(selectedProvider, mediaJobForm.operation)) {
+      input.setErrorMessage("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。");
       return;
     }
 

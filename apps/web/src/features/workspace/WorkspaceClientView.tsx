@@ -7678,7 +7678,7 @@ function NewTaskPanel({
       {mediaProviders.length > 0 ? (
         <div className="provider-run-notice neutral client-provider-notice">
           <Database size={16} />
-          <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+          <span>{t("Generation-only models cannot run coding tasks.")}</span>
         </div>
       ) : null}
       <div className="composer-footer">

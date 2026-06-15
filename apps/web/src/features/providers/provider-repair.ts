@@ -53,7 +53,7 @@ function buildProviderRepairItem(provider: ProviderPreset, t?: ProviderTranslate
       provider,
       title: translateProviderText(t, "{providerName}: not chat-compatible", { providerName: provider.displayName }),
       detail: provider.api === "media-job"
-        ? translateProviderText(t, "Media providers are not runnable for coding tasks yet.")
+        ? translateProviderText(t, "Generation-only models are not runnable for coding tasks.")
         : translateProviderText(t, "Current blocker: {reason}.", { reason: providerRunBlockerLabel(provider, t) }),
       status: "attention",
       action: "edit",

@@ -7,10 +7,8 @@ import type {
 } from "../types.js";
 import {
   filterChatModelOptions as filterCoreChatModelOptions,
-  filterMediaModelOptions as filterCoreMediaModelOptions,
   isMediaOnlyModelId,
   mediaModelKind,
-  providerMediaKind,
 } from "@ling-stack/core/provider-adapters";
 import {
   resolveProviderModelCapabilitySnapshot,
@@ -29,6 +27,9 @@ type ProviderCapabilityUiInput =
   | ProviderPreset
   | Pick<ProviderFormState, "api" | "kind" | "providerId" | "model" | "contextWindow" | "maxTokens" | "capabilitiesText">;
 type ProviderCapabilityPresetInput = Pick<ProviderPreset, "id" | "api" | "kind" | "providerId" | "model" | "contextWindow" | "maxTokens" | "capabilities">;
+type GenerationOperation = "image_generate" | "image_edit" | "video_generate";
+
+const generationCapabilities = new Set<GenerationOperation>(["image_generate", "image_edit", "video_generate"]);
 
 export const defaultProviderForm: ProviderFormState = {
   kind: "openai-compatible",
@@ -204,7 +205,6 @@ function providerTemplateBaseUrl(
 }
 
 export function providerTemplateToForm(template: ProviderTemplate, t?: ProviderTranslate): ProviderFormState {
-  const isRunnableChatTemplate = template.api !== "media-job" && template.capabilities.includes("chat");
   return {
     kind: template.kind,
     displayName: translateProviderText(t, template.displayName),
@@ -218,7 +218,7 @@ export function providerTemplateToForm(template: ProviderTemplate, t?: ProviderT
     clearApiKey: false,
     capabilitiesText: template.capabilities.join(", "),
     inputText: (template.input ?? ["text"]).join(", "),
-    enabled: isRunnableChatTemplate ? true : template.enabled ?? false,
+    enabled: template.capabilities.includes("chat") && template.api !== "media-job" ? true : template.enabled ?? false,
     authHeader: template.authHeader ?? true,
     reasoning: template.reasoning ?? false,
     contextWindow: "",
@@ -251,13 +251,42 @@ export function providerFormToTemplate(form: ProviderFormState): ProviderTemplat
 
 export function providerFormWithSelectedModel(
   form: ProviderFormState,
-  model: Pick<ProviderModelOption, "id" | "displayName">,
+  model: ProviderModelOption,
   sourceForm?: ProviderFormState,
 ): { readonly form: ProviderFormState; readonly notice?: string } {
+  const baseForm = sourceForm ?? form;
+  const nextForm = {
+    ...baseForm,
+    model: model.id,
+    api: model.api ?? baseForm.api,
+    capabilitiesText: model.capabilities?.length ? model.capabilities.join(", ") : baseForm.capabilitiesText,
+    inputText: model.input?.length ? model.input.join(", ") : baseForm.inputText,
+  };
   if (sourceForm) {
-    return { form: { ...sourceForm, model: model.id } };
+    return { form: nextForm };
   }
-  return { form: { ...form, model: model.id } };
+  return { form: nextForm };
+}
+
+export function normalizeProviderModelForImport(
+  model: ProviderModelOption,
+  form: Pick<ProviderFormState, "api" | "kind" | "providerId" | "capabilitiesText" | "inputText">,
+): ProviderModelOption {
+  if (model.capabilities?.length || model.api || model.input?.length) {
+    return model;
+  }
+  const knownGenerationKind = mediaModelKind(model.id);
+  if (!knownGenerationKind) {
+    return model;
+  }
+  const capabilities: GenerationOperation[] =
+    knownGenerationKind === "seedance" ? ["video_generate"] : ["image_generate", "image_edit"];
+  return {
+    ...model,
+    api: "media-job",
+    input: ["text", "image"],
+    capabilities,
+  };
 }
 
 export function splitProviderCsv(value: string): readonly string[] {
@@ -299,6 +328,17 @@ export function isMediaProvider(provider: ProviderPreset): boolean {
   return provider.api === "media-job";
 }
 
+export function providerHasGenerationCapability(provider: Pick<ProviderPreset, "capabilities">): boolean {
+  return provider.capabilities.some((capability) => generationCapabilities.has(capability as GenerationOperation));
+}
+
+export function providerSupportsGenerationOperation(
+  provider: Pick<ProviderPreset, "capabilities">,
+  operation: GenerationOperation,
+): boolean {
+  return provider.capabilities.includes(operation);
+}
+
 export function isLiveMediaProvider(provider: ProviderPreset): boolean {
   return (
     isMediaProvider(provider) &&
@@ -312,12 +352,53 @@ export function isLiveMediaProvider(provider: ProviderPreset): boolean {
 
 export function canUseMediaProviderForOperation(
   provider: ProviderPreset,
-  operation: "image_generate" | "image_edit" | "video_generate",
+  operation: GenerationOperation,
 ): boolean {
   if (!isLiveMediaProvider(provider) || !provider.capabilities.includes(operation)) {
     return false;
   }
   return provider.kind === "seedream" && operation === "image_generate";
+}
+
+export const canUseGenerationProviderForOperation = canUseMediaProviderForOperation;
+
+export function providerCapabilityChipLabels(
+  provider: Pick<ProviderPreset, "capabilities"> | Pick<ProviderModelOption, "id" | "capabilities">,
+  t?: ProviderTranslate,
+): readonly string[] {
+  const capabilities: readonly string[] = "capabilities" in provider && provider.capabilities?.length
+    ? provider.capabilities
+    : isMediaOnlyModelId("id" in provider ? provider.id : undefined)
+      ? inferredGenerationCapabilities("id" in provider ? provider.id : undefined)
+      : [];
+  const labels: string[] = [];
+  if (capabilities.includes("chat")) {
+    labels.push(translateProviderText(t, "chat capability"));
+  }
+  if (capabilities.includes("tool_call")) {
+    labels.push(translateProviderText(t, "tool capability"));
+  }
+  if (capabilities.includes("reasoning")) {
+    labels.push(translateProviderText(t, "reasoning capability"));
+  }
+  if (capabilities.includes("image_generate") || capabilities.includes("image_edit")) {
+    labels.push(translateProviderText(t, "image capability"));
+  }
+  if (capabilities.includes("video_generate")) {
+    labels.push(translateProviderText(t, "video capability"));
+  }
+  return labels.length > 0 ? labels : [translateProviderText(t, "unknown capability")];
+}
+
+function inferredGenerationCapabilities(modelId: string | undefined): readonly GenerationOperation[] {
+  const kind = mediaModelKind(modelId);
+  if (kind === "seedance") {
+    return ["video_generate"];
+  }
+  if (kind === "seedream" || kind === "jimeng") {
+    return ["image_generate", "image_edit"];
+  }
+  return [];
 }
 
 export function providerCodingTaskLabel(provider: ProviderPreset, t?: ProviderTranslate): string {
@@ -330,7 +411,7 @@ export function providerRunBlockerLabel(provider: ProviderPreset, t?: ProviderTr
     return translateProviderText(t, "disabled");
   }
   if (provider.api === "media-job") {
-    return translateProviderText(t, "media job only");
+    return translateProviderText(t, "not chat-capable");
   }
   if (!provider.capabilities.includes("chat")) {
     return translateProviderText(t, "no chat");
@@ -453,17 +534,17 @@ export function filterChatModelOptions(models: readonly ProviderModelOption[]): 
 
 export function filterMediaModelOptions(
   models: readonly ProviderModelOption[],
-  form: Pick<ProviderFormState, "kind" | "providerId">,
+  _form: Pick<ProviderFormState, "kind" | "providerId">,
 ): readonly ProviderModelOption[] {
-  return filterCoreMediaModelOptions(models, providerMediaKind(form));
+  return models.filter(isMediaModelOption);
 }
 
 export function hiddenNonMatchingMediaModelCount(
   models: readonly ProviderModelOption[],
   form: Pick<ProviderFormState, "kind" | "providerId">,
 ): number {
-  const mediaCount = models.filter(isMediaModelOption).length;
-  return mediaCount - filterMediaModelOptions(models, form).length;
+  void form;
+  return 0;
 }
 
 
@@ -537,7 +618,7 @@ export function providerCheckDisplayGuidance(result: ProviderCheckResult, provid
 export function providerCheckGuidance(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
   if (result.ok) {
     if (provider?.api === "media-job") {
-      return translateProviderText(t, "Media job configuration is ready. Use this provider from Media Jobs.");
+      return translateProviderText(t, "Model is ready for generation tasks.");
     }
     return translateProviderText(t, "Ready for run. You can select this preset from Workspace or a channel.");
   }
@@ -555,7 +636,7 @@ export function providerCheckGuidance(result: ProviderCheckResult, provider: Pic
     return translateProviderText(t, "Check the model name, API protocol, and Base URL path for this provider.");
   }
   if (result.code === "model_api_mismatch") {
-    return translateProviderText(t, "Switch the API protocol to Media job, or choose a chat model for this provider.");
+    return translateProviderText(t, "Choose a protocol that matches this model capability, or select another model.");
   }
   if (result.code === "provider_disabled") {
     return translateProviderText(t, "Enable the preset before using it for runs.");
@@ -564,7 +645,7 @@ export function providerCheckGuidance(result: ProviderCheckResult, provider: Pic
     return translateProviderText(t, "This preset needs chat capability before it can run coding tasks.");
   }
   if (result.code === "unsupported_live_probe") {
-    return translateProviderText(t, "This media provider cannot run a real check yet. Use a supported Seedream or Seedance media template, or configure the model from Media Jobs.");
+    return translateProviderText(t, "This model cannot run a live generation check yet. Use a supported generation-capable supplier model.");
   }
   if (result.code === "rate_limited") {
     return translateProviderText(t, "The endpoint is reachable. Wait or switch credentials, then run Check again.");

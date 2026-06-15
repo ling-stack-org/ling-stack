@@ -30,7 +30,7 @@ export function resolveProviderForRun(
       throw new HttpError(400, "provider_disabled", `Provider preset is disabled: ${preset.id}`);
     }
     if (preset.api === "media-job") {
-      throw new HttpError(400, "unsupported_capability", "Media provider presets cannot run pi coding tasks");
+      throw new HttpError(400, "unsupported_capability", "Generation-only model presets cannot run coding tasks");
     }
     if (!preset.capabilities.includes("chat")) {
       throw new HttpError(400, "unsupported_capability", "Provider preset must include chat capability for coding runs");

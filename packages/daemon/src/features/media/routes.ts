@@ -80,7 +80,7 @@ export async function handleMediaJobRoute(
     return;
   }
   if (action) {
-    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for media job ${action}` });
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for generation task ${action}` });
     return;
   }
   handleMediaJobItem(request, response, config, storeRegistry, mediaJobId);
@@ -101,7 +101,7 @@ function handleMediaJobItem(
   }
 
   if (request.method !== "GET") {
-    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for media jobs` });
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for generation tasks` });
     return;
   }
 
@@ -109,7 +109,7 @@ function handleMediaJobItem(
     const store = storeRegistry.getStore(cwd);
     const job = store.getMediaJob(mediaJobId);
     if (!job) {
-      writeJson(response, 404, { error: "media_job_not_found", message: `Media job not found: ${mediaJobId}` });
+      writeJson(response, 404, { error: "media_job_not_found", message: `Generation task not found: ${mediaJobId}` });
       return;
     }
     writeJson(response, 200, { mediaJob: job });
@@ -137,7 +137,7 @@ function handleListMediaJobArtifacts(
     const store = storeRegistry.getStore(cwd);
     const job = store.getMediaJob(mediaJobId);
     if (!job) {
-      writeJson(response, 404, { error: "media_job_not_found", message: `Media job not found: ${mediaJobId}` });
+      writeJson(response, 404, { error: "media_job_not_found", message: `Generation task not found: ${mediaJobId}` });
       return;
     }
     writeJson(response, 200, {

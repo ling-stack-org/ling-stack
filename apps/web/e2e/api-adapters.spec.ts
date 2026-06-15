@@ -271,5 +271,5 @@ test("media payload adapter requires object JSON input", () => {
   });
 
   expect(parseMediaInput("")).toBeUndefined();
-  expect(() => parseMediaInput("[1,2,3]")).toThrow("Media job input must be a JSON object.");
+  expect(() => parseMediaInput("[1,2,3]")).toThrow("Generation task input must be a JSON object.");
 });

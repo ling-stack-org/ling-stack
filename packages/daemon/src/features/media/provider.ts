@@ -25,7 +25,7 @@ export function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInp
     throw new HttpError(400, "provider_disabled", `Provider preset is disabled: ${preset.id}`);
   }
   if (preset.api !== "media-job") {
-    throw new HttpError(400, "unsupported_capability", "Media jobs require a media-job provider preset");
+    throw new HttpError(400, "unsupported_capability", "Generation tasks require a generation-capable provider preset");
   }
   if (!preset.capabilities.includes(input.operation)) {
     throw new HttpError(400, "unsupported_capability", `${preset.displayName} does not support ${input.operation}`);

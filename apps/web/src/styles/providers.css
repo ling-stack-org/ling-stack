@@ -268,7 +268,11 @@
 }
 
 .provider-identity-row {
-  grid-template-columns: minmax(0, 1.1fr) minmax(160px, 0.8fr) minmax(0, 1.1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.provider-template-select-field {
+  max-width: 420px;
 }
 
 .provider-api-key-field {
@@ -605,6 +609,53 @@
   border-color: #d8c28a;
   background: #fff8e6;
   color: #725018;
+}
+
+.provider-readonly-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.provider-readonly-field > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.provider-readonly-field > strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.provider-readonly-field > small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.provider-capability-chip-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.provider-capability-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
+  border: 1px solid #d6ded9;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #45534e;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 18px;
 }
 
 .provider-advanced-detail {
@@ -1252,46 +1303,6 @@
 
 .provider-table tbody tr:last-child td {
   border-bottom: 0;
-}
-
-.provider-group-row td {
-  padding: 9px 14px;
-  background: #f8faf9;
-  color: #40524c;
-}
-
-.provider-group-summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(160px, 0.45fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.provider-group-summary > span:not(.provider-avatar) {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.provider-group-summary strong,
-.provider-group-summary small,
-.provider-group-summary em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.provider-group-summary strong {
-  color: #1f2f2a;
-  font-size: 13px;
-}
-
-.provider-group-summary small,
-.provider-group-summary em {
-  color: #687872;
-  font-size: 11px;
-  font-style: normal;
 }
 
 .provider-table th:nth-child(1),

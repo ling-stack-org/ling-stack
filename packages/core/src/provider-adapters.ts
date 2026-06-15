@@ -20,13 +20,34 @@ const endpointSuffixes = [
 
 const builtinMediaModelOptions: Record<ProviderAdapterMediaKind, readonly ProviderModelOption[]> = {
   seedream: [
-    { id: "doubao-seedream-5-0-260128", displayName: "Doubao Seedream 5.0", ownedBy: "volcengine" },
+    {
+      id: "doubao-seedream-5-0-260128",
+      displayName: "Doubao Seedream 5.0",
+      ownedBy: "volcengine",
+      api: "media-job",
+      input: ["text", "image"],
+      capabilities: ["image_generate", "image_edit"],
+    },
   ],
   seedance: [
-    { id: "doubao-seedance-1-0-pro-250528", displayName: "Doubao Seedance 1.0 Pro", ownedBy: "volcengine" },
+    {
+      id: "doubao-seedance-1-0-pro-250528",
+      displayName: "Doubao Seedance 1.0 Pro",
+      ownedBy: "volcengine",
+      api: "media-job",
+      input: ["text", "image"],
+      capabilities: ["video_generate"],
+    },
   ],
   jimeng: [
-    { id: "jimeng-image", displayName: "Jimeng Image", ownedBy: "volcengine" },
+    {
+      id: "jimeng-image",
+      displayName: "Jimeng Image",
+      ownedBy: "volcengine",
+      api: "media-job",
+      input: ["text", "image"],
+      capabilities: ["image_generate", "image_edit"],
+    },
   ],
 };
 

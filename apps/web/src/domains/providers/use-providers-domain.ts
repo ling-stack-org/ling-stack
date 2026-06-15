@@ -16,7 +16,6 @@ import {
   canBatchCheckProvider,
   canWorkbenchBatchCheckProvider,
   defaultProviderForm,
-  isMediaProvider,
   providerCheckDisplayMessage,
   providerCheckGuidance,
   providerCheckStatusLabel,
@@ -361,14 +360,7 @@ export function useProvidersDomain(input: {
 
       let readyCount = 0;
       let failedCount = 0;
-      let chatCount = 0;
-      let mediaCount = 0;
       for (const provider of candidates) {
-        if (isMediaProvider(provider)) {
-          mediaCount += 1;
-        } else {
-          chatCount += 1;
-        }
         const result = await checkProvider(input.cwd.trim(), provider.id);
         if (result.ok) {
           readyCount += 1;
@@ -379,12 +371,10 @@ export function useProvidersDomain(input: {
 
       await refreshProviders();
       const nextBatchResult = {
-        message: input.translate("Checked {count} model presets: {readyCount} ready, {failedCount} failed. Chat {chatCount} / media {mediaCount}.", {
+        message: input.translate("Checked {count} model presets: {readyCount} ready, {failedCount} failed.", {
           count: candidates.length,
           readyCount,
           failedCount,
-          chatCount,
-          mediaCount,
         }),
         failedCount,
       };

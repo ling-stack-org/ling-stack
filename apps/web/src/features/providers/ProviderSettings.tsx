@@ -24,17 +24,16 @@ import {
   canWorkbenchBatchCheckProvider,
   canUseProviderForRun,
   customOpenAICompatibleForm,
-  isMediaProvider,
   isWorkbenchNeedsConfigProvider,
   isWorkbenchReadyProvider,
+  normalizeProviderModelForImport,
+  providerCapabilityChipLabels,
   providerCheckDisplayGuidance,
   providerCheckDisplayMessage,
   providerCheckGuidance,
   providerCheckMessage,
   providerCheckStatusLabel,
   providerCodingTaskLabel,
-  providerCapabilityUiStateDescription,
-  providerCapabilityUiStateLabel,
   providerFormToTemplate,
   providerFormWithSelectedModel,
   providerLastCheckClass,
@@ -45,8 +44,6 @@ import {
   providerEffectiveBaseUrl,
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
-  providerTemplateKindLabel,
-  deriveProviderCapabilityUiState,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
 import type {
@@ -199,7 +196,6 @@ export function ProviderSettings({
     matchingFixedTemplate.api === form.api &&
     normalizeProviderEndpoint(matchingFixedTemplate.baseUrl ?? "") === normalizeProviderEndpoint(form.baseUrl);
   const canEditCustomProviderFields = selectedTemplateIsCustom || !fixedTemplateMatchesCurrentShape;
-  const providerCapabilityState = deriveProviderCapabilityUiState(form, templates);
   const repairProviderId = repairRun ? readRunProviderPresetId(repairRun) : "";
   const repairProvider = repairProviderId ? providers.find((provider) => provider.id === repairProviderId) : undefined;
   const filteredProviders = useMemo(
@@ -220,7 +216,7 @@ export function ProviderSettings({
       }),
     [providerSearch, providerStatusFilter, providers],
   );
-  const providerGroups = useMemo(() => groupProvidersBySupplier(filteredProviders, templates), [filteredProviders, templates]);
+  const filteredSupplierCount = useMemo(() => countProviderSuppliers(filteredProviders, templates), [filteredProviders, templates]);
   const visibleModelOptions = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
     if (!query) {
@@ -231,8 +227,10 @@ export function ProviderSettings({
     );
   }, [modelOptions, modelSearch]);
   const selectedImportModels = useMemo(
-    () => modelOptions.filter((model) => selectedModelIds.includes(model.id)),
-    [modelOptions, selectedModelIds],
+    () => modelOptions
+      .filter((model) => selectedModelIds.includes(model.id))
+      .map((model) => normalizeProviderModelForImport(model, modelOptionsContext ?? form)),
+    [form, modelOptions, modelOptionsContext, selectedModelIds],
   );
 
   useEffect(() => {
@@ -335,12 +333,12 @@ export function ProviderSettings({
       setIsFetchingModels(true);
       setModelFetchError("");
       const response = await listProviderModels(cwd.trim(), form);
-      const nextModels = response.models;
+      const nextModels = response.models.map((model) => normalizeProviderModelForImport(model, form));
       setModelOptions(nextModels);
       setModelOptionsContext({ ...form });
-      setModelOptionsSource(response.source);
+      setModelOptionsSource(providerModelSourceLabel(response.source, t));
       setSelectedModelIds([]);
-      setModelSelectionNotice(response.source === "builtin:media-models"
+      setModelSelectionNotice(response.source === "builtin:generation-models" || response.source === "builtin:media-models"
         ? t("Could not read models from the provider. Built-in model candidates are shown.")
         : "");
       if (nextModels.length === 0) {
@@ -464,7 +462,7 @@ export function ProviderSettings({
 
         <div className="provider-capability-summary" aria-label={t("Provider workbench status")}>
           <span>{t("Saved presets")} <strong>{savedProviderCount}</strong></span>
-          <span>{t("Suppliers")} <strong>{providerGroups.length}</strong></span>
+          <span>{t("Suppliers")} <strong>{filteredSupplierCount}</strong></span>
           <span>{t("Coding ready")} <strong>{preflightReadyProviderCount}</strong></span>
           <span>{t("Missing secrets")} <strong>{missingSecretCount}</strong></span>
         </div>
@@ -534,25 +532,11 @@ export function ProviderSettings({
                 </tr>
               </thead>
               <tbody>
-                {providerGroups.map((group) => (
-                  <Fragment key={group.key}>
-                    <tr className="provider-group-row">
-                      <td colSpan={7}>
-                        <div className="provider-group-summary">
-                          <span className="provider-avatar" aria-hidden="true">{providerInitial(group.label)}</span>
-                          <span>
-                            <strong>{group.label}</strong>
-                            <small>{group.providerId} · {group.modelCount} {t("models")} · {group.api}</small>
-                          </span>
-                          <em>{group.endpoint || t("default endpoint")}</em>
-                        </div>
-                      </td>
-                    </tr>
-                    {group.providers.map((provider) => {
+                {filteredProviders.map((provider) => {
                   const providerMissingApiKey = providerNeedsSecret(provider) && !provider.apiKeyConfigured;
                   const providerSelectedForRun = provider.id === selectedProviderId;
-                  const providerIsMedia = provider.api === "media-job";
                   const providerCanBeDefault = providerPreflightReady(provider);
+                  const providerIsChatCapable = provider.capabilities.includes("chat") && provider.api !== "media-job";
                   const providerIsChecking = checkingProviderIds.includes(provider.id);
                   const rowCheckResult = checkScope === "row" && checkedProviderId === provider.id ? checkResult : undefined;
                   const rowCheckMessage = rowCheckResult ? providerCheckDisplayMessage(rowCheckResult, provider, t) : "";
@@ -574,7 +558,7 @@ export function ProviderSettings({
                           <span className="provider-model-name">{provider.model}</span>
                           <div className="provider-meta-line provider-table-compat-line">
                             <span>{t("Model")}: {provider.model}</span>
-                            <span>{t("API protocol")}: {provider.api}</span>
+                            <span>{t("Capabilities")}: {providerCapabilityChipLabels(provider, t).join(" / ")}</span>
                             <span>{provider.lastCheck ? t("last check {time}", { time: formatDateTime(provider.lastCheck.checkedAt) }) : t("not checked")}</span>
                           </div>
                         </td>
@@ -607,14 +591,9 @@ export function ProviderSettings({
                                 {provider.enabled ? t("enabled") : t("disabled")}
                               </span>
                             ) : null}
-                            {providerSelectedForRun && !providerIsMedia ? (
+                            {providerSelectedForRun ? (
                               <span className="provider-state default">
                                 {t("Current default")}
-                              </span>
-                            ) : null}
-                            {providerIsMedia ? (
-                              <span className="provider-state media-only">
-                                {t("Media task")}
                               </span>
                             ) : null}
                             {!providerMissingApiKey ? (
@@ -624,9 +603,14 @@ export function ProviderSettings({
                             ) : null}
                             {!providerMissingApiKey ? (
                               <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
-                                {t("Coding task")}: {providerCodingTaskLabel(provider, t)}
+                                {t("Run readiness")}: {providerCodingTaskLabel(provider, t)}
                               </span>
                             ) : null}
+                            <span className="provider-capability-chip-row" aria-label={t("Capability chips")}>
+                              {providerCapabilityChipLabels(provider, t).map((label) => (
+                                <span className="provider-capability-chip" key={label}>{label}</span>
+                              ))}
+                            </span>
                           </span>
                         </td>
                         <td>
@@ -634,7 +618,7 @@ export function ProviderSettings({
                             <button
                               className="secondary-button compact-button"
                               type="button"
-                              disabled={providerIsMedia || (!providerSelectedForRun && !providerCanBeDefault)}
+                              disabled={!providerSelectedForRun && !providerCanBeDefault}
                               onClick={() => {
                                 if (providerSelectedForRun) {
                                   onStopUse(provider);
@@ -644,7 +628,7 @@ export function ProviderSettings({
                               }}
                             >
                               {providerSelectedForRun ? <X size={14} /> : <Play size={14} />}
-                              {providerIsMedia ? t("Media task") : providerSelectedForRun ? t("Clear default") : t("Set default")}
+                              {providerSelectedForRun ? t("Clear default") : providerIsChatCapable ? t("Set default") : t("Not a chat model")}
                             </button>
                             <button
                               className="secondary-button compact-button icon-button"
@@ -707,8 +691,6 @@ export function ProviderSettings({
                     </Fragment>
                   );
                 })}
-                  </Fragment>
-                ))}
               </tbody>
             </table>
           )}
@@ -737,57 +719,39 @@ export function ProviderSettings({
         </div>
 
         <div className="provider-sheet-body">
-        <div className="provider-template-board" aria-label={t("Choose model supplier")}>
-          <div className="provider-template-board-header">
-            <span>
-              <strong>{t("Choose model supplier")}</strong>
-              <small>{t("Configure a supplier first, then fetch the models exposed by its endpoint.")}</small>
-            </span>
-          </div>
+        <div className="provider-template-board">
           {supplierTemplates.length === 0 ? (
             <div className="empty-state compact-empty">
               <PlugZap />
               <span>{t("No templates available.")}</span>
             </div>
           ) : (
-            <div className="provider-template-panel">
-              <div className="provider-template-grid">
+            <label className="field wide provider-template-select-field">
+              <span>{t("Model supplier")}</span>
+              <select
+                value={selectedTemplateId}
+                onChange={(event) => {
+                  const template = supplierTemplates.find((item) => item.templateId === event.target.value);
+                  if (!template) {
+                    return;
+                  }
+                  resetModelDiscovery();
+                  onTemplateSelect(template);
+                }}
+              >
                 {supplierTemplates.map((template) => (
-                  <button
-                    key={template.templateId}
-                    className={[
-                      "provider-template-card",
-                      template.templateId === customOpenAICompatibleTemplateId ? "custom-provider-card" : "",
-                      selectedTemplateId === template.templateId ? "selected" : "",
-                    ].filter(Boolean).join(" ")}
-                    type="button"
-                    onClick={() => {
-                      resetModelDiscovery();
-                      onTemplateSelect(template);
-                    }}
-                  >
-                    <span className="provider-template-kind">{t(providerTemplateKindLabel(template))}</span>
-                    <strong>{t(template.displayName)}</strong>
-                    <span className="provider-template-model">{template.templateId === customOpenAICompatibleTemplateId ? t("Base URL + model + API Key") : template.model}</span>
-                    <small>{t(template.description)}</small>
-                  </button>
+                  <option key={template.templateId} value={template.templateId}>
+                    {t(template.displayName)}
+                  </option>
                 ))}
-              </div>
-            </div>
+              </select>
+            </label>
           )}
         </div>
         <div className="field-row provider-identity-row">
           <label className="field">
             <span>{t("Provider name")}</span>
             <input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
-          </label>
-          <label className="field">
-            <span>{t("Provider ID")}</span>
-            <input
-              value={form.providerId}
-              disabled={!canEditCustomProviderFields}
-              onChange={(event) => onFormChange({ ...form, providerId: event.target.value })}
-            />
           </label>
           <label className="field">
             <span>{t("Model")}</span>
@@ -836,25 +800,32 @@ export function ProviderSettings({
         </div>
 
         <div className="field-row provider-number-row">
-          <label className="field">
-            <span>{t("API protocol")}</span>
-            <select
-              value={form.api}
-              disabled={!canEditCustomProviderFields}
-              onChange={(event) => {
-                const api = event.target.value as ProviderFormState["api"];
-                onFormChange({ ...form, api, providerTransport: api === "openai-codex-responses" ? form.providerTransport || "auto" : "" });
-              }}
-            >
-              <option value="openai-completions">{t("OpenAI completions")}</option>
-              <option value="openai-responses">{t("OpenAI responses")}</option>
-              <option value="openai-codex-responses">{t("OpenAI Codex Responses")}</option>
-              <option value="anthropic-messages">{t("Anthropic messages")}</option>
-              <option value="google-generative-ai">{t("Google generative AI")}</option>
-              <option value="mistral-conversations">{t("Mistral conversations")}</option>
-              <option value="media-job">{t("Media job")}</option>
-            </select>
-          </label>
+          {form.api === "media-job" ? (
+            <div className="field provider-readonly-field">
+              <span>{t("Runtime adapter")}</span>
+              <strong>{t("Generation adapter")}</strong>
+              <small>{t("Selected automatically from this model capability.")}</small>
+            </div>
+          ) : (
+            <label className="field">
+              <span>{t("API protocol")}</span>
+              <select
+                value={form.api}
+                disabled={!canEditCustomProviderFields}
+                onChange={(event) => {
+                  const api = event.target.value as ProviderFormState["api"];
+                  onFormChange({ ...form, api, providerTransport: api === "openai-codex-responses" ? form.providerTransport || "auto" : "" });
+                }}
+              >
+                <option value="openai-completions">{t("OpenAI completions")}</option>
+                <option value="openai-responses">{t("OpenAI responses")}</option>
+                <option value="openai-codex-responses">{t("OpenAI Codex Responses")}</option>
+                <option value="anthropic-messages">{t("Anthropic messages")}</option>
+                <option value="google-generative-ai">{t("Google generative AI")}</option>
+                <option value="mistral-conversations">{t("Mistral conversations")}</option>
+              </select>
+            </label>
+          )}
           {form.api === "openai-codex-responses" ? (
             <label className="field">
               <span>{t("Transport")}</span>
@@ -870,14 +841,6 @@ export function ProviderSettings({
               </select>
             </label>
           ) : null}
-        </div>
-
-        <div className={`provider-capability-state ${providerCapabilityState}`}>
-          <span>
-            <strong>{t("Model capability")}</strong>
-            <small>{t(providerCapabilityUiStateDescription(providerCapabilityState))}</small>
-          </span>
-          <em>{t(providerCapabilityUiStateLabel(providerCapabilityState))}</em>
         </div>
 
         <details className="provider-advanced-detail">
@@ -961,7 +924,7 @@ export function ProviderSettings({
                 >
                   <strong>{model.displayName ?? model.id}</strong>
                   <small>{model.ownedBy ?? model.id}</small>
-                  {model.capabilities?.length ? <em>{model.capabilities.join(", ")}</em> : null}
+                  <em>{providerCapabilityChipLabels(model, t).join(" / ")}</em>
                 </button>
                 );
               })}
@@ -1051,16 +1014,6 @@ export function ProviderSettings({
   );
 }
 
-interface ProviderWorkbenchGroup {
-  readonly key: string;
-  readonly label: string;
-  readonly providerId: string;
-  readonly api: string;
-  readonly endpoint: string;
-  readonly modelCount: number;
-  readonly providers: readonly ProviderPreset[];
-}
-
 function dedupeProviderTemplates(templates: readonly ProviderTemplate[]): readonly ProviderTemplate[] {
   const seen = new Set<string>();
   const result: ProviderTemplate[] = [];
@@ -1074,40 +1027,20 @@ function dedupeProviderTemplates(templates: readonly ProviderTemplate[]): readon
   return result;
 }
 
-function groupProvidersBySupplier(
+function countProviderSuppliers(
   providers: readonly ProviderPreset[],
   templates: readonly ProviderTemplate[],
-): readonly ProviderWorkbenchGroup[] {
-  const groups = new Map<string, ProviderPreset[]>();
+): number {
+  const keys = new Set<string>();
   for (const provider of providers) {
-    const key = [
+    keys.add([
       provider.providerId,
       provider.api,
       normalizeProviderEndpoint(providerEffectiveBaseUrl(provider, templates)),
       provider.apiKeyRef ?? "",
-    ].join("\u0000");
-    const entries = groups.get(key) ?? [];
-    entries.push(provider);
-    groups.set(key, entries);
+    ].join("\u0000"));
   }
-  return [...groups.entries()].map(([key, entries]) => {
-    const first = entries[0];
-    return {
-      key,
-      label: providerSupplierLabel(first),
-      providerId: first.providerId,
-      api: first.api,
-      endpoint: providerEffectiveBaseUrl(first, templates),
-      modelCount: entries.length,
-      providers: entries,
-    };
-  });
-}
-
-function providerSupplierLabel(provider: ProviderPreset): string {
-  const displayName = provider.displayName.trim();
-  const separator = displayName.indexOf(" · ");
-  return separator > 0 ? displayName.slice(0, separator) : displayName || provider.providerId;
+  return keys.size;
 }
 
 function ProviderNextAction({
@@ -1184,6 +1117,13 @@ function ProviderNextAction({
 
 function normalizeProviderEndpoint(value: string): string {
   return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function providerModelSourceLabel(source: string, t: (key: string) => string): string {
+  if (source === "builtin:generation-models" || source === "builtin:media-models") {
+    return t("Built-in generation model candidates");
+  }
+  return source;
 }
 
 function providerInitial(displayName: string): string {

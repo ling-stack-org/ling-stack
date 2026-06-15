@@ -69,10 +69,10 @@ export async function checkProviderPreset(
     }
     if (gate.config?.mode === "live") {
       if (!preset.baseUrl) {
-        return { ok: false, code: "bad_request", message: "baseUrl is required for live media vendor transport.", checkedAt };
+        return { ok: false, code: "bad_request", message: "baseUrl is required for live generation transport.", checkedAt };
       }
       if (!preset.apiKeyRef) {
-        return { ok: false, code: "secret_missing", message: "API key missing. Add an API key before enabling live media vendor transport.", checkedAt };
+        return { ok: false, code: "secret_missing", message: "API key missing. Add an API key before enabling live generation transport.", checkedAt };
       }
       const secretStatus = providerSecretStatus(store, preset, secretResolver);
       if (!secretStatus.configured) {
@@ -88,7 +88,7 @@ export async function checkProviderPreset(
     return {
       ok: true,
       code: "static_check",
-      message: "Media provider configuration is valid. Media vendor transport is disabled by default and no live vendor HTTP request will be made.",
+      message: "Generation model configuration is valid. Live generation transport is disabled by default and no generation request will be made.",
       checkedAt,
     };
   }

@@ -122,7 +122,7 @@ export function SidebarNavigation({
         <NavItem icon={<Kanban />} label={t("Work Board")} active={activeSidebarTarget === "work_board"} onClick={() => onOpenView("work_board")} />
         <NavItem icon={<Timer />} label={t("Automations")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} />
         <NavItem icon={<Inbox />} label={t("Review Queue")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
-        <NavItem icon={<Database />} label={t("Media Jobs")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
+        <NavItem icon={<Database />} label={t("Generation")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
         <NavItem icon={<Users />} label={t("AI Teammates")} active={activeSidebarTarget === "teammates"} onClick={() => onOpenView("teammates")} />
       </nav>
 

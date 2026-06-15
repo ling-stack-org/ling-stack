@@ -235,7 +235,7 @@ export function ChannelTaskWorkspace({
               {mediaProviders.length > 0 ? (
                 <div className="provider-run-notice neutral">
                   <Database size={16} />
-                  <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+                  <span>{t("Generation-only models cannot run coding tasks.")}</span>
                 </div>
               ) : null}
               <div className="tool-grid compact-tools" aria-label="Channel detail allowed tools">
@@ -320,7 +320,7 @@ export function ChannelTaskWorkspace({
         {mediaProviders.length > 0 ? (
           <div className="provider-run-notice neutral">
             <Database size={16} />
-            <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+            <span>{t("Generation-only models cannot run coding tasks.")}</span>
           </div>
         ) : null}
 

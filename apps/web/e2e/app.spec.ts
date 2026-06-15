@@ -47,7 +47,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   const navigation = page.getByLabel("Ling Stack navigation");
   await expect(navigation.locator(".primary-nav .nav-item").filter({ hasText: "Model Workbench" })).toHaveCount(1);
   await expect(navigation.locator(".config-grid").getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Media Jobs" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Generation" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
 
   await navigation.locator(".primary-nav .nav-item").filter({ hasText: "Model Workbench" }).click();
@@ -61,8 +61,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.getByRole("heading", { name: "External work" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "Media Jobs" }).click();
-  await expect(page.getByRole("heading", { name: "Media jobs", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Media job status")).toBeVisible();
+  await navigation.getByRole("button", { name: "Generation" }).click();
+  await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Generation task status")).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 });

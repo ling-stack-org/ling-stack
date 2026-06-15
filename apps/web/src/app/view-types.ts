@@ -57,7 +57,7 @@ export function viewTitle(view: ViewId): string {
     return "Work Board";
   }
   if (view === "media") {
-    return "Media jobs";
+    return "Generation tasks";
   }
   if (view === "settings") {
     return "Settings";

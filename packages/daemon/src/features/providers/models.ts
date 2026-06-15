@@ -1,5 +1,6 @@
 import {
   builtinMediaModelCandidates,
+  mediaModelKind,
   normalizeProviderBaseUrlForAdapter,
   providerMediaKind,
   providerApis,
@@ -20,6 +21,7 @@ import { isRecord, removeUndefined, validateUrl } from "../../shared/validation.
 import { resolveProviderSecret } from "./secrets.js";
 
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
+const providerModelInputTypes = ["text", "image"] as const;
 
 export async function listProviderModels(
   store: RunStore,
@@ -82,7 +84,7 @@ async function listMediaProviderModels(
   const builtin = builtinMediaModelCandidates(mediaKind);
   const secret = resolveProviderModelListSecret(store, preset, input, secretResolver);
   if (preset.authHeader === false && !secret.configured) {
-    return { source: "builtin:media-models", models: builtin };
+    return { source: "builtin:generation-models", models: builtin };
   }
   if ((preset.authHeader !== false || preset.apiKeyRef) && !secret.configured) {
     throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
@@ -97,7 +99,7 @@ async function listMediaProviderModels(
     });
     if (!response.ok) {
       if (builtin.length > 0) {
-        return { source: "builtin:media-models", models: builtin };
+        return { source: "builtin:generation-models", models: builtin };
       }
       throw new HttpError(
         response.status === 401 || response.status === 403 ? 401 : 400,
@@ -116,7 +118,7 @@ async function listMediaProviderModels(
       throw error;
     }
     if (builtin.length > 0) {
-      return { source: "builtin:media-models", models: builtin };
+      return { source: "builtin:generation-models", models: builtin };
     }
     throw new HttpError(
       400,
@@ -232,14 +234,24 @@ function parseProviderModelOption(value: unknown): ProviderModelOption | undefin
   if (!id) {
     return undefined;
   }
+  const inferredMediaKind = mediaModelKind(id);
+  const inferredCapabilities = inferredMediaKind === "seedance"
+    ? ["video_generate"] as const
+    : inferredMediaKind
+      ? ["image_generate", "image_edit"] as const
+      : undefined;
   return removeUndefined({
     id,
     displayName: typeof value.display_name === "string" ? value.display_name : typeof value.displayName === "string" ? value.displayName : undefined,
     ownedBy: typeof value.owned_by === "string" ? value.owned_by : typeof value.ownedBy === "string" ? value.ownedBy : undefined,
     createdAt: typeof value.created_at === "string" ? value.created_at : undefined,
-    api: typeof value.api === "string" && providerApis.includes(value.api as ProviderApi) ? value.api as ProviderApi : undefined,
-    input: parseProviderModelStringArray(value.input, ["text", "image"]),
-    capabilities: parseProviderModelStringArray(value.capabilities, providerCapabilities),
+    api: typeof value.api === "string" && providerApis.includes(value.api as ProviderApi)
+      ? value.api as ProviderApi
+      : inferredCapabilities
+        ? "media-job"
+        : undefined,
+    input: parseProviderModelStringArray(value.input, providerModelInputTypes) ?? (inferredCapabilities ? providerModelInputTypes : undefined),
+    capabilities: parseProviderModelStringArray(value.capabilities, providerCapabilities) ?? inferredCapabilities,
   });
 }
 

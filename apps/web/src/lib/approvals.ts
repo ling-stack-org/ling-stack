@@ -107,7 +107,7 @@ export function mergeApprovalsForRun(
 
 export function approvalOwnerLabels(approval: ApprovalRequest): readonly string[] {
   if (approval.mediaJobId) {
-    return ["media job"];
+    return ["generation task"];
   }
   return [
     approval.taskId ? "task" : "",

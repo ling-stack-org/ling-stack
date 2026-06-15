@@ -4,7 +4,7 @@ import {
   createBaseState,
 } from "./support/mock-state";
 
-test("media jobs page lists, runs, and creates media jobs", async ({ page }) => {
+test("generation tasks page lists, runs, and creates generation tasks", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     {
@@ -105,8 +105,8 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
-  await expect(page.getByRole("heading", { name: "Media jobs", level: 1 })).toBeVisible();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Generation" }).click();
+  await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
   const failedJob = page.locator(".media-job-row").filter({ hasText: "Live gated product mockup." });
   await expect(failedJob).toContainText("failed");
   await expect(failedJob).toContainText("Seedream image generation failed with HTTP 429");
@@ -126,7 +126,7 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
     mediaJobId: "media_job_existing",
     actionType: "media_cost",
     risk: "high",
-    title: "Approve media job cost",
+    title: "Approve generation cost",
     description: "Seedream Image image_generate requires approval before live media execution.",
     payload: {
       type: "media_cost",
@@ -145,13 +145,13 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
   await expect(existingJob.locator(".artifact-main-link")).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
 
   await page.getByRole("textbox", { name: "Prompt" }).fill("New campaign image.");
-  await page.getByRole("button", { name: "Create media job" }).click();
+  await page.getByRole("button", { name: "Create generation task" }).click();
 
   await expect(page.locator(".media-job-row").first()).toContainText("New campaign image.");
   await expect.poll(() => state.mediaJobs.length).toBe(4);
 });
 
-test("media jobs page surfaces live media cost approvals", async ({ page }) => {
+test("generation tasks page surfaces live generation cost approvals", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     {
@@ -189,16 +189,16 @@ test("media jobs page surfaces live media cost approvals", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Generation" }).click();
   const jobRow = page.locator(".media-job-row").filter({ hasText: "Approval gated product mockup." });
   await jobRow.getByRole("button", { name: "Run" }).click();
   await expect(jobRow).toContainText("waiting_for_approval");
   await expect(jobRow).toContainText("Approval required before live execution");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Review Queue" }).click();
-  const mediaApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve media job cost" });
+  const mediaApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve generation cost" });
   await expect(mediaApproval).toContainText("media_cost");
-  await expect(mediaApproval).toContainText("media job");
+  await expect(mediaApproval).toContainText("generation task");
   await expect(mediaApproval.getByLabel("Media cost approval summary")).not.toContainText("provider_seedream");
   await expect(mediaApproval.getByLabel("Media cost approval summary")).toContainText("Approval gated product mockup.");
 
@@ -208,7 +208,7 @@ test("media jobs page surfaces live media cost approvals", async ({ page }) => {
   await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_media_job_live_pending")?.status).toBe("approved");
   await expect(mediaApproval).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Generation" }).click();
   await jobRow.getByRole("button", { name: "Run" }).click();
   await expect(jobRow).toContainText("succeeded");
   await expect(jobRow.locator(".artifact-row")).toContainText("Seedream image result");

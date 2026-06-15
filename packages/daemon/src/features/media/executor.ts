@@ -126,7 +126,7 @@ export async function runMediaJobExecution(input: {
     if (!job) {
       return {
         statusCode: 404,
-        body: { error: "media_job_not_found", message: `Media job not found: ${input.mediaJobId}` },
+        body: { error: "media_job_not_found", message: `Generation task not found: ${input.mediaJobId}` },
       };
     }
     if (!isRunnableMediaJobStatus(job.status)) {
@@ -134,7 +134,7 @@ export async function runMediaJobExecution(input: {
         statusCode: 409,
         body: {
           error: "media_job_not_runnable",
-          message: `Media job cannot be run from status ${job.status}: ${input.mediaJobId}`,
+          message: `Generation task cannot be run from status ${job.status}: ${input.mediaJobId}`,
         },
       };
     }
@@ -200,7 +200,7 @@ export async function runMediaJobExecution(input: {
       expiresAt: new Date(Date.now() + MEDIA_RUNTIME_SEMAPHORE_TTL_MS).toISOString(),
     });
     if (!semaphore) {
-      throw new HttpError(409, "runtime_semaphore_conflict", `Media provider is busy: ${provider.id}`);
+      throw new HttpError(409, "runtime_semaphore_conflict", `Generation model is busy: ${provider.id}`);
     }
     store.appendRuntimeEvent({
       workUnitId: supervised.workUnit.id,
@@ -260,7 +260,7 @@ export async function runMediaJobExecution(input: {
 
     const completedAt = new Date().toISOString();
     if (!mediaExecutionHasRequiredArtifact(execution.artifacts, job.operation)) {
-      const message = "媒体供应商没有返回可用的图片或视频结果，请检查模型、权限和返回格式。";
+      const message = "生成供应商没有返回可用的图片或视频结果，请检查模型、权限和返回格式。";
       const failed = store.updateMediaJobStatus(
         job.id,
         {
@@ -413,31 +413,31 @@ function resolveLiveMediaExecutionReadiness(
     return {
       ok: false,
       code: gate.errorCode ?? "invalid_request",
-      message: gate.errorMessage ?? "媒体模型真实生成配置无效，请在模型工作台重新保存。",
+      message: gate.errorMessage ?? "生成模型真实生成配置无效，请在模型工作台重新保存。",
     };
   }
   if (gate.config?.mode !== "live") {
     return {
       ok: false,
       code: "live_media_transport_required",
-      message: "当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。",
+      message: "当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。",
     };
   }
   if (!provider.baseUrl) {
-    return { ok: false, code: "bad_request", message: "媒体模型缺少 Base URL，请在模型工作台补充后重试。" };
+    return { ok: false, code: "bad_request", message: "生成模型缺少 Base URL，请在模型工作台补充后重试。" };
   }
   if (!provider.apiKeyRef) {
-    return { ok: false, code: "secret_missing", message: "媒体模型缺少 API Key，请在模型工作台补充后重试。" };
+    return { ok: false, code: "secret_missing", message: "生成模型缺少 API Key，请在模型工作台补充后重试。" };
   }
   const secret = resolveProviderSecret(store, provider, secretResolver);
   if (!secret.configured) {
-    return { ok: false, code: "secret_missing", message: "媒体模型 API Key 尚未配置，请在模型工作台保存密钥后重试。" };
+    return { ok: false, code: "secret_missing", message: "生成模型 API Key 尚未配置，请在模型工作台保存密钥后重试。" };
   }
   if (provider.kind !== "seedream" || operation !== "image_generate") {
     return {
       ok: false,
       code: "unsupported_capability",
-      message: "当前只支持 Seedream 图片生成的真实执行，其他媒体模型暂未接入真实生成。",
+      message: "当前只支持 Seedream 图片生成的真实执行，其他生成模型暂未接入真实生成。",
     };
   }
   return { ok: true };
@@ -505,7 +505,7 @@ function createMediaCostApprovalInput(job: MediaJob, provider: ProviderPreset): 
     mediaJobId: job.id,
     actionType: "media_cost",
     risk: "high",
-    title: "Approve media job cost",
+    title: "Approve generation cost",
     description: `${provider.displayName} ${job.operation} requires approval before live media execution.`,
     payload: {
       type: "media_cost",
