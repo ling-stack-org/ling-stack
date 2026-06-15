@@ -236,10 +236,10 @@ function MediaJobInspector({
   const { t } = useI18n();
   const provider = mediaJob ? providers.find((item) => item.id === mediaJob.providerPresetId) : undefined;
   return (
-    <section className="inspector" aria-label={t("Media job context")}>
+    <section className="inspector" aria-label={t("Generation task context")}>
       <div className="panel-title">
         <Database size={18} />
-        <h2>{t("Media job context")}</h2>
+        <h2>{t("Generation task context")}</h2>
       </div>
       {mediaJob ? (
         <>
@@ -261,7 +261,7 @@ function MediaJobInspector({
       ) : (
         <div className="empty-state compact-empty">
           <Database />
-          <span>{t("No media jobs recorded for this workspace")}</span>
+          <span>{t("No generation tasks recorded for this workspace")}</span>
         </div>
       )}
     </section>

@@ -16,7 +16,7 @@ export function parseMediaInput(inputText: string): Record<string, unknown> | un
   }
   const parsed = JSON.parse(trimmed) as unknown;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("Media job input must be a JSON object.");
+    throw new Error("Generation task input must be a JSON object.");
   }
   return parsed as Record<string, unknown>;
 }

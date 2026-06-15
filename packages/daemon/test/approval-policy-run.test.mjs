@@ -1925,7 +1925,7 @@ test("media provider model listing returns provider-exposed candidates without c
       authHeader: false,
     });
     assert.deepEqual(jimengResult.models.map((model) => model.id), ["jimeng-image"]);
-    assert.equal(jimengResult.source, "builtin:media-models");
+    assert.equal(jimengResult.source, "builtin:generation-models");
   } finally {
     await daemon.close();
     await openai.close();
@@ -2128,7 +2128,7 @@ test("media job run blocks static media providers from reporting fake success", 
     const executed = await postJsonExpectError(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(executed.status, 400);
     assert.equal(executed.body.error, "live_media_transport_required");
-    assert.match(executed.body.message, /当前没有可真实生成的媒体模型/);
+    assert.match(executed.body.message, /当前没有可真实生成的模型/);
     assert.equal(executed.body.mediaJob.status, "failed");
     assert.deepEqual(executed.body.mediaJob.artifactIds, []);
   } finally {
@@ -2391,7 +2391,7 @@ test("media provider presets remain blocked from coding task runs", async () => 
 
     assert.equal(blocked.status, 400);
     assert.equal(blocked.body.error, "unsupported_capability");
-    assert.match(blocked.body.message, /Media provider presets cannot run pi coding tasks/);
+    assert.match(blocked.body.message, /Generation-only model presets cannot run coding tasks/);
     assert.equal(runner.runs.length, 0);
   } finally {
     await daemon.close();

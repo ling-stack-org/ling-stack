@@ -2470,7 +2470,7 @@ export function createDefaultProviderTemplates(): readonly Record<string, unknow
       templateId: "seedream-image",
       kind: "seedream",
       displayName: "Seedream Image",
-      description: "Seedream image provider. image_generate can use live Ark HTTP when mediaVendorTransport.mode is explicitly set to live; image_edit remains deferred.",
+      description: "Seedream supplier template for image generation and editing capability.",
       providerId: "seedream",
       model: "doubao-seedream-5-0-260128",
       api: "media-job",
@@ -2483,7 +2483,7 @@ export function createDefaultProviderTemplates(): readonly Record<string, unknow
       templateId: "jimeng-image",
       kind: "jimeng",
       displayName: "Jimeng Image",
-      description: "Jimeng image generation/editing capability placeholder for the future media job runtime.",
+      description: "Jimeng supplier template for image generation and editing capability.",
       providerId: "jimeng",
       model: "jimeng-image",
       api: "media-job",
@@ -2496,7 +2496,7 @@ export function createDefaultProviderTemplates(): readonly Record<string, unknow
       templateId: "seedance-video",
       kind: "seedance",
       displayName: "Seedance Video",
-      description: "Seedance video generation capability placeholder for the future media job runtime.",
+      description: "Seedance supplier template for video generation capability.",
       providerId: "seedance",
       model: "seedance",
       api: "media-job",
@@ -7374,8 +7374,8 @@ export async function handleDaemonRoute(
           mediaJobId: job.id,
           actionType: "media_cost",
           risk: "high",
-          title: "Approve media job cost",
-          description: "Seedream Image image_generate requires approval before live media execution.",
+          title: "Approve generation cost",
+          description: "Seedream Image image_generate requires approval before live generation.",
           payload: {
             type: "media_cost",
             providerPresetId: job.providerPresetId,
@@ -7407,7 +7407,7 @@ export async function handleDaemonRoute(
     }
     if (!liveGate) {
       job.status = "failed";
-      job.errorMessage = "当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。";
+      job.errorMessage = "当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。";
       await route.fulfill({
         status: 400,
         json: {

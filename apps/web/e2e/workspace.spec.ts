@@ -132,7 +132,7 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Missing Key Gateway" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Seedream Image" })).toHaveCount(0);
-  await expect(page.getByText("Media providers stay in Media Jobs and cannot run coding tasks.").first()).toBeVisible();
+  await expect(page.getByText("Generation-only models cannot run coding tasks.").first()).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");

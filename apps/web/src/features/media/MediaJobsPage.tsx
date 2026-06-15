@@ -10,7 +10,11 @@ import {
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { canUseMediaProviderForOperation, isLiveMediaProvider, isMediaProvider } from "../../lib/providers.js";
+import {
+  canUseGenerationProviderForOperation,
+  providerHasGenerationCapability,
+  providerSupportsGenerationOperation,
+} from "../../lib/providers.js";
 import { ArtifactRow, MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type {
   MediaJob,
@@ -54,13 +58,13 @@ export function MediaJobsPage({
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const mediaProviders = providers.filter(isMediaProvider);
-  const enabledMediaProviders = mediaProviders.filter((provider) => provider.enabled);
-  const liveMediaProviders = mediaProviders.filter(isLiveMediaProvider);
-  const runnableProvidersForOperation = mediaProviders.filter((provider) => canUseMediaProviderForOperation(provider, form.operation));
+  const generationProviders = providers.filter(providerHasGenerationCapability);
+  const enabledGenerationProviders = generationProviders.filter((provider) => provider.enabled);
+  const generationProvidersForOperation = generationProviders.filter((provider) => providerSupportsGenerationOperation(provider, form.operation));
+  const runnableProvidersForOperation = generationProvidersForOperation.filter((provider) => canUseGenerationProviderForOperation(provider, form.operation));
   const selectedProvider = providers.find((provider) => provider.id === form.providerPresetId);
   const providerSupportsOperation = Boolean(selectedProvider?.capabilities.includes(form.operation));
-  const selectedProviderCanRun = Boolean(selectedProvider && canUseMediaProviderForOperation(selectedProvider, form.operation));
+  const selectedProviderCanRun = Boolean(selectedProvider && canUseGenerationProviderForOperation(selectedProvider, form.operation));
   const canCreate = Boolean(selectedProviderCanRun && form.prompt.trim());
 
   return (
@@ -69,7 +73,7 @@ export function MediaJobsPage({
         <div className="panel-title split">
           <span>
             <Database size={18} />
-            <h2 id="media-jobs-title">{t("Media jobs")}</h2>
+            <h2 id="media-jobs-title">{t("Generation tasks")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
             {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
@@ -84,18 +88,18 @@ export function MediaJobsPage({
           </div>
         ) : null}
 
-        <div className="provider-onboarding-strip" aria-label="Media job status">
-          <MetaRow label={t("Media providers")} value={String(mediaProviders.length)} compact />
-          <MetaRow label={t("Enabled")} value={String(enabledMediaProviders.length)} compact />
-          <MetaRow label={t("Live ready")} value={String(liveMediaProviders.length)} compact />
-          <MetaRow label={t("Queued jobs")} value={String(jobs.filter((job) => job.status === "queued").length)} compact />
+        <div className="provider-onboarding-strip" aria-label={t("Generation task status")}>
+          <MetaRow label={t("Generation models")} value={String(generationProviders.length)} compact />
+          <MetaRow label={t("Enabled")} value={String(enabledGenerationProviders.length)} compact />
+          <MetaRow label={t("Ready to generate")} value={String(runnableProvidersForOperation.length)} compact />
+          <MetaRow label={t("Queued tasks")} value={String(jobs.filter((job) => job.status === "queued").length)} compact />
         </div>
 
         <div className="media-job-list">
           {jobs.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <Database />}
-              <span>{isLoading ? t("Loading media jobs...") : t("No media jobs recorded for this workspace")}</span>
+              <span>{isLoading ? t("Loading generation tasks...") : t("No generation tasks recorded for this workspace")}</span>
             </div>
           ) : (
             jobs.map((job) => {
@@ -131,7 +135,7 @@ export function MediaJobsPage({
                           onRun(job.id);
                         }}
                         disabled={isLoading || isRunningJob || !isRunnable}
-                        title={isRunnable ? t("Run media adapter") : t("Cannot run from {status}", { status: job.status })}
+                        title={isRunnable ? t("Run generation") : t("Cannot run from {status}", { status: job.status })}
                       >
                         {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                         {t("Run")}
@@ -141,7 +145,7 @@ export function MediaJobsPage({
                   <p>{job.prompt}</p>
                   <div className="provider-meta-line">
                     <span>{provider?.displayName ?? t("Unknown provider")}</span>
-                    <span>{t("{count} media results", { count: mediaArtifacts.length })}</span>
+                    <span>{t("{count} generated results", { count: mediaArtifacts.length })}</span>
                     <time>{formatDateTime(job.createdAt)}</time>
                   </div>
                   {job.status === "waiting_for_approval" ? <small className="media-job-approval">{t("Approval required before live execution")}</small> : null}
@@ -166,7 +170,7 @@ export function MediaJobsPage({
         <div className="panel-title split">
           <span>
             <Plus size={18} />
-            <h2 id="media-job-form-title">{t("Create media job")}</h2>
+            <h2 id="media-job-form-title">{t("Create generation task")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
             <PlugZap size={14} />
@@ -178,20 +182,20 @@ export function MediaJobsPage({
           {runnableProvidersForOperation.length > 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
           <span>
             {runnableProvidersForOperation.length > 0
-              ? t("Ready media models can generate real results. Coding task runs still require chat providers.")
-              : t("当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。")}
+              ? t("Ready generation models can produce real results. Coding runs still require chat-capable models.")
+              : t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}
           </span>
         </div>
 
         <label className="field wide">
-          <span>{t("Media provider")}</span>
+          <span>{t("Generation model")}</span>
           <select
-            value={selectedProviderCanRun ? form.providerPresetId : ""}
+            value={selectedProvider && providerSupportsOperation ? form.providerPresetId : ""}
             onChange={(event) => onFormChange({ ...form, providerPresetId: event.target.value })}
-            disabled={runnableProvidersForOperation.length === 0}
+            disabled={generationProvidersForOperation.length === 0}
           >
-            <option value="">{t("Select media provider")}</option>
-            {runnableProvidersForOperation.map((provider) => (
+            <option value="">{t("Select generation model")}</option>
+            {generationProvidersForOperation.map((provider) => (
               <option key={provider.id} value={provider.id}>
                 {provider.displayName} / {provider.model}
               </option>
@@ -205,7 +209,8 @@ export function MediaJobsPage({
             value={form.operation}
             onChange={(event) => {
               const operation = event.target.value as MediaOperation;
-              const nextProvider = mediaProviders.find((provider) => canUseMediaProviderForOperation(provider, operation));
+              const nextProvider = generationProviders.find((provider) => canUseGenerationProviderForOperation(provider, operation)) ??
+                generationProviders.find((provider) => providerSupportsGenerationOperation(provider, operation));
               onFormChange({ ...form, operation, providerPresetId: nextProvider?.id ?? "" });
             }}
           >
@@ -225,7 +230,7 @@ export function MediaJobsPage({
         {selectedProvider && providerSupportsOperation && !selectedProviderCanRun ? (
           <div className="provider-run-notice">
             <CircleAlert size={16} />
-            <span>{t("当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。")}</span>
+            <span>{t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}</span>
           </div>
         ) : null}
 
@@ -244,7 +249,7 @@ export function MediaJobsPage({
 
         <button className="primary-button" type="button" onClick={onCreate} disabled={isLoading || !canCreate}>
           {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-          {t("Create media job")}
+          {t("Create generation task")}
         </button>
       </section>
     </div>

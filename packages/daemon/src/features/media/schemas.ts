@@ -9,7 +9,7 @@ import { isRecord, readOptionalObject, readString } from "../../shared/validatio
 
 export function parseCreateMediaJobInput(value: unknown): CreateMediaJobInput {
   if (!isRecord(value)) {
-    throw new Error("Media job request must be a JSON object");
+    throw new Error("Generation task request must be a JSON object");
   }
   const input: CreateMediaJobInput = {
     providerPresetId: readString(value, "providerPresetId"),
