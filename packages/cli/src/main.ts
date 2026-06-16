@@ -347,7 +347,7 @@ async function handleLocalRestart(args: readonly string[], options: GlobalOption
     daemonUrl: options.daemonUrl,
     webUrl,
     timeoutMs,
-    buildDaemon: !parsed.booleans.has("skip-build"),
+    buildPackages: !parsed.booleans.has("skip-build"),
   });
 
   if (options.json) {
@@ -356,7 +356,7 @@ async function handleLocalRestart(args: readonly string[], options: GlobalOption
   }
 
   console.log("Local stack restarted");
-  console.log(`Daemon build: ${result.build.ran ? "ok" : `skipped (${result.build.skippedReason ?? "not requested"})`}`);
+  console.log(`Local package build: ${result.build.ran ? "ok" : `skipped (${result.build.skippedReason ?? "not requested"})`}`);
   printLocalServiceStatus(result.status.daemon);
   printStartupStatusSummary(result.status.startup);
   printLocalServiceStatus(result.status.web);
@@ -6128,7 +6128,7 @@ Behavior:
   Restarts the local Ling Stack daemon and Web UI.
   This is a local development command only; it does not restart remote or production services.
   When launchd services are installed, uses com.lingstack.local.daemon and com.lingstack.local.web.
-  Builds @ling-stack/daemon before restart unless --skip-build is passed.
+  Builds local runtime packages before restart unless --skip-build is passed.
   Refuses active work by default; use --force for an explicit operator override.
 `);
     return;
