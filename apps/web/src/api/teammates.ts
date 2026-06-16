@@ -3,6 +3,7 @@ import type {
   AiTeammateMutationResponse,
   CancelTeammateDirectReplyInterventionRequest,
   CancelTeammateDirectReplyRequest,
+  CreateTeammateDirectLinkPreviewRequest,
   CreateAiTeammateRequest,
   CreateTeammateDirectMessageRequest,
   CreateTeammateDirectReplyInterventionRequest,
@@ -15,6 +16,8 @@ import type {
   TaskListResponse,
   TeammateActivityListResponse,
   TeammateChannelMembershipListResponse,
+  TeammateDirectLinkPreviewListResponse,
+  TeammateDirectLinkPreviewMutationResponse,
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
   TeammateDirectInterventionListResponse,
@@ -22,6 +25,10 @@ import type {
   TeammateDirectReplyCancelResponse,
   TeammateDirectRuntimeResponse,
   TeammateDirectThreadResponse,
+  DirectWorkspaceMutationResponse,
+  DirectWorkspaceResponse,
+  DirectWorkspaceCreateWorktreeRequest,
+  DirectWorkspaceHandoffRequest,
   TeammateMcpBindingListResponse,
   TeammateMemoryScopeListResponse,
   TeammatePersonaDraftRequest,
@@ -114,8 +121,44 @@ export async function getTeammateDirectThread(cwd: string, teammateId: string): 
   return daemonClient.getTeammateDirectThread(cwd, teammateId);
 }
 
+export async function getTeammateDirectWorkspace(cwd: string, teammateId: string): Promise<DirectWorkspaceResponse> {
+  return daemonClient.getTeammateDirectWorkspace(cwd, teammateId);
+}
+
+export async function createTeammateDirectWorktree(
+  cwd: string,
+  teammateId: string,
+  input: DirectWorkspaceCreateWorktreeRequest = {},
+): Promise<DirectWorkspaceMutationResponse> {
+  return daemonClient.createTeammateDirectWorktree(cwd, teammateId, input);
+}
+
+export async function handoffTeammateDirectWorkspace(
+  cwd: string,
+  teammateId: string,
+  input: DirectWorkspaceHandoffRequest,
+): Promise<DirectWorkspaceMutationResponse> {
+  return daemonClient.handoffTeammateDirectWorkspace(cwd, teammateId, input);
+}
+
+export async function refreshTeammateDirectWorkspace(cwd: string, teammateId: string): Promise<DirectWorkspaceMutationResponse> {
+  return daemonClient.refreshTeammateDirectWorkspace(cwd, teammateId);
+}
+
 export async function listTeammateDirectMessages(cwd: string, teammateId: string): Promise<TeammateDirectMessageListResponse> {
   return daemonClient.listTeammateDirectMessages(cwd, teammateId);
+}
+
+export async function listTeammateDirectLinkPreviews(cwd: string, teammateId: string): Promise<TeammateDirectLinkPreviewListResponse> {
+  return daemonClient.listTeammateDirectLinkPreviews(cwd, teammateId);
+}
+
+export async function createTeammateDirectLinkPreview(
+  cwd: string,
+  teammateId: string,
+  input: CreateTeammateDirectLinkPreviewRequest,
+): Promise<TeammateDirectLinkPreviewMutationResponse> {
+  return daemonClient.createTeammateDirectLinkPreview(cwd, teammateId, input);
 }
 
 export async function createTeammateDirectMessage(

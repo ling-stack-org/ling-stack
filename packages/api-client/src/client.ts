@@ -93,6 +93,7 @@ import type {
   CancelTeammateDirectReplyInterventionRequest,
   CancelTeammateDirectReplyRequest,
   CreateTeammateDirectReplyInterventionRequest,
+  CreateTeammateDirectLinkPreviewRequest,
   CreateLingThreadRequest,
   CreateTeammateDirectMessageRequest,
   PromoteTeammateDirectReplyInterventionRequest,
@@ -269,9 +270,15 @@ import type {
   TeammateDirectMessageMutationResponse,
   TeammateDirectInterventionListResponse,
   TeammateDirectInterventionResponse,
+  TeammateDirectLinkPreviewListResponse,
+  TeammateDirectLinkPreviewMutationResponse,
   TeammateDirectReplyCancelResponse,
   TeammateDirectRuntimeResponse,
   TeammateDirectThreadResponse,
+  DirectWorkspaceCreateWorktreeRequest,
+  DirectWorkspaceHandoffRequest,
+  DirectWorkspaceMutationResponse,
+  DirectWorkspaceResponse,
   TeammatePrivateAttachmentListResponse,
   TeammatePrivateAttachmentMutationResponse,
   TeammateMcpBindingListResponse,
@@ -1139,8 +1146,44 @@ export class LingDaemonClient {
     return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-thread`, { cwd });
   }
 
+  async getTeammateDirectWorkspace(cwd: string, teammateId: string): Promise<DirectWorkspaceResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-workspace`, { cwd });
+  }
+
+  async createTeammateDirectWorktree(
+    cwd: string,
+    teammateId: string,
+    input: DirectWorkspaceCreateWorktreeRequest = {},
+  ): Promise<DirectWorkspaceMutationResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree`, { cwd }, input);
+  }
+
+  async handoffTeammateDirectWorkspace(
+    cwd: string,
+    teammateId: string,
+    input: DirectWorkspaceHandoffRequest,
+  ): Promise<DirectWorkspaceMutationResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-workspace/handoff`, { cwd }, input);
+  }
+
+  async refreshTeammateDirectWorkspace(cwd: string, teammateId: string): Promise<DirectWorkspaceMutationResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-workspace/refresh`, { cwd });
+  }
+
   async listTeammateDirectMessages(cwd: string, teammateId: string, limit = 100): Promise<TeammateDirectMessageListResponse> {
     return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-messages`, { cwd, limit });
+  }
+
+  async listTeammateDirectLinkPreviews(cwd: string, teammateId: string, limit = 100): Promise<TeammateDirectLinkPreviewListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-link-previews`, { cwd, limit });
+  }
+
+  async createTeammateDirectLinkPreview(
+    cwd: string,
+    teammateId: string,
+    input: CreateTeammateDirectLinkPreviewRequest,
+  ): Promise<TeammateDirectLinkPreviewMutationResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-link-previews`, { cwd }, input);
   }
 
   async createTeammateDirectMessage(

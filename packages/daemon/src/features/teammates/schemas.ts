@@ -3,6 +3,7 @@ import {
   readOnlyRunTools,
   type AiTeammate,
   type AiTeammateUpdateInput,
+  type ChannelMessageFileRef,
   type CreateAiTeammateInput,
   type HardDeleteAiTeammateInput,
   type ReplaceTeammateChannelMembershipInput,
@@ -23,11 +24,17 @@ import {
   readString,
   readStringAllowEmpty,
 } from "../../shared/validation.js";
-import { parseChannelAttachmentRequest, type ChannelAttachmentRequest } from "../channels/schemas.js";
+import {
+  parseChannelAttachmentRequest,
+  readOptionalChannelMessageFileRefs,
+  type ChannelAttachmentRequest,
+} from "../channels/schemas.js";
 
 export interface TeammateDirectMessageRequest {
   readonly body: string;
   readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
   readonly providerPresetId?: string;
 }
@@ -209,14 +216,22 @@ export function parseTeammateDirectMessageRequest(value: unknown): TeammateDirec
   const input: TeammateDirectMessageRequest = {
     body,
     attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
+    linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
+    fileRefs: readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [],
     requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
     providerPresetId: readOptionalString(value, "providerPresetId"),
   };
-  if (!input.body.trim() && input.attachmentIds.length === 0) {
-    throw new Error("body or attachmentIds is required");
+  if (!input.body.trim() && input.attachmentIds.length === 0 && input.linkPreviewIds.length === 0 && input.fileRefs.length === 0) {
+    throw new Error("body, attachmentIds, linkPreviewIds, or fileRefs is required");
   }
   if (input.attachmentIds.length > 10) {
     throw new Error("A teammate direct message can reference at most 10 attachments");
+  }
+  if (input.linkPreviewIds.length > 10) {
+    throw new Error("A teammate direct message can reference at most 10 link previews");
+  }
+  if (input.fileRefs.length > 12) {
+    throw new Error("A teammate direct message can reference at most 12 workspace files");
   }
   return input;
 }

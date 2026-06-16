@@ -9,6 +9,7 @@ import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { materializeInlineTeammateDirectInputs } from "./direct-materialization.js";
+import type { DirectWorkspaceReady } from "./direct-workspace.js";
 
 export async function createAiTeammateDirectReply(input: {
   readonly runnerRegistry: RunnerRegistry;
@@ -17,6 +18,7 @@ export async function createAiTeammateDirectReply(input: {
   readonly thread: TeammateDirectThread;
   readonly sourceMessage: TeammateDirectMessage;
   readonly providerPresetId?: string;
+  readonly workspace?: DirectWorkspaceReady;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly signal?: AbortSignal;
@@ -34,6 +36,8 @@ export async function createAiTeammateDirectReply(input: {
   };
 }): Promise<TeammateDirectMessage> {
   const providerPresetId = input.providerPresetId ?? input.teammate.providerPresetId;
+  const workspaceCwd = input.store.paths.cwd;
+  const executionCwd = input.workspace?.executionCwd ?? workspaceCwd;
   const runnerResolution = input.runnerRegistry.resolve({
     requestedRunnerId: input.teammate.runnerId,
     allowFallback: true,
@@ -68,6 +72,10 @@ export async function createAiTeammateDirectReply(input: {
     request: {
       sourceMessageId: input.sourceMessage.id,
       teammateId: input.teammate.id,
+      workspaceCwd,
+      executionCwd,
+      directWorkspaceBinding: input.workspace?.binding,
+      directWorkspaceSnapshot: input.workspace?.snapshot,
       providerPresetId,
       runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
     },
@@ -156,15 +164,16 @@ export async function createAiTeammateDirectReply(input: {
       input.teammate.systemPrompt ?? `You are ${input.teammate.displayName}, an AI teammate inside Ling Stack.`,
       ...input.teammate.appendSystemPrompt,
       "Reply concisely to the private conversation.",
-      "This private chat has no tool access and cannot mutate files, send external messages, or inspect channel files.",
-      "Do not claim to see channel history, attachments, web pages, or memory beyond the explicit Used memory section unless the user pasted that content in this chat.",
+      "This private chat uses its own isolated workspace context. Treat attachments, link previews, and workspace file references as explicit private-chat context only.",
+      "This private chat has no tool access and cannot mutate files or send external messages.",
+      "Do not claim to see channel history, attachments, web pages, or memory beyond the explicit Used memory section unless the user pasted or attached that content in this chat.",
       memoryPrompt,
     ].filter((line): line is string => Boolean(line)).join("\n");
     const provider = resolveProviderForRun(
       input.store,
       {
-        cwd: input.store.paths.cwd,
-        workspaceCwd: input.store.paths.cwd,
+        cwd: executionCwd,
+        workspaceCwd,
         task,
         providerPresetId,
         tools: [],
@@ -184,7 +193,7 @@ export async function createAiTeammateDirectReply(input: {
     });
 
     const result = await runnerResolution.runner.adapter.runTask({
-      cwd: input.store.paths.cwd,
+      cwd: executionCwd,
       task,
       provider,
       tools: [],

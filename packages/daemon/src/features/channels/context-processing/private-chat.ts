@@ -1,8 +1,10 @@
 import type {
   AiTeammate,
+  ChannelMessageFileRef,
   RunSession,
   RunStore,
   Task,
+  TeammateDirectLinkPreview,
   TeammateDirectMessage,
   TeammateDirectThread,
   TeammatePrivateAttachment,
@@ -35,22 +37,26 @@ export interface BuildPrivateChatContextViewInput {
 export function buildPrivateChatContextView(input: BuildPrivateChatContextViewInput): ChannelContextView {
   const attachmentsById = input.attachmentsById ?? new Map();
   const materializationsByAttachmentId = input.materializationsByAttachmentId ?? new Map();
+  const promptMessages = privatePromptMessages(input.messages, input.sourceMessage);
+  const linkPreviewsById = collectDirectLinkPreviews(input.store, input.teammate.id, input.thread.id, promptMessages);
   const prompt = formatPrivateChatPrompt({
     teammate: input.teammate,
     messages: input.messages,
     sourceMessage: input.sourceMessage,
     attachmentsById,
     materializationsByAttachmentId,
+    linkPreviewsById,
   });
   const promptSources = [
     collectTeammateProfileSource(input.teammate),
     ...collectPrivateMessageSources({
       teammate: input.teammate,
       thread: input.thread,
-      messages: privatePromptMessages(input.messages, input.sourceMessage),
+      messages: promptMessages,
       sourceMessage: input.sourceMessage,
       attachmentsById,
       materializationsByAttachmentId,
+      linkPreviewsById,
     }),
     ...collectPrivateLinkedReferenceSources({
       store: input.store,
@@ -118,42 +124,62 @@ export function collectPrivateMessageSources(input: {
   readonly sourceMessage: TeammateDirectMessage;
   readonly attachmentsById?: ReadonlyMap<string, TeammatePrivateAttachment>;
   readonly materializationsByAttachmentId?: ReadonlyMap<string, PrivateChatAttachmentMaterialization>;
+  readonly linkPreviewsById?: ReadonlyMap<string, TeammateDirectLinkPreview>;
 }): readonly ChannelContextSource[] {
   const attachmentsById = input.attachmentsById ?? new Map();
   const materializationsByAttachmentId = input.materializationsByAttachmentId ?? new Map();
-  return input.messages.map((message) => ({
-    id: `private_message:${message.id}`,
-    kind: "private_message" as const,
-    workspaceId: input.thread.workspaceId,
-    teammateId: input.teammate.id,
-    sourceRefs: [
-      { type: "teammate_direct_thread", id: input.thread.id, label: input.thread.title },
-      { type: "teammate_direct_message", id: message.id, label: message.id === input.sourceMessage.id ? "Latest private message" : "Private chat history" },
-      ...message.attachmentIds.map((attachmentId) => {
+  const linkPreviewsById = input.linkPreviewsById ?? new Map();
+  return input.messages.map((message) => {
+    const attachmentIds = message.attachmentIds ?? [];
+    const linkPreviewIds = message.linkPreviewIds ?? [];
+    const fileRefs = message.fileRefs ?? [];
+    return {
+      id: `private_message:${message.id}`,
+      kind: "private_message" as const,
+      workspaceId: input.thread.workspaceId,
+      teammateId: input.teammate.id,
+      sourceRefs: [
+        { type: "teammate_direct_thread", id: input.thread.id, label: input.thread.title },
+        { type: "teammate_direct_message", id: message.id, label: message.id === input.sourceMessage.id ? "Latest private message" : "Private chat history" },
+        ...attachmentIds.map((attachmentId) => {
         const attachment = attachmentsById.get(attachmentId);
         return { type: "teammate_private_attachment", id: attachmentId, label: attachment?.fileName };
-      }),
-      ...(message.linkedTaskId ? [{ type: "task", id: message.linkedTaskId, label: "Linked task" }] : []),
-      ...(message.linkedRunId ? [{ type: "run", id: message.linkedRunId, label: "Linked run" }] : []),
-    ],
-    title: message.id === input.sourceMessage.id ? "Latest private message" : `Private ${message.authorType} message`,
-    text: renderPrivateMessageLine(input.teammate, message, attachmentsById, message.id === input.sourceMessage.id ? materializationsByAttachmentId : new Map()),
-    metadata: {
-      threadId: input.thread.id,
-      authorType: message.authorType,
-      authorId: message.authorId,
-      status: message.status,
-      attachmentCount: message.attachmentIds.length,
-      materializedAttachmentCount: message.attachmentIds
-        .map((attachmentId) => materializationsByAttachmentId.get(attachmentId))
-        .filter(hasPrivateAttachmentPromptContent).length,
-      linkedTaskId: message.linkedTaskId,
-      linkedRunId: message.linkedRunId,
-      createdAt: message.createdAt,
-    },
-    sensitivity: "private" as const,
-    freshness: message.id === input.sourceMessage.id ? "current_turn" as const : "recent" as const,
-  }));
+        }),
+        ...linkPreviewIds.map((linkPreviewId) => {
+        const preview = linkPreviewsById.get(linkPreviewId);
+        return { type: "teammate_direct_link_preview", id: linkPreviewId, label: preview?.title ?? preview?.url };
+        }),
+        ...fileRefs.map((fileRef, index) => ({ type: "workspace_file_ref", id: `${message.id}:${index}`, label: renderPrivateFileRef(fileRef) })),
+        ...(message.linkedTaskId ? [{ type: "task", id: message.linkedTaskId, label: "Linked task" }] : []),
+        ...(message.linkedRunId ? [{ type: "run", id: message.linkedRunId, label: "Linked run" }] : []),
+      ],
+      title: message.id === input.sourceMessage.id ? "Latest private message" : `Private ${message.authorType} message`,
+      text: renderPrivateMessageLine(
+        input.teammate,
+        message,
+        attachmentsById,
+        message.id === input.sourceMessage.id ? materializationsByAttachmentId : new Map(),
+        linkPreviewsById,
+      ),
+      metadata: {
+        threadId: input.thread.id,
+        authorType: message.authorType,
+        authorId: message.authorId,
+        status: message.status,
+        attachmentCount: attachmentIds.length,
+        linkPreviewCount: linkPreviewIds.length,
+        fileRefCount: fileRefs.length,
+        materializedAttachmentCount: attachmentIds
+          .map((attachmentId) => materializationsByAttachmentId.get(attachmentId))
+          .filter(hasPrivateAttachmentPromptContent).length,
+        linkedTaskId: message.linkedTaskId,
+        linkedRunId: message.linkedRunId,
+        createdAt: message.createdAt,
+      },
+      sensitivity: "private" as const,
+      freshness: message.id === input.sourceMessage.id ? "current_turn" as const : "recent" as const,
+    };
+  });
 }
 
 export function collectPrivateLinkedReferenceSources(input: {
@@ -195,13 +221,14 @@ function formatPrivateChatPrompt(input: {
   readonly sourceMessage: TeammateDirectMessage;
   readonly attachmentsById: ReadonlyMap<string, TeammatePrivateAttachment>;
   readonly materializationsByAttachmentId: ReadonlyMap<string, PrivateChatAttachmentMaterialization>;
+  readonly linkPreviewsById: ReadonlyMap<string, TeammateDirectLinkPreview>;
 }): string {
   const history = input.messages
     .filter((message) => message.status === "ready" && message.id !== input.sourceMessage.id && !isHistoricalGuidanceMessage(message))
     .slice(-20)
-    .map((message) => renderPrivateMessageLine(input.teammate, message, input.attachmentsById, new Map()))
+    .map((message) => renderPrivateMessageLine(input.teammate, message, input.attachmentsById, new Map(), input.linkPreviewsById))
     .join("\n");
-  const latestMessage = renderPrivateMessageLine(input.teammate, input.sourceMessage, input.attachmentsById, input.materializationsByAttachmentId);
+  const latestMessage = renderPrivateMessageLine(input.teammate, input.sourceMessage, input.attachmentsById, input.materializationsByAttachmentId, input.linkPreviewsById);
   return [
     `Teammate: ${input.teammate.displayName}`,
     `Role: ${input.teammate.roleKey}`,
@@ -215,6 +242,7 @@ function formatPrivateChatPrompt(input: {
     "",
     "Reply to the Latest message to answer now. Use older conversation only as context.",
     "If the latest message includes attachments, use only attachment content explicitly listed under Attachment content. Metadata-only attachments do not expose their body. Do not infer unseen attachment contents, including image, PDF, Office, or file contents.",
+    "If the latest message includes links or workspace file references, use only the explicit metadata and paths listed in this private chat context. Do not claim to have opened files or web pages unless their content is included.",
   ].join("\n");
 }
 
@@ -241,6 +269,7 @@ function renderPrivateMessageLine(
   message: TeammateDirectMessage,
   attachmentsById: ReadonlyMap<string, TeammatePrivateAttachment>,
   materializationsByAttachmentId: ReadonlyMap<string, PrivateChatAttachmentMaterialization>,
+  linkPreviewsById: ReadonlyMap<string, TeammateDirectLinkPreview>,
 ): string {
   const author = message.authorType === "ai-teammate"
     ? teammate.displayName
@@ -248,25 +277,64 @@ function renderPrivateMessageLine(
       ? "System"
       : "User";
   const body = message.body.trim() || "(no text)";
-  const attachments = message.attachmentIds
+  const attachmentIds = message.attachmentIds ?? [];
+  const linkPreviewIds = message.linkPreviewIds ?? [];
+  const fileRefs = message.fileRefs ?? [];
+  const attachments = attachmentIds
     .map((attachmentId) => attachmentsById.get(attachmentId))
     .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
     .map((attachment) => `${attachment.fileName} (${attachment.kind}, ${attachment.contentType}, ${formatBytes(attachment.sizeBytes)})`);
-  const attachmentContent = message.attachmentIds
+  const attachmentContent = attachmentIds
     .map((attachmentId) => materializationsByAttachmentId.get(attachmentId))
     .filter(hasPrivateAttachmentPromptContent)
     .map((materialization) => [
       `- ${materialization.fileName}${materialization.truncated ? " (truncated)" : ""}:`,
       materialization.contentText?.trim(),
     ].filter(Boolean).join("\n"));
-  if (attachments.length === 0) {
+  const links = linkPreviewIds
+    .map((linkPreviewId) => linkPreviewsById.get(linkPreviewId))
+    .filter((preview): preview is TeammateDirectLinkPreview => Boolean(preview))
+    .map((preview) => `${preview.title?.trim() || preview.siteName?.trim() || preview.url} (${preview.normalizedUrl})`);
+  const fileRefLabels = fileRefs.map(renderPrivateFileRef);
+  if (attachments.length === 0 && links.length === 0 && fileRefLabels.length === 0) {
     return `${author}: ${body}`;
   }
   return [
     `${author}: ${body}`,
     `Attachments: ${attachments.join("; ")}`,
+    links.length > 0 ? `Links: ${links.join("; ")}` : undefined,
+    fileRefLabels.length > 0 ? `Workspace file refs: ${fileRefLabels.join("; ")}` : undefined,
     attachmentContent.length > 0 ? `Attachment content:\n${attachmentContent.join("\n")}` : undefined,
   ].filter(Boolean).join("\n");
+}
+
+function collectDirectLinkPreviews(
+  store: RunStore,
+  teammateId: string,
+  threadId: string,
+  messages: readonly TeammateDirectMessage[],
+): ReadonlyMap<string, TeammateDirectLinkPreview> {
+  const previews = new Map<string, TeammateDirectLinkPreview>();
+  const linkPreviewIds = new Set(messages.flatMap((message) => message.linkPreviewIds ?? []));
+  if (linkPreviewIds.size === 0) {
+    return previews;
+  }
+  const getLinkPreview = (store as { getTeammateDirectLinkPreview?: (id: string) => TeammateDirectLinkPreview | undefined }).getTeammateDirectLinkPreview;
+  if (!getLinkPreview) {
+    return previews;
+  }
+  for (const linkPreviewId of linkPreviewIds) {
+    const preview = getLinkPreview.call(store, linkPreviewId);
+    if (preview && preview.teammateId === teammateId && preview.threadId === threadId) {
+      previews.set(preview.id, preview);
+    }
+  }
+  return previews;
+}
+
+function renderPrivateFileRef(fileRef: ChannelMessageFileRef): string {
+  const line = fileRef.line ? `:${fileRef.line}` : "";
+  return `${fileRef.label?.trim() || fileRef.path}${line}`;
 }
 
 function hasPrivateAttachmentPromptContent(

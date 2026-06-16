@@ -6,6 +6,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
+import { assertDirectFileRefsWithinWorkspace, type DirectWorkspaceReady } from "./direct-workspace.js";
 import { parseTeammateDirectMessageRequest } from "./schemas.js";
 
 export type CreateTeammateDirectAiReply = (input: {
@@ -14,6 +15,7 @@ export type CreateTeammateDirectAiReply = (input: {
   readonly thread: TeammateDirectThread;
   readonly sourceMessage: TeammateDirectMessage;
   readonly providerPresetId?: string;
+  readonly workspace?: DirectWorkspaceReady;
   readonly signal?: AbortSignal;
   readonly onWorkUnitStarted?: (handle: {
     readonly workUnitId: string;
@@ -106,6 +108,11 @@ export async function handleTeammateDirectMessagesCollection(
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseTeammateDirectMessageRequest(body);
+      assertDirectFileRefsWithinWorkspace({
+        thread,
+        workspaceCwd: store.paths.cwd,
+        fileRefs: input.fileRefs,
+      });
       const now = new Date().toISOString();
       const message = store.createTeammateDirectMessage(
         {
@@ -115,6 +122,8 @@ export async function handleTeammateDirectMessagesCollection(
           authorId: "local-user",
           body: input.body,
           attachmentIds: input.attachmentIds,
+          linkPreviewIds: input.linkPreviewIds,
+          fileRefs: input.fileRefs,
         },
         now,
       );
@@ -125,6 +134,7 @@ export async function handleTeammateDirectMessagesCollection(
             thread,
             sourceMessage: message,
             providerPresetId: input.providerPresetId,
+            workspace: undefined,
           })
         : undefined;
       writeJson(response, 201, aiReply ? { message, aiReply } : { message });
@@ -171,6 +181,11 @@ export async function handleTeammateDirectMessageStream(
     const thread = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
     const body = await readJsonBody(request, config.maxBodyBytes);
     const messageInput = parseTeammateDirectMessageRequest(body);
+    assertDirectFileRefsWithinWorkspace({
+      thread,
+      workspaceCwd: store.paths.cwd,
+      fileRefs: messageInput.fileRefs,
+    });
     const now = new Date().toISOString();
     const message = store.createTeammateDirectMessage(
       {
@@ -180,6 +195,8 @@ export async function handleTeammateDirectMessageStream(
         authorId: "local-user",
         body: messageInput.body,
         attachmentIds: messageInput.attachmentIds,
+        linkPreviewIds: messageInput.linkPreviewIds,
+        fileRefs: messageInput.fileRefs,
       },
       now,
     );
