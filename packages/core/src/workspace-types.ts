@@ -174,6 +174,67 @@ export interface ChannelWorkspaceSnapshot {
   readonly checkedAt?: string;
 }
 
+export type DirectWorkspaceMode = ChannelWorkspaceMode;
+
+export type DirectWorkspaceStatus = ChannelWorkspaceStatus;
+
+export interface DirectWorkspaceBinding {
+  readonly mode: DirectWorkspaceMode;
+  readonly status: DirectWorkspaceStatus;
+  readonly executionPath?: string;
+  readonly worktreePath?: string;
+  readonly branchName?: string;
+  readonly baseBranch?: string;
+  readonly baseCommit?: string;
+  readonly errorMessage?: string;
+  readonly createdAt?: string;
+  readonly checkedAt?: string;
+  readonly updatedAt: string;
+}
+
+export interface DirectWorkspaceSnapshot {
+  readonly mode: DirectWorkspaceMode;
+  readonly status: DirectWorkspaceStatus;
+  readonly workspaceCwd: string;
+  readonly executionCwd: string;
+  readonly worktreePath?: string;
+  readonly branchName?: string;
+  readonly baseBranch?: string;
+  readonly baseCommit?: string;
+  readonly checkedAt?: string;
+}
+
+export function teammateDirectLinkPreviewNamespace(teammateId: string, threadId: string): string {
+  return `teammate_direct:${teammateId}:${threadId}`;
+}
+
+export function resolveDirectExecutionCwd(thread: TeammateDirectThread, workspaceCwd: string): string {
+  const binding = thread.workspaceBinding;
+  if (binding?.mode === "managed_worktree" && binding.worktreePath) {
+    return binding.worktreePath;
+  }
+  if (binding?.mode === "external_path" && binding.executionPath) {
+    return binding.executionPath;
+  }
+  return workspaceCwd;
+}
+
+export function createDirectWorkspaceSnapshot(thread: TeammateDirectThread, workspaceCwd: string): DirectWorkspaceSnapshot {
+  const binding = thread.workspaceBinding;
+  const executionCwd = resolveDirectExecutionCwd(thread, workspaceCwd);
+  return {
+    mode: binding?.mode ?? "managed_worktree",
+    status: binding?.status ?? "not_created",
+    workspaceCwd,
+    executionCwd,
+    worktreePath: binding?.worktreePath,
+    branchName: binding?.branchName,
+    baseBranch: binding?.baseBranch,
+    baseCommit: binding?.baseCommit,
+    checkedAt: binding?.checkedAt,
+  };
+}
+
 export interface ChannelRuntimePolicy {
   readonly maxConcurrentRuns: number;
   readonly executionMode: ChannelExecutionMode;
@@ -576,6 +637,7 @@ export interface TeammateDirectThread {
   readonly workspaceId: string;
   readonly teammateId: string;
   readonly title: string;
+  readonly workspaceBinding?: DirectWorkspaceBinding;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -593,6 +655,8 @@ export interface TeammateDirectMessage {
   readonly authorId?: string;
   readonly body: string;
   readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly status: TeammateDirectMessageStatus;
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
@@ -608,6 +672,8 @@ export interface CreateTeammateDirectMessageInput {
   readonly authorId?: string;
   readonly body: string;
   readonly attachmentIds?: readonly string[];
+  readonly linkPreviewIds?: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly status?: TeammateDirectMessageStatus;
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
@@ -617,6 +683,53 @@ export interface CreateTeammateDirectMessageInput {
 export interface ListTeammateDirectMessagesOptions {
   readonly teammateId: string;
   readonly threadId?: string;
+  readonly limit?: number;
+}
+
+export interface TeammateDirectLinkPreview {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly threadId: string;
+  readonly messageId?: string;
+  readonly url: string;
+  readonly normalizedUrl: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly imageUrl?: string;
+  readonly siteName?: string;
+  readonly status: ChannelLinkPreviewStatus;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateTeammateDirectLinkPreviewInput {
+  readonly teammateId: string;
+  readonly threadId: string;
+  readonly messageId?: string;
+  readonly url: string;
+  readonly normalizedUrl: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly imageUrl?: string;
+  readonly siteName?: string;
+  readonly status: ChannelLinkPreviewStatus;
+  readonly errorMessage?: string;
+}
+
+export interface UpdateTeammateDirectLinkPreviewInput {
+  readonly title?: string | null;
+  readonly description?: string | null;
+  readonly imageUrl?: string | null;
+  readonly siteName?: string | null;
+  readonly status?: ChannelLinkPreviewStatus;
+  readonly errorMessage?: string | null;
+}
+
+export interface ListTeammateDirectLinkPreviewsOptions {
+  readonly teammateId: string;
+  readonly threadId: string;
   readonly limit?: number;
 }
 
@@ -633,6 +746,8 @@ export type TeammateDirectReplyInterventionStatus =
 export interface TeammateDirectReplyInterventionMessagePayload {
   readonly body: string;
   readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
 }
 
 export interface TeammateDirectReplyIntervention {
@@ -1994,6 +2109,10 @@ export function createTeammateDirectMessageId(): string {
 
 export function createTeammateDirectReplyInterventionId(): string {
   return `dm_int_${randomUUID()}`;
+}
+
+export function createTeammateDirectLinkPreviewId(): string {
+  return `dm_link_${randomUUID()}`;
 }
 
 export function createChannelMessageId(): string {

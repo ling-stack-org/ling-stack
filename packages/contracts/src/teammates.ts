@@ -1,6 +1,14 @@
 import type { ToolName } from "./shared.js";
 import type { SkillApprovalProfile } from "./approvals.js";
-import type { ChannelAttachmentKind } from "./channels.js";
+import type {
+  ChannelAttachmentKind,
+  ChannelLinkPreviewStatus,
+  ChannelMessageFileRef,
+  ChannelWorkspaceBinding,
+  ChannelWorkspaceMode,
+  ChannelWorkspaceSnapshot,
+  ChannelWorkspaceStatus,
+} from "./channels.js";
 import type { McpToolDefaultApproval } from "./mcp.js";
 import type { WorkUnit } from "./runtime.js";
 
@@ -213,11 +221,36 @@ export interface TeammateMemoryScopeListResponse {
   readonly scopes: readonly TeammateMemoryScope[];
 }
 
+export type DirectWorkspaceMode = ChannelWorkspaceMode;
+export type DirectWorkspaceStatus = ChannelWorkspaceStatus;
+export type DirectWorkspaceBinding = ChannelWorkspaceBinding;
+export type DirectWorkspaceSnapshot = Omit<ChannelWorkspaceSnapshot, "boundPath">;
+
+export interface DirectWorkspaceResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly threadId: string;
+  readonly binding: DirectWorkspaceBinding;
+  readonly snapshot: DirectWorkspaceSnapshot;
+}
+
+export interface DirectWorkspaceCreateWorktreeRequest {
+  readonly baseBranch?: string;
+}
+
+export interface DirectWorkspaceHandoffRequest {
+  readonly mode: DirectWorkspaceMode;
+  readonly executionPath?: string;
+}
+
+export type DirectWorkspaceMutationResponse = DirectWorkspaceResponse;
+
 export interface TeammateDirectThread {
   readonly id: string;
   readonly workspaceId: string;
   readonly teammateId: string;
   readonly title: string;
+  readonly workspaceBinding?: DirectWorkspaceBinding;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -235,6 +268,8 @@ export interface TeammateDirectMessage {
   readonly authorId?: string;
   readonly body: string;
   readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly status: TeammateDirectMessageStatus;
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
@@ -246,8 +281,47 @@ export interface TeammateDirectMessage {
 export interface CreateTeammateDirectMessageRequest {
   readonly body: string;
   readonly attachmentIds?: readonly string[];
+  readonly linkPreviewIds?: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly requestAiReply?: boolean;
   readonly providerPresetId?: string;
+}
+
+export interface TeammateDirectLinkPreview {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly threadId: string;
+  readonly messageId?: string;
+  readonly url: string;
+  readonly normalizedUrl: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly imageUrl?: string;
+  readonly siteName?: string;
+  readonly status: ChannelLinkPreviewStatus;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateTeammateDirectLinkPreviewRequest {
+  readonly url: string;
+  readonly messageId?: string;
+}
+
+export interface TeammateDirectLinkPreviewListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly thread: TeammateDirectThread;
+  readonly linkPreviews: readonly TeammateDirectLinkPreview[];
+}
+
+export interface TeammateDirectLinkPreviewMutationResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly thread: TeammateDirectThread;
+  readonly linkPreview: TeammateDirectLinkPreview;
 }
 
 export type TeammateDirectReplyInterventionMode = "queue_followup" | "interrupt_redirect";
@@ -263,6 +337,8 @@ export type TeammateDirectReplyInterventionStatus =
 export interface TeammateDirectReplyInterventionMessagePayload {
   readonly body: string;
   readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
 }
 
 export interface TeammateDirectReplyIntervention {

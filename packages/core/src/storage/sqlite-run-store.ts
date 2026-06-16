@@ -69,6 +69,7 @@ import {
   createWorkflowHandoffIntentId,
   createWorkflowSelectorDecisionId,
   createRetentionTombstoneId,
+  createTeammateDirectLinkPreviewId,
   createTeammateDirectMessageId,
   createTeammateDirectReplyInterventionId,
   createTeammateDirectThreadId,
@@ -165,10 +166,12 @@ import {
   type CreateChannelWorkflowStepInput,
   type CreateWorkflowHandoffIntentInput,
   type CreateWorkflowSelectorDecisionInput,
+  type CreateTeammateDirectLinkPreviewInput,
   type CreateTeammateDirectMessageInput,
   type CreateTeammateDirectReplyInterventionInput,
   type CreateTeammatePrivateAttachmentInput,
   type CreateTaskInput,
+  type DirectWorkspaceBinding,
   type HardDeleteAiTeammateInput,
   type HardDeleteAiTeammateResult,
   type ListAiTeammatesOptions,
@@ -187,6 +190,7 @@ import {
   type ListChannelWorkflowStepsOptions,
   type ListWorkflowHandoffIntentsOptions,
   type ListWorkflowSelectorDecisionsOptions,
+  type ListTeammateDirectLinkPreviewsOptions,
   type ListTeammateDirectMessagesOptions,
   type ListTeammateDirectReplyInterventionsOptions,
   type ListTeammatePrivateAttachmentsOptions,
@@ -200,6 +204,7 @@ import {
   type TaskStatus,
   type TaskUpdateInput,
   type TeammateChannelMembership,
+  type TeammateDirectLinkPreview,
   type TeammateDirectMessage,
   type TeammateDirectMessageAuthorType,
   type TeammateDirectMessageStatus,
@@ -211,6 +216,7 @@ import {
   type TeammateMemoryScope,
   type TeammateMemoryScopeKind,
   type TeammatePrivateAttachment,
+  type UpdateTeammateDirectLinkPreviewInput,
   type TeammatePrivateAttachmentScope,
   type TeammateSkillBinding,
   type TeammateSkillBindingSource,
@@ -659,6 +665,8 @@ const CHANNEL_EXECUTION_PROPOSAL_SHAPING_MIGRATION_VERSION = 64;
 const CHANNEL_EXECUTION_PROPOSAL_SHAPING_MIGRATION_NAME = "add_channel_execution_proposal_shaping";
 const AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_VERSION = 65;
 const AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_NAME = "add_automation_codex_style_fields";
+const TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_VERSION = 66;
+const TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_NAME = "add_teammate_direct_workspace_and_payload";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -4773,13 +4781,30 @@ export class SqliteRunStore implements RunStore {
           workspace_id,
           teammate_id,
           title,
+          workspace_binding_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
-      .run(thread.id, thread.workspaceId, thread.teammateId, thread.title, thread.createdAt, thread.updatedAt);
+      .run(thread.id, thread.workspaceId, thread.teammateId, thread.title, null, thread.createdAt, thread.updatedAt);
 
     return thread;
+  }
+
+  updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined {
+    const existing = this.database.prepare(teammateDirectThreadSelectSql("WHERE id = ?")).get(threadId);
+    if (!existing) {
+      return undefined;
+    }
+    this.database
+      .prepare(`
+        UPDATE teammate_direct_threads
+        SET workspace_binding_json = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(workspaceBinding ? stringifyJson(workspaceBinding) : null, now, threadId);
+    const updated = this.database.prepare(teammateDirectThreadSelectSql("WHERE id = ?")).get(threadId);
+    return updated ? mapTeammateDirectThread(updated) : undefined;
   }
 
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[] {
@@ -4812,6 +4837,8 @@ export class SqliteRunStore implements RunStore {
       throw new Error(`Direct thread does not belong to teammate: ${input.threadId}`);
     }
     const attachmentIds = normalizeStringList(input.attachmentIds ?? []);
+    const linkPreviewIds = normalizeStringList(input.linkPreviewIds ?? []);
+    const fileRefs = normalizeChannelMessageFileRefs(input.fileRefs);
     if (attachmentIds.length > 10) {
       throw new Error("A teammate direct message can reference at most 10 attachments");
     }
@@ -4819,6 +4846,12 @@ export class SqliteRunStore implements RunStore {
       const attachment = this.getTeammatePrivateAttachment(attachmentId);
       if (!attachment || attachment.teammateId !== input.teammateId || attachment.threadId !== input.threadId || attachment.scope !== "teammate_direct_thread") {
         throw new Error(`Private attachment does not belong to teammate direct thread: ${attachmentId}`);
+      }
+    }
+    for (const linkPreviewId of linkPreviewIds) {
+      const linkPreview = this.getTeammateDirectLinkPreview(linkPreviewId);
+      if (!linkPreview || linkPreview.teammateId !== input.teammateId || linkPreview.threadId !== input.threadId) {
+        throw new Error(`Link preview does not belong to teammate direct thread: ${linkPreviewId}`);
       }
     }
 
@@ -4831,6 +4864,8 @@ export class SqliteRunStore implements RunStore {
       authorId: input.authorId,
       body: input.body,
       attachmentIds,
+      linkPreviewIds,
+      fileRefs,
       status: input.status ?? "ready",
       errorMessage: input.errorMessage,
       linkedTaskId: input.linkedTaskId,
@@ -4850,13 +4885,15 @@ export class SqliteRunStore implements RunStore {
           author_id,
           body,
           attachment_ids_json,
+          link_preview_ids_json,
+          file_refs_json,
           status,
           error_message,
           linked_task_id,
           linked_run_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         message.id,
@@ -4867,6 +4904,8 @@ export class SqliteRunStore implements RunStore {
         message.authorId ?? null,
         message.body,
         stringifyJson(message.attachmentIds),
+        stringifyJson(message.linkPreviewIds),
+        stringifyJson(message.fileRefs),
         message.status,
         message.errorMessage ?? null,
         message.linkedTaskId ?? null,
@@ -4920,6 +4959,136 @@ export class SqliteRunStore implements RunStore {
     return updated ? mapTeammateDirectMessage(updated) : undefined;
   }
 
+  createTeammateDirectLinkPreview(input: CreateTeammateDirectLinkPreviewInput, now: string): TeammateDirectLinkPreview {
+    const teammate = this.getAiTeammate(input.teammateId);
+    if (!teammate) {
+      throw new Error(`AI teammate not found: ${input.teammateId}`);
+    }
+    const thread = this.getOrCreateTeammateDirectThread(input.teammateId, now);
+    if (thread.id !== input.threadId) {
+      throw new Error(`Direct thread does not belong to teammate: ${input.threadId}`);
+    }
+    if (input.messageId) {
+      const message = this.getTeammateDirectMessage(input.messageId);
+      if (!message || message.teammateId !== input.teammateId || message.threadId !== input.threadId) {
+        throw new Error(`Direct message does not belong to teammate direct thread: ${input.messageId}`);
+      }
+    }
+    const preview: TeammateDirectLinkPreview = {
+      id: createTeammateDirectLinkPreviewId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      teammateId: input.teammateId,
+      threadId: input.threadId,
+      messageId: input.messageId,
+      url: input.url,
+      normalizedUrl: input.normalizedUrl,
+      title: input.title,
+      description: input.description,
+      imageUrl: input.imageUrl,
+      siteName: input.siteName,
+      status: input.status,
+      errorMessage: input.errorMessage,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO teammate_direct_link_previews (
+          id,
+          workspace_id,
+          teammate_id,
+          thread_id,
+          message_id,
+          url,
+          normalized_url,
+          title,
+          description,
+          image_url,
+          site_name,
+          status,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        preview.id,
+        preview.workspaceId,
+        preview.teammateId,
+        preview.threadId,
+        preview.messageId ?? null,
+        preview.url,
+        preview.normalizedUrl,
+        preview.title ?? null,
+        preview.description ?? null,
+        preview.imageUrl ?? null,
+        preview.siteName ?? null,
+        preview.status,
+        preview.errorMessage ?? null,
+        preview.createdAt,
+        preview.updatedAt,
+      );
+    const created = this.getTeammateDirectLinkPreview(preview.id);
+    if (!created) {
+      throw new Error(`Failed to create teammate direct link preview: ${preview.id}`);
+    }
+    return created;
+  }
+
+  getTeammateDirectLinkPreview(id: string): TeammateDirectLinkPreview | undefined {
+    const row = this.database.prepare(teammateDirectLinkPreviewSelectSql("WHERE id = ?")).get(id);
+    return row ? mapTeammateDirectLinkPreview(row) : undefined;
+  }
+
+  listTeammateDirectLinkPreviews(options: ListTeammateDirectLinkPreviewsOptions): TeammateDirectLinkPreview[] {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    return this.database
+      .prepare(`${teammateDirectLinkPreviewSelectSql("WHERE workspace_id = ? AND teammate_id = ? AND thread_id = ?")} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(DEFAULT_WORKSPACE_ID, options.teammateId, options.threadId, limit)
+      .map(mapTeammateDirectLinkPreview);
+  }
+
+  updateTeammateDirectLinkPreview(id: string, input: UpdateTeammateDirectLinkPreviewInput, now: string): TeammateDirectLinkPreview | undefined {
+    const existing = this.getTeammateDirectLinkPreview(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: TeammateDirectLinkPreview = {
+      ...existing,
+      title: nullableUpdate(input.title, existing.title),
+      description: nullableUpdate(input.description, existing.description),
+      imageUrl: nullableUpdate(input.imageUrl, existing.imageUrl),
+      siteName: nullableUpdate(input.siteName, existing.siteName),
+      status: input.status ?? existing.status,
+      errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE teammate_direct_link_previews
+        SET
+          title = ?,
+          description = ?,
+          image_url = ?,
+          site_name = ?,
+          status = ?,
+          error_message = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.title ?? null,
+        next.description ?? null,
+        next.imageUrl ?? null,
+        next.siteName ?? null,
+        next.status,
+        next.errorMessage ?? null,
+        next.updatedAt,
+        id,
+      );
+    return this.getTeammateDirectLinkPreview(id);
+  }
+
   createTeammateDirectReplyIntervention(input: CreateTeammateDirectReplyInterventionInput, now: string): TeammateDirectReplyIntervention {
     const teammate = this.getAiTeammate(input.teammateId);
     if (!teammate) {
@@ -4948,6 +5117,12 @@ export class SqliteRunStore implements RunStore {
         const attachment = this.getTeammatePrivateAttachment(attachmentId);
         if (!attachment || attachment.teammateId !== input.teammateId || attachment.threadId !== input.threadId || attachment.scope !== "teammate_direct_thread") {
           throw new Error(`Private attachment does not belong to teammate direct thread: ${attachmentId}`);
+        }
+      }
+      for (const linkPreviewId of messagePayload.linkPreviewIds) {
+        const linkPreview = this.getTeammateDirectLinkPreview(linkPreviewId);
+        if (!linkPreview || linkPreview.teammateId !== input.teammateId || linkPreview.threadId !== input.threadId) {
+          throw new Error(`Link preview does not belong to teammate direct thread: ${linkPreviewId}`);
         }
       }
     }
@@ -11449,6 +11624,7 @@ export class SqliteRunStore implements RunStore {
           workspace_id TEXT NOT NULL,
           teammate_id TEXT NOT NULL,
           title TEXT NOT NULL,
+          workspace_binding_json TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -11466,6 +11642,9 @@ export class SqliteRunStore implements RunStore {
           author_type TEXT NOT NULL,
           author_id TEXT,
           body TEXT NOT NULL,
+          attachment_ids_json TEXT NOT NULL DEFAULT '[]',
+          link_preview_ids_json TEXT NOT NULL DEFAULT '[]',
+          file_refs_json TEXT NOT NULL DEFAULT '[]',
           status TEXT NOT NULL,
           error_message TEXT,
           linked_task_id TEXT,
@@ -13593,6 +13772,57 @@ export class SqliteRunStore implements RunStore {
       }
     }
 
+    const hasTeammateDirectWorkspaceAndPayloadMigration = this.hasMigration(TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_VERSION);
+    if (
+      !hasTeammateDirectWorkspaceAndPayloadMigration ||
+      (this.hasTable("teammate_direct_threads") && !this.hasColumn("teammate_direct_threads", "workspace_binding_json")) ||
+      (this.hasTable("teammate_direct_messages") && !this.hasColumn("teammate_direct_messages", "link_preview_ids_json")) ||
+      (this.hasTable("teammate_direct_messages") && !this.hasColumn("teammate_direct_messages", "file_refs_json")) ||
+      !this.hasTable("teammate_direct_link_previews")
+    ) {
+      if (this.hasTable("teammate_direct_threads") && !this.hasColumn("teammate_direct_threads", "workspace_binding_json")) {
+        this.database.exec("ALTER TABLE teammate_direct_threads ADD COLUMN workspace_binding_json TEXT;");
+      }
+      if (this.hasTable("teammate_direct_messages") && !this.hasColumn("teammate_direct_messages", "link_preview_ids_json")) {
+        this.database.exec("ALTER TABLE teammate_direct_messages ADD COLUMN link_preview_ids_json TEXT NOT NULL DEFAULT '[]';");
+      }
+      if (this.hasTable("teammate_direct_messages") && !this.hasColumn("teammate_direct_messages", "file_refs_json")) {
+        this.database.exec("ALTER TABLE teammate_direct_messages ADD COLUMN file_refs_json TEXT NOT NULL DEFAULT '[]';");
+      }
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS teammate_direct_link_previews (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          teammate_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          message_id TEXT,
+          url TEXT NOT NULL,
+          normalized_url TEXT NOT NULL,
+          title TEXT,
+          description TEXT,
+          image_url TEXT,
+          site_name TEXT,
+          status TEXT NOT NULL,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE,
+          FOREIGN KEY(thread_id) REFERENCES teammate_direct_threads(id) ON DELETE CASCADE,
+          FOREIGN KEY(message_id) REFERENCES teammate_direct_messages(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_direct_link_previews_thread_created
+        ON teammate_direct_link_previews(teammate_id, thread_id, created_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_teammate_direct_link_previews_thread_url
+        ON teammate_direct_link_previews(teammate_id, thread_id, normalized_url);
+      `);
+      if (!hasTeammateDirectWorkspaceAndPayloadMigration) {
+        this.recordMigration(TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_VERSION, TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_NAME);
+      }
+    }
+
     const hasChannelInputMaterializationsMigration = this.hasMigration(CHANNEL_INPUT_MATERIALIZATIONS_MIGRATION_VERSION);
     if (
       !hasChannelInputMaterializationsMigration ||
@@ -15373,14 +15603,15 @@ function mapMemoryReviewDecision(row: Record<string, SQLOutputValue>): MemoryRev
 }
 
 function mapTeammateDirectThread(row: Record<string, SQLOutputValue>): TeammateDirectThread {
-  return {
+  return omitUndefined({
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
     teammateId: readString(row, "teammate_id"),
     title: readString(row, "title"),
+    workspaceBinding: parseNullableDirectWorkspaceBinding(readNullableString(row, "workspace_binding_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
-  };
+  });
 }
 
 function mapTeammateDirectMessage(row: Record<string, SQLOutputValue>): TeammateDirectMessage {
@@ -15393,10 +15624,32 @@ function mapTeammateDirectMessage(row: Record<string, SQLOutputValue>): Teammate
     authorId: readNullableString(row, "author_id"),
     body: readString(row, "body"),
     attachmentIds: parseJsonStringArray(readString(row, "attachment_ids_json")),
+    linkPreviewIds: parseJsonStringArray(readString(row, "link_preview_ids_json")),
+    fileRefs: parseChannelMessageFileRefs(readString(row, "file_refs_json")),
     status: readString(row, "status") as TeammateDirectMessageStatus,
     errorMessage: readNullableString(row, "error_message"),
     linkedTaskId: readNullableString(row, "linked_task_id"),
     linkedRunId: readNullableString(row, "linked_run_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapTeammateDirectLinkPreview(row: Record<string, SQLOutputValue>): TeammateDirectLinkPreview {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    teammateId: readString(row, "teammate_id"),
+    threadId: readString(row, "thread_id"),
+    messageId: readNullableString(row, "message_id"),
+    url: readString(row, "url"),
+    normalizedUrl: readString(row, "normalized_url"),
+    title: readNullableString(row, "title"),
+    description: readNullableString(row, "description"),
+    imageUrl: readNullableString(row, "image_url"),
+    siteName: readNullableString(row, "site_name"),
+    status: readString(row, "status") as ChannelLinkPreviewStatus,
+    errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -16418,6 +16671,14 @@ function parseNullableChannelWorkspaceBinding(value: string | undefined): Channe
   return normalizeChannelWorkspaceBinding(parsed);
 }
 
+function parseNullableDirectWorkspaceBinding(value: string | undefined): DirectWorkspaceBinding | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = parseJsonObject(value);
+  return normalizeChannelWorkspaceBinding(parsed) as DirectWorkspaceBinding | undefined;
+}
+
 function normalizeChannelWorkspaceBinding(value: Record<string, unknown>): ChannelWorkspaceBinding | undefined {
   const mode = value.mode;
   if (mode !== "local" && mode !== "managed_worktree" && mode !== "external_path") {
@@ -16964,6 +17225,7 @@ function teammateDirectThreadSelectSql(whereClause: string): string {
       workspace_id,
       teammate_id,
       title,
+      workspace_binding_json,
       created_at,
       updated_at
     FROM teammate_direct_threads
@@ -16982,6 +17244,8 @@ function teammateDirectMessageSelectSql(whereClause: string): string {
       author_id,
       body,
       attachment_ids_json,
+      link_preview_ids_json,
+      file_refs_json,
       status,
       error_message,
       linked_task_id,
@@ -16989,6 +17253,29 @@ function teammateDirectMessageSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM teammate_direct_messages
+    ${whereClause}
+  `;
+}
+
+function teammateDirectLinkPreviewSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      teammate_id,
+      thread_id,
+      message_id,
+      url,
+      normalized_url,
+      title,
+      description,
+      image_url,
+      site_name,
+      status,
+      error_message,
+      created_at,
+      updated_at
+    FROM teammate_direct_link_previews
     ${whereClause}
   `;
 }
@@ -18587,9 +18874,12 @@ function normalizeRunInterventionWorkspaceFilePayloads(
 function normalizeTeammateDirectReplyInterventionMessagePayload(
   payload: TeammateDirectReplyInterventionMessagePayload,
 ): TeammateDirectReplyInterventionMessagePayload {
+  const fileRefs = normalizeChannelMessageFileRefs(payload.fileRefs);
   return {
     body: payload.body.trim(),
-    attachmentIds: normalizeStringList(payload.attachmentIds),
+    attachmentIds: normalizeStringList(payload.attachmentIds ?? []),
+    linkPreviewIds: normalizeStringList(payload.linkPreviewIds ?? []),
+    ...(fileRefs.length > 0 ? { fileRefs } : {}),
   };
 }
 
@@ -18739,6 +19029,7 @@ function parseTeammateDirectReplyInterventionMessagePayload(
     return {
       body: instruction,
       attachmentIds: [],
+      linkPreviewIds: [],
     };
   }
   const parsed = parseJson(value);
@@ -18747,12 +19038,16 @@ function parseTeammateDirectReplyInterventionMessagePayload(
   }
   const body = typeof parsed.body === "string" ? parsed.body : instruction;
   const attachmentIds = Array.isArray(parsed.attachmentIds) ? parsed.attachmentIds : [];
-  if (attachmentIds.some((item) => typeof item !== "string")) {
-    throw new Error("Expected teammate direct reply intervention attachment ids from SQLite");
+  const linkPreviewIds = Array.isArray(parsed.linkPreviewIds) ? parsed.linkPreviewIds : [];
+  if (attachmentIds.some((item) => typeof item !== "string") || linkPreviewIds.some((item) => typeof item !== "string")) {
+    throw new Error("Expected teammate direct reply intervention payload ids from SQLite");
   }
+  const fileRefs = Array.isArray(parsed.fileRefs) ? parseChannelMessageFileRefs(stringifyJson(parsed.fileRefs)) : [];
   return normalizeTeammateDirectReplyInterventionMessagePayload({
     body,
     attachmentIds: attachmentIds as string[],
+    linkPreviewIds: linkPreviewIds as string[],
+    fileRefs,
   });
 }
 

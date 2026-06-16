@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defaultProviderTemplates, executeExternalWorkAction } from "@ling-stack/core";
-import type { RunSession, RunStore } from "@ling-stack/core";
+import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import {
@@ -172,8 +172,10 @@ import {
   handleTeammateDirectReplyCancel,
   handleTeammateDirectRuntime,
 } from "../features/teammates/direct-controls.js";
+import { handleTeammateDirectLinkPreviews } from "../features/teammates/direct-link-previews.js";
 import { handleTeammateDirectMessagesCollection, handleTeammateDirectMessageStream, handleTeammateDirectThread } from "../features/teammates/direct-messages.js";
 import { createAiTeammateDirectReply } from "../features/teammates/direct-replies.js";
+import { ensureDirectWorkspaceReady, handleTeammateDirectWorkspace } from "../features/teammates/direct-workspace.js";
 import { handleTeammateAvatar, handleTeammateDirectAttachments, handleTeammateHardDelete } from "../features/teammates/private-attachments.js";
 import {
   handleTeammateActivity,
@@ -1535,8 +1537,16 @@ export async function routeRequest(
       await handleTeammateDirectRuntime(request, response, config, storeRegistry, teammateRoute.teammateId, directReplyControl);
       return;
     }
+    if (teammateRoute.action === "direct-workspace") {
+      await handleTeammateDirectWorkspace(request, response, config, storeRegistry, teammateRoute.teammateId, teammateRoute.workspaceAction);
+      return;
+    }
     if (teammateRoute.action === "direct-interventions") {
       await handleTeammateDirectInterventions(request, response, config, storeRegistry, teammateRoute.teammateId, directReplyControl);
+      return;
+    }
+    if (teammateRoute.action === "direct-link-previews") {
+      await handleTeammateDirectLinkPreviews(request, response, config, storeRegistry, teammateRoute.teammateId);
       return;
     }
     if (teammateRoute.action === "direct-messages") {
@@ -1548,6 +1558,10 @@ export async function routeRequest(
         teammateRoute.teammateId,
         async ({ store, teammate, thread, sourceMessage, providerPresetId, onWorkUnitStarted }) => {
           let sourceWorkUnitId: string | undefined;
+          const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
+          if (!workspace.ok) {
+            return createBlockedTeammateDirectReply(store, teammate, thread, workspace.message);
+          }
           await providerStartupRefresh.refreshBeforeRun({
             cwd: store.paths.cwd,
             store,
@@ -1560,6 +1574,7 @@ export async function routeRequest(
             thread,
             sourceMessage,
             providerPresetId,
+            workspace: workspace.workspace,
             runtimeSupervisor,
             secretResolver,
             onWorkUnitStarted: (handle) => {
@@ -1594,6 +1609,12 @@ export async function routeRequest(
         teammateRoute.teammateId,
         async ({ store, teammate, thread, sourceMessage, providerPresetId, signal, onWorkUnitStarted, stream }) => {
           let sourceWorkUnitId: string | undefined;
+          const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
+          if (!workspace.ok) {
+            const blocked = createBlockedTeammateDirectReply(store, teammate, thread, workspace.message);
+            stream?.onBlocked(blocked);
+            return blocked;
+          }
           await providerStartupRefresh.refreshBeforeRun({
             cwd: store.paths.cwd,
             store,
@@ -1606,6 +1627,7 @@ export async function routeRequest(
             thread,
             sourceMessage,
             providerPresetId,
+            workspace: workspace.workspace,
             runtimeSupervisor,
             secretResolver,
             signal,
@@ -1784,6 +1806,26 @@ function readRunWorkspaceCwd(run: RunSession): string | undefined {
   }
   const workspaceCwd = (snapshot as { readonly workspaceCwd?: unknown }).workspaceCwd;
   return typeof workspaceCwd === "string" && workspaceCwd.trim() ? workspaceCwd : undefined;
+}
+
+function createBlockedTeammateDirectReply(
+  store: RunStore,
+  teammate: AiTeammate,
+  thread: TeammateDirectThread,
+  reason: string,
+): TeammateDirectMessage {
+  return store.createTeammateDirectMessage(
+    {
+      threadId: thread.id,
+      teammateId: teammate.id,
+      authorType: "ai-teammate",
+      authorId: teammate.id,
+      body: `私聊工作区不可用：${reason}`,
+      status: "blocked",
+      errorMessage: reason,
+    },
+    new Date().toISOString(),
+  );
 }
 
 async function startDetachedRunAndResolveReady(

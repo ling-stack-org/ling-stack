@@ -136,7 +136,7 @@ async function createOrFetchChannelLinkPreview(
   );
 }
 
-async function fetchLinkPreviewMetadata(url: string): Promise<{
+export async function fetchLinkPreviewMetadata(url: string): Promise<{
   readonly title?: string | null;
   readonly description?: string | null;
   readonly imageUrl?: string | null;
@@ -267,7 +267,7 @@ function decodeHtmlEntities(value: string): string {
     .trim();
 }
 
-function normalizePreviewUrl(rawUrl: string): string {
+export function normalizePreviewUrl(rawUrl: string): string {
   const parsed = new URL(rawUrl.trim());
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Only http and https links can be previewed");

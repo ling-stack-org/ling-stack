@@ -16,7 +16,7 @@ import { officeExtractorV1 } from "../dist/features/channels/materialization/ext
 import { pdfExtractorV1 } from "../dist/features/channels/materialization/extractors/pdf.js";
 import { attachmentMaterializationFingerprint, linkPreviewMaterializationFingerprint } from "../dist/features/channels/materialization/fingerprints.js";
 import { materializeInlineChannelInputs } from "../dist/features/channels/materialization/inline.js";
-import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+import { ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -5698,11 +5698,37 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
     const teammateTasks = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/tasks?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(teammateTasks.tasks.map((item) => item.id), [task.id]);
 
+    const initialDirectWorkspace = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(initialDirectWorkspace.binding.status, "not_created");
+    const createdDirectWorkspace = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(createdDirectWorkspace.binding.mode, "managed_worktree");
+    assert.equal(createdDirectWorkspace.binding.status, "ready");
+    assert.match(createdDirectWorkspace.snapshot.executionCwd, /\.ling-stack\/worktrees\/teammates\//);
+    await access(createdDirectWorkspace.snapshot.executionCwd);
+
+    const linkPreview = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-link-previews?cwd=${encodeURIComponent(cwd)}`, {
+      url: "http://localhost:12345/private-note",
+    });
+    assert.equal(linkPreview.linkPreview.teammateId, teammateId);
+    assert.equal(linkPreview.linkPreview.status, "blocked");
+    const listedLinkPreviews = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-link-previews?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(listedLinkPreviews.linkPreviews.map((item) => item.id), [linkPreview.linkPreview.id]);
+
     const message = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "Please review this private workspace.",
+      linkPreviewIds: [linkPreview.linkPreview.id],
+      fileRefs: [{
+        path: "README.md",
+        label: "README.md",
+        rootRelation: "inside_workspace",
+        kind: "file",
+        materializationStatus: "metadata_only",
+      }],
       requestAiReply: true,
     });
     assert.equal(message.message.status, "ready");
+    assert.deepEqual(message.message.linkPreviewIds, [linkPreview.linkPreview.id]);
+    assert.equal(message.message.fileRefs[0].path, "README.md");
     assert.equal(message.aiReply.status, "blocked");
     assert.match(message.aiReply.errorMessage, /provider preset/i);
 
@@ -5732,6 +5758,7 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
 
 test("AI teammate private reply waits for startup provider refresh instead of using stale timeout", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-provider-startup-refresh-"));
+  await ensureGitRepo(cwd);
   const relay = await startMockOpenAICompatibleServer();
   const runner = new RecordingRunner();
   let daemon = await startDaemonForTest(runner);
@@ -6342,6 +6369,7 @@ test("skill import draft publishes registry skills and teammate bindings use eff
 
 test("teammate direct message stream emits ready delta and done events", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-stream-"));
+  await ensureGitRepo(cwd);
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -6369,8 +6397,34 @@ test("teammate direct message stream emits ready delta and done events", async (
   }
 });
 
+test("teammate direct message rejects workspace file refs outside private workspace", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-file-ref-boundary-"));
+  await ensureGitRepo(cwd);
+  const daemon = await startDaemonForTest();
+  try {
+    const teammateId = "teammate_builtin_designer";
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Read this file.",
+        fileRefs: [{ path: resolve(tmpdir(), "outside-private-chat.txt"), label: "outside-private-chat.txt", source: "composer" }],
+      }),
+    });
+    assert.equal(response.status, 400);
+    const error = await response.json();
+    assert.match(error.message, /文件引用不在私聊工作区范围内/);
+    const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.messages.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("teammate direct reply materializes current text and docx attachments", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachment-materialization-"));
+  await ensureGitRepo(cwd);
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -6473,6 +6527,7 @@ test("teammate direct reply uses private chat memory isolation", async () => {
 
 test("teammate direct prompt anchors latest attachment message instead of old guidance context", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachment-anchor-"));
+  await ensureGitRepo(cwd);
   const runner = new RecordingRunner();
   const stores = [];
   const daemon = await startDaemonForTest(runner, {
@@ -6544,6 +6599,7 @@ test("teammate direct prompt anchors latest attachment message instead of old gu
 
 test("teammate direct reply cancel aborts active reply and marks pending message cancelled", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-cancel-"));
+  await ensureGitRepo(cwd);
   const runner = new AbortableDelayedRunner();
   const daemon = await startDaemonForTest(runner);
   const streamController = new AbortController();
@@ -6591,6 +6647,7 @@ test("teammate direct reply cancel aborts active reply and marks pending message
 
 test("teammate direct queued guidance can promote to immediate continuation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-promote-guidance-"));
+  await ensureGitRepo(cwd);
   const runner = new AbortableDelayedRunner();
   const daemon = await startDaemonForTest(runner);
   const streamController = new AbortController();
@@ -6613,6 +6670,23 @@ test("teammate direct queued guidance can promote to immediate continuation", as
 
     const runtime = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-runtime?cwd=${encodeURIComponent(cwd)}`);
     assert.ok(runtime.activeReply?.workUnitId);
+    const rejectedGuidance = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "queue_followup",
+        instruction: "Use outside file.",
+        messagePayload: {
+          body: "Use outside file.",
+          attachmentIds: [],
+          fileRefs: [{ path: resolve(tmpdir(), "outside-guidance.txt"), label: "outside-guidance.txt", source: "composer" }],
+        },
+        idempotencyKey: "test-reject-outside-guidance-file-ref",
+      }),
+    });
+    assert.equal(rejectedGuidance.status, 400);
+    assert.match((await rejectedGuidance.json()).message, /文件引用不在私聊工作区范围内/);
+
     const queued = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`, {
       mode: "queue_followup",
       instruction: "Use this queued guidance immediately.",
@@ -6626,6 +6700,7 @@ test("teammate direct queued guidance can promote to immediate continuation", as
     assert.deepEqual(queued.intervention.messagePayload, {
       body: "Use this queued guidance immediately.",
       attachmentIds: [],
+      linkPreviewIds: [],
     });
 
     const promoted = await postJson(`${daemon.url}/teammate-direct-interventions/${encodeURIComponent(queued.intervention.id)}/promote?cwd=${encodeURIComponent(cwd)}`, {});
@@ -6656,6 +6731,7 @@ test("teammate direct queued guidance can promote to immediate continuation", as
 
 test("teammate direct queued guidance starts automatically after source reply completes", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-queued-guidance-"));
+  await ensureGitRepo(cwd);
   const runner = new AbortableDelayedRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -6704,6 +6780,7 @@ test("teammate direct queued guidance starts automatically after source reply co
 
 test("teammate direct queued guidance drains multiple queued items in thread FIFO order", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-queued-guidance-fifo-"));
+  await ensureGitRepo(cwd);
   const runner = new AbortableDelayedRunner();
   const daemon = await startDaemonForTest(runner);
   try {

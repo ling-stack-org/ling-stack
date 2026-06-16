@@ -1042,7 +1042,7 @@ function readOptionalChannelMentions(record: Record<string, unknown>, key: strin
   });
 }
 
-function readOptionalChannelMessageFileRefs(record: Record<string, unknown>, key: string): ChannelMessageFileRef[] | undefined {
+export function readOptionalChannelMessageFileRefs(record: Record<string, unknown>, key: string): ChannelMessageFileRef[] | undefined {
   const value = record[key];
   if (value === undefined) {
     return undefined;

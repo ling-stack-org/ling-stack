@@ -12,6 +12,7 @@ import {
   Copy,
   Hash,
   Image,
+  Link2,
   Loader2,
   MessageSquare,
   Paperclip,
@@ -37,18 +38,21 @@ import {
   cancelTeammateDirectReply,
   createSkillImportDraft,
   createTask,
+  createTeammateDirectLinkPreview,
   createTeammateDirectIntervention,
   createTeammatePersonaDraft,
   deleteAttachment,
   deleteTeammateAvatar,
   getMemoryHealth,
   getTeammateDirectRuntime,
+  getTeammateDirectWorkspace,
   getMemoryReviewPolicy,
   listMemoryObjects,
   listMemoryPromotionInbox,
   listSkills,
   listTeammateActivity,
   listTeammateChannels,
+  listTeammateDirectLinkPreviews,
   listTeammateDirectMessages,
   listTeammatePrivateAttachments,
   listUsedMemoryEvents,
@@ -110,9 +114,12 @@ import type {
   TeammatePersonaDraft,
   TeammateActivityItem,
   TeammateChannelMembership,
+  TeammateDirectLinkPreview,
   TeammateDirectMessage,
   TeammateDirectReplyIntervention,
   TeammateDirectRuntimeResponse,
+  DirectWorkspaceResponse,
+  ChannelMessageFileRef,
   TeammateDirectThread,
   TeammateMcpBinding,
   TeammateMemoryScope,
@@ -213,6 +220,7 @@ export function TeammateWorkspace({
   const [thread, setThread] = useState<TeammateDirectThread | undefined>();
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
+  const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const [directReplyOptimisticActive, setDirectReplyOptimisticActive] = useState(false);
   const [directGuidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "stop" | "">("");
   const [directGuidanceCancelingId, setDirectGuidanceCancelingId] = useState("");
@@ -221,6 +229,8 @@ export function TeammateWorkspace({
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
   const [pendingAttachmentIds, setPendingAttachmentIds] = useState<readonly string[]>([]);
+  const [directLinkPreviews, setDirectLinkPreviews] = useState<readonly TeammateDirectLinkPreview[]>([]);
+  const [pendingDirectLinkPreviewIds, setPendingDirectLinkPreviewIds] = useState<readonly string[]>([]);
   const [memberships, setMemberships] = useState<readonly TeammateChannelMembership[]>([]);
   const [skillRegistryEntries, setSkillRegistryEntries] = useState<readonly SkillRegistryEntry[]>([]);
   const [skillBindings, setSkillBindings] = useState<readonly TeammateSkillBinding[]>([]);
@@ -435,6 +445,11 @@ export function TeammateWorkspace({
     () => [...messages].reverse().find((message) => message.authorType === "ai-teammate"),
     [messages],
   );
+  const directLinkPreviewById = useMemo(() => new Map(directLinkPreviews.map((preview) => [preview.id, preview])), [directLinkPreviews]);
+  const pendingDirectLinkPreviews = useMemo(
+    () => pendingDirectLinkPreviewIds.map((id) => directLinkPreviewById.get(id)).filter((preview): preview is TeammateDirectLinkPreview => Boolean(preview)),
+    [directLinkPreviewById, pendingDirectLinkPreviewIds],
+  );
   const providerReady = Boolean(provider && providerPreflightReady(provider));
   const providerRecovered = providerReady && Boolean(provider);
   const settingsProviderReady = Boolean(settingsProvider && providerPreflightReady(settingsProvider));
@@ -444,15 +459,22 @@ export function TeammateWorkspace({
   const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || directReplyOptimisticActive || openDirectInterventions.length > 0);
   const privateComposerPayload = useMemo(() => {
     const serializedInput = serializeComposerInputParts(composerInputParts);
+    const fileRefs = directComposerFileRefs(composerFileReferenceParts);
     return {
       body: serializedInput.body.trim(),
       attachmentIds: [...serializedInput.attachmentIds],
+      linkPreviewIds: [...pendingDirectLinkPreviewIds],
+      fileRefs,
     };
-  }, [composerInputParts]);
-  const privateComposerHasGuidancePayload = privateComposerPayload.body.length > 0 || privateComposerPayload.attachmentIds.length > 0;
+  }, [composerFileReferenceParts, composerInputParts, pendingDirectLinkPreviewIds]);
+  const privateComposerHasGuidancePayload =
+    privateComposerPayload.body.length > 0 ||
+    privateComposerPayload.attachmentIds.length > 0 ||
+    privateComposerPayload.linkPreviewIds.length > 0 ||
+    privateComposerPayload.fileRefs.length > 0;
   const privateComposerSendDisabled = directReplyActive
     ? Boolean(directGuidanceSubmitting || uploadingAttachments)
-    : hasQueuedDirectGuidance || (!messageDraft.trim() && pendingAttachmentIds.length === 0);
+    : hasQueuedDirectGuidance || (!messageDraft.trim() && pendingAttachmentIds.length === 0 && pendingDirectLinkPreviewIds.length === 0 && composerFileReferenceParts.length === 0);
   const privateComposerSending = directReplyActive ? Boolean(directGuidanceSubmitting) : sending;
   const privateComposerSendLabel = directReplyActive
     ? privateComposerHasGuidancePayload
@@ -493,6 +515,9 @@ export function TeammateWorkspace({
     setMessageSearchOpen(false);
     setMessageSearchQuery("");
     setPendingAttachmentIds([]);
+    setPendingDirectLinkPreviewIds([]);
+    setDirectLinkPreviews([]);
+    setDirectWorkspace(undefined);
     setDirectRuntime(undefined);
     setDirectReplyOptimisticActive(false);
     setDirectGuidanceSubmitting("");
@@ -601,6 +626,8 @@ export function TeammateWorkspace({
       const [
         directResponse,
         directRuntimeResponse,
+        directWorkspaceResponse,
+        directLinkPreviewsResponse,
         privateAttachmentsResponse,
         skillRegistryResponse,
         channelResponse,
@@ -619,6 +646,8 @@ export function TeammateWorkspace({
       ] = await Promise.all([
         listTeammateDirectMessages(workspaceCwd, teammate.id),
         getTeammateDirectRuntime(workspaceCwd, teammate.id),
+        getTeammateDirectWorkspace(workspaceCwd, teammate.id),
+        listTeammateDirectLinkPreviews(workspaceCwd, teammate.id),
         listTeammatePrivateAttachments(workspaceCwd, teammate.id),
         listSkills(workspaceCwd),
         listTeammateChannels(workspaceCwd, teammate.id),
@@ -638,6 +667,8 @@ export function TeammateWorkspace({
       setThread(directResponse.thread);
       setMessages(directResponse.messages);
       setDirectRuntime(directRuntimeResponse);
+      setDirectWorkspace(directWorkspaceResponse);
+      setDirectLinkPreviews(directLinkPreviewsResponse.linkPreviews);
       setPrivateAttachments(privateAttachmentsResponse.attachments);
       setSkillRegistryEntries(skillRegistryResponse.skills);
       setMemberships(channelResponse.memberships);
@@ -666,13 +697,17 @@ export function TeammateWorkspace({
     if (!workspaceCwd) {
       return;
     }
-    const [directResponse, runtimeResponse] = await Promise.all([
+    const [directResponse, runtimeResponse, directWorkspaceResponse, linkPreviewsResponse] = await Promise.all([
       listTeammateDirectMessages(workspaceCwd, teammate.id),
       getTeammateDirectRuntime(workspaceCwd, teammate.id),
+      getTeammateDirectWorkspace(workspaceCwd, teammate.id),
+      listTeammateDirectLinkPreviews(workspaceCwd, teammate.id),
     ]);
     setThread(directResponse.thread);
     setMessages(directResponse.messages);
     setDirectRuntime(runtimeResponse);
+    setDirectWorkspace(directWorkspaceResponse);
+    setDirectLinkPreviews(linkPreviewsResponse.linkPreviews);
     setDirectReplyOptimisticActive(Boolean(runtimeResponse.activeReply));
   }
 
@@ -686,18 +721,41 @@ export function TeammateWorkspace({
     return runtimeResponse.activeReply;
   }
 
+  async function ensureDirectLinkPreviewsForBody(body: string): Promise<readonly TeammateDirectLinkPreview[]> {
+    const existing = [...pendingDirectLinkPreviews];
+    const created: TeammateDirectLinkPreview[] = [];
+    for (const url of extractUrls(body)) {
+      if (existing.some((preview) => preview.url === url || preview.normalizedUrl === url) || created.some((preview) => preview.url === url || preview.normalizedUrl === url)) {
+        continue;
+      }
+      const response = await createTeammateDirectLinkPreview(cwd.trim(), teammate.id, { url });
+      created.push(response.linkPreview);
+      setDirectLinkPreviews((current) => [
+        response.linkPreview,
+        ...current.filter((preview) => preview.id !== response.linkPreview.id),
+      ]);
+    }
+    return uniqueDirectLinkPreviews([...existing, ...created]);
+  }
+
   async function sendPrivateMessage(): Promise<void> {
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const body = serializedInput.body.trim();
     const attachmentIds = [...serializedInput.attachmentIds];
-    if ((!body && attachmentIds.length === 0) || sending) {
+    const fileRefs = directComposerFileRefs(composerFileReferenceParts);
+    if ((!body && attachmentIds.length === 0 && pendingDirectLinkPreviewIds.length === 0 && fileRefs.length === 0) || sending) {
       return;
     }
+    const draftSnapshot = messageDraft;
+    const attachmentIdsSnapshot = pendingAttachmentIds;
+    const linkPreviewIdsSnapshot = pendingDirectLinkPreviewIds;
     setSending(true);
     try {
       setWorkspaceError("");
+      const linkPreviews = await ensureDirectLinkPreviewsForBody(body);
       setMessageDraft("");
       setPendingAttachmentIds([]);
+      setPendingDirectLinkPreviewIds([]);
       privateFeedPinnedToLatestRef.current = true;
       privateFeedAutoFollowUntilRef.current = Date.now() + 3_000;
       privateFeedUserScrollIntentRef.current = false;
@@ -705,6 +763,8 @@ export function TeammateWorkspace({
       const response = await streamTeammateDirectMessage(cwd.trim(), teammate.id, {
         body,
         attachmentIds,
+        linkPreviewIds: linkPreviews.map((preview) => preview.id),
+        fileRefs,
         providerPresetId: teammate.providerPresetId,
       });
       await readSseResponse(response, (event) => {
@@ -763,6 +823,9 @@ export function TeammateWorkspace({
       setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
       await refreshDirectRuntime();
     } catch (error) {
+      setMessageDraft(draftSnapshot);
+      setPendingAttachmentIds(attachmentIdsSnapshot);
+      setPendingDirectLinkPreviewIds(linkPreviewIdsSnapshot);
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setSending(false);
@@ -797,12 +860,12 @@ export function TeammateWorkspace({
 
   async function submitDirectGuidance(mode: "queue_followup" | "interrupt_redirect"): Promise<boolean> {
     const payload = privateComposerPayload;
-    if ((!payload.body && payload.attachmentIds.length === 0) || directGuidanceSubmitting) {
+    if ((!payload.body && payload.attachmentIds.length === 0 && payload.linkPreviewIds.length === 0 && payload.fileRefs.length === 0) || directGuidanceSubmitting) {
       return false;
     }
     const draftSnapshot = messageDraft;
     const attachmentIdsSnapshot = pendingAttachmentIds;
-    const instruction = summarizeDirectGuidancePayload(payload, t);
+    const linkPreviewIdsSnapshot = pendingDirectLinkPreviewIds;
     setDirectGuidanceSubmitting(mode);
     try {
       setWorkspaceError("");
@@ -812,22 +875,30 @@ export function TeammateWorkspace({
         setWorkspaceError(t("There is no active private reply right now."));
         return false;
       }
+      const linkPreviews = await ensureDirectLinkPreviewsForBody(payload.body);
+      const completePayload = {
+        ...payload,
+        linkPreviewIds: linkPreviews.map((preview) => preview.id),
+      };
+      const instruction = summarizeDirectGuidancePayload(completePayload, t);
       const operationId = directGuidanceOperationSeqRef.current + 1;
       directGuidanceOperationSeqRef.current = operationId;
       const response = await createTeammateDirectIntervention(cwd.trim(), teammate.id, {
         mode,
         instruction,
-        messagePayload: payload,
+        messagePayload: completePayload,
         idempotencyKey: `direct-guidance:${activeReply.workUnitId}:${mode}:${operationId}:${instruction}`,
       });
       setDirectRuntime(response.runtime);
       setMessageDraft("");
       setPendingAttachmentIds([]);
+      setPendingDirectLinkPreviewIds([]);
       await refreshDirectRuntime();
       return true;
     } catch (error) {
       setMessageDraft(draftSnapshot);
       setPendingAttachmentIds(attachmentIdsSnapshot);
+      setPendingDirectLinkPreviewIds(linkPreviewIdsSnapshot);
       setWorkspaceError(error instanceof Error ? error.message : String(error));
       return false;
     } finally {
@@ -855,8 +926,9 @@ export function TeammateWorkspace({
     if (intervention.status !== "queued" || directGuidanceCancelingId) {
       return;
     }
-    setMessageDraft(intervention.messagePayload?.body ?? intervention.instruction);
+    setMessageDraft(intervention.messagePayload ? directGuidanceDraftText(intervention.messagePayload) : intervention.instruction);
     setPendingAttachmentIds(intervention.messagePayload?.attachmentIds ?? []);
+    setPendingDirectLinkPreviewIds(intervention.messagePayload?.linkPreviewIds ?? []);
     await cancelDirectGuidance(intervention.id);
   }
 
@@ -1824,6 +1896,14 @@ export function TeammateWorkspace({
                         .map((attachmentId) => privateAttachmentById.get(attachmentId))
                         .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
                         .map((attachment) => ({ id: attachment.id, label: attachment.fileName })),
+                      linkPreviews: (intervention.messagePayload?.linkPreviewIds ?? [])
+                        .map((previewId) => directLinkPreviewById.get(previewId))
+                        .filter((preview): preview is TeammateDirectLinkPreview => Boolean(preview))
+                        .map((preview) => ({ id: preview.id, label: preview.title || preview.siteName || preview.url })),
+                      fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((fileRef, index) => ({
+                        id: `${intervention.id}:file:${index}`,
+                        label: directFileRefLabel(fileRef),
+                      })),
                       statusLabel: teammateDirectInterventionStatusLabel(intervention.status, t),
                       meta: teammateDirectInterventionModeLabel(intervention.mode, t),
                       promoteLabel: t("Run this guidance now"),
@@ -1863,7 +1943,7 @@ export function TeammateWorkspace({
                 onSend={handlePrivateComposerSubmit}
                 onKeyDown={handlePrivateComposerKeyDown}
                 onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
-                previewContent={pendingAttachments.length > 0 || composerFileReferenceParts.length > 0 ? (
+                previewContent={pendingAttachments.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
                   <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
                     {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
                       <ComposerFileReferenceToken
@@ -1873,6 +1953,20 @@ export function TeammateWorkspace({
                         removeLabel={t("Remove file reference")}
                         onRemove={() => removeComposerFileReference(part.raw, occurrenceIndex)}
                       />
+                    ))}
+                    {pendingDirectLinkPreviews.map((preview) => (
+                      <div key={preview.id} className="composer-preview-card link ready">
+                        <span className="composer-preview-file-icon" aria-hidden="true">
+                          <Link2 size={16} />
+                        </span>
+                        <span className="composer-preview-body">
+                          <strong title={preview.url}>{preview.title || preview.siteName || preview.url}</strong>
+                          <small>{preview.normalizedUrl}</small>
+                        </span>
+                        <button className="composer-preview-remove" type="button" onClick={() => setPendingDirectLinkPreviewIds((current) => current.filter((id) => id !== preview.id))} aria-label={t("Remove link preview")}>
+                          <X size={13} />
+                        </button>
+                      </div>
                     ))}
                     {pendingAttachments.map((attachment) => (
                       <div key={attachment.id} className="composer-preview-card file ready">
@@ -1907,6 +2001,17 @@ export function TeammateWorkspace({
               <small>{t("Private")}</small>
             </div>
             <p>{lastAiMessage?.body ? truncateText(lastAiMessage.body, 180) : t("No AI reply summary yet.")}</p>
+          </section>
+          <section>
+            <div className="panel-title split">
+              <span>
+                <SquareTerminal size={15} />
+                <h3>{t("Private workspace")}</h3>
+              </span>
+              <small>{directWorkspaceStatusLabel(directWorkspace, t)}</small>
+            </div>
+            <p>{directWorkspacePathLabel(directWorkspace, t)}</p>
+            {directWorkspace?.binding.errorMessage ? <small className="teammate-message-error">{directWorkspace.binding.errorMessage}</small> : null}
           </section>
           <section>
             <div className="panel-title split">
@@ -3406,6 +3511,80 @@ function upsertDirectMessages(
   return Array.from(byId.values()).sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 }
 
+function uniqueDirectLinkPreviews(previews: readonly TeammateDirectLinkPreview[]): readonly TeammateDirectLinkPreview[] {
+  const byId = new Map<string, TeammateDirectLinkPreview>();
+  for (const preview of previews) {
+    byId.set(preview.id, preview);
+  }
+  return [...byId.values()];
+}
+
+function directComposerFileRefs(
+  parts: ReturnType<typeof composerWorkspaceFileParts>,
+): readonly ChannelMessageFileRef[] {
+  return parts.map((part) => ({
+    path: part.path,
+    source: "composer" as const,
+    ...(part.line ? { line: part.line } : {}),
+  }));
+}
+
+function directFileRefLabel(fileRef: ChannelMessageFileRef): string {
+  const line = fileRef.line ? `:${fileRef.line}` : "";
+  return `${fileRef.label?.trim() || fileRef.path}${line}`;
+}
+
+function directGuidanceDraftText(payload: NonNullable<TeammateDirectReplyIntervention["messagePayload"]>): string {
+  const body = payload.body.trim();
+  const missingFileTokens = (payload.fileRefs ?? [])
+    .filter((fileRef) => !body.includes(fileRef.path))
+    .map((fileRef) => fileRef.line ? `${fileRef.path}:${fileRef.line}` : fileRef.path);
+  return [payload.body, ...missingFileTokens].filter((part) => part.trim()).join("\n");
+}
+
+function extractUrls(value: string): string[] {
+  const matches = value.match(/https?:\/\/[^\s<>"'`]+/g) ?? [];
+  return [...new Set(matches.map((url) => url.replace(/[),.;!?]+$/u, "")))];
+}
+
+function directWorkspaceStatusLabel(workspace: DirectWorkspaceResponse | undefined, t: Translate): string {
+  const status = workspace?.binding.status;
+  if (status === "ready") {
+    return t("Ready");
+  }
+  if (status === "missing") {
+    return t("Missing");
+  }
+  if (status === "blocked" || status === "unsupported") {
+    return t("Blocked");
+  }
+  return t("Not created");
+}
+
+function directWorkspacePathLabel(workspace: DirectWorkspaceResponse | undefined, t: Translate): string {
+  if (!workspace || workspace.binding.status === "not_created") {
+    return t("Worktree will be created when this private chat first runs.");
+  }
+  const snapshot = workspace?.snapshot;
+  const executionCwd = snapshot?.executionCwd || workspace?.binding.executionPath || workspace?.binding.worktreePath;
+  if (!executionCwd) {
+    return t("Worktree will be created when this private chat first runs.");
+  }
+  const label = shortWorkspacePath(executionCwd);
+  if ((workspace?.binding.mode ?? "managed_worktree") === "managed_worktree") {
+    return `${t("Worktree")} ${label}`;
+  }
+  if (workspace?.binding.mode === "external_path") {
+    return `${t("External")} ${label}`;
+  }
+  return `${t("Local")} ${label}`;
+}
+
+function shortWorkspacePath(path: string): string {
+  const parts = path.split(/[\\/]/u).filter(Boolean);
+  return parts.length <= 3 ? path : `.../${parts.slice(-3).join("/")}`;
+}
+
 function teammateDirectInterventionStatusLabel(
   status: TeammateDirectReplyIntervention["status"],
   t: Translate,
@@ -3439,11 +3618,22 @@ function teammateDirectInterventionModeLabel(
 }
 
 function summarizeDirectGuidancePayload(
-  payload: { readonly body: string; readonly attachmentIds: readonly string[] },
+  payload: {
+    readonly body: string;
+    readonly attachmentIds: readonly string[];
+    readonly linkPreviewIds?: readonly string[];
+    readonly fileRefs?: readonly ChannelMessageFileRef[];
+  },
   t: Translate,
 ): string {
   if (payload.body.trim()) {
     return payload.body.trim();
+  }
+  if (payload.fileRefs?.length) {
+    return t("Queued guidance with {count} file reference(s)", { count: payload.fileRefs.length });
+  }
+  if ((payload.linkPreviewIds?.length ?? 0) > 0) {
+    return t("Queued guidance with {count} link(s)", { count: payload.linkPreviewIds?.length ?? 0 });
   }
   if (payload.attachmentIds.length > 0) {
     return t("Queued guidance with {count} attachment(s)", { count: payload.attachmentIds.length });

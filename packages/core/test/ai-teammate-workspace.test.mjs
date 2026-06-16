@@ -607,6 +607,7 @@ test("sqlite persists teammate direct reply interventions with idempotency and c
     assert.deepEqual(queued.messagePayload, {
       body: "回复完后补一版简短结论。",
       attachmentIds: [attachment.id],
+      linkPreviewIds: [],
     });
     const duplicate = store.createTeammateDirectReplyIntervention(
       {
@@ -698,6 +699,7 @@ test("sqlite persists teammate direct reply interventions with idempotency and c
     assert.deepEqual(store.getTeammateDirectReplyIntervention(queuedInterventionId).messagePayload, {
       body: "回复完后补一版简短结论。",
       attachmentIds: [attachmentId],
+      linkPreviewIds: [],
     });
     const persisted = store.listTeammateDirectReplyInterventions({ teammateId });
     assert.equal(persisted.length, 2);

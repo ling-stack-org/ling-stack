@@ -320,11 +320,20 @@ export function parseTeammateRoute(
   pathname: string,
 ): {
   readonly teammateId: string;
-  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "direct-messages-stream" | "direct-runtime" | "direct-interventions" | "direct-attachments" | "avatar" | "hard-delete" | "tasks" | "activity";
+  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "direct-messages-stream" | "direct-runtime" | "direct-interventions" | "direct-workspace" | "direct-link-previews" | "direct-attachments" | "avatar" | "hard-delete" | "tasks" | "activity";
+  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "teammates") {
     return { teammateId: segments[1] };
+  }
+  if (
+    segments.length === 4 &&
+    segments[0] === "teammates" &&
+    segments[2] === "direct-workspace" &&
+    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh")
+  ) {
+    return { teammateId: segments[1], action: "direct-workspace", workspaceAction: segments[3] };
   }
   if (
     segments.length === 3 &&
@@ -339,6 +348,8 @@ export function parseTeammateRoute(
       segments[2] === "direct-messages" ||
       segments[2] === "direct-runtime" ||
       segments[2] === "direct-interventions" ||
+      segments[2] === "direct-workspace" ||
+      segments[2] === "direct-link-previews" ||
       segments[2] === "direct-attachments" ||
       segments[2] === "avatar" ||
       segments[2] === "hard-delete" ||

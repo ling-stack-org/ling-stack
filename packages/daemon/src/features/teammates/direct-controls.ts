@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   AiTeammate,
+  ChannelMessageFileRef,
   RunStore,
   SecretResolver,
   TeammateDirectMessage,
@@ -21,8 +22,10 @@ import type { ProviderStartupRefreshService } from "../providers/startup-refresh
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalStringArray } from "../../shared/validation.js";
+import { readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { createAiTeammateDirectReply } from "./direct-replies.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
+import { assertDirectFileRefsWithinWorkspace, ensureDirectWorkspaceReady } from "./direct-workspace.js";
 
 export interface TeammateDirectRuntimeSnapshot {
   readonly teammateId: string;
@@ -94,6 +97,13 @@ export class DirectReplyControlService {
     const active = this.findActiveReply(input.store, teammate.id, thread.id);
     if (!active) {
       throw new Error("当前没有正在回复的私聊消息。");
+    }
+    if (input.messagePayload?.fileRefs?.length) {
+      assertDirectFileRefsWithinWorkspace({
+        thread,
+        workspaceCwd: input.store.paths.cwd,
+        fileRefs: input.messagePayload.fileRefs,
+      });
     }
     const now = new Date().toISOString();
     const intervention = input.store.createTeammateDirectReplyIntervention(
@@ -240,14 +250,24 @@ export class DirectReplyControlService {
       return;
     }
     try {
+      const workspace = await ensureDirectWorkspaceReady({
+        store: input.store,
+        thread: input.thread,
+        workspaceCwd: input.store.paths.cwd,
+      });
+      if (!workspace.ok) {
+        throw new Error(workspace.message);
+      }
       const guidance = input.store.createTeammateDirectMessage(
         {
-          threadId: input.thread.id,
+          threadId: workspace.workspace.thread.id,
           teammateId: input.teammate.id,
           authorType: "system",
           authorId: "system",
           body: renderDirectGuidanceMessage(starting),
           attachmentIds: starting.messagePayload?.attachmentIds ?? [],
+          linkPreviewIds: starting.messagePayload?.linkPreviewIds ?? [],
+          fileRefs: starting.messagePayload?.fileRefs ?? [],
           status: "ready",
         },
         now,
@@ -263,9 +283,10 @@ export class DirectReplyControlService {
         runnerRegistry: this.dependencies.runnerRegistry,
         store: input.store,
         teammate: input.teammate,
-        thread: input.thread,
+        thread: workspace.workspace.thread,
         sourceMessage: guidance,
         providerPresetId: input.teammate.providerPresetId,
+        workspace: workspace.workspace,
         runtimeSupervisor: this.dependencies.runtimeSupervisor,
         secretResolver: this.dependencies.secretResolver,
         signal: abortController.signal,
@@ -291,7 +312,7 @@ export class DirectReplyControlService {
       await this.maybeStartNextQueuedContinuation({
         store: input.store,
         teammateId: input.teammate.id,
-        threadId: input.thread.id,
+        threadId: workspace.workspace.thread.id,
       });
     } catch (error) {
       input.store.updateTeammateDirectReplyInterventionStatus({
@@ -368,14 +389,23 @@ function isActiveDirectReplyStatus(status: WorkUnitStatus): boolean {
 }
 
 function renderDirectGuidanceMessage(intervention: TeammateDirectReplyIntervention): string {
-  const body = intervention.messagePayload?.body.trim() || intervention.instruction;
-  const attachmentSummary = intervention.messagePayload?.attachmentIds.length
-    ? `\n附件：${intervention.messagePayload.attachmentIds.join(", ")}`
-    : "";
+  const payload = intervention.messagePayload;
+  const body = payload?.body.trim() || intervention.instruction;
+  const details = [
+    payload?.attachmentIds.length ? `附件：${payload.attachmentIds.join(", ")}` : undefined,
+    payload?.linkPreviewIds.length ? `链接：${payload.linkPreviewIds.join(", ")}` : undefined,
+    payload?.fileRefs?.length ? `文件：${payload.fileRefs.map(renderDirectGuidanceFileRef).join(", ")}` : undefined,
+  ].filter((line): line is string => Boolean(line));
+  const detailSummary = details.length > 0 ? `\n${details.join("\n")}` : "";
   if (intervention.mode === "interrupt_redirect") {
-    return `已停止上一条回复，并按新引导继续：${body}${attachmentSummary}`;
+    return `已停止上一条回复，并按新引导继续：${body}${detailSummary}`;
   }
-  return `排队引导：${body}${attachmentSummary}`;
+  return `排队引导：${body}${detailSummary}`;
+}
+
+function renderDirectGuidanceFileRef(fileRef: ChannelMessageFileRef): string {
+  const line = fileRef.line ? `:${fileRef.line}` : "";
+  return `${fileRef.label?.trim() || fileRef.path}${line}`;
 }
 
 export async function handleTeammateDirectRuntime(
@@ -580,12 +610,16 @@ function parseDirectInterventionMessagePayload(value: unknown): TeammateDirectRe
   }
   const body = typeof value.body === "string" ? value.body.trim() : "";
   const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
-  if (!body && attachmentIds.length === 0) {
-    throw new Error("messagePayload must include body or attachments");
+  const linkPreviewIds = readOptionalStringArray(value, "linkPreviewIds") ?? [];
+  const fileRefs = readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [];
+  if (!body && attachmentIds.length === 0 && linkPreviewIds.length === 0 && fileRefs.length === 0) {
+    throw new Error("messagePayload must include body, attachments, links, or file references");
   }
   return {
     body,
     attachmentIds,
+    linkPreviewIds,
+    ...(fileRefs.length ? { fileRefs } : {}),
   };
 }
 

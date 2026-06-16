@@ -70,10 +70,12 @@ import type {
   CreateChannelLinkPreviewInput,
   CreateChannelMessageInput,
   CreateAiTeammateInput,
+  CreateTeammateDirectLinkPreviewInput,
   CreateTeammateDirectMessageInput,
   CreateTeammateDirectReplyInterventionInput,
   CreateTeammatePrivateAttachmentInput,
   CreateTaskInput,
+  DirectWorkspaceBinding,
   HardDeleteAiTeammateInput,
   HardDeleteAiTeammateResult,
   ListAiTeammatesOptions,
@@ -93,6 +95,7 @@ import type {
   ListChannelMessagesOptions,
   ListChannelMessageRouteDecisionsOptions,
   ListTeammatePrivateAttachmentsOptions,
+  ListTeammateDirectLinkPreviewsOptions,
   ListTeammateDirectReplyInterventionsOptions,
   ListTeammateDirectMessagesOptions,
   ListTasksOptions,
@@ -102,6 +105,7 @@ import type {
   Task,
   TaskUpdateInput,
   TeammateChannelMembership,
+  TeammateDirectLinkPreview,
   TeammateDirectMessage,
   TeammateDirectReplyIntervention,
   TeammateDirectThread,
@@ -124,6 +128,7 @@ import type {
   WorkflowHandoffIntent,
   WorkflowSelectorDecision,
   UpdateChannelLinkPreviewInput,
+  UpdateTeammateDirectLinkPreviewInput,
   UpdateTeammateDirectReplyInterventionStatusInput,
 } from "./workspace-types.js";
 import type {
@@ -1044,6 +1049,7 @@ export interface RunStore {
   recordUsedMemoryEvent(input: CreateUsedMemoryEventInput, now: string): UsedMemoryEvent;
   listUsedMemoryEvents(options?: ListUsedMemoryEventsOptions): UsedMemoryEvent[];
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread;
+  updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined;
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[];
   getTeammateDirectMessage(id: string): TeammateDirectMessage | undefined;
   createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage;
@@ -1057,6 +1063,10 @@ export interface RunStore {
     },
     now: string,
   ): TeammateDirectMessage | undefined;
+  createTeammateDirectLinkPreview(input: CreateTeammateDirectLinkPreviewInput, now: string): TeammateDirectLinkPreview;
+  getTeammateDirectLinkPreview(id: string): TeammateDirectLinkPreview | undefined;
+  listTeammateDirectLinkPreviews(options: ListTeammateDirectLinkPreviewsOptions): TeammateDirectLinkPreview[];
+  updateTeammateDirectLinkPreview(id: string, input: UpdateTeammateDirectLinkPreviewInput, now: string): TeammateDirectLinkPreview | undefined;
   createTeammateDirectReplyIntervention(input: CreateTeammateDirectReplyInterventionInput, now: string): TeammateDirectReplyIntervention;
   getTeammateDirectReplyIntervention(interventionId: string): TeammateDirectReplyIntervention | undefined;
   listTeammateDirectReplyInterventions(options?: ListTeammateDirectReplyInterventionsOptions): TeammateDirectReplyIntervention[];
