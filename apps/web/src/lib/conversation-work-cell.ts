@@ -31,23 +31,47 @@ export interface ConversationWorkCellRow {
   readonly title: string;
   readonly description?: string;
   readonly meta?: string;
+  readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
   readonly tone?: ConversationWorkCellRowTone;
 }
 
-export interface ConversationWorkCellBranch {
+export interface ConversationWorkCellRowDetailLine {
+  readonly kind?: "text" | "code";
+  readonly text: string;
+}
+
+export type ConversationAgentActivitySpanKind = "agent" | "overflow";
+
+export interface ConversationAgentActivitySpan {
   readonly id: string;
+  readonly participantId?: string;
+  readonly kind?: ConversationAgentActivitySpanKind;
   readonly label: string;
   readonly summary?: string;
   readonly meta?: string;
   readonly tone?: ConversationWorkCellRowTone;
   readonly stateLabel?: string;
+  readonly latestRow?: ConversationWorkCellRow;
   readonly rows: readonly ConversationWorkCellRow[];
 }
+
+/** @deprecated Use ConversationAgentActivitySpan. */
+export type ConversationWorkCellBranch = ConversationAgentActivitySpan;
 
 export interface ConversationWorkCellEvidenceLink {
   readonly id: string;
   readonly label: string;
   readonly meta?: string;
+  readonly href?: string;
+}
+
+export type ConversationArtifactStripItemKind = "artifact" | "changed" | "checked" | "attention" | "approval";
+
+export interface ConversationArtifactStripItem {
+  readonly id: string;
+  readonly kind: ConversationArtifactStripItemKind;
+  readonly label: string;
+  readonly tone?: ConversationWorkCellRowTone;
   readonly href?: string;
 }
 
@@ -74,32 +98,37 @@ export interface ConversationOperationCellViewModel {
   readonly summary: string;
   readonly stats: readonly ConversationWorkCellStat[];
   readonly operationRows: readonly ConversationWorkCellRow[];
+  readonly agentSpans: readonly ConversationAgentActivitySpan[];
+  /** @deprecated Use agentSpans. Kept while call sites migrate. */
   readonly agentBranches: readonly ConversationWorkCellBranch[];
   readonly terminalReportRows: readonly ConversationWorkCellRow[];
   /** @deprecated Use operationRows. Kept while call sites migrate. */
   readonly activeRows: readonly ConversationWorkCellRow[];
-  /** @deprecated Use agentBranches. Kept while call sites migrate. */
+  /** @deprecated Use agentSpans. Kept while call sites migrate. */
   readonly branchRows?: readonly ConversationWorkCellBranch[];
   /** @deprecated Use terminalReportRows. Kept while call sites migrate. */
   readonly finalReportRows?: readonly ConversationWorkCellRow[];
   readonly groups: readonly ConversationWorkCellGroup[];
   readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
+  readonly artifactStripItems: readonly ConversationArtifactStripItem[];
   readonly updatedAt: string;
 }
 
 export type ConversationWorkCellViewModel = ConversationOperationCellViewModel;
 
 type ConversationOperationCellDraft =
-  Omit<ConversationOperationCellViewModel, "activeRows" | "branchRows" | "finalReportRows"> &
-  Partial<Pick<ConversationOperationCellViewModel, "activeRows" | "branchRows" | "finalReportRows">>;
+  Omit<ConversationOperationCellViewModel, "agentSpans" | "activeRows" | "branchRows" | "finalReportRows"> &
+  Partial<Pick<ConversationOperationCellViewModel, "agentSpans" | "activeRows" | "branchRows" | "finalReportRows">>;
 
 export function normalizeConversationOperationCell(
   draft: ConversationOperationCellDraft,
 ): ConversationOperationCellViewModel {
+  const agentSpans = draft.agentSpans ?? draft.agentBranches;
   return {
     ...draft,
+    agentSpans,
     activeRows: draft.activeRows ?? draft.operationRows,
-    branchRows: draft.branchRows ?? draft.agentBranches,
+    branchRows: draft.branchRows ?? agentSpans,
     finalReportRows: draft.finalReportRows ?? draft.terminalReportRows,
   };
 }
@@ -109,11 +138,210 @@ export interface ConversationWorkCellDetailsModel {
   readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
 }
 
+export function buildConversationArtifactStripItems(input: {
+  readonly groups: readonly ConversationWorkCellGroup[];
+  readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
+  readonly t: Translate;
+}): readonly ConversationArtifactStripItem[] {
+  const changedRows = input.groups.find((group) => group.id === "changed")?.rows ?? [];
+  const checkedRows = input.groups.find((group) => group.id === "checked")?.rows ?? [];
+  const attentionRows = input.groups.find((group) => group.id === "attention")?.rows ?? [];
+  const items: ConversationArtifactStripItem[] = [];
+  const primaryArtifact = input.evidenceLinks.find((link) => link.label.trim());
+
+  if (primaryArtifact) {
+    items.push({
+      id: `artifact:${primaryArtifact.id}`,
+      kind: "artifact",
+      label: input.evidenceLinks.length > 1
+        ? input.t("Artifact {label} +{count}", { label: primaryArtifact.label, count: input.evidenceLinks.length - 1 })
+        : input.t("Artifact {label}", { label: primaryArtifact.label }),
+      href: primaryArtifact.href,
+      tone: "neutral",
+    });
+  }
+
+  if (changedRows.length > 0) {
+    items.push({
+      id: "changed",
+      kind: "changed",
+      label: changedRows.length === 1 ? input.t("Changed 1 file") : input.t("Changed {count} files", { count: changedRows.length }),
+      tone: "neutral",
+    });
+  }
+
+  if (checkedRows.length > 0) {
+    const failedCount = checkedRows.filter((row) => row.tone === "failed").length;
+    const passedCount = checkedRows.filter((row) => row.tone === "success").length;
+    const count = failedCount > 0 ? failedCount : passedCount > 0 ? passedCount : checkedRows.length;
+    items.push({
+      id: "checked",
+      kind: "checked",
+      label: failedCount > 0
+        ? count === 1 ? input.t("1 check failed") : input.t("{count} checks failed", { count })
+        : count === 1 ? input.t("1 check passed") : input.t("{count} checks passed", { count }),
+      tone: failedCount > 0 ? "failed" : "success",
+    });
+  }
+
+  if (attentionRows.length > 0) {
+    items.unshift({
+      id: "attention",
+      kind: "attention",
+      label: input.t("{count} attention items", { count: attentionRows.length }),
+      tone: attentionRows.some((row) => row.tone === "failed") ? "failed" : "waiting",
+    });
+  }
+
+  return items.slice(0, 4);
+}
+
+const MAIN_FEED_GROUP_IDS = new Set<ConversationWorkCellGroupKind>(["changed", "checked", "evidence", "attention"]);
+
+const MAIN_FEED_GROUP_LIMITS: Record<ConversationWorkCellGroupKind, number> = {
+  changed: 6,
+  checked: 5,
+  context: 0,
+  evidence: 4,
+  attention: 3,
+};
+
+const MAIN_FEED_INTERNAL_PATTERNS: readonly RegExp[] = [
+  /\bcontext pack\b/iu,
+  /\bcontext packet\b/iu,
+  /\boutput packet\b/iu,
+  /\bworkflow step context\b/iu,
+  /\bworkflow step output\b/iu,
+  /\baction preview\b/iu,
+  /\bcontent log\b/iu,
+  /\braw event\b/iu,
+  /\bwork[-_\s]?unit\b/iu,
+  /\bpacket\b/iu,
+  /\bselector\b/iu,
+  /\battempt\b/iu,
+  /\bprovider\s*:/iu,
+  /\bmodel\s*:/iu,
+  /\bbudget\s*:/iu,
+  /\btokens?\b/iu,
+  /\btoken budget\b/iu,
+  /\bjson\s*·/iu,
+  /\blog\s*·/iu,
+  /\bprovider_[a-z0-9_-]+\b/iu,
+  /\bworkflow_[a-z0-9_-]+\b/iu,
+  /\bwfstep_[a-z0-9_-]+\b/iu,
+  /\brun_[a-z0-9_-]+\b/iu,
+  /\.ling-stack\//iu,
+  /\bsessions\//iu,
+  /\bsummaries\//iu,
+  /\b(?:context|output|preview)\.json\b/iu,
+  /\.jsonl?\b/iu,
+  /\.log\b/iu,
+  /\bworkflow_runtime_boundary\b/iu,
+  /\bold_verbose_log_tail\b/iu,
+  /\braw prompt text excluded\b/iu,
+  /\braw logs excluded\b/iu,
+  /\braw artifact bodies excluded\b/iu,
+  /\bsource refs\b/iu,
+  /\bcompactions\b/iu,
+  /\bchannel_collaboration_protocol\b/iu,
+];
+
+export function mainFeedEvidenceGroups(
+  groups: readonly ConversationWorkCellGroup[],
+  t: Translate,
+): readonly ConversationWorkCellGroup[] {
+  return groups
+    .filter((group) => MAIN_FEED_GROUP_IDS.has(group.id))
+    .map((group) => {
+      const rows = group.rows
+        .filter((row) => isMainFeedSafeRow(row))
+        .slice(0, MAIN_FEED_GROUP_LIMITS[group.id]);
+      return {
+        ...group,
+        summary: mainFeedGroupSummary(group.id, rows.length, t),
+        rows,
+      };
+    });
+}
+
+export function mainFeedEvidenceLinks(
+  links: readonly ConversationWorkCellEvidenceLink[],
+): readonly ConversationWorkCellEvidenceLink[] {
+  return links
+    .filter((link) => isMainFeedSafeText([link.label, link.meta].filter(Boolean).join(" ")))
+    .slice(0, 4);
+}
+
+export function mainFeedArtifactEvidenceLinks(
+  artifacts: readonly RunArtifact[],
+  artifactHref?: (artifact: RunArtifact) => string,
+  limit = 4,
+): readonly ConversationWorkCellEvidenceLink[] {
+  return mainFeedEvidenceLinks(artifacts.slice(0, limit).map((artifact) => ({
+    id: artifact.id,
+    label: mainFeedArtifactLabel(artifact),
+    meta: [artifact.type, artifact.sizeBytes !== undefined ? formatBytes(artifact.sizeBytes) : undefined].filter(Boolean).join(" · "),
+    href: artifactHref?.(artifact),
+  })));
+}
+
+function isMainFeedSafeRow(row: ConversationWorkCellRow): boolean {
+  return isMainFeedSafeText([
+    row.title,
+    row.description,
+    row.meta,
+    ...(row.detailLines ?? []).map((line) => line.text),
+  ].filter(Boolean).join(" "));
+}
+
+function isMainFeedSafeText(value: string): boolean {
+  const text = value.trim();
+  if (!text) {
+    return true;
+  }
+  return !MAIN_FEED_INTERNAL_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function mainFeedArtifactLabel(artifact: RunArtifact): string {
+  const title = artifact.title?.trim();
+  if (title && !isLowSignalArtifactTitle(title)) {
+    return title;
+  }
+  const path = artifact.path?.trim();
+  return path || title || artifact.id;
+}
+
+function isLowSignalArtifactTitle(value: string): boolean {
+  return /^(Generated file metadata|Workflow step context|Workflow step output|Action preview):/iu.test(value) ||
+    /\bcontent log\b/iu.test(value);
+}
+
+function mainFeedGroupSummary(
+  kind: ConversationWorkCellGroupKind,
+  count: number,
+  t: Translate,
+): string {
+  if (kind === "changed") {
+    return count > 0 ? t("{count} changed items", { count }) : t("No changed files recorded");
+  }
+  if (kind === "checked") {
+    return count > 0 ? t("{count} checks", { count }) : t("No items recorded");
+  }
+  if (kind === "attention") {
+    return count > 0 ? t("{count} attention items", { count }) : t("No attention needed");
+  }
+  if (kind === "evidence") {
+    return t("{count} evidence items", { count });
+  }
+  return t("No items recorded");
+}
+
 export interface BuildConversationWorkCellInput {
   readonly threadId: string;
   readonly runs: readonly RunSession[];
   readonly turns?: readonly LingTurn[];
   readonly turnRunLinks?: readonly LingTurnRun[];
+  readonly allowRunThreadFallback?: boolean;
   readonly approvals: readonly ApprovalRequest[];
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly executionActions?: readonly ExecutionAction[];
@@ -126,6 +354,9 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     .filter((run) => run.threadId === input.threadId)
     .sort((left, right) => compareRunActivity(left, right));
   const turnContext = buildVisibleTurnContext(input);
+  if (!turnContext && input.allowRunThreadFallback !== true) {
+    return undefined;
+  }
   const runs = turnContext?.runs ?? threadRuns;
   if (runs.length === 0) {
     return undefined;
@@ -139,6 +370,7 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     .filter((approval) => approval.runId ? runIdSet.has(approval.runId) : false)
     .sort((left, right) => (right.resolvedAt ?? right.createdAt).localeCompare(left.resolvedAt ?? left.createdAt));
   const artifacts = runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
+  const artifactsById = artifactsByIdMap(artifacts);
   const actions = (input.executionActions ?? [])
     .filter((action) => action.threadId === input.threadId || (action.runId ? runIdSet.has(action.runId) : false))
     .sort((left, right) => (right.completedAt ?? right.executedAt ?? right.resolvedAt ?? right.createdAt).localeCompare(left.completedAt ?? left.executedAt ?? left.resolvedAt ?? left.createdAt));
@@ -147,12 +379,11 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const failedActions = actions.filter((action) => action.status === "failed" || action.status === "denied" || action.status === "expired");
   const mode: ConversationWorkCellMode = isWorkCellStatusActive(status) ? "active" : "completed";
   const title = turnContext?.turn.title || readRunTitle(latestRun);
-  const evidenceLinks = artifacts.slice(0, 5).map((artifact) => ({
-    id: artifact.id,
-    label: artifact.title || artifact.path || artifact.id,
-    meta: [artifact.type, artifact.sizeBytes !== undefined ? formatBytes(artifact.sizeBytes) : undefined].filter(Boolean).join(" · "),
-    href: input.artifactHref?.(artifact),
-  }));
+  const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
+  const groups = mainFeedEvidenceGroups(
+    buildWorkCellGroups({ t: input.t, runs, approvals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
+    input.t,
+  );
 
   return normalizeConversationOperationCell({
     id: turnContext ? `work-cell:turn:${turnContext.turn.id}` : `work-cell:${input.threadId}`,
@@ -168,20 +399,20 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
       t: input.t,
       status,
       latestRun,
-      runCount: runs.length,
-      artifactCount: artifacts.length,
+      title,
       pendingApprovalCount: pendingApprovals.length,
     }),
     stats: [
-      { id: "attempts", label: input.t("Attempts"), value: String(runs.length) },
-      { id: "artifacts", label: input.t("Evidence"), value: String(artifacts.length) },
+      { id: "tries", label: input.t("Tries"), value: String(runs.length) },
+      { id: "artifacts", label: input.t("Artifacts"), value: String(artifacts.length) },
       { id: "approvals", label: input.t("Approvals"), value: String(approvals.length) },
     ],
     operationRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
     agentBranches: [],
     terminalReportRows: [],
-    groups: buildWorkCellGroups({ t: input.t, runs, approvals, artifacts, actions, failedRuns, failedActions, pendingApprovals }),
+    groups,
     evidenceLinks,
+    artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, t: input.t }),
     updatedAt: turnContext?.turn.updatedAt ?? latestRun.endedAt ?? latestRun.startedAt ?? latestRun.updatedAt,
   });
 }
@@ -215,6 +446,7 @@ export function buildConversationWorkCellDetailsFromThreadEvidence(input: {
   const cell = buildConversationWorkCellViewModel({
     threadId: input.threadId,
     runs: filteredRuns.map((item) => item.run),
+    allowRunThreadFallback: true,
     approvals: filteredRuns.flatMap((item) => item.approvals),
     artifactsByRun,
     executionActions: filterEvidenceActions(input.evidence.actions, input.threadId, filteredRuns.map((item) => item.run.id), input.runIds),
@@ -223,7 +455,7 @@ export function buildConversationWorkCellDetailsFromThreadEvidence(input: {
   });
   return {
     groups: cell?.groups ?? emptyWorkCellGroups(input.t),
-    evidenceLinks: cell?.evidenceLinks ?? [],
+    evidenceLinks: mainFeedEvidenceLinks(cell?.evidenceLinks ?? []),
   };
 }
 
@@ -296,7 +528,7 @@ function filterEvidenceActions(
 function emptyWorkCellGroups(t: Translate): readonly ConversationWorkCellGroup[] {
   return [
     { id: "changed", label: t("Changed"), summary: t("No changed files recorded"), rows: [] },
-    { id: "checked", label: t("Checked work"), summary: t("No items recorded"), rows: [] },
+    { id: "checked", label: t("Checks"), summary: t("No items recorded"), rows: [] },
     { id: "evidence", label: t("Evidence"), summary: t("{count} evidence items", { count: 0 }), rows: [] },
     { id: "attention", label: t("Attention"), summary: t("No attention needed"), rows: [] },
   ];
@@ -314,14 +546,10 @@ function buildActiveRows(input: {
   rows.push({
     id: `run:${input.latestRun.id}`,
     kind: "watch",
-    title: input.latestRun.status === "waiting_for_approval"
-      ? input.t("Waiting for approval")
-      : input.latestRun.status === "queued"
-        ? input.t("Queued")
-        : input.t("Running attempt"),
-    description: readRunTitle(input.latestRun),
-    meta: input.latestRun.providerName ? `${input.latestRun.providerName} · ${input.latestRun.providerModel}` : undefined,
-    tone: input.latestRun.status === "waiting_for_approval" ? "waiting" : input.latestRun.status === "queued" || input.latestRun.status === "running" ? "running" : "neutral",
+    title: runOperationTitle(input.latestRun.status, readRunTitle(input.latestRun), input.t),
+    description: input.latestRun.errorMessage ? truncatePreview(input.latestRun.errorMessage, 180) : undefined,
+    meta: operationStatusMeta(input.latestRun.status, input.t),
+    tone: runStatusTone(input.latestRun.status),
   });
 
   for (const approval of input.pendingApprovals.slice(0, 3)) {
@@ -341,7 +569,7 @@ function buildActiveRows(input: {
       kind: operationKindForExecutionAction(action),
       title: action.title,
       description: action.summary,
-      meta: action.status,
+      meta: operationStatusMeta(action.status, input.t),
       tone: action.status === "failed" || action.status === "denied" || action.status === "expired"
         ? "failed"
         : action.status === "succeeded"
@@ -352,22 +580,12 @@ function buildActiveRows(input: {
     });
   }
 
-  if (input.artifacts.length > 0) {
-    rows.push({
-      id: "artifacts",
-      kind: "edit",
-      title: input.t("Evidence captured"),
-      description: input.t("{count} artifacts", { count: input.artifacts.length }),
-      tone: "success",
-    });
-  }
-
   if (input.runs.length > 1) {
     rows.push({
       id: "attempts",
       kind: "watch",
-      title: input.t("Prior attempts"),
-      description: input.t("{count} attempts", { count: input.runs.length - 1 }),
+      title: input.t("Earlier tries"),
+      description: input.t("{count} earlier tries", { count: input.runs.length - 1 }),
       tone: "neutral",
     });
   }
@@ -380,12 +598,13 @@ function buildWorkCellGroups(input: {
   readonly runs: readonly RunSession[];
   readonly approvals: readonly ApprovalRequest[];
   readonly artifacts: readonly RunArtifact[];
+  readonly artifactsById: ReadonlyMap<string, RunArtifact>;
   readonly actions: readonly ExecutionAction[];
   readonly failedRuns: readonly RunSession[];
   readonly failedActions: readonly ExecutionAction[];
   readonly pendingApprovals: readonly ApprovalRequest[];
 }): readonly ConversationWorkCellGroup[] {
-  const changedArtifacts = input.artifacts.filter((artifact) => artifact.type === "diff" || artifact.type === "file" || Boolean(artifact.path));
+  const changedArtifacts = input.artifacts.filter((artifact) => artifact.type === "diff" || artifact.type === "file");
   const changedRows = uniqueBy(changedArtifacts, (artifact) => artifact.path || artifact.id).slice(0, 8).map((artifact) => ({
     id: `artifact:${artifact.id}`,
     kind: "edit" as const,
@@ -398,11 +617,17 @@ function buildWorkCellGroups(input: {
     id: `run:${run.id}`,
     kind: "verify" as const,
     title: readRunTitle(run),
-    description: run.errorMessage ? truncatePreview(run.errorMessage, 160) : run.providerName ? `${run.providerName} · ${run.providerModel}` : undefined,
-    meta: run.status,
+    description: run.errorMessage ? truncatePreview(run.errorMessage, 160) : undefined,
+    meta: operationStatusMeta(run.status, input.t),
     tone: runStatusTone(run.status),
   }));
   const evidenceRows: ConversationWorkCellRow[] = [
+    ...buildConversationExecutionActionEvidenceRows({
+      actions: input.actions,
+      artifactsById: input.artifactsById,
+      t: input.t,
+      limit: 8,
+    }),
     ...input.artifacts.slice(0, 8).map((artifact) => {
       const kind: ConversationOperationKind = artifact.type === "diff" || artifact.type === "file" || artifact.path ? "edit" : "verify";
       return {
@@ -436,8 +661,8 @@ function buildWorkCellGroups(input: {
       id: `failed-run:${run.id}`,
       kind: "watch" as const,
       title: readRunTitle(run),
-      description: run.errorMessage ? truncatePreview(run.errorMessage, 180) : input.t("Run failed without a captured error message."),
-      meta: run.status,
+      description: run.errorMessage ? truncatePreview(run.errorMessage, 180) : input.t("Failed without a captured error message."),
+      meta: operationStatusMeta(run.status, input.t),
       tone: "failed" as const,
     })),
     ...input.failedActions.slice(0, 5).map((action) => ({
@@ -445,7 +670,8 @@ function buildWorkCellGroups(input: {
       kind: operationKindForExecutionAction(action),
       title: action.title,
       description: action.summary,
-      meta: action.status,
+      detailLines: executionActionDetailLines(action, input.artifactsById, input.t),
+      meta: operationStatusMeta(action.status, input.t),
       tone: "failed" as const,
     })),
   ];
@@ -459,8 +685,8 @@ function buildWorkCellGroups(input: {
     },
     {
       id: "checked",
-      label: input.t("Checked work"),
-      summary: input.t("{count} attempts", { count: input.runs.length }),
+      label: input.t("Checks"),
+      summary: input.t("{count} checks", { count: input.runs.length }),
       rows: checkedRows,
     },
     {
@@ -478,43 +704,165 @@ function buildWorkCellGroups(input: {
   ];
 }
 
+export function buildConversationExecutionActionEvidenceRows(input: {
+  readonly actions: readonly ExecutionAction[];
+  readonly artifacts?: readonly RunArtifact[];
+  readonly artifactsById?: ReadonlyMap<string, RunArtifact>;
+  readonly t: Translate;
+  readonly limit?: number;
+}): readonly ConversationWorkCellRow[] {
+  const artifactsById = input.artifactsById ?? artifactsByIdMap(input.artifacts ?? []);
+  return input.actions
+    .filter(isMainFeedActionRow)
+    .slice(0, input.limit ?? 8)
+    .map((action) => executionActionEvidenceRow(action, artifactsById, input.t));
+}
+
+function artifactsByIdMap(artifacts: readonly RunArtifact[]): ReadonlyMap<string, RunArtifact> {
+  return new Map(artifacts.map((artifact) => [artifact.id, artifact]));
+}
+
+function isMainFeedActionRow(action: ExecutionAction): boolean {
+  if (action.status === "proposed") {
+    return false;
+  }
+  return executionActionHasUserFacingTarget(action) ||
+    action.resultArtifactIds.length > 0 ||
+    Boolean(action.summary.trim());
+}
+
+function executionActionEvidenceRow(
+  action: ExecutionAction,
+  artifactsById: ReadonlyMap<string, RunArtifact>,
+  t: Translate,
+): ConversationWorkCellRow {
+  return {
+    id: `action:${action.id}`,
+    kind: operationKindForExecutionAction(action),
+    title: action.title,
+    description: action.summary,
+    detailLines: executionActionDetailLines(action, artifactsById, t),
+    meta: operationStatusMeta(action.status, t),
+    tone: executionActionTone(action),
+  };
+}
+
+function executionActionDetailLines(
+  action: ExecutionAction,
+  artifactsById: ReadonlyMap<string, RunArtifact>,
+  t: Translate,
+): readonly ConversationWorkCellRowDetailLine[] {
+  const lines: ConversationWorkCellRowDetailLine[] = [];
+  const push = (line: ConversationWorkCellRowDetailLine): void => {
+    const text = line.text.trim();
+    if (!text || lines.some((existing) => existing.text === text)) {
+      return;
+    }
+    lines.push({ ...line, text });
+  };
+
+  for (const ref of action.targetRefs) {
+    if (ref.type === "command") {
+      const command = userFacingTargetRefText(ref);
+      if (command) {
+        push({ kind: "code", text: `$ ${truncatePreview(command, 140)}` });
+      }
+      continue;
+    }
+    if (ref.type === "file") {
+      const path = userFacingTargetRefText(ref);
+      if (path) {
+        push({ text: path });
+      }
+      continue;
+    }
+    if (ref.type === "mcp_tool") {
+      const tool = userFacingTargetRefText(ref);
+      if (tool) {
+        push({ text: `${t("Tool")}: ${tool}` });
+      }
+    }
+  }
+
+  const outputArtifacts = action.resultArtifactIds
+    .map((artifactId) => artifactsById.get(artifactId))
+    .filter((artifact): artifact is RunArtifact => Boolean(artifact))
+    .filter((artifact) => isMainFeedSafeText([mainFeedArtifactLabel(artifact), artifact.path].join(" ")));
+  if (outputArtifacts.length > 0) {
+    push({ text: outputArtifacts.length === 1 ? t("1 output recorded") : t("{count} outputs recorded", { count: outputArtifacts.length }) });
+  }
+
+  if (lines.length === 0 && action.scopeSummary?.trim()) {
+    push({ text: action.scopeSummary });
+  }
+
+  return lines.slice(0, 5);
+}
+
+function executionActionHasUserFacingTarget(action: ExecutionAction): boolean {
+  return action.targetRefs.some((ref) =>
+    (ref.type === "command" || ref.type === "file" || ref.type === "mcp_tool") &&
+    Boolean(userFacingTargetRefText(ref)));
+}
+
+function userFacingTargetRefText(ref: ExecutionAction["targetRefs"][number]): string | undefined {
+  const value = (ref.path ?? ref.label ?? "").trim();
+  if (!value || value === ref.id || isInternalTargetLabel(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function isInternalTargetLabel(value: string): boolean {
+  return /\b(?:run|work[-_\s]?unit|workflow|task|channel)_[a-z0-9_-]+\b/iu.test(value) ||
+    /\btool[_-]?call[_-]?[a-z0-9_-]*\b/iu.test(value) ||
+    /^call[_-]?[a-z0-9_-]+$/iu.test(value) ||
+    /^[a-z0-9_-]{24,}$/iu.test(value);
+}
+
+function executionActionTone(action: ExecutionAction): ConversationWorkCellRowTone {
+  if (action.status === "failed" || action.status === "denied" || action.status === "expired") {
+    return "failed";
+  }
+  if (action.status === "waiting_for_approval") {
+    return "waiting";
+  }
+  if (action.status === "succeeded" || action.status === "approved") {
+    return "success";
+  }
+  if (action.status === "executing") {
+    return "running";
+  }
+  return "neutral";
+}
+
 function buildWorkCellSummary(input: {
   readonly t: Translate;
   readonly status: ConversationWorkCellStatus;
   readonly latestRun: RunSession;
-  readonly runCount: number;
-  readonly artifactCount: number;
+  readonly title: string;
   readonly pendingApprovalCount: number;
 }): string {
   if (input.status === "succeeded") {
-    return input.t("Completed {attempts} attempts with {artifacts} evidence items.", {
-      attempts: input.runCount,
-      artifacts: input.artifactCount,
-    });
+    return input.title;
   }
   if (input.status === "failed") {
     const issue = input.latestRun.errorMessage ? truncatePreview(input.latestRun.errorMessage, 180) : input.t("No failure message was captured.");
-    return input.t("Failed after {attempts} attempts: {issue}", {
-      attempts: input.runCount,
-      issue,
-    });
+    return input.t("Failed: {issue}", { issue });
   }
   if (input.status === "cancelled" || input.status === "superseded") {
-    return input.t("Cancelled after {attempts} attempts.", { attempts: input.runCount });
+    return input.t("Cancelled: {title}.", { title: input.title });
   }
   if (input.status === "waiting_for_approval" || input.pendingApprovalCount > 0) {
-    return input.t("Waiting for {count} approvals before continuing.", { count: Math.max(1, input.pendingApprovalCount) });
+    return input.t("Waiting for approval to continue.");
   }
   if (input.status === "queued" || input.status === "open") {
-    return input.t("Queued with {attempts} attempts in this work thread.", { attempts: input.runCount });
+    return input.t("Queued: {title}.", { title: input.title });
   }
   if (input.status === "blocked") {
-    return input.t("Waiting on blockers with {attempts} attempts in this work thread.", { attempts: input.runCount });
+    return input.t("Blocked: waiting for input.");
   }
-  return input.t("Running with {attempts} attempts and {artifacts} evidence items.", {
-    attempts: input.runCount,
-    artifacts: input.artifactCount,
-  });
+  return input.t("Working on {title}.", { title: input.title });
 }
 
 function compareRunActivity(left: RunSession, right: RunSession): number {
@@ -539,7 +887,7 @@ function readRunTitle(run: RunSession): string {
       return title.trim();
     }
   }
-  return run.taskId || run.id;
+  return "Task";
 }
 
 function runStatusTone(status: RunSession["status"]): ConversationWorkCellRowTone {
@@ -556,6 +904,50 @@ function runStatusTone(status: RunSession["status"]): ConversationWorkCellRowTon
     return "running";
   }
   return "neutral";
+}
+
+function runOperationTitle(status: RunSession["status"], title: string, t: Translate): string {
+  if (status === "waiting_for_approval") {
+    return t("Waiting for approval: {title}", { title });
+  }
+  if (status === "queued") {
+    return t("Waiting to start {title}", { title });
+  }
+  if (status === "failed") {
+    return t("Could not finish {title}", { title });
+  }
+  if (status === "cancelled") {
+    return t("Stopped {title}", { title });
+  }
+  if (status === "succeeded") {
+    return t("Finished {title}", { title });
+  }
+  return t("Working on {title}", { title });
+}
+
+function operationStatusMeta(status: string, t: Translate): string | undefined {
+  if (status === "succeeded") {
+    return undefined;
+  }
+  if (status === "failed") {
+    return t("Failed");
+  }
+  if (status === "cancelled" || status === "superseded") {
+    return t("Stopped");
+  }
+  if (status === "waiting_for_approval") {
+    return t("Waiting for approval");
+  }
+  if (status === "queued") {
+    return undefined;
+  }
+  if (status === "denied") {
+    return t("Denied");
+  }
+  if (status === "expired") {
+    return t("Expired");
+  }
+  return undefined;
 }
 
 function operationKindForExecutionAction(action: ExecutionAction): ConversationOperationKind {

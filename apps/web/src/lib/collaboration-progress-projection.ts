@@ -18,18 +18,22 @@ export function buildCollaborationProgressProjection(input: {
   readonly cards: readonly CollaborationTaskCardModel[];
   readonly t: Translate;
   readonly limit?: number;
+  readonly scope?: "active" | "with_recent_terminal";
 }): readonly CollaborationProgressProjectionItem[] {
   const limit = Math.max(1, Math.min(input.limit ?? 6, 6));
+  const scope = input.scope ?? "with_recent_terminal";
   const sortedCards = [...input.cards]
     .filter((card) => card.mode !== "completed" || card.steps.some((step) => step.state === "done"))
     .sort((left, right) => collaborationCardPriority(right) - collaborationCardPriority(left) || right.updatedAt.localeCompare(left.updatedAt));
-  const actionableCards = sortedCards.filter((card) => !isTerminalSummaryCard(card));
+  const actionableCards = sortedCards.filter((card) => scope === "active" ? isActiveProgressCard(card) : !isTerminalSummaryCard(card));
   const terminalCards = sortedCards
     .filter(isTerminalSummaryCard)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  const cards = actionableCards.length > 0
-    ? [...actionableCards, ...terminalCards.slice(0, 1)]
-    : terminalCards.slice(0, 1);
+  const cards = scope === "active"
+    ? actionableCards
+    : actionableCards.length > 0
+      ? [...actionableCards, ...terminalCards.slice(0, 1)]
+      : terminalCards.slice(0, 1);
   const rows: CollaborationProgressProjectionItem[] = [];
 
   for (const card of cards) {
@@ -74,6 +78,13 @@ function shouldProjectStepRows(card: CollaborationTaskCardModel): boolean {
 
 function isTerminalSummaryCard(card: CollaborationTaskCardModel): boolean {
   return card.mode === "completed" || card.mode === "cancelled";
+}
+
+function isActiveProgressCard(card: CollaborationTaskCardModel): boolean {
+  return card.mode === "blocked" ||
+    card.mode === "waiting" ||
+    card.mode === "running" ||
+    card.mode === "ready_for_confirmation";
 }
 
 function collaborationCardPriority(card: CollaborationTaskCardModel): number {

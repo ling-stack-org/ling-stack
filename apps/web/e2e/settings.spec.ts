@@ -40,13 +40,11 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByLabel("动态类别").getByRole("button", { name: /全部/ })).toBeVisible();
   await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
   await page.locator(".task-toolbar-progress").click();
-  await expect(page.getByRole("region", { name: "进度" })).toBeVisible();
-  await page.locator(".task-toolbar-progress").click();
-  await expect(page.getByRole("region", { name: "进度" })).toHaveCount(0);
-  await expect(page.getByPlaceholder("给频道发消息，或 @ 一个 AI 队友")).toBeVisible();
-  await expect(page.locator(".channel-composer").getByRole("button", { name: "发送" })).toBeVisible();
-  await expect.poll(() => state.workspaceSettings.locale).toBe("zh-CN");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBeNull();
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+  await page.locator(".task-toolbar-panel").click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "文件");
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
@@ -66,12 +64,11 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
   await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
   await page.locator(".task-toolbar-progress").click();
-  await expect(page.getByRole("region", { name: "Progress" })).toBeVisible();
-  await page.locator(".task-toolbar-progress").click();
-  await expect(page.getByRole("region", { name: "Progress" })).toHaveCount(0);
-  await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
-  await expect.poll(() => state.workspaceSettings.locale).toBe("en-US");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBeNull();
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+  await page.locator(".task-toolbar-panel").click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Files");
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
 });
 
 test("Chinese mode localizes workspace settings, runtime policy, and teammate setup labels", async ({ page }) => {
@@ -173,7 +170,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme", "light");
 });
 
-test("settings channel protocol shortcut opens the workspace protocol editor", async ({ page }) => {
+test("settings interface preferences do not expose the channel protocol editor", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -183,19 +180,8 @@ test("settings channel protocol shortcut opens the workspace protocol editor", a
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Interface preferences" });
-  await expect(settingsPanel).toContainText("Channel protocol");
-  await expect(settingsPanel).toContainText("Engineering");
-  await settingsPanel.getByRole("button", { name: "Open editor" }).click();
-
-  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  const contextPanel = page.getByRole("complementary", { name: "Context" });
-  await expect(contextPanel).toBeVisible();
-  await expect(
-    contextPanel.getByRole("tablist", { name: "Channel inspector modes" }).getByRole("button", { name: "Protocol", exact: true }),
-  ).toHaveClass(/active/);
-  await expect(contextPanel).toContainText("Channel protocol");
-  await expect(contextPanel).toContainText("Effective response language");
-  await expect(contextPanel).toContainText("Read-only protocol defaults");
+  await expect(settingsPanel).not.toContainText("Channel protocol");
+  await expect(settingsPanel.getByRole("button", { name: "Open editor" })).toHaveCount(0);
 });
 
 test("settings approval policy loads, edits, and saves tool decisions and write paths", async ({ page }) => {

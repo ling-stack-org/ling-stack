@@ -4,7 +4,6 @@ export {
   openChannelChatTools,
   openChannelContextPanel,
   openChannelFilesPanel,
-  openChannelTasksTab,
   openNewTaskPanel,
   openTaskFromAttentionQueue,
   readHorizontalOverflow,

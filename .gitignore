@@ -20,6 +20,12 @@ apps/web/test-results/
 WORKFLOW.md
 *.log
 
+# local generated artifacts
+.codex-artifacts/
+.playwright-cli/
+logs/
+output/
+
 # system
 .DS_Store
 

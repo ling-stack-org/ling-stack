@@ -1,6 +1,14 @@
 # Multi-Agent Collaboration Cards And Ambient Audit
 
-Status: product design baseline.
+Status: superseded for main-feed conversation UI; retained as historical context.
+
+2026-06-15 update: main-feed collaboration cards are no longer the active product model.
+Use [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md) and
+[Conversation UI Design Conformance Recovery Plan](conversation-ui-design-conformance-recovery-plan.md)
+for the channel conversation feed. This document may still explain the older
+collaboration-card read model, but not a current Progress drawer surface.
+
+Previous status: product design baseline.
 Date: 2026-06-13
 
 Related docs:

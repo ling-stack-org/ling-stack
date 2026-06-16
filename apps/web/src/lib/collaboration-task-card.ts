@@ -56,7 +56,7 @@ export function buildCollaborationTaskCardModel(input: BuildCollaborationTaskCar
     title: step.title,
     ownerLabel: step.toParticipantLabel,
     state: collaborationStepState(step),
-    summary: step.resultSummary ?? step.blocker ?? (step.status === "succeeded" || step.status === "skipped" ? undefined : truncatePreview(step.prompt, 120)),
+    summary: collaborationStepSummary(step),
     branchGroupId: step.metadata?.branchGroupId,
     joinGroupId: step.metadata?.joinGroupId,
     updatedAt: step.updatedAt,
@@ -193,6 +193,39 @@ function collaborationStepState(step: ChannelWorkflowStep): CollaborationTaskSte
   return "queued";
 }
 
+function collaborationStepSummary(step: ChannelWorkflowStep): string | undefined {
+  if (step.resultSummary?.trim()) {
+    return step.resultSummary.trim();
+  }
+  if (step.blocker?.trim()) {
+    return step.blocker.trim();
+  }
+  return semanticPromptSummary(step.prompt);
+}
+
+function semanticPromptSummary(prompt: string): string | undefined {
+  const stepSummaryMatch = /(?:^|\n)Step summary:\s*\n([\s\S]*?)(?=\n\n[A-Z][^:\n]{0,80}:\s*\n|$)/u.exec(prompt);
+  const extracted = stepSummaryMatch?.[1]?.trim();
+  if (extracted) {
+    return truncatePreview(extracted, 120);
+  }
+  const trimmed = prompt.trim();
+  if (!trimmed || isStructuredWorkflowPrompt(trimmed)) {
+    return undefined;
+  }
+  return truncatePreview(trimmed, 120);
+}
+
+function isStructuredWorkflowPrompt(prompt: string): boolean {
+  return /\bConfirmed proposal:\b/u.test(prompt) ||
+    /\bOverall scope:\b/u.test(prompt) ||
+    /\bAssigned teammate:\b/u.test(prompt) ||
+    /\bStep action:\b/u.test(prompt) ||
+    /\bAcceptance criteria:\b/u.test(prompt) ||
+    /\bComplete only this step\./u.test(prompt) ||
+    /\bruntime permission\b/iu.test(prompt);
+}
+
 function collaborationBranchState(steps: readonly CollaborationTaskCardStep[]): CollaborationTaskStepState {
   if (steps.some((step) => step.state === "blocked")) {
     return "blocked";
@@ -203,8 +236,11 @@ function collaborationBranchState(steps: readonly CollaborationTaskCardStep[]): 
   if (steps.some((step) => step.state === "active")) {
     return "active";
   }
-  if (steps.some((step) => step.state === "waiting" || step.state === "queued")) {
+  if (steps.some((step) => step.state === "waiting")) {
     return "waiting";
+  }
+  if (steps.some((step) => step.state === "queued")) {
+    return "queued";
   }
   if (steps.every((step) => step.state === "done")) {
     return "done";

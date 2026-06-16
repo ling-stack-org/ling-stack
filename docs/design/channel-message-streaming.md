@@ -15,6 +15,21 @@ Sending a channel message from the composer should start a normal Ling Agent cha
 
 The existing JSON `POST /channels/:id/messages` remains supported for API compatibility. The Web app should prefer the streaming endpoint for composer sends.
 
+The current message-body stream is a compatibility transport. The target product stream
+is a shared semantic transcript stream that can be consumed by Web, the future desktop
+app, and CLI/TUI-style clients:
+
+```text
+daemon/core channel records and run events
+  -> ConversationTranscript snapshot
+  -> transcript delta stream
+  -> Web renderer / Desktop renderer / CLI renderer
+```
+
+Clients may render the same transcript differently, but they should not re-run intent
+routing, workflow/run grouping, active-cell lifecycle, or message-body phrase detection.
+That interpretation belongs in the daemon/core projection layer and the shared contracts.
+
 Streaming changes only the transport and UI cadence; it must not make the reply
 stateless. The daemon should build the same Ling Agent layered channel context for
 streamed and non-streamed sends: current turn envelope, channel state, effective protocol,
@@ -27,6 +42,11 @@ That context is owned by the [Channel Context Processing Layer](channel-context-
 not by the streaming transport. SSE only delivers the visible body updates for the same
 durable Ling Agent turn.
 
+Transcript projection is owned by the shared conversation contract described in
+[Contracts and API Client](contracts-api-client.md), not by the Web component tree. Web can
+host the first implementation while the visual design stabilizes, but the contract must be
+portable to Desktop and CLI before the projection becomes a permanent API.
+
 While a pending AI reply has no visible text yet, the Web feed should show a
 generic `Thinking...` status with a spinner. As soon as `delta.body` is non-empty,
 the same bubble must render that body instead of a generic pending label.
@@ -38,6 +58,8 @@ must not steal focus; the existing jump-to-latest affordance remains the recover
 path.
 
 ## HTTP Contract
+
+### Compatibility: Message Body Stream
 
 ```http
 POST /channels/:id/messages/stream?cwd=/path/to/project
@@ -57,11 +79,54 @@ SSE events:
 | `blocked` | `{ message, aiReply?, aiReplies?, error? }` | The reply could not continue because of provider, teammate, or runtime blocking. |
 | `error` | `{ message?, aiReply?, aiReplies?, error }` | The stream itself failed after the request started. Persisted messages, if any, are included. |
 
+### Target: Transcript Snapshot And Delta Stream
+
+The target API should expose transcript state as a durable read model:
+
+```http
+GET /channels/:id/transcript?cwd=/path/to/project
+Accept: application/json
+```
+
+Suggested response:
+
+```ts
+interface ChannelConversationTranscriptResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly transcript: ConversationTranscript;
+  readonly sequence: number;
+}
+```
+
+The live stream can be a separate endpoint or an extension of the existing send stream.
+The important part is the event model:
+
+| Event | Payload | Semantics |
+| --- | --- | --- |
+| `transcript_snapshot` | `{ transcript, sequence }` | Full current transcript for initial load or reconnect. |
+| `turn_started` | `{ turnId, sequence }` | A user turn now owns a transcript container. |
+| `block_started` | `{ turnId, block, sequence }` | A semantic block exists, for example coordinator text, operation cell, command row, approval, or agent span. |
+| `block_delta` | `{ turnId, blockId, patch, sequence }` | The same block mutates in place. Text deltas, stdout chunks, status changes, and evidence growth update the existing block. |
+| `block_completed` | `{ turnId, blockId, status, patch?, sequence }` | The block is terminal and should remain as a committed transcript block. |
+| `turn_completed` | `{ turnId, status, sequence }` | The turn is terminal. Active popovers should clear unless another active turn exists. |
+| `error` | `{ error, sequence? }` | The stream failed. Persisted transcript state remains the source of truth. |
+
+This mirrors the useful part of Codex's `Thread / Turn / Item` model without copying its
+JSON-RPC app-server wholesale. Ling's names can remain `ConversationTranscript`,
+`ConversationTurn`, and `TranscriptBlock`.
+
 ## Persistence And Reconnect
 
 `delta` updates the same `ChannelMessage` row with `status: "pending"`. `done` updates the same row to `ready`, `blocked`, or `failed`. The browser stream is only a live transport; the SQLite channel message store remains the source of truth.
 
 If the browser disconnects, the daemon should stop writing to that client but should not treat the disconnect as user cancellation for channel replies. Explicit cancellation remains a separate runtime control concern.
+
+For transcript streaming, the daemon persists the underlying channel/run/workflow records
+and rebuilds the transcript snapshot from those records. The transcript stream itself is
+not the source of truth. Reconnect should request a snapshot at or after the last observed
+sequence and then continue with deltas. If delta replay is unavailable, clients must
+replace their local transcript with the latest snapshot.
 
 ## Hidden Proposal Safety
 
@@ -73,23 +138,23 @@ When a channel turn intentionally creates multiple AI replies, the stream may em
 
 ## Collaboration Stream Folding
 
-For multi-agent collaboration cards, streaming is still a live transport, not permanent
-process spam.
+For multi-agent collaboration, streaming is still a live transport, not permanent process
+spam and not a collaboration-card-specific model.
 
 Default rules:
 
 - requirement shaping streams update the same shaping card until Ling Agent posts a
   compact summary or asks a clarifying question;
-- execution step streams update the active step row inside the collaboration task card;
-- when a step reaches terminal state, the stream folds into a step summary and optional
-  handoff card;
-- parallel branch streams are folded by default and exposed per branch only when the user
-  expands details;
+- execution step streams update the active `OperationCell` or `AgentActivitySpan` row;
+- when a step reaches terminal state, the same row changes status and remains folded in
+  the transcript;
+- parallel branch streams expose one latest-action row per active agent, with prior
+  semantic actions folded under that agent span;
 - raw runtime stream events stay in evidence/details, not the default feed.
 
 See
-[Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
-for the product-level card behavior.
+[Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
+for the current product-level transcript behavior.
 
 ## Acceptance
 
@@ -103,3 +168,7 @@ for the product-level card behavior.
 - Streamed and non-streamed channel replies include the same layered channel context, while excluding the current pending assistant placeholder.
 - Multi-agent collaboration streams fold into task/step summaries after terminal state
   instead of leaving raw process streams in the default feed.
+- Future transcript streams expose turn/block lifecycle events where running blocks mutate
+  in place and terminal blocks commit without being deleted.
+- Web and Desktop consume the same transcript snapshot/delta contract. CLI may render the
+  same model as text or TUI, but it does not own the conversation projection.

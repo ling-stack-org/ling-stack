@@ -17,6 +17,9 @@ export function teammateInitialFromName(name: string): string {
   if (!cleaned) {
     return "AI";
   }
+  if (!/^[\x00-\x7F]+$/u.test(cleaned)) {
+    return Array.from(cleaned)[0]?.toUpperCase() || "AI";
+  }
   const parts = cleaned.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) {
     return `${parts[0].charAt(0)}${parts[1].charAt(0)}`.toUpperCase();

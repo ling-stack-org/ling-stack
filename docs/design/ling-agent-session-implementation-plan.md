@@ -61,6 +61,19 @@ Ling Agent Session View
   -> terminal final report
 ```
 
+The next conversation UI implementation should add a second read model:
+
+```text
+ConversationTranscript
+  -> ConversationTurn[]
+  -> TranscriptBlock[]
+  -> active OperationCell / AgentActivitySpan mutation
+  -> committed folded process history
+```
+
+`LingAgentSessionView` remains the coarse state summary. `ConversationTranscript` owns the
+ordered user-facing cell stream. Do not merge them into one report-shaped object.
+
 The goal is to make Ling feel like one coherent agent session while preserving the lower
 layers that already enforce state, permissions, runner behavior, and audit.
 
@@ -73,6 +86,8 @@ layers that already enforce state, permissions, runner behavior, and audit.
 - Treat attachments, link previews, composer file refs, and active-run guidance payloads
   as first-class turn input, not UI decorations or optional message metadata.
 - Keep process details expandable, not default transcript content.
+- Keep completed process rows folded in the transcript; terminal summary must not delete
+  or replace the process history.
 - Make Ling Agent a protected built-in system teammate and default executor identity, not
   a permission authority.
 - Make user interjections durable interventions, not hidden prompt injection.
@@ -96,6 +111,9 @@ layers that already enforce state, permissions, runner behavior, and audit.
 | Run interventions | `packages/daemon/src/features/runs/interventions.ts` |
 | Execution actions | `packages/daemon/src/features/runs/execution-actions.ts` |
 | Thread/evidence APIs | `packages/daemon/src/features/runs/thread-routes.ts` |
+| Current Web turn projection prototype | `apps/web/src/lib/conversation-turn-projector.ts` |
+| Current Web operation projection prototype | `apps/web/src/lib/conversation-work-cell.ts` |
+| Future shared transcript contracts | `packages/contracts/src/conversation-transcript.ts` |
 
 ## P1: Session View Projection
 
@@ -143,14 +161,24 @@ interface LingAgentSessionView {
 }
 ```
 
-Suggested source location:
+Implemented source location for the first coarse session view:
 
 ```text
 packages/daemon/src/features/channels/ling-agent-session-view.ts
-apps/web/src/lib/ling-agent-session-view.ts
 ```
 
-Prefer a shared contract in `packages/contracts` only after the shape is proven.
+Shared contract target:
+
+```text
+packages/contracts/src/conversation-transcript.ts
+packages/core/src/conversation-transcript-projector.ts
+packages/daemon/src/features/channels/conversation-transcript.ts
+```
+
+Use `packages/contracts` for wire types, a pure projector in `packages/core` when it can
+avoid daemon-only dependencies, and daemon feature glue for store queries and endpoints.
+Web and Desktop should consume the daemon transcript snapshot/delta API instead of
+duplicating projection logic.
 
 ### Derivation Rules
 
@@ -181,6 +209,32 @@ Do not make this endpoint an authority for approval, run, or workflow state.
   and final report should be visible.
 - Keep legacy proposal/workflow/runs loaded until the view is stable.
 - Do not remove existing evidence links.
+- Treat current Web projection helpers as prototype code. Once the transcript contract is
+  stable, migrate grouping, terminal-state ownership, command folding, and agent span
+  lifecycle into shared projector code.
+
+### Shared Transcript Work
+
+- Define `ConversationTranscript`, `ConversationTranscriptTurn`, `TranscriptBlock`,
+  `OperationCellBlock`, `AgentActivitySpanBlock`, `RawDetailRef`, and transcript delta
+  events in `packages/contracts`.
+- Add a pure projector that groups by root user turn, stable operation id, and actor.
+- Preserve running-to-terminal mutation on the same block id.
+- Keep command stdout/stderr bounded in inline detail and full output behind raw/detail
+  refs.
+- Add a daemon snapshot endpoint and optional SSE stream for transcript updates.
+- Keep CLI as a consumer. CLI may render transcript blocks as text or TUI cells, but it
+  must not own the projection.
+
+Acceptance:
+
+- Web and Desktop can render the same transcript JSON with different visual chrome.
+- The transcript snapshot contains no raw workflow/run/work-unit labels in default display
+  fields.
+- Completing work changes block status and labels; it does not remove completed operation
+  rows.
+- No projector phase relies on matching coordinator body prefixes such as `确认需求` or
+  `完成`.
 
 ### Tests
 

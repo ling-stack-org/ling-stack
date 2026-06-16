@@ -690,10 +690,6 @@ export async function readSidebarSelection(page: Page): Promise<{ readonly activ
   });
 }
 
-export async function openChannelTasksTab(page: Page): Promise<void> {
-  await openChannelSidePanel(page, "Progress");
-}
-
 export async function openTaskFromAttentionQueue(page: Page, title: string): Promise<void> {
   const hideDetails = page.getByRole("button", { name: "Hide details" });
   if (await hideDetails.count() > 0 && await hideDetails.isVisible().catch(() => false)) {
@@ -701,14 +697,14 @@ export async function openTaskFromAttentionQueue(page: Page, title: string): Pro
     await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   }
   await openChannelChatTools(page);
-  const taskEvent = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: title }).first();
+  const taskEvent = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: title }).last();
   await expect(taskEvent).toBeVisible();
   await taskEvent.getByRole("button", { name: "Open task" }).click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
 }
 
 export async function openNewTaskPanel(page: Page): Promise<void> {
-  await openChannelTasksTab(page);
+  await openChannelContextPanel(page);
   await page.locator(".channel-side-panel").hover();
   await page.getByRole("button", { name: "New task" }).click();
 }
@@ -718,10 +714,22 @@ export async function openChannelFilesPanel(page: Page): Promise<void> {
 }
 
 export async function openChannelContextPanel(page: Page): Promise<void> {
-  await openChannelSidePanel(page, "Context");
+  const panel = page.locator(".channel-side-panel");
+  const panelVisible = (await panel.count()) > 0 && await panel.isVisible().catch(() => false);
+  const panelLabel = panelVisible ? await panel.getAttribute("aria-label") : "";
+  if (panelVisible && panelLabel === "Context") {
+    await panel.hover();
+    return;
+  }
+  await openChannelChatTools(page);
+  const openContextButton = page.getByRole("button", { name: "Open context" }).first();
+  await expect(openContextButton).toBeVisible();
+  await openContextButton.click();
+  await expect(panel).toHaveAttribute("aria-label", "Context");
+  await panel.hover();
 }
 
-export async function openChannelSidePanel(page: Page, name: "Progress" | "Files" | "Context" | "Settings"): Promise<void> {
+export async function openChannelSidePanel(page: Page, name: "Files" | "Settings"): Promise<void> {
   const expectedLabels = [name];
   const panel = page.locator(".channel-side-panel");
   const panelVisible = (await panel.count()) > 0 && await panel.isVisible().catch(() => false);
@@ -2736,7 +2744,13 @@ export function createChannelFromBody(body: Record<string, unknown>, id: string,
         : typeof existing.defaultProviderPresetId === "string"
           ? existing.defaultProviderPresetId
           : undefined,
-    defaultTeammateId: typeof body.defaultTeammateId === "string" ? body.defaultTeammateId : typeof existing.defaultTeammateId === "string" ? existing.defaultTeammateId : undefined,
+    defaultTeammateId: body.defaultTeammateId === null || body.defaultTeammateId === ""
+      ? undefined
+      : typeof body.defaultTeammateId === "string"
+        ? body.defaultTeammateId
+        : typeof existing.defaultTeammateId === "string"
+          ? existing.defaultTeammateId
+          : undefined,
     autoReplyMode: body.autoReplyMode === null
       ? "mentions_only"
       : body.autoReplyMode !== undefined
@@ -2887,6 +2901,43 @@ export function createMockTeammate(overrides: Record<string, unknown> = {}): Rec
   };
 }
 
+function createMockLingAgentTeammate(): Record<string, unknown> {
+  return {
+    id: "ling_agent",
+    workspaceId: "workspace_default",
+    templateId: "ling_agent",
+    kind: "system_teammate",
+    systemRole: "ling_agent",
+    roleKey: "custom",
+    displayName: "Ling Agent",
+    description: "Coordinates scoped channel work.",
+    avatarTone: "violet",
+    providerPresetId: undefined,
+    systemPrompt: "You are Ling Agent.",
+    appendSystemPrompt: [],
+    allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    approvalProfile: { mode: "standard", risk: "medium" },
+    status: "active",
+    pinned: true,
+    hidden: false,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z",
+  };
+}
+
+function mockTeammateCanRunInChannel(state: MockState, channelId: string, teammateId: string): boolean {
+  if (teammateId === "ling_agent") {
+    return true;
+  }
+  const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+  if (isRecord(channel) && channel.defaultTeammateId === teammateId) {
+    return true;
+  }
+  return state.teammateChannelMemberships.some((item) =>
+    isRecord(item) && item.channelId === channelId && item.teammateId === teammateId
+  );
+}
+
 function maybeCreateMockWorkflowProposal(
   state: MockState,
   channelId: string,
@@ -2911,25 +2962,28 @@ function maybeCreateMockWorkflowProposal(
 
   const activeTeammates = state.aiTeammates.filter((teammate): teammate is Record<string, unknown> =>
     isRecord(teammate) && teammate.status !== "disabled" && teammate.hidden !== true);
+  const channelTeammates = activeTeammates.filter((teammate) =>
+    typeof teammate.id === "string" && mockTeammateCanRunInChannel(state, channelId, teammate.id)
+  );
   const selectedTeammates = allTeammates
     ? roleOrder.flatMap((role) => {
-        const teammate = activeTeammates.find((item) => item.roleKey === role);
+        const teammate = channelTeammates.find((item) => item.roleKey === role);
         return teammate ? [teammate] : [];
       }).slice(0, 5)
     : roleOrder.flatMap((role) => {
         if (!matchedRoles.includes(role)) {
           return [];
         }
-        const teammate = activeTeammates.find((item) => item.roleKey === role);
+        const teammate = channelTeammates.find((item) => item.roleKey === role);
         return teammate ? [teammate] : [];
       });
-  if (selectedTeammates.length === 0) {
-    return undefined;
-  }
+  const finalSelectedTeammates = selectedTeammates.length > 0
+    ? selectedTeammates
+    : [createMockLingAgentTeammate()];
 
-  const engineer = selectedTeammates.find((teammate) => teammate.roleKey === "engineer");
-  const assignee = engineer ?? selectedTeammates[0];
-  const assigneeId = typeof assignee.id === "string" ? assignee.id : "teammate_builtin_engineer";
+  const engineer = finalSelectedTeammates.find((teammate) => teammate.roleKey === "engineer");
+  const assignee = engineer ?? finalSelectedTeammates[0];
+  const assigneeId = typeof assignee?.id === "string" ? assignee.id : "ling_agent";
   const proposal = {
     id: `proposal_${state.channelExecutionProposals.length + 1}`,
     workspaceId: "workspace_default",
@@ -2944,12 +2998,12 @@ function maybeCreateMockWorkflowProposal(
       "Run each implementation step through the existing channel task/run path.",
       "Keep selector, handoff, run, approval, and artifact evidence expandable.",
     ],
-    collaborationSteps: selectedTeammates.map((teammate) => ({
+    collaborationSteps: finalSelectedTeammates.map((teammate) => ({
       teammateId: typeof teammate.id === "string" ? teammate.id : "teammate_builtin_engineer",
       action: teammate.roleKey === "qa" || teammate.roleKey === "designer" || teammate.roleKey === "docs" ? "reviewed" : "coordinated",
       summary: mockProposalStepSummary(typeof teammate.roleKey === "string" ? teammate.roleKey : "engineer"),
     })),
-    requiredTools: Array.from(new Set(selectedTeammates.flatMap((teammate) => Array.isArray(teammate.allowedTools) ? teammate.allowedTools : []))),
+    requiredTools: Array.from(new Set(finalSelectedTeammates.flatMap((teammate) => Array.isArray(teammate.allowedTools) ? teammate.allowedTools : []))),
     riskSummary: allTeammates
       ? "Converted an all-teammates request into one workflow proposal instead of visible group chat."
       : "Non-direct multi-agent collaboration waits for confirmation and continues through existing workflow/run approvals.",
@@ -8006,6 +8060,7 @@ function buildMockWorkflowEvidence(state: MockState, workflow: Record<string, un
   const artifacts = Object.entries(state.artifactsByRun)
     .filter(([runId]) => stepRunIds.has(runId))
     .flatMap(([, runArtifacts]) => runArtifacts);
+  const actions = state.executionActions.filter((action) => action.runId ? stepRunIds.has(action.runId) : false);
   return {
     workflow,
     steps: steps.map((step) => {
@@ -8025,6 +8080,7 @@ function buildMockWorkflowEvidence(state: MockState, workflow: Record<string, un
       const approvalRecord = approval as unknown as Record<string, unknown>;
       return steps.some((step) => approval.runId === readString(step, "runId") || readString(approvalRecord, "workflowStepId") === readString(step, "id"));
     }),
+    actions,
     artifacts,
     memoryCandidates: [],
   };
@@ -8133,14 +8189,14 @@ function buildMockCollaborationTaskCard(state: MockState, workflow: Record<strin
   const queuedStep = steps.find((step) => readString(step, "status") === "queued");
   const focusStep = blockedStep ?? failedStep ?? waitingStep ?? activeStep ?? queuedStep;
   const cardSteps = steps.map((step) => ({
-    id: readString(step, "id"),
-    title: readString(step, "title"),
-    ownerLabel: readString(step, "toParticipantLabel"),
-    state: mockCollaborationStepState(readString(step, "status")),
-    summary: readOptionalString(step, "resultSummary") ?? readOptionalString(step, "blocker") ?? (readString(step, "status") === "succeeded" || readString(step, "status") === "skipped" ? undefined : truncateMockPreview(readString(step, "prompt"), 120)),
-    branchGroupId: readNestedString(step.metadata, ["branchGroupId"]),
-    joinGroupId: readNestedString(step.metadata, ["joinGroupId"]),
-    updatedAt: readString(step, "updatedAt"),
+	    id: readString(step, "id"),
+	    title: readString(step, "title"),
+	    ownerLabel: readString(step, "toParticipantLabel"),
+	    state: mockCollaborationStepState(readString(step, "status")),
+	    summary: mockCollaborationStepSummary(step),
+	    branchGroupId: readNestedString(step.metadata, ["branchGroupId"]),
+	    joinGroupId: readNestedString(step.metadata, ["joinGroupId"]),
+	    updatedAt: readString(step, "updatedAt"),
   }));
   const executionMode = mockCollaborationExecutionMode(steps);
   const completedStepCount = steps.filter((step) => readString(step, "status") === "succeeded" || readString(step, "status") === "skipped").length;
@@ -8254,6 +8310,41 @@ function mockCollaborationStepState(status: string): string {
   return "queued";
 }
 
+function mockCollaborationStepSummary(step: Record<string, unknown>): string | undefined {
+  const resultSummary = readOptionalString(step, "resultSummary")?.trim();
+  if (resultSummary) {
+    return resultSummary;
+  }
+  const blocker = readOptionalString(step, "blocker")?.trim();
+  if (blocker) {
+    return blocker;
+  }
+  return semanticMockPromptSummary(readString(step, "prompt"));
+}
+
+function semanticMockPromptSummary(prompt: string): string | undefined {
+  const stepSummaryMatch = /(?:^|\n)Step summary:\s*\n([\s\S]*?)(?=\n\n[A-Z][^:\n]{0,80}:\s*\n|$)/u.exec(prompt);
+  const extracted = stepSummaryMatch?.[1]?.trim();
+  if (extracted) {
+    return truncateMockPreview(extracted, 120);
+  }
+  const trimmed = prompt.trim();
+  if (!trimmed || isStructuredMockWorkflowPrompt(trimmed)) {
+    return undefined;
+  }
+  return truncateMockPreview(trimmed, 120);
+}
+
+function isStructuredMockWorkflowPrompt(prompt: string): boolean {
+  return /\bConfirmed proposal:\b/u.test(prompt) ||
+    /\bOverall scope:\b/u.test(prompt) ||
+    /\bAssigned teammate:\b/u.test(prompt) ||
+    /\bStep action:\b/u.test(prompt) ||
+    /\bAcceptance criteria:\b/u.test(prompt) ||
+    /\bComplete only this step\./u.test(prompt) ||
+    /\bruntime permission\b/iu.test(prompt);
+}
+
 function mockCollaborationBranchState(steps: readonly Record<string, unknown>[]): string {
   if (steps.some((step) => readString(step, "state") === "blocked")) {
     return "blocked";
@@ -8264,8 +8355,11 @@ function mockCollaborationBranchState(steps: readonly Record<string, unknown>[])
   if (steps.some((step) => readString(step, "state") === "active")) {
     return "active";
   }
-  if (steps.some((step) => readString(step, "state") === "waiting" || readString(step, "state") === "queued")) {
+  if (steps.some((step) => readString(step, "state") === "waiting")) {
     return "waiting";
+  }
+  if (steps.some((step) => readString(step, "state") === "queued")) {
+    return "queued";
   }
   if (steps.every((step) => readString(step, "state") === "done")) {
     return "done";

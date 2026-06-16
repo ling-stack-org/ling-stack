@@ -146,7 +146,6 @@ export function AppShell(): JSX.Element {
   const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
-  const [channelContextOpenRequest, setChannelContextOpenRequest] = useState<{ readonly channelId: string; readonly mode: "protocol"; readonly nonce: number } | undefined>();
   const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
   const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({
@@ -936,7 +935,6 @@ export function AppShell(): JSX.Element {
   const {
     openPlainView,
     openRunDiagnosticsView,
-    openSelectedChannelProtocolEditor,
     selectWorkspaceChannel,
     selectWorkspaceChannelBranch,
     selectAiTeammate,
@@ -952,7 +950,6 @@ export function AppShell(): JSX.Element {
     setActiveView,
     setActiveSidebarTarget,
     setApprovalRepairRunId,
-    setChannelContextOpenRequest,
     setChannelCreateOpen,
     setSelectedChannelBranchId,
     setSelectedChannelId,
@@ -1491,7 +1488,6 @@ export function AppShell(): JSX.Element {
             cwd={form.cwd}
             daemonHealthy={daemonHealthy}
             channelAutoRouteEnabled={daemonFeatures.channels.autoRoute}
-            channelContextOpenRequest={channelContextOpenRequest}
             providerLabel={`${form.provider}/${form.model}`}
             channels={channels}
             selectedChannelId={selectedChannelId}
@@ -1937,7 +1933,6 @@ export function AppShell(): JSX.Element {
                     onOpenRunDiagnostics={() => {
                       openRunDiagnosticsView();
                     }}
-                    onOpenChannelProtocol={openSelectedChannelProtocolEditor}
                     onRefreshMcp={() => void refreshMcp()}
                     onArchivedItemsChanged={() => refreshChannels()}
                     onCreateMcpServer={addMcpServer}

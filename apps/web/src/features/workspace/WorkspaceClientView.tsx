@@ -71,10 +71,16 @@ import {
   type ChannelActivityTriageDraft,
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
-import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { buildConversationTurnProjection, type ConversationTranscriptBlock, type ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import { buildCollaborationProgressProjection, type CollaborationProgressProjectionIcon, type CollaborationProgressProjectionItem, type CollaborationProgressProjectionTone } from "../../lib/collaboration-progress-projection.js";
-import { buildCollaborationTaskCardModel, type CollaborationTaskCardModel, type CollaborationTaskStepState } from "../../lib/collaboration-task-card.js";
-import { collaborationTaskCardToConversationWorkCell } from "../../lib/collaboration-task-work-cell.js";
+import { buildCollaborationTaskCardModel, type CollaborationTaskCardModel } from "../../lib/collaboration-task-card.js";
+import {
+  buildConversationContextSourceSummaryFromInspect,
+  buildConversationContextSourceSummaryFromPacket,
+  conversationContextSourceSummaryLabel,
+  type ConversationContextSourceSummary,
+} from "../../lib/conversation-context-sources.js";
 import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
 import {
   allChannelActivitySavedViewId,
@@ -211,8 +217,8 @@ import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
-type ChannelSidePanelView = "progress" | "files" | "context" | "settings" | "task" | "approval";
-type ChannelDrawerRootView = Extract<ChannelSidePanelView, "progress" | "files" | "context" | "settings">;
+type ChannelSidePanelView = "files" | "context" | "settings" | "task" | "approval";
+type ChannelDrawerRootView = Extract<ChannelSidePanelView, "files" | "settings">;
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
@@ -245,14 +251,6 @@ type ThreadTurnsLoadState =
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly turns: readonly LingTurn[]; readonly runLinks: readonly LingTurnRun[] }
   | { readonly status: "error"; readonly errorMessage: string };
-
-interface AttentionContextRow {
-  readonly id: string;
-  readonly icon: ReactNode;
-  readonly label: string;
-  readonly value: string;
-  readonly onOpen?: () => void;
-}
 
 interface AttentionProgressRow {
   readonly id: string;
@@ -289,15 +287,12 @@ interface ActiveMentionPicker {
   readonly end: number;
 }
 
-const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["progress", "files", "context", "settings"];
+const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["files", "settings"];
 const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
 const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "blocked", "failed", "pending"];
 const channelNotificationLevels: readonly ChannelNotificationLevel[] = ["all", "mentions", "muted"];
 
 function channelSidePanelLabel(view: ChannelSidePanelView): string {
-  if (view === "progress") {
-    return "Progress";
-  }
   if (view === "files") {
     return "Files";
   }
@@ -314,9 +309,6 @@ function channelSidePanelLabel(view: ChannelSidePanelView): string {
 }
 
 function channelSidePanelIcon(view: ChannelSidePanelView, size: number): JSX.Element {
-  if (view === "progress") {
-    return <ListChecks size={size} />;
-  }
   if (view === "task") {
     return <SquareTerminal size={size} />;
   }
@@ -333,11 +325,12 @@ function channelSidePanelIcon(view: ChannelSidePanelView, size: number): JSX.Ele
 }
 
 function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean {
-  return item.kind === "message" || item.kind === "summary" || (item.kind === "run" && Boolean(item.record.threadId));
+  return item.kind === "message" || item.kind === "summary";
 }
 
 type MessageFeedItem =
   | { readonly id: "older-channel-messages"; readonly kind: "older-loader" }
+  | { readonly id: string; readonly kind: "turn"; readonly turn: ConversationTurnViewModel }
   | { readonly id: string; readonly kind: "activity"; readonly item: ChannelActivityItem }
   | { readonly id: string; readonly kind: "pending-send"; readonly preview: PendingChannelSendPreview };
 
@@ -372,7 +365,46 @@ function messageFeedItemRenderSignature(item: MessageFeedItem | undefined): stri
       item.preview.fileRefs.map((fileRef) => `${fileRef.path}:${fileRef.source ?? ""}:${fileRef.line ?? ""}`).join(","),
     ].join("|");
   }
+  if (item.kind === "turn") {
+    return conversationTurnRenderSignature(item.turn);
+  }
   return channelActivityItemRenderSignature(item.item);
+}
+
+function messageFeedItemCanAnchor(item: MessageFeedItem | undefined): item is Extract<MessageFeedItem, { readonly kind: "activity" | "turn" }> {
+  return item?.kind === "activity" || item?.kind === "turn";
+}
+
+function messageFeedItemIsPending(item: MessageFeedItem | undefined): boolean {
+  if (!item) {
+    return false;
+  }
+  if (item.kind === "activity") {
+    return item.item.kind === "message" && item.item.record.status === "pending";
+  }
+  if (item.kind === "turn") {
+    return turnHasPendingMessage(item.turn) || item.turn.operationCell?.mode === "active";
+  }
+  return false;
+}
+
+function turnHasPendingMessage(turn: ConversationTurnViewModel): boolean {
+  return turn.sourceMessage.status === "pending" ||
+    turn.coordinatorStartMessages.some((message) => message.status === "pending") ||
+    turn.coordinatorTerminalMessages.some((message) => message.status === "pending");
+}
+
+function conversationTurnRenderSignature(turn: ConversationTurnViewModel): string {
+  return [
+    turn.id,
+    turn.updatedAt,
+    turn.sourceMessage.status,
+    turn.sourceMessage.updatedAt,
+    turn.sourceMessage.body,
+    ...turn.coordinatorStartMessages.map((message) => `${message.id}:${message.status}:${message.updatedAt}:${message.body}`),
+    turn.operationCell ? `${turn.operationCell.id}:${turn.operationCell.status}:${turn.operationCell.updatedAt}:${turn.operationCell.summary}` : "",
+    ...turn.coordinatorTerminalMessages.map((message) => `${message.id}:${message.status}:${message.updatedAt}:${message.body}`),
+  ].join("|");
 }
 
 function channelActivityItemRenderSignature(item: ChannelActivityItem): string {
@@ -419,7 +451,6 @@ export function WorkspaceClientView({
   cwd,
   daemonHealthy,
   channelAutoRouteEnabled,
-  channelContextOpenRequest,
   providerLabel,
   channels,
   selectedChannelId,
@@ -563,7 +594,6 @@ export function WorkspaceClientView({
   readonly cwd: string;
   readonly daemonHealthy: boolean | undefined;
   readonly channelAutoRouteEnabled: boolean;
-  readonly channelContextOpenRequest?: { readonly channelId: string; readonly mode: "protocol"; readonly nonce: number };
   readonly providerLabel: string;
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
@@ -721,10 +751,9 @@ export function WorkspaceClientView({
   const selectedChannelWorkspace = selectedChannel ? resolveChannelWorkspaceBinding(selectedChannel, cwd) : undefined;
   const selectedChannelExecutionPath = selectedChannel && selectedChannelWorkspace ? resolveChannelWorkspaceExecutionPath(selectedChannelWorkspace, selectedChannel, cwd) : "";
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
-  const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "progress");
+  const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "files");
   const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
-  const [selectedWorkflowEvidenceWorkflowId, setSelectedWorkflowEvidenceWorkflowId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
@@ -1008,17 +1037,13 @@ export function WorkspaceClientView({
     }
     return cards;
   }, [channelCollaborationCardRefreshSignature, channelCollaborationCardsState, localCollaborationTaskCardByWorkflowId, selectedChannelId]);
-  const selectedWorkflowProgressModel = selectedWorkflowEvidenceWorkflowId
-    ? workflowProgressByWorkflowId.get(selectedWorkflowEvidenceWorkflowId)
-    : undefined;
-  const selectedWorkflowCollaborationTaskCard = selectedWorkflowEvidenceWorkflowId
-    ? collaborationTaskCardByWorkflowId.get(selectedWorkflowEvidenceWorkflowId)
-    : undefined;
-  const selectedWorkflowWorkCell = selectedWorkflowProgressModel
-    ? selectedWorkflowCollaborationTaskCard
-      ? collaborationTaskCardToConversationWorkCell({ card: selectedWorkflowCollaborationTaskCard, progress: selectedWorkflowProgressModel, t })
-      : workflowProgressToConversationWorkCell(selectedWorkflowProgressModel)
-    : undefined;
+  const conversationWorkCellByWorkflowId = useMemo(() => {
+    const cells = new Map<string, ConversationWorkCellViewModel>();
+    for (const [workflowId, progressModel] of workflowProgressByWorkflowId) {
+      cells.set(workflowId, workflowProgressToConversationWorkCell(progressModel));
+    }
+    return cells;
+  }, [workflowProgressByWorkflowId]);
   const workflowRepresentedRunIds = useMemo(() => {
     const runIds = new Set<string>();
     for (const model of workflowProgressByWorkflowId.values()) {
@@ -1294,29 +1319,10 @@ export function WorkspaceClientView({
       ]}
       actions={[
         {
-          id: "open-progress",
-          label: t("Progress"),
-          icon: <Workflow size={14} />,
-          onClick: openProgressPanel,
-        },
-      ]}
-    />
-  ) : activeLeaseCount > 0 || taskActionPending ? (
-    <ConversationStatusStrip
-      className="channel-active-status-strip"
-      icon={<Clock3 size={15} />}
-      title={t("Active work")}
-      description={activeLeaseCount > 0 ? t("Active resource lock") : t("Sending message...")}
-      statusNode={<StatusBadge status="running" />}
-      metaItems={[
-        { id: "leases", label: t("Resource leases"), value: activeLeaseCount },
-      ]}
-      actions={[
-        {
-          id: "open-progress",
-          label: t("Progress"),
-          icon: <Workflow size={14} />,
-          onClick: openProgressPanel,
+          id: "open-settings",
+          label: t("Settings"),
+          icon: <SlidersHorizontal size={14} />,
+          onClick: () => openSidePanelView("settings"),
         },
       ]}
     />
@@ -1502,19 +1508,51 @@ export function WorkspaceClientView({
   );
   const activityFiltersActive = activitySearch.trim().length > 0 || activityCategoryFilter !== "all" || activityAttentionFilter !== "all";
   const auditActivityVisible = activityToolsOpen || activityFiltersActive;
+  const conversationTurnProjection = useMemo(
+    () => buildConversationTurnProjection({
+      channelId: selectedChannelId,
+      messages: channelMessages,
+      proposals: channelExecutionProposals,
+      intentDecisions: channelIntentDecisions,
+      workflows: channelWorkflows,
+      workflowSteps: channelWorkflowSteps,
+      runs: channelRuns,
+      operationCellByWorkflowId: conversationWorkCellByWorkflowId,
+      operationCellByThreadId: conversationWorkCellByThreadId,
+      lingAgentAuthorId: LING_AGENT_AUTHOR_ID,
+    }),
+    [
+      channelExecutionProposals,
+      channelIntentDecisions,
+      channelMessages,
+      channelRuns,
+      channelWorkflowSteps,
+      channelWorkflows,
+      conversationWorkCellByThreadId,
+      conversationWorkCellByWorkflowId,
+      selectedChannelId,
+    ],
+  );
   const visibleActivityItems = useMemo(
     () => {
       const baseItems = auditActivityVisible
         ? filteredActivityItems
-        : filteredActivityItems.filter((item) => channelActivityVisibleInDefaultChat(item) || (item.kind === "workflow" && workflowProgressByWorkflowId.has(item.record.id)));
+        : filteredActivityItems.filter((item) =>
+          channelActivityVisibleInDefaultChat(item) ||
+          (item.kind === "workflow" && workflowProgressByWorkflowId.has(item.record.id)) ||
+          (item.kind === "run" && Boolean(item.record.threadId && conversationWorkCellByThreadId.has(item.record.threadId)))
+        );
       return activeWorkThreadId
         ? baseItems.filter((item) => item.kind === "run" && item.record.threadId === activeWorkThreadId)
         : baseItems;
     },
-    [activeWorkThreadId, auditActivityVisible, filteredActivityItems, workflowProgressByWorkflowId],
+    [activeWorkThreadId, auditActivityVisible, conversationWorkCellByThreadId, filteredActivityItems, workflowProgressByWorkflowId],
   );
   const renderableActivityItems = useMemo(
     () => visibleActivityItems.filter((item) => {
+      if (!auditActivityVisible && conversationTurnProjection.hiddenActivityIds.has(item.id)) {
+        return false;
+      }
       if (!auditActivityVisible && item.kind === "workflow-step" && workflowProgressByWorkflowId.has(item.record.workflowId)) {
         return false;
       }
@@ -1527,12 +1565,28 @@ export function WorkspaceClientView({
       const workCell = conversationWorkCellByThreadId.get(item.record.threadId);
       return !workCell || workCell.anchorRunId === item.record.id;
     }),
-    [auditActivityVisible, conversationWorkCellByThreadId, visibleActivityItems, workflowProgressByWorkflowId, workflowRepresentedRunIds],
+    [auditActivityVisible, conversationTurnProjection.hiddenActivityIds, conversationWorkCellByThreadId, visibleActivityItems, workflowProgressByWorkflowId, workflowRepresentedRunIds],
   );
   const latestVisibleActivityItemId =
     renderableActivityItems.length > 0 ? renderableActivityItems[renderableActivityItems.length - 1]?.id ?? "" : "";
+  const conversationFeedBodyItems = useMemo<readonly MessageFeedItem[]>(
+    () => {
+      const items: Array<MessageFeedItem & { readonly createdAt: string }> = [
+        ...(!auditActivityVisible
+          ? conversationTurnProjection.turns.map((turn) => ({ id: turn.id, kind: "turn" as const, turn, createdAt: turn.createdAt }))
+          : []),
+        ...renderableActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item, createdAt: item.createdAt })),
+      ];
+      items.sort((left, right) => {
+        const timeComparison = left.createdAt.localeCompare(right.createdAt);
+        return timeComparison === 0 ? left.id.localeCompare(right.id) : timeComparison;
+      });
+      return items.map(({ createdAt: _createdAt, ...item }) => item);
+    },
+    [auditActivityVisible, conversationTurnProjection.turns, renderableActivityItems],
+  );
   const messageFeedCanLoadOlder =
-    channelMessagesHasOlder && !activityFiltersActive && renderableActivityItems.length > 0;
+    channelMessagesHasOlder && !activityFiltersActive && conversationFeedBodyItems.length > 0;
   const pendingChannelSendResolved = useMemo(() => {
     if (!pendingChannelSendPreview) {
       return false;
@@ -1561,14 +1615,14 @@ export function WorkspaceClientView({
   const messageFeedItems = useMemo<readonly MessageFeedItem[]>(
     () => [
       ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies MessageFeedItem] : []),
-      ...renderableActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item })),
+      ...conversationFeedBodyItems,
       ...(pendingChannelSendVisible && pendingChannelSendPreview
         ? [{ id: `pending-send:${pendingChannelSendPreview.id}`, kind: "pending-send" as const, preview: pendingChannelSendPreview }]
         : []),
     ],
-    [messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendVisible, renderableActivityItems],
+    [conversationFeedBodyItems, messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendVisible],
   );
-  const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && renderableActivityItems.length === 0 && !pendingChannelSendVisible;
+  const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && conversationFeedBodyItems.length === 0 && !pendingChannelSendVisible;
   const messageFeedVirtualizer = useVirtualizer({
     count: messageFeedItems.length,
     getScrollElement: () => messageFeedRef.current,
@@ -1597,16 +1651,16 @@ export function WorkspaceClientView({
     }
     const feed = messageFeedRef.current;
     if (feed) {
-      const anchorRow = messageFeedVirtualRows.find((virtualRow) => messageFeedItems[virtualRow.index]?.kind === "activity");
+      const anchorRow = messageFeedVirtualRows.find((virtualRow) => messageFeedItemCanAnchor(messageFeedItems[virtualRow.index]));
       const anchorItem = anchorRow ? messageFeedItems[anchorRow.index] : undefined;
-      if (anchorRow && anchorItem?.kind === "activity") {
+      if (anchorRow && messageFeedItemCanAnchor(anchorItem)) {
         messageFeedOlderLoadSnapshotRef.current = {
           anchorId: anchorItem.id,
           anchorOffset: anchorRow.start - feed.scrollTop,
         };
       } else {
-        const fallbackAnchor = messageFeedItems.find((item) => item.kind === "activity");
-        if (fallbackAnchor?.kind === "activity") {
+        const fallbackAnchor = messageFeedItems.find(messageFeedItemCanAnchor);
+        if (fallbackAnchor) {
           messageFeedOlderLoadSnapshotRef.current = {
             anchorId: fallbackAnchor.id,
             anchorOffset: 48,
@@ -1907,10 +1961,10 @@ export function WorkspaceClientView({
     setActivityToolsOpen(false);
     setPendingChannelSendPreview(undefined);
     setAttentionProgressExpanded(true);
-    setSidePanelView("progress");
+    setSidePanelView("files");
     setSidePanelOpen(false);
+    setProgressPopoverOpen(false);
     setSelectedApprovalId("");
-    setSelectedWorkflowEvidenceWorkflowId("");
     setCreateTaskOpen(false);
     setChannelNotificationLevel("mentions");
     messageFeedPinnedToLatestRef.current = true;
@@ -1919,19 +1973,6 @@ export function WorkspaceClientView({
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
   }, [selectedChannelId]);
-
-  useEffect(() => {
-    if (!channelContextOpenRequest || channelContextOpenRequest.channelId !== selectedChannelId) {
-      return;
-    }
-    setInspectorMode(channelContextOpenRequest.mode);
-    setSidePanelView("context");
-    setSidePanelOpen(true);
-    setProgressPopoverOpen(false);
-    setChannelMoreOpen(false);
-    setActivityToolsOpen(false);
-    onRefreshChannelProtocol();
-  }, [channelContextOpenRequest?.nonce, selectedChannelId]);
 
   useEffect(() => {
     const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
@@ -1978,9 +2019,7 @@ export function WorkspaceClientView({
     const maxScrollTop = feed.scrollHeight - feed.clientHeight;
     const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
     const latestItem = messageFeedItems.at(-1);
-    const latestItemPending = latestItem?.kind === "activity" &&
-      latestItem.item.kind === "message" &&
-      latestItem.item.record.status === "pending";
+    const latestItemPending = messageFeedItemIsPending(latestItem);
     const preserveAutoFollow =
       !pinnedToLatest &&
       !messageFeedUserScrollIntentRef.current &&
@@ -2035,14 +2074,12 @@ export function WorkspaceClientView({
     const run = runById.get(runId);
     setActivityToolsOpen(false);
     setChannelMoreOpen(false);
-    setSidePanelView("progress");
-    setSidePanelOpen(true);
     setProgressPopoverOpen(false);
     onRefreshChannelActivity();
     onRefreshChannelFiles();
     onRefreshTasks();
     if (run?.taskId && taskById.has(run.taskId)) {
-      onSelectTask(run.taskId);
+      selectTask(run.taskId);
       return;
     }
     onOpenRun(runId);
@@ -2060,32 +2097,6 @@ export function WorkspaceClientView({
     } else {
       onRefreshChannelProtocol();
     }
-  }
-
-  function openProgressPanel(): void {
-    setSelectedWorkflowEvidenceWorkflowId("");
-    setSidePanelView("progress");
-    setSidePanelOpen(true);
-    setProgressPopoverOpen(false);
-    setChannelMoreOpen(false);
-    setActivityToolsOpen(false);
-    setTeammateManagerOpen(false);
-  }
-
-  function openWorkflowEvidencePanel(workflowIdOrThreadId: string): void {
-    const workflowId = workflowIdFromWorkCellThreadId(workflowIdOrThreadId);
-    if (!workflowId) {
-      openProgressPanel();
-      return;
-    }
-    setSelectedWorkflowEvidenceWorkflowId(workflowId);
-    setSidePanelView("progress");
-    setSidePanelOpen(true);
-    setProgressPopoverOpen(false);
-    setChannelMoreOpen(false);
-    setActivityToolsOpen(false);
-    setTeammateManagerOpen(false);
-    loadWorkflowWorkCellDetails(workflowId);
   }
 
   function openApprovalInPanel(approval: ApprovalRequest | undefined): void {
@@ -2445,29 +2456,11 @@ export function WorkspaceClientView({
     } else {
       selected.add(teammateId);
     }
-    const selectedTeammateIds = [...selected];
-    const defaultResponderTeammateId = selectedTeammateIds.includes(channelForm.defaultResponderTeammateId)
-      ? channelForm.defaultResponderTeammateId
-      : selectedTeammateIds[0] ?? "";
     onChannelFormChange({
       ...channelForm,
-      selectedTeammateIds,
-      defaultResponderTeammateId,
-      defaultTeammateId: defaultResponderTeammateId,
-    });
-  }
-
-  function setCreateChannelDefaultResponder(teammateId: string): void {
-    const selected = new Set(channelForm.selectedTeammateIds);
-    if (teammateId) {
-      selected.add(teammateId);
-    }
-    const selectedTeammateIds = [...selected];
-    onChannelFormChange({
-      ...channelForm,
-      selectedTeammateIds,
-      defaultResponderTeammateId: teammateId,
-      defaultTeammateId: teammateId,
+      selectedTeammateIds: [...selected],
+      defaultResponderTeammateId: "",
+      defaultTeammateId: "",
     });
   }
 
@@ -2475,7 +2468,8 @@ export function WorkspaceClientView({
     onChannelFormChange({
       ...nextForm,
       selectedTeammateIds: channelForm.selectedTeammateIds,
-      defaultResponderTeammateId: channelForm.defaultResponderTeammateId,
+      defaultResponderTeammateId: "",
+      defaultTeammateId: "",
     });
   }
 
@@ -2651,16 +2645,13 @@ export function WorkspaceClientView({
           ? channelsLoading || channelTeammateMembershipsLoading
           : sidePanelView === "approval"
             ? approvalsLoading
-            : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || externalWorkCiTriageLoading || durableWorkItemsLoading || tasksLoading;
+            : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || durableWorkItemsLoading || tasksLoading;
 
   function refreshSidePanel(): void {
-    if (sidePanelView === "task" || sidePanelView === "progress") {
+    if (sidePanelView === "task") {
       onRefreshTasks();
       onRefreshChannelActivity();
       onRefreshWorkItems();
-      if (sidePanelView === "progress" && selectedWorkflowEvidenceWorkflowId) {
-        loadWorkflowWorkCellDetails(selectedWorkflowEvidenceWorkflowId, { force: true });
-      }
       return;
     }
     if (sidePanelView === "context") {
@@ -2706,10 +2697,6 @@ export function WorkspaceClientView({
     ],
     [allTeammateOptions, channelTeammateIds],
   );
-  const defaultTeammateOptions = useMemo(
-    () => teammateOptions.filter((option) => option.id !== LING_AGENT_AUTHOR_ID),
-    [teammateOptions],
-  );
   const mentionPickerOptions = useMemo(
     () => {
       if (!mentionPicker) {
@@ -2727,9 +2714,6 @@ export function WorkspaceClientView({
     },
     [mentionPicker, teammateOptions],
   );
-  const defaultTeammate = selectedChannel?.defaultTeammateId
-    ? allTeammateOptions.find((teammate) => teammate.id === selectedChannel.defaultTeammateId)
-    : undefined;
   const localTeammateById = useMemo(
     () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
     [activeLocalTeammates],
@@ -2738,16 +2722,19 @@ export function WorkspaceClientView({
     () => new Map(localTeammates.map((teammate) => [teammate.id, teammate])),
     [localTeammates],
   );
+  const allLocalTeammateByName = useMemo(
+    () => new Map(localTeammates.map((teammate) => [teammate.displayName.trim().toLowerCase(), teammate])),
+    [localTeammates],
+  );
   const channelTeammates = useMemo(
     () => {
-      const selectedChannelDefaultTeammateId = selectedChannel?.defaultTeammateId;
       return channelTeammateMemberships.map((membership) => {
         const teammate = localTeammateById.get(membership.teammateId);
-        return teammate ? { membership, teammate, isDefault: selectedChannelDefaultTeammateId === teammate.id } : undefined;
+        return teammate ? { membership, teammate } : undefined;
       })
-        .filter((item): item is { readonly membership: TeammateChannelMembership; readonly teammate: LocalTeammateDraft; readonly isDefault: boolean } => Boolean(item));
+        .filter((item): item is { readonly membership: TeammateChannelMembership; readonly teammate: LocalTeammateDraft } => Boolean(item));
     },
-    [channelTeammateMemberships, localTeammateById, selectedChannel?.defaultTeammateId],
+    [channelTeammateMemberships, localTeammateById],
   );
   const availableChannelTeammates = useMemo(
     () => activeLocalTeammates.filter((teammate) => teammate.id !== LING_AGENT_AUTHOR_ID && !teammate.hidden && !channelTeammateIds.has(teammate.id)),
@@ -3367,6 +3354,145 @@ export function WorkspaceClientView({
     return <AvatarInitial label="T" />;
   }
 
+  function renderConversationAgentAvatar(span: ConversationAgentActivitySpan): ReactNode {
+    const participantId = span.participantId?.trim();
+    const teammate = (participantId ? allLocalTeammateById.get(participantId) : undefined) ??
+      allLocalTeammateByName.get(span.label.trim().toLowerCase());
+    return teammate ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact /> : undefined;
+  }
+
+  function renderConversationTurnItem(turn: ConversationTurnViewModel): ReactNode {
+    const operationCell = turn.operationCell;
+    const operationRef = turn.operationRef;
+    let detailsState: ConversationWorkCellDetailsState = { status: "not_loaded" };
+    let onLoadDetails: ((id: string) => void) | undefined;
+    if (operationCell && operationRef?.kind === "workflow") {
+      detailsState = conversationWorkCellDetailsByKey[workflowWorkCellDetailsCacheKey(operationRef.workflowId)] ?? { status: "not_loaded" };
+      onLoadDetails = loadWorkflowWorkCellDetails;
+    } else if (operationCell && operationRef?.kind === "run_thread") {
+      detailsState = conversationWorkCellDetailsByKey[conversationWorkCellDetailsCacheKey(operationRef.threadId)] ?? { status: "not_loaded" };
+      onLoadDetails = loadConversationWorkCellDetails;
+    }
+
+    return (
+      <div className="conversation-turn" data-conversation-turn-id={turn.id}>
+        {renderMessageFeedActivityItem(channelMessageToActivityItem(turn.sourceMessage))}
+        {renderConversationTurnAssistantTranscript(turn, detailsState, onLoadDetails)}
+      </div>
+    );
+  }
+
+  function renderConversationTurnAssistantTranscript(
+    turn: ConversationTurnViewModel,
+    detailsState: ConversationWorkCellDetailsState,
+    onLoadDetails: ((id: string) => void) | undefined,
+  ): ReactNode {
+    if (turn.blocks.length === 0) {
+      return null;
+    }
+
+    const anchorMessage = turn.blocks.find((block) => block.kind === "coordinator_text")?.message;
+    const authorName = anchorMessage
+      ? messageAuthorLabel(anchorMessage, teammateOptions, t("Deleted teammate"), t("You"), allLocalTeammateById)
+      : t("Ling Agent");
+    const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
+    const copyText = conversationTurnAssistantCopyText(turn);
+
+    return (
+      <MessageRow
+        className="channel-message-row conversation-turn-assistant-row"
+        authorType="ai-teammate"
+        avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : <AvatarInitial label="L" tone="violet" />}
+        authorName={authorName}
+        createdAtLabel={formatDateTime(createdAt)}
+        statusNode={<small className="conversation-message-tag">AI</small>}
+        bodyNode={(
+          <div className="conversation-turn-assistant-transcript">
+            {turn.blocks.map((block) => renderConversationTranscriptBlock(turn, block, detailsState, onLoadDetails))}
+          </div>
+        )}
+        actionsNode={(
+          <div className="channel-message-row-footer-stack">
+            <MessageFooterActions
+              className="channel-message-row-actions"
+              actions={[
+                {
+                  id: "copy",
+                  label: t("Copy message"),
+                  icon: <Copy size={11} />,
+                  onClick: () => copyMessageText(copyText),
+                },
+                {
+                  id: "reply",
+                  label: t("Reply in topic"),
+                  icon: <Reply size={11} />,
+                  className: "message-reply-button message-meta-action",
+                  onClick: () => openThreadForMessage(turn.sourceMessage),
+                },
+              ]}
+            />
+          </div>
+        )}
+      />
+    );
+  }
+
+  function renderConversationTranscriptBlock(
+    turn: ConversationTurnViewModel,
+    block: ConversationTranscriptBlock,
+    detailsState: ConversationWorkCellDetailsState,
+    onLoadDetails: ((id: string) => void) | undefined,
+  ): ReactNode {
+    if (block.kind === "coordinator_text") {
+      const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
+      if (!body) {
+        return null;
+      }
+      return (
+        <div className={block.phase === "terminal" ? "conversation-turn-assistant-copy terminal" : "conversation-turn-assistant-copy"} key={block.id}>
+          <MessageBodyRenderer text={body} cwd={cwd} compact />
+        </div>
+      );
+    }
+
+    return (
+      <div className="conversation-turn-operation" key={block.id}>
+        <ConversationWorkCell
+          model={block.operationCell}
+          detailsState={detailsState}
+          onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
+          onLoadDetails={onLoadDetails}
+          renderAgentAvatar={renderConversationAgentAvatar}
+        />
+      </div>
+    );
+  }
+
+  function conversationTurnAssistantCopyText(turn: ConversationTurnViewModel): string {
+    return turn.blocks
+      .flatMap((block) => {
+        if (block.kind === "coordinator_text") {
+          const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
+          return body ? [body] : [];
+        }
+        return [block.operationCell.title];
+      })
+      .join("\n\n")
+      .trim();
+  }
+
+  function channelMessageToActivityItem(message: ChannelMessage): ChannelActivityItem {
+    return {
+      id: `message:${message.id}`,
+      kind: "message",
+      createdAt: message.createdAt,
+      record: message,
+      category: "message",
+      attention: message.status === "blocked" ? "blocked" : message.status === "failed" ? "failed" : message.status === "pending" ? "pending" : "none",
+      searchText: message.body.toLowerCase(),
+    };
+  }
+
   function renderMessageFeedActivityItem(item: ChannelActivityItem): ReactNode {
     if (item.kind === "message") {
       const message = item.record;
@@ -3453,7 +3579,6 @@ export function WorkspaceClientView({
                 onCancel={() => onCancelExecutionProposal(proposal)}
                 onUpdate={onUpdateExecutionProposal}
                 onOpenRun={openRunInPanel}
-                onOpenWorkflow={openWorkflowEvidencePanel}
               />
             ))}
           </div>
@@ -3491,7 +3616,6 @@ export function WorkspaceClientView({
               onCancel={() => onCancelExecutionProposal(proposal)}
               onUpdate={onUpdateExecutionProposal}
               onOpenRun={openRunInPanel}
-              onOpenWorkflow={openWorkflowEvidencePanel}
             />
           ))}
         </div>
@@ -3563,10 +3687,10 @@ export function WorkspaceClientView({
       const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
       const progressModel = workflowProgressByWorkflowId.get(workflow.id);
       if (progressModel && !auditActivityVisible) {
-        const collaborationCard = collaborationTaskCardByWorkflowId.get(workflow.id);
-        const workCell = collaborationCard
-          ? collaborationTaskCardToConversationWorkCell({ card: collaborationCard, progress: progressModel, t })
-          : workflowProgressToConversationWorkCell(progressModel);
+        const workCell = conversationWorkCellByWorkflowId.get(workflow.id);
+        if (!workCell) {
+          return null;
+        }
         const detailsKey = workflowWorkCellDetailsCacheKey(workflow.id);
         return (
           <ConversationWorkCell
@@ -3574,6 +3698,7 @@ export function WorkspaceClientView({
             detailsState={conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
             onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
             onLoadDetails={loadWorkflowWorkCellDetails}
+            renderAgentAvatar={renderConversationAgentAvatar}
           />
         );
       }
@@ -3702,6 +3827,7 @@ export function WorkspaceClientView({
             detailsState={conversationWorkCellDetailsByKey[conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
             onOpenRun={openRunInPanel}
             onLoadDetails={loadConversationWorkCellDetails}
+            renderAgentAvatar={renderConversationAgentAvatar}
           />
         );
       }
@@ -3827,6 +3953,9 @@ export function WorkspaceClientView({
     }
     if (feedItem.kind === "pending-send") {
       return renderPendingChannelSendPreview(feedItem.preview);
+    }
+    if (feedItem.kind === "turn") {
+      return renderConversationTurnItem(feedItem.turn);
     }
     return renderMessageFeedActivityItem(feedItem.item);
   }
@@ -4119,7 +4248,7 @@ export function WorkspaceClientView({
           <small>
             {channelTeammateMembershipsLoading
               ? t("Loading teammates...")
-              : t("{count} teammates collaborate in this channel. Manage add, remove, and default response teammates here.", { count: channelTeammates.length })}
+              : t("{count} teammates collaborate in this channel. Manage add and remove teammates here.", { count: channelTeammates.length })}
           </small>
         </div>
       </div>
@@ -4130,25 +4259,16 @@ export function WorkspaceClientView({
         </div>
       ) : (
         <div className="channel-teammate-list" role="list">
-          {channelTeammates.map(({ isDefault, teammate }) => {
+          {channelTeammates.map(({ teammate }) => {
             const saving = channelTeammateSavingId === teammate.id;
             return (
-              <article key={teammate.id} className={isDefault ? "channel-teammate-chip default" : "channel-teammate-chip"} role="listitem">
-                <button
+              <article key={teammate.id} className="channel-teammate-chip" role="listitem">
+                <div
                   className="channel-teammate-chip-main"
-                  type="button"
-                  aria-pressed={isDefault}
-                  title={isDefault ? t("Default teammate") : t("Set default")}
-                  onClick={() => {
-                    if (!saving && !isDefault) {
-                      void onSetDefaultChannelTeammate(teammate.id);
-                    }
-                  }}
-                  disabled={saving}
                 >
                   <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
                   <strong>{teammate.displayName}</strong>
-                </button>
+                </div>
                 <button className="channel-teammate-remove-button" type="button" aria-label={t("Remove from channel")} title={t("Remove from channel")} onClick={() => void onRemoveChannelTeammate(teammate.id)} disabled={saving}>
                   {saving ? <Loader2 className="spin" size={13} /> : <X size={13} />}
                 </button>
@@ -4214,34 +4334,17 @@ export function WorkspaceClientView({
   );
 
   const channelHasChatContent = channelMessages.length > 0 || channelContextSummaries.length > 0;
-  const attentionContextRowCandidates: readonly (AttentionContextRow | undefined)[] = [
-    effectiveProvider ? {
-      id: "provider",
-      icon: <Activity size={18} />,
-      label: t("Provider"),
-      value: effectiveProvider.displayName,
-      onOpen: () => onOpenProviders(latestRun),
-    } : undefined,
-    selectedChannel ? {
-      id: "permission",
-      icon: <SlidersHorizontal size={18} />,
-      label: t("Permission mode"),
-      value: sessionPermissionModeLabel(permissionMode, t),
-      onOpen: () => openSidePanelView("settings"),
-    } : undefined,
-  ];
-  const attentionContextRows: readonly AttentionContextRow[] = attentionContextRowCandidates.filter((row): row is AttentionContextRow => row !== undefined);
   const workflowAttentionProgressRows: readonly AttentionProgressRow[] = buildWorkflowAttentionProgressRows({
     items: buildCollaborationProgressProjection({
       cards: [...collaborationTaskCardByWorkflowId.values()],
       t,
       limit: 6,
+      scope: "active",
     }),
-    onOpen: () => openSidePanelView("context"),
   });
   const attentionProgressRowCandidates: readonly (AttentionProgressRow | undefined)[] = [
     ...workflowAttentionProgressRows,
-    selectedTask ? {
+    selectedTask && taskIsActiveProgressPopoverTask(selectedTask) ? {
       id: "current-task",
       icon: <SquareTerminal size={18} />,
       tone: selectedTask.status === "blocked" ? "blocked" : selectedTask.status === "failed" ? "failed" : selectedTask.status === "done" ? "success" : selectedTask.status === "running" ? "running" : "neutral",
@@ -4249,7 +4352,7 @@ export function WorkspaceClientView({
       secondary: `${t("Current task")} · ${t(selectedTask.status)}`,
       onOpen: () => selectTask(selectedTask.id),
     } : undefined,
-    latestRun ? {
+    latestRun && runIsActiveProgressPopoverRun(latestRun) ? {
       id: "latest-run",
       icon: runProgressIcon(latestRun.status),
       tone: runProgressTone(latestRun.status),
@@ -4269,7 +4372,7 @@ export function WorkspaceClientView({
   const attentionProgressRows: readonly AttentionProgressRow[] = attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined);
   const channelHasProgressContent = attentionProgressRows.length > 0;
 
-  function openSidePanelView(view: ChannelDrawerRootView): void {
+  function openSidePanelView(view: ChannelSidePanelView): void {
     setSidePanelView(view);
     setSidePanelOpen(true);
     setProgressPopoverOpen(false);
@@ -4375,15 +4478,6 @@ export function WorkspaceClientView({
           </section>
         ) : null}
         <label className="field wide">
-          <span>{t("Default AI teammate")}</span>
-          <select value={channelEditForm.defaultTeammateId} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultTeammateId: event.target.value })} disabled={!selectedChannelId}>
-            <option value="">{t("No default teammate")}</option>
-            {defaultTeammateOptions.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="field wide">
           <span>{t("AI response language")}</span>
           <select
             value={channelEditForm.responseLanguage}
@@ -4411,32 +4505,10 @@ export function WorkspaceClientView({
     </section>
   );
 
-  const sidePanelTitle = sidePanelView === "progress" && selectedWorkflowWorkCell
-    ? t("Workflow evidence")
-    : createTaskOpen && sidePanelView === "task"
+  const sidePanelTitle = createTaskOpen && sidePanelView === "task"
       ? t("New task")
       : t(channelSidePanelLabel(sidePanelView));
-  const sidePanelContent = sidePanelView === "progress" ? (
-    <ChannelProgressPanel
-      selectedTask={selectedTask}
-      latestRun={latestRun}
-      pendingApprovals={pendingChannelApprovals}
-      collaborationTaskCards={[...collaborationTaskCardByWorkflowId.values()]}
-      selectedWorkflowWorkCell={selectedWorkflowWorkCell}
-      selectedWorkflowDetailsState={selectedWorkflowEvidenceWorkflowId ? conversationWorkCellDetailsByKey[workflowWorkCellDetailsCacheKey(selectedWorkflowEvidenceWorkflowId)] ?? { status: "not_loaded" } : undefined}
-      externalWorkCiTriage={externalWorkCiTriage}
-      externalWorkCiTriageLoading={externalWorkCiTriageLoading}
-      channelHasChatContent={channelHasChatContent}
-      onOpenTask={openTaskFromActivity}
-      onOpenRun={openRunInPanel}
-      onOpenApproval={openApprovalInPanel}
-      onOpenContext={() => openProtocolFromActivity("runtime")}
-      onOpenWorkflowDetails={setSelectedWorkflowEvidenceWorkflowId}
-      onClearSelectedWorkflow={() => setSelectedWorkflowEvidenceWorkflowId("")}
-      onLoadWorkflowDetails={loadWorkflowWorkCellDetails}
-      onRefreshExternalWorkCiTriage={onRefreshExternalWorkCiTriage}
-    />
-  ) : sidePanelView === "files" ? (
+  const sidePanelContent = sidePanelView === "files" ? (
     <ChannelFiles
       attachments={channelAttachments}
       linkPreviews={channelLinkPreviews}
@@ -4622,15 +4694,20 @@ export function WorkspaceClientView({
             <SlidersHorizontal size={15} />
           </button>
           <button
-            className={progressPopoverVisible || (sidePanelOpen && sidePanelView === "progress") ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
+            className={progressPopoverVisible ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
             type="button"
             aria-label={t("Progress")}
             title={t("Progress")}
             onClick={() => {
-              if (sidePanelOpen || !channelHasProgressContent) {
-                openProgressPanel();
+              if (!channelHasProgressContent) {
+                setProgressPopoverOpen(false);
                 return;
               }
+              setSidePanelOpen(false);
+              setCreateTaskOpen(false);
+              setChannelMoreOpen(false);
+              setActivityToolsOpen(false);
+              setTeammateManagerOpen(false);
               setProgressPopoverOpen((current) => !current);
             }}
           >
@@ -4649,6 +4726,9 @@ export function WorkspaceClientView({
                 setProgressPopoverOpen(false);
                 return;
               }
+              if (sidePanelView === "context") {
+                setSidePanelView("files");
+              }
               setSidePanelOpen(true);
               setProgressPopoverOpen(false);
               setActivityToolsOpen(false);
@@ -4660,7 +4740,6 @@ export function WorkspaceClientView({
         {progressPopoverVisible ? (
           <div className="channel-progress-popover">
             <ProgressPopover
-              contextRows={attentionContextRows}
               expanded={attentionProgressExpanded}
               onExpandedChange={setAttentionProgressExpanded}
               progressRows={attentionProgressRows}
@@ -4714,7 +4793,6 @@ export function WorkspaceClientView({
                   <div className="channel-create-teammate-grid">
                     {createChannelTeammateOptions.map((teammate) => {
                       const selected = channelForm.selectedTeammateIds.includes(teammate.id);
-                      const isDefault = channelForm.defaultResponderTeammateId === teammate.id;
                       return (
                         <button
                           key={teammate.id}
@@ -4726,7 +4804,7 @@ export function WorkspaceClientView({
                           <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
                           <span>
                             <strong>{teammate.displayName}</strong>
-                            <small>{isDefault ? t("Default teammate") : selected ? t("Joined channel") : t("Not joined")}</small>
+                            <small>{selected ? t("Joined channel") : t("Not joined")}</small>
                           </span>
                           {selected ? <Check size={14} /> : <Plus size={14} />}
                         </button>
@@ -4735,15 +4813,6 @@ export function WorkspaceClientView({
                   </div>
                 )}
               </section>
-              <label className="field wide">
-                <span>{t("Default AI teammate")}</span>
-                <select value={channelForm.defaultResponderTeammateId} onChange={(event) => setCreateChannelDefaultResponder(event.target.value)} disabled={createChannelTeammateOptions.length === 0}>
-                  <option value="">{t("No default teammate")}</option>
-                  {createChannelTeammateOptions.map((teammate) => (
-                    <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
-                  ))}
-                </select>
-              </label>
               <label className="field wide">
                 <span>{t("AI response language")}</span>
                 <select
@@ -5108,7 +5177,7 @@ export function WorkspaceClientView({
             icon={channelSidePanelIcon(sidePanelView, 16)}
             actions={(
               <>
-                {(sidePanelView === "progress" || sidePanelView === "task") ? (
+                {sidePanelView !== "approval" ? (
                   <button
                     className="icon-button"
                     type="button"
@@ -5279,7 +5348,6 @@ function ChannelInspector({
         <ChannelProtocolEditor
           channel={channel}
           protocol={protocol}
-          teammates={teammates.filter((teammate) => teammate.id !== LING_AGENT_AUTHOR_ID)}
           autoRouteEnabled={autoRouteEnabled}
           onSave={onSaveProtocol}
           onRevert={onRevertProtocol}
@@ -5544,20 +5612,17 @@ function buildRecentRoutingEvidence(
 interface ChannelProtocolDraft {
   readonly responseLanguage: NonNullable<Channel["responseLanguage"]>;
   readonly autoReplyMode: Channel["autoReplyMode"];
-  readonly defaultTeammateId: string;
 }
 
 function ChannelProtocolEditor({
   channel,
   protocol,
-  teammates,
   autoRouteEnabled,
   onSave,
   onRevert,
 }: {
   readonly channel: Channel | undefined;
   readonly protocol: ChannelCollaborationProtocolResponse | undefined;
-  readonly teammates: readonly { readonly id: string; readonly label: string }[];
   readonly autoRouteEnabled: boolean;
   readonly onSave: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
   readonly onRevert: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
@@ -5570,8 +5635,7 @@ function ChannelProtocolEditor({
   const baseDraft = useMemo(() => protocolDraftFromState(channel, protocol), [channel, protocol]);
   const changed =
     draft.responseLanguage !== baseDraft.responseLanguage ||
-    draft.autoReplyMode !== baseDraft.autoReplyMode ||
-    draft.defaultTeammateId !== baseDraft.defaultTeammateId;
+    draft.autoReplyMode !== baseDraft.autoReplyMode;
 
   useEffect(() => {
     setDraft(baseDraft);
@@ -5583,16 +5647,12 @@ function ChannelProtocolEditor({
     const patch: {
       responseLanguage?: UpdateChannelCollaborationProtocolRequest["responseLanguage"];
       autoReplyMode?: UpdateChannelCollaborationProtocolRequest["autoReplyMode"];
-      defaultTeammateId?: UpdateChannelCollaborationProtocolRequest["defaultTeammateId"];
     } = {};
     if (draft.responseLanguage !== baseDraft.responseLanguage) {
       patch.responseLanguage = draft.responseLanguage;
     }
     if (draft.autoReplyMode !== baseDraft.autoReplyMode) {
       patch.autoReplyMode = draft.autoReplyMode;
-    }
-    if (draft.defaultTeammateId !== baseDraft.defaultTeammateId) {
-      patch.defaultTeammateId = draft.defaultTeammateId || null;
     }
     if (Object.keys(patch).length === 0) {
       setNotice(t("No protocol changes"));
@@ -5655,20 +5715,6 @@ function ChannelProtocolEditor({
               <option value="en-US">{t("English")}</option>
             </select>
           </label>
-          <label className="field wide">
-            <span>{t("Default AI teammate")}</span>
-            <select
-              value={draft.defaultTeammateId}
-              onChange={(event) => setDraft({ ...draft, defaultTeammateId: event.target.value })}
-              disabled={!channel || saving}
-            >
-              <option value="">{t("No default teammate")}</option>
-              {teammates.map((teammate) => (
-                <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
-              ))}
-            </select>
-            <small>{t("Source")}: {protocolSourceLabel(protocol.sources.defaultTeammateId.source, t)}</small>
-          </label>
           <div className="task-strip-head">
             <span><Info size={15} /><strong>{t("Read-only protocol defaults")}</strong></span>
           </div>
@@ -5728,7 +5774,6 @@ function protocolDraftFromState(
   return {
     responseLanguage: protocol?.sources.responseLanguage.channelValue ?? channel?.responseLanguage ?? "workspace",
     autoReplyMode: channel?.autoReplyMode ?? protocol?.protocol.autoReplyMode ?? "mentions_only",
-    defaultTeammateId: channel?.defaultTeammateId ?? protocol?.protocol.defaultTeammateId ?? "",
   };
 }
 
@@ -5966,6 +6011,167 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
 }
 
+function conversationCoordinatorDisplayBody(
+  turn: ConversationTurnViewModel,
+  message: ChannelMessage,
+  phase: "start" | "terminal",
+  t: Translate,
+): string {
+  if (!turn.operationCell || !shouldSanitizeGeneratedCoordinatorBody(message.body)) {
+    return message.body;
+  }
+  if (phase === "terminal" && isGeneratedWorkflowCoordinatorBody(message.body)) {
+    const fallback = conversationCoordinatorTerminalFallback(turn, t);
+    return isDuplicateCoordinatorDisplayBody(turn, fallback) ? "" : fallback;
+  }
+  const cleaned = cleanGeneratedWorkflowText(message.body);
+  if (cleaned) {
+    return isDuplicateCoordinatorDisplayBody(turn, cleaned) ? "" : cleaned;
+  }
+  const fallback = phase === "terminal"
+    ? conversationCoordinatorTerminalFallback(turn, t)
+    : conversationCoordinatorStartFallback(turn, t);
+  return isDuplicateCoordinatorDisplayBody(turn, fallback) ? "" : fallback;
+}
+
+function shouldSanitizeGeneratedCoordinatorBody(body: string): boolean {
+  const text = body.trim();
+  if (!text) {
+    return false;
+  }
+  if (/^(确认需求|完成|已完成)\s*[:：]/u.test(text) || /^(Confirm requirement|Completed)\s*:/iu.test(text)) {
+    return true;
+  }
+  if (/Smoke ID\s*:/iu.test(text) || /开始\s*workflow\s*[:：]/iu.test(text)) {
+    return true;
+  }
+  if (/(Confirmed proposal|Overall scope|Assigned teammate|Step action|Acceptance criteria)\s*:/u.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function isGeneratedWorkflowCoordinatorBody(body: string): boolean {
+  return /Smoke ID\s*:/iu.test(body) || /开始\s*workflow\s*[:：]/iu.test(body);
+}
+
+function conversationCoordinatorStartFallback(turn: ConversationTurnViewModel, t: Translate): string {
+  const task = conversationTurnTaskText(turn);
+  const agents = conversationTurnAgentLabels(turn);
+  const delegation = agents.length > 0
+    ? ` ${t("This task is assigned to {agents}.", { agents: formatAgentLabelList(agents) })}`
+    : "";
+  return `${ensureSentenceEnding(task)}${delegation}`.trim();
+}
+
+function conversationCoordinatorTerminalFallback(turn: ConversationTurnViewModel, t: Translate): string {
+  const operationCell = turn.operationCell;
+  const result = conversationTurnResultText(turn);
+  const agents = conversationTurnAgentLabels(turn);
+  const teammateSuffix = agents.length > 0
+    ? ` ${t("Teammates: {agents}.", { agents: formatAgentLabelList(agents) })}`
+    : "";
+  if (operationCell?.status === "blocked") {
+    return t("Blocked: {reason}.", { reason: result });
+  }
+  if (operationCell?.status === "failed") {
+    return t("Failed: {summary}.", { summary: result });
+  }
+  if (operationCell?.status === "cancelled" || operationCell?.status === "superseded") {
+    return t("Cancelled: {summary}.", { summary: result });
+  }
+  return `${ensureSentenceEnding(result)}${teammateSuffix ? ` ${teammateSuffix}` : ""}`.trim();
+}
+
+function conversationTurnTaskText(turn: ConversationTurnViewModel): string {
+  return cleanGeneratedWorkflowText(turn.operationCell?.title) ??
+    cleanGeneratedWorkflowText(turn.operationCell?.summary) ??
+    cleanGeneratedWorkflowText(turn.sourceMessage.body) ??
+    "current task";
+}
+
+function conversationTurnResultText(turn: ConversationTurnViewModel): string {
+  return cleanGeneratedWorkflowText(turn.operationCell?.summary) ??
+    cleanGeneratedWorkflowText(turn.operationCell?.title) ??
+    cleanGeneratedWorkflowText(turn.sourceMessage.body) ??
+    "current task";
+}
+
+function conversationTurnAgentLabels(turn: ConversationTurnViewModel): readonly string[] {
+  return uniqueStrings(
+    (turn.operationCell?.agentSpans ?? [])
+      .filter((span) => span.kind !== "overflow")
+      .map((span) => span.label.trim())
+      .filter(Boolean),
+  );
+}
+
+function formatAgentLabelList(labels: readonly string[]): string {
+  return labels.join("、");
+}
+
+function ensureSentenceEnding(value: string): string {
+  const text = value.trim();
+  if (!text) {
+    return "";
+  }
+  return /[。.!?！？]$/u.test(text) ? text : `${text}.`;
+}
+
+function isDuplicateCoordinatorDisplayBody(turn: ConversationTurnViewModel, value: string): boolean {
+  const normalizedValue = normalizeCoordinatorDisplayComparison(value);
+  if (!normalizedValue) {
+    return true;
+  }
+  const operationCell = turn.operationCell;
+  const candidates = [
+    turn.sourceMessage.body,
+    operationCell?.title,
+    operationCell?.summary,
+    ...(operationCell?.operationRows ?? []).map((row) => row.title),
+  ];
+  return candidates.some((candidate) => normalizeCoordinatorDisplayComparison(candidate) === normalizedValue);
+}
+
+function normalizeCoordinatorDisplayComparison(value: string | undefined): string {
+  const cleaned = stripGeneratedWorkflowNoise(value)
+    .toLowerCase()
+    .replace(/[。.!?！？]+$/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return cleaned;
+}
+
+function cleanGeneratedWorkflowText(value: string | undefined): string | undefined {
+  const cleaned = stripGeneratedWorkflowNoise(value);
+  if (!cleaned) {
+    return undefined;
+  }
+  return truncatePreview(cleaned, 120);
+}
+
+function stripGeneratedWorkflowNoise(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+  let text = value.trim();
+  text = text
+    .replace(/^确认需求\s*[:：]\s*/u, "")
+    .replace(/^(完成|已完成)\s*[:：]\s*/u, "")
+    .replace(/^Confirm requirement\s*:\s*/iu, "")
+    .replace(/^Completed\s*:\s*/iu, "")
+    .replace(/^["“「']+|["”」']+$/gu, "")
+    .replace(/^[“「"]?开始\s*workflow\s*[:：]\s*/iu, "")
+    .replace(/^\s*workflow\s*[:：]\s*/iu, "")
+    .replace(/\s*Smoke ID\s*:\s*[\w.-]+[。.]?/giu, "")
+    .replace(/\s*开始处理[。.]?$/u, "")
+    .replace(/[」”"]+[。.]?$/u, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  text = text.replace(/[。.]$/u, "").trim();
+  return text;
+}
+
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -6184,7 +6390,7 @@ function WorkflowStepCard({
         <div className="context-packet muted" aria-label={t("Packet artifacts")}>
           {metadata?.contextArtifactId ? (
             <WorkflowArtifactChip
-              label={t("Context packet")}
+              label={t("Context source artifact")}
               artifactId={metadata.contextArtifactId}
               artifact={runArtifactsById.get(metadata.contextArtifactId)}
               cwd={cwd}
@@ -6302,7 +6508,6 @@ type WorkflowStepContextEvidenceState =
 
 type WorkflowContextPackSnapshot = NonNullable<ChannelWorkflowStepContextPacket["contextPack"]>;
 type WorkflowContextPackSectionSnapshot = WorkflowContextPackSnapshot["sections"][number];
-type WorkflowContextPackSourceRefSnapshot = WorkflowContextPackSnapshot["sourceRefs"][number];
 
 function WorkflowStepContextEvidencePanel({
   cwd,
@@ -6346,11 +6551,11 @@ function WorkflowStepContextEvidencePanel({
   }
 
   return (
-    <section className="workflow-context-evidence-panel" aria-label={t("Context Pack evidence")}>
+    <section className="workflow-context-evidence-panel" aria-label={t("Context sources")}>
       <button className="secondary-button compact-button" type="button" onClick={toggleOpen} aria-expanded={open}>
         {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         <FileText size={13} />
-        {t("Inspect context")}
+        {t("Context sources")}
       </button>
       {open ? (
         <WorkflowStepContextEvidenceBody
@@ -6421,7 +6626,7 @@ function WorkflowStepContextEvidenceBody({
       <div className="workflow-context-evidence-body">
         <div className="workflow-context-evidence-state">
           <FileText size={13} />
-          <span>{t("Context artifact exists, but no Context Pack snapshot was recorded.")}</span>
+          <span>{t("Context source details are not available.")}</span>
           <small>{artifactId}</small>
         </div>
       </div>
@@ -6454,87 +6659,14 @@ function WorkflowContextInspectEvidence({
       </div>
     );
   }
+  const summary = buildConversationContextSourceSummaryFromInspect(inspect, t);
 
   return (
     <div className="workflow-context-evidence-body">
-      <div className="context-packet muted" aria-label={t("Context inspect summary")}>
-        <span>{t("Kind")}: {inspect.kind ?? "unknown"}</span>
-        <span>{t("Provider")}: {inspect.providerPresetId ?? fallbackPacket?.providerPresetId ?? "unknown"}</span>
-        <span>{t("Model")}: {inspect.modelId ?? "unknown"}</span>
-        <span>{t("Budget")}: {inspect.budget?.mode ?? "unknown"}</span>
-        {inspect.budget ? <span>{inspect.budget.estimatedInputTokens}/{inspect.budget.inputBudgetTokens} tokens</span> : null}
-        {inspect.budget?.overBudget ? <span>{t("Over budget")}</span> : null}
-      </div>
-
-      <div className="workflow-context-evidence-grid">
+      <WorkflowContextSourceSummaryView summary={summary} />
+      <WorkflowContextDeveloperDiagnostics>
         <WorkflowContextInspectBudgetDiagnostics inspect={inspect} t={t} />
-
-        <WorkflowContextEvidenceSection
-          title={t("Kept sections")}
-          summary={t("{count} sections", { count: inspect.sectionCount })}
-        >
-          {inspect.sections.length > 0 ? (
-            <ul>
-              {inspect.sections.map((section) => (
-                <li key={section.id}>
-                  <strong>{section.id}</strong>
-                  <small>{workflowContextInspectSectionMeta(section)}</small>
-                </li>
-              ))}
-            </ul>
-          ) : <small>{t("No kept sections recorded.")}</small>}
-        </WorkflowContextEvidenceSection>
-
-        <WorkflowContextEvidenceSection
-          title={t("Dropped sections")}
-          summary={t("{count} sections", { count: inspect.droppedSectionCount })}
-        >
-          {inspect.droppedSectionIds.length > 0 ? (
-            <div className="workflow-context-chip-list">
-              {inspect.droppedSectionIds.map((sectionId) => <code key={sectionId}>{sectionId}</code>)}
-            </div>
-          ) : <small>{t("No sections dropped.")}</small>}
-        </WorkflowContextEvidenceSection>
-
-        <WorkflowContextEvidenceSection
-          title={t("Source refs")}
-          summary={t("{count} refs", { count: inspect.sourceRefCount })}
-        >
-          {inspect.sourceRefs.length > 0 ? (
-            <ul>
-              {inspect.sourceRefs.slice(0, 18).map((ref) => (
-                <li key={`${ref.type}:${ref.id}`}>
-                  <strong>{ref.type}</strong>
-                  <small>{workflowContextSourceRefLabel(ref)}</small>
-                </li>
-              ))}
-            </ul>
-          ) : <small>{t("No source refs recorded.")}</small>}
-          {inspect.sourceRefs.length > 18 ? <small>{t("+{count} more refs", { count: inspect.sourceRefs.length - 18 })}</small> : null}
-        </WorkflowContextEvidenceSection>
-
-        {inspect.compactionIds.length > 0 ? (
-          <WorkflowContextEvidenceSection
-            title={t("Compactions")}
-            summary={t("{count} compactions", { count: inspect.compactionCount })}
-          >
-            <div className="workflow-context-chip-list">
-              {inspect.compactionIds.map((compactionId) => <code key={compactionId}>{compactionId}</code>)}
-            </div>
-          </WorkflowContextEvidenceSection>
-        ) : null}
-
-        <WorkflowContextEvidenceSection
-          title={t("Safety boundary")}
-          summary={t("Developer diagnostics")}
-        >
-          <div className="workflow-context-chip-list">
-            {inspect.safety.rawPromptTextIncluded ? null : <code>{t("raw prompt text excluded")}</code>}
-            {inspect.safety.rawLogsIncluded ? null : <code>{t("raw logs excluded")}</code>}
-            {inspect.safety.rawArtifactBodiesIncluded ? null : <code>{t("raw artifact bodies excluded")}</code>}
-          </div>
-        </WorkflowContextEvidenceSection>
-      </div>
+      </WorkflowContextDeveloperDiagnostics>
     </div>
   );
 }
@@ -6553,99 +6685,73 @@ function WorkflowContextPackEvidence({
       <div className="workflow-context-evidence-body">
         <div className="workflow-context-evidence-state">
           <FileText size={13} />
-          <span>{t("Context artifact exists, but no Context Pack snapshot was recorded.")}</span>
+          <span>{t("Context source details are not available.")}</span>
           <small>{artifactId}</small>
         </div>
       </div>
     );
   }
-  const protocolMetadata = workflowContextProtocolMetadata(pack);
+  const summary = buildConversationContextSourceSummaryFromPacket(packet, t);
   return (
     <div className="workflow-context-evidence-body">
-      <div className="context-packet muted" aria-label={t("Context Pack summary")}>
-        <span>{t("Kind")}: {pack.kind}</span>
-        <span>{t("Provider")}: {pack.providerPresetId ?? packet.providerPresetId ?? "unknown"}</span>
-        <span>{t("Model")}: {pack.modelId ?? "unknown"}</span>
-        <span>{t("Budget")}: {pack.budget.mode}</span>
-        <span>{pack.estimatedInputTokens}/{pack.budget.inputBudgetTokens} tokens</span>
-        {pack.overBudget ? <span>{t("Over budget")}</span> : null}
-      </div>
-
-      <div className="workflow-context-evidence-grid">
+      <WorkflowContextSourceSummaryView summary={summary} />
+      <WorkflowContextDeveloperDiagnostics>
         <WorkflowContextBudgetDiagnostics pack={pack} t={t} />
-
-        <WorkflowContextEvidenceSection
-          title={t("Kept sections")}
-          summary={t("{count} sections", { count: pack.sections.length })}
-        >
-          {pack.sections.length > 0 ? (
-            <ul>
-              {pack.sections.map((section) => (
-                <li key={section.id}>
-                  <strong>{section.id}</strong>
-                  <small>{workflowContextSectionMeta(section)}</small>
-                </li>
-              ))}
-            </ul>
-          ) : <small>{t("No kept sections recorded.")}</small>}
-        </WorkflowContextEvidenceSection>
-
-        <WorkflowContextEvidenceSection
-          title={t("Dropped sections")}
-          summary={t("{count} sections", { count: pack.droppedSectionIds.length })}
-        >
-          {pack.droppedSectionIds.length > 0 ? (
-            <div className="workflow-context-chip-list">
-              {pack.droppedSectionIds.map((sectionId) => <code key={sectionId}>{sectionId}</code>)}
-            </div>
-          ) : <small>{t("No sections dropped.")}</small>}
-        </WorkflowContextEvidenceSection>
-
-        <WorkflowContextEvidenceSection
-          title={t("Source refs")}
-          summary={t("{count} refs", { count: pack.sourceRefs.length })}
-        >
-          {pack.sourceRefs.length > 0 ? (
-            <ul>
-              {pack.sourceRefs.slice(0, 18).map((ref) => (
-                <li key={`${ref.type}:${ref.id}`}>
-                  <strong>{ref.type}</strong>
-                  <small>{workflowContextSourceRefLabel(ref)}</small>
-                </li>
-              ))}
-            </ul>
-          ) : <small>{t("No source refs recorded.")}</small>}
-          {pack.sourceRefs.length > 18 ? <small>{t("+{count} more refs", { count: pack.sourceRefs.length - 18 })}</small> : null}
-        </WorkflowContextEvidenceSection>
-
-        {pack.compactionIds.length > 0 ? (
-          <WorkflowContextEvidenceSection
-            title={t("Compactions")}
-            summary={t("{count} compactions", { count: pack.compactionIds.length })}
-          >
-            <div className="workflow-context-chip-list">
-              {pack.compactionIds.map((compactionId) => <code key={compactionId}>{compactionId}</code>)}
-            </div>
-          </WorkflowContextEvidenceSection>
-        ) : null}
-
-        {protocolMetadata.length > 0 ? (
-          <WorkflowContextEvidenceSection
-            title={t("Collaboration protocol")}
-            summary="channel_collaboration_protocol"
-          >
-            <ul>
-              {protocolMetadata.map((item) => (
-                <li key={item.label}>
-                  <strong>{item.label}</strong>
-                  <small>{item.value}</small>
-                </li>
-              ))}
-            </ul>
-          </WorkflowContextEvidenceSection>
-        ) : null}
-      </div>
+      </WorkflowContextDeveloperDiagnostics>
     </div>
+  );
+}
+
+function WorkflowContextSourceSummaryView({
+  summary,
+}: {
+  readonly summary: ConversationContextSourceSummary;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="workflow-context-source-summary" aria-label={t("Context source summary")}>
+      <div className="workflow-context-source-head">
+        <strong>{t("Sources used")}</strong>
+        <small>{conversationContextSourceSummaryLabel(summary, t)}</small>
+      </div>
+      {summary.groups.length > 0 ? (
+        <ul className="workflow-context-source-list">
+          {summary.groups.map((group) => (
+            <li key={group.id}>
+              <span>{group.label}</span>
+              <small>
+                {group.count === 1 ? t("1 item") : t("{count} items", { count: group.count })}
+                {group.examples.length > 0 ? ` · ${group.examples.join(", ")}` : ""}
+              </small>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <small className="workflow-context-source-empty">{summary.unavailableReason ?? t("No user-facing sources were recorded.")}</small>
+      )}
+      {summary.droppedCount > 0 || summary.compactionCount > 0 ? (
+        <div className="workflow-context-source-foot">
+          {summary.droppedCount > 0 ? <span>{t("{count} items omitted from model context", { count: summary.droppedCount })}</span> : null}
+          {summary.compactionCount > 0 ? <span>{t("{count} compacted context summaries", { count: summary.compactionCount })}</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkflowContextDeveloperDiagnostics({
+  children,
+}: {
+  readonly children: ReactNode;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <details className="workflow-context-developer-diagnostics">
+      <summary>
+        <span>{t("Developer diagnostics")}</span>
+      </summary>
+      {children}
+    </details>
   );
 }
 
@@ -6865,25 +6971,6 @@ function WorkflowContextEvidenceSection({
   );
 }
 
-function workflowContextSectionMeta(section: WorkflowContextPackSectionSnapshot): string {
-  return [
-    section.role,
-    section.priority,
-    typeof section.estimatedTokens === "number" ? `${section.estimatedTokens} tokens` : undefined,
-    `${section.sourceRefIds?.length ?? 0} refs`,
-  ].filter(Boolean).join(" · ");
-}
-
-function workflowContextInspectSectionMeta(section: WorkflowContextInspectSummary["sections"][number]): string {
-  return [
-    section.role,
-    section.priority,
-    typeof section.estimatedTokens === "number" ? `${section.estimatedTokens} tokens` : undefined,
-    `${section.sourceRefIds.length} refs`,
-    section.metadataKeys.length > 0 ? `metadata:${section.metadataKeys.join(", ")}` : undefined,
-  ].filter(Boolean).join(" · ");
-}
-
 function workflowContextSectionDiagnosticMeta(section: WorkflowContextPackSectionSnapshot, t: Translate): string {
   return [
     section.role,
@@ -6924,10 +7011,6 @@ function formatWorkflowTokenCount(value: number | undefined, t: Translate): stri
   return typeof value === "number" && Number.isFinite(value) ? t("{count} tokens", { count: value }) : t("Not recorded");
 }
 
-function workflowContextSourceRefLabel(ref: WorkflowContextPackSourceRefSnapshot | WorkflowContextInspectSummary["sourceRefs"][number]): string {
-  return ref.label ? `${ref.label} [${ref.id}]` : ref.id;
-}
-
 function workflowContextInspectAvailabilityLabel(
   availability: WorkflowContextInspectSummary["availability"],
   t: Translate,
@@ -6936,45 +7019,12 @@ function workflowContextInspectAvailabilityLabel(
     return t("No persisted context snapshot for this step.");
   }
   if (availability === "unreadable_context_packet") {
-    return t("Context packet could not be read.");
+    return t("Context source details could not be read.");
   }
   if (availability === "missing_context_pack") {
-    return t("Context artifact exists, but no Context Pack snapshot was recorded.");
+    return t("Context source details are not available.");
   }
-  return t("Context inspect metadata is available.");
-}
-
-function workflowContextProtocolMetadata(pack: WorkflowContextPackSnapshot): readonly { readonly label: string; readonly value: string }[] {
-  const metadata = pack.sections.find((section) => section.id === "channel_collaboration_protocol")?.metadata;
-  if (!metadata) {
-    return [];
-  }
-  return [
-    workflowContextProtocolField(metadata, "responseLanguage", "responseLanguageSource"),
-    workflowContextProtocolField(metadata, "autoReplyMode", "autoReplyModeSource"),
-    workflowContextProtocolField(metadata, "defaultTeammateId", "defaultTeammateSource"),
-  ].filter((item): item is { readonly label: string; readonly value: string } => Boolean(item));
-}
-
-function workflowContextProtocolField(
-  metadata: Record<string, unknown>,
-  valueKey: string,
-  sourceKey: string,
-): { readonly label: string; readonly value: string } | undefined {
-  const value = workflowContextMetadataString(metadata, valueKey);
-  if (!value) {
-    return undefined;
-  }
-  const source = workflowContextMetadataString(metadata, sourceKey);
-  return {
-    label: valueKey,
-    value: source ? `${value} (${source})` : value,
-  };
-}
-
-function workflowContextMetadataString(metadata: Record<string, unknown>, key: string): string | undefined {
-  const value = metadata[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  return t("Context source details are available.");
 }
 
 function workflowStepFailurePolicyLabel(policy: string, t: Translate): string {
@@ -7037,430 +7087,6 @@ function WorkflowFinalSummary({
       ) : null}
     </div>
   );
-}
-
-function ChannelProgressPanel({
-  selectedTask,
-  latestRun,
-  pendingApprovals,
-  collaborationTaskCards,
-  selectedWorkflowWorkCell,
-  selectedWorkflowDetailsState,
-  externalWorkCiTriage,
-  externalWorkCiTriageLoading,
-  channelHasChatContent,
-  onOpenTask,
-  onOpenRun,
-  onOpenApproval,
-  onOpenContext,
-  onOpenWorkflowDetails,
-  onClearSelectedWorkflow,
-  onLoadWorkflowDetails,
-  onRefreshExternalWorkCiTriage,
-}: {
-  readonly selectedTask: Task | undefined;
-  readonly latestRun: RunSession | undefined;
-  readonly pendingApprovals: readonly ApprovalRequest[];
-  readonly collaborationTaskCards: readonly CollaborationTaskCardModel[];
-  readonly selectedWorkflowWorkCell?: ConversationWorkCellViewModel;
-  readonly selectedWorkflowDetailsState?: ConversationWorkCellDetailsState;
-  readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
-  readonly externalWorkCiTriageLoading: boolean;
-  readonly channelHasChatContent: boolean;
-  readonly onOpenTask: (taskId: string) => void;
-  readonly onOpenRun: (runId: string) => void;
-  readonly onOpenApproval: (approval: ApprovalRequest | undefined) => void;
-  readonly onOpenContext: () => void;
-  readonly onOpenWorkflowDetails: (workflowId: string) => void;
-  readonly onClearSelectedWorkflow: () => void;
-  readonly onLoadWorkflowDetails: (workflowIdOrThreadId: string, options?: { readonly force?: boolean }) => void;
-  readonly onRefreshExternalWorkCiTriage: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const visibleCollaborationTaskCards = prioritizeCollaborationTaskCards(collaborationTaskCards).slice(0, 3);
-  const hasProgress = Boolean(
-    selectedTask ||
-      latestRun ||
-      pendingApprovals.length > 0 ||
-      visibleCollaborationTaskCards.length > 0 ||
-      Boolean(selectedWorkflowWorkCell) ||
-      externalWorkCiTriage.length > 0,
-  );
-
-  if (!hasProgress) {
-    return (
-      <section className="channel-progress-panel empty" aria-label={t("Progress")}>
-        <div className="client-empty-state channel-progress-empty">
-          <ListChecks />
-          <span>{channelHasChatContent ? t("No progress yet") : t("No channel progress yet")}</span>
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="channel-progress-panel" aria-label={t("Progress")}>
-      {selectedWorkflowWorkCell ? (
-        <section className="channel-progress-section">
-          <div className="task-strip-head">
-            <span>
-              <Workflow size={15} />
-              <strong>{t("Workflow evidence")}</strong>
-            </span>
-            <button className="secondary-button compact-button" type="button" onClick={onClearSelectedWorkflow}>
-              <X size={13} />
-              {t("Back")}
-            </button>
-          </div>
-          <ConversationWorkCell
-            model={selectedWorkflowWorkCell}
-            detailsState={selectedWorkflowDetailsState ?? { status: "not_loaded" }}
-            onOpenRun={selectedWorkflowWorkCell.anchorRunId.startsWith("workflow:") ? undefined : onOpenRun}
-            onLoadDetails={onLoadWorkflowDetails}
-          />
-        </section>
-      ) : null}
-
-      {visibleCollaborationTaskCards.length > 0 ? (
-        <section className="channel-progress-section">
-          <div className="task-strip-head">
-            <span>
-              <Workflow size={15} />
-              <strong>{t("Collaboration task")}</strong>
-            </span>
-            <small>{visibleCollaborationTaskCards.length}</small>
-          </div>
-          <div className="collaboration-task-card-list">
-            {visibleCollaborationTaskCards.map((card) => (
-              <CollaborationTaskProgressCard
-                key={card.id}
-                card={card}
-                onOpen={() => onOpenWorkflowDetails(card.workflowId)}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <div className="channel-progress-summary-grid">
-        {selectedTask ? (
-          <button className="channel-progress-card" type="button" onClick={() => onOpenTask(selectedTask.id)}>
-            <span>
-              <SquareTerminal size={15} />
-              <strong>{t("Current task")}</strong>
-            </span>
-            <p>{selectedTask.title}</p>
-            <StatusBadge status={selectedTask.status} />
-          </button>
-        ) : null}
-        {latestRun ? (
-          <button className="channel-progress-card" type="button" onClick={() => onOpenRun(latestRun.id)}>
-            <span>
-              <Activity size={15} />
-              <strong>{t("Latest run")}</strong>
-            </span>
-            <p>{readRunTitle(latestRun)}</p>
-            <StatusBadge status={latestRun.status} />
-          </button>
-        ) : null}
-        {pendingApprovals.length > 0 ? (
-          <button className="channel-progress-card attention" type="button" onClick={() => onOpenApproval(pendingApprovals[0])}>
-            <span>
-              <ShieldCheck size={15} />
-              <strong>{t("Pending approval")}</strong>
-            </span>
-            <p>{pendingApprovals[0]?.title ?? t("Approval request")}</p>
-            <small>{t("{count} pending approvals", { count: pendingApprovals.length })}</small>
-          </button>
-        ) : null}
-      </div>
-
-      {pendingApprovals.length > 0 ? (
-        <section className="channel-progress-section">
-          <div className="task-strip-head">
-            <span>
-              <ShieldCheck size={15} />
-              <strong>{t("Approvals")}</strong>
-            </span>
-            <small>{pendingApprovals.length}</small>
-          </div>
-          <div className="channel-progress-list">
-            {pendingApprovals.map((approval) => (
-              <button key={approval.id} className="channel-progress-row pending" type="button" onClick={() => onOpenApproval(approval)}>
-                <span>
-                  <strong>{approval.title}</strong>
-                  <small>{approval.description}</small>
-                </span>
-                <small>{approval.risk}</small>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {externalWorkCiTriage.length > 0 || externalWorkCiTriageLoading ? (
-        <section className="channel-progress-section">
-          <div className="task-strip-head">
-            <span>
-              <FileCheck2 size={15} />
-              <strong>{t("CI triage")}</strong>
-            </span>
-            <button className="icon-button" type="button" onClick={onRefreshExternalWorkCiTriage} disabled={externalWorkCiTriageLoading} aria-label={t("Refresh CI triage")} title={t("Refresh CI triage")}>
-              {externalWorkCiTriageLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-            </button>
-          </div>
-          <div className="channel-progress-list">
-            {externalWorkCiTriage.slice(0, 3).map((record) => (
-              <button
-                key={record.triage.id}
-                className="channel-progress-row"
-                type="button"
-                onClick={() => {
-                  if (record.task) {
-                    onOpenTask(record.task.id);
-                    return;
-                  }
-                  if (record.run) {
-                    onOpenRun(record.run.id);
-                  }
-                }}
-              >
-                <span>
-                  <strong>{record.externalWork?.item.title ?? t("CI triage")}</strong>
-                  <small>{record.triage.failure.workflowName ?? record.triage.failure.checkName}</small>
-                </span>
-                <small>{record.triage.failure.conclusion}</small>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-    </section>
-  );
-}
-
-function CollaborationTaskProgressCard({
-  card,
-  onOpen,
-}: {
-  readonly card: CollaborationTaskCardModel;
-  readonly onOpen: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const showProgressDetails = shouldShowCollaborationTaskProgressDetails(card);
-  const visibleSteps = showProgressDetails ? visibleCollaborationTaskSteps(card) : [];
-  const hiddenStepCount = showProgressDetails ? Math.max(0, card.steps.length - visibleSteps.length) : 0;
-  const visibleBranches = showProgressDetails ? card.branches.slice(0, 3) : [];
-  const hiddenBranchCount = showProgressDetails ? Math.max(0, card.branches.length - visibleBranches.length) : 0;
-  return (
-    <button className={`collaboration-task-card ${card.mode}`} type="button" onClick={onOpen}>
-      <span className="collaboration-task-card-head">
-        <span>
-          {collaborationTaskCardIcon(card.mode)}
-          <strong>{t(collaborationTaskCardModeLabel(card.mode))}</strong>
-        </span>
-        <em>{t(collaborationExecutionModeLabel(card.executionMode))}</em>
-      </span>
-      <span className="collaboration-task-card-title">
-        <strong>{card.title}</strong>
-        <small>{card.objective}</small>
-      </span>
-      <span className="collaboration-task-card-meta" aria-label={t("Collaboration task metadata")}>
-        {card.currentOwnerLabel ? <small>{t("Owner")}: {card.currentOwnerLabel}</small> : null}
-        <small>{t("{done} of {total} steps complete", { done: card.completedStepCount, total: card.totalStepCount })}</small>
-        {card.pendingApprovalCount > 0 ? <small>{t("{count} pending approvals", { count: card.pendingApprovalCount })}</small> : null}
-      </span>
-      {isTerminalCollaborationTaskCard(card) ? (
-        <span className={`collaboration-task-card-callout ${card.mode}`}>
-          {collaborationTaskCardIcon(card.mode)}
-          <small>
-            {t(collaborationTaskCardModeLabel(card.mode))}: {t("{done} of {total} steps complete", { done: card.completedStepCount, total: card.totalStepCount })}
-          </small>
-        </span>
-      ) : card.blocker ? (
-        <span className="collaboration-task-card-callout blocked">
-          <CircleAlert size={14} />
-          <small>{card.blocker}</small>
-        </span>
-      ) : card.nextAction ? (
-        <span className="collaboration-task-card-callout">
-          <ListChecks size={14} />
-          <small>{card.nextAction}</small>
-        </span>
-      ) : null}
-      {showProgressDetails ? (
-        visibleBranches.length > 0 ? (
-          <span className="collaboration-task-branch-list" aria-label={t("Agent branches")}>
-            {visibleBranches.map((branch) => (
-              <span key={branch.id} className={`collaboration-task-branch ${branch.state}`}>
-                <i aria-hidden="true" />
-                <span>
-                  <strong>{branch.label}</strong>
-                  {branch.summary ? <small>{branch.summary}</small> : null}
-                </span>
-                <small>{branch.completedStepCount}/{branch.totalStepCount}</small>
-              </span>
-            ))}
-            {hiddenBranchCount > 0 ? (
-              <span className="collaboration-task-branch more">
-                <i aria-hidden="true" />
-                <span>
-                  <strong>{t("+{count} more branches", { count: hiddenBranchCount })}</strong>
-                </span>
-              </span>
-            ) : null}
-          </span>
-        ) : (
-          <span className="collaboration-task-step-list" aria-label={t("Collaboration steps")}>
-            {visibleSteps.map((step) => (
-              <span key={step.id} className={`collaboration-task-step ${step.state}`}>
-                <i aria-hidden="true" />
-                <span>
-                  <strong>{step.ownerLabel}: {step.title}</strong>
-                  {step.summary ? <small>{step.summary}</small> : null}
-                </span>
-                <small>{t(collaborationTaskStepStateLabel(step.state))}</small>
-              </span>
-            ))}
-            {hiddenStepCount > 0 ? (
-              <span className="collaboration-task-step more">
-                <i aria-hidden="true" />
-                <span>
-                  <strong>{t("+{count} more steps", { count: hiddenStepCount })}</strong>
-                </span>
-              </span>
-            ) : null}
-          </span>
-        )
-      ) : null}
-      <span className="collaboration-task-card-footer">
-        <small>{t("Details")}</small>
-      </span>
-    </button>
-  );
-}
-
-function prioritizeCollaborationTaskCards(cards: readonly CollaborationTaskCardModel[]): readonly CollaborationTaskCardModel[] {
-  const sortedCards = [...cards].sort((left, right) =>
-    collaborationTaskCardPriority(right) - collaborationTaskCardPriority(left) ||
-    right.updatedAt.localeCompare(left.updatedAt),
-  );
-  const actionableCards = sortedCards.filter((card) => !isTerminalCollaborationTaskCard(card));
-  const terminalCards = sortedCards
-    .filter(isTerminalCollaborationTaskCard)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  return actionableCards.length > 0
-    ? [...actionableCards, ...terminalCards.slice(0, 1)]
-    : terminalCards.slice(0, 1);
-}
-
-function collaborationTaskCardPriority(card: CollaborationTaskCardModel): number {
-  if (card.mode === "blocked") {
-    return 70;
-  }
-  if (card.mode === "failed") {
-    return 60;
-  }
-  if (card.mode === "waiting") {
-    return 50;
-  }
-  if (card.mode === "running") {
-    return 40;
-  }
-  if (card.mode === "ready_for_confirmation") {
-    return 30;
-  }
-  if (card.mode === "completed") {
-    return 20;
-  }
-  if (card.mode === "cancelled") {
-    return 10;
-  }
-  return 0;
-}
-
-function shouldShowCollaborationTaskProgressDetails(card: CollaborationTaskCardModel): boolean {
-  return !isTerminalCollaborationTaskCard(card);
-}
-
-function isTerminalCollaborationTaskCard(card: CollaborationTaskCardModel): boolean {
-  return card.mode === "completed" || card.mode === "cancelled";
-}
-
-function visibleCollaborationTaskSteps(card: CollaborationTaskCardModel): readonly CollaborationTaskCardModel["steps"][number][] {
-  const active = card.steps.filter((step) => step.state !== "done");
-  if (active.length > 0) {
-    const completedBeforeActive = card.steps.filter((step) => step.state === "done").slice(-2);
-    return [...completedBeforeActive, ...active].slice(0, 6);
-  }
-  return card.steps.slice(-6);
-}
-
-function collaborationTaskCardModeLabel(mode: CollaborationTaskCardModel["mode"]): string {
-  if (mode === "ready_for_confirmation") {
-    return "Ready";
-  }
-  if (mode === "running") {
-    return "Running";
-  }
-  if (mode === "waiting") {
-    return "Waiting";
-  }
-  if (mode === "blocked") {
-    return "Blocked";
-  }
-  if (mode === "completed") {
-    return "Completed";
-  }
-  if (mode === "failed") {
-    return "Failed";
-  }
-  return "Cancelled";
-}
-
-function collaborationExecutionModeLabel(mode: CollaborationTaskCardModel["executionMode"]): string {
-  if (mode === "parallel") {
-    return "Parallel";
-  }
-  if (mode === "mixed") {
-    return "Mixed";
-  }
-  return "Serial";
-}
-
-function collaborationTaskStepStateLabel(state: CollaborationTaskStepState): string {
-  if (state === "active") {
-    return "Active";
-  }
-  if (state === "waiting" || state === "queued") {
-    return "Waiting";
-  }
-  if (state === "blocked") {
-    return "Blocked";
-  }
-  if (state === "done") {
-    return "Done";
-  }
-  if (state === "failed") {
-    return "Failed";
-  }
-  return "Cancelled";
-}
-
-function collaborationTaskCardIcon(mode: CollaborationTaskCardModel["mode"]): JSX.Element {
-  if (mode === "blocked" || mode === "failed") {
-    return <CircleAlert size={15} />;
-  }
-  if (mode === "waiting" || mode === "ready_for_confirmation") {
-    return <ShieldCheck size={15} />;
-  }
-  if (mode === "completed") {
-    return <CheckCircle2 size={15} />;
-  }
-  if (mode === "running") {
-    return <Loader2 className="spin" size={15} />;
-  }
-  return <X size={15} />;
 }
 
 function workflowIdFromWorkCellThreadId(value: string): string {
@@ -7860,12 +7486,11 @@ function TaskDetailPanel({
         <div className={linkedRunSucceeded ? "task-run-link compact succeeded" : "task-run-link compact"}>
           <StatusBadge status={linkedRunStatus} />
           <span className="task-run-summary">
-            {linkedRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
-            <span>{t("Latest run")}</span>
+            <span>{t("Run linked")}</span>
           </span>
-          <button className={linkedRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
-            {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
-            {linkedRunSucceeded ? t("View result") : t("Open run")}
+          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
+            <History size={14} />
+            {t("Open run")}
           </button>
           {linkedRunCancellable ? (
             <button className="secondary-button danger compact-button" type="button" onClick={stopLinkedRun} disabled={isCancellingRun}>
@@ -8007,6 +7632,14 @@ function runCanBeStopped(run: RunSession): boolean {
   return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
 }
 
+function runIsActiveProgressPopoverRun(run: RunSession): boolean {
+  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
+function taskIsActiveProgressPopoverTask(task: Task): boolean {
+  return task.status === "claimed" || task.status === "running" || task.status === "blocked";
+}
+
 function runCanBeStoppedInComposer(
   run: RunSession,
   workflowStepById: ReadonlyMap<string, ChannelWorkflowStep>,
@@ -8037,7 +7670,6 @@ function ChannelExecutionProposalCard({
   onCancel,
   onUpdate,
   onOpenRun,
-  onOpenWorkflow,
 }: {
   readonly proposal: ChannelExecutionProposal;
   readonly assigneeLabel: string;
@@ -8053,7 +7685,6 @@ function ChannelExecutionProposalCard({
     input: UpdateChannelExecutionProposalRequest,
   ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onOpenRun: (runId: string) => void;
-  readonly onOpenWorkflow: (workflowIdOrThreadId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
@@ -8333,12 +7964,6 @@ function ChannelExecutionProposalCard({
           <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(proposal.linkedRunId ?? "")}>
             <SquareTerminal size={14} />
             {t("Open run")}
-          </button>
-        ) : null}
-        {proposal.linkedWorkflowId ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onOpenWorkflow(proposal.linkedWorkflowId ?? "")}>
-            <Workflow size={14} />
-            {t("Open workflow")}
           </button>
         ) : null}
         {proposal.status === "draft" ? (
@@ -8678,51 +8303,20 @@ function ActivityFilterToolbar({
 }
 
 function ProgressPopover({
-  contextRows,
   expanded,
   onExpandedChange,
   progressRows,
 }: {
-  readonly contextRows: readonly AttentionContextRow[];
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly progressRows: readonly AttentionProgressRow[];
 }): JSX.Element | null {
   const { t } = useI18n();
-  if (contextRows.length === 0 && progressRows.length === 0) {
+  if (progressRows.length === 0) {
     return null;
   }
   return (
     <section className="attention-queue compact" aria-label={t("Progress")}>
-      {contextRows.length > 0 ? (
-        <div className="attention-context-section">
-          <div className="attention-section-head">
-            <strong>{t("Run settings")}</strong>
-          </div>
-          <div className="attention-context-list" aria-label={t("Run settings")}>
-            {contextRows.map((row) => {
-              const content = (
-                <>
-                  <span className="attention-row-icon">{row.icon}</span>
-                  <span className="attention-context-copy">
-                    <small>{row.label}</small>
-                    <strong>{row.value}</strong>
-                  </span>
-                </>
-              );
-              return row.onOpen ? (
-                <button key={row.id} className="attention-context-row interactive" type="button" onClick={row.onOpen}>
-                  {content}
-                </button>
-              ) : (
-                <div key={row.id} className="attention-context-row">
-                  {content}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
       {progressRows.length > 0 ? (
         <div className="attention-progress-preview">
           <div className="attention-section-head attention-progress-head">
@@ -9450,40 +9044,20 @@ function ChannelRouteInspectContent({
       ) : null}
       {contextPack ? (
         <div className="channel-route-inspect-section">
-          <span>{t("Context Pack metadata")}</span>
+          <span>{t("Context source metadata")}</span>
           <dl className="channel-route-inspect-grid">
             <div>
-              <dt>{t("Pack kind")}</dt>
-              <dd>{contextPack.kind}</dd>
-            </div>
-            <div>
-              <dt>{t("Provider preset")}</dt>
-              <dd>{contextPack.providerPresetId || t("Not recorded")}</dd>
-            </div>
-            <div>
-              <dt>{t("Model")}</dt>
-              <dd>{contextPack.modelId || t("Not recorded")}</dd>
-            </div>
-            <div>
-              <dt>{t("Context sections")}</dt>
-              <dd>{formatOptionalIdList(contextPack.sectionIds, t)}</dd>
-            </div>
-            <div>
-              <dt>{t("Dropped sections")}</dt>
-              <dd>{formatOptionalIdList(contextPack.droppedSectionIds, t)}</dd>
-            </div>
-            <div>
-              <dt>{t("Source refs")}</dt>
+              <dt>{t("Sources")}</dt>
               <dd>{formatRouteSourceRefCounts(contextPack.sourceRefCounts) || t("None")}</dd>
             </div>
             <div>
               <dt>{t("Compactions")}</dt>
-              <dd>{formatOptionalIdList(contextPack.compactionIds, t)}</dd>
+              <dd>{contextPack.compactionIds.length > 0 ? t("{count} compacted context summaries", { count: contextPack.compactionIds.length }) : t("None")}</dd>
             </div>
           </dl>
         </div>
       ) : (
-        <p>{t("No inspectable Context Pack metadata was recorded for this route decision.")}</p>
+        <p>{t("No inspectable context source metadata was recorded for this route decision.")}</p>
       )}
     </>
   );
@@ -10280,7 +9854,7 @@ function runProgressIcon(status: RunSession["status"]): JSX.Element {
 
 function buildWorkflowAttentionProgressRows(input: {
   readonly items: readonly CollaborationProgressProjectionItem[];
-  readonly onOpen: () => void;
+  readonly onOpen?: () => void;
 }): readonly AttentionProgressRow[] {
   return input.items.map((item) => ({
     id: item.id,

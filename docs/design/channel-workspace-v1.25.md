@@ -2,8 +2,10 @@
 
 ## Status
 
-Implemented in the web channel workspace polish slice. This remains a frontend-only
-refinement: no daemon API, database table, or browser-side Git probe was added.
+Implemented in the web channel workspace polish slice, then superseded on 2026-06-16
+for drawer ownership: the floating popover remains, but the right drawer `Progress`
+root page is retired. This remains a frontend-only refinement: no daemon API, database
+table, or browser-side Git probe was added.
 
 ## Summary
 
@@ -110,8 +112,8 @@ Rules:
 
 - Hide empty optional sections instead of rendering placeholder copy.
 - Do not render an `Attention` section, counts, or top attention rows in the popover.
-- If there are no progress rows, the header icon routes to the Progress drawer page
-  according to existing header behavior instead of opening an empty popover.
+- If there are no progress rows, the header icon does not open an empty popover and
+  does not route to the right drawer.
 - The first visible section starts without a top divider.
 - The last visible section ends without an extra divider.
 
@@ -258,15 +260,15 @@ Rendering rules:
 | State | Run settings | Progress | Primary action |
 | --- | --- | --- | --- |
 | No channel selected | hidden | hidden | existing empty state |
-| Channel has no chat/work content | available rows only | hidden | open Progress drawer only if user asks |
-| Channel has chat but no work | provider/permission rows | hidden | open Progress drawer only if user asks |
+| Channel has no chat/work content | available rows only | hidden | no progress surface |
+| Channel has chat but no work | provider/permission rows | hidden | no progress surface |
 | Latest run succeeded | context rows | `Last run · Succeeded` with success icon | open linked task/run drawer |
 | Latest run running | context rows | running row with spinner/clock | open linked task/run drawer |
 | Pending approval exists | context rows | approval-needed row | open approval detail |
 | Workflow blocked | context rows | blocked workflow row | open task/context detail |
 | New workflow starts after completion | context rows | new workflow row replaces prior completion rows | open workflow detail |
 | Failed work exists | context rows | latest failed row if it is current | open task/run detail |
-| Right drawer open | no popover | Progress drawer page owns detail | header icon switches to drawer behavior |
+| Right drawer open | no popover | drawer owns Files/Context/Settings detail only | header icon does not route progress into the drawer |
 | Teammate manager open | no popover | hidden | teammate manager owns focus |
 | Mobile viewport | same section order | compact rows | fixed bottom sheet |
 | Chinese locale | same section order | labels may wrap | no horizontal overflow |
@@ -304,7 +306,8 @@ exist. Attention row ordering remains an Activity/audit-log concern.
 ## Interaction Rules
 
 - The header progress icon remains icon-only and does not show a numeric badge.
-- If the right drawer is open, the progress icon opens the Progress drawer page.
+- If the right drawer is open, the progress icon does not open or focus a Progress
+  drawer page.
 - If the drawer is hidden and progress exists, the icon opens the popover.
 - Opening the right drawer hides the popover.
 - Opening teammate management hides the popover.
@@ -428,8 +431,7 @@ Implementation guardrails:
 - Progress rows are not rendered as summary cards.
 - Attention rows, blocked/failed/pending chips, and terminal audit history do not render
   inside the popover.
-- Clicking progress rows routes to existing task, approval, context, run, or Progress drawer
-  destinations.
+- Clicking progress rows routes to existing task, approval, context, or run destinations.
 - Raw IDs and audit payloads stay out of the default popover.
 - Channels without current work do not show invented progress.
 - Mobile keeps the same hierarchy without covering the composer.
@@ -457,7 +459,7 @@ Detailed QA matrix:
 | Scenario | Expected result |
 | --- | --- |
 | Drawer hidden, progress present | Header icon opens popover with Run settings and Progress |
-| Drawer open | Header icon opens or focuses the Progress drawer page instead of overlaying the popover |
+| Drawer open | Header icon does not overlay the popover or expose a Progress drawer page |
 | Teammate manager open | Progress popover is hidden and does not stack under the teammate manager |
 | No current work | Popover does not invent latest run/current task rows from another channel |
 | Pending approval | Progress row opens approval detail |

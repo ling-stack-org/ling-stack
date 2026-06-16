@@ -1189,8 +1189,8 @@ Acceptance:
 Validation:
 
 - daemon test: `workflow collaboration card endpoints derive compact product cards`;
-- Web E2E: `right progress panel prefers daemon collaboration card payload`;
-- Web E2E: `right progress panel falls back to local collaboration card derivation`.
+- Web E2E: `progress popover prefers daemon collaboration card payload`;
+- Web E2E: `progress popover falls back to local collaboration card derivation`.
 
 ### CP11: Full Context Processing Migration
 

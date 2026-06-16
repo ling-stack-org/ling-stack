@@ -667,7 +667,9 @@ Use the accepted Web console direction:
 ### Slice 4: Right Drawer Consolidation
 
 - Extract shared `RightDrawer`.
-- Keep root pages stable: Progress, Files, Context, Settings.
+- Keep root pages stable: Files and Settings. Context/source detail is a drill-down or
+  developer/debug surface, not a root page. Active progress belongs to the floating
+  status popover.
 - Move drill-down task/approval/evidence pages into a drawer stack.
 
 ### Slice 5: Private Chat Alignment

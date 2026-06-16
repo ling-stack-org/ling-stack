@@ -1,6 +1,8 @@
 import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, RunArtifact, RunSession, WorkflowEvidenceResponse } from "../types.js";
 import type { Translate } from "../i18n.js";
 import type {
+  ConversationAgentActivitySpan,
+  ConversationArtifactStripItem,
   ConversationWorkCellDetailsModel,
   ConversationWorkCellEvidenceLink,
   ConversationWorkCellGroup,
@@ -8,7 +10,7 @@ import type {
   ConversationWorkCellRowTone,
   ConversationWorkCellViewModel,
 } from "./conversation-work-cell.js";
-import { normalizeConversationOperationCell } from "./conversation-work-cell.js";
+import { buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import { truncatePreview } from "./data.js";
 
 export type WorkflowProgressMode = "active" | "completed";
@@ -23,6 +25,7 @@ export interface WorkflowProgressStat {
 export interface WorkflowProgressModel {
   readonly id: string;
   readonly workflowId: string;
+  readonly steps: readonly ChannelWorkflowStep[];
   readonly runIds: readonly string[];
   readonly anchorRunId: string;
   readonly mode: WorkflowProgressMode;
@@ -30,9 +33,11 @@ export interface WorkflowProgressModel {
   readonly title: string;
   readonly summary: string;
   readonly currentRows: readonly ConversationWorkCellRow[];
+  readonly agentSpans: readonly ConversationAgentActivitySpan[];
   readonly stats: readonly WorkflowProgressStat[];
   readonly groups: readonly ConversationWorkCellGroup[];
   readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
+  readonly artifactStripItems: readonly ConversationArtifactStripItem[];
   readonly attention: WorkflowProgressAttention;
   readonly updatedAt: string;
 }
@@ -83,16 +88,16 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     ? "active"
     : "completed";
   const anchorRunId = latestRun(workflowRuns)?.id ?? `workflow:${input.workflow.id}`;
-  const evidenceLinks = artifacts.slice(0, 5).map((artifact) => ({
-    id: artifact.id,
-    label: artifact.title || artifact.path || artifact.id,
-    meta: [artifact.type, artifact.sizeBytes !== undefined ? formatBytes(artifact.sizeBytes) : undefined].filter(Boolean).join(" · "),
-    href: input.artifactHref?.(artifact),
-  }));
+  const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
+  const groups = mainFeedEvidenceGroups(
+    buildWorkflowProgressGroups({ t: input.t, steps: orderedSteps, artifacts, approvals: workflowApprovals }),
+    input.t,
+  );
 
   return {
     id: `workflow-progress:${input.workflow.id}`,
     workflowId: input.workflow.id,
+    steps: orderedSteps,
     runIds,
     anchorRunId,
     mode,
@@ -108,25 +113,23 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
       pendingApprovalCount: pendingApprovals.length,
       finalResultSummary,
     }),
-    currentRows: buildCurrentRows({
+    currentRows: buildWorkflowOperationRows({
       t: input.t,
-      currentStep,
-      blockedStep,
-      waitingStep,
-      runningStep,
-      queuedStep,
-      completedSteps,
-      totalSteps: orderedSteps.length,
-      artifactCount: artifacts.length,
+      steps: orderedSteps,
       pendingApprovalCount: pendingApprovals.length,
+    }),
+    agentSpans: buildWorkflowAgentActivitySpans({
+      t: input.t,
+      steps: orderedSteps,
     }),
     stats: [
       { id: "steps", label: input.t("Steps"), value: `${completedSteps}/${orderedSteps.length}` },
       { id: "evidence", label: input.t("Evidence"), value: String(artifacts.length) },
       { id: "approvals", label: input.t("Approvals"), value: String(mode === "completed" ? workflowApprovals.length : pendingApprovals.length) },
     ],
-    groups: buildWorkflowProgressGroups({ t: input.t, steps: orderedSteps, artifacts, approvals: workflowApprovals }),
+    groups,
     evidenceLinks,
+    artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, t: input.t }),
     attention,
     updatedAt: input.workflow.updatedAt,
   };
@@ -144,11 +147,13 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
     title: model.title,
     summary: model.summary,
     stats: model.stats,
-    operationRows: model.currentRows,
-    agentBranches: [],
+    operationRows: model.agentSpans.length > 0 ? [] : model.currentRows,
+    agentSpans: model.agentSpans,
+    agentBranches: model.agentSpans,
     terminalReportRows: [],
     groups: model.groups,
     evidenceLinks: model.evidenceLinks,
+    artifactStripItems: model.artifactStripItems,
     updatedAt: model.updatedAt,
   });
 }
@@ -172,16 +177,24 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     meta: artifact.type,
     tone: "neutral",
   }));
-  const checkedRows: ConversationWorkCellRow[] = input.evidence.steps.slice(0, 16).map(({ step, diagnostics }) => ({
-    id: `step:${step.id}`,
-    kind: "verify",
-    title: `${step.toParticipantLabel}: ${step.title}`,
-    description: step.resultSummary ?? step.blocker ?? truncatePreview(step.prompt, 160),
-    meta: diagnostics.length > 0 ? `${step.status} · ${diagnostics.length} diagnostics` : step.status,
-    tone: workflowStepTone(step.status),
-  }));
-  const contextRows = input.evidence.steps.flatMap((stepEvidence) => buildWorkflowContextPackRows(stepEvidence, t));
+  const checkedRows: ConversationWorkCellRow[] = input.evidence.steps.slice(0, 16).map(({ step, diagnostics }) => {
+    const title = workflowStepDisplayTitle(step, t);
+    return {
+      id: `step:${step.id}`,
+      kind: "verify",
+      title,
+      description: workflowStepDisplayDescription(step, 160, title),
+      meta: workflowStepDisplayMeta(step.status, diagnostics.length, t),
+      tone: workflowStepTone(step.status),
+    };
+  });
   const evidenceRows: ConversationWorkCellRow[] = [
+    ...buildConversationExecutionActionEvidenceRows({
+      actions: input.evidence.actions ?? [],
+      artifacts,
+      t,
+      limit: 8,
+    }),
     ...artifacts.slice(0, 10).map((artifact) => ({
       id: `artifact:${artifact.id}`,
       kind: artifact.type === "diff" || artifact.type === "file" || artifact.path ? "edit" as const : "verify" as const,
@@ -190,36 +203,12 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
       meta: artifact.type,
       tone: "neutral" as const,
     })),
-    ...input.evidence.selectorDecisions.slice(0, 8).map((decision) => ({
-      id: `selector:${decision.id}`,
-      kind: "handoff" as const,
-      title: t("Speaker selection"),
-      description: decision.reason,
-      meta: decision.status,
-      tone: decision.status === "accepted" ? "success" as const : "neutral" as const,
-    })),
-    ...input.evidence.handoffIntents.slice(0, 8).map((intent) => ({
-      id: `handoff-intent:${intent.id}`,
-      kind: "handoff" as const,
-      title: t("Handoff intent"),
-      description: `${intent.fromParticipantLabel} -> ${intent.toParticipantLabel ?? intent.toParticipantId}: ${intent.reason}`,
-      meta: intent.status,
-      tone: intent.status === "failed" ? "failed" as const : intent.status === "accepted" || intent.status === "validated" ? "success" as const : "neutral" as const,
-    })),
-    ...input.evidence.memoryCandidates.slice(0, 8).map((candidate) => ({
-      id: `memory-candidate:${candidate.memory.id}`,
-      kind: "read" as const,
-      title: t("Memory candidate"),
-      description: candidate.memory.title,
-      meta: candidate.memory.reviewState,
-      tone: "waiting" as const,
-    })),
   ];
   const diagnosticRows: ConversationWorkCellRow[] = input.evidence.steps.flatMap(({ step, diagnostics }) =>
     diagnostics.slice(0, 4).map((diagnostic) => ({
       id: `diagnostic:${step.id}:${diagnostic.kind}:${diagnostic.message}`,
       kind: "watch" as const,
-      title: step.title,
+      title: workflowStepDisplayTitle(step, t),
       description: diagnostic.message,
       meta: diagnostic.severity,
       tone: diagnostic.severity === "critical" ? "failed" as const : "waiting" as const,
@@ -241,21 +230,16 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     .map(({ step }) => ({
       id: `attention-step:${step.id}`,
       kind: "watch" as const,
-      title: step.title,
+      title: workflowStepDisplayTitle(step, t),
       description: step.blocker ?? step.resultSummary ?? t("Needs attention"),
       meta: step.status,
       tone: step.status === "failed" ? "failed" as const : "waiting" as const,
     }));
   const attentionRows = [...approvalRows, ...blockedRows, ...diagnosticRows].slice(0, 16);
-  const evidenceLinks = artifacts.slice(0, 8).map((artifact) => ({
-    id: artifact.id,
-    label: artifact.title || artifact.path || artifact.id,
-    meta: [artifact.type, artifact.sizeBytes !== undefined ? formatBytes(artifact.sizeBytes) : undefined].filter(Boolean).join(" · "),
-    href: input.artifactHref?.(artifact),
-  }));
+  const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
 
   return {
-    groups: [
+    groups: mainFeedEvidenceGroups([
       {
         id: "changed",
         label: t("Changed"),
@@ -264,15 +248,9 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
       },
       {
         id: "checked",
-        label: t("Checked work"),
+        label: t("Checks"),
         summary: t("{count} steps", { count: input.evidence.steps.length }),
         rows: checkedRows,
-      },
-      {
-        id: "context",
-        label: t("Context Pack"),
-        summary: contextRows.length > 0 ? t("{count} context items", { count: contextRows.length }) : t("No context evidence captured"),
-        rows: contextRows,
       },
       {
         id: "evidence",
@@ -286,287 +264,9 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
         summary: attentionRows.length > 0 ? t("{count} attention items", { count: attentionRows.length }) : t("No attention needed"),
         rows: attentionRows,
       },
-    ],
+    ], t),
     evidenceLinks,
   };
-}
-
-type WorkflowEvidenceStepModel = WorkflowEvidenceResponse["steps"][number];
-type WorkflowContextInspectSummary = WorkflowEvidenceStepModel["contextInspect"];
-type WorkflowContextPackSnapshot = NonNullable<NonNullable<WorkflowEvidenceStepModel["contextPacket"]>["contextPack"]>;
-type WorkflowContextSectionSnapshot = WorkflowContextPackSnapshot["sections"][number];
-type WorkflowContextSourceRefSnapshot = WorkflowContextPackSnapshot["sourceRefs"][number];
-
-function buildWorkflowContextPackRows(
-  stepEvidence: WorkflowEvidenceStepModel,
-  t: Translate,
-): ConversationWorkCellRow[] {
-  const { step, contextInspect, contextPacket, diagnostics } = stepEvidence;
-  const stepTitle = `${step.toParticipantLabel}: ${step.title}`;
-  const artifactId = step.metadata?.contextArtifactId;
-  if (contextInspect) {
-    return buildWorkflowContextInspectRows({ inspect: contextInspect, stepTitle, stepId: step.id, t });
-  }
-  if (!artifactId && !contextPacket) {
-    return [];
-  }
-  if (!contextPacket) {
-    const diagnostic = diagnostics.find((item) => item.kind === "bad_packet" || item.kind === "missing_context_packet");
-    return [{
-      id: `context-missing:${step.id}`,
-      title: stepTitle,
-      description: diagnostic?.message ?? t("No persisted context snapshot for this step."),
-      meta: artifactId ? `artifact:${artifactId}` : t("missing"),
-      tone: "waiting",
-    }];
-  }
-  const pack = contextPacket.contextPack;
-  if (!pack) {
-    return [{
-      id: `context-no-pack:${step.id}`,
-      title: stepTitle,
-      description: t("Context artifact exists, but no Context Pack snapshot was recorded."),
-      meta: artifactId ? `artifact:${artifactId}` : contextPacket.generatedAt,
-      tone: "waiting",
-    }];
-  }
-
-  const rows: ConversationWorkCellRow[] = [{
-    id: `context-pack:${step.id}`,
-    kind: "read",
-    title: stepTitle,
-    description: [
-      `${t("Kind")}: ${pack.kind}`,
-      `${t("Provider")}: ${pack.providerPresetId ?? "unknown"}`,
-      `${t("Model")}: ${pack.modelId ?? "unknown"}`,
-      `${t("Budget")}: ${pack.budget.mode}`,
-    ].join(" · "),
-    meta: `${pack.estimatedInputTokens}/${pack.budget.inputBudgetTokens} tokens`,
-    tone: pack.overBudget ? "waiting" : "neutral",
-  }];
-
-  rows.push({
-    id: `context-sections:${step.id}`,
-    kind: "read",
-    title: t("Kept sections"),
-    description: pack.sections.length > 0
-      ? truncatePreview(pack.sections.map(formatContextPackSection).join(", "), 220)
-      : t("No kept sections recorded."),
-    meta: String(pack.sections.length),
-    tone: "neutral",
-  });
-
-  rows.push({
-    id: `context-dropped:${step.id}`,
-    kind: "read",
-    title: t("Dropped sections"),
-    description: pack.droppedSectionIds.length > 0
-      ? truncatePreview(pack.droppedSectionIds.join(", "), 220)
-      : t("No sections dropped."),
-    meta: String(pack.droppedSectionIds.length),
-    tone: pack.droppedSectionIds.length > 0 ? "waiting" : "success",
-  });
-
-  rows.push({
-    id: `context-source-refs:${step.id}`,
-    kind: "read",
-    title: t("Source refs"),
-    description: pack.sourceRefs.length > 0
-      ? truncatePreview(summarizeContextPackSourceRefs(pack.sourceRefs), 220)
-      : t("No source refs recorded."),
-    meta: String(pack.sourceRefs.length),
-    tone: "neutral",
-  });
-
-  if (pack.compactionIds.length > 0) {
-    rows.push({
-      id: `context-compactions:${step.id}`,
-      kind: "watch",
-      title: t("Compactions"),
-      description: truncatePreview(pack.compactionIds.join(", "), 220),
-      meta: String(pack.compactionIds.length),
-      tone: "neutral",
-    });
-  }
-
-  const protocolSummary = summarizeProtocolMetadata(pack);
-  if (protocolSummary) {
-    rows.push({
-      id: `context-protocol:${step.id}`,
-      kind: "handoff",
-      title: t("Collaboration protocol"),
-      description: protocolSummary,
-      meta: "channel_collaboration_protocol",
-      tone: "neutral",
-    });
-  }
-
-  return rows;
-}
-
-function buildWorkflowContextInspectRows(input: {
-  readonly inspect: WorkflowContextInspectSummary;
-  readonly stepTitle: string;
-  readonly stepId: string;
-  readonly t: Translate;
-}): ConversationWorkCellRow[] {
-  const { inspect, stepTitle, stepId, t } = input;
-  if (inspect.availability !== "available") {
-    return [{
-      id: `context-inspect:${stepId}`,
-      kind: "read",
-      title: stepTitle,
-      description: workflowContextInspectAvailabilityLabel(inspect.availability, t),
-      meta: inspect.contextArtifactId ? `artifact:${inspect.contextArtifactId}` : t("missing"),
-      tone: "waiting",
-    }];
-  }
-
-  const rows: ConversationWorkCellRow[] = [{
-    id: `context-inspect:${stepId}`,
-    kind: "read",
-    title: stepTitle,
-    description: [
-      `${t("Kind")}: ${inspect.kind ?? "unknown"}`,
-      `${t("Provider")}: ${inspect.providerPresetId ?? "unknown"}`,
-      `${t("Model")}: ${inspect.modelId ?? "unknown"}`,
-      `${t("Budget")}: ${inspect.budget?.mode ?? "unknown"}`,
-    ].join(" · "),
-    meta: inspect.budget ? `${inspect.budget.estimatedInputTokens}/${inspect.budget.inputBudgetTokens} tokens` : t("Not recorded"),
-    tone: inspect.budget?.overBudget ? "waiting" : "neutral",
-  }];
-
-  rows.push({
-    id: `context-inspect-sections:${stepId}`,
-    kind: "read",
-    title: t("Kept sections"),
-    description: inspect.sections.length > 0
-      ? truncatePreview(inspect.sections.map(formatContextInspectSection).join(", "), 220)
-      : t("No kept sections recorded."),
-    meta: String(inspect.sectionCount),
-    tone: "neutral",
-  });
-
-  rows.push({
-    id: `context-inspect-dropped:${stepId}`,
-    kind: "read",
-    title: t("Dropped sections"),
-    description: inspect.droppedSectionIds.length > 0
-      ? truncatePreview(inspect.droppedSectionIds.join(", "), 220)
-      : t("No sections dropped."),
-    meta: String(inspect.droppedSectionCount),
-    tone: inspect.droppedSectionCount > 0 ? "waiting" : "success",
-  });
-
-  rows.push({
-    id: `context-inspect-source-refs:${stepId}`,
-    kind: "read",
-    title: t("Source refs"),
-    description: inspect.sourceRefs.length > 0
-      ? truncatePreview(summarizeContextPackSourceRefs(inspect.sourceRefs), 220)
-      : t("No source refs recorded."),
-    meta: String(inspect.sourceRefCount),
-    tone: "neutral",
-  });
-
-  if (inspect.compactionIds.length > 0) {
-    rows.push({
-      id: `context-inspect-compactions:${stepId}`,
-      kind: "watch",
-      title: t("Compactions"),
-      description: truncatePreview(inspect.compactionIds.join(", "), 220),
-      meta: String(inspect.compactionCount),
-      tone: "neutral",
-    });
-  }
-
-  rows.push({
-    id: `context-inspect-safety:${stepId}`,
-    kind: "watch",
-    title: t("Safety boundary"),
-    description: workflowContextInspectSafetyLabel(inspect, t),
-    meta: t("Developer diagnostics"),
-    tone: "neutral",
-  });
-
-  return rows;
-}
-
-function formatContextInspectSection(section: WorkflowContextInspectSummary["sections"][number]): string {
-  const sourceCount = section.sourceRefIds.length;
-  const tokens = section.estimatedTokens !== undefined ? `, ${section.estimatedTokens}t` : "";
-  return `${section.id}(${section.role}/${section.priority}, refs:${sourceCount}${tokens})`;
-}
-
-function workflowContextInspectAvailabilityLabel(
-  availability: WorkflowContextInspectSummary["availability"],
-  t: Translate,
-): string {
-  if (availability === "missing_context_artifact") {
-    return t("No persisted context snapshot for this step.");
-  }
-  if (availability === "unreadable_context_packet") {
-    return t("Context packet could not be read.");
-  }
-  if (availability === "missing_context_pack") {
-    return t("Context artifact exists, but no Context Pack snapshot was recorded.");
-  }
-  return t("Context inspect metadata is available.");
-}
-
-function workflowContextInspectSafetyLabel(inspect: WorkflowContextInspectSummary, t: Translate): string {
-  const excluded = [
-    inspect.safety.rawPromptTextIncluded ? undefined : t("raw prompt text excluded"),
-    inspect.safety.rawLogsIncluded ? undefined : t("raw logs excluded"),
-    inspect.safety.rawArtifactBodiesIncluded ? undefined : t("raw artifact bodies excluded"),
-  ].filter((value): value is string => Boolean(value));
-  return excluded.length > 0 ? excluded.join(" · ") : t("No safety exclusions recorded.");
-}
-
-function formatContextPackSection(section: WorkflowContextSectionSnapshot): string {
-  const sourceCount = section.sourceRefIds?.length ?? 0;
-  const tokens = section.estimatedTokens !== undefined ? `, ${section.estimatedTokens}t` : "";
-  return `${section.id}(${section.role}/${section.priority}, refs:${sourceCount}${tokens})`;
-}
-
-function summarizeContextPackSourceRefs(refs: readonly WorkflowContextSourceRefSnapshot[]): string {
-  const groups = new Map<string, string[]>();
-  for (const ref of refs) {
-    const values = groups.get(ref.type) ?? [];
-    values.push(ref.label ? `${ref.label} [${ref.id}]` : ref.id);
-    groups.set(ref.type, values);
-  }
-  return [...groups.entries()]
-    .map(([type, values]) => `${type}: ${values.slice(0, 4).join(", ")}${values.length > 4 ? ` +${values.length - 4}` : ""}`)
-    .join("; ");
-}
-
-function summarizeProtocolMetadata(pack: WorkflowContextPackSnapshot): string | undefined {
-  const protocolSection = pack.sections.find((section) => section.id === "channel_collaboration_protocol");
-  const metadata = protocolSection?.metadata;
-  if (!metadata) {
-    return undefined;
-  }
-  const values = [
-    protocolField(metadata, "responseLanguage", "responseLanguageSource"),
-    protocolField(metadata, "autoReplyMode", "autoReplyModeSource"),
-    protocolField(metadata, "defaultTeammateId", "defaultTeammateSource"),
-  ].filter((value): value is string => Boolean(value));
-  return values.length > 0 ? values.join(" · ") : undefined;
-}
-
-function protocolField(metadata: Record<string, unknown>, valueKey: string, sourceKey: string): string | undefined {
-  const value = readMetadataString(metadata, valueKey);
-  if (!value) {
-    return undefined;
-  }
-  const source = readMetadataString(metadata, sourceKey);
-  return source ? `${valueKey}: ${value} (${source})` : `${valueKey}: ${value}`;
-}
-
-function readMetadataString(metadata: Record<string, unknown>, key: string): string | undefined {
-  const value = metadata[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function buildWorkflowProgressSummary(input: {
@@ -580,9 +280,7 @@ function buildWorkflowProgressSummary(input: {
   readonly finalResultSummary?: string;
 }): string {
   if (input.workflow.status === "succeeded") {
-    return input.finalResultSummary
-      ? input.t("Task completed: {summary}", { summary: input.finalResultSummary })
-      : input.t("Task completed.");
+    return input.finalResultSummary ?? input.workflow.title;
   }
   if (input.workflow.status === "failed" || input.workflow.status === "cancelled") {
     if (input.finalResultSummary) {
@@ -597,7 +295,7 @@ function buildWorkflowProgressSummary(input: {
     return input.t("Blocked: {reason}", { reason: input.currentStep?.blocker ?? input.finalResultSummary ?? input.t("waiting for user input") });
   }
   if (input.pendingApprovalCount > 0 || input.workflow.status === "waiting_for_approval" || input.currentStep?.status === "waiting_for_approval") {
-    return input.t("{teammate} is waiting for approval.", { teammate: input.currentStep?.toParticipantLabel ?? input.t("Workflow") });
+    return input.t("{teammate} is waiting for approval.", { teammate: input.currentStep?.toParticipantLabel ?? input.t("Work") });
   }
   if (input.currentStep && (input.currentStep.status === "running" || input.currentStep.status === "claimed")) {
     return input.t("{teammate} is working on {step}. {done} of {total} steps complete.", {
@@ -623,7 +321,7 @@ function readWorkflowFinalResultSummary(
   for (let index = steps.length - 1; index >= 0; index -= 1) {
     const step = steps[index];
     const summary = step.resultSummary?.trim();
-    if (summary && terminalStatuses.has(step.status)) {
+    if (summary && terminalStatuses.has(step.status) && !isGenericWorkflowSuccessSummary(summary)) {
       return summary;
     }
   }
@@ -649,30 +347,22 @@ function readWorkflowApprovalFinalResultSummary(
   return cancelled ? `Approval cancelled: ${cancelled.title}.` : undefined;
 }
 
-function buildCurrentRows(input: {
+function buildWorkflowOperationRows(input: {
   readonly t: Translate;
-  readonly currentStep?: ChannelWorkflowStep;
-  readonly blockedStep?: ChannelWorkflowStep;
-  readonly waitingStep?: ChannelWorkflowStep;
-  readonly runningStep?: ChannelWorkflowStep;
-  readonly queuedStep?: ChannelWorkflowStep;
-  readonly completedSteps: number;
-  readonly totalSteps: number;
-  readonly artifactCount: number;
+  readonly steps: readonly ChannelWorkflowStep[];
   readonly pendingApprovalCount: number;
 }): readonly ConversationWorkCellRow[] {
-  const rows: ConversationWorkCellRow[] = [];
-  const prioritized = input.blockedStep ?? input.waitingStep ?? input.runningStep ?? input.queuedStep ?? input.currentStep;
-  if (prioritized) {
-    rows.push({
-      id: `step:${prioritized.id}`,
+  const rows: ConversationWorkCellRow[] = visibleWorkflowOperationSteps(input.steps).map((step) => {
+    const title = workflowStepOperationTitle(step, input.t);
+    return {
+      id: `step:${step.id}`,
       kind: "handoff",
-      title: workflowStepProgressTitle(prioritized, input.t),
-      description: prioritized.blocker ?? prioritized.prompt,
-      meta: prioritized.status,
-      tone: workflowStepTone(prioritized.status),
-    });
-  }
+      title,
+      description: workflowStepOperationSummary(step, 140, title),
+      meta: workflowStepDisplayMeta(step.status, 0, input.t),
+      tone: workflowStepTone(step.status),
+    };
+  });
   if (input.pendingApprovalCount > 0) {
     rows.push({
       id: "approvals",
@@ -682,23 +372,172 @@ function buildCurrentRows(input: {
       tone: "waiting",
     });
   }
-  rows.push({
-    id: "completed",
-    kind: "verify",
-    title: input.t("Step progress"),
-    description: input.t("{done} of {total} steps complete", { done: input.completedSteps, total: input.totalSteps }),
-    tone: input.completedSteps === input.totalSteps && input.totalSteps > 0 ? "success" : "neutral",
-  });
-  if (input.artifactCount > 0) {
-    rows.push({
-      id: "artifacts",
-      kind: "edit",
-      title: input.t("Evidence captured"),
-      description: input.t("{count} evidence items", { count: input.artifactCount }),
-      tone: "success",
-    });
-  }
   return rows;
+}
+
+function buildWorkflowAgentActivitySpans(input: {
+  readonly t: Translate;
+  readonly steps: readonly ChannelWorkflowStep[];
+}): readonly ConversationAgentActivitySpan[] {
+  const groups = new Map<string, ChannelWorkflowStep[]>();
+  for (const step of input.steps) {
+    if (isCoordinatorWorkflowParticipant(step)) {
+      continue;
+    }
+    const key = step.toParticipantId || step.toParticipantLabel || step.id;
+    groups.set(key, [...(groups.get(key) ?? []), step]);
+  }
+  if (groups.size === 0) {
+    return [];
+  }
+
+  return [...groups.entries()]
+    .map(([participantId, steps], index) => {
+      const orderedSteps = [...steps].sort((left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt));
+      const latestStep = workflowAgentFocusStep(orderedSteps);
+      const groupStatus = workflowAgentGroupStatus(orderedSteps);
+      const canonicalParticipantId = orderedSteps.find((step) => step.toParticipantId.trim())?.toParticipantId.trim();
+      return {
+        sortIndex: index,
+        id: `agent:${participantId}`,
+        ...(canonicalParticipantId ? { participantId: canonicalParticipantId } : {}),
+        kind: "agent" as const,
+        label: latestStep?.toParticipantLabel.trim() || orderedSteps[0]?.toParticipantLabel.trim() || participantId,
+        tone: workflowStepTone(groupStatus),
+        stateLabel: workflowStepStatusMeta(groupStatus, input.t),
+        latestRow: latestStep ? workflowStepToAgentRow(latestStep, input.t, "latest") : undefined,
+        rows: orderedSteps.map((step) => workflowStepToAgentRow(step, input.t, "history")),
+      } satisfies ConversationAgentActivitySpan & { readonly sortIndex: number };
+    })
+    .sort((left, right) => left.sortIndex - right.sortIndex)
+    .map(({ sortIndex: _sortIndex, ...span }) => span);
+}
+
+function isCoordinatorWorkflowParticipant(step: ChannelWorkflowStep): boolean {
+  const id = step.toParticipantId.trim().toLowerCase();
+  const label = step.toParticipantLabel.trim().toLowerCase();
+  return id === "ling_agent" || id === "ling-agent" || label === "ling agent" || label === "ling";
+}
+
+function workflowAgentFocusStep(steps: readonly ChannelWorkflowStep[]): ChannelWorkflowStep | undefined {
+  return steps.find((step) => step.status === "blocked") ??
+    steps.find((step) => step.status === "failed") ??
+    steps.find((step) => step.status === "waiting_for_approval") ??
+    steps.find((step) => step.status === "running" || step.status === "claimed") ??
+    steps.find((step) => step.status === "queued") ??
+    steps.at(-1);
+}
+
+function workflowAgentGroupStatus(steps: readonly ChannelWorkflowStep[]): ChannelWorkflowStep["status"] {
+  return workflowAgentFocusStep(steps)?.status ?? "succeeded";
+}
+
+function workflowStepToAgentRow(
+  step: ChannelWorkflowStep,
+  t: Translate,
+  scope: "latest" | "history",
+): ConversationWorkCellRow {
+  const title = workflowStepOperationTitle(step, t);
+  return {
+    id: `${scope}:workflow-step:${step.id}`,
+    kind: workflowStepOperationKind(step),
+    title,
+    description: workflowStepOperationSummary(step, 160, title),
+    meta: workflowStepStatusMeta(step.status, t),
+    tone: workflowStepTone(step.status),
+  };
+}
+
+function workflowStepOperationKind(step: ChannelWorkflowStep): ConversationWorkCellRow["kind"] {
+  const text = `${step.title}\n${step.prompt}\n${step.resultSummary ?? ""}`.toLowerCase();
+  if (/\b(rg|grep|find|search)\b|搜索/u.test(text)) {
+    return "search";
+  }
+  if (/\b(read|list|ls|inspect)\b|读取|查看/u.test(text)) {
+    return "read";
+  }
+  if (/\b(edit|write|create|modify|patch)\b|创建|修改|写入/u.test(text)) {
+    return "edit";
+  }
+  if (/\b(test|check|verify|pnpm|npm|node|playwright|typecheck)\b|检查|验证|测试/u.test(text)) {
+    return "verify";
+  }
+  return "handoff";
+}
+
+function visibleWorkflowOperationSteps(steps: readonly ChannelWorkflowStep[]): readonly ChannelWorkflowStep[] {
+  if (steps.length <= 6) {
+    return steps;
+  }
+  const focusIndex = steps.findIndex((step) =>
+    step.status === "blocked" ||
+    step.status === "failed" ||
+    step.status === "waiting_for_approval" ||
+    step.status === "running" ||
+    step.status === "claimed" ||
+    step.status === "queued"
+  );
+  if (focusIndex < 0) {
+    return steps.slice(-6);
+  }
+  const start = Math.max(0, focusIndex - 3);
+  return steps.slice(start, start + 6);
+}
+
+function workflowStepOperationTitle(step: ChannelWorkflowStep, t: Translate): string {
+  const owner = step.toParticipantLabel.trim();
+  const title = stripWorkflowStepOwnerPrefix(step.title, owner);
+  const summary = workflowStepDisplaySummary(step, 140);
+  if ((step.status === "succeeded" || step.status === "skipped") && summary) {
+    return summary;
+  }
+  if ((step.status === "failed" || step.status === "blocked") && summary) {
+    return summary;
+  }
+  if (summary && isGenericWorkflowStepTitle(title)) {
+    return workflowStepLifecycleTitle(step.status, summary, t);
+  }
+  const baseTitle = !title || isGenericWorkflowStepTitle(title)
+    ? summary ?? genericWorkflowStepTitle(title, t)
+    : title;
+  return workflowStepLifecycleTitle(step.status, baseTitle, t);
+}
+
+function workflowStepLifecycleTitle(
+  status: ChannelWorkflowStep["status"],
+  title: string,
+  t: Translate,
+): string {
+  if (status === "running" || status === "claimed") {
+    return t("Working on {title}", { title });
+  }
+  if (status === "queued") {
+    return t("Waiting to start {title}", { title });
+  }
+  if (status === "waiting_for_approval") {
+    return t("Waiting for approval: {title}", { title });
+  }
+  if (status === "cancelled") {
+    return t("Stopped {title}", { title });
+  }
+  if (status === "succeeded" || status === "skipped") {
+    return t("Finished {title}", { title });
+  }
+  if (!title || isGenericWorkflowStepTitle(title)) {
+    return title || genericWorkflowStepTitle(title, t);
+  }
+  return title;
+}
+
+function workflowStepOperationSummary(step: ChannelWorkflowStep, maxLength: number, title: string): string | undefined {
+  const summary = workflowStepDisplaySummary(step, maxLength);
+  if (summary) {
+    return summary === title ? undefined : summary;
+  }
+  if (step.status === "running" || step.status === "claimed" || step.status === "queued" || step.status === "waiting_for_approval") {
+    return truncatePreview(step.prompt, maxLength);
+  }
+  return undefined;
 }
 
 function buildWorkflowProgressGroups(input: {
@@ -716,14 +555,17 @@ function buildWorkflowProgressGroups(input: {
     meta: artifact.type,
     tone: "neutral" as const,
   }));
-  const checkedRows = input.steps.slice(0, 12).map((step) => ({
-    id: `step:${step.id}`,
-    kind: "verify" as const,
-    title: `${step.toParticipantLabel}: ${step.title}`,
-    description: step.resultSummary ?? step.blocker ?? truncatePreview(step.prompt, 140),
-    meta: step.status,
-    tone: workflowStepTone(step.status),
-  }));
+  const checkedRows = input.steps.slice(0, 12).map((step) => {
+    const title = workflowStepDisplayTitle(step, input.t);
+    return {
+      id: `step:${step.id}`,
+      kind: "verify" as const,
+      title,
+      description: workflowStepDisplayDescription(step, 140, title),
+      meta: workflowStepDisplayMeta(step.status, 0, input.t),
+      tone: workflowStepTone(step.status),
+    };
+  });
   const evidenceRows: ConversationWorkCellRow[] = input.artifacts.slice(0, 10).map((artifact) => ({
     id: `artifact:${artifact.id}`,
     kind: artifact.type === "diff" || artifact.type === "file" ? "edit" as const : "verify" as const,
@@ -740,28 +582,6 @@ function buildWorkflowProgressGroups(input: {
     meta: approval.status,
     tone: approvalStatusTone(approval.status),
   })));
-  for (const step of input.steps) {
-    if (step.metadata?.contextArtifactId) {
-      evidenceRows.push({
-        id: `context-packet:${step.id}`,
-        kind: "read",
-        title: input.t("Context packet"),
-        description: step.title,
-        meta: step.metadata.contextArtifactId,
-        tone: "neutral",
-      });
-    }
-    if (step.metadata?.outputArtifactId) {
-      evidenceRows.push({
-        id: `output-packet:${step.id}`,
-        kind: "verify",
-        title: input.t("Output packet"),
-        description: step.title,
-        meta: step.metadata.outputArtifactId,
-        tone: "neutral",
-      });
-    }
-  }
   const attentionRows: ConversationWorkCellRow[] = [
     ...input.approvals
       .filter((approval) => approval.status !== "approved")
@@ -777,7 +597,7 @@ function buildWorkflowProgressGroups(input: {
     ...input.steps.filter((step) => step.status === "blocked" || step.status === "failed").slice(0, 5).map((step) => ({
       id: `attention-step:${step.id}`,
       kind: "watch" as const,
-      title: step.title,
+      title: workflowStepDisplayTitle(step, input.t),
       description: step.blocker ?? step.resultSummary ?? input.t("Needs attention"),
       meta: step.status,
       tone: step.status === "failed" ? "failed" as const : "waiting" as const,
@@ -792,7 +612,7 @@ function buildWorkflowProgressGroups(input: {
     },
     {
       id: "checked",
-      label: input.t("Checked work"),
+      label: input.t("Checks"),
       summary: input.t("{count} steps", { count: input.steps.length }),
       rows: checkedRows,
     },
@@ -841,6 +661,121 @@ function workflowStepProgressTitle(step: ChannelWorkflowStep, t: Translate): str
   return t("{teammate} finished {step}", { teammate: step.toParticipantLabel, step: step.title });
 }
 
+function workflowStepDisplayTitle(step: ChannelWorkflowStep, t: Translate): string {
+  const owner = step.toParticipantLabel.trim();
+  const title = stripWorkflowStepOwnerPrefix(step.title, owner);
+  const summary = workflowStepDisplaySummary(step, 120);
+  const displayTitle = summary && isGenericWorkflowStepTitle(title)
+    ? summary
+    : isGenericWorkflowStepTitle(title)
+      ? genericWorkflowStepTitle(title, t)
+      : title;
+  if (!owner) {
+    return displayTitle || title;
+  }
+  return `${owner}: ${displayTitle || title}`;
+}
+
+function workflowStepDisplaySummary(step: ChannelWorkflowStep, maxLength: number): string | undefined {
+  const summary = step.resultSummary?.trim();
+  if (summary && !isGenericWorkflowSuccessSummary(summary)) {
+    return summary;
+  }
+  const blocker = step.blocker?.trim();
+  if (blocker) {
+    return blocker;
+  }
+  return semanticWorkflowPromptSummary(step.prompt, maxLength);
+}
+
+function workflowStepDisplayDescription(step: ChannelWorkflowStep, maxLength: number, title: string): string | undefined {
+  const summary = workflowStepDisplaySummary(step, maxLength);
+  if (!summary || title.endsWith(summary)) {
+    return undefined;
+  }
+  return summary;
+}
+
+function semanticWorkflowPromptSummary(prompt: string, maxLength: number): string | undefined {
+  const stepSummaryMatch = /(?:^|\n)Step summary:\s*\n([\s\S]*?)(?=\n\n[A-Z][^:\n]{0,80}:\s*\n|$)/u.exec(prompt);
+  const extracted = stepSummaryMatch?.[1]?.trim();
+  if (extracted) {
+    return truncatePreview(extracted, maxLength);
+  }
+  const trimmed = prompt.trim();
+  if (!trimmed || isStructuredWorkflowPrompt(trimmed)) {
+    return undefined;
+  }
+  return truncatePreview(trimmed, maxLength);
+}
+
+function isStructuredWorkflowPrompt(prompt: string): boolean {
+  return /\bConfirmed proposal:\b/u.test(prompt) ||
+    /\bOverall scope:\b/u.test(prompt) ||
+    /\bAssigned teammate:\b/u.test(prompt) ||
+    /\bStep action:\b/u.test(prompt) ||
+    /\bAcceptance criteria:\b/u.test(prompt) ||
+    /\bComplete only this step\./u.test(prompt) ||
+    /\bruntime permission\b/iu.test(prompt);
+}
+
+function stripWorkflowStepOwnerPrefix(title: string, owner: string): string {
+  const trimmedTitle = title.trim();
+  const trimmedOwner = owner.trim();
+  if (!trimmedOwner) {
+    return trimmedTitle;
+  }
+  return trimmedTitle.replace(new RegExp(`^${escapeRegExp(trimmedOwner)}\\s*[:：]\\s*`, "iu"), "").trim();
+}
+
+function isGenericWorkflowStepTitle(title: string): boolean {
+  const normalized = title.trim().toLowerCase();
+  return normalized === "coordinate" ||
+    normalized === "coordinated" ||
+    normalized === "consult" ||
+    normalized === "consulted" ||
+    normalized === "review" ||
+    normalized === "reviewed" ||
+    normalized === "flagged_risk" ||
+    normalized === "flagged risk";
+}
+
+function genericWorkflowStepTitle(title: string, t: Translate): string {
+  const normalized = title.trim().toLowerCase();
+  if (normalized === "review" || normalized === "reviewed") {
+    return t("Review scope");
+  }
+  if (normalized === "consult" || normalized === "consulted") {
+    return t("Clarify scope");
+  }
+  if (normalized === "flagged_risk" || normalized === "flagged risk") {
+    return t("Review risk");
+  }
+  return t("Coordinate work");
+}
+
+function workflowStepDisplayMeta(
+  status: ChannelWorkflowStep["status"],
+  diagnosticCount: number,
+  t: Translate,
+): string | undefined {
+  if (diagnosticCount > 0) {
+    return t("{count} diagnostics", { count: diagnosticCount });
+  }
+  if (status === "succeeded" || status === "skipped") {
+    return undefined;
+  }
+  return workflowStepStatusMeta(status, t);
+}
+
+function isGenericWorkflowSuccessSummary(value: string): boolean {
+  return /^(run\s+succeeded(?:\s+and\s+post-step\s+approval\s+was\s+granted)?|succeeded|completed)\.?$/iu.test(value.trim());
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function workflowStepTone(status: ChannelWorkflowStep["status"]): ConversationWorkCellRowTone {
   if (status === "succeeded" || status === "skipped") {
     return "success";
@@ -855,6 +790,22 @@ function workflowStepTone(status: ChannelWorkflowStep["status"]): ConversationWo
     return "running";
   }
   return "neutral";
+}
+
+function workflowStepStatusMeta(status: ChannelWorkflowStep["status"], t: Translate): string | undefined {
+  if (status === "failed") {
+    return t("Failed");
+  }
+  if (status === "blocked") {
+    return t("Blocked");
+  }
+  if (status === "waiting_for_approval") {
+    return t("Waiting for approval");
+  }
+  if (status === "cancelled") {
+    return t("Stopped");
+  }
+  return undefined;
 }
 
 function approvalStatusTone(status: ApprovalRequest["status"]): ConversationWorkCellRowTone {
@@ -898,14 +849,4 @@ function uniqueBy<T>(items: readonly T[], keyOf: (item: T) => string): readonly 
     result.push(item);
   }
   return result;
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) {
-    return `${value} B`;
-  }
-  if (value < 1024 * 1024) {
-    return `${(value / 1024).toFixed(1)} KB`;
-  }
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }

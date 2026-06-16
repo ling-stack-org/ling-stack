@@ -19,6 +19,8 @@ contracts, and approval boundaries.
 - Reuse the same Web UI and daemon API.
 - Add OS keychain, tray/menu bar, notifications, file picker, and update UX.
 - Keep Desktop downstream of daemon state machines, approvals, leases, and audit logs.
+- Render the shared `ConversationTranscript` contract from the daemon instead of copying
+  Web-only conversation grouping logic.
 
 ## Default Choice
 
@@ -71,10 +73,39 @@ Desktop does not own:
 - task/run/channel/provider CRUD,
 - approval decisions outside daemon APIs,
 - state machine transitions,
+- conversation transcript projection,
+- intent routing or target resolution,
 - runner execution,
 - provider adapters,
 - GitHub automation logic,
 - workspace persistence schema.
+
+## Conversation Transcript Boundary
+
+Desktop may style the conversation differently from Web, but it consumes the same semantic
+transcript:
+
+```text
+local daemon
+  -> ConversationTranscript snapshot/delta
+  -> Desktop renderer
+```
+
+Desktop must not:
+
+- parse coordinator prose to decide whether a turn is start, terminal, blocked, or
+  delegated;
+- regroup workflow/run/work-unit records into its own competing transcript model;
+- turn raw run events into first-level conversation rows;
+- own active work state after the daemon has marked the turn terminal.
+
+Desktop may:
+
+- render the same `OperationCell` and `AgentActivitySpan` blocks with native macOS visual
+  treatment;
+- show OS notifications for transcript state changes such as approval required, blocked,
+  succeeded, or failed;
+- deep-link notification clicks to the relevant transcript turn or raw/detail view.
 
 ## Visual And Theme Model
 
@@ -210,4 +241,6 @@ Desktop smoke tests:
 - Web modularization and contracts/api-client extraction should happen before serious
   desktop implementation.
 - Desktop is a shell over daemon and Web, not a second client model.
+- Desktop is a client over shared semantic contracts, not a second conversation
+  projection implementation.
 - Tauri is a later evaluation, not the v0.1 default.

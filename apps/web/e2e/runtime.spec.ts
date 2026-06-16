@@ -148,6 +148,23 @@ test("runtime diagnostics surface supervisor state and work unit controls", asyn
     lastRenewedAt: "2026-05-25T00:12:00.000Z",
     expiresAt: "2026-05-25T01:12:00.000Z",
   }];
+  state.channelContextSummaries = [
+    {
+      id: "summary_runtime_context",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      targetType: "thread",
+      targetId: "thread_runtime_context",
+      sourceMessageIds: [],
+      decisionIds: [],
+      summary: "Runtime diagnostics context for channel inspector deep-link.",
+      acceptanceCriteria: [],
+      openQuestions: [],
+      authorType: "system",
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    },
+  ];
 
   await mockDaemon(page, state);
   await page.goto("/");

@@ -161,13 +161,12 @@ export function useChannelActionsController(input: {
   readonly refreshChannelActivity: () => Promise<void>;
 }): ChannelActionsController {
   function buildChannelCreatePayload(form: ChannelCreateFormState): ChannelFormState {
-    const defaultTeammateId = form.defaultResponderTeammateId || form.defaultTeammateId;
     return {
       name: form.name,
       status: form.status,
       boundPath: form.boundPath,
       defaultProviderPresetId: form.defaultProviderPresetId,
-      defaultTeammateId,
+      defaultTeammateId: "",
       autoReplyMode: form.autoReplyMode,
       responseLanguage: form.responseLanguage,
       allowedTools: form.allowedTools,
@@ -176,23 +175,13 @@ export function useChannelActionsController(input: {
   }
 
   function selectedCreateTeammateIds(form: ChannelCreateFormState): readonly string[] {
-    const ids = new Set(form.selectedTeammateIds.filter(Boolean));
-    if (form.defaultResponderTeammateId) {
-      ids.add(form.defaultResponderTeammateId);
-    }
-    return [...ids];
+    return [...new Set(form.selectedTeammateIds.filter(Boolean))];
   }
 
   async function applyCreatedChannelTeammates(channelId: string, form: ChannelCreateFormState): Promise<void> {
-    const defaultTeammateId = form.defaultResponderTeammateId || form.defaultTeammateId;
     const teammateIds = selectedCreateTeammateIds(form);
-    if (defaultTeammateId) {
-      await input.setDefaultChannelTeammate(channelId, defaultTeammateId);
-    }
     for (const teammateId of teammateIds) {
-      if (teammateId !== defaultTeammateId) {
-        await input.addChannelTeammate(channelId, teammateId);
-      }
+      await input.addChannelTeammate(channelId, teammateId);
     }
   }
 
@@ -242,7 +231,7 @@ export function useChannelActionsController(input: {
         status: input.channelForm.status,
         boundPath: input.channelForm.boundPath.trim() || input.form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? input.channelForm.defaultProviderPresetId,
-        defaultTeammateId: input.channelForm.defaultResponderTeammateId || input.channelForm.defaultTeammateId,
+        defaultTeammateId: "",
         autoReplyMode: input.channelForm.autoReplyMode,
         responseLanguage: input.channelForm.responseLanguage,
         allowedTools: input.channelForm.allowedTools.length > 0 ? input.channelForm.allowedTools : defaultTools,

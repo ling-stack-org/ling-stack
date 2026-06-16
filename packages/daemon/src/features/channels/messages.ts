@@ -576,9 +576,9 @@ function coordinatorWorkflowStartBody(
 ): string {
   const title = proposal.title.trim() || sourceMessage.body.trim() || "this task";
   if (proposal.responseLanguage === "en-US") {
-    return `I have enough context to start "${title}". I will keep the main thread focused on key status and the final result; files, checks, and run details stay in the folded evidence summary.`;
+    return `Confirmed: "${title}". Starting now.`;
   }
-  return `我已确认任务边界，开始处理「${title}」。我会在主会话同步关键状态和最终结果；具体文件、检查和运行细节放在折叠证据摘要里。`;
+  return `确认需求：「${title}」。开始处理。`;
 }
 
 function coordinatorWorkflowStartFailedBody(proposal: ChannelExecutionProposal, error: unknown): string {

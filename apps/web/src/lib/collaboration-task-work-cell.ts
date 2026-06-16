@@ -1,5 +1,6 @@
 import type { Translate } from "../i18n.js";
-import type { ConversationWorkCellBranch, ConversationWorkCellRow, ConversationWorkCellRowTone, ConversationWorkCellViewModel } from "./conversation-work-cell.js";
+import type { ChannelWorkflowStep } from "../types.js";
+import type { ConversationAgentActivitySpan, ConversationWorkCellRow, ConversationWorkCellRowTone, ConversationWorkCellViewModel } from "./conversation-work-cell.js";
 import { normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import type { CollaborationTaskCardModel, CollaborationTaskStepState } from "./collaboration-task-card.js";
 import { workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "./workflow-progress.js";
@@ -10,13 +11,13 @@ export function collaborationTaskCardToConversationWorkCell(input: {
   readonly t: Translate;
 }): ConversationWorkCellViewModel {
   const base = workflowProgressToConversationWorkCell(input.progress);
-  const branchRows = buildCollaborationBranchRows(input.card, input.t);
-  const operationRows = input.card.mode === "completed"
-    ? []
-    : branchRows && branchRows.length > 0
-      ? buildCollaborationAttentionRows(input.card, input.t)
+  const agentSpans = buildCollaborationAgentSpans(input.card, input.t, input.progress.steps);
+  const hasAgentSpans = agentSpans.length > 0;
+  const operationRows = hasAgentSpans
+    ? buildCollaborationAttentionRows(input.card, input.t)
+    : input.card.mode === "completed"
+      ? base.operationRows
       : buildCollaborationActiveRows(input.card, input.t);
-  const terminalReportRows = buildFinalLingReportRows(input.card, base, input.t);
   return normalizeConversationOperationCell({
     ...base,
     id: `collaboration-work-cell:${input.card.workflowId}`,
@@ -28,14 +29,15 @@ export function collaborationTaskCardToConversationWorkCell(input: {
     summary: collaborationTaskWorkCellSummary(input.card, base.summary, input.t),
     stats: buildCollaborationWorkCellStats(input.card, input.t),
     operationRows,
-    agentBranches: branchRows ?? [],
-    terminalReportRows,
+    agentSpans,
+    agentBranches: agentSpans,
+    terminalReportRows: [],
   });
 }
 
 function collaborationTaskWorkCellKicker(card: CollaborationTaskCardModel, t: Translate): string {
   if (card.mode === "completed") {
-    return t("Work complete");
+    return t("Completed");
   }
   if (card.mode === "blocked") {
     return t("Work blocked");
@@ -59,9 +61,9 @@ function collaborationTaskWorkCellSummary(card: CollaborationTaskCardModel, fall
   if (card.mode === "completed") {
     const summary = readFinalStepSummary(card);
     if (summary && !isGenericRunSuccessSummary(summary)) {
-      return t("Completed: {summary}", { summary });
+      return summary;
     }
-    return t("I finished {title}. Expand the evidence summary below for exact files, checks, and run details.", { title: card.title });
+    return card.title;
   }
   if (card.mode === "blocked") {
     return t("Blocked: {reason}", { reason: card.blocker ?? fallbackSummary });
@@ -108,8 +110,8 @@ function buildCollaborationActiveRows(card: CollaborationTaskCardModel, t: Trans
       id: `collaboration-step:${step.id}`,
       kind: "handoff",
       title: `${step.ownerLabel}: ${step.title}`,
-      description: step.summary,
-      meta: t(collaborationTaskStepStateLabel(step.state)),
+      description: visibleCollaborationStepSummary(step),
+      meta: collaborationTaskStepStateMeta(step.state, t),
       tone: collaborationStepTone(step.state),
     });
   }
@@ -129,6 +131,15 @@ function buildCollaborationActiveRows(card: CollaborationTaskCardModel, t: Trans
       title: t("Waiting for approval"),
       description: t("{count} pending approvals", { count: card.pendingApprovalCount }),
       tone: "waiting",
+    });
+  }
+  if (card.nextAction && (card.mode === "blocked" || card.mode === "failed" || card.mode === "waiting")) {
+    rows.push({
+      id: "collaboration-next-action",
+      kind: "watch",
+      title: t("Needs attention"),
+      description: card.nextAction,
+      tone: card.mode === "waiting" ? "waiting" : card.mode === "failed" ? "failed" : "neutral",
     });
   }
   return rows.slice(0, 5);
@@ -158,7 +169,7 @@ function buildCollaborationAttentionRows(card: CollaborationTaskCardModel, t: Tr
     rows.push({
       id: "collaboration-next-action",
       kind: "watch",
-      title: t("Next action"),
+      title: t("Needs attention"),
       description: card.nextAction,
       tone: card.pendingApprovalCount > 0 ? "waiting" : "neutral",
     });
@@ -166,204 +177,363 @@ function buildCollaborationAttentionRows(card: CollaborationTaskCardModel, t: Tr
   return rows.slice(0, 3);
 }
 
-function buildCollaborationBranchRows(card: CollaborationTaskCardModel, t: Translate): readonly ConversationWorkCellBranch[] | undefined {
-  if (card.branches.length === 0) {
-    return undefined;
-  }
-  return card.branches.slice(0, 6).map((branch) => ({
-    id: branch.id,
-    label: branch.label,
-    summary: branch.summary,
-    meta: t("{done} of {total} steps complete", { done: branch.completedStepCount, total: branch.totalStepCount }),
-    tone: collaborationStepTone(branch.state),
-    stateLabel: t(collaborationTaskStepStateLabel(branch.state)),
-    rows: branch.steps.slice(0, 6).map((step) => ({
-      id: `branch-step:${step.id}`,
-      kind: "handoff" as const,
-      title: `${step.ownerLabel}: ${step.title}`,
-      description: step.summary,
-      meta: t(collaborationTaskStepStateLabel(step.state)),
-      tone: collaborationStepTone(step.state),
-    })),
-  }));
-}
-
-function buildFinalLingReportRows(
+function buildCollaborationAgentSpans(
   card: CollaborationTaskCardModel,
-  base: ConversationWorkCellViewModel,
   t: Translate,
-): readonly ConversationWorkCellRow[] {
-  if (card.mode !== "completed" && card.mode !== "blocked" && card.mode !== "failed" && card.mode !== "cancelled") {
+  workflowSteps: readonly ChannelWorkflowStep[],
+): readonly ConversationAgentActivitySpan[] {
+  const workflowStepById = new Map(workflowSteps.map((step) => [step.id, step]));
+  const groups = card.branches.length > 0
+    ? card.branches.map((branch) => {
+      const latestStep = agentSpanFocusStep(branch.steps);
+      return {
+        id: branch.id,
+        label: collaborationAgentSpanLabel(branch),
+        summary: branch.summary,
+        state: branch.state,
+        completedStepCount: branch.completedStepCount,
+        totalStepCount: branch.totalStepCount,
+        updatedAt: branch.steps.reduce((latest, step) => step.updatedAt.localeCompare(latest) > 0 ? step.updatedAt : latest, branch.steps[0]?.updatedAt ?? card.updatedAt),
+        latestStep,
+        detailSteps: agentSpanDetailSteps(branch.steps),
+        steps: branch.steps,
+      };
+    })
+    : buildSerialAgentSpanGroups(card, t);
+  if (groups.length === 0) {
     return [];
   }
-
-  const changedGroup = base.groups.find((group) => group.id === "changed");
-  const checkedGroup = base.groups.find((group) => group.id === "checked");
-  const evidenceGroup = base.groups.find((group) => group.id === "evidence");
-  const attentionGroup = base.groups.find((group) => group.id === "attention");
-  const changedRows = changedGroup?.rows ?? [];
-  const validationRows = buildValidationRows({ checkedRows: checkedGroup?.rows ?? [], evidenceRows: evidenceGroup?.rows ?? [] });
-  const attentionRows = attentionGroup?.rows ?? [];
-  const evidenceCount = base.evidenceLinks.length || evidenceGroup?.rows.length || 0;
-  const blocker = readFailedStepSummary(card) ?? card.blocker;
-  const rows: ConversationWorkCellRow[] = [{
-    id: "final-outcome",
-    kind: "verify",
-    title: t("Outcome"),
-    description: buildFinalOutcomeSummary(card, base, t),
-    meta: t(collaborationTaskCardModeLabel(card.mode)),
-    tone: card.mode === "completed" ? "success" : card.mode === "blocked" ? "waiting" : "failed",
-  }];
-
-  if (card.blocker || card.mode === "blocked" || card.mode === "failed") {
-    rows.push(buildFinalBlockerRow({ card, blocker, attentionRows, t }));
-    rows.push(buildFinalNextActionRow(card, t));
+  const sortedGroups = [...groups].sort((left, right) =>
+    agentSpanStatePriority(right.state) - agentSpanStatePriority(left.state) ||
+    right.updatedAt.localeCompare(left.updatedAt) ||
+    left.label.localeCompare(right.label),
+  );
+  const visibleGroups = sortedGroups.slice(0, 3);
+  const hiddenGroups = sortedGroups.slice(visibleGroups.length);
+  const spans = visibleGroups.map((group) => ({
+    id: group.id,
+    kind: "agent" as const,
+    label: group.label,
+    summary: group.latestStep ? undefined : group.summary,
+    meta: undefined,
+    tone: collaborationStepTone(group.state),
+    stateLabel: collaborationTaskStepStateMeta(group.state, t),
+    latestRow: group.latestStep ? collaborationStepToAgentRow(group.latestStep, t, "latest", workflowStepById.get(group.latestStep.id)) : undefined,
+    rows: group.detailSteps.map((step) => collaborationStepToAgentRow(step, t, "history", workflowStepById.get(step.id))),
+  }));
+  if (hiddenGroups.length === 0) {
+    return spans;
   }
-
-  rows.push({
-    id: "final-changed",
-    kind: "edit",
-    title: t("Changed"),
-    description: changedRows.length > 0
-      ? t("Changed: {items}. Evidence recorded: {evidence}.", { items: summarizeFinalReportRows(changedRows, t), evidence: evidenceCount })
-      : t("No changed files recorded. Evidence recorded: {evidence}.", { evidence: evidenceCount }),
-    meta: changedRows.length > 0 ? t("{count} changed items", { count: changedRows.length }) : undefined,
-    tone: changedRows.length > 0 ? "success" : "neutral",
-  });
-
-  rows.push({
-    id: "final-validated",
-    kind: "verify",
-    title: t("Validated"),
-    description: validationRows.length > 0
-      ? t("{count} validation records: {items}", { count: validationRows.length, items: summarizeFinalReportRows(validationRows, t) })
-      : t("No validation commands recorded."),
-    meta: validationRows.length > 0 ? String(validationRows.length) : undefined,
-    tone: validationRows.length > 0 ? "success" : "neutral",
-  });
-
-  if (card.mode === "completed") {
-    rows.push(buildFinalBlockerRow({ card, blocker, attentionRows, t }));
-    rows.push(buildFinalNextActionRow(card, t));
-  } else if (card.mode === "cancelled") {
-    rows.push(buildFinalNextActionRow(card, t));
-  }
-
-  return rows.slice(0, 5);
+  const hiddenRows = hiddenGroups
+    .map((group) => group.latestStep ? collaborationStepToAgentRow(group.latestStep, t, "overflow", workflowStepById.get(group.latestStep.id)) : undefined)
+    .filter((row): row is ConversationWorkCellRow => Boolean(row));
+  return [
+    ...spans,
+    {
+      id: "agent-overflow",
+      kind: "overflow" as const,
+      label: t("{count} more teammates", { count: hiddenGroups.length }),
+      summary: hiddenGroups.map((group) => group.label).slice(0, 3).join(", "),
+      meta: undefined,
+      tone: hiddenGroups.some((group) => group.state === "blocked" || group.state === "failed") ? "failed" : "neutral",
+      stateLabel: undefined,
+      rows: hiddenRows,
+    },
+  ];
 }
 
-function buildFinalOutcomeSummary(
-  card: CollaborationTaskCardModel,
-  base: ConversationWorkCellViewModel,
+function collaborationAgentSpanLabel(branch: CollaborationTaskCardModel["branches"][number]): string {
+  const owners = branch.ownerLabels.map((owner) => owner.trim()).filter(Boolean);
+  if (owners.length > 0) {
+    return owners.slice(0, 2).join(", ");
+  }
+  return branch.label.replace(/\s+branch$/iu, "").trim() || branch.label;
+}
+
+function buildSerialAgentSpanGroups(card: CollaborationTaskCardModel, t: Translate): readonly AgentSpanGroup[] {
+  const groups = new Map<string, CollaborationTaskCardModel["steps"][number][]>();
+  for (const step of card.steps) {
+    const key = step.ownerLabel.trim() || step.id;
+    groups.set(key, [...(groups.get(key) ?? []), step]);
+  }
+  const entries = [...groups.entries()].filter(([owner, steps]) =>
+    groups.size > 1 || shouldProjectSingleAgentSpan(owner, steps)
+  );
+  if (entries.length === 0) {
+    return [];
+  }
+  return entries.map(([owner, steps]) => {
+    const focusStep = agentSpanFocusStep(steps);
+    return {
+      id: `agent:${owner}`,
+      label: owner,
+      summary: focusStep ? agentSpanLatestSummary(focusStep, t) : undefined,
+      state: agentSpanGroupState(steps),
+      completedStepCount: steps.filter((step) => step.state === "done").length,
+      totalStepCount: steps.length,
+      updatedAt: steps.reduce((latest, step) => step.updatedAt.localeCompare(latest) > 0 ? step.updatedAt : latest, steps[0]?.updatedAt ?? card.updatedAt),
+      latestStep: focusStep,
+      detailSteps: agentSpanDetailSteps(steps),
+      steps,
+    };
+  });
+}
+
+function agentSpanDetailSteps(
+  steps: readonly CollaborationTaskCardModel["steps"][number][],
+): readonly CollaborationTaskCardModel["steps"][number][] {
+  return steps.filter(hasSemanticAgentProcessStep).slice(-6);
+}
+
+function agentSpanFocusStep(
+  steps: readonly CollaborationTaskCardModel["steps"][number][],
+): CollaborationTaskCardModel["steps"][number] | undefined {
+  return steps.find((step) => step.state === "blocked") ??
+    steps.find((step) => step.state === "failed") ??
+    steps.find((step) => step.state === "active") ??
+    steps.find((step) => step.state === "waiting" || step.state === "queued") ??
+    steps.at(-1);
+}
+
+function collaborationStepToAgentRow(
+  step: CollaborationTaskCardModel["steps"][number],
   t: Translate,
-): string {
-  if (card.mode === "completed") {
-    const summary = readFinalStepSummary(card);
-    return summary && !isGenericRunSuccessSummary(summary)
-      ? summary
-      : t("Task finished successfully.");
-  }
-  if (card.mode === "blocked") {
-    return t("Collaboration blocked: {reason}", { reason: card.blocker ?? readFailedStepSummary(card) ?? base.summary });
-  }
-  if (card.mode === "failed") {
-    return readFailedStepSummary(card) ?? card.blocker ?? t("No failure reason was recorded.");
-  }
-  return t("Task was cancelled before completion.");
-}
-
-function buildFinalBlockerRow(input: {
-  readonly card: CollaborationTaskCardModel;
-  readonly blocker?: string;
-  readonly attentionRows: readonly ConversationWorkCellRow[];
-  readonly t: Translate;
-}): ConversationWorkCellRow {
-  const attentionSummary = input.attentionRows.length > 0 ? summarizeFinalReportRows(input.attentionRows, input.t) : undefined;
-  const isHealthy = input.card.mode === "completed" && !input.blocker && !attentionSummary;
+  scope: "latest" | "history" | "overflow",
+  workflowStep?: ChannelWorkflowStep,
+): ConversationWorkCellRow {
+  const title = agentActionTitle(step, t, workflowStep);
+  const description = agentActionDescription(step, title, t, workflowStep);
   return {
-    id: "final-blockers-risks",
-    kind: "watch",
-    title: input.t("Blockers / risks"),
-    description: input.blocker
-      ? input.t("Blocker: {reason}", { reason: input.blocker })
-      : attentionSummary
-        ? input.t("Risks: {items}", { items: attentionSummary })
-        : input.t("No blockers or risks recorded."),
-    tone: isHealthy ? "success" : input.card.mode === "blocked" ? "waiting" : input.card.mode === "completed" ? "neutral" : "failed",
+    id: `${scope}-step:${step.id}`,
+    kind: "handoff",
+    title: scope === "overflow" ? `${step.ownerLabel}: ${title}` : title,
+    description,
+    meta: collaborationTaskStepStateMeta(step.state, t),
+    tone: collaborationStepTone(step.state),
   };
 }
 
-function buildFinalNextActionRow(card: CollaborationTaskCardModel, t: Translate): ConversationWorkCellRow {
-  if (card.mode === "blocked") {
-    return {
-      id: "final-next-action",
-      kind: "watch",
-      title: t("Next action"),
-      description: card.nextAction ?? t("Review the blocker, then expand the evidence summary for source records."),
-      tone: "waiting",
-    };
-  }
-  if (card.mode === "failed") {
-    return {
-      id: "final-next-action",
-      kind: "watch",
-      title: t("Next action"),
-      description: card.nextAction ?? t("Review the failure, then expand the evidence summary for source records."),
-      tone: "failed",
-    };
-  }
-  return {
-    id: "final-next-action",
-    kind: "watch",
-    title: t("Next action"),
-    description: t("Expand the evidence summary for details if needed."),
-    tone: "neutral",
-  };
+function agentSpanLatestSummary(step: CollaborationTaskCardModel["steps"][number], t: Translate): string {
+  return agentActionTitle(step, t);
 }
 
-function buildValidationRows(input: {
-  readonly checkedRows: readonly ConversationWorkCellRow[];
-  readonly evidenceRows: readonly ConversationWorkCellRow[];
-}): readonly ConversationWorkCellRow[] {
-  const checkedRows = input.checkedRows.filter((row) =>
-    (row.tone === "success" || row.tone === "neutral") && finalReportRowLooksLikeValidation(row, { includeDescription: true }),
-  );
-  const evidenceRows = input.evidenceRows.filter((row) =>
-    (row.tone === "success" || row.tone === "neutral") && finalReportRowLooksLikeValidation(row, { includeDescription: false }),
-  );
-  return uniqueFinalReportRows([...checkedRows, ...evidenceRows]);
+function agentActionTitle(step: CollaborationTaskCardModel["steps"][number], t: Translate, workflowStep?: ChannelWorkflowStep): string {
+  const title = stripOwnerPrefix(step.title, step.ownerLabel);
+  const summary = visibleCollaborationStepSummary(step, workflowStep);
+  if (summary && isGenericAgentActionTitle(title)) {
+    return summary;
+  }
+  if (!title || isGenericAgentActionTitle(title)) {
+    return summary ?? fallbackAgentActionTitle(step, t);
+  }
+  return title || summary || step.title;
 }
 
-function finalReportRowLooksLikeValidation(
-  row: ConversationWorkCellRow,
-  options: { readonly includeDescription: boolean },
+function agentActionDescription(step: CollaborationTaskCardModel["steps"][number], title: string, t: Translate, workflowStep?: ChannelWorkflowStep): string | undefined {
+  const summary = visibleCollaborationStepSummary(step, workflowStep);
+  if (!summary || summary === title || title === fallbackAgentActionTitle(step, t)) {
+    return undefined;
+  }
+  return summary;
+}
+
+function stripOwnerPrefix(title: string, ownerLabel: string): string {
+  const trimmedTitle = title.trim();
+  const trimmedOwner = ownerLabel.trim();
+  if (!trimmedOwner) {
+    return trimmedTitle;
+  }
+  const prefixPattern = new RegExp(`^${escapeRegExp(trimmedOwner)}\\s*[:：]\\s*`, "iu");
+  return trimmedTitle.replace(prefixPattern, "").trim();
+}
+
+function isGenericAgentActionTitle(title: string): boolean {
+  const normalized = title.trim().toLowerCase();
+  return normalized === "coordinate" ||
+    normalized === "coordinated" ||
+    normalized === "consult" ||
+    normalized === "consulted" ||
+    normalized === "review" ||
+    normalized === "reviewed" ||
+    normalized === "flagged_risk" ||
+    normalized === "flagged risk";
+}
+
+function fallbackAgentActionTitle(step: CollaborationTaskCardModel["steps"][number], t: Translate): string {
+  if (step.state === "blocked") {
+    return step.summary ?? t("Resolve blocker");
+  }
+  if (step.state === "failed") {
+    return step.summary ?? t("Failed");
+  }
+  if (step.state === "active") {
+    return step.summary ?? t("Waiting for agent result");
+  }
+  if (step.state === "waiting") {
+    return step.summary ?? t("Waiting for approval");
+  }
+  if (step.state === "queued") {
+    return step.summary ?? t("Queued");
+  }
+  if (step.state === "cancelled") {
+    return step.summary ?? t("Work cancelled.");
+  }
+  return step.summary ?? t("Done for this segment.");
+}
+
+function collaborationTaskStepStateMeta(state: CollaborationTaskStepState, t: Translate): string | undefined {
+  if (state === "blocked") {
+    return t("Blocked");
+  }
+  if (state === "failed") {
+    return t("Failed");
+  }
+  if (state === "waiting") {
+    return t("Waiting for approval");
+  }
+  if (state === "cancelled") {
+    return t("Stopped");
+  }
+  return undefined;
+}
+
+function shouldProjectSingleAgentSpan(
+  owner: string,
+  steps: readonly CollaborationTaskCardModel["steps"][number][],
 ): boolean {
-  const haystack = [row.title, options.includeDescription ? row.description : undefined, row.meta]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  return /\b(test|tests|tested|typecheck|lint|build|validate|validated|validation|verify|verified|verification|check|checked|qa|coverage|e2e|passed)\b/.test(haystack);
+  return !isCoordinatorAgentOwner(owner) && steps.some(hasSemanticAgentProcessStep);
 }
 
-function summarizeFinalReportRows(rows: readonly ConversationWorkCellRow[], t: Translate): string {
-  const labels = uniqueFinalReportRows(rows).slice(0, 3).map((row) => row.title);
-  const summary = labels.join(", ");
-  const hiddenCount = Math.max(0, rows.length - labels.length);
-  return hiddenCount > 0 ? t("{items} and {count} more", { items: summary, count: hiddenCount }) : summary;
+function isCoordinatorAgentOwner(owner: string): boolean {
+  const normalized = owner.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return normalized === "ling" ||
+    normalized === "ling agent" ||
+    normalized === "main agent" ||
+    normalized === "coordinator" ||
+    normalized === "主 agent" ||
+    normalized === "主agent";
 }
 
-function uniqueFinalReportRows(rows: readonly ConversationWorkCellRow[]): readonly ConversationWorkCellRow[] {
-  const seen = new Set<string>();
-  const result: ConversationWorkCellRow[] = [];
-  for (const row of rows) {
-    const key = `${row.title}\n${row.description ?? ""}\n${row.meta ?? ""}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    result.push(row);
+function hasSemanticAgentProcessStep(step: CollaborationTaskCardModel["steps"][number]): boolean {
+  const title = stripOwnerPrefix(step.title, step.ownerLabel);
+  return Boolean(visibleCollaborationStepSummary(step) || (title && !isGenericAgentActionTitle(title)));
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function visibleCollaborationStepSummary(step: CollaborationTaskCardModel["steps"][number], workflowStep?: ChannelWorkflowStep): string | undefined {
+  const summary = step.summary?.trim();
+  if (!summary || (step.state === "done" && isGenericRunSuccessSummary(summary))) {
+    return semanticWorkflowStepSummary(workflowStep);
   }
-  return result;
+  return summary;
+}
+
+function semanticWorkflowStepSummary(step: ChannelWorkflowStep | undefined): string | undefined {
+  if (!step) {
+    return undefined;
+  }
+  const resultSummary = step.resultSummary?.trim();
+  if (resultSummary && !isGenericRunSuccessSummary(resultSummary)) {
+    return truncateStepPreview(resultSummary, 140);
+  }
+  const promptSummary = semanticWorkflowPromptSummary(step.prompt);
+  return promptSummary ? truncateStepPreview(promptSummary, 140) : undefined;
+}
+
+function semanticWorkflowPromptSummary(prompt: string): string | undefined {
+  const stepSummaryMatch = /(?:^|\n)Step summary:\s*\n([\s\S]*?)(?=\n\n[A-Z][^:\n]{0,80}:\s*\n|$)/u.exec(prompt);
+  const extracted = stepSummaryMatch?.[1]?.trim();
+  if (extracted) {
+    return extracted;
+  }
+  const assignedTaskMatch = /(?:^|\n)(?:Assigned task|Task|Prompt|User request|Original request)\s*:\s*([\s\S]*?)(?=\n[A-Z][^:\n]{0,80}:\s*|$)/iu.exec(prompt);
+  const assignedTask = assignedTaskMatch?.[1]?.trim();
+  if (assignedTask) {
+    return assignedTask;
+  }
+  const trimmed = prompt.trim();
+  if (!trimmed || isStructuredWorkflowPrompt(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function isStructuredWorkflowPrompt(prompt: string): boolean {
+  return /\bConfirmed proposal:\b/u.test(prompt) ||
+    /\bOverall scope:\b/u.test(prompt) ||
+    /\bAssigned teammate:\b/u.test(prompt) ||
+    /\bStep action:\b/u.test(prompt) ||
+    /\bAcceptance criteria:\b/u.test(prompt) ||
+    /\bComplete only this step\./u.test(prompt) ||
+    /\bruntime permission\b/iu.test(prompt);
+}
+
+function truncateStepPreview(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+interface AgentSpanGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly summary?: string;
+  readonly state: CollaborationTaskStepState;
+  readonly completedStepCount: number;
+  readonly totalStepCount: number;
+  readonly updatedAt: string;
+  readonly latestStep?: CollaborationTaskCardModel["steps"][number];
+  readonly detailSteps: readonly CollaborationTaskCardModel["steps"][number][];
+  readonly steps: readonly CollaborationTaskCardModel["steps"][number][];
+}
+
+function agentSpanStatePriority(state: CollaborationTaskStepState): number {
+  if (state === "blocked") {
+    return 60;
+  }
+  if (state === "failed") {
+    return 50;
+  }
+  if (state === "active") {
+    return 40;
+  }
+  if (state === "waiting" || state === "queued") {
+    return 30;
+  }
+  if (state === "done") {
+    return 20;
+  }
+  return 0;
+}
+
+function agentSpanGroupState(steps: readonly CollaborationTaskCardModel["steps"][number][]): CollaborationTaskStepState {
+  if (steps.some((step) => step.state === "blocked")) {
+    return "blocked";
+  }
+  if (steps.some((step) => step.state === "failed")) {
+    return "failed";
+  }
+  if (steps.some((step) => step.state === "active")) {
+    return "active";
+  }
+  if (steps.some((step) => step.state === "waiting")) {
+    return "waiting";
+  }
+  if (steps.some((step) => step.state === "queued")) {
+    return "queued";
+  }
+  if (steps.every((step) => step.state === "done")) {
+    return "done";
+  }
+  if (steps.every((step) => step.state === "cancelled")) {
+    return "cancelled";
+  }
+  return "waiting";
 }
 
 function visibleCollaborationTaskSteps(card: CollaborationTaskCardModel): readonly CollaborationTaskCardModel["steps"][number][] {
@@ -398,25 +568,6 @@ function collaborationExecutionModeLabel(mode: CollaborationTaskCardModel["execu
     return "Mixed";
   }
   return "Serial";
-}
-
-function collaborationTaskStepStateLabel(state: CollaborationTaskStepState): string {
-  if (state === "active") {
-    return "Active";
-  }
-  if (state === "waiting" || state === "queued") {
-    return "Waiting";
-  }
-  if (state === "blocked") {
-    return "Blocked";
-  }
-  if (state === "done") {
-    return "Done";
-  }
-  if (state === "failed") {
-    return "Failed";
-  }
-  return "Cancelled";
 }
 
 function collaborationTaskCardModeLabel(mode: CollaborationTaskCardModel["mode"]): string {

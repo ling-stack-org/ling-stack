@@ -51,29 +51,60 @@ user sends a turn with text, mentions, attachments, links, file refs, or guidanc
 -> Ling Agent uses specialists when useful and available
 -> execution flows through workflow/run/approval
 -> active process stays visible as one operation cell while running
--> terminal process commits once and collapses into a final result report
+-> terminal process commits once and remains as folded transcript history
 -> evidence remains expandable
 ```
 
 ## Conversation Projection Boundary
 
-The concrete Web projection is defined in
+The concrete transcript projection is defined in
 [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md).
 
-That document merges two product concerns:
+That document merges these product concerns:
 
 - `CoordinatorMessageCell`: Ling Agent owns user-facing narration, clarification,
   blocked-state explanation, and final synthesis.
 - `OperationCell`: executable work appears as one visible work object that mutates while
   active and commits once when terminal.
-- `AgentBranchRow`: specialist teammates appear as compact branches inside the operation
-  unless the user is directly chatting with that teammate.
+- `AgentActivitySpan`: specialist teammates appear as compact latest-action rows inside
+  the operation unless the user is directly chatting with that teammate.
 - `EvidenceDetail`: commands, stdout/stderr, raw events, workflow packets, JSON, provider
   metadata, and ids remain in expandable evidence or diagnostic detail.
 
 This boundary prevents the same task from rendering as a Ling Agent message, workflow
 card, run card, collaboration card, right-drawer duplicate, and raw log row at the same
 time.
+
+### Shared Transcript Boundary
+
+Ling Agent Session View and Conversation Transcript are related but not the same read
+model:
+
+| Model | Owns | Does not own |
+| --- | --- | --- |
+| `LingAgentSessionView` | coarse session state, active workflow/run ids, pending approvals, final result summary | ordered transcript rows, command output folding, per-agent process history |
+| `ConversationTranscript` | ordered user-visible turn blocks, active/terminal operation cells, agent activity spans, artifact strips, raw/detail refs | runtime authority, approval decisions, runner execution |
+
+The session view can answer "what state is Ling Agent in right now?". The transcript can
+answer "what did the user see, what is running, and what process history remains folded?".
+
+For Web and future Desktop parity, the transcript projection should move behind shared
+contracts:
+
+```text
+channel messages, workflows, runs, approvals, artifacts, interventions
+  -> daemon/core transcript projector
+  -> packages/contracts ConversationTranscript
+  -> Web renderer / Desktop renderer / CLI renderer
+```
+
+The current Web projection may remain a prototype while the UI design settles, but the
+long-term owner must not be `apps/web`. Desktop should not copy Web-specific grouping
+logic, and CLI should not become the source of truth for message projection.
+
+Coordinator prose is not the structure. The transcript projector must not decide start,
+terminal, delegation, or blocked states by matching generated phrases such as
+`确认需求` or `完成`. Those states come from turn/cell metadata and lower-level records.
 
 ## Problem
 

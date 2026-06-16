@@ -12,7 +12,6 @@ import { readRunProviderPresetId } from "../lib/run-evidence.js";
 export interface AppNavigationController {
   readonly openPlainView: (view: ViewId) => void;
   readonly openRunDiagnosticsView: () => void;
-  readonly openSelectedChannelProtocolEditor: () => void;
   readonly selectWorkspaceChannel: (channelId: string) => void;
   readonly selectWorkspaceChannelBranch: (channelId: string, branchId: string) => void;
   readonly selectAiTeammate: (teammateId: string) => void;
@@ -30,7 +29,6 @@ export function useAppNavigationController(input: {
   readonly setActiveView: Dispatch<SetStateAction<ViewId>>;
   readonly setActiveSidebarTarget: Dispatch<SetStateAction<SidebarTarget>>;
   readonly setApprovalRepairRunId: Dispatch<SetStateAction<string>>;
-  readonly setChannelContextOpenRequest: Dispatch<SetStateAction<{ readonly channelId: string; readonly mode: "protocol"; readonly nonce: number } | undefined>>;
   readonly setChannelCreateOpen: Dispatch<SetStateAction<boolean>>;
   readonly setSelectedChannelBranchId: Dispatch<SetStateAction<string>>;
   readonly setSelectedChannelId: Dispatch<SetStateAction<string>>;
@@ -61,18 +59,6 @@ export function useAppNavigationController(input: {
     input.setChannelCreateOpen(false);
     input.setActiveView("runs");
     input.setActiveSidebarTarget("settings");
-  }
-
-  function openSelectedChannelProtocolEditor(): void {
-    if (!input.selectedChannelId) {
-      return;
-    }
-    input.setThreadPageTargetId("");
-    input.setChannelCreateOpen(false);
-    input.setSelectedChannelBranchId("");
-    input.setActiveView("workspace");
-    input.setActiveSidebarTarget(channelSidebarTarget(input.selectedChannelId));
-    input.setChannelContextOpenRequest({ channelId: input.selectedChannelId, mode: "protocol", nonce: Date.now() });
   }
 
   function selectWorkspaceChannel(channelId: string): void {
@@ -151,7 +137,6 @@ export function useAppNavigationController(input: {
   return {
     openPlainView,
     openRunDiagnosticsView,
-    openSelectedChannelProtocolEditor,
     selectWorkspaceChannel,
     selectWorkspaceChannelBranch,
     selectAiTeammate,
