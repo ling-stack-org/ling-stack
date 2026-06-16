@@ -57,7 +57,7 @@ Runtime safety:
 
 - Restart refuses active daemon work by default when active work can be verified.
 - `--force` restarts anyway.
-- `--skip-build` skips the daemon build step for fast local retries.
+- `--skip-build` skips the local runtime package build step for fast local retries.
 - `--timeout <ms>` controls readiness waits.
 
 ## Service Manager Detection

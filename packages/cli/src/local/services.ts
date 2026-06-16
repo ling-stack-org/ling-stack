@@ -94,7 +94,7 @@ export async function restartLocalStack(input: {
   readonly daemonUrl: string;
   readonly webUrl: string;
   readonly timeoutMs: number;
-  readonly buildDaemon: boolean;
+  readonly buildPackages: boolean;
 }): Promise<LocalRestartResult> {
   const initial = await readLocalStackStatus(input);
   if (!initial.daemon.launchd.installed || !initial.web.launchd.installed) {
@@ -105,8 +105,8 @@ export async function restartLocalStack(input: {
     );
   }
 
-  const build = input.buildDaemon
-    ? await buildDaemonPackageIfPresent(input.cwd)
+  const build = input.buildPackages
+    ? await buildLocalPackagesIfPresent(input.cwd)
     : { ran: false, skippedReason: "skip_build_requested" };
 
   await kickstartLaunchdService(LOCAL_DAEMON_LABEL);
@@ -280,14 +280,26 @@ function resolveLocalLogPath(cwd: string, service: LocalServiceName, launchd?: L
   return join(cwd, "logs", service === "daemon" ? "local-daemon.log" : "local-web.log");
 }
 
-async function buildDaemonPackageIfPresent(cwd: string): Promise<{ readonly ran: boolean; readonly skippedReason?: string }> {
+async function buildLocalPackagesIfPresent(cwd: string): Promise<{ readonly ran: boolean; readonly skippedReason?: string }> {
+  const packageFilters: string[] = [];
   try {
     await stat(join(cwd, "packages", "daemon", "package.json"));
+    packageFilters.push("@ling-stack/daemon");
   } catch {
-    return { ran: false, skippedReason: "daemon_package_not_found" };
+    // This command can run from partial checkouts used by tests.
   }
-  await execFileText("corepack", ["pnpm", "--filter", "@ling-stack/daemon", "build"], { cwd }).catch((error: unknown) => {
-    throw new CliError(4, "local_daemon_build_failed", errorMessage(error));
+  try {
+    await stat(join(cwd, "packages", "api-client", "package.json"));
+    packageFilters.push("@ling-stack/api-client");
+  } catch {
+    // The Web dev server can still run from a prebuilt or external API client.
+  }
+  if (packageFilters.length === 0) {
+    return { ran: false, skippedReason: "local_packages_not_found" };
+  }
+  const args = ["pnpm", ...packageFilters.flatMap((filter) => ["--filter", filter]), "build"];
+  await execFileText("corepack", args, { cwd }).catch((error: unknown) => {
+    throw new CliError(4, "local_build_failed", errorMessage(error));
   });
   return { ran: true };
 }

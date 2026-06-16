@@ -556,7 +556,7 @@ ling-stack restart
 Behavior:
 
 - local-only; never restarts production or remote services,
-- builds `@ling-stack/daemon` in source checkouts unless `--skip-build` is used,
+- builds local runtime packages in source checkouts unless `--skip-build` is used,
 - uses the installed local service manager when available,
 - waits for daemon `/health` and Web UI readiness,
 - refuses active daemon work by default when it can be verified; `--force` is the explicit override.
