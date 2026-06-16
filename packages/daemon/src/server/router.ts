@@ -279,6 +279,7 @@ export async function routeRequest(
     activeDirectReplies,
     runControl: new RunControlService(),
     providerStartupRefresh,
+    imageVisionSummarizer,
   });
   setCorsHeaders(response);
 
@@ -1577,6 +1578,7 @@ export async function routeRequest(
             workspace: workspace.workspace,
             runtimeSupervisor,
             secretResolver,
+            imageVisionSummarizer,
             onWorkUnitStarted: (handle) => {
               sourceWorkUnitId = handle.workUnitId;
               onWorkUnitStarted?.(handle);
@@ -1630,6 +1632,7 @@ export async function routeRequest(
             workspace: workspace.workspace,
             runtimeSupervisor,
             secretResolver,
+            imageVisionSummarizer,
             signal,
             onWorkUnitStarted: (handle) => {
               sourceWorkUnitId = handle.workUnitId;

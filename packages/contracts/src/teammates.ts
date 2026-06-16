@@ -492,6 +492,8 @@ export interface TeammateDirectMessageListResponse {
   readonly teammateId: string;
   readonly thread: TeammateDirectThread;
   readonly messages: readonly TeammateDirectMessage[];
+  readonly hasMore?: boolean;
+  readonly nextBeforeMessageId?: string;
 }
 
 export interface TeammateDirectMessageMutationResponse {

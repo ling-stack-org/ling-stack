@@ -554,6 +554,9 @@ export function AppShell(): JSX.Element {
     refreshWorkItems,
     claimDurableWorkItem,
     heartbeatDurableWorkItem,
+    releaseDurableWorkItem,
+    completeDurableWorkItem,
+    failDurableWorkItem,
     routeExternalWorkToChannel,
     resetForCwd: resetDurableWorkItemsForCwd,
   } = durableWorkItemsDomain.actions;
@@ -1633,6 +1636,9 @@ export function AppShell(): JSX.Element {
             onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
             onClaimWorkItem={(workItemId) => void claimDurableWorkItem(workItemId)}
             onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
+            onReleaseWorkItem={(workItemId, claimToken) => void releaseDurableWorkItem(workItemId, claimToken)}
+            onCompleteWorkItem={(workItemId, claimToken) => void completeDurableWorkItem(workItemId, claimToken)}
+            onFailWorkItem={(workItemId, claimToken) => void failDurableWorkItem(workItemId, claimToken)}
             busyWorkItemId={busyWorkItemId}
             onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
             workspaceSettings={workspaceSettings}
@@ -1839,6 +1845,9 @@ export function AppShell(): JSX.Element {
                     onRouteExternalWork={(externalWorkId, channelId) => void routeExternalWorkToChannel(externalWorkId, channelId)}
                     onClaimWorkItem={(workItemId) => void claimDurableWorkItem(workItemId)}
                     onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
+                    onReleaseWorkItem={(workItemId, claimToken) => void releaseDurableWorkItem(workItemId, claimToken)}
+                    onCompleteWorkItem={(workItemId, claimToken) => void completeDurableWorkItem(workItemId, claimToken)}
+                    onFailWorkItem={(workItemId, claimToken) => void failDurableWorkItem(workItemId, claimToken)}
                     routingExternalWorkId={routingExternalWorkId}
                     busyWorkItemId={busyWorkItemId}
                   />

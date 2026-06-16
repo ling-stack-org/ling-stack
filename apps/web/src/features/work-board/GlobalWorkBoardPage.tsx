@@ -1,8 +1,22 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { CircleAlert, ClipboardList, ExternalLink, Inbox, Kanban, RefreshCw, Route, SquareTerminal, UserCheck } from "lucide-react";
+import { CheckCircle2, CircleAlert, ClipboardList, ExternalLink, Inbox, Kanban, RefreshCw, Route, SquareTerminal, UserCheck, XCircle } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { buildWorkItemViews, workItemStatusOrder, workItemStatusLabel, type WorkItemSourceType, type WorkItemStatus, type WorkItemView, type WorkItemWaitingReason } from "../../lib/work-items.js";
+import {
+  buildWorkItemViews,
+  isActionableWorkItem,
+  isTerminalWorkItemView,
+  workItemActionGroup,
+  workItemActionGroupLabel,
+  workItemActionGroupOrder,
+  workItemNextActionLabel,
+  workItemStatusOrder,
+  workItemStatusLabel,
+  type WorkItemSourceType,
+  type WorkItemStatus,
+  type WorkItemView,
+  type WorkItemWaitingReason,
+} from "../../lib/work-items.js";
 import { StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
@@ -17,9 +31,9 @@ import type {
 } from "../../types.js";
 import { WorkItemRow } from "./WorkItemRow.js";
 
-type WorkBoardScope = "global" | "channel" | "mine" | "blocked";
+type WorkBoardScope = "actionable" | "global" | "channel" | "mine" | "blocked" | "history";
 
-const workBoardScopeOrder: readonly WorkBoardScope[] = ["global", "channel", "mine", "blocked"];
+const workBoardScopeOrder: readonly WorkBoardScope[] = ["actionable", "global", "channel", "mine", "blocked", "history"];
 
 export function GlobalWorkBoardPage({
   channels,
@@ -39,6 +53,9 @@ export function GlobalWorkBoardPage({
   onRouteExternalWork,
   onClaimWorkItem,
   onHeartbeatWorkItem,
+  onReleaseWorkItem,
+  onCompleteWorkItem,
+  onFailWorkItem,
   routingExternalWorkId,
   busyWorkItemId,
 }: {
@@ -59,6 +76,9 @@ export function GlobalWorkBoardPage({
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
   readonly onClaimWorkItem?: (workItemId: string) => void;
   readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onReleaseWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onCompleteWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onFailWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly routingExternalWorkId?: string;
   readonly busyWorkItemId?: string;
 }): JSX.Element {
@@ -67,7 +87,7 @@ export function GlobalWorkBoardPage({
   const [statusFilter, setStatusFilter] = useState<WorkItemStatus | "">("");
   const [sourceFilter, setSourceFilter] = useState<WorkItemSourceType | "">("");
   const [waitingFilter, setWaitingFilter] = useState<WorkItemWaitingReason | "">("");
-  const [activeScope, setActiveScope] = useState<WorkBoardScope>("global");
+  const [activeScope, setActiveScope] = useState<WorkBoardScope>("actionable");
   const [selectedWorkItemId, setSelectedWorkItemId] = useState("");
   const channelById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
   const items = useMemo(
@@ -97,6 +117,7 @@ export function GlobalWorkBoardPage({
   const sourceOptions = [...new Set(scopedItems.map((item) => item.sourceType))].sort();
   const waitingOptions = [...new Set(scopedItems.map((item) => item.waitingReason).filter(Boolean))].sort() as WorkItemWaitingReason[];
   const stats = useMemo(() => readWorkBoardStats(scopedItems), [scopedItems]);
+  const visibleGroups = useMemo(() => buildVisibleWorkBoardGroups(filteredItems), [filteredItems]);
 
   return (
     <section className="panel work-board-page" aria-labelledby="global-work-board-title">
@@ -104,8 +125,8 @@ export function GlobalWorkBoardPage({
         <span className="work-board-heading">
           <Kanban size={18} />
           <span>
-            <h2 id="global-work-board-title">{t("Global Work Board")}</h2>
-            <small>{t("Global work ledger")}</small>
+            <h2 id="global-work-board-title">{t("Needs action")}</h2>
+            <small>{t("Action inbox across channels, runs, approvals, and durable work.")}</small>
           </span>
         </span>
         <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
@@ -133,10 +154,10 @@ export function GlobalWorkBoardPage({
               ))}
             </div>
             <div className="work-board-count-line">
-              <span>{t("{count} visible work items", { count: filteredItems.length })}</span>
-              <span>{t("{count} unassigned", { count: stats.unassigned })}</span>
-              <span>{t("{count} waiting", { count: stats.waiting })}</span>
-              <span>{t("{count} blocked", { count: stats.blocked })}</span>
+              <span>{t("{count} need action", { count: stats.actionable })}</span>
+              <span>{t("{count} running", { count: stats.running })}</span>
+              <span>{t("{count} blocked or failed", { count: stats.blocked })}</span>
+              <span>{t("{count} recently completed", { count: stats.completed })}</span>
             </div>
           </div>
 
@@ -175,15 +196,14 @@ export function GlobalWorkBoardPage({
             <div className="client-empty-state compact-empty"><Kanban /><span>{t("No work items match these filters")}</span></div>
           ) : (
             <div className="work-board-groups">
-              {workItemStatusOrder.map((status) => {
-                const group = filteredItems.filter((item) => item.status === status);
+              {visibleGroups.map(({ key, label, items: group }) => {
                 if (group.length === 0) {
                   return null;
                 }
                 return (
-                  <section key={status} className="work-board-group">
+                  <section key={key} className="work-board-group">
                     <div className="work-board-group-head">
-                      <strong>{t(workItemStatusLabel(status))}</strong>
+                      <strong>{t(label)}</strong>
                       <span>{group.length}</span>
                     </div>
                     <div className="work-board-list">
@@ -203,6 +223,9 @@ export function GlobalWorkBoardPage({
                           onRouteExternalWork={onRouteExternalWork}
                           onClaimWorkItem={onClaimWorkItem}
                           onHeartbeatWorkItem={onHeartbeatWorkItem}
+                          onReleaseWorkItem={onReleaseWorkItem}
+                          onCompleteWorkItem={onCompleteWorkItem}
+                          onFailWorkItem={onFailWorkItem}
                           busyWorkItemId={busyWorkItemId}
                         />
                       ))}
@@ -226,6 +249,9 @@ export function GlobalWorkBoardPage({
           onRouteExternalWork={onRouteExternalWork}
           onClaimWorkItem={onClaimWorkItem}
           onHeartbeatWorkItem={onHeartbeatWorkItem}
+          onReleaseWorkItem={onReleaseWorkItem}
+          onCompleteWorkItem={onCompleteWorkItem}
+          onFailWorkItem={onFailWorkItem}
         />
       </div>
     </section>
@@ -233,19 +259,28 @@ export function GlobalWorkBoardPage({
 }
 
 function filterByScope(items: readonly WorkItemView[], scope: WorkBoardScope): WorkItemView[] {
+  if (scope === "actionable") {
+    return items.filter(isActionableWorkItem);
+  }
   if (scope === "channel") {
-    return items.filter((item) => Boolean(item.channelId));
+    return items.filter((item) => Boolean(item.channelId) && !isTerminalWorkItemView(item));
   }
   if (scope === "mine") {
-    return items.filter((item) => Boolean(item.assigneeTeammateId || item.claim));
+    return items.filter((item) => Boolean(item.assigneeTeammateId || item.claim) && !isTerminalWorkItemView(item));
   }
   if (scope === "blocked") {
     return items.filter((item) => item.status === "blocked" || item.status === "waiting");
   }
-  return [...items];
+  if (scope === "history") {
+    return items.filter(isTerminalWorkItemView);
+  }
+  return items.filter((item) => !isTerminalWorkItemView(item));
 }
 
 function scopeLabel(scope: WorkBoardScope): string {
+  if (scope === "actionable") {
+    return "Needs action";
+  }
   if (scope === "channel") {
     return "Channel scope";
   }
@@ -255,19 +290,38 @@ function scopeLabel(scope: WorkBoardScope): string {
   if (scope === "blocked") {
     return "Blocked work";
   }
-  return "Global";
+  if (scope === "history") {
+    return "History";
+  }
+  return "All active";
 }
 
 function readWorkBoardStats(items: readonly WorkItemView[]): {
-  readonly unassigned: number;
-  readonly waiting: number;
+  readonly actionable: number;
+  readonly running: number;
   readonly blocked: number;
+  readonly completed: number;
 } {
   return {
-    unassigned: items.filter((item) => !item.channelId && !item.assigneeTeammateId && !item.claim).length,
-    waiting: items.filter((item) => item.status === "waiting").length,
+    actionable: items.filter(isActionableWorkItem).length,
+    running: items.filter((item) => item.status === "running").length,
     blocked: items.filter((item) => item.status === "blocked").length,
+    completed: items.filter((item) => item.status === "done").length,
   };
+}
+
+function buildVisibleWorkBoardGroups(items: readonly WorkItemView[]): ReadonlyArray<{
+  readonly key: string;
+  readonly label: string;
+  readonly items: readonly WorkItemView[];
+}> {
+  return workItemActionGroupOrder
+    .map((groupKey) => ({
+      key: groupKey,
+      label: workItemActionGroupLabel(groupKey),
+      items: items.filter((item) => workItemActionGroup(item) === groupKey),
+    }))
+    .filter((group) => group.items.length > 0);
 }
 
 function WorkItemDetailDrawer({
@@ -283,6 +337,9 @@ function WorkItemDetailDrawer({
   onRouteExternalWork,
   onClaimWorkItem,
   onHeartbeatWorkItem,
+  onReleaseWorkItem,
+  onCompleteWorkItem,
+  onFailWorkItem,
 }: {
   readonly item?: WorkItemView;
   readonly channels: readonly Channel[];
@@ -296,6 +353,9 @@ function WorkItemDetailDrawer({
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
   readonly onClaimWorkItem?: (workItemId: string) => void;
   readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onReleaseWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onCompleteWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onFailWorkItem?: (workItemId: string, claimToken: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [routeChannelId, setRouteChannelId] = useState("");
@@ -313,8 +373,11 @@ function WorkItemDetailDrawer({
   const targetChannelId = routeChannelId || item.channelId || "";
   const canRoute = Boolean(item.externalWorkId && onRouteExternalWork && channels.length > 1);
   const busy = busyWorkItemId === item.id;
-  const canClaim = Boolean(item.durable && !item.claim && !isTerminalWorkItem(item) && onClaimWorkItem);
+  const canClaim = Boolean(item.durable && !item.claim && !isTerminalWorkItemView(item) && onClaimWorkItem);
   const canHeartbeat = Boolean(item.durable && item.claim?.token && onHeartbeatWorkItem);
+  const canRelease = Boolean(item.durable && item.claim?.token && onReleaseWorkItem);
+  const canComplete = Boolean(item.durable && item.claim?.token && onCompleteWorkItem && !isTerminalWorkItemView(item));
+  const canFail = Boolean(item.durable && item.claim?.token && onFailWorkItem && !isTerminalWorkItemView(item));
   const owner = item.claim?.ownerId ?? item.assigneeTeammateId ?? t("Unassigned");
   const linkedObjects = [
     item.runId ? { key: "run", label: t("Run"), value: item.runId, icon: <SquareTerminal size={14} />, onClick: () => onOpenRun(item.runId as string) } : undefined,
@@ -335,6 +398,45 @@ function WorkItemDetailDrawer({
         </div>
       </div>
 
+      <DetailSection title={t("Next action")} icon={<CircleAlert size={14} />}>
+        <p>{t(workItemNextActionLabel(item))}{item.subtitle ? ` · ${item.subtitle}` : ""}</p>
+      </DetailSection>
+
+      <div className="work-board-detail-actions primary">
+        {item.approvalId ? (
+          <button className="primary-button compact-button" type="button" onClick={() => onOpenApproval(item.approvalId as string)}>
+            <Inbox size={14} />
+            {t("Handle approval")}
+          </button>
+        ) : item.status === "blocked" && item.runId ? (
+          <button className="primary-button compact-button" type="button" onClick={() => onOpenRun(item.runId as string)}>
+            <CircleAlert size={14} />
+            {t("View failure")}
+          </button>
+        ) : item.runId ? (
+          <button className="primary-button compact-button" type="button" onClick={() => onOpenRun(item.runId as string)}>
+            <SquareTerminal size={14} />
+            {t("View run")}
+          </button>
+        ) : item.taskId ? (
+          <button className="primary-button compact-button" type="button" onClick={() => onOpenTask(item.taskId as string)}>
+            <ExternalLink size={14} />
+            {t("Open task")}
+          </button>
+        ) : item.channelId ? (
+          <button className="primary-button compact-button" type="button" onClick={() => onOpenChannel(item.channelId as string)}>
+            <ExternalLink size={14} />
+            {t("Open channel")}
+          </button>
+        ) : null}
+        {canClaim ? (
+          <button className="secondary-button compact-button" type="button" disabled={busy} onClick={() => onClaimWorkItem?.(item.id)}>
+            <UserCheck size={14} />
+            {busy ? t("Claiming") : t("Claim")}
+          </button>
+        ) : null}
+      </div>
+
       <div className="work-board-detail-meta">
         <DetailField label={t("Owner")} value={owner} />
         <DetailField label={t("Channel")} value={channelName ?? item.channelId ?? "-"} />
@@ -342,11 +444,7 @@ function WorkItemDetailDrawer({
         <DetailField label={t("Updated")} value={formatDateTime(item.updatedAt)} />
       </div>
 
-      <DetailSection title={t("Current status")} icon={<CircleAlert size={14} />}>
-        <p>{item.subtitle || t("No status summary available")}</p>
-      </DetailSection>
-
-      <DetailSection title={t("Linked objects")} icon={<ExternalLink size={14} />}>
+      <DetailDisclosure title={t("Linked objects")} icon={<ExternalLink size={14} />}>
         {linkedObjects.length === 0 ? (
           <p>{t("No linked objects")}</p>
         ) : (
@@ -360,9 +458,9 @@ function WorkItemDetailDrawer({
             ))}
           </div>
         )}
-      </DetailSection>
+      </DetailDisclosure>
 
-      <DetailSection title={t("Diagnostics")} icon={<ClipboardList size={14} />}>
+      <DetailDisclosure title={t("Diagnostics")} icon={<ClipboardList size={14} />}>
         <div className="work-board-diagnostics">
           <DetailField label={t("Created")} value={formatDateTime(item.createdAt)} />
           <DetailField label={t("Attempts")} value={item.attemptCount !== undefined && item.retryBudget !== undefined ? `${item.attemptCount}/${item.retryBudget}` : "-"} />
@@ -374,7 +472,7 @@ function WorkItemDetailDrawer({
             {item.labels.map((label) => <span key={label}>{label}</span>)}
           </div>
         ) : null}
-      </DetailSection>
+      </DetailDisclosure>
 
       {canRoute ? (
         <div className="work-board-detail-route">
@@ -399,12 +497,6 @@ function WorkItemDetailDrawer({
       ) : null}
 
       <div className="work-board-detail-actions">
-        {item.runId ? (
-          <button className="primary-button compact-button" type="button" onClick={() => onOpenRun(item.runId as string)}>
-            <SquareTerminal size={14} />
-            {t("View run")}
-          </button>
-        ) : null}
         {item.channelId ? (
           <button className="secondary-button compact-button" type="button" onClick={() => onOpenChannel(item.channelId as string)}>
             <ExternalLink size={14} />
@@ -417,22 +509,52 @@ function WorkItemDetailDrawer({
             {t("Open approval")}
           </button>
         ) : null}
-        {canClaim ? (
-          <button className="secondary-button compact-button" type="button" disabled={busy} onClick={() => onClaimWorkItem?.(item.id)}>
-            <UserCheck size={14} />
-            {busy ? t("Claiming") : t("Claim")}
-          </button>
-        ) : null}
         {canHeartbeat && item.claim ? (
           <button className="secondary-button compact-button" type="button" disabled={busy} onClick={() => onHeartbeatWorkItem?.(item.id, item.claim?.token as string)}>
             <RefreshCw size={14} />
-            {busy ? t("Refreshing") : t("Heartbeat")}
+            {busy ? t("Refreshing") : t("Refresh claim")}
+          </button>
+        ) : null}
+        {canRelease && item.claim ? (
+          <button className="secondary-button compact-button" type="button" disabled={busy} onClick={() => onReleaseWorkItem?.(item.id, item.claim?.token as string)}>
+            <XCircle size={14} />
+            {busy ? t("Releasing") : t("Release claim")}
+          </button>
+        ) : null}
+        {canComplete && item.claim ? (
+          <button className="secondary-button compact-button" type="button" disabled={busy} onClick={() => onCompleteWorkItem?.(item.id, item.claim?.token as string)}>
+            <CheckCircle2 size={14} />
+            {busy ? t("Completing") : t("Mark done")}
+          </button>
+        ) : null}
+        {canFail && item.claim ? (
+          <button className="secondary-button compact-button" type="button" disabled={busy} onClick={() => onFailWorkItem?.(item.id, item.claim?.token as string)}>
+            <CircleAlert size={14} />
+            {busy ? t("Marking failed") : t("Mark failed")}
           </button>
         ) : null}
       </div>
     </aside>
   );
 }
+
+function DetailDisclosure({
+  title,
+  icon,
+  children,
+}: {
+  readonly title: string;
+  readonly icon: JSX.Element;
+  readonly children: ReactNode;
+}): JSX.Element {
+  return (
+    <details className="work-board-detail-section work-board-detail-disclosure">
+      <summary>{icon}<span>{title}</span></summary>
+      <div className="work-board-detail-disclosure-body">{children}</div>
+    </details>
+  );
+}
+
 
 function DetailSection({
   title,
@@ -458,8 +580,4 @@ function DetailField({ label, value }: { readonly label: string; readonly value:
       <strong>{value}</strong>
     </span>
   );
-}
-
-function isTerminalWorkItem(item: WorkItemView): boolean {
-  return item.status === "done" || item.status === "archived";
 }

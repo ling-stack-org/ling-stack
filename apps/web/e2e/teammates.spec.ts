@@ -584,6 +584,102 @@ test("AI teammate settings save status and visibility fields", async ({ page }) 
   await expect(page.getByRole("heading", { name: "Ling Engineer settings", level: 2 })).toBeVisible();
 });
 
+test("AI teammate private chat previews image attachments and keeps them in message history", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_builtin_engineer";
+  state.providers = [
+    createChatProvider({
+      id: "provider_local",
+      displayName: "Local Relay",
+      model: "vision-chat",
+      input: ["text", "image"],
+      capabilities: ["chat", "vision"],
+      lastCheck: { ok: true, code: "ready", message: "Provider is reachable.", checkedAt: "2026-06-04T00:00:00.000Z" },
+    }),
+  ];
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: "provider_local" })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  const privateComposer = page.locator(".teammate-direct-composer");
+  await privateComposer.locator("input[type=file]").setInputFiles({
+    name: "direct-shot.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"),
+  });
+  await expect(privateComposer.locator(".composer-preview-thumbnail[alt='direct-shot.png']")).toBeVisible();
+  await expect.poll(() => {
+    const attachment = state.teammatePrivateAttachments.find((item) => isRecord(item) && item.fileName === "direct-shot.png");
+    return isRecord(attachment) ? attachment.kind : undefined;
+  }).toBe("image");
+
+  const privateInput = privateComposer.locator("textarea");
+  await privateInput.fill("Please read this private image.");
+  await privateInput.press("Enter");
+
+  const privateChat = page.getByLabel("Private chat", { exact: true });
+  const userMessage = privateChat.locator(".teammate-message-row.local-user").filter({ hasText: "Please read this private image." });
+  await expect(userMessage).toContainText("direct-shot.png");
+  await expect(privateChat.getByText("Private reply: I can see the image attachment direct-shot.png.")).toBeVisible();
+  await expect(privateComposer.getByLabel("Pending message assets")).toHaveCount(0);
+  await expect.poll(() => {
+    const message = state.teammateDirectMessages.find((item) => isRecord(item) && item.body === "Please read this private image.");
+    return isRecord(message) ? message.attachmentIds : [];
+  }).toEqual(["tpatt_1"]);
+
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  const reloadedMessage = page.getByLabel("Private chat", { exact: true }).locator(".teammate-message-row.local-user").filter({ hasText: "Please read this private image." });
+  await expect(reloadedMessage).toContainText("direct-shot.png");
+});
+
+test("AI teammate private chat opens latest messages and loads older history from the top", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_builtin_designer";
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Designer" })];
+  state.teammateDirectMessages = Array.from({ length: 106 }, (_, index) => ({
+    id: `tdmsg_history_${index + 1}`,
+    workspaceId: "workspace_default",
+    threadId: `tdthread_${teammateId}`,
+    teammateId,
+    authorType: index % 2 === 0 ? "local-user" : "ai-teammate",
+    authorId: index % 2 === 0 ? "local-user" : teammateId,
+    body: `private history ${index + 1}`,
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: new Date(Date.UTC(2026, 5, 16, 0, index, 0)).toISOString(),
+    updatedAt: new Date(Date.UTC(2026, 5, 16, 0, index, 0)).toISOString(),
+  }));
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Designer" }).click();
+  const privateChat = page.getByLabel("Private chat", { exact: true });
+  await expect(privateChat.getByText("private history 106", { exact: true })).toBeVisible();
+  await expect(privateChat.getByText("private history 1", { exact: true })).toHaveCount(0);
+
+  const feed = page.locator(".teammate-message-list");
+  await feed.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect.poll(() => page.locator(".teammate-message-row", { hasText: "private history 1" }).count()).toBeGreaterThan(0);
+  await feed.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect(privateChat.getByText("private history 1", { exact: true })).toBeVisible();
+});
+
 test("AI teammate private chat demotes recovered provider preflight history", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
@@ -768,6 +864,87 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   }).toBe("cancelled");
   await expect(resumedInput).toHaveValue("");
   await expect(page.getByLabel("Private message feed").getByText("回复已停止").first()).toBeVisible();
+});
+
+test("AI teammate private chat queues image attachments in direct guidance", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_builtin_engineer";
+  const threadId = `tdthread_${teammateId}`;
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
+  state.teammateDirectMessages = [
+    {
+      id: "tdmsg_pending_reply",
+      workspaceId: "workspace_default",
+      threadId,
+      teammateId,
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: "",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "pending",
+      createdAt: "2026-06-04T00:45:00.000Z",
+      updatedAt: "2026-06-04T00:45:00.000Z",
+    },
+  ];
+  state.workUnits = [
+    {
+      id: "wu_direct_pending",
+      workspaceId: "workspace_default",
+      kind: "teammate_direct_reply",
+      ownerType: "teammate",
+      ownerId: teammateId,
+      teammateId,
+      idempotencyKey: "direct-reply:pending",
+      status: "running",
+      priority: 50,
+      attemptCount: 1,
+      activeAttemptId: "wua_direct_pending",
+      createdByActor: "user",
+      request: { sourceMessageId: "tdmsg_user_source" },
+      timeoutPolicy: { staleAfterMs: 120000, timeoutAfterMs: 300000 },
+      linkedMessageId: "tdmsg_pending_reply",
+      createdAt: "2026-06-04T00:44:59.000Z",
+      updatedAt: "2026-06-04T00:45:00.000Z",
+      startedAt: "2026-06-04T00:45:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  const privateComposer = page.locator(".teammate-direct-composer");
+  await privateComposer.locator("input[type=file]").setInputFiles({
+    name: "queued-shot.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"),
+  });
+  await expect(privateComposer.locator(".composer-preview-thumbnail[alt='queued-shot.png']")).toBeVisible();
+  await privateComposer.locator("textarea").fill("Use this new image before answering.");
+  await privateComposer.locator("textarea").press("Enter");
+
+  const guidance = page.getByLabel("正在回复");
+  const queuedRow = guidance.locator(".channel-run-guidance-row").filter({ hasText: "Use this new image before answering." });
+  await expect(queuedRow).toContainText("queued-shot.png");
+  await expect.poll(() => {
+    const intervention = state.teammateDirectInterventions.at(-1);
+    return intervention?.messagePayload;
+  }).toEqual({
+    body: "Use this new image before answering.",
+    attachmentIds: ["tpatt_1"],
+    linkPreviewIds: [],
+    fileRefs: [],
+  });
+
+  await queuedRow.getByRole("button", { name: "立即执行这条引导" }).click();
+  await expect.poll(() => {
+    const intervention = state.teammateDirectInterventions.at(-1);
+    return [intervention?.status, intervention?.messagePayload?.attachmentIds];
+  }).toEqual(["cancelling_source", ["tpatt_1"]]);
 });
 
 test("AI teammate private chat keeps queued guidance from bypassing into a new message", async ({ page }) => {

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Kanban, Loader2 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { buildWorkItemViews, filterWorkItemsByChannel, workItemStatusOrder, workItemStatusLabel } from "../../lib/work-items.js";
+import { buildWorkItemViews, filterWorkItemsByChannel, isTerminalWorkItemView, workItemActionGroup, workItemActionGroupLabel, workItemActionGroupOrder } from "../../lib/work-items.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -31,6 +31,9 @@ export function ChannelWorkBoard({
   onOpenApproval,
   onClaimWorkItem,
   onHeartbeatWorkItem,
+  onReleaseWorkItem,
+  onCompleteWorkItem,
+  onFailWorkItem,
   busyWorkItemId,
 }: {
   readonly channel: Channel | undefined;
@@ -48,6 +51,9 @@ export function ChannelWorkBoard({
   readonly onOpenApproval: (approvalId: string) => void;
   readonly onClaimWorkItem?: (workItemId: string) => void;
   readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onReleaseWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onCompleteWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onFailWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly busyWorkItemId?: string;
 }): JSX.Element {
   const { t } = useI18n();
@@ -62,7 +68,7 @@ export function ChannelWorkBoard({
       artifactsByRun,
       durableWorkItems,
     });
-    return channel ? filterWorkItemsByChannel(all, channel.id) : [];
+    return channel ? filterWorkItemsByChannel(all, channel.id).filter((item) => !isTerminalWorkItemView(item)) : [];
   }, [approvals, artifactsByRun, channel, durableWorkItems, externalActionDetails, externalWorkCiTriage, runs, tasks, workflowSteps]);
 
   return (
@@ -77,18 +83,18 @@ export function ChannelWorkBoard({
       {loading ? (
         <div className="client-empty-state compact-empty"><Loader2 className="spin" /><span>{t("Loading work board...")}</span></div>
       ) : items.length === 0 ? (
-        <div className="client-empty-state compact-empty"><Kanban /><span>{t("No work items for this channel")}</span></div>
+        <div className="client-empty-state compact-empty"><Kanban /><span>{t("No active work items for this channel")}</span></div>
       ) : (
         <div className="work-board-groups">
-          {workItemStatusOrder.map((status) => {
-            const group = items.filter((item) => item.status === status);
+          {workItemActionGroupOrder.map((groupKey) => {
+            const group = items.filter((item) => workItemActionGroup(item) === groupKey);
             if (group.length === 0) {
               return null;
             }
             return (
-              <section key={status} className="work-board-group">
+              <section key={groupKey} className="work-board-group">
                 <div className="work-board-group-head">
-                  <strong>{t(workItemStatusLabel(status))}</strong>
+                  <strong>{t(workItemActionGroupLabel(groupKey))}</strong>
                   <span>{group.length}</span>
                 </div>
                 <div className="work-board-list">
@@ -102,6 +108,9 @@ export function ChannelWorkBoard({
                       onOpenApproval={onOpenApproval}
                       onClaimWorkItem={onClaimWorkItem}
                       onHeartbeatWorkItem={onHeartbeatWorkItem}
+                      onReleaseWorkItem={onReleaseWorkItem}
+                      onCompleteWorkItem={onCompleteWorkItem}
+                      onFailWorkItem={onFailWorkItem}
                       busyWorkItemId={busyWorkItemId}
                     />
                   ))}

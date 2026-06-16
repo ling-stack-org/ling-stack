@@ -19,6 +19,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { ProviderStartupRefreshService } from "../providers/startup-refresh.js";
+import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalStringArray } from "../../shared/validation.js";
@@ -50,6 +51,7 @@ export class DirectReplyControlService {
       readonly activeDirectReplies: ActiveDirectReplyRegistry;
       readonly runControl: RunControlService;
       readonly providerStartupRefresh: ProviderStartupRefreshService;
+      readonly imageVisionSummarizer?: LingImageVisionSummarizer;
     },
   ) {}
 
@@ -289,6 +291,7 @@ export class DirectReplyControlService {
         workspace: workspace.workspace,
         runtimeSupervisor: this.dependencies.runtimeSupervisor,
         secretResolver: this.dependencies.secretResolver,
+        imageVisionSummarizer: this.dependencies.imageVisionSummarizer,
         signal: abortController.signal,
         onWorkUnitStarted: (handle) => {
           continuationWorkUnitId = handle.workUnitId;

@@ -40,17 +40,17 @@ test("work board merges durable items and supports claim heartbeat", async ({ pa
   await expect(channelBoard).toContainText("durable");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" }).click();
-  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Global Work Board" })).toBeVisible();
+  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toBeVisible();
   const durableRow = page.locator(".work-item-row").filter({ hasText: "Durable inspect handoff" });
   await expect(durableRow).toContainText("durable");
-  await expect(durableRow).toContainText("attempt 0/2");
+  await expect(durableRow).toContainText("Claim to handle");
 
   await durableRow.getByRole("button", { name: "Claim" }).click();
   await expect.poll(() => state.workItems[0]?.claim?.ownerId).toBe("web-user");
   await expect(durableRow).toContainText("claimed by web-user");
-  await expect(durableRow).toContainText("attempt 1/2");
+  await expect(durableRow).toContainText("Work is claimed");
 
-  await durableRow.getByRole("button", { name: "Heartbeat" }).click();
+  await durableRow.getByRole("button", { name: "Refresh claim" }).click();
   await expect.poll(() => state.workItems[0]?.claim?.heartbeatAt).toBe("2026-06-07T00:01:00.000Z");
   await expect(durableRow).toContainText("claimed by web-user");
 });

@@ -92,15 +92,19 @@ export async function handleTeammateDirectMessagesCollection(
 
     const thread = store.getOrCreateTeammateDirectThread(teammateId, new Date().toISOString());
     if (request.method === "GET") {
+      const page = store.listTeammateDirectMessagesPage({
+        teammateId,
+        threadId: thread.id,
+        beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      });
       writeJson(response, 200, {
         cwd,
         teammateId,
         thread,
-        messages: store.listTeammateDirectMessages({
-          teammateId,
-          threadId: thread.id,
-          limit: readOptionalIntegerQuery(url, "limit", 1),
-        }),
+        messages: page.messages,
+        hasMore: page.hasMore,
+        nextBeforeMessageId: page.nextBeforeMessageId,
       });
       return;
     }

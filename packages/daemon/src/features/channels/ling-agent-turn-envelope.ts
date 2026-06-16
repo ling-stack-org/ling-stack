@@ -1,9 +1,13 @@
 import { statSync } from "node:fs";
 import { isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
 import type { Channel, ChannelAttachment, ChannelLinkPreview, ChannelMention, ChannelMessage, ChannelMessageFileRef, RunStore } from "@ling-stack/core";
-import { findChannelInputMaterialization, materializationHasPromptContent } from "./materialization/cache.js";
 import {
-  attachmentMaterializationFingerprint,
+  findAvailableChannelInputMaterializationForSource,
+  findChannelInputMaterialization,
+  materializationHasPromptContent,
+} from "./materialization/cache.js";
+import {
+  attachmentMaterializationFingerprintCandidates,
   linkPreviewMaterializationFingerprint,
   workspaceFileRefMaterializationFingerprint,
 } from "./materialization/fingerprints.js";
@@ -196,14 +200,23 @@ function materializeAttachmentPreview(
   channelId: string,
   attachment: ChannelAttachment,
 ): Pick<LingTurnAttachmentRef, "previewStatus" | "materializationStatus" | "materializationId" | "previewText" | "reason"> {
-  const cached = findChannelInputMaterialization({
-    store,
-    channelId,
-    sourceKind: "attachment",
-    sourceId: attachment.id,
-    sourceFingerprint: attachmentMaterializationFingerprint(attachment),
-    extractorId: attachmentExtractorIdForKind(attachment.kind),
-  });
+  const extractorId = attachmentExtractorIdForKind(attachment.kind);
+  const cached = attachmentMaterializationFingerprintCandidates(attachment, { attachmentsDir: store.paths.attachmentsDir })
+    .map((sourceFingerprint) => findChannelInputMaterialization({
+      store,
+      channelId,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+      sourceFingerprint,
+      extractorId,
+    }))
+    .find(Boolean) ?? findAvailableChannelInputMaterializationForSource({
+      store,
+      channelId,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+      extractorId,
+    });
   if (cached) {
     return {
       previewStatus: previewStatusForCachedMaterialization(cached.status),

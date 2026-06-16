@@ -1,12 +1,19 @@
 import type { Channel, ChannelMessage, RunStore } from "@ling-stack/core";
 import { defaultLingMaterializationBudgets } from "./budgets.js";
-import { findChannelInputMaterialization, writeChannelInputMaterialization } from "./cache.js";
+import {
+  cloneChannelInputMaterializationResult,
+  findAvailableChannelInputMaterializationForSource,
+  findChannelInputMaterialization,
+  findReusableChannelAttachmentMaterialization,
+  isRetryableMaterializationFailure,
+  writeChannelInputMaterialization,
+} from "./cache.js";
 import { imageVisionExtractorV1 } from "./extractors/image.js";
 import { linkBodyExtractorV1 } from "./extractors/link-body.js";
 import { officeExtractorV1 } from "./extractors/office.js";
 import { pdfExtractorV1 } from "./extractors/pdf.js";
 import { textAttachmentExtractorV1 } from "./extractors/text-attachment.js";
-import { attachmentMaterializationFingerprint, linkPreviewMaterializationFingerprint } from "./fingerprints.js";
+import { attachmentMaterializationFingerprintCandidates, linkPreviewMaterializationFingerprint } from "./fingerprints.js";
 import type {
   LingImageVisionSummarizer,
   LingInputExtractor,
@@ -131,16 +138,47 @@ interface MaterializeAttachmentWithExtractorInput extends MaterializeInlineChann
 }
 
 async function materializeAttachmentWithExtractor(input: MaterializeAttachmentWithExtractorInput): Promise<void> {
-  const sourceFingerprint = attachmentMaterializationFingerprint(input.attachment);
-  const cached = findChannelInputMaterialization({
+  const sourceFingerprints = attachmentMaterializationFingerprintCandidates(input.attachment, {
+    attachmentsDir: input.store.paths.attachmentsDir,
+  });
+  const sourceFingerprint = sourceFingerprints[0] ?? "";
+  const cached = sourceFingerprints
+    .map((fingerprint) => findChannelInputMaterialization({
+      store: input.store,
+      channelId: input.channel.id,
+      sourceKind: "attachment",
+      sourceId: input.attachment.id,
+      sourceFingerprint: fingerprint,
+      extractorId: input.extractor.id,
+    }))
+    .find(Boolean) ?? findAvailableChannelInputMaterializationForSource({
+      store: input.store,
+      channelId: input.channel.id,
+      sourceKind: "attachment",
+      sourceId: input.attachment.id,
+      extractorId: input.extractor.id,
+    });
+  if (cached) {
+    return;
+  }
+  const reusable = findReusableChannelAttachmentMaterialization({
     store: input.store,
     channelId: input.channel.id,
-    sourceKind: "attachment",
-    sourceId: input.attachment.id,
-    sourceFingerprint,
+    attachment: input.attachment,
     extractorId: input.extractor.id,
   });
-  if (cached) {
+  if (reusable) {
+    writeChannelInputMaterialization({
+      store: input.store,
+      channelId: input.channel.id,
+      sourceKind: "attachment",
+      sourceId: input.attachment.id,
+      sourceFingerprint,
+      extractor: input.extractor,
+      result: cloneChannelInputMaterializationResult(reusable),
+      now: input.now,
+      expiresAt: reusable.expiresAt,
+    });
     return;
   }
   const result = await input.extractor.materialize({
@@ -158,6 +196,9 @@ async function materializeAttachmentWithExtractor(input: MaterializeAttachmentWi
     imageVisionSummarizer: input.imageVisionSummarizer,
   });
   if (result.errorCode === "no_image_vision_summarizer") {
+    return;
+  }
+  if (isRetryableMaterializationFailure(result)) {
     return;
   }
   writeChannelInputMaterialization({

@@ -5,6 +5,7 @@ export { ComposerMentionToken, type ComposerMentionTokenProps } from "./Composer
 export { LingStackLogo } from "./LingStackLogo.js";
 export { MessageComposer, type MessageComposerProps } from "./MessageComposer.js";
 export { MetaRow } from "./MetaRow.js";
+export { createAttachmentPreviewUrl, createLocalComposerAssetId, pendingAssetLabel, pendingPreviewLabel, revokeObjectUrl, revokePendingAttachmentPreview, revokePendingAttachmentPreviews, type PendingAssetState, type PendingAttachmentItem } from "./composer-pending-assets.js";
 export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
 export { StatusBadge } from "./StatusBadge.js";
 export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";

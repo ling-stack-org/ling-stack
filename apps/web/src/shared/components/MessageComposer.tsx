@@ -1,4 +1,4 @@
-import { forwardRef, type KeyboardEventHandler, type ReactNode } from "react";
+import { forwardRef, type ClipboardEventHandler, type DragEventHandler, type KeyboardEventHandler, type ReactNode } from "react";
 import { Loader2, Plus, Send } from "lucide-react";
 
 export interface MessageComposerProps {
@@ -21,10 +21,15 @@ export interface MessageComposerProps {
   readonly previewContent?: ReactNode;
   readonly toolContent?: ReactNode;
   readonly overlayContent?: ReactNode;
+  readonly dropZoneClassName?: string;
   readonly onChange: (value: string) => void;
   readonly onSend: () => void | Promise<void>;
   readonly onAttachFiles?: (files: FileList) => void | Promise<void>;
   readonly onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
+  readonly onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
+  readonly onDragOver?: DragEventHandler<HTMLDivElement>;
+  readonly onDragLeave?: DragEventHandler<HTMLDivElement>;
+  readonly onDrop?: DragEventHandler<HTMLDivElement>;
 }
 
 export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerProps>(function MessageComposer(
@@ -48,10 +53,15 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
     previewContent,
     toolContent,
     overlayContent,
+    dropZoneClassName,
     onChange,
     onSend,
     onAttachFiles,
     onKeyDown,
+    onPaste,
+    onDragOver,
+    onDragLeave,
+    onDrop,
   },
   ref,
 ) {
@@ -62,7 +72,12 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
 
   return (
     <section className={rootClassName} aria-label={label}>
-      <div className="composer-drop-zone">
+      <div
+        className={["composer-drop-zone", dropZoneClassName].filter(Boolean).join(" ")}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         {previewContent}
         <textarea
           ref={ref}
@@ -71,6 +86,7 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
           disabled={disabled}
           onChange={(event) => onChange(event.currentTarget.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           placeholder={placeholder}
           aria-label={placeholder}
         />

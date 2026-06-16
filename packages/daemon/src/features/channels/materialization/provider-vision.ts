@@ -30,7 +30,7 @@ const IMAGE_VISION_MAX_OUTPUT_TOKENS = 700;
 
 export interface CreateProviderBackedImageVisionSummarizerInput {
   readonly store: RunStore;
-  readonly channel: Channel;
+  readonly channel?: Pick<Channel, "defaultProviderPresetId">;
   readonly requestedProviderPresetId?: string;
   readonly secretResolver: SecretResolver;
   readonly fetch?: typeof globalThis.fetch;
@@ -94,7 +94,7 @@ export function createProviderBackedImageVisionSummarizer(
 function resolveImageVisionProvider(input: CreateProviderBackedImageVisionSummarizerInput): ProviderPreset | undefined {
   const candidateIds = [
     input.requestedProviderPresetId,
-    input.channel.defaultProviderPresetId,
+    input.channel?.defaultProviderPresetId,
     ...input.store.listProviderPresets({ enabled: true }).map((preset) => preset.id),
   ].filter((id): id is string => Boolean(id));
   for (const providerPresetId of [...new Set(candidateIds)]) {

@@ -132,10 +132,19 @@ import {
   StatusBadge,
   UsedMemorySummary,
   composerWorkspaceFileParts,
+  createAttachmentPreviewUrl,
+  createLocalComposerAssetId,
   filterUsedMemoryEventsByResponse,
   parseComposerInputParts,
+  pendingAssetLabel,
+  pendingPreviewLabel,
   removeComposerInputRawToken,
+  revokeObjectUrl,
+  revokePendingAttachmentPreview,
+  revokePendingAttachmentPreviews,
   serializeComposerInputParts,
+  type PendingAssetState,
+  type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationGuidanceStrip, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, FileRefChip, MessageBodyRenderer, MessageBubble, MessageFooterActions, MessageRow, RightDrawer, type ConversationGuidanceItem, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
 import type {
@@ -207,7 +216,6 @@ type ChannelDrawerRootView = Extract<ChannelSidePanelView, "progress" | "files" 
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
-type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
 type AttentionProgressTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
 type ChannelProposalStepDraft = {
@@ -255,16 +263,6 @@ interface AttentionProgressRow {
   readonly onOpen?: () => void;
 }
 
-interface PendingAttachmentItem {
-  readonly localId: string;
-  readonly fileName: string;
-  readonly sizeBytes: number;
-  readonly state: PendingAssetState;
-  readonly previewUrl?: string;
-  readonly attachment?: ChannelAttachment;
-  readonly error?: string;
-}
-
 interface PendingLinkPreviewItem {
   readonly localId: string;
   readonly url: string;
@@ -275,7 +273,7 @@ interface PendingLinkPreviewItem {
 
 interface ChannelComposerSnapshot {
   readonly messageDraft: string;
-  readonly pendingAttachments: readonly PendingAttachmentItem[];
+  readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
   readonly pendingLinkPreviews: readonly PendingLinkPreviewItem[];
   readonly messageMentions: readonly ChannelMention[];
   readonly sendState: ComposerSendState;
@@ -554,6 +552,9 @@ export function WorkspaceClientView({
   onResolveApproval,
   onClaimWorkItem,
   onHeartbeatWorkItem,
+  onReleaseWorkItem,
+  onCompleteWorkItem,
+  onFailWorkItem,
   busyWorkItemId,
   onOpenProviders,
   workspaceSettings,
@@ -706,6 +707,9 @@ export function WorkspaceClientView({
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onClaimWorkItem: (workItemId: string) => void;
   readonly onHeartbeatWorkItem: (workItemId: string, claimToken: string) => void;
+  readonly onReleaseWorkItem: (workItemId: string, claimToken: string) => void;
+  readonly onCompleteWorkItem: (workItemId: string, claimToken: string) => void;
+  readonly onFailWorkItem: (workItemId: string, claimToken: string) => void;
   readonly busyWorkItemId: string;
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly workspaceSettings: WorkspaceSettings | undefined;
@@ -746,7 +750,7 @@ export function WorkspaceClientView({
     risks: "",
   });
   const [messageDraft, setMessageDraft] = useState("");
-  const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<ChannelAttachment>[]>([]);
   const [pendingLinkPreviews, setPendingLinkPreviews] = useState<readonly PendingLinkPreviewItem[]>([]);
   const [messageMentions, setMessageMentions] = useState<readonly ChannelMention[]>([]);
   const [mentionPicker, setMentionPicker] = useState<ActiveMentionPicker | undefined>();
@@ -2901,20 +2905,6 @@ export function WorkspaceClientView({
     void attachFiles(event.dataTransfer.files);
   }
 
-  function revokePendingAttachmentPreview(item: PendingAttachmentItem | undefined): void {
-    if (!item?.previewUrl || !attachmentPreviewUrlsRef.current.has(item.previewUrl)) {
-      return;
-    }
-    revokeObjectUrl(item.previewUrl);
-    attachmentPreviewUrlsRef.current.delete(item.previewUrl);
-  }
-
-  function revokePendingAttachmentPreviews(items: readonly PendingAttachmentItem[]): void {
-    for (const item of items) {
-      revokePendingAttachmentPreview(item);
-    }
-  }
-
   async function attachFiles(files: FileList | readonly File[]): Promise<void> {
     const selectedFiles = Array.from(files).slice(0, 10);
     if (selectedFiles.length === 0) {
@@ -2926,7 +2916,7 @@ export function WorkspaceClientView({
         attachmentPreviewUrlsRef.current.add(previewUrl);
       }
       return {
-        localId: createLocalId("attachment"),
+        localId: createLocalComposerAssetId("attachment"),
         fileName: file.name,
         sizeBytes: file.size,
         state: "uploading" as const,
@@ -2965,7 +2955,7 @@ export function WorkspaceClientView({
     if (!url) {
       return;
     }
-    const localId = createLocalId("link");
+    const localId = createLocalComposerAssetId("link");
     setPendingLinkPreviews((current) => [
       ...current.filter((item) => item.url !== url && item.preview?.normalizedUrl !== url && item.preview?.url !== url),
       { localId, url, state: "uploading" },
@@ -3056,7 +3046,7 @@ export function WorkspaceClientView({
             const message = error instanceof Error ? error.message : String(error);
             setPendingLinkPreviews((current) => [
               ...current,
-              { localId: createLocalId("link"), url, state: "failed", error: message },
+              { localId: createLocalComposerAssetId("link"), url, state: "failed", error: message },
             ]);
           }
         }
@@ -3086,7 +3076,7 @@ export function WorkspaceClientView({
       setMentionActiveIndex(0);
       setSendState("idle");
       setSendError("");
-      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
+      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
       refreshChannelRunGuidanceSurfaces();
       window.setTimeout(() => {
         void refreshChannelRunGuidance(activeConversationSourceRunId);
@@ -3152,7 +3142,7 @@ export function WorkspaceClientView({
       .map((attachmentId) => channelAttachmentById.get(attachmentId))
       .filter((attachment): attachment is ChannelAttachment => Boolean(attachment))
       .map((attachment) => ({
-        localId: createLocalId("attachment"),
+        localId: createLocalComposerAssetId("attachment"),
         fileName: attachment.fileName,
         sizeBytes: attachment.sizeBytes,
         state: "ready" as const,
@@ -3162,7 +3152,7 @@ export function WorkspaceClientView({
       .map((previewId) => channelLinkPreviewById.get(previewId))
       .filter((preview): preview is ChannelLinkPreview => Boolean(preview))
       .map((preview) => ({
-        localId: createLocalId("link"),
+        localId: createLocalComposerAssetId("link"),
         url: preview.url,
         state: preview.status === "ready" ? "ready" as const : preview.status === "blocked" ? "blocked" as const : "failed" as const,
         preview,
@@ -3211,14 +3201,14 @@ export function WorkspaceClientView({
             const message = error instanceof Error ? error.message : String(error);
             setPendingLinkPreviews((current) => [
               ...current,
-              { localId: createLocalId("link"), url, state: "failed", error: message },
+              { localId: createLocalComposerAssetId("link"), url, state: "failed", error: message },
             ]);
           }
         }
       }
       const linkPreviews = [...pendingPreviewRecords, ...newPreviews];
       const pendingSendPreview = {
-        id: createLocalId("message"),
+        id: createLocalComposerAssetId("message"),
         channelId: selectedChannelId,
         body,
         mentions,
@@ -3244,7 +3234,7 @@ export function WorkspaceClientView({
         fileRefs,
         requestAiReply: shouldRequestAi,
       });
-      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
+      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
       setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
       setSendState("idle");
       setSendError("");
@@ -3294,7 +3284,7 @@ export function WorkspaceClientView({
   function removePendingAttachment(localId: string): void {
     setPendingAttachments((current) => {
       const removed = current.find((item) => item.localId === localId);
-      revokePendingAttachmentPreview(removed);
+      revokePendingAttachmentPreview(removed, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
       return current.filter((item) => item.localId !== localId);
     });
   }
@@ -4845,6 +4835,9 @@ export function WorkspaceClientView({
                         onOpenApproval={(approvalId) => openApprovalInPanel(approvals.find((approval) => approval.id === approvalId))}
                         onClaimWorkItem={onClaimWorkItem}
                         onHeartbeatWorkItem={onHeartbeatWorkItem}
+                        onReleaseWorkItem={onReleaseWorkItem}
+                        onCompleteWorkItem={onCompleteWorkItem}
+                        onFailWorkItem={onFailWorkItem}
                         busyWorkItemId={busyWorkItemId}
                       />
                       <CiTriageAuditPanel
@@ -10544,46 +10537,6 @@ function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPick
   return candidates
     .filter((candidate): candidate is ActiveMentionPicker => Boolean(candidate))
     .sort((left, right) => (right.end - right.start) - (left.end - left.start))[0];
-}
-
-function pendingAssetLabel(state: PendingAssetState): string {
-  if (state === "uploading") {
-    return "Uploading";
-  }
-  if (state === "blocked") {
-    return "Blocked";
-  }
-  if (state === "failed") {
-    return "Failed";
-  }
-  return "Ready";
-}
-
-function pendingPreviewLabel(state: PendingAssetState): string {
-  if (state === "uploading") {
-    return "Fetching link preview...";
-  }
-  return pendingAssetLabel(state);
-}
-
-function createLocalId(prefix: string): string {
-  const randomId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `${prefix}-${randomId}`;
-}
-
-function createAttachmentPreviewUrl(file: File): string | undefined {
-  if (!isPreviewableImageFile(file)) {
-    return undefined;
-  }
-  return globalThis.URL.createObjectURL(file);
-}
-
-function revokeObjectUrl(previewUrl: string): void {
-  globalThis.URL.revokeObjectURL(previewUrl);
-}
-
-function isPreviewableImageFile(file: File): boolean {
-  return file.type.startsWith("image/") || /\.(gif|jpe?g|png|webp)$/i.test(file.name);
 }
 
 function formatBytes(value: number): string {

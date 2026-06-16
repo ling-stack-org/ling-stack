@@ -683,7 +683,14 @@ export interface CreateTeammateDirectMessageInput {
 export interface ListTeammateDirectMessagesOptions {
   readonly teammateId: string;
   readonly threadId?: string;
+  readonly beforeMessageId?: string;
   readonly limit?: number;
+}
+
+export interface TeammateDirectMessageListPage {
+  readonly messages: readonly TeammateDirectMessage[];
+  readonly hasMore: boolean;
+  readonly nextBeforeMessageId?: string;
 }
 
 export interface TeammateDirectLinkPreview {

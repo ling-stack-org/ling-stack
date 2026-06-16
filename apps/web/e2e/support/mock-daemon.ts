@@ -4343,6 +4343,8 @@ export async function handleDaemonRoute(
       }
       if (request.method() === "POST") {
         const body = await request.postDataJSON() as Record<string, unknown>;
+        const fileName = typeof body.fileName === "string" ? body.fileName : "attachment.txt";
+        const inferred = inferMockChannelAttachment(fileName);
         const attachment = {
           id: `tpatt_${state.teammatePrivateAttachments.length + 1}`,
           workspaceId: "workspace_default",
@@ -4350,9 +4352,9 @@ export async function handleDaemonRoute(
           threadId: thread.id,
           messageId: typeof body.messageId === "string" ? body.messageId : undefined,
           scope: "teammate_direct_thread",
-          kind: "text",
-          fileName: typeof body.fileName === "string" ? body.fileName : "attachment.txt",
-          contentType: typeof body.contentType === "string" ? body.contentType : "text/plain",
+          kind: inferred.kind,
+          fileName,
+          contentType: inferred.contentType,
           sizeBytes: typeof body.contentBase64 === "string" ? Buffer.from(body.contentBase64, "base64").byteLength : 0,
           path: `teammates/${teammateId}/direct/${thread.id}/mock`,
           createdAt: "2026-06-04T00:10:00.000Z",
@@ -4493,10 +4495,29 @@ export async function handleDaemonRoute(
     if ((action === "direct-thread" || action === "direct-messages") && request.method() === "GET") {
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
       const messages = state.teammateDirectMessages.filter((item) => isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id);
+      const url = new URL(request.url());
+      const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 500);
+      const beforeMessageId = url.searchParams.get("beforeMessageId") ?? undefined;
+      const sortedMessages = [...messages].sort((left, right) => {
+        const leftCreatedAt = typeof left.createdAt === "string" ? left.createdAt : "";
+        const rightCreatedAt = typeof right.createdAt === "string" ? right.createdAt : "";
+        return leftCreatedAt.localeCompare(rightCreatedAt) || String(left.id ?? "").localeCompare(String(right.id ?? ""));
+      });
+      const cursorIndex = beforeMessageId ? sortedMessages.findIndex((item) => item.id === beforeMessageId) : sortedMessages.length;
+      const endIndex = cursorIndex >= 0 ? cursorIndex : sortedMessages.length;
+      const pageMessages = sortedMessages.slice(Math.max(0, endIndex - limit), endIndex);
+      const hasMore = endIndex - limit > 0;
       await route.fulfill({
         json: action === "direct-thread"
           ? { cwd, teammateId, thread }
-          : { cwd, teammateId, thread, messages },
+          : {
+            cwd,
+            teammateId,
+            thread,
+            messages: pageMessages,
+            hasMore,
+            nextBeforeMessageId: hasMore && pageMessages.length > 0 ? pageMessages[0].id : undefined,
+          },
       });
       return;
     }
@@ -4601,6 +4622,7 @@ export async function handleDaemonRoute(
           : !isRecord(provider) || !isRecord(provider.lastCheck) || provider.lastCheck.ok !== true
             ? "Provider preflight is not ready."
             : "";
+      const directReplyBody = buildMockDirectReplyBody(state, message.attachmentIds);
       const aiReply = {
         id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
         workspaceId: "workspace_default",
@@ -4608,7 +4630,7 @@ export async function handleDaemonRoute(
         teammateId,
         authorType: "ai-teammate",
         authorId: teammateId,
-        body: blockedReason ? `AI teammate is blocked: ${blockedReason}` : "Private reply: I will refine this into a scoped task.",
+        body: blockedReason ? `AI teammate is blocked: ${blockedReason}` : directReplyBody,
         attachmentIds: [],
         linkPreviewIds: [],
         fileRefs: [],
@@ -4664,6 +4686,7 @@ export async function handleDaemonRoute(
           : !isRecord(provider) || !isRecord(provider.lastCheck) || provider.lastCheck.ok !== true
             ? "Provider preflight is not ready."
             : "";
+      const directReplyBody = buildMockDirectReplyBody(state, message.attachmentIds);
       const aiReply = body.requestAiReply === true
         ? {
             id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
@@ -4672,7 +4695,7 @@ export async function handleDaemonRoute(
             teammateId,
             authorType: "ai-teammate",
             authorId: teammateId,
-            body: blockedReason ? `AI teammate is blocked: ${blockedReason}` : "Private reply: I will refine this into a scoped task.",
+            body: blockedReason ? `AI teammate is blocked: ${blockedReason}` : directReplyBody,
             attachmentIds: [],
             linkPreviewIds: [],
             fileRefs: [],
@@ -7889,6 +7912,18 @@ export function inferMockChannelAttachment(fileName: string): { readonly kind: s
     return { kind: "text", contentType: "text/markdown; charset=utf-8" };
   }
   return { kind: "text", contentType: "text/plain; charset=utf-8" };
+}
+
+function buildMockDirectReplyBody(state: MockState, attachmentIds: readonly unknown[]): string {
+  const imageAttachment = attachmentIds
+    .filter((attachmentId): attachmentId is string => typeof attachmentId === "string")
+    .map((attachmentId) => state.teammatePrivateAttachments.find((item) => isRecord(item) && item.id === attachmentId))
+    .find((attachment): attachment is Record<string, unknown> => isRecord(attachment) && attachment.kind === "image");
+  if (imageAttachment) {
+    const fileName = typeof imageAttachment.fileName === "string" ? imageAttachment.fileName : "image";
+    return `Private reply: I can see the image attachment ${fileName}.`;
+  }
+  return "Private reply: I will refine this into a scoped task.";
 }
 
 export function getOrCreateMockTeammateThread(

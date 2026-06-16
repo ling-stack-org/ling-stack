@@ -2,9 +2,12 @@ import type {
   ListWorkItemsRequest,
   WorkItemClaimRequest,
   WorkItemClaimResponse,
+  WorkItemCompleteRequest,
+  WorkItemFailRequest,
   WorkItemHeartbeatRequest,
   WorkItemListResponse,
   WorkItemMutationResponse,
+  WorkItemReleaseRequest,
 } from "../types.js";
 import { daemonClient } from "./client.js";
 
@@ -29,4 +32,28 @@ export async function heartbeatWorkItem(
   input: WorkItemHeartbeatRequest,
 ): Promise<WorkItemMutationResponse> {
   return daemonClient.heartbeatWorkItem(cwd, workItemId, input);
+}
+
+export async function releaseWorkItem(
+  cwd: string,
+  workItemId: string,
+  input: WorkItemReleaseRequest,
+): Promise<WorkItemMutationResponse> {
+  return daemonClient.releaseWorkItem(cwd, workItemId, input);
+}
+
+export async function completeWorkItem(
+  cwd: string,
+  workItemId: string,
+  input: WorkItemCompleteRequest,
+): Promise<WorkItemMutationResponse> {
+  return daemonClient.completeWorkItem(cwd, workItemId, input);
+}
+
+export async function failWorkItem(
+  cwd: string,
+  workItemId: string,
+  input: WorkItemFailRequest,
+): Promise<WorkItemMutationResponse> {
+  return daemonClient.failWorkItem(cwd, workItemId, input);
 }

@@ -16,6 +16,7 @@ import { officeExtractorV1 } from "../dist/features/channels/materialization/ext
 import { pdfExtractorV1 } from "../dist/features/channels/materialization/extractors/pdf.js";
 import { attachmentMaterializationFingerprint, linkPreviewMaterializationFingerprint } from "../dist/features/channels/materialization/fingerprints.js";
 import { materializeInlineChannelInputs } from "../dist/features/channels/materialization/inline.js";
+import { materializeInlineTeammateDirectInputs } from "../dist/features/teammates/direct-materialization.js";
 import { ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 const require = createRequire(import.meta.url);
@@ -846,6 +847,237 @@ test("inline materialization writes image vision cache with injected summarizer"
     assert.match(envelope.attachments[0].previewText, /save button overlapping/);
   } finally {
     store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("inline image materialization reuses same image content after provider timeout", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-image-vision-content-cache-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    await mkdir(store.paths.attachmentsDir, { recursive: true });
+    const imageBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+    await writeFile(resolve(store.paths.attachmentsDir, "first.png"), imageBytes);
+    await writeFile(resolve(store.paths.attachmentsDir, "second.png"), imageBytes);
+    const channel = store.createChannel({
+      name: "Image vision content cache",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+    }, "2026-06-11T00:00:00.000Z");
+    const firstAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "image",
+      fileName: "same.png",
+      contentType: "image/png",
+      sizeBytes: imageBytes.byteLength,
+      path: "first.png",
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    const firstMessage = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "看下这个图片",
+      attachmentIds: [firstAttachment.id],
+    }, "2026-06-11T00:02:00.000Z");
+
+    await materializeInlineChannelInputs({
+      store,
+      channel,
+      sourceMessage: firstMessage,
+      now: "2026-06-11T00:03:00.000Z",
+      imageVisionSummarizer: async () => ({
+        contentText: "The image shows a red banner with visible Chinese text.",
+        structuredSummary: { source: "first_pass" },
+      }),
+    });
+
+    const secondAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "image",
+      fileName: "same.png",
+      contentType: "image/png",
+      sizeBytes: imageBytes.byteLength,
+      path: "second.png",
+      createdAt: "2026-06-11T00:04:00.000Z",
+    });
+    const secondMessage = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "同一张图再看一次",
+      attachmentIds: [secondAttachment.id],
+    }, "2026-06-11T00:05:00.000Z");
+
+    let timeoutSummarizerCalls = 0;
+    await materializeInlineChannelInputs({
+      store,
+      channel,
+      sourceMessage: secondMessage,
+      now: "2026-06-11T00:06:00.000Z",
+      imageVisionSummarizer: async () => {
+        timeoutSummarizerCalls += 1;
+        throw new Error("The operation was aborted due to timeout");
+      },
+    });
+
+    assert.equal(timeoutSummarizerCalls, 0);
+    const rows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: secondAttachment.id,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, "available");
+    assert.match(rows[0].contentText, /red banner/);
+
+    const envelope = buildLingAgentTurnEnvelope({ store, channel, sourceMessage: secondMessage });
+    assert.equal(envelope.attachments[0].materializationStatus, "available");
+    assert.match(envelope.attachments[0].previewText, /red banner/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("retryable image materialization failures are not cached permanently", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-image-vision-timeout-retry-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    await mkdir(store.paths.attachmentsDir, { recursive: true });
+    const imageBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 9, 8, 7, 6]);
+    await writeFile(resolve(store.paths.attachmentsDir, "retry.png"), imageBytes);
+    const channel = store.createChannel({
+      name: "Image vision timeout retry",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+    }, "2026-06-11T00:00:00.000Z");
+    const attachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "image",
+      fileName: "retry.png",
+      contentType: "image/png",
+      sizeBytes: imageBytes.byteLength,
+      path: "retry.png",
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    const message = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "看下这个图片",
+      attachmentIds: [attachment.id],
+    }, "2026-06-11T00:02:00.000Z");
+
+    await materializeInlineChannelInputs({
+      store,
+      channel,
+      sourceMessage: message,
+      now: "2026-06-11T00:03:00.000Z",
+      imageVisionSummarizer: async () => {
+        throw new Error("The operation was aborted due to timeout");
+      },
+    });
+    assert.equal(store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+    }).length, 0);
+
+    await materializeInlineChannelInputs({
+      store,
+      channel,
+      sourceMessage: message,
+      now: "2026-06-11T00:04:00.000Z",
+      imageVisionSummarizer: async () => ({
+        contentText: "The retried image summary is available.",
+      }),
+    });
+
+    const rows = store.listChannelInputMaterializations({
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: attachment.id,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, "available");
+    assert.match(rows[0].contentText, /retried image summary/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate direct materialization reads image attachments with injected summarizer", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-image-vision-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    await mkdir(store.paths.attachmentsDir, { recursive: true });
+    await writeFile(resolve(store.paths.attachmentsDir, "direct-image.png"), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const teammate = store.createAiTeammate({
+      roleKey: "engineer",
+      displayName: "Engineer",
+      description: "Helps with private chat.",
+      avatarTone: "blue",
+      approvalProfile: { mode: "none" },
+      status: "active",
+    }, "2026-06-11T01:00:00.000Z");
+    const thread = store.getOrCreateTeammateDirectThread(teammate.id, "2026-06-11T01:01:00.000Z");
+    const message = store.createTeammateDirectMessage({
+      threadId: thread.id,
+      teammateId: teammate.id,
+      authorType: "local-user",
+      authorId: "local-user",
+      body: "Look at this screenshot.",
+      status: "ready",
+    }, "2026-06-11T01:02:00.000Z");
+    const attachment = store.createTeammatePrivateAttachment({
+      teammateId: teammate.id,
+      threadId: thread.id,
+      messageId: message.id,
+      scope: "teammate_direct_thread",
+      kind: "image",
+      fileName: "direct-image.png",
+      contentType: "image/png",
+      sizeBytes: 8,
+      path: "direct-image.png",
+      createdAt: "2026-06-11T01:03:00.000Z",
+    });
+    const messageWithAttachment = store.createTeammateDirectMessage({
+      threadId: thread.id,
+      teammateId: teammate.id,
+      authorType: "local-user",
+      authorId: "local-user",
+      body: "Please read this image.",
+      attachmentIds: [attachment.id],
+      status: "ready",
+    }, "2026-06-11T01:04:00.000Z");
+
+    let summarizerCalls = 0;
+    const materialized = await materializeInlineTeammateDirectInputs({
+      store,
+      teammateId: teammate.id,
+      threadId: thread.id,
+      sourceMessage: messageWithAttachment,
+      now: "2026-06-11T01:05:00.000Z",
+      imageVisionSummarizer: async (input) => {
+        summarizerCalls += 1;
+        assert.equal(input.attachment.id, attachment.id);
+        assert.equal(input.maxBytes, 5 * 1024 * 1024);
+        assert.equal(input.maxChars, 4_000);
+        assert.match(input.absolutePath, /direct-image\.png$/);
+        return {
+          contentText: "The image shows an error toast above a disabled send button.",
+          structuredSummary: { source: "direct_test_summarizer" },
+        };
+      },
+    });
+
+    assert.equal(summarizerCalls, 1);
+    const result = materialized.get(attachment.id);
+    assert.equal(result?.status, "available");
+    assert.equal(result?.kind, "image");
+    assert.match(result?.contentText ?? "", /disabled send button/);
+  } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -5808,6 +6040,35 @@ test("AI teammate private reply waits for startup provider refresh instead of us
   } finally {
     await daemon.close();
     await relay.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate direct messages default to latest page and load older history with cursor", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-message-pagination-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const teammateId = "teammate_builtin_designer";
+    const created = [];
+    for (let index = 0; index < 106; index += 1) {
+      const response = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
+        body: `private message ${index + 1}`,
+        requestAiReply: false,
+      });
+      created.push(response.message);
+    }
+
+    const latest = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(latest.messages.length, 100);
+    assert.equal(latest.hasMore, true);
+    assert.equal(latest.nextBeforeMessageId, created[6].id);
+    assert.deepEqual(latest.messages.map((message) => message.id), created.slice(6).map((message) => message.id));
+
+    const older = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}&beforeMessageId=${encodeURIComponent(latest.nextBeforeMessageId)}`);
+    assert.equal(older.hasMore, false);
+    assert.deepEqual(older.messages.map((message) => message.id), created.slice(0, 6).map((message) => message.id));
+  } finally {
+    await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });

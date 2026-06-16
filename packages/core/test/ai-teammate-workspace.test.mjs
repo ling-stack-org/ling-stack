@@ -712,6 +712,46 @@ test("sqlite persists teammate direct reply interventions with idempotency and c
   }
 });
 
+test("sqlite lists latest teammate direct messages and pages older history", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-direct-message-pagination-"));
+  const store = createSqliteRunStore(cwd);
+  const engineerId = createBuiltinAiTeammateId("engineer");
+  try {
+    const thread = store.getOrCreateTeammateDirectThread(engineerId, "2026-06-16T00:00:00.000Z");
+    const messages = [];
+    for (let index = 0; index < 106; index += 1) {
+      messages.push(store.createTeammateDirectMessage(
+        {
+          threadId: thread.id,
+          teammateId: engineerId,
+          authorType: index % 2 === 0 ? "local-user" : "ai-teammate",
+          body: `Message ${index + 1}`,
+        },
+        new Date(Date.UTC(2026, 5, 16, 0, index, 0)).toISOString(),
+      ));
+    }
+
+    const latest = store.listTeammateDirectMessages({ teammateId: engineerId, threadId: thread.id });
+    assert.equal(latest.length, 100);
+    assert.deepEqual(latest.map((message) => message.id), messages.slice(6).map((message) => message.id));
+
+    const latestPage = store.listTeammateDirectMessagesPage({ teammateId: engineerId, threadId: thread.id });
+    assert.equal(latestPage.hasMore, true);
+    assert.equal(latestPage.nextBeforeMessageId, messages[6].id);
+
+    const olderPage = store.listTeammateDirectMessagesPage({
+      teammateId: engineerId,
+      threadId: thread.id,
+      beforeMessageId: latestPage.nextBeforeMessageId,
+    });
+    assert.equal(olderPage.hasMore, false);
+    assert.deepEqual(olderPage.messages.map((message) => message.id), messages.slice(0, 6).map((message) => message.id));
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite private attachments and hard delete remove private teammate data", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-hard-delete-"));
   const store = createSqliteRunStore(cwd);

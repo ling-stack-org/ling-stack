@@ -137,6 +137,11 @@
   background: var(--surface-panel-strong);
 }
 
+.work-board-count-line span:first-child {
+  border-color: var(--warning);
+  color: var(--text-strong);
+}
+
 .work-board-groups {
   display: grid;
   align-content: start;
@@ -246,6 +251,10 @@
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.work-item-main p.work-item-next-line {
+  color: var(--text-strong);
 }
 
 .work-item-labels {
@@ -399,13 +408,44 @@
   padding-top: 2px;
 }
 
-.work-board-detail-section h4 {
+.work-board-detail-section h4,
+.work-board-detail-disclosure summary {
   display: flex;
   align-items: center;
   gap: 6px;
   margin: 0;
   color: var(--text-strong);
   font-size: 12px;
+}
+
+.work-board-detail-disclosure {
+  padding: 8px 0 0;
+}
+
+.work-board-detail-disclosure summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.work-board-detail-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.work-board-detail-disclosure summary::after {
+  content: "+";
+  margin-left: auto;
+  color: var(--text-muted);
+  font-weight: 800;
+}
+
+.work-board-detail-disclosure[open] summary::after {
+  content: "-";
+}
+
+.work-board-detail-disclosure-body {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
 }
 
 .work-board-detail-section p {
@@ -469,6 +509,10 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   padding-top: 2px;
+}
+
+.work-board-detail-actions.primary {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .work-board-detail-actions .compact-button {

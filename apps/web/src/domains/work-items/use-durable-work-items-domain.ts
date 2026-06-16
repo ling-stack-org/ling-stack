@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { routeExternalWork } from "../../api/external-work.js";
-import { claimWorkItem, heartbeatWorkItem, listWorkItems } from "../../api/work-items.js";
+import { claimWorkItem, completeWorkItem, failWorkItem, heartbeatWorkItem, listWorkItems, releaseWorkItem } from "../../api/work-items.js";
 import type { WorkItemView } from "../../types.js";
 
 export interface DurableWorkItemsState {
@@ -14,6 +14,9 @@ export interface DurableWorkItemsActions {
   readonly refreshWorkItems: (cwd?: string) => Promise<void>;
   readonly claimDurableWorkItem: (workItemId: string) => Promise<void>;
   readonly heartbeatDurableWorkItem: (workItemId: string, claimToken: string) => Promise<void>;
+  readonly releaseDurableWorkItem: (workItemId: string, claimToken: string) => Promise<void>;
+  readonly completeDurableWorkItem: (workItemId: string, claimToken: string) => Promise<void>;
+  readonly failDurableWorkItem: (workItemId: string, claimToken: string, reason?: string) => Promise<void>;
   readonly routeExternalWorkToChannel: (externalWorkId: string, channelId: string) => Promise<void>;
   readonly resetForCwd: () => void;
 }
@@ -92,6 +95,57 @@ export function useDurableWorkItemsDomain(input: {
     }
   }
 
+  async function releaseDurableWorkItem(workItemId: string, claimToken: string): Promise<void> {
+    const workspaceCwd = input.cwd;
+    if (!workspaceCwd || !workItemId || !claimToken || busyWorkItemId) {
+      return;
+    }
+    setBusyWorkItemId(workItemId);
+    try {
+      const response = await releaseWorkItem(workspaceCwd, workItemId, { claimToken });
+      setDurableWorkItems((current) => [response.workItem, ...current.filter((item) => item.id !== response.workItem.id)]);
+      input.setErrorMessage("");
+    } catch (caught) {
+      input.setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusyWorkItemId("");
+    }
+  }
+
+  async function completeDurableWorkItem(workItemId: string, claimToken: string): Promise<void> {
+    const workspaceCwd = input.cwd;
+    if (!workspaceCwd || !workItemId || !claimToken || busyWorkItemId) {
+      return;
+    }
+    setBusyWorkItemId(workItemId);
+    try {
+      const response = await completeWorkItem(workspaceCwd, workItemId, { claimToken });
+      setDurableWorkItems((current) => [response.workItem, ...current.filter((item) => item.id !== response.workItem.id)]);
+      input.setErrorMessage("");
+    } catch (caught) {
+      input.setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusyWorkItemId("");
+    }
+  }
+
+  async function failDurableWorkItem(workItemId: string, claimToken: string, reason = "Marked failed from work board"): Promise<void> {
+    const workspaceCwd = input.cwd;
+    if (!workspaceCwd || !workItemId || !claimToken || busyWorkItemId) {
+      return;
+    }
+    setBusyWorkItemId(workItemId);
+    try {
+      const response = await failWorkItem(workspaceCwd, workItemId, { claimToken, reason, retry: false });
+      setDurableWorkItems((current) => [response.workItem, ...current.filter((item) => item.id !== response.workItem.id)]);
+      input.setErrorMessage("");
+    } catch (caught) {
+      input.setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusyWorkItemId("");
+    }
+  }
+
   async function routeExternalWorkToChannel(externalWorkId: string, channelId: string): Promise<void> {
     const workspaceCwd = input.cwd;
     if (!workspaceCwd || !externalWorkId || !channelId || routingExternalWorkId) {
@@ -134,6 +188,9 @@ export function useDurableWorkItemsDomain(input: {
       refreshWorkItems,
       claimDurableWorkItem,
       heartbeatDurableWorkItem,
+      releaseDurableWorkItem,
+      completeDurableWorkItem,
+      failDurableWorkItem,
       routeExternalWorkToChannel,
       resetForCwd,
     },

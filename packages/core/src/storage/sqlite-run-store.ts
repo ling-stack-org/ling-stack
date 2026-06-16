@@ -206,6 +206,7 @@ import {
   type TeammateChannelMembership,
   type TeammateDirectLinkPreview,
   type TeammateDirectMessage,
+  type TeammateDirectMessageListPage,
   type TeammateDirectMessageAuthorType,
   type TeammateDirectMessageStatus,
   type TeammateDirectReplyIntervention,
@@ -4808,18 +4809,44 @@ export class SqliteRunStore implements RunStore {
   }
 
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[] {
+    return this.listTeammateDirectMessagesPage(options).messages.slice();
+  }
+
+  listTeammateDirectMessagesPage(options: ListTeammateDirectMessagesOptions): TeammateDirectMessageListPage {
     const clauses = ["workspace_id = ?", "teammate_id = ?"];
     const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.teammateId];
     if (options.threadId) {
       clauses.push("thread_id = ?");
       params.push(options.threadId);
     }
+    if (options.beforeMessageId) {
+      const cursor = this.database
+        .prepare("SELECT teammate_id, thread_id, created_at, rowid FROM teammate_direct_messages WHERE workspace_id = ? AND id = ?")
+        .get(DEFAULT_WORKSPACE_ID, options.beforeMessageId);
+      if (!cursor || readString(cursor, "teammate_id") !== options.teammateId) {
+        throw new Error(`Invalid teammate direct message cursor: ${options.beforeMessageId}`);
+      }
+      const cursorThreadId = readString(cursor, "thread_id");
+      if (options.threadId && options.threadId !== cursorThreadId) {
+        throw new Error(`Invalid teammate direct message cursor: ${options.beforeMessageId}`);
+      }
+      clauses.push("(created_at < ? OR (created_at = ? AND rowid < ?))");
+      const cursorCreatedAt = readString(cursor, "created_at");
+      params.push(cursorCreatedAt, cursorCreatedAt, readNumber(cursor, "rowid"));
+    }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`${teammateDirectMessageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
+    params.push(limit + 1);
+    const rows = this.database
+      .prepare(`${teammateDirectMessageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
       .all(...params)
       .map(mapTeammateDirectMessage);
+    const hasMore = rows.length > limit;
+    const messages = rows.slice(0, limit).reverse();
+    return {
+      messages,
+      hasMore,
+      nextBeforeMessageId: hasMore && messages.length > 0 ? messages[0].id : undefined,
+    };
   }
 
   getTeammateDirectMessage(id: string): TeammateDirectMessage | undefined {

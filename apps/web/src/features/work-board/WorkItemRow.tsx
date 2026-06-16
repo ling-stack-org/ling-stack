@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { CircleAlert, Clock3, ExternalLink, GitPullRequest, Loader2, Route, ShieldCheck, SquareTerminal, UserCheck } from "lucide-react";
+import { CheckCircle2, CircleAlert, Clock3, ExternalLink, GitPullRequest, Loader2, Route, ShieldCheck, SquareTerminal, UserCheck, XCircle } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import type { WorkItemView } from "../../lib/work-items.js";
+import { isTerminalWorkItemView, workItemNextActionLabel, type WorkItemView } from "../../lib/work-items.js";
 import type { Channel } from "../../types.js";
 import { StatusBadge } from "../../shared/components/index.js";
 
@@ -20,6 +20,9 @@ export function WorkItemRow({
   onRouteExternalWork,
   onClaimWorkItem,
   onHeartbeatWorkItem,
+  onReleaseWorkItem,
+  onCompleteWorkItem,
+  onFailWorkItem,
   busyWorkItemId,
 }: {
   readonly item: WorkItemView;
@@ -35,6 +38,9 @@ export function WorkItemRow({
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
   readonly onClaimWorkItem?: (workItemId: string) => void;
   readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onReleaseWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onCompleteWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly onFailWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly busyWorkItemId?: string;
 }): JSX.Element {
   const { t } = useI18n();
@@ -43,8 +49,11 @@ export function WorkItemRow({
   const canRoute = Boolean(item.externalWorkId && onRouteExternalWork && routeChannels.length > 1);
   const targetChannelId = routeChannelId || item.channelId || "";
   const busy = busyWorkItemId === item.id;
-  const canClaim = Boolean(item.durable && !item.claim && !isTerminalWorkItem(item) && onClaimWorkItem);
+  const canClaim = Boolean(item.durable && !item.claim && !isTerminalWorkItemView(item) && onClaimWorkItem);
   const canHeartbeat = Boolean(item.durable && item.claim?.token && onHeartbeatWorkItem);
+  const canRelease = Boolean(item.durable && item.claim?.token && onReleaseWorkItem);
+  const canComplete = Boolean(item.durable && item.claim?.token && onCompleteWorkItem && !isTerminalWorkItemView(item));
+  const canFail = Boolean(item.durable && item.claim?.token && onFailWorkItem && !isTerminalWorkItemView(item));
   const handleSelect = (): void => onSelect?.(item.id);
   return (
     <article
@@ -68,17 +77,12 @@ export function WorkItemRow({
           <strong>{item.title}</strong>
           <StatusBadge status={item.status} />
         </div>
-        {item.subtitle ? <p>{item.subtitle}</p> : null}
+        <p className="work-item-next-line">{t(workItemNextActionLabel(item))}{item.subtitle ? ` · ${item.subtitle}` : ""}</p>
         <div className="provider-meta-line">
-          <span>{t(item.sourceType)}</span>
-          {item.durable ? <span>{t("durable")}</span> : null}
           {channelName ? <span>#{channelName}</span> : null}
           {item.waitingReason ? <span>{t("waiting: {reason}", { reason: t(item.waitingReason) })}</span> : null}
           <span>{t(item.priority)}</span>
           {item.claim ? <span>{t("claimed by {owner}", { owner: item.claim.ownerId })}</span> : null}
-          {item.attemptCount !== undefined && item.retryBudget !== undefined ? (
-            <span>{t("attempt {count}/{budget}", { count: item.attemptCount, budget: item.retryBudget })}</span>
-          ) : null}
           <time>{formatDateTime(item.updatedAt)}</time>
         </div>
         {item.labels.length > 0 ? (
@@ -111,7 +115,40 @@ export function WorkItemRow({
             onClick={() => onHeartbeatWorkItem?.(item.id, item.claim?.token as string)}
           >
             {busy ? <Loader2 className="spin" size={14} /> : <Clock3 size={14} />}
-            {busy ? t("Refreshing") : t("Heartbeat")}
+            {busy ? t("Refreshing") : t("Refresh claim")}
+          </button>
+        ) : null}
+        {canRelease && item.claim ? (
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onReleaseWorkItem?.(item.id, item.claim?.token as string)}
+          >
+            {busy ? <Loader2 className="spin" size={14} /> : <XCircle size={14} />}
+            {busy ? t("Releasing") : t("Release claim")}
+          </button>
+        ) : null}
+        {canComplete && item.claim ? (
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onCompleteWorkItem?.(item.id, item.claim?.token as string)}
+          >
+            {busy ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+            {busy ? t("Completing") : t("Mark done")}
+          </button>
+        ) : null}
+        {canFail && item.claim ? (
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onFailWorkItem?.(item.id, item.claim?.token as string)}
+          >
+            {busy ? <Loader2 className="spin" size={14} /> : <CircleAlert size={14} />}
+            {busy ? t("Marking failed") : t("Mark failed")}
           </button>
         ) : null}
         {canRoute ? (
@@ -146,10 +183,6 @@ export function WorkItemRow({
   );
 }
 
-function isTerminalWorkItem(item: WorkItemView): boolean {
-  return item.status === "done" || item.status === "archived";
-}
-
 function primaryOpenAction(
   item: WorkItemView,
   actions: {
@@ -160,7 +193,10 @@ function primaryOpenAction(
   },
 ): { readonly label: string; readonly icon: JSX.Element; readonly onClick: () => void } | undefined {
   if (item.approvalId && actions.onOpenApproval) {
-    return { label: "Review", icon: <ShieldCheck size={14} />, onClick: () => actions.onOpenApproval?.(item.approvalId as string) };
+    return { label: "Handle approval", icon: <ShieldCheck size={14} />, onClick: () => actions.onOpenApproval?.(item.approvalId as string) };
+  }
+  if (item.status === "blocked" && item.runId && actions.onOpenRun) {
+    return { label: "View failure", icon: <CircleAlert size={14} />, onClick: () => actions.onOpenRun?.(item.runId as string) };
   }
   if (item.runId && actions.onOpenRun) {
     return { label: "Open run", icon: <SquareTerminal size={14} />, onClick: () => actions.onOpenRun?.(item.runId as string) };

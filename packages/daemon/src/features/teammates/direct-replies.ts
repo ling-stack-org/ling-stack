@@ -5,6 +5,8 @@ import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/
 import { extractAssistantText } from "../../shared/assistant-text.js";
 import { buildPrivateChatContextView } from "../channels/context-processing/private-chat.js";
 import { renderChannelContextView } from "../channels/context-processing/render.js";
+import { createProviderBackedImageVisionSummarizer } from "../channels/materialization/provider-vision.js";
+import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
@@ -21,6 +23,7 @@ export async function createAiTeammateDirectReply(input: {
   readonly workspace?: DirectWorkspaceReady;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly signal?: AbortSignal;
   readonly onWorkUnitStarted?: (handle: {
     readonly workUnitId: string;
@@ -120,12 +123,18 @@ export async function createAiTeammateDirectReply(input: {
   const privateAttachmentsById = new Map(privateAttachments.map((attachment) => [attachment.id, attachment]));
   const textDeltas: string[] = [];
   try {
+    const imageVisionSummarizer = input.imageVisionSummarizer ?? createProviderBackedImageVisionSummarizer({
+      store: input.store,
+      requestedProviderPresetId: providerPresetId,
+      secretResolver: input.secretResolver,
+    });
     const materializedAttachments = await materializeInlineTeammateDirectInputs({
       store: input.store,
       teammateId: input.teammate.id,
       threadId: input.thread.id,
       sourceMessage: input.sourceMessage,
       now,
+      imageVisionSummarizer,
     });
     const memoryRecall = input.store.recallMemory({
       teammateId: input.teammate.id,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -10,6 +10,7 @@ import {
   ChevronRight,
   CheckCircle2,
   Copy,
+  FileText,
   Hash,
   Image,
   Link2,
@@ -87,10 +88,17 @@ import {
   StatusBadge,
   UsedMemorySummary,
   composerWorkspaceFileParts,
+  createAttachmentPreviewUrl,
+  createLocalComposerAssetId,
   filterUsedMemoryEventsByResponse,
   parseComposerInputParts,
+  pendingAssetLabel,
   removeComposerInputRawToken,
+  revokeObjectUrl,
+  revokePendingAttachmentPreview,
+  revokePendingAttachmentPreviews,
   serializeComposerInputParts,
+  type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationGuidanceStrip, ConversationShell, ConversationStatusStrip, ConversationVirtualFeed, MessageBubble, MessageFooterActions } from "../../shared/conversation/index.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
@@ -219,6 +227,9 @@ export function TeammateWorkspace({
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
   const [thread, setThread] = useState<TeammateDirectThread | undefined>();
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
+  const [hasMoreDirectMessages, setHasMoreDirectMessages] = useState(false);
+  const [nextDirectBeforeMessageId, setNextDirectBeforeMessageId] = useState<string | undefined>();
+  const [loadingOlderDirectMessages, setLoadingOlderDirectMessages] = useState(false);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const [directReplyOptimisticActive, setDirectReplyOptimisticActive] = useState(false);
@@ -228,7 +239,7 @@ export function TeammateWorkspace({
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
-  const [pendingAttachmentIds, setPendingAttachmentIds] = useState<readonly string[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<TeammatePrivateAttachment>[]>([]);
   const [directLinkPreviews, setDirectLinkPreviews] = useState<readonly TeammateDirectLinkPreview[]>([]);
   const [pendingDirectLinkPreviewIds, setPendingDirectLinkPreviewIds] = useState<readonly string[]>([]);
   const [memberships, setMemberships] = useState<readonly TeammateChannelMembership[]>([]);
@@ -273,6 +284,7 @@ export function TeammateWorkspace({
   const [savingSkills, setSavingSkills] = useState(false);
   const [savingMcp, setSavingMcp] = useState(false);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [composerDragActive, setComposerDragActive] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [hardDeleting, setHardDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -291,6 +303,7 @@ export function TeammateWorkspace({
   const privateFeedAutoFollowUntilRef = useRef(0);
   const privateFeedUserScrollIntentRef = useRef(false);
   const directGuidanceOperationSeqRef = useRef(0);
+  const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const settingsProvider = settingsForm.providerPresetId ? providers.find((item) => item.id === settingsForm.providerPresetId) : undefined;
   const isProtectedSystemTeammate = Boolean(teammate.protectedProfile || teammate.kind === "system_teammate" || teammate.systemRole === "ling_agent");
@@ -306,10 +319,10 @@ export function TeammateWorkspace({
   const effectiveSkillById = useMemo(() => new Map(effectiveSkills.map((skill) => [skill.skillId, skill])), [effectiveSkills]);
   const memoryById = useMemo(() => new Map(memoryObjects.map((memory) => [memory.id, memory])), [memoryObjects]);
   const privateAttachmentById = useMemo(() => new Map(privateAttachments.map((attachment) => [attachment.id, attachment])), [privateAttachments]);
-  const pendingAttachments = useMemo(() => pendingAttachmentIds.map((id) => privateAttachmentById.get(id)).filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment)), [pendingAttachmentIds, privateAttachmentById]);
+  const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
   const composerInputParts = parseComposerInputParts(messageDraft, {
     cwd: cwd.trim(),
-    attachments: pendingAttachmentIds.map((attachmentId) => ({ attachmentId })),
+    attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
     skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
   });
   const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
@@ -472,9 +485,10 @@ export function TeammateWorkspace({
     privateComposerPayload.attachmentIds.length > 0 ||
     privateComposerPayload.linkPreviewIds.length > 0 ||
     privateComposerPayload.fileRefs.length > 0;
+  const privateAttachmentOperationPending = pendingAttachments.some((item) => item.state === "uploading");
   const privateComposerSendDisabled = directReplyActive
-    ? Boolean(directGuidanceSubmitting || uploadingAttachments)
-    : hasQueuedDirectGuidance || (!messageDraft.trim() && pendingAttachmentIds.length === 0 && pendingDirectLinkPreviewIds.length === 0 && composerFileReferenceParts.length === 0);
+    ? Boolean(directGuidanceSubmitting || privateAttachmentOperationPending)
+    : hasQueuedDirectGuidance || privateAttachmentOperationPending || (!messageDraft.trim() && readyAttachmentIds.length === 0 && pendingDirectLinkPreviewIds.length === 0 && composerFileReferenceParts.length === 0);
   const privateComposerSending = directReplyActive ? Boolean(directGuidanceSubmitting) : sending;
   const privateComposerSendLabel = directReplyActive
     ? privateComposerHasGuidancePayload
@@ -514,7 +528,12 @@ export function TeammateWorkspace({
     setSkillImportOpen(false);
     setMessageSearchOpen(false);
     setMessageSearchQuery("");
-    setPendingAttachmentIds([]);
+    setMessages([]);
+    setHasMoreDirectMessages(false);
+    setNextDirectBeforeMessageId(undefined);
+    setLoadingOlderDirectMessages(false);
+    revokePendingAttachmentPreviews(pendingAttachments, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
+    setPendingAttachments([]);
     setPendingDirectLinkPreviewIds([]);
     setDirectLinkPreviews([]);
     setDirectWorkspace(undefined);
@@ -533,6 +552,13 @@ export function TeammateWorkspace({
     setPersonaImportForm({ sourcePath: "", content: "" });
     setPersonaDraft(undefined);
   }, [teammate.id]);
+
+  useEffect(() => () => {
+    for (const previewUrl of attachmentPreviewUrlsRef.current) {
+      revokeObjectUrl(previewUrl);
+    }
+    attachmentPreviewUrlsRef.current.clear();
+  }, []);
 
   useEffect(() => {
     void refreshTeammateWorkspace();
@@ -666,6 +692,8 @@ export function TeammateWorkspace({
       ]);
       setThread(directResponse.thread);
       setMessages(directResponse.messages);
+      setHasMoreDirectMessages(Boolean(directResponse.hasMore));
+      setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
       setDirectRuntime(directRuntimeResponse);
       setDirectWorkspace(directWorkspaceResponse);
       setDirectLinkPreviews(directLinkPreviewsResponse.linkPreviews);
@@ -697,18 +725,64 @@ export function TeammateWorkspace({
     if (!workspaceCwd) {
       return;
     }
-    const [directResponse, runtimeResponse, directWorkspaceResponse, linkPreviewsResponse] = await Promise.all([
+    const [directResponse, runtimeResponse, directWorkspaceResponse, linkPreviewsResponse, privateAttachmentsResponse] = await Promise.all([
       listTeammateDirectMessages(workspaceCwd, teammate.id),
       getTeammateDirectRuntime(workspaceCwd, teammate.id),
       getTeammateDirectWorkspace(workspaceCwd, teammate.id),
       listTeammateDirectLinkPreviews(workspaceCwd, teammate.id),
+      listTeammatePrivateAttachments(workspaceCwd, teammate.id),
     ]);
     setThread(directResponse.thread);
-    setMessages(directResponse.messages);
+    setMessages((current) => current.length > directResponse.messages.length
+      ? upsertDirectMessages(current, directResponse.messages)
+      : directResponse.messages);
+    setHasMoreDirectMessages(Boolean(directResponse.hasMore));
+    setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
     setDirectRuntime(runtimeResponse);
     setDirectWorkspace(directWorkspaceResponse);
     setDirectLinkPreviews(linkPreviewsResponse.linkPreviews);
+    setPrivateAttachments(privateAttachmentsResponse.attachments);
     setDirectReplyOptimisticActive(Boolean(runtimeResponse.activeReply));
+  }
+
+  async function loadOlderDirectMessages(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (
+      !workspaceCwd ||
+      loadingOlderDirectMessages ||
+      !hasMoreDirectMessages ||
+      !nextDirectBeforeMessageId ||
+      normalizedMessageSearchQuery
+    ) {
+      return;
+    }
+    const feed = privateFeedRef.current;
+    const previousScrollHeight = feed?.scrollHeight ?? 0;
+    const previousScrollTop = feed?.scrollTop ?? 0;
+    setLoadingOlderDirectMessages(true);
+    privateFeedPinnedToLatestRef.current = false;
+    try {
+      const response = await listTeammateDirectMessages(workspaceCwd, teammate.id, {
+        beforeMessageId: nextDirectBeforeMessageId,
+      });
+      setThread(response.thread);
+      setMessages((current) => upsertDirectMessages(current, response.messages));
+      setHasMoreDirectMessages(Boolean(response.hasMore));
+      setNextDirectBeforeMessageId(response.nextBeforeMessageId);
+      globalThis.requestAnimationFrame(() => {
+        globalThis.requestAnimationFrame(() => {
+          const nextFeed = privateFeedRef.current;
+          if (!nextFeed) {
+            return;
+          }
+          nextFeed.scrollTop = nextFeed.scrollHeight - previousScrollHeight + previousScrollTop;
+        });
+      });
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingOlderDirectMessages(false);
+    }
   }
 
   async function resolveActiveDirectReply() {
@@ -747,14 +821,14 @@ export function TeammateWorkspace({
       return;
     }
     const draftSnapshot = messageDraft;
-    const attachmentIdsSnapshot = pendingAttachmentIds;
+    const attachmentsSnapshot = pendingAttachments;
     const linkPreviewIdsSnapshot = pendingDirectLinkPreviewIds;
     setSending(true);
     try {
       setWorkspaceError("");
       const linkPreviews = await ensureDirectLinkPreviewsForBody(body);
       setMessageDraft("");
-      setPendingAttachmentIds([]);
+      setPendingAttachments([]);
       setPendingDirectLinkPreviewIds([]);
       privateFeedPinnedToLatestRef.current = true;
       privateFeedAutoFollowUntilRef.current = Date.now() + 3_000;
@@ -821,10 +895,11 @@ export function TeammateWorkspace({
       setMemoryHealthReport(memoryHealthResponse.report);
       setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
       setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
+      revokePendingAttachmentPreviews(attachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
       await refreshDirectRuntime();
     } catch (error) {
       setMessageDraft(draftSnapshot);
-      setPendingAttachmentIds(attachmentIdsSnapshot);
+      setPendingAttachments(attachmentsSnapshot);
       setPendingDirectLinkPreviewIds(linkPreviewIdsSnapshot);
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -864,7 +939,7 @@ export function TeammateWorkspace({
       return false;
     }
     const draftSnapshot = messageDraft;
-    const attachmentIdsSnapshot = pendingAttachmentIds;
+    const attachmentsSnapshot = pendingAttachments;
     const linkPreviewIdsSnapshot = pendingDirectLinkPreviewIds;
     setDirectGuidanceSubmitting(mode);
     try {
@@ -891,13 +966,14 @@ export function TeammateWorkspace({
       });
       setDirectRuntime(response.runtime);
       setMessageDraft("");
-      setPendingAttachmentIds([]);
+      setPendingAttachments([]);
       setPendingDirectLinkPreviewIds([]);
+      revokePendingAttachmentPreviews(attachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
       await refreshDirectRuntime();
       return true;
     } catch (error) {
       setMessageDraft(draftSnapshot);
-      setPendingAttachmentIds(attachmentIdsSnapshot);
+      setPendingAttachments(attachmentsSnapshot);
       setPendingDirectLinkPreviewIds(linkPreviewIdsSnapshot);
       setWorkspaceError(error instanceof Error ? error.message : String(error));
       return false;
@@ -926,8 +1002,9 @@ export function TeammateWorkspace({
     if (intervention.status !== "queued" || directGuidanceCancelingId) {
       return;
     }
+    revokePendingAttachmentPreviews(pendingAttachments, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
     setMessageDraft(intervention.messagePayload ? directGuidanceDraftText(intervention.messagePayload) : intervention.instruction);
-    setPendingAttachmentIds(intervention.messagePayload?.attachmentIds ?? []);
+    setPendingAttachments(pendingAttachmentItemsFromIds(intervention.messagePayload?.attachmentIds ?? [], privateAttachmentById));
     setPendingDirectLinkPreviewIds(intervention.messagePayload?.linkPreviewIds ?? []);
     await cancelDirectGuidance(intervention.id);
   }
@@ -983,6 +1060,40 @@ export function TeammateWorkspace({
       return;
     }
     void sendPrivateMessage();
+  }
+
+  function handlePrivateComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    if (event.clipboardData.files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    void uploadPrivateFiles(Array.from(event.clipboardData.files));
+  }
+
+  function handlePrivateComposerDragOver(event: DragEvent<HTMLDivElement>): void {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setComposerDragActive(true);
+  }
+
+  function handlePrivateComposerDragLeave(event: DragEvent<HTMLDivElement>): void {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+    setComposerDragActive(false);
+  }
+
+  function handlePrivateComposerDrop(event: DragEvent<HTMLDivElement>): void {
+    if (event.dataTransfer.files.length === 0) {
+      setComposerDragActive(false);
+      return;
+    }
+    event.preventDefault();
+    setComposerDragActive(false);
+    void uploadPrivateFiles(Array.from(event.dataTransfer.files));
   }
 
   async function refreshMemoryReviewData(): Promise<void> {
@@ -1071,28 +1182,64 @@ export function TeammateWorkspace({
   }
 
   async function uploadPrivateFiles(files: readonly File[]): Promise<void> {
-    if (files.length === 0 || uploadingAttachments) {
+    const selectedFiles = Array.from(files).slice(0, Math.max(0, 10 - pendingAttachments.length));
+    if (selectedFiles.length === 0 || uploadingAttachments) {
       return;
     }
+    const uploadItems = selectedFiles.map((file) => {
+      const previewUrl = createAttachmentPreviewUrl(file);
+      if (previewUrl) {
+        attachmentPreviewUrlsRef.current.add(previewUrl);
+      }
+      return {
+        localId: createLocalComposerAssetId("attachment"),
+        fileName: file.name,
+        sizeBytes: file.size,
+        state: "uploading" as const,
+        previewUrl,
+        deleteOnRemove: true,
+      };
+    });
+    setPendingAttachments((current) => [...current, ...uploadItems]);
     setUploadingAttachments(true);
     try {
       setWorkspaceError("");
-      const responses = await Promise.all(files.map((file) => uploadTeammatePrivateAttachment(cwd.trim(), teammate.id, file)));
+      const responses = await Promise.all(selectedFiles.map((file) => uploadTeammatePrivateAttachment(cwd.trim(), teammate.id, file)));
       const uploaded = responses.map((response) => response.attachment);
       setPrivateAttachments((current) => [...uploaded, ...current.filter((attachment) => !uploaded.some((item) => item.id === attachment.id))]);
-      setPendingAttachmentIds((current) => [...current, ...uploaded.map((attachment) => attachment.id)].slice(0, 10));
+      const uploadedByLocalId = new Map(uploadItems.map((item, index) => [item.localId, uploaded[index]]));
+      setPendingAttachments((current) => current.map((item) => {
+        if (!uploadedByLocalId.has(item.localId)) {
+          return item;
+        }
+        const attachment = uploadedByLocalId.get(item.localId);
+        return attachment
+          ? { ...item, state: "ready", attachment }
+          : { ...item, state: "failed", error: t("Upload failed") };
+      }));
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setPendingAttachments((current) => current.map((item) =>
+        uploadItems.some((upload) => upload.localId === item.localId)
+          ? { ...item, state: "failed", error: message }
+          : item,
+      ));
+      setWorkspaceError(message);
     } finally {
       setUploadingAttachments(false);
     }
   }
 
-  async function removePendingAttachment(attachmentId: string): Promise<void> {
-    setPendingAttachmentIds((current) => current.filter((id) => id !== attachmentId));
+  async function removePendingAttachment(localId: string): Promise<void> {
+    const removed = pendingAttachments.find((item) => item.localId === localId);
+    revokePendingAttachmentPreview(removed, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
+    setPendingAttachments((current) => current.filter((item) => item.localId !== localId));
+    if (!removed?.attachment || !removed.deleteOnRemove) {
+      return;
+    }
     try {
-      await deleteAttachment(cwd.trim(), attachmentId);
-      setPrivateAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+      await deleteAttachment(cwd.trim(), removed.attachment.id);
+      setPrivateAttachments((current) => current.filter((attachment) => attachment.id !== removed?.attachment?.id));
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     }
@@ -1106,6 +1253,9 @@ export function TeammateWorkspace({
     const feed = privateFeedRef.current;
     if (!feed) {
       return;
+    }
+    if (feed.scrollTop <= 80 && hasMoreDirectMessages && nextDirectBeforeMessageId && !loadingOlderDirectMessages && !normalizedMessageSearchQuery) {
+      void loadOlderDirectMessages();
     }
     const maxScrollTop = feed.scrollHeight - feed.clientHeight;
     const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
@@ -1811,7 +1961,7 @@ export function TeammateWorkspace({
                             href: attachmentContentUrl(attachment, cwd.trim()),
                             target: "_blank",
                             rel: "noreferrer",
-                            icon: <Paperclip size={13} />,
+                            icon: attachment.kind === "image" ? <Image size={13} /> : <FileText size={13} />,
                             previewRequest: attachmentCanPreview(attachment) ? {
                               source: "attachment",
                               cwd: cwd.trim(),
@@ -1942,7 +2092,12 @@ export function TeammateWorkspace({
                 onChange={setMessageDraft}
                 onSend={handlePrivateComposerSubmit}
                 onKeyDown={handlePrivateComposerKeyDown}
+                onPaste={handlePrivateComposerPaste}
+                onDragOver={handlePrivateComposerDragOver}
+                onDragLeave={handlePrivateComposerDragLeave}
+                onDrop={handlePrivateComposerDrop}
                 onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
+                dropZoneClassName={composerDragActive ? "active" : undefined}
                 previewContent={pendingAttachments.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
                   <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
                     {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
@@ -1968,20 +2123,31 @@ export function TeammateWorkspace({
                         </button>
                       </div>
                     ))}
-                    {pendingAttachments.map((attachment) => (
-                      <div key={attachment.id} className="composer-preview-card file ready">
-                        <span className="composer-preview-file-icon" aria-hidden="true">
-                          <Paperclip size={16} />
-                        </span>
+                    {pendingAttachments.map((item) => (
+                      <div key={item.localId} className={`composer-preview-card ${item.previewUrl ? "image" : "file"} ${item.state}`}>
+                        {item.previewUrl ? (
+                          <img className="composer-preview-thumbnail" src={item.previewUrl} alt={item.fileName} />
+                        ) : (
+                          <span className="composer-preview-file-icon" aria-hidden="true">
+                            <FileText size={17} />
+                          </span>
+                        )}
                         <span className="composer-preview-body">
-                          <strong title={attachment.fileName}>{attachment.fileName}</strong>
-                          <small>{formatBytes(attachment.sizeBytes)}</small>
+                          <strong title={item.fileName}>{item.fileName}</strong>
+                          <small>{item.error ?? `${t(pendingAssetLabel(item.state))} · ${formatBytes(item.attachment?.sizeBytes ?? item.sizeBytes)}`}</small>
                         </span>
-                        <button className="composer-preview-remove" type="button" onClick={() => void removePendingAttachment(attachment.id)} aria-label={t("Remove pending attachment")}>
+                        {item.state === "uploading" ? <Loader2 className="composer-preview-state-icon spin" size={13} /> : null}
+                        <button className="composer-preview-remove" type="button" onClick={() => void removePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
                           <X size={13} />
                         </button>
                       </div>
                     ))}
+                  </div>
+                ) : null}
+                overlayContent={composerDragActive ? (
+                  <div className="composer-drop-hint">
+                    <FileText size={16} />
+                    <span>{t("Drop files to attach")}</span>
                   </div>
                 ) : null}
               />
@@ -3540,6 +3706,22 @@ function directGuidanceDraftText(payload: NonNullable<TeammateDirectReplyInterve
     .filter((fileRef) => !body.includes(fileRef.path))
     .map((fileRef) => fileRef.line ? `${fileRef.path}:${fileRef.line}` : fileRef.path);
   return [payload.body, ...missingFileTokens].filter((part) => part.trim()).join("\n");
+}
+
+function pendingAttachmentItemsFromIds(
+  attachmentIds: readonly string[],
+  attachmentById: ReadonlyMap<string, TeammatePrivateAttachment>,
+): readonly PendingAttachmentItem<TeammatePrivateAttachment>[] {
+  return attachmentIds
+    .map((attachmentId) => attachmentById.get(attachmentId))
+    .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
+    .map((attachment) => ({
+      localId: createLocalComposerAssetId("attachment"),
+      fileName: attachment.fileName,
+      sizeBytes: attachment.sizeBytes,
+      state: "ready" as const,
+      attachment,
+    }));
 }
 
 function extractUrls(value: string): string[] {

@@ -37,6 +37,8 @@ export type WorkItemSourceType =
 
 export type WorkItemWaitingReason = "approval" | "external" | "handoff" | "resource" | "user" | "scheduler" | "provider";
 
+export type WorkItemActionGroup = "needs_action" | "in_progress" | "ready" | "recent_done" | "archived";
+
 export interface WorkItemView {
   readonly id: string;
   readonly workspaceId: string;
@@ -88,6 +90,14 @@ export const workItemStatusOrder: readonly WorkItemStatus[] = [
   "review",
   "blocked",
   "done",
+  "archived",
+];
+
+export const workItemActionGroupOrder: readonly WorkItemActionGroup[] = [
+  "needs_action",
+  "in_progress",
+  "ready",
+  "recent_done",
   "archived",
 ];
 
@@ -275,6 +285,85 @@ export function filterWorkItemsByChannel(items: readonly WorkItemView[], channel
 
 export function workItemStatusLabel(status: WorkItemStatus): string {
   return status.replaceAll("_", " ");
+}
+
+export function isTerminalWorkItemView(item: WorkItemView): boolean {
+  return item.status === "done" || item.status === "archived";
+}
+
+export function isActionableWorkItem(item: WorkItemView): boolean {
+  if (isTerminalWorkItemView(item)) {
+    return false;
+  }
+  return item.status === "waiting" ||
+    item.status === "blocked" ||
+    item.status === "review" ||
+    Boolean(item.approvalId) ||
+    Boolean(item.claim) ||
+    Boolean(item.durable && !item.claim) ||
+    Boolean(!item.channelId && !item.assigneeTeammateId && !item.claim);
+}
+
+export function workItemActionGroup(item: WorkItemView): WorkItemActionGroup {
+  if (item.status === "archived") {
+    return "archived";
+  }
+  if (item.status === "done") {
+    return "recent_done";
+  }
+  if (item.status === "running") {
+    return "in_progress";
+  }
+  if (isActionableWorkItem(item)) {
+    return "needs_action";
+  }
+  return "ready";
+}
+
+export function workItemActionGroupLabel(group: WorkItemActionGroup): string {
+  switch (group) {
+    case "needs_action":
+      return "Needs action";
+    case "in_progress":
+      return "In progress";
+    case "ready":
+      return "Ready or queued";
+    case "recent_done":
+      return "Recently completed";
+    case "archived":
+      return "Archived";
+  }
+}
+
+export function workItemNextActionLabel(item: WorkItemView): string {
+  if (item.approvalId || item.waitingReason === "approval") {
+    return "Handle approval";
+  }
+  if (item.status === "blocked") {
+    return item.runId ? "View failure" : "Review blocker";
+  }
+  if (item.durable && !item.claim && !isTerminalWorkItemView(item)) {
+    return "Claim to handle";
+  }
+  if (item.claim) {
+    return "Work is claimed";
+  }
+  if (item.status === "running") {
+    return "Open running work";
+  }
+  if (item.status === "review") {
+    return "Review result";
+  }
+  if (item.status === "ready") {
+    return "Open ready work";
+  }
+  if (item.status === "done") {
+    return "Work completed";
+  }
+  if (item.status === "archived") {
+    return "Archived work";
+  }
+  return "Review work item";
 }
 
 function statusFromTaskAndRun(taskStatus: Task["status"], runStatus: RunSession["status"] | undefined): WorkItemStatus {

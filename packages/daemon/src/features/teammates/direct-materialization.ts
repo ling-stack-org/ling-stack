@@ -1,9 +1,10 @@
 import type { ChannelAttachment, RunStore, TeammateDirectMessage, TeammatePrivateAttachment } from "@ling-stack/core";
 import { defaultLingMaterializationBudgets } from "../channels/materialization/budgets.js";
+import { imageVisionExtractorV1 } from "../channels/materialization/extractors/image.js";
 import { officeExtractorV1 } from "../channels/materialization/extractors/office.js";
 import { pdfExtractorV1 } from "../channels/materialization/extractors/pdf.js";
 import { textAttachmentExtractorV1 } from "../channels/materialization/extractors/text-attachment.js";
-import type { LingInputExtractor } from "../channels/materialization/registry.js";
+import type { LingImageVisionSummarizer, LingInputExtractor } from "../channels/materialization/registry.js";
 
 export interface TeammateDirectAttachmentMaterialization {
   readonly attachmentId: string;
@@ -21,6 +22,7 @@ export async function materializeInlineTeammateDirectInputs(input: {
   readonly threadId: string;
   readonly sourceMessage: TeammateDirectMessage;
   readonly now: string;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }): Promise<ReadonlyMap<string, TeammateDirectAttachmentMaterialization>> {
   const materializations = new Map<string, TeammateDirectAttachmentMaterialization>();
   for (const attachmentId of input.sourceMessage.attachmentIds) {
@@ -51,6 +53,7 @@ export async function materializeInlineTeammateDirectInputs(input: {
       now: input.now,
       attachment: privateAttachmentAsChannelAttachment(attachment, input.sourceMessage.id),
       attachmentsDir: input.store.paths.attachmentsDir,
+      imageVisionSummarizer: input.imageVisionSummarizer,
     });
     materializations.set(attachment.id, {
       attachmentId: attachment.id,
@@ -87,6 +90,13 @@ function extractorForPrivateAttachment(
       extractor: officeExtractorV1,
       maxBytes: defaultLingMaterializationBudgets.officeReadBytes,
       maxChars: defaultLingMaterializationBudgets.officePromptChars,
+    };
+  }
+  if (attachment.kind === "image") {
+    return {
+      extractor: imageVisionExtractorV1,
+      maxBytes: defaultLingMaterializationBudgets.imageReadBytes,
+      maxChars: defaultLingMaterializationBudgets.imagePromptChars,
     };
   }
   return undefined;

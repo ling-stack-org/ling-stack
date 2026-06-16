@@ -145,8 +145,12 @@ export async function refreshTeammateDirectWorkspace(cwd: string, teammateId: st
   return daemonClient.refreshTeammateDirectWorkspace(cwd, teammateId);
 }
 
-export async function listTeammateDirectMessages(cwd: string, teammateId: string): Promise<TeammateDirectMessageListResponse> {
-  return daemonClient.listTeammateDirectMessages(cwd, teammateId);
+export async function listTeammateDirectMessages(
+  cwd: string,
+  teammateId: string,
+  options: { readonly limit?: number; readonly beforeMessageId?: string } = {},
+): Promise<TeammateDirectMessageListResponse> {
+  return daemonClient.listTeammateDirectMessages(cwd, teammateId, options);
 }
 
 export async function listTeammateDirectLinkPreviews(cwd: string, teammateId: string): Promise<TeammateDirectLinkPreviewListResponse> {

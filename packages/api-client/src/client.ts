@@ -1170,8 +1170,16 @@ export class LingDaemonClient {
     return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-workspace/refresh`, { cwd });
   }
 
-  async listTeammateDirectMessages(cwd: string, teammateId: string, limit = 100): Promise<TeammateDirectMessageListResponse> {
-    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-messages`, { cwd, limit });
+  async listTeammateDirectMessages(
+    cwd: string,
+    teammateId: string,
+    options: { readonly limit?: number; readonly beforeMessageId?: string } = {},
+  ): Promise<TeammateDirectMessageListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-messages`, {
+      cwd,
+      limit: options.limit,
+      beforeMessageId: options.beforeMessageId,
+    });
   }
 
   async listTeammateDirectLinkPreviews(cwd: string, teammateId: string, limit = 100): Promise<TeammateDirectLinkPreviewListResponse> {

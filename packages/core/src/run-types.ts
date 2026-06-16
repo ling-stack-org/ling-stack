@@ -107,6 +107,7 @@ import type {
   TeammateChannelMembership,
   TeammateDirectLinkPreview,
   TeammateDirectMessage,
+  TeammateDirectMessageListPage,
   TeammateDirectReplyIntervention,
   TeammateDirectThread,
   TeammateMemoryScope,
@@ -1051,6 +1052,7 @@ export interface RunStore {
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread;
   updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined;
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[];
+  listTeammateDirectMessagesPage(options: ListTeammateDirectMessagesOptions): TeammateDirectMessageListPage;
   getTeammateDirectMessage(id: string): TeammateDirectMessage | undefined;
   createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage;
   updateTeammateDirectMessageRuntime(
