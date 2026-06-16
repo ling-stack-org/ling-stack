@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronDown, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
-import type { ConversationOperationCellViewModel, ConversationWorkCellBranch, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../lib/conversation-work-cell.js";
+import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../lib/conversation-work-cell.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -17,6 +17,7 @@ export interface ConversationWorkCellProps {
   readonly detailsState?: ConversationWorkCellDetailsState;
   readonly onOpenRun?: (runId: string) => void;
   readonly onLoadDetails?: (threadId: string) => void;
+  readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }
 
 export function ConversationWorkCell({
@@ -24,18 +25,33 @@ export function ConversationWorkCell({
   detailsState,
   onOpenRun,
   onLoadDetails,
+  renderAgentAvatar,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(false);
+  const [detailsCollapsed, setDetailsCollapsed] = useState(true);
   const active = model.mode === "active";
-  const operationRows = model.operationRows;
-  const agentBranches = model.agentBranches;
-  const terminalReportRows = model.terminalReportRows;
+  const fallbackRows: readonly ConversationWorkCellRow[] = model.operationRows.length === 0 && model.agentSpans.length === 0
+    ? [{
+      id: "operation:fallback",
+      kind: "watch",
+      title: model.title,
+      description: model.summary && model.summary !== model.title ? model.summary : undefined,
+      tone: active ? "running" : model.status === "succeeded" ? "success" : model.status === "failed" ? "failed" : "neutral",
+    }]
+    : [];
+  const operationRows = model.operationRows.length > 0 ? model.operationRows : fallbackRows;
+  const agentSpans = model.agentSpans;
+  const showOperationRows = operationRows.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
+  const artifactStripSummary = buildArtifactStripSummary(model.artifactStripItems);
+  const evidenceSummary = artifactStripSummary ?? buildEvidenceSummary(model, t);
+  const diagnosticsHandler = model.showDiagnostics === true && !evidenceSummary ? onOpenRun : undefined;
   const rootClassName = [
     "conversation-work-cell",
+    "conversation-operation-cell",
     active ? "active" : "completed",
     `status-${model.status}`,
+    "no-rail",
     model.presentation ? `presentation-${model.presentation}` : "",
   ].filter(Boolean).join(" ");
   const currentDetailsState: ConversationWorkCellDetailsState = detailsState ?? {
@@ -43,10 +59,17 @@ export function ConversationWorkCell({
     groups: model.groups,
     evidenceLinks: model.evidenceLinks,
   };
+  const detailsExpanded = Boolean(evidenceSummary && !detailsCollapsed);
+
+  useEffect(() => {
+    if (detailsExpanded && currentDetailsState.status === "not_loaded") {
+      onLoadDetails?.(model.threadId);
+    }
+  }, [currentDetailsState.status, detailsExpanded, model.threadId, onLoadDetails]);
 
   function toggleDetails(): void {
-    const nextExpanded = !expanded;
-    setExpanded(nextExpanded);
+    const nextExpanded = detailsCollapsed;
+    setDetailsCollapsed(!detailsCollapsed);
     if (nextExpanded && (currentDetailsState.status === "not_loaded" || currentDetailsState.status === "error")) {
       onLoadDetails?.(model.threadId);
     }
@@ -54,50 +77,41 @@ export function ConversationWorkCell({
 
   return (
     <article className={rootClassName} data-thread-id={model.threadId} data-operation-source={model.sourceKind} aria-label={statusLabel}>
-      <div className="conversation-work-cell-rail" aria-hidden="true">
-        <WorkCellStatusIcon status={model.status} active={active} />
-      </div>
       <div className="conversation-work-cell-body">
-        <header className="conversation-work-cell-head">
-          <div>
-            <span className="conversation-work-cell-kicker">{statusLabel}</span>
-            <strong>{model.title}</strong>
-          </div>
-        </header>
-
-        <p className="conversation-work-cell-summary">{model.summary}</p>
-
-        <button className="conversation-work-cell-evidence-summary" type="button" onClick={toggleDetails} aria-expanded={expanded}>
-          <ChevronDown size={14} aria-hidden="true" />
-          <span>{buildEvidenceSummary(model, t)}</span>
-        </button>
-
-        {agentBranches.length > 0 ? (
-          <BranchRows branches={agentBranches} />
+        {agentSpans.length > 0 ? (
+          <AgentActivitySpans spans={agentSpans} renderAgentAvatar={renderAgentAvatar} />
         ) : null}
 
-        {active ? (
+        {showOperationRows ? (
           <ActiveTurnItemStream rows={operationRows} />
         ) : null}
 
-        {terminalReportRows.length > 0 ? (
-          <FinalReportRows rows={terminalReportRows} />
+        {evidenceSummary ? (
+          <button
+            className={artifactStripSummary ? "conversation-work-cell-evidence-summary conversation-work-cell-artifact-strip" : "conversation-work-cell-evidence-summary"}
+            type="button"
+            onClick={toggleDetails}
+            aria-expanded={detailsExpanded}
+          >
+            <ChevronDown size={14} aria-hidden="true" />
+            <span>{evidenceSummary}</span>
+          </button>
         ) : null}
 
-        <div className="conversation-work-cell-actions">
-          {model.showDiagnostics === false || !onOpenRun ? null : (
+        {diagnosticsHandler ? (
+          <div className="conversation-work-cell-actions">
             <button
               className="secondary-button compact-button"
               type="button"
-              onClick={() => onOpenRun(model.anchorRunId)}
+              onClick={() => diagnosticsHandler(model.anchorRunId)}
             >
               <History size={13} />
               {t("Diagnostics")}
             </button>
-          )}
-        </div>
+          </div>
+        ) : null}
 
-        {expanded ? (
+        {detailsExpanded ? (
           <WorkCellDetails
             state={currentDetailsState}
             onRetry={() => onLoadDetails?.(model.threadId)}
@@ -108,7 +122,14 @@ export function ConversationWorkCell({
   );
 }
 
-function buildEvidenceSummary(model: ConversationOperationCellViewModel, t: Translate): string {
+function buildArtifactStripSummary(items: readonly ConversationArtifactStripItem[]): string | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+  return items.map((item) => item.label).join(" · ");
+}
+
+function buildEvidenceSummary(model: ConversationOperationCellViewModel, t: Translate): string | undefined {
   const changedCount = model.groups.find((group) => group.id === "changed")?.rows.length ?? 0;
   const checkedCount = model.groups.find((group) => group.id === "checked")?.rows.length ?? 0;
   const evidenceCount = model.groups.find((group) => group.id === "evidence")?.rows.length ?? 0;
@@ -129,52 +150,86 @@ function buildEvidenceSummary(model: ConversationOperationCellViewModel, t: Tran
   if (checkedCount > 0) {
     pieces.push(t("{count} checks", { count: checkedCount }));
   }
-  if (evidenceCount > 0) {
-    pieces.push(t("{count} evidence items", { count: evidenceCount }));
+  if (pieces.length === 0 && evidenceCount > 0) {
+    pieces.push(t("{count} records", { count: evidenceCount }));
   }
   if (model.evidenceLinks.length > 0) {
-    pieces.push(t("{count} evidence links", { count: model.evidenceLinks.length }));
+    pieces.push(t("{count} references", { count: model.evidenceLinks.length }));
   }
 
-  return pieces.length > 0 ? pieces.join(" · ") : t("Evidence folded");
+  return pieces.length > 0 ? pieces.join(" · ") : undefined;
 }
 
-function BranchRows({ branches }: { readonly branches: readonly ConversationWorkCellBranch[] }): JSX.Element {
+function AgentActivitySpans({
+  spans,
+  renderAgentAvatar,
+}: {
+  readonly spans: readonly ConversationAgentActivitySpan[];
+  readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
+}): JSX.Element {
   const { t } = useI18n();
-  const [expandedBranchId, setExpandedBranchId] = useState<string>();
+  const [expandedSpanIds, setExpandedSpanIds] = useState<ReadonlySet<string>>(() => new Set());
   return (
-    <section className="conversation-work-cell-branches" aria-label={t("Agent branches")}>
-      <header>
-        <strong>{t("Agent branches")}</strong>
-        <small>{t("{count} branches", { count: branches.length })}</small>
-      </header>
-      <div className="conversation-work-cell-branch-list">
-        {branches.map((branch) => {
-          const expanded = expandedBranchId === branch.id;
-          return (
-            <div key={branch.id} className={["conversation-work-cell-branch", branch.tone ?? "neutral", expanded ? "expanded" : ""].filter(Boolean).join(" ")}>
-              <button
-                className="conversation-work-cell-branch-head"
-                type="button"
-                aria-expanded={expanded}
-                onClick={() => setExpandedBranchId(expanded ? undefined : branch.id)}
-              >
-                <span className="conversation-work-cell-row-dot" aria-hidden="true" />
-                <span className="conversation-work-cell-branch-copy">
-                  <strong>{branch.label}</strong>
-                  {branch.summary ? <small>{branch.summary}</small> : null}
-                </span>
-                {branch.meta ? <code>{branch.meta}</code> : null}
-                <span className="conversation-work-cell-branch-toggle">
+    <section className="conversation-work-cell-agent-spans" aria-label={t("Agent activity")}>
+      <div className="conversation-work-cell-agent-span-list">
+        {spans.map((span) => {
+          const hasDetail = span.rows.length > 0;
+          const expanded = hasDetail && expandedSpanIds.has(span.id);
+          const latestRow = span.latestRow;
+          const currentSummary = latestRow?.title ?? span.summary;
+          const avatar = renderAgentAvatar?.(span);
+          const headContent = (
+            <>
+              <span className="conversation-work-cell-agent-avatar" aria-hidden="true">
+                {avatar ?? agentAvatarLabel(span.label)}
+              </span>
+              <span className="conversation-work-cell-agent-span-copy">
+                <strong>{span.label}</strong>
+                {currentSummary ? <small>{currentSummary}</small> : null}
+              </span>
+              {span.stateLabel ? <span className="conversation-work-cell-agent-span-state">{span.stateLabel}</span> : null}
+              {hasDetail ? (
+                <span className="conversation-work-cell-agent-span-toggle" aria-hidden="true">
                   <ChevronDown size={13} aria-hidden="true" />
-                  <span>{expanded ? t("Collapse branch") : t("Expand branch")}</span>
                 </span>
-              </button>
-              {expanded ? (
-                <div className="conversation-work-cell-branch-detail" aria-label={t("Branch steps")}>
-                  {branch.stateLabel ? <small>{branch.stateLabel}</small> : null}
+              ) : null}
+            </>
+          );
+          return (
+            <div
+              key={span.id}
+              className={["conversation-work-cell-agent-span", `kind-${span.kind ?? "agent"}`, span.tone ?? "neutral", expanded ? "expanded" : ""].filter(Boolean).join(" ")}
+              data-agent-span-kind={span.kind ?? "agent"}
+            >
+              {hasDetail ? (
+                <button
+                  className="conversation-work-cell-agent-span-head"
+                  type="button"
+                  aria-expanded={expanded}
+                  aria-label={expanded ? t("Collapse agent activity") : t("Expand agent activity")}
+                  onClick={() => {
+                    setExpandedSpanIds((current) => {
+                      const next = new Set(current);
+                      if (expanded) {
+                        next.delete(span.id);
+                      } else {
+                        next.add(span.id);
+                      }
+                      return next;
+                    });
+                  }}
+                >
+                  {headContent}
+                </button>
+              ) : (
+                <div className="conversation-work-cell-agent-span-head static">
+                  {headContent}
+                </div>
+              )}
+              {expanded && hasDetail ? (
+                <div className="conversation-work-cell-agent-span-detail" aria-label={t("Agent activity detail")}>
                   <div className="conversation-work-cell-row-list">
-                    {branch.rows.map((row) => <WorkCellRow key={row.id} row={row} compact />)}
+                    {span.rows.map((row) => <WorkCellRow key={row.id} row={row} compact showIcon={false} />)}
                   </div>
                 </div>
               ) : null}
@@ -209,20 +264,6 @@ function workCellStatusLabel(
   return active ? t("Task in progress") : t("Work result");
 }
 
-function FinalReportRows({ rows }: { readonly rows: readonly ConversationWorkCellRow[] }): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <section className="conversation-work-cell-final-report" aria-label={t("Final Ling report")}>
-      <header>
-        <strong>{t("Ling summary")}</strong>
-      </header>
-      <div className="conversation-work-cell-row-list">
-        {rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
-      </div>
-    </section>
-  );
-}
-
 function WorkCellDetails({
   state,
   onRetry,
@@ -235,11 +276,8 @@ function WorkCellDetails({
     return (
       <div className="conversation-work-cell-details">
         <div className="conversation-work-cell-details-state">
-          <Clock3 size={13} />
-          <span>{t("Details are loaded on demand.")}</span>
-          <button className="secondary-button compact-button" type="button" onClick={onRetry}>
-            {t("Load details")}
-          </button>
+          <Loader2 className="spin" size={13} />
+          <span>{t("Loading details...")}</span>
         </div>
       </div>
     );
@@ -262,7 +300,7 @@ function WorkCellDetails({
           <span>{state.errorMessage || t("Evidence failed to load.")}</span>
           <button className="secondary-button compact-button" type="button" onClick={onRetry}>
             <RefreshCw size={13} />
-            {t("Retry details")}
+            {t("Retry evidence")}
           </button>
         </div>
       </div>
@@ -288,7 +326,7 @@ function WorkCellDetails({
             <small>{group.summary}</small>
           </header>
           <div className="conversation-work-cell-row-list">
-            {group.rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
+            {group.rows.map((row) => <WorkCellRow key={row.id} row={row} showIcon={false} />)}
           </div>
         </section>
       ))}
@@ -327,36 +365,163 @@ function ActiveTurnItemStream({ rows }: { readonly rows: readonly ConversationWo
   }
   return (
     <div className="conversation-work-cell-active-stream" aria-label={t("Active work stream")}>
-      {rows.map((row) => <WorkCellRow key={row.id} row={row} compact />)}
+      {rows.map((row) => <WorkCellRow key={row.id} row={row} compact showIcon={false} />)}
     </div>
   );
 }
 
-function WorkCellRow({ row, compact = false }: { readonly row: ConversationWorkCellRow; readonly compact?: boolean }): JSX.Element {
-  return (
-    <div className={["conversation-work-cell-row", row.tone ?? "neutral", compact ? "compact" : ""].filter(Boolean).join(" ")}>
-      <span className="conversation-work-cell-row-dot" aria-hidden="true" />
+function WorkCellRow({
+  row,
+  compact = false,
+  showIcon = true,
+}: {
+  readonly row: ConversationWorkCellRow;
+  readonly compact?: boolean;
+  readonly showIcon?: boolean;
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const displayDescription = displayableRowDescription(row.title, row.description);
+  const displayMeta = displayableRowMeta(row.meta);
+  const detailLines = displayableRowDetailLines(row.detailLines);
+  const hasDetail = Boolean(displayDescription || detailLines.length > 0);
+  const rowClassName = ["conversation-work-cell-row", row.tone ?? "neutral", compact ? "compact" : "", showIcon ? "" : "iconless", expanded ? "expanded" : ""].filter(Boolean).join(" ");
+  const rowMain = (
+    <>
+      {showIcon ? (
+        <span className="conversation-work-cell-row-icon" aria-hidden="true">
+          <WorkCellRowIcon tone={row.tone ?? "neutral"} />
+        </span>
+      ) : null}
       <span className="conversation-work-cell-row-copy">
         <strong>{row.title}</strong>
-        {row.description ? <small>{row.description}</small> : null}
+        {displayMeta ? <small>{displayMeta}</small> : null}
       </span>
-      {row.meta ? <code>{row.meta}</code> : null}
+      {hasDetail ? (
+        <span className="conversation-work-cell-row-toggle" aria-hidden="true">
+          <ChevronDown size={13} />
+        </span>
+      ) : null}
+    </>
+  );
+  return (
+    <div className={rowClassName}>
+      {hasDetail ? (
+        <button
+          className="conversation-work-cell-row-main"
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {rowMain}
+        </button>
+      ) : (
+        <div className="conversation-work-cell-row-main static">
+          {rowMain}
+        </div>
+      )}
+      {expanded && hasDetail ? (
+        <div className="conversation-work-cell-row-detail">
+          {displayDescription ? <small>{displayDescription}</small> : null}
+          {detailLines.map((line, index) => (
+            line.kind === "code"
+              ? <code key={`${line.kind}:${index}`}>{line.text}</code>
+              : <small key={`${line.kind ?? "text"}:${index}`}>{line.text}</small>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function WorkCellStatusIcon({ status, active }: { readonly status: ConversationOperationCellViewModel["status"]; readonly active: boolean }): JSX.Element {
-  if (status === "succeeded") {
-    return <CheckCircle2 size={17} />;
+function displayableRowDetailLines(lines?: readonly { readonly kind?: "text" | "code"; readonly text: string }[]): readonly { readonly kind?: "text" | "code"; readonly text: string }[] {
+  if (!lines || lines.length === 0) {
+    return [];
   }
-  if (status === "failed" || status === "cancelled" || status === "superseded") {
-    return <CircleAlert size={17} />;
+  const result: Array<{ readonly kind?: "text" | "code"; readonly text: string }> = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const text = line.text.trim();
+    if (!text || isLowSignalRowMeta(text) || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    result.push({ kind: line.kind, text });
+    if (result.length >= 5) {
+      break;
+    }
   }
-  if (status === "waiting_for_approval") {
-    return <ShieldCheck size={17} />;
+  return result;
+}
+
+function displayableRowDescription(title: string, description?: string): string | undefined {
+  const trimmed = description?.trim();
+  if (!trimmed) {
+    return undefined;
   }
-  if (active) {
-    return <Loader2 className="spin" size={17} />;
+  if (sameVisibleRowText(title, trimmed)) {
+    return undefined;
   }
-  return <Clock3 size={17} />;
+  return trimmed;
+}
+
+function displayableRowMeta(meta?: string): string | undefined {
+  const trimmed = meta?.trim();
+  if (!trimmed || isLowSignalRowMeta(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function sameVisibleRowText(title: string, description: string): boolean {
+  const normalizedTitle = normalizeVisibleRowText(title);
+  const normalizedDescription = normalizeVisibleRowText(description);
+  return normalizedTitle === normalizedDescription || normalizedTitle.endsWith(` ${normalizedDescription}`);
+}
+
+function normalizeVisibleRowText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^[^:：]{1,32}\s*[:：]\s*/u, "")
+    .replace(/[。.!！?？]+$/u, "")
+    .replace(/\s+/gu, " ");
+}
+
+function isLowSignalRowMeta(value: string): boolean {
+  return /^(file|diff|json|log|artifact|text|markdown|patch|succeeded|completed|success)$/iu.test(value) ||
+    /^(text\/|application\/json|text\/x-diff)/iu.test(value) ||
+    /\.jsonl?$/iu.test(value) ||
+    /\.log$/iu.test(value);
+}
+
+function agentAvatarLabel(label: string): string {
+  const normalized = label.trim();
+  if (!normalized) {
+    return "A";
+  }
+  if (/^[\x00-\x7F]+$/.test(normalized)) {
+    const words = normalized.split(/[\s._-]+/u).filter(Boolean);
+    if (words.length > 1) {
+      return words.slice(0, 2).map((word) => word[0]?.toUpperCase() ?? "").join("") || "A";
+    }
+    const compact = normalized.replace(/[^A-Za-z0-9]/g, "");
+    return compact.length <= 2 ? compact.toUpperCase() : compact[0]?.toUpperCase() ?? "A";
+  }
+  return Array.from(normalized)[0] ?? "A";
+}
+
+function WorkCellRowIcon({ tone }: { readonly tone: ConversationWorkCellRow["tone"] | "neutral" }): JSX.Element {
+  if (tone === "running") {
+    return <Loader2 className="spin" size={13} />;
+  }
+  if (tone === "waiting") {
+    return <ShieldCheck size={13} />;
+  }
+  if (tone === "failed") {
+    return <CircleAlert size={13} />;
+  }
+  if (tone === "success") {
+    return <CheckCircle2 size={13} />;
+  }
+  return <Clock3 size={13} />;
 }

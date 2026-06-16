@@ -1202,17 +1202,7 @@ export function TeammateWorkspace({
     const existing = current.find((membership) => membership.channelId === channelId);
     const next = existing
       ? current.filter((membership) => membership.channelId !== channelId)
-      : [...current, { channelId, isDefault: current.length === 0 }];
-    await saveChannelMemberships(next);
-  }
-
-  async function setDefaultChannel(channelId: string): Promise<void> {
-    const current = memberships.map((membership) => ({ channelId: membership.channelId, isDefault: membership.isDefault }));
-    const hasMembership = current.some((membership) => membership.channelId === channelId);
-    const next = current.map((membership) => ({ ...membership, isDefault: membership.channelId === channelId }));
-    if (!hasMembership) {
-      next.push({ channelId, isDefault: true });
-    }
+      : [...current, { channelId }];
     await saveChannelMemberships(next);
   }
 
@@ -2171,12 +2161,11 @@ export function TeammateWorkspace({
               {channels.map((channel) => {
                 const membership = membershipByChannelId.get(channel.id);
                 const joined = Boolean(membership);
-                const isDefault = Boolean(membership?.isDefault || channel.defaultTeammateId === teammate.id);
                 return (
                   <article key={channel.id} className="teammate-data-row teammate-channel-row">
                     <span>
                       <strong>{channel.name}</strong>
-                      <small>{isProtectedSystemTeammate ? t("Built-in coordinator") : isDefault ? t("Channel default") : joined ? t("Joined channel") : t("Not joined")}</small>
+                      <small>{isProtectedSystemTeammate ? t("Built-in coordinator") : joined ? t("Joined channel") : t("Not joined")}</small>
                     </span>
                     <div className="teammate-channel-actions">
                       <StatusBadge status={channel.status} />
@@ -2187,10 +2176,6 @@ export function TeammateWorkspace({
                           <button className="secondary-button compact-button" type="button" onClick={() => void toggleChannelMembership(channel.id)} disabled={savingChannels}>
                             {joined ? <X size={14} /> : <Plus size={14} />}
                             {joined ? t("Leave") : t("Join")}
-                          </button>
-                          <button className="secondary-button compact-button" type="button" onClick={() => void setDefaultChannel(channel.id)} disabled={savingChannels || isDefault}>
-                            <CheckCircle2 size={14} />
-                            {isDefault ? t("Default teammate") : t("Set default")}
                           </button>
                         </>
                       )}

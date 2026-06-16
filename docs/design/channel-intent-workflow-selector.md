@@ -52,6 +52,23 @@ does not decide whether Ling Agent receives the turn, and it must not reduce the
 plain text. Attachments, link previews, workspace file refs, and active-run guidance are
 part of the classifier input.
 
+The classifier also does not own the conversation UI. Its output is one input to Ling
+Agent Session and the shared `ConversationTranscript` projector. The UI should not render
+"ordinary chat" and "execution work" as two unrelated product modes. They are coordinator
+outcomes inside the same turn model:
+
+```text
+TurnEnvelope
+  -> TargetResolver
+  -> IntentRouter outcome
+  -> workflow/run/approval/message records
+  -> ConversationTranscript blocks
+```
+
+Default display is decided by transcript block semantics, not by selector labels and not
+by generated coordinator wording. A future Web or Desktop renderer must not parse phrases
+such as `确认需求`, `完成`, or `执行` to decide what UI shape to show.
+
 ## Current Implementation
 
 The current implementation is deterministic by default and uses Ling-native persistence.
@@ -139,6 +156,10 @@ The selector is not a product surface. It may create route decisions, proposals,
 workflow entries as internal execution primitives, but the ordinary UI should translate
 those primitives into Ling Agent outcomes: answer, clarify, confirm task, run progress,
 approval needed, final result, or evidence.
+
+Those outcomes are still not final UI templates. They become transcript blocks through the
+shared conversation projector: coordinator text, operation cells, agent activity spans,
+approval blocks, artifact strips, and raw/detail refs.
 
 The intent selector may:
 

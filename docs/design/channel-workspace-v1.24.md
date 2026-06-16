@@ -1,13 +1,18 @@
 # Channel Workspace v1.24 Right Drawer Workspace
 
+Status: superseded on 2026-06-16 for drawer progress and context ownership. The current
+right drawer root pages are Files and Settings; active progress belongs to the floating
+popover, durable progress belongs to the transcript, and context/source detail is opened
+only from explicit detail or developer-debug affordances.
+
 ## Summary
 
 v1.24 turns the channel right side into a Codex-like multi-page drawer while keeping chat
 as the permanent center workspace.
 
-The drawer is a light detail area, not a second primary page. The root drawer pages are:
+The drawer is a light detail area, not a second primary page. Current root drawer pages
+are:
 
-- Progress
 - Files
 - Context
 - Settings
@@ -96,7 +101,7 @@ It does not show raw audit payloads or long activity logs in the channel drawer.
 - `...` opens root drawer pages only.
 - The header settings icon opens the Settings drawer page.
 - The attention/progress icon opens the progress popover when the drawer is hidden and
-  attention items exist; otherwise it opens the Progress drawer page.
+  active progress exists; otherwise it does not open the drawer.
 - Opening the right drawer hides the progress popover.
 - Opening the teammate manager hides the progress popover and the right drawer.
 - The right drawer has no duplicate close button inside the drawer body; the header
@@ -115,7 +120,8 @@ It does not show raw audit payloads or long activity logs in the channel drawer.
 ## Acceptance Criteria
 
 - Chat remains the fixed center surface while right-side pages change.
-- Root drawer pages are Progress, Files, Context, and Settings.
+- Root drawer pages are Files and Settings; Progress and Context are not ordinary root
+  pages.
 - Task and approval details are reachable as drill-down pages, not permanent tabs.
 - Current-channel settings do not expose add-channel, theme, or language controls.
 - Progress is bound to current-channel state and stays empty when the channel has no

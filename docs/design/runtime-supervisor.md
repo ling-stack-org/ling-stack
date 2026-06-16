@@ -80,12 +80,18 @@ CLI         --+                         |
                                         +--> core state machines
                                         +--> storage
                                         +--> runner/provider/tool adapters
+                                        +--> shared conversation transcript projector
 ```
 
 The desktop app may start, stop, and monitor the daemon, but it must not become a second
 runtime. The web app may run from Vite or be embedded inside the desktop shell, but it
 must not call a runner directly. The CLI is also a client over the same daemon API unless
 it is explicitly performing setup work before the daemon exists.
+
+The same rule applies to conversation projection: clients may render transcript data, but
+the daemon/core layer owns the semantic projection from channel messages, workflows, runs,
+approvals, artifacts, and interventions into `ConversationTranscript`. Web, Desktop, and
+CLI must not each invent their own lifecycle interpretation for active and completed work.
 
 ## Runtime Identity
 
@@ -876,9 +882,11 @@ diagnostic.stuck_detected
 - Discovers or starts the daemon.
 - Uses the same API client as Web.
 - Shows daemon health, runtime identity, and background status.
+- Renders the same shared conversation transcript snapshot/delta contract as Web.
 - Can expose tray controls for stop/restart after confirmation.
 - Does not own active runs or direct runner state.
 - Does not create a second daemon for the same workspace.
+- Does not own conversation projection or parse message body phrases as state.
 
 ### CLI
 
@@ -886,6 +894,8 @@ diagnostic.stuck_detected
 - Can run setup commands before daemon startup.
 - Sends idempotency keys for start/cancel/retry/approve.
 - Can print diagnostic views for active, stuck, leases, and semaphores.
+- Can render the shared transcript as plain text or TUI cells, but does not own the
+  transcript projector.
 
 ## Startup Recovery
 
@@ -1022,6 +1032,7 @@ The supervisor must preserve existing security boundaries:
 - Desktop shows runtime identity and health.
 - Desktop uses shared API client.
 - Desktop never owns active runtime state.
+- Desktop consumes shared conversation transcript snapshot/delta state.
 - Add tests for Web plus desktop-style client connecting to one daemon.
 
 ## Test Plan

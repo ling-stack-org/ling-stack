@@ -141,7 +141,6 @@ export function SettingsPage({
   onOpenExternalWorkRecords,
   onOpenExternalWorkTriage,
   onOpenRunDiagnostics,
-  onOpenChannelProtocol,
   onRefreshMcp,
   onArchivedItemsChanged,
   onCreateMcpServer,
@@ -220,7 +219,6 @@ export function SettingsPage({
   readonly onOpenExternalWorkRecords: () => void;
   readonly onOpenExternalWorkTriage: () => void;
   readonly onOpenRunDiagnostics: () => void;
-  readonly onOpenChannelProtocol: () => void;
   readonly onRefreshMcp: () => void;
   readonly onArchivedItemsChanged?: () => void | Promise<void>;
   readonly onCreateMcpServer: (form: McpServerFormState) => Promise<void>;
@@ -589,21 +587,6 @@ export function SettingsPage({
               <option value="zh-CN">{t("Chinese")}</option>
               <option value="en-US">{t("English")}</option>
             </select>
-          </div>
-          <div className="interface-preference-row">
-            <span>
-              <ShieldCheck size={16} />
-              <strong>{t("Channel protocol")}</strong>
-              <small>{selectedChannel ? selectedChannel.name : t("No channel selected")}</small>
-            </span>
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={onOpenChannelProtocol}
-              disabled={!selectedChannel}
-            >
-              {t("Open editor")}
-            </button>
           </div>
         </div>
       </section>

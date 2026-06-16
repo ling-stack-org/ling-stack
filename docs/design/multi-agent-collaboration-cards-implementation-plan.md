@@ -1,6 +1,6 @@
 # Multi-Agent Collaboration Cards Implementation Plan
 
-Status: first implementation slice plan.
+Status: superseded for main-feed conversation UI; retained as historical context.
 Date: 2026-06-13
 
 Related docs:
@@ -13,6 +13,14 @@ Related docs:
 - [State Machines and Recovery](state-machine-recovery.md)
 
 ## Purpose
+
+2026-06-15 update: this document must not be used as the source of truth for the channel
+main conversation feed. Main-feed collaboration cards have been superseded by
+[Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md) and
+[Conversation UI Design Conformance Recovery Plan](conversation-ui-design-conformance-recovery-plan.md).
+The remaining valid use of this document is historical context for the original
+collaboration-card read model. Current UI must use the transcript, floating progress
+popover, and detail drawer boundaries from the active conversation UI documents.
 
 This plan implements the first visible product loop from today's design work:
 
@@ -315,12 +323,13 @@ Focused tests to add or update:
 
 ## Phase CCI6: Right Panel Collaboration Task Card
 
-Status: second implementation slice.
+Status: historical slice; superseded by the no-Progress-drawer transcript model.
 
 ### Goal
 
-Make the channel right-side Progress panel use `CollaborationTaskCardModel` as the
-primary product surface for workflow-backed collaboration.
+Historical goal: make the old channel right-side Progress panel use
+`CollaborationTaskCardModel` as the primary product surface for workflow-backed
+collaboration. Current UI must not restore this surface.
 
 The right panel should answer these questions without exposing orchestration internals:
 
@@ -408,7 +417,8 @@ entry point.
 
 ### Acceptance
 
-- Active/blocked/completed workflow cards appear in the right Progress panel.
+- Historical acceptance: active/blocked/completed workflow cards appeared in the old
+  right-side progress panel. This is no longer the active product model.
 - The card shows owner, execution mode, progress count, next action or blocker, and up
   to 6 step rows.
 - Completed workflow cards do not expand every completed step in the main Progress

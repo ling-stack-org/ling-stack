@@ -343,17 +343,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect.poll(() => state.teammateChannelMemberships.some((item) =>
     isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_design"
   )).toBe(true);
-  await designRow.getByRole("button", { name: "Set default" }).click();
-  await expect.poll(() => {
-    const design = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_design");
-    return isRecord(design) ? design.defaultTeammateId : undefined;
-  }).toBe(teammateId);
+  await expect(designRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
   await expect.poll(() => {
     const membership = state.teammateChannelMemberships.find((item) =>
       isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_design"
     );
     return isRecord(membership) ? membership.isDefault : false;
-  }).toBe(true);
+  }).toBe(false);
   const engineeringRow = page.locator(".teammate-channel-row").filter({ hasText: "Engineering" });
   await engineeringRow.getByRole("button", { name: "Leave" }).click();
   await expect.poll(() => state.teammateChannelMemberships.some((item) =>
@@ -482,7 +478,9 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
   await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
   const channelTeammateManager = page.getByLabel("Channel teammates");
-  await expect(channelTeammateManager.locator(".channel-teammate-chip.default")).toContainText("Renamed Engineer");
+  const renamedEngineerChip = channelTeammateManager.locator(".channel-teammate-chip").filter({ hasText: "Renamed Engineer" });
+  await expect(renamedEngineerChip).toBeVisible();
+  await expect(renamedEngineerChip).not.toHaveClass(/default/);
 
   await page.reload();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Engineer" }).click();
@@ -525,8 +523,9 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
   await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
-  const channelChipWithAvatar = page.getByLabel("Channel teammates").locator(".channel-teammate-chip.default").filter({ hasText: "Imported QA Persona" });
+  const channelChipWithAvatar = page.getByLabel("Channel teammates").locator(".channel-teammate-chip").filter({ hasText: "Imported QA Persona" });
   await expect(channelChipWithAvatar.locator(".teammate-avatar-image")).toBeVisible();
+  await expect(channelChipWithAvatar).not.toHaveClass(/default/);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Imported QA Persona" }).click();
   await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();

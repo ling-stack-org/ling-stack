@@ -38,6 +38,7 @@ import {
   readWorkflowStepContextPacketArtifact,
   readWorkflowStepOutputPacketArtifact,
 } from "./workflow-step-packets.js";
+import { listExecutionActions } from "../runs/execution-actions.js";
 import {
   buildChannelCollaborationCardsFromStore,
   buildWorkflowCollaborationCardFromStore,
@@ -1033,13 +1034,8 @@ function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus)
 }
 
 function workflowTerminalCoordinatorReplyBodyIsPresent(body: string): boolean {
-  return (
-    /\b(I finished|I stopped|I could not finish)\b/i.test(body) ||
-    /我已完成|我已停止|我没能完成/u.test(body)
-  ) && (
-    /\bevidence summary\b/i.test(body) ||
-    /打开工作证据|展开下方证据摘要/u.test(body)
-  );
+  return /\b(Done|Stopped|Not completed):\s*"/i.test(body) ||
+    /^(完成|已停止|未完成)：/u.test(body);
 }
 
 function workflowTerminalCoordinatorReplyBody(
@@ -1051,20 +1047,20 @@ function workflowTerminalCoordinatorReplyBody(
   const blocker = workflowTerminalBlocker(workflow, steps, language);
   if (language === "en-US") {
     if (workflow.status === "succeeded") {
-      return `I finished "${title}". The main result is here; expand the evidence summary below for files, checks, and run details.`;
+      return `Done: "${title}".`;
     }
     if (workflow.status === "cancelled") {
-      return `I stopped "${title}". Expand the evidence summary below for files, checks, and run details.`;
+      return `Stopped: "${title}".`;
     }
-    return `I could not finish "${title}". Reason: ${blocker}. Expand the evidence summary below for files, checks, and run details.`;
+    return `Not completed: "${title}". Reason: ${blocker}.`;
   }
   if (workflow.status === "succeeded") {
-    return `我已完成「${title}」。主结果已收束到这里；需要核对具体文件、检查和运行细节时，展开下方证据摘要即可查看。`;
+    return `完成：「${title}」。`;
   }
   if (workflow.status === "cancelled") {
-    return `我已停止「${title}」。需要核对具体文件、检查和运行细节时，展开下方证据摘要即可查看。`;
+    return `已停止：「${title}」。`;
   }
-  return `我没能完成「${title}」。原因：${blocker}。需要核对具体文件、检查和运行细节时，展开下方证据摘要即可查看。`;
+  return `未完成：「${title}」。原因：${blocker}。`;
 }
 
 function workflowTerminalBlocker(
@@ -1102,6 +1098,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
   readonly handoffIntents: ReturnType<RunStore["listWorkflowHandoffIntents"]>;
   readonly handoffs: readonly ChannelHandoff[];
   readonly approvals: ReturnType<RunStore["listApprovalRequests"]>;
+  readonly actions: ReturnType<typeof listExecutionActions>;
   readonly artifacts: readonly RunArtifact[];
   readonly memoryCandidates: readonly {
     readonly memory: MemoryObject;
@@ -1126,6 +1123,9 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
     .map((handoffId) => handoffId ? store.getChannelHandoff(handoffId) : undefined)
     .filter((handoff): handoff is ChannelHandoff => Boolean(handoff));
   const approvals = steps.flatMap((step) => store.listApprovalRequests({ workflowStepId: step.id, limit: 500 }));
+  const actions = uniqueExecutionActions(evidenceSteps.flatMap((step) =>
+    step.linkedRun ? listExecutionActions(store, { runId: step.linkedRun.id, limit: 500 }) : [],
+  ));
   const artifacts = uniqueArtifacts(evidenceSteps.flatMap((step) => [...step.packetArtifacts, ...step.linkedArtifacts]));
   return {
     workflow,
@@ -1134,6 +1134,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
     handoffIntents,
     handoffs,
     approvals,
+    actions,
     artifacts,
     memoryCandidates: collectWorkflowMemoryCandidates(store, workflow, steps, artifacts),
   };
@@ -1228,6 +1229,23 @@ function buildWorkflowStepEvidenceSourceIds(store: RunStore, step: ChannelWorkfl
     ...(step.metadata?.outputArtifactIds ?? []),
     ...(step.runId ? store.listArtifacts(step.runId).map((artifact) => artifact.id) : []),
   ].filter((id): id is string => Boolean(id)));
+}
+
+function uniqueExecutionActions(actions: ReturnType<typeof listExecutionActions>): ReturnType<typeof listExecutionActions> {
+  const seen = new Set<string>();
+  const result: ReturnType<typeof listExecutionActions> = [];
+  for (const action of actions) {
+    if (seen.has(action.id)) {
+      continue;
+    }
+    seen.add(action.id);
+    result.push(action);
+  }
+  return result.sort((left, right) =>
+    (right.completedAt ?? right.executedAt ?? right.resolvedAt ?? right.createdAt)
+      .localeCompare(left.completedAt ?? left.executedAt ?? left.resolvedAt ?? left.createdAt) ||
+    right.id.localeCompare(left.id),
+  );
 }
 
 function renderWorkflowStepContextPackPrompt(pack: ContextPack): string {

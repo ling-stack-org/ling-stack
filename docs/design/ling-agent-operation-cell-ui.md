@@ -20,20 +20,21 @@ Ling Stack should merge two interaction models:
 
 1. Codex-style operation cells: a running action is one semantic cell that mutates in
    place, commits once, and hides raw details behind evidence.
-2. Multi-agent branch visibility, inspired by Grok-like agent surfaces: several
+2. Multi-agent activity visibility, inspired by Grok-like agent surfaces: several
    specialist agents may work in parallel, but the user sees one coordinated task
    surface and one final answer, not a separate chat transcript for every agent.
 
-The default channel feed should read like this:
+The default channel feed is a cell stream, not a fixed report template. A turn may
+contain coordinator text, operation rows, agent spans, artifact rows, or only an answer,
+depending on the normalized events for that turn:
 
 ```text
 user request
-Ling Agent coordinator message, only when useful
-active operation cell
-  compact multi-agent branch rows
-  compact operation rows
-terminal Ling Agent summary
-folded evidence summary
+Ling Agent transcript
+  TranscriptBlock[]
+    coordinator text, only when useful
+    OperationCell / AgentActivitySpan / ArtifactStrip as needed
+    terminal result text, when there is a result to summarize
 ```
 
 It should not read like this:
@@ -72,6 +73,23 @@ This layer sits between daemon/runtime records and React components. It is respo
 turning noisy event streams into user-facing cells before any component decides typography,
 spacing, iconography, drawer width, or animation.
 
+The first implementation can live in Web while the visible interaction is corrected, but
+the layer is not a Web-only concept. The stable form should be a shared semantic
+`ConversationTranscript` contract produced by daemon/core and consumed by Web, Desktop,
+and CLI renderers:
+
+```text
+daemon/core projection
+  -> ConversationTranscript / TranscriptBlock[]
+  -> Web renderer
+  -> Desktop renderer
+  -> CLI/TUI renderer
+```
+
+CLI may render transcript blocks as terminal rows, but it must not become the owner of
+conversation projection. Desktop may use native macOS styling, but it must consume the
+same semantic transcript rather than copying Web grouping logic.
+
 Non-goals:
 
 - introducing `workflow`, `run`, `work-unit`, `packet`, or `raw event` as first-level user
@@ -87,29 +105,27 @@ The missing layer is not another runtime abstraction. It is a Web UI projection 
 that turns existing conversation, workflow, run, approval, artifact, and teammate records
 into a Codex-style transcript with Ling-specific multi-agent actors.
 
-The target feed shape is:
+The target feed shape is deliberately heterogeneous:
 
 ```text
 ConversationTurn
   UserMessageCell
-  CoordinatorMessageCell
-  AgentActivitySpan[]
-    AgentHeader
-    OperationCell[]
-      OperationDisplayLine
-      TranscriptDetail?
-    ActiveCell?
-  CoordinatorSummaryCell
-  ArtifactStrip?
+  LingAgentTranscript
+    blocks: TranscriptBlock[]
 ```
 
-For single-agent work:
+`TranscriptBlock` is an ordered stream. It can contain coordinator text,
+assistant text, operation cells, agent activity spans, approval cells, artifact strips,
+and raw/detail references. A block appears only when the underlying semantic event needs
+that user-facing shape. Do not pad every turn into the same set of headings.
+
+For single-agent work, a possible rendering is:
 
 ```text
 User: 创建一个 login.html...
 
-Ling Agent:
-确认需求：创建 login.html，包含邮箱、密码、记住我和登录按钮。
+Ling Agent
+可以，先创建 login.html，并做一次基础检查。
 
 读取项目结构和现有入口 ˅
 创建 login.html ˅
@@ -118,17 +134,15 @@ Ling Agent:
   Read package.json
   $ node --check login.html
 
-Ling Agent:
-完成：login.html 已创建。检查通过。
-
+login.html 已创建，检查通过。
 产物 login.html · 变更 1 个文件 · 检查 2 项通过
 ```
 
-For serial multi-agent work:
+For serial multi-agent work, a possible rendering is:
 
 ```text
-Ling Agent:
-确认需求：创建 login.html。该任务交给 Engineer 实现。
+Ling Agent
+这个任务交给 Engineer 实现，QA 做验收。
 
 Engineer
   查看项目结构 ˅
@@ -139,15 +153,14 @@ QA
   验证页面 ˅
   截图检查 ˅
 
-Ling Agent:
-完成：login.html 已创建。检查通过。协作队友：Engineer、QA。
+login.html 已创建，检查通过。协作队友：Engineer、QA。
 ```
 
 For parallel multi-agent work, the default feed shows one compact branch per active
 teammate and only the latest active row for each branch:
 
 ```text
-Ling Agent:
+Ling Agent
 拆成两个并行任务：Engineer 实现，QA 准备验收。
 
 Engineer
@@ -159,6 +172,10 @@ QA
 
 The user's default reading path is the coordinator narrative and the latest state. Older
 per-agent rows remain folded under the corresponding `AgentActivitySpan`.
+
+These examples are illustrative only. They must not become string templates or parser
+rules. The UI structure comes from the semantic projection, not from matching phrases
+such as `确认需求` or `完成`.
 
 ## Raw Event Normalizer
 
@@ -255,6 +272,36 @@ UI layers:
 `Actor` and `AgentActivitySpan` so multi-agent work does not become either raw internal
 chat or a separate collaboration card system.
 
+## Codex Source Alignment
+
+The Codex source review on 2026-06-16 creates these Ling design constraints. These are
+framework rules, not visual-copy rules.
+
+| Codex source area | Observed mechanism | Ling rule |
+| --- | --- | --- |
+| `chatwidget.rs` | `active_cell` mutates while a tool/stream is in flight, then `flush_active_cell()` inserts the finalized cell into history. | A running operation updates the same `OperationCell`; terminal state commits the same cell instead of appending a replacement summary. |
+| `chatwidget/transcript.rs` | `TranscriptState` owns `active_cell`, `active_cell_revision`, turn flags, and copyable agent markdown. | Keep turn state separate from visible copy. Do not infer UI structure by matching generated coordinator text. |
+| `chatwidget/turn_lifecycle.rs` | `agent_turn_running` is derived turn state, independent of any one history cell or overlay. | Running popover/composer affordances derive from turn lifecycle and active cells, and must clear when the turn finishes. |
+| `history_cell/mod.rs` | Each `HistoryCell` provides `display_lines`, `raw_lines`, and optional `transcript_lines`. | Every Ling cell needs display, expanded, and raw/detail render contracts. The main feed cannot be the raw/debug surface. |
+| `exec_cell/model.rs` | `ExecCell` stores command calls keyed by `call_id`; output chunks append to that call; `complete_call` records output and duration. | Command/tool/file/check operations must have stable operation ids and update their own state in place. Stdout chunks update evidence, not the feed row list. |
+| `exec_cell/render.rs` | Exec display switches `Running` to `Ran`/`You ran`; read/list/search calls coalesce into `Exploring`/`Explored`; tool output defaults to bounded lines. | Low-level exploration commands group under semantic rows. User-meaningful commands get compact rows with bounded inline output and full raw detail elsewhere. |
+| `history_cell/search.rs` | `WebSearchCell` changes `Searching the web` to `Searched the web` by toggling cell state. | Lightweight browser/search/memory cells use the same status mutation pattern: running label becomes terminal label on the same row. |
+| `pager_overlay.rs` | Transcript overlay owns committed cells plus a cached live tail derived from the current active cell; cache key changes on revision/animation/width. | Right drawer/detail can include active live detail, but it must not duplicate the main transcript. Active detail must refresh when a cell mutates. |
+| `chatwidget/streaming.rs` | Assistant text deltas stream through a controller, then consolidate into one final markdown cell; reasoning deltas update status, not transcript. | Coordinator/assistant prose is streamed text inside the same turn transcript, not fixed start/end cards. Internal reasoning/status must not become default conversation rows. |
+
+The transferable model is:
+
+```text
+raw event
+  -> semantic cell route
+  -> active mutable cell
+  -> terminal committed cell
+  -> display / expanded / raw render modes
+```
+
+The non-transferable part is Codex's terminal UI implementation. Ling should not clone
+Ratatui layout, terminal keybindings, or English labels such as `Running` and `Ran`.
+
 ## Cell Render Contract
 
 Every user-facing cell supports three render modes. Components may style these modes
@@ -302,9 +349,10 @@ Render-mode rules:
 | Surface | Owns | Must not own |
 | --- | --- | --- |
 | Main conversation feed | user messages, coordinator narrative, operation display rows, active cell, final summary, artifact strip | raw event logs, duplicate collaboration cards, workflow/run ids |
-| Floating run popover | current running state, active actor, elapsed time, interrupt affordance, latest one-line action | full transcript, raw output, historical collaboration record |
-| Right drawer | deep detail, raw/debug transcript, file preview, diff, cross-task Progress/Files/Context/Settings pages | a second copy of the main conversation or the same inline evidence |
+| Floating run popover | current running state, active actor, elapsed time, interrupt affordance, latest one-line action, compact source icons while active | full transcript, raw output, historical collaboration record |
+| Right drawer | deep detail, raw/debug transcript, source detail, file preview, diff, cross-task Files/Context/Settings pages | active progress, a second copy of the main conversation, or the same inline evidence |
 | Inline expansion | semantic evidence needed for normal audit | unbounded logs, JSON dumps, provider metadata |
+| Source summary strip | compact evidence sources from tools, web, memory, files, and apps | operation history, raw events, internal helper tools |
 | Modal / blocking view | approval, missing input, permission change, destructive confirmation | passive status or historical logs |
 | Composer active-work affordance | normal send, queue follow-up, stop-and-redirect | hidden prompt injection or implicit interruption |
 
@@ -371,8 +419,9 @@ Coordinator narrative
 | `UserMessageCell` | durable user message | attachments and file refs can expand inline |
 | `CoordinatorMessageCell` | Ling Agent narrative, plan, clarification, or final result | no raw logs; links to the related operation when needed |
 | `OperationCell` | one compact task/process cell, active or terminal | expands to semantic operation rows and evidence |
-| `AgentBranchRow` | one compact row per participating teammate | expands to branch-specific output and evidence |
+| `AgentActivitySpan` | one compact latest-action row per participating teammate | expands to prior semantic actions and evidence refs |
 | `ApprovalCell` | visible only when user authority is needed | expands to command/action payload and policy context |
+| `SourceSummaryStrip` | compact source icons in active popover or detail surfaces | expands in right drawer to source names, urls, tool/app metadata, and related operation refs |
 | `EvidenceDetail` | never shown by default | exact files, commands, outputs, raw events, JSON, logs |
 
 `Workflow`, `Run`, `WorkUnit`, `Attempt`, `Packet`, and `RouteDecision` are data model
@@ -396,6 +445,10 @@ Ling Agent messages are not for:
 
 Rules:
 
+- A user turn with executable work renders one `ConversationTurnAssistantTranscript`.
+  The start copy, operation cell, and terminal copy are segments inside the same Ling
+  Agent transcript row. They must not render as two separate Ling Agent replies with
+  duplicated avatar/header chrome.
 - A started task should not create both a coordinator "start" message and a separate
   "work started" cell unless the coordinator message carries meaningful planning or
   safety context.
@@ -427,19 +480,22 @@ Core rules:
 - If a fact already appears in an operation row, coordinator copy should add judgement or
   result, not repeat the same status.
 
-Default message patterns:
+Message examples, not required prefixes:
 
 | Situation | Pattern | Example |
 | --- | --- | --- |
-| Scope confirmation | `确认需求：{task}。` | `确认需求：创建 login.html，包含邮箱、密码和登录按钮。` |
-| Safe delegation | `{task} 交给 {agent}。` | `实现交给 Engineer，验收交给 QA。` |
-| Parallel split | `拆成 {n} 个并行任务：{agent-task-list}。` | `拆成两个并行任务：Engineer 实现，QA 准备验收。` |
-| Clarification | `需要确认：{question}` | `需要确认：登录页是否要接入真实 API？` |
-| Blocked | `阻塞：{reason}。{next-action}` | `阻塞：缺少写入权限。批准后继续修改文件。` |
-| Waiting approval | `等待审批：{action}` | `等待审批：运行 pnpm install。` |
-| Completed | `完成：{result}。{verification}` | `完成：login.html 已创建。检查通过。` |
-| Interrupted | `已中断：{reason}。` | `已中断：按新的方向重新处理。` |
-| Cancelled | `已取消：{task}。` | `已取消：未继续运行检查。` |
+| Scope context | natural acknowledgement or plan, only when useful | `可以，先创建 login.html，并做一次基础检查。` |
+| Safe delegation | natural delegation sentence | `实现交给 Engineer，验收交给 QA。` |
+| Parallel split | compact split sentence | `拆成两个并行任务：Engineer 实现，QA 准备验收。` |
+| Clarification | direct question | `登录页是否要接入真实 API？` |
+| Blocked | reason plus next action | `缺少写入权限。批准后继续修改文件。` |
+| Waiting approval | action that needs authority | `等待审批：运行 pnpm install。` |
+| Completed | result and useful verification | `login.html 已创建，检查通过。` |
+| Interrupted | what changed and what follows | `已按新的方向停止当前处理。` |
+| Cancelled | cancellation result | `已取消，未继续运行检查。` |
+
+No implementation may parse these strings to decide whether a message is start,
+terminal, delegated, or blocked. That structure must come from turn/cell metadata.
 
 Operation row copy:
 
@@ -498,10 +554,10 @@ Agent finished task successfully.
 Accepted replacements:
 
 ```text
-Ling Agent：确认需求：创建 login.html。
+Ling Agent：可以，先创建 login.html。
 Engineer：正在修改 login.html。
 QA：等待实现完成后验收。
-Ling Agent：完成：login.html 已创建。检查通过。协作队友：Engineer、QA。
+Ling Agent：login.html 已创建，检查通过。协作队友：Engineer、QA。
 产物 login.html · 变更 1 个文件 · 检查 2 项通过
 ```
 
@@ -547,10 +603,12 @@ interface OperationCell {
   readonly coordinatorMessageId?: string;
   readonly title: string;
   readonly status: OperationCellStatus;
+  readonly displayLabel: string;
+  readonly terminalLabel?: string;
   readonly summary: string;
   readonly activeOperation?: OperationRow;
   readonly operationRows: readonly OperationRow[];
-  readonly agentBranches: readonly AgentBranchRow[];
+  readonly agentSpans: readonly AgentActivitySpan[];
   readonly evidenceSummary: EvidenceSummary;
   readonly evidenceKey: string;
   readonly updatedAt: string;
@@ -561,14 +619,15 @@ interface OperationRow {
   readonly kind: OperationKind;
   readonly status: OperationCellStatus;
   readonly label: string;
+  readonly activeLabel?: string;
+  readonly terminalLabel?: string;
   readonly summary?: string;
   readonly durationMs?: number;
   readonly evidenceKey?: string;
 }
 
-interface AgentBranchRow {
+interface AgentActivitySpan {
   readonly id: string;
-  readonly teammateId: string;
   readonly teammateName: string;
   readonly roleLabel?: string;
   readonly status: OperationCellStatus;
@@ -579,7 +638,9 @@ interface AgentBranchRow {
 ```
 
 The UI can derive this model from current workflow, run, approval, artifact, and
-legacy collaboration records before adding new storage.
+legacy collaboration records before adding new storage. Labels are state-derived:
+`activeLabel` renders while running, and `terminalLabel` replaces it on the same row
+after success, failure, cancellation, or blocking.
 
 ## OperationCell Micro-Spec
 
@@ -667,7 +728,7 @@ Section limits:
 | checks | 5 checks | show failed checks first |
 | approvals | 3 decisions | most recent first |
 | artifacts | 4 items | remaining artifacts counted |
-| agent branch history | latest 3 semantic actions per agent | full branch transcript in drawer |
+| agent activity history | latest 3 semantic actions per agent | full sub-agent transcript in drawer |
 | raw event ids | hidden | drawer only |
 
 Command detail shape:
@@ -695,12 +756,24 @@ Check detail shape:
 Update behavior:
 
 - `running` mutates the same row text and status icon.
+- Running labels and terminal labels are two states of the same row. Example:
+  `正在连接浏览器` becomes `已连接浏览器`; it must not append a second row.
 - New semantic actions append under the same `OperationCell` only when they are new
   user-visible steps.
 - Raw stdout chunks do not append rows. They update bounded command output in expanded
   detail or raw detail.
 - `succeeded`, `failed`, `blocked`, `cancelled`, and `interrupted` are terminal for the
   visible row unless a linked redirect creates a new operation.
+
+Command/tool row rules:
+
+- User-meaningful commands can show one command row in the transcript.
+- Read/list/search commands should coalesce into an exploration/read-context row unless
+  one command changes the user's next action.
+- Command output is bounded in inline expanded detail. Full stdout/stderr, exit code,
+  raw command array, environment, and call ids belong in raw/detail.
+- Output chunks mutate the command row's evidence; they do not create visible rows.
+- Completion records duration and status on the same row.
 
 ## AgentActivitySpan Micro-Spec
 
@@ -731,6 +804,14 @@ Display variants:
 | completed collaboration | show names in final coordinator summary and artifact strip | branch details stay folded |
 | direct teammate chat | teammate owns the conversation surface | not an `AgentActivitySpan` |
 
+Ordering rules:
+
+- Preserve the first semantic appearance order of participating agents inside the
+  workflow transcript. Status changes may change row tone, but they must not reorder
+  spans by severity, state, or label.
+- The coordinator terminal line uses the same agent order as the visible
+  `AgentActivitySpan` rows.
+
 State table:
 
 | Agent status | Default text | Visibility |
@@ -741,7 +822,7 @@ State table:
 | blocked | `{agent} · 阻塞：{reason}` | visible and emphasized |
 | failed | `{agent} · 失败：{summary}` | visible until coordinator handles it |
 | cancelled | `{agent} · 已取消` | visible only if user initiated or affects result |
-| succeeded | `{agent} · 完成：{result}` | collapses after coordinator summary |
+| succeeded | `{agent} · {result summary}` | collapses after coordinator summary |
 
 Latest-action update rules:
 
@@ -751,15 +832,48 @@ Latest-action update rules:
 - If an agent emits a useful assistant summary, use that as `resultSummary`.
 - If an agent only emits tool activity, synthesize a semantic action from the tool kind.
 - Do not show raw agent internal reasoning by default.
+- Completion changes the default row state; it does not delete the agent's process.
+  Historical semantic actions remain available behind that agent row.
+- Do not surface generic internal step verbs as user-facing latest actions. `Consult`,
+  `Review`, `Coordinate`, `Coordinated`, `Reviewed`, and `flagged_risk` are fallback
+  implementation labels, not conversation copy.
 
 History folding:
 
 ```text
-Engineer · 完成：login.html 已创建
+Engineer · login.html 已创建
   查看项目结构
   修改 login.html
   检查通过
 ```
+
+Lifecycle:
+
+```text
+running:
+Engineer
+  正在修改 login.html
+
+completed, default:
+Engineer
+  修改 login.html 完成
+
+completed, expanded:
+Engineer
+  查看项目结构
+  修改 login.html
+  运行检查
+```
+
+Coordinator message projection:
+
+- Start and terminal coordinator messages are semantic display bodies in the default
+  transcript. Generated request text such as `开始 workflow: ... Smoke ID: ...` is not
+  repeated back to the user.
+- Start copy confirms scope and delegation.
+- Terminal copy reports the result and, when applicable, the teammate names.
+- Raw coordinator message text can remain reachable through audit/detail surfaces, but
+  not in the default conversation reading path.
 
 Folded history limits:
 
@@ -836,10 +950,14 @@ Root pages:
 
 | Root page | Purpose | Default content |
 | --- | --- | --- |
-| Progress | current-channel active work and attention | latest operation status, pending approvals, blockers |
 | Files | artifacts and attachments | changed files, generated files, previews |
 | Context | decisions, memory, handoffs | brief, decisions, referenced context |
 | Settings | current-channel configuration | channel teammate/runtime/provider settings |
+
+There is intentionally no `Progress` root page. Active progress is owned by the floating
+popover; completed or durable progress is owned by the main transcript. Task and approval
+views remain drawer detail pages only when opened from explicit task or approval
+affordances.
 
 Operation detail pages are drill-down pages, opened from explicit operation, artifact,
 approval, or raw-detail actions. They are not root tabs.
@@ -875,7 +993,8 @@ Drawer copy rules:
 
 - Drawer titles use nouns: `操作详情`, `Raw detail`, `文件变更`, `审批详情`.
 - The drawer may show internal ids only inside folded raw sections.
-- The drawer should not repeat `完成：...` if the main feed already has the final summary.
+- The drawer should not repeat the final result sentence if the main feed already has the
+  final summary.
 - The drawer can show exact command/output text because the user explicitly asked for detail
   by opening it.
 
@@ -920,6 +1039,44 @@ Default row text must be user-readable and short. Raw command strings, stdout, J
 stack traces, provider metadata, token budgets, packet ids, and event ids go into
 `EvidenceDetail`.
 
+## Status Copy Canon
+
+Codex's TUI does not treat `active`, `queued`, and `done` as default transcript
+copy. Those states drive a cell lifecycle, while the visible row uses a semantic
+verb phrase owned by that cell:
+
+- search: `Searching the web` mutates into `Searched the web`;
+- command: `Running <cmd>` mutates into `Ran <cmd>`;
+- grouped context gathering: `Exploring` mutates into `Explored`;
+- the bottom running indicator stays short, usually `Working`, and only adds
+  concise details when they help the user interrupt or inspect the task.
+
+Ling should follow the same rule in localized product copy:
+
+| Internal lifecycle | Default transcript copy | Meta/status chip |
+| --- | --- | --- |
+| queued/open | `等待开始：{semantic action}` only when no better action exists | hidden by default |
+| running/claimed | `正在{semantic action}` or the latest action text | hidden by default |
+| waiting_for_approval | `等待审批：{approval/action}` | visible until resolved |
+| blocked | `阻塞：{reason/action}` | visible |
+| failed | `未完成：{reason/action}` | visible |
+| cancelled/superseded | `已停止：{action}` | visible only when it affects outcome |
+| succeeded/skipped | `{semantic action}` or `已完成：{action}` when no action verb exists | hidden by default |
+
+Implementation rules:
+
+- `Done`, `Active`, `Queued`, and `Completed` are internal lifecycle words, not
+  default row copy for the main transcript.
+- A row should not show both a semantic title and a generic status chip when the
+  title already communicates the state.
+- `AgentActivitySpan.stateLabel` is reserved for waiting, blocked, failed, or
+  cancelled states. Running and completed spans rely on the latest action row.
+- Operation row `meta` is reserved for approval/failure/blocker diagnostics,
+  command snippets, or bounded evidence hints. It must not repeat lifecycle enum
+  values.
+- The same row may mutate from running wording to terminal wording. Completion
+  freezes the row; it does not append a second `Done` row.
+
 ## Active Lifecycle
 
 Operation cells follow a single mutable lifecycle:
@@ -927,7 +1084,7 @@ Operation cells follow a single mutable lifecycle:
 ```text
 user message committed
 -> operation cell created as queued/running
--> operation rows and agent branch rows mutate in place
+-> operation rows and AgentActivitySpan rows mutate in place
 -> evidence bundle grows behind the disclosure
 -> terminal status commits once
 -> final coordinator summary appears or updates
@@ -988,7 +1145,7 @@ Inline folded evidence can show:
 - changed files;
 - checks;
 - approval decisions;
-- compact agent branch outputs;
+- compact agent activity outputs;
 - artifact links;
 - context/evidence counts.
 
@@ -1008,6 +1165,65 @@ Right drawer behavior:
   inline transcript detail.
 - Do not render a separate "open work evidence" button inside an operation group that
   already has expandable evidence summary.
+
+## Source Summary Strip
+
+Codex Desktop's environment popover has a useful pattern: it summarizes sources from
+structured turn items, not from assistant prose. Ling should use the same idea without
+copying the exact UI.
+
+`SourceSummaryStrip` is an evidence summary, not a transcript cell that explains progress.
+It answers "what external or contextual sources were involved?" with compact icons and
+tooltips.
+
+Source inputs:
+
+| Input event | Source kind | Default icon | Detail target |
+| --- | --- | --- | --- |
+| MCP/tool call from a user-meaningful server | `tool` or `app` | app logo, plugin icon, or tool glyph | tool detail, MCP server metadata, related operation |
+| web search/open page/find in page | `web` | globe | browser/open url, web search detail |
+| memory recall or project memory citation | `memory` | memory glyph | memory citation detail |
+| file/doc/image attachment or referenced workspace file | `file` | file glyph | file preview or artifact detail |
+| generated artifact used as context | `artifact` | artifact glyph | artifact detail |
+
+Filtering rules:
+
+- Do not show internal helper tools as sources: `node_repl`, projector/internal daemon
+  helpers, raw shell wrappers, setup/cleanup glue, event normalizers, or hidden model
+  routing helpers.
+- Do not infer sources from coordinator text. Sources come from structured event,
+  attachment, memory, tool, browser, and artifact records.
+- Deduplicate by stable semantic key: tool server/app id, normalized URL, memory id,
+  workspace file path, or artifact id.
+- Prefer user-facing names from plugin/app metadata. If no metadata exists, use a short
+  sanitized server or host label. Raw ids appear only in drawer raw detail.
+- Keep failed or cancelled source attempts only when they affected the user-visible result
+  or blocker.
+
+Lifecycle:
+
+```text
+turn started
+  -> sourceRefs empty
+tool/web/memory/file event observed
+  -> append or update sourceRef on the owning operation/agent span
+active popover
+  -> shows compact source icons while the turn is active
+turn completed
+  -> sourceRefs freeze as committed evidence summary
+right drawer detail
+  -> shows source name, type, target, related operation, and raw detail ref
+```
+
+Placement:
+
+- Main feed does not show a standalone `Sources` card.
+- Operation expanded detail may show a short source count or inline icon strip when it
+  helps normal audit.
+- The right floating popover may show compact icons because it is already an active status
+  surface.
+- The right drawer owns the source detail page. It must not repeat the main transcript or
+  final coordinator result.
 
 ## User Input During Active Work
 
@@ -1054,6 +1270,21 @@ Keep visible:
 
 ## Implementation Slices
 
+Phase 1 implementation is limited to the core message framework:
+
+```text
+ConversationTranscriptTurn
+  -> coordinator text blocks
+  -> OperationCell blocks
+  -> AgentActivitySpan blocks
+  -> terminal text blocks
+  -> ArtifactStrip blocks
+```
+
+P0-P8 and the main-feed parts of P11 belong to Phase 1. P9 and P10 are later surface
+work. They must consume the transcript model after it is stable; they must not define the
+message structure or become a workaround for missing operation/agent history.
+
 ### P0. Normalizer Contract
 
 Add a pure projection normalizer before React rendering. It accepts raw event envelopes and
@@ -1089,14 +1320,15 @@ Acceptance:
 - no extra runtime rows appear for routine events;
 - stale completions do not override cancelled/interrupted visible state.
 
-### P3. Multi-Agent Branch Rows
+### P3. AgentActivitySpan Projection
 
-Render participating teammates as compact branch rows inside the operation cell.
+Render participating teammates as compact `AgentActivitySpan` rows inside the operation
+cell.
 
 Acceptance:
 
-- multi-agent work shows branch status without separate teammate chat spam;
-- branch detail expands inline;
+- multi-agent work shows agent status without separate teammate chat spam;
+- agent detail expands inline with semantic process rows;
 - final Ling Agent summary synthesizes the result.
 
 ### P4. Evidence Detail Boundary
@@ -1152,6 +1384,47 @@ Acceptance:
 - command output is bounded to the row limits defined in this document;
 - rows with no semantic detail do not show a disclosure affordance.
 
+Expanded detail v1 acceptance:
+
+- detail groups render as transcript sections (`Changed`, `Checks`, `Evidence`,
+  `Attention`) with no card border, background, chip shell, or dashboard header;
+- group headers may show a short count, but they must not describe UI mechanics or where
+  to find deeper logs;
+- rows show only user-semantic text by default: file path, check name, failed reason,
+  approval state, or bounded output excerpt;
+- raw artifact types such as `file`, `diff`, `json`, `log`, and terminal storage names
+  are not visible row metadata in the main transcript;
+- successful terminal states are represented by the row tone or artifact strip, not by
+  visible `succeeded` / `completed` status words;
+- if a row title and description are the same apart from owner prefix or punctuation, keep
+  one visible line and remove the row chevron;
+- evidence links render as plain transcript links; they must not become chips, cards, or
+  a second report surface;
+- the same fact should not be repeated across coordinator text, operation row, expanded
+  row, and drawer. When duplication is unavoidable in legacy data, prefer the most useful
+  semantic surface and hide raw/internal variants.
+
+Command/tool/file detail row v1:
+
+- `ExecutionAction` rows may appear inside expanded `Evidence` when they carry a
+  user-meaningful command, file, tool, approval, or output artifact reference.
+- Workflow evidence may include `ExecutionAction[]` as a read-model projection from
+  linked runs. This is not new workflow storage; it lets workflow transcripts keep the
+  same folded command/file/check process rows as thread-backed runs.
+- Each action row keeps one default label. Its expanded detail may show up to 5 bounded
+  lines:
+  - one command line as `$ {command}`;
+  - up to 3 file paths touched by the action;
+  - one tool/server label when it is user-meaningful;
+  - one output summary such as `2 outputs recorded`.
+- The inline detail never shows tool call ids, run ids, work-unit ids, artifact ids,
+  event ids, raw JSON/log paths, provider metadata, environment variables, or full
+  stdout/stderr.
+- If more details exist than fit in the 5-line cap, show a count summary instead of
+  streaming more rows.
+- Failed actions may show the bounded failure summary inline because it changes the
+  user's next action. Successful actions should avoid generic `succeeded` copy.
+
 ### P8. AgentActivitySpan Rendering
 
 Render multi-agent work as compact agent spans inside the same task transcript.
@@ -1169,6 +1442,8 @@ Acceptance:
 
 ### P9. Floating Run Popover Boundary
 
+Later surface, not Phase 1.
+
 Keep the right floating status surface, but restrict it to ambient active-work state.
 
 Acceptance:
@@ -1183,11 +1458,14 @@ Acceptance:
 
 ### P10. Right Drawer Detail Boundary
 
+Later surface, not Phase 1.
+
 Keep the right drawer as a detail/workspace surface, not a duplicate transcript.
 
 Acceptance:
 
-- drawer root pages remain `Progress`, `Files`, `Context`, and `Settings`;
+- drawer root pages remain `Files` and `Settings`; context/source detail is opened only
+  from explicit detail affordances, and active progress remains in the floating popover;
 - operation detail pages open only from explicit drill-down actions;
 - drawer `Summary` does not repeat the coordinator final message;
 - drawer `Timeline` uses timestamped semantic events, not copied main-feed rows;

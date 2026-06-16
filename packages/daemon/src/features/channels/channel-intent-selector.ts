@@ -1309,10 +1309,10 @@ function looksWorkShapedButUnderspecified(text: string): boolean {
 
 function selectProposalParticipants(input: ChannelIntentSelectorInput, reasonCode: IntentReasonCode):
   readonly ProposalParticipantSelection[] {
-  const activeSpecialists = input.store
+  const channelSpecialists = input.store
     .listAiTeammates({ status: "active", includeHidden: false, limit: 100 })
-    .filter((teammate) => !isLingAgentExecutorId(teammate.id));
-  const byRole = new Map(activeSpecialists.map((teammate) => [teammate.roleKey, teammate]));
+    .filter((teammate) => !isLingAgentExecutorId(teammate.id) && teammateCanReplyInChannel(input.store, input.channel, teammate.id));
+  const byRole = new Map(channelSpecialists.map((teammate) => [teammate.roleKey, teammate]));
   const text = input.sourceMessage.body.toLowerCase();
   const selectedRoles = reasonCode === "all_teammates_request"
     ? roleMatches.filter((role) => byRole.has(role.roleKey)).slice(0, 5)

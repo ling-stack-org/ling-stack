@@ -2032,7 +2032,7 @@ test("channel intent selector creates workflow proposals for execution-shaped al
     assert.equal(proposals.proposals[0].assigneeTeammateId, "teammate_builtin_engineer");
     assert.deepEqual(
       proposals.proposals[0].collaborationSteps.map((step) => step.teammateId),
-      ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa", "teammate_builtin_designer", "teammate_builtin_product-strategist"],
+      ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"],
     );
     assert.equal(proposals.proposals[0].responseLanguage, "zh-CN");
     assert.match(proposals.proposals[0].prompt, /建议协作步骤/);
@@ -2054,6 +2054,53 @@ test("channel intent selector creates workflow proposals for execution-shaped al
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
     assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
     assert.match(decisions.decisions[0].reason, /Workflow proposal created from channel intent/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel intent selector does not assign specialists outside current channel", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-roster-boundary-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    for (const teammateId of ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"]) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Architect 先拆，Engineer 实现，QA 验证",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 0);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].assigneeTeammateId, "ling_agent");
+    assert.equal(proposals.proposals[0].proposedByTeammateId, "ling_agent");
+    assert.deepEqual(proposals.proposals[0].collaborationSteps.map((step) => step.teammateId), ["ling_agent"]);
+    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
+    assert.doesNotMatch(proposals.proposals[0].prompt, /Engineer:|QA:|Architect:/);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
+    assert.equal(decisions.decisions[0].action, "workflow_proposal");
+    assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7251,21 +7298,21 @@ function assertCoordinatorWorkflowStartReply(result) {
   assert.equal(result.aiReply.status, "ready");
   assert.equal(result.aiReply.threadId, result.message.id);
   assert.equal(result.aiReply.authorId, "ling_agent");
+  assert.match(result.aiReply.body, /确认需求/);
   assert.match(result.aiReply.body, /开始处理/);
-  assert.match(result.aiReply.body, /主会话/);
-  assert.match(result.aiReply.body, /工作证据|折叠证据摘要/);
+  assert.doesNotMatch(result.aiReply.body, /主会话/);
+  assert.doesNotMatch(result.aiReply.body, /工作证据|折叠证据摘要/);
 }
 
 function assertCoordinatorWorkflowTerminalReply(messages) {
   const reply = messages.find((message) =>
     message.kind === "ai_reply" &&
     message.authorId === "ling_agent" &&
-    /我已完成|I finished/.test(message.body) &&
-    /打开工作证据|展开下方证据摘要|evidence summary/i.test(message.body)
+    /^(完成：|Done:)/u.test(message.body)
   );
   assert.ok(reply, "expected Ling Agent workflow terminal summary reply");
   assert.equal(reply.status, "ready");
-  assert.match(reply.body, /我已完成/);
+  assert.doesNotMatch(reply.body, /我已完成|I finished|打开工作证据|展开下方证据摘要|evidence summary/i);
 }
 
 function assertIntentDecisionInspectPayloadIsSafe(decision) {

@@ -30,9 +30,10 @@ Conversation timeline
 ```
 
 While work is running, the conversation should show a sparse, auditable stream of action
-items. When work completes, Ling should automatically collapse those items into a compact
-turn result. Expanding the result should show how Ling got there. Raw diagnostics stay
-behind explicit drill-down.
+items. When work completes, Ling should keep those actions in the transcript as committed
+folded cells instead of deleting or replacing them with a one-line summary. Expanding a
+completed cell should show how Ling got there. Raw diagnostics stay behind explicit
+drill-down.
 
 ## Related Docs
 
@@ -40,6 +41,8 @@ behind explicit drill-down.
 - [Thread-First Work History Implementation Plan](thread-first-work-history-implementation-plan.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
+- [Contracts and API Client](contracts-api-client.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Work Board, Review Queue, and Inline Approval Boundaries](work-board-review-queue.md)
 
@@ -83,11 +86,58 @@ LingThread
       -> Evidence item
 ```
 
+That durable model is not the same object as the user-visible conversation transcript.
+The conversation UI should project the durable/runtime records into a separate semantic
+read model:
+
+```text
+LingThread / channel messages / runs / approvals / artifacts
+  -> ConversationTranscript
+    -> ConversationTranscriptTurn
+      -> TranscriptBlock[]
+```
+
+`LingTurn` is the durable work-intent boundary. `ConversationTranscriptTurn` is the
+renderable user-turn container. `TranscriptBlock` is the display unit that can represent
+coordinator prose, an operation cell, an agent activity span, approval state, artifact
+strip, or raw-detail reference. This distinction matters because a user turn can contain
+ordinary coordinator conversation without creating extra work records, while a work turn
+can render many operation blocks without creating many chat messages.
+
+### Phase 1 Implementation Boundary
+
+The first implementation phase for the conversation UI is the transcript message
+framework only:
+
+```text
+existing channel/runtime records
+  -> ConversationTranscriptTurn
+     -> TranscriptBlock[]
+        coordinator_text
+        operation_cell
+        agent_activity_span
+        coordinator_text
+        artifact_strip
+```
+
+Phase 1 must prove that:
+
+- one executable user task normally renders as one assistant transcript turn;
+- start text, operation cells, agent spans, terminal text, and artifacts are blocks inside
+  that turn;
+- active operation blocks mutate in place;
+- terminal operation blocks commit as folded history, not deleted process rows;
+- multi-agent process rows remain folded under `AgentActivitySpan`;
+- coordinator copy is never parsed by fixed phrases such as `确认需求` or `完成`.
+
+Right floating popover, right drawer, and source-summary affordances are later surfaces.
+They consume `ConversationTranscriptTurn`; they do not define or repair it.
+
 ## V2 Product Goals
 
 - Show active work inside channel/private conversation as sparse live item rows.
-- Collapse completed work into a compact turn result summary.
-- Let users expand completed summaries to audit grouped items without reading raw event
+- Commit completed operation rows as folded transcript history under the same user turn.
+- Let users expand completed operation rows to audit grouped items without reading raw event
   streams.
 - Anchor resume, fork, archive, search, and Review Queue links to a stable turn boundary.
 - Keep Work History as the global index across channels, teammates, automations,
@@ -106,18 +156,25 @@ LingThread
   content.
 - Do not display hidden model reasoning. V2 displays auditable actions and evidence, not
   private chain-of-thought.
+- Do not force coordinator messages into fixed copy templates such as `确认需求`, `完成`,
+  `执行`, or `结论`. Those phrases can appear naturally, but structure must come from
+  metadata and block kinds.
 
 ## User-Facing Information Architecture
 
 ### Conversation Default
 
-The conversation feed should default to ordinary messages plus turn-level work items:
+The conversation feed should default to ordinary messages plus transcript blocks that
+belong to the same user turn:
 
 ```text
 User message
-Active turn item stream
+ConversationTranscriptTurn
+  -> coordinator text
+  -> active or committed operation cells
+  -> agent activity spans when collaboration is involved
+  -> terminal coordinator text and artifact strip
 User follow-up
-Completed turn result summary
 ```
 
 Active turns answer what Ling is doing now without exposing hidden reasoning:
@@ -127,7 +184,7 @@ Active turns answer what Ling is doing now without exposing hidden reasoning:
 - which tool, file, command, test, browser check, or external work item is involved;
 - whether the action succeeded, failed, was cancelled, or is still running.
 
-Completed turn summaries answer:
+Terminal coordinator text and artifact strips answer:
 
 - What did the user ask for?
 - What was completed or blocked?
@@ -158,8 +215,8 @@ thread/turn/run data. They should differ by density, not by source of truth.
 ### Active Turn Stream
 
 While a turn is active, V2C should render Codex-inspired item rows inline in the
-conversation. These rows are transient presentation of auditable actions, not durable
-reasoning:
+conversation. These rows are semantic presentation of auditable actions, not durable
+reasoning and not raw event rows:
 
 ```text
 Ling is working...
@@ -179,8 +236,9 @@ Rules:
 - never render hidden model reasoning or private chain-of-thought;
 - render approval decisions in the composer-adjacent temporary approval overlay, not as
   a normal transcript row with inline buttons;
-- when the turn completes, replace the live stream with the completed summary by
-  default while preserving the ability to expand details.
+- when the turn completes, mutate the same active row to a terminal committed row and
+  fold it by default; do not delete it and do not replace it with only a coordinator
+  summary.
 
 ### Composer Approval Overlay
 
@@ -569,6 +627,17 @@ Create a turn when a work-triggering intent is accepted:
 Do not create a turn for every normal chat message unless that message creates or
 continues executable work.
 
+This rule is about durable work records, not about UI rendering. The conversation feed may
+still render a `ConversationTranscriptTurn` for a user message that only needs coordinator
+prose, clarification, or discussion. That UI turn does not require a `LingTurn` unless it
+creates executable work, continues a previous work turn, queues a follow-up, redirects an
+active run, or records an external work update.
+
+Do not infer this boundary by matching assistant copy. A message that says `确认需求` is not
+automatically a work turn, and a message that omits `完成` can still be terminal. The
+materialization decision must come from intent selection, target resolution, runtime
+state, and explicit turn metadata.
+
 ### Status Reconciliation
 
 Turn status is derived from linked runs and explicit interventions:
@@ -641,6 +710,59 @@ Build active stream rows and completed grouped item rows from existing evidence:
 If derived item rows become slow or inconsistent, introduce a rebuildable
 `ling_turn_process_items` cache later. Do not make it authoritative in V2A.
 
+## Conversation Transcript Read Model
+
+The turn item read model feeds two different products:
+
+- Conversation transcript: sparse, user-facing, Codex-like display/expanded/raw layers.
+- Work History detail: denser audit and recovery view over the same turn/run/evidence
+  records.
+
+Do not make the Web component tree the permanent owner of this grouping. The stable shape
+should be a shared `ConversationTranscript` contract owned by daemon/core projection and
+defined in `packages/contracts`.
+
+```text
+raw runtime/channel records
+  -> semantic projector
+  -> ConversationTranscript
+    -> ConversationTranscriptTurn
+      -> TranscriptBlock
+        -> display surface
+        -> expanded surface
+        -> raw/detail reference
+```
+
+Projection rules:
+
+- one user task should normally produce one `ConversationTranscriptTurn` in the main feed;
+- coordinator start text, operation cells, agent spans, terminal text, and artifacts are
+  blocks inside that same turn, not separate `Ling Agent` replies;
+- `OperationCell` blocks use stable ids, mutate while active, and commit in place when
+  terminal;
+- command output chunks, file diffs, browser snapshots, and raw JSON events update
+  evidence on an existing block or detail ref instead of creating default-feed spam;
+- multi-agent work uses `AgentActivitySpan` blocks that show the latest action by default
+  and keep prior semantic operations folded under the span;
+- raw/detail fields are referenced from blocks and rendered only in expanded/raw surfaces,
+  not duplicated in the main transcript or right drawer root.
+
+`LingTurn` and `ConversationTranscriptTurn` can be related but are not identical:
+
+| Concept | Owner | Purpose | Example |
+| --- | --- | --- | --- |
+| `LingTurn` | daemon durable work store | executable intent, lineage, resume/fork/archive anchors | a task run, queued follow-up, interrupt redirect |
+| `ConversationTranscriptTurn` | shared transcript projection | one user-visible turn in channel/private conversation | user request plus coordinator prose, operation cells, agent spans, terminal summary |
+| `TranscriptBlock` | shared transcript projection | renderable semantic unit with lifecycle | operation cell, agent activity span, approval state, artifact strip |
+
+This split prevents three common failures:
+
+1. creating durable work rows for every normal chat message;
+2. splitting one user task into multiple `Ling Agent` replies because start text and
+   terminal text were stored as unrelated messages;
+3. deleting completed process rows because the final coordinator summary is treated as a
+   replacement for the active stream.
+
 ## API Design
 
 ### Additive V2 APIs
@@ -652,6 +774,8 @@ GET /threads/:threadId/turns?cwd=...
 POST /threads/:threadId/turns?cwd=...
 GET /threads/:threadId/evidence?cwd=...&turnId=...
 GET /threads/:threadId/process?cwd=...&turnId=...
+GET /channels/:channelId/transcript?cwd=...
+GET /threads/:threadId/transcript?cwd=...
 POST /threads/:threadId/resume-preview?cwd=...&turnId=...
 POST /threads/:threadId/resume?cwd=...&turnId=...
 POST /threads/:threadId/fork?cwd=...
@@ -660,6 +784,10 @@ POST /threads/:threadId/archive?cwd=...
 POST /threads/:threadId/pin?cwd=...
 GET /threads?cwd=...&q=...
 ```
+
+The transcript endpoints are read-model endpoints. They should return
+`ConversationTranscript` snapshots and, later, sequence-aware delta streams. They should
+not expose raw run events as the default response shape.
 
 ### Preserve Existing APIs
 
@@ -1984,8 +2112,10 @@ No migration should rewrite old run logs or event JSONL files.
 
 ## Open Decisions
 
-- Should teammate direct chat work share `LingTurn`, or should direct-message records
-  point to turns only when work is created?
+- For teammate direct messages, the default should be no `LingTurn`. Direct-message
+  records point to turns only when executable work is created, continued, queued, or
+  redirected. The remaining open decision is the exact API field name for that optional
+  link.
 - Should `metadata_json` live on `ling_threads`, or should it be a separate
   `ling_thread_metadata` table?
 - Should turn ids be daemon-only, or can Web allocate optimistic ids?
@@ -1999,11 +2129,17 @@ No migration should rewrite old run logs or event JSONL files.
 V2 is complete when:
 
 - every new executable user intent has a durable `LingTurn`;
-- conversation feed can show active item streams while work is running;
-- completed work auto-collapses into result-first summaries;
-- users can expand summaries to inspect grouped items and evidence;
+- conversation feed consumes a shared `ConversationTranscript` read model;
+- active operation blocks mutate in place while work is running;
+- completed operation blocks commit as folded transcript history instead of being deleted
+  or replaced by the final summary;
+- one user task normally renders as one assistant transcript turn with start text,
+  operation cells, agent spans, terminal text, and artifacts as blocks;
+- users can expand operation cells and agent spans to inspect grouped items and evidence;
 - Work History can show the same turn with richer audit detail;
 - turn-linked resume/fork/search/archive works;
 - Work Board and Review Queue route to turn or attempt anchors correctly;
 - direct run detail still works;
-- raw logs and hidden reasoning are not default conversation content.
+- raw logs and hidden reasoning are not default conversation content;
+- Web, Desktop, and CLI render the same transcript contract instead of each owning
+  independent phrase-based grouping logic.

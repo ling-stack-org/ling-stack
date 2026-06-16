@@ -127,7 +127,7 @@ The visible hierarchy is:
 ```text
 CoordinatorMessageCell
 OperationCell
-  AgentBranchRow[]
+  AgentActivitySpan[]
   OperationRow[]
   EvidenceDisclosure
 EvidenceDetail / RightDrawer, only for raw or cross-task drilldown
@@ -224,7 +224,7 @@ Rules:
 - show only one active strip per conversation surface,
 - do not duplicate the same state inside every message row,
 - if multiple runs are active, summarize the highest-priority item and link to the
-  right drawer Progress page,
+  active progress popover or explicit detail target,
 - normal Send remains a normal message action and is not an implicit run interrupt.
 
 ## Conversation Data Contract
@@ -791,13 +791,12 @@ Rules:
 
 ### Drawer Page Detail
 
-Progress page:
+Progress drawer page (retired):
 
-- active runs,
-- queued follow-ups,
-- pending approvals,
-- blocked work,
-- recent completed summaries.
+- The right drawer no longer exposes this root page.
+- Active runs, queued follow-ups, pending approvals, and blocked work appear in the
+  floating popover or explicit task/approval detail targets.
+- Recent completed summaries stay in the main transcript.
 
 Files page:
 
