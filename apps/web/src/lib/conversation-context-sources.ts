@@ -1,4 +1,4 @@
-import type { ChannelWorkflowStepContextPacket, WorkflowContextInspectSummary } from "../types.js";
+import type { ChannelContextSummary, ChannelWorkflowStepContextPacket, WorkflowContextInspectSummary } from "../types.js";
 import type { Translate } from "../i18n.js";
 
 type WorkflowContextPackSnapshot = NonNullable<ChannelWorkflowStepContextPacket["contextPack"]>;
@@ -15,6 +15,7 @@ export interface ConversationContextSourceGroup {
   readonly label: string;
   readonly count: number;
   readonly examples: readonly string[];
+  readonly refs: readonly ConversationContextSourceRefLike[];
 }
 
 export interface ConversationContextSourceSummary {
@@ -63,6 +64,25 @@ export function buildConversationContextSourceSummaryFromPacket(
   return buildConversationContextSourceSummaryFromPack(pack, t);
 }
 
+export function buildConversationContextSourceSummaryFromChannelSummary(
+  summary: ChannelContextSummary,
+  t: Translate,
+): ConversationContextSourceSummary {
+  const sourceRefs: ConversationContextSourceRefLike[] = [
+    ...summary.sourceMessageIds.map((id) => ({ type: "message", id })),
+    ...summary.decisionIds.map((id) => ({ type: "decision", id })),
+  ];
+  if (sourceRefs.length === 0) {
+    sourceRefs.push({ type: "context_summary", id: summary.id, label: t("Context summary") });
+  }
+  return buildConversationContextSourceSummary({
+    sourceRefs,
+    droppedCount: 0,
+    compactionCount: 0,
+    t,
+  });
+}
+
 export function buildConversationContextSourceSummaryFromPack(
   pack: WorkflowContextPackSnapshot,
   t: Translate,
@@ -98,6 +118,7 @@ function buildConversationContextSourceSummary(input: {
     readonly type: string;
     readonly label: string;
     readonly examples: string[];
+    readonly refs: ConversationContextSourceRefLike[];
     count: number;
   }>();
 
@@ -108,11 +129,12 @@ function buildConversationContextSourceSummary(input: {
     const type = sanitizeContextSourceType(ref.type);
     const label = contextSourceTypeLabel(type, input.t);
     const key = `${type}:${label}`;
-    const existing = grouped.get(key) ?? { type, label, examples: [], count: 0 };
+    const existing = grouped.get(key) ?? { type, label, examples: [], refs: [], count: 0 };
     const example = userFacingSourceExample(ref);
     if (example && !existing.examples.includes(example) && existing.examples.length < 3) {
       existing.examples.push(example);
     }
+    existing.refs.push({ ...ref, type });
     existing.count += 1;
     grouped.set(key, existing);
   }
@@ -125,6 +147,7 @@ function buildConversationContextSourceSummary(input: {
       label: group.label,
       count: group.count,
       examples: group.examples,
+      refs: group.refs,
     }));
 
   return {
@@ -159,6 +182,12 @@ function sanitizeContextSourceType(type: string): string {
 function contextSourceTypeLabel(type: string, t: Translate): string {
   if (type === "message" || type === "channel_message" || type === "private_message") {
     return t("Messages");
+  }
+  if (type === "decision" || type === "channel_decision") {
+    return t("Decisions");
+  }
+  if (type === "context_summary" || type === "summary") {
+    return t("Context summaries");
   }
   if (type === "file" || type === "workspace_file" || type === "attachment") {
     return t("Files");

@@ -8,22 +8,60 @@ export function UsedMemorySummary({
   memoryById,
   maxItems = 4,
   compact = false,
+  variant = "panel",
 }: {
   readonly events: readonly UsedMemoryEvent[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly maxItems?: number;
   readonly compact?: boolean;
+  readonly variant?: "panel" | "footer";
 }): JSX.Element | null {
   const { t } = useI18n();
-  const memoryIds = uniqueMemoryIds(events).slice(0, maxItems);
-  if (events.length === 0 || memoryIds.length === 0) {
+  const allMemoryIds = uniqueMemoryIds(events);
+  const memoryIds = allMemoryIds.slice(0, maxItems);
+  if (events.length === 0 || allMemoryIds.length === 0) {
     return null;
   }
 
-  const overflowCount = Math.max(0, uniqueMemoryIds(events).length - memoryIds.length);
-  const latestEvent = events[0];
+  const overflowCount = Math.max(0, allMemoryIds.length - memoryIds.length);
+  const latestEvent = latestUsedMemoryEvent(events);
+  const className = `used-memory-summary${compact ? " compact" : ""}${variant === "footer" ? " footer" : ""}`;
+  if (variant === "footer") {
+    const recallQueries = uniqueStrings(events.map((event) => event.recallQuery.trim()).filter(Boolean)).slice(0, 2);
+    return (
+      <details className={className} aria-label={t("Used memory")}>
+        <summary>
+          <span className="used-memory-summary-footer-label">
+            <Database size={12} />
+            {formatUsedMemoryCount(t, allMemoryIds.length)}
+          </span>
+          <small>{formatDateTime(latestEvent.createdAt)}</small>
+        </summary>
+        <div className="used-memory-summary-footer-body">
+          <ul>
+            {memoryIds.map((memoryId) => {
+              const memory = memoryById.get(memoryId);
+              const sourceSummary = memory ? formatSourceRefs(memory) : "";
+              return (
+                <li key={memoryId}>
+                  <span>{memory?.title ?? shortMemoryId(memoryId)}</span>
+                  {memory ? <small>{`${t("Scope")}: ${formatMemoryScope(memory)}`}</small> : null}
+                  {sourceSummary ? <small>{`${t("Source")}: ${sourceSummary}`}</small> : null}
+                </li>
+              );
+            })}
+          </ul>
+          {overflowCount > 0 ? <small className="used-memory-overflow">{t("+{count} more memory items", { count: overflowCount })}</small> : null}
+          {recallQueries.length > 0 ? (
+            <small className="used-memory-recall-query">{`${t("Recall")}: ${recallQueries.join(" · ")}`}</small>
+          ) : null}
+        </div>
+      </details>
+    );
+  }
+
   return (
-    <div className={`used-memory-summary${compact ? " compact" : ""}`} aria-label={t("Used memory")}>
+    <div className={className} aria-label={t("Used memory")}>
       <div className="used-memory-summary-head">
         <span>
           <Database size={13} />
@@ -72,6 +110,30 @@ function uniqueMemoryIds(events: readonly UsedMemoryEvent[]): readonly string[] 
   return ids;
 }
 
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
+}
+
+function latestUsedMemoryEvent(events: readonly UsedMemoryEvent[]): UsedMemoryEvent {
+  return [...events].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? events[0];
+}
+
+function formatUsedMemoryCount(t: ReturnType<typeof useI18n>["t"], count: number): string {
+  return count === 1 ? t("Used 1 memory") : t("Used {count} memories", { count });
+}
+
 function shortMemoryId(memoryId: string): string {
   return memoryId.length > 24 ? `${memoryId.slice(0, 20)}...` : memoryId;
+}
+
+function formatMemoryScope(memory: MemoryObject): string {
+  return `${memory.scopeType}:${memory.ownerId}`;
+}
+
+function formatSourceRefs(memory: MemoryObject): string {
+  return memory.sourceRefs
+    .slice(0, 2)
+    .map((sourceRef) => sourceRef.label?.trim() || sourceRef.url?.trim() || `${sourceRef.type}:${sourceRef.id}`)
+    .filter(Boolean)
+    .join(" · ");
 }

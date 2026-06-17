@@ -404,6 +404,12 @@ Used memory
 The first UI can be compact. The important part is that memory use is visible and
 inspectable.
 
+Conversation UI projection is covered by
+[Conversation Memory Citations And Sources](conversation-memory-citations-and-sources.md).
+The memory runtime remains authoritative for scope, review, recall, and used-memory audit;
+the transcript layer should derive a message-level citation footer from `UsedMemoryEvent`
+and `MemoryObject` instead of replacing the memory data model.
+
 ## Write And Promotion Flow
 
 Memory should not write every token automatically. Writes should be candidate-based.
