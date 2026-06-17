@@ -5,6 +5,7 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   RunSession,
+  UsedMemoryEvent,
 } from "../types.js";
 import type { ConversationWorkCellViewModel } from "./conversation-work-cell.js";
 
@@ -21,6 +22,7 @@ export interface ConversationCoordinatorTextBlock {
   readonly kind: "coordinator_text";
   readonly phase: "start" | "terminal";
   readonly message: ChannelMessage;
+  readonly memoryCitationEvents: readonly UsedMemoryEvent[];
 }
 
 export interface ConversationOperationCellBlock {
@@ -55,6 +57,7 @@ export interface BuildConversationTurnProjectionInput {
   readonly workflows: readonly ChannelWorkflow[];
   readonly workflowSteps: readonly ChannelWorkflowStep[];
   readonly runs: readonly RunSession[];
+  readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly operationCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly operationCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly lingAgentAuthorId: string;
@@ -74,6 +77,12 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
   );
   const workflowById = new Map(input.workflows.filter((workflow) => workflow.channelId === input.channelId).map((workflow) => [workflow.id, workflow]));
   const runsById = new Map(input.runs.map((run) => [run.id, run]));
+  const usedMemoryEventsByResponseId = groupBy(
+    input.usedMemoryEvents
+      .filter((event) => Boolean(event.responseId) && (!event.channelId || event.channelId === input.channelId))
+      .sort(compareByCreatedAtThenId),
+    (event) => event.responseId ?? "",
+  );
   const rootMessages = channelMessages
     .filter(isRootUserMessage)
     .sort(compareByCreatedAtThenId);
@@ -94,10 +103,11 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
     const childMessages = (childMessagesByThreadId.get(sourceMessage.id) ?? []).sort(compareByCreatedAtThenId);
     const coordinatorMessages = childMessages.filter((message) => isLingAgentMessage(message, input.lingAgentAuthorId));
     const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell);
-    const blocks = buildTranscriptBlocks({ startMessages, terminalMessages, operation });
+    const blocks = buildTranscriptBlocks({ startMessages, terminalMessages, operation, usedMemoryEventsByResponseId });
     const updatedAt = maxIsoString([
       sourceMessage.updatedAt,
       ...coordinatorMessages.map((message) => message.updatedAt),
+      ...coordinatorMessages.flatMap((message) => (usedMemoryEventsByResponseId.get(message.id) ?? []).map((event) => event.createdAt)),
       operation?.cell.updatedAt,
     ]);
 
@@ -221,6 +231,7 @@ function buildTranscriptBlocks(input: {
   readonly startMessages: readonly ChannelMessage[];
   readonly terminalMessages: readonly ChannelMessage[];
   readonly operation: { readonly cell: ConversationWorkCellViewModel; readonly ref: ConversationTurnOperationRef } | undefined;
+  readonly usedMemoryEventsByResponseId: ReadonlyMap<string, readonly UsedMemoryEvent[]>;
 }): readonly ConversationTranscriptBlock[] {
   const blocks: ConversationTranscriptBlock[] = [];
   for (const message of input.startMessages) {
@@ -229,6 +240,7 @@ function buildTranscriptBlocks(input: {
       kind: "coordinator_text",
       phase: "start",
       message,
+      memoryCitationEvents: input.usedMemoryEventsByResponseId.get(message.id) ?? [],
     });
   }
   if (input.operation) {
@@ -245,6 +257,7 @@ function buildTranscriptBlocks(input: {
       kind: "coordinator_text",
       phase: "terminal",
       message,
+      memoryCitationEvents: input.usedMemoryEventsByResponseId.get(message.id) ?? [],
     });
   }
   return blocks;

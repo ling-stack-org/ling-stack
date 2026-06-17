@@ -501,6 +501,9 @@ Type: semantic evidence projection.
 Goal: summarize user-meaningful context sources from structured events without adding a
 new first-level card to the main conversation.
 
+Design source:
+[Conversation Memory Citations And Sources](conversation-memory-citations-and-sources.md).
+
 Suggested files:
 
 ```text
@@ -514,14 +517,17 @@ apps/web/src/shared/conversation/ConversationWorkCell.tsx
 Work:
 
 - Derive source refs from MCP/tool calls, web search/open page/find in page events,
-  memory citations, file refs, and artifacts.
+  context sources, file refs, and artifacts.
+- Keep memory citations separate: `UsedMemoryEvent + MemoryObject` projects into a
+  message-level memory footer, while memory may also contribute only a compact source
+  group count in the active source summary.
 - Filter internal helpers: `node_repl`, daemon glue, projector helpers, setup/cleanup
   wrappers, raw shell wrappers, and hidden routing tools.
 - Deduplicate by stable source key: tool/app id, normalized URL, memory id, file path, or
   artifact id.
 - Attach source refs to the owning operation or agent span before rendering.
-- Render compact icons only in active popover, inline expanded evidence, or right drawer
-  source detail. Do not render a standalone main-feed Sources card.
+- Render compact source icons only in active popover, inline expanded evidence, or right
+  drawer source detail. Do not render a standalone main-feed Sources card.
 
 Acceptance:
 
@@ -531,6 +537,7 @@ Acceptance:
 - Source refs remain available after terminal commit and do not disappear with active
   status.
 - Source detail does not duplicate the final coordinator answer or operation transcript.
+- Memory source detail does not duplicate the message-level memory citation footer.
 
 ### CUI7. Floating Run Popover Boundary
 
@@ -643,6 +650,9 @@ Type: Web detail and artifact strip.
 
 Goal: show useful outputs without turning evidence into card stacks.
 
+Design source:
+[Conversation Memory Citations And Sources](conversation-memory-citations-and-sources.md).
+
 Suggested files:
 
 ```text
@@ -657,7 +667,9 @@ Work:
 
 - Add a compact artifact strip under terminal coordinator summary when artifacts exist.
 - Show file paths, changed file count, and check count.
-- Show memory rows only when memory affected the answer.
+- Show message-level memory citation footer only when memory affected the answer. Do not
+  render memory as an OperationCell row unless the memory event is run-only and has no
+  owning assistant/coordinator message.
 - Keep full file previews and diffs in drawer detail.
 
 Acceptance:

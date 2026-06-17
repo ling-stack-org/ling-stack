@@ -422,10 +422,16 @@ Coordinator narrative
 | `AgentActivitySpan` | one compact latest-action row per participating teammate | expands to prior semantic actions and evidence refs |
 | `ApprovalCell` | visible only when user authority is needed | expands to command/action payload and policy context |
 | `SourceSummaryStrip` | compact source icons in active popover or detail surfaces | expands in right drawer to source names, urls, tool/app metadata, and related operation refs |
+| `MemoryCitationFooter` | compact used-memory footer under the owning coordinator/agent message | expands to memory title, scope, source refs, recall policy, and used-memory event ids |
 | `EvidenceDetail` | never shown by default | exact files, commands, outputs, raw events, JSON, logs |
 
 `Workflow`, `Run`, `WorkUnit`, `Attempt`, `Packet`, and `RouteDecision` are data model
 and audit terms. They should not appear as default UI labels in the main feed.
+
+Memory citations and source summaries follow
+[Conversation Memory Citations And Sources](conversation-memory-citations-and-sources.md).
+Memory citation is answer evidence. Source summary is context inventory. OperationCell is
+execution evidence.
 
 ## Coordinator Message Contract
 
@@ -1224,6 +1230,8 @@ Placement:
   surface.
 - The right drawer owns the source detail page. It must not repeat the main transcript or
   final coordinator result.
+- Used-memory detail belongs to the owning message's memory citation footer first. Source
+  summary may count memory as a source group, but must not duplicate the footer contents.
 
 ## User Input During Active Work
 

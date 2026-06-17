@@ -76,9 +76,12 @@ import { buildConversationTurnProjection, type ConversationTranscriptBlock, type
 import { buildCollaborationProgressProjection, type CollaborationProgressProjectionIcon, type CollaborationProgressProjectionItem, type CollaborationProgressProjectionTone } from "../../lib/collaboration-progress-projection.js";
 import { buildCollaborationTaskCardModel, type CollaborationTaskCardModel } from "../../lib/collaboration-task-card.js";
 import {
+  buildConversationContextSourceSummaryFromChannelSummary,
   buildConversationContextSourceSummaryFromInspect,
   buildConversationContextSourceSummaryFromPacket,
   conversationContextSourceSummaryLabel,
+  type ConversationContextSourceGroup,
+  type ConversationContextSourceRefLike,
   type ConversationContextSourceSummary,
 } from "../../lib/conversation-context-sources.js";
 import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
@@ -217,7 +220,7 @@ import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
-type ChannelSidePanelView = "files" | "context" | "settings" | "task" | "approval";
+type ChannelSidePanelView = "files" | "context" | "settings" | "task" | "approval" | "sources";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "files" | "settings">;
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
@@ -261,6 +264,11 @@ interface AttentionProgressRow {
   readonly onOpen?: () => void;
 }
 
+interface SelectedSourceDetailState {
+  readonly summary: ConversationContextSourceSummary;
+  readonly groupId?: string;
+}
+
 interface PendingLinkPreviewItem {
   readonly localId: string;
   readonly url: string;
@@ -296,6 +304,9 @@ function channelSidePanelLabel(view: ChannelSidePanelView): string {
   if (view === "files") {
     return "Files";
   }
+  if (view === "sources") {
+    return "Context sources";
+  }
   if (view === "context") {
     return "Context";
   }
@@ -317,6 +328,9 @@ function channelSidePanelIcon(view: ChannelSidePanelView, size: number): JSX.Ele
   }
   if (view === "approval") {
     return <ShieldCheck size={size} />;
+  }
+  if (view === "sources") {
+    return <FileCheck2 size={size} />;
   }
   if (view === "settings") {
     return <SlidersHorizontal size={size} />;
@@ -759,6 +773,7 @@ export function WorkspaceClientView({
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
+  const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
   const [activityToolsOpen, setActivityToolsOpen] = useState(false);
   const [activitySearch, setActivitySearch] = useState("");
   const [activityCategoryFilter, setActivityCategoryFilter] = useState<ActivityCategoryFilter>("all");
@@ -1517,6 +1532,7 @@ export function WorkspaceClientView({
       workflows: channelWorkflows,
       workflowSteps: channelWorkflowSteps,
       runs: channelRuns,
+      usedMemoryEvents,
       operationCellByWorkflowId: conversationWorkCellByWorkflowId,
       operationCellByThreadId: conversationWorkCellByThreadId,
       lingAgentAuthorId: LING_AGENT_AUTHOR_ID,
@@ -1531,6 +1547,7 @@ export function WorkspaceClientView({
       conversationWorkCellByThreadId,
       conversationWorkCellByWorkflowId,
       selectedChannelId,
+      usedMemoryEvents,
     ],
   );
   const visibleActivityItems = useMemo(
@@ -2635,7 +2652,9 @@ export function WorkspaceClientView({
     });
   }
 
-  const sidePanelLoading = sidePanelView === "task"
+  const sidePanelLoading = sidePanelView === "sources"
+    ? false
+    : sidePanelView === "task"
     ? tasksLoading
     : sidePanelView === "context"
       ? inspectorMode === "runtime" ? runtimeLoading : channelProtocolLoading
@@ -2648,6 +2667,9 @@ export function WorkspaceClientView({
             : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || durableWorkItemsLoading || tasksLoading;
 
   function refreshSidePanel(): void {
+    if (sidePanelView === "sources") {
+      return;
+    }
     if (sidePanelView === "task") {
       onRefreshTasks();
       onRefreshChannelActivity();
@@ -3451,6 +3473,13 @@ export function WorkspaceClientView({
       return (
         <div className={block.phase === "terminal" ? "conversation-turn-assistant-copy terminal" : "conversation-turn-assistant-copy"} key={block.id}>
           <MessageBodyRenderer text={body} cwd={cwd} compact />
+          {block.memoryCitationEvents.length > 0 ? (
+            <UsedMemorySummary
+              variant="footer"
+              events={block.memoryCitationEvents}
+              memoryById={memoryById}
+            />
+          ) : null}
         </div>
       );
     }
@@ -4370,6 +4399,16 @@ export function WorkspaceClientView({
     } : undefined,
   ];
   const attentionProgressRows: readonly AttentionProgressRow[] = attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined);
+  const activeProgressSourceSummary = useMemo(
+    () => buildActiveProgressSourceSummary({
+      contextSummaries: channelContextSummaries,
+      workflowSteps: channelWorkflowSteps,
+      selectedTask,
+      runningWorkflowStepId,
+      t,
+    }),
+    [channelContextSummaries, channelWorkflowSteps, runningWorkflowStepId, selectedTask, t],
+  );
   const channelHasProgressContent = attentionProgressRows.length > 0;
 
   function openSidePanelView(view: ChannelSidePanelView): void {
@@ -4386,11 +4425,24 @@ export function WorkspaceClientView({
       onRefreshChannelProtocol();
     } else if (view === "settings") {
       onRefreshChannels();
+    } else if (view === "sources") {
+      return;
     } else {
       onRefreshTasks();
       onRefreshChannelActivity();
       onRefreshWorkItems();
     }
+  }
+
+  function openSourceGroupInPanel(group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary): void {
+    setSelectedSourceDetail({ summary, groupId: group.id });
+    setSidePanelView("sources");
+    setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setTeammateManagerOpen(false);
   }
 
   const channelManagementPanel = (
@@ -4572,6 +4624,12 @@ export function WorkspaceClientView({
         onReconcileWorkUnit={onReconcileWorkUnit}
       />
     </div>
+  ) : sidePanelView === "sources" ? (
+    <ChannelSourceDetailPanel
+      detail={selectedSourceDetail}
+      messages={channelMessages}
+      decisions={channelDecisions}
+    />
   ) : sidePanelView === "settings" ? (
     <div className="channel-settings-stack">
       {channelNotificationPanel}
@@ -4743,6 +4801,8 @@ export function WorkspaceClientView({
               expanded={attentionProgressExpanded}
               onExpandedChange={setAttentionProgressExpanded}
               progressRows={attentionProgressRows}
+              sourceSummary={activeProgressSourceSummary}
+              onOpenSourceGroup={openSourceGroupInPanel}
             />
           </div>
         ) : null}
@@ -5175,7 +5235,7 @@ export function WorkspaceClientView({
             ariaLabel={sidePanelTitle}
             title={sidePanelTitle}
             icon={channelSidePanelIcon(sidePanelView, 16)}
-            actions={(
+            actions={sidePanelView === "sources" ? undefined : (
               <>
                 {sidePanelView !== "approval" ? (
                   <button
@@ -5212,6 +5272,136 @@ export function WorkspaceClientView({
 }
 
 type ChannelInspectorMode = "protocol" | "brief" | "routing" | "decisions" | "handoffs" | "runtime";
+
+function ChannelSourceDetailPanel({
+  detail,
+  messages,
+  decisions,
+}: {
+  readonly detail?: SelectedSourceDetailState;
+  readonly messages: readonly ChannelMessage[];
+  readonly decisions: readonly ChannelDecision[];
+}): JSX.Element {
+  const { t } = useI18n();
+  if (!detail) {
+    return (
+      <section className="context-source-detail-panel" aria-label={t("Context sources")}>
+        <div className="context-source-detail-empty">
+          <FileCheck2 size={15} />
+          <span>{t("Context source details are not available.")}</span>
+        </div>
+      </section>
+    );
+  }
+  const selectedGroups = detail.groupId
+    ? detail.summary.groups.filter((group) => group.id === detail.groupId)
+    : detail.summary.groups;
+  const groups = selectedGroups.length > 0 ? selectedGroups : detail.summary.groups;
+
+  return (
+    <section className="context-source-detail-panel" aria-label={t("Context sources")}>
+      <div className="context-source-detail-head">
+        <span>
+          <FileCheck2 size={15} />
+          <strong>{t("Sources used")}</strong>
+        </span>
+        <small>{conversationContextSourceSummaryLabel(detail.summary, t)}</small>
+      </div>
+      {groups.length > 0 ? (
+        <div className="context-source-detail-groups">
+          {groups.map((group) => (
+            <section key={group.id} className="context-source-detail-group" aria-label={group.label}>
+              <div className="context-source-detail-group-head">
+                <span className="attention-row-icon neutral">{conversationContextSourceGroupIcon(group.type)}</span>
+                <span>
+                  <strong>{group.label}</strong>
+                  <small>{group.count === 1 ? t("1 item") : t("{count} items", { count: group.count })}</small>
+                </span>
+              </div>
+              <ul className="context-source-ref-list">
+                {group.refs.map((ref, index) => {
+                  const display = contextSourceRefDisplay(ref, messages, decisions, t);
+                  return (
+                    <li key={`${ref.type}:${ref.id}:${index}`}>
+                      <span>{display.primary}</span>
+                      <small>{display.secondary}</small>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="context-source-detail-empty">
+          <FileText size={15} />
+          <span>{detail.summary.unavailableReason ?? t("No user-facing sources were recorded.")}</span>
+        </div>
+      )}
+      {detail.summary.droppedCount > 0 || detail.summary.compactionCount > 0 ? (
+        <div className="context-source-detail-foot">
+          {detail.summary.droppedCount > 0 ? <span>{t("{count} items omitted from model context", { count: detail.summary.droppedCount })}</span> : null}
+          {detail.summary.compactionCount > 0 ? <span>{t("{count} compacted context summaries", { count: detail.summary.compactionCount })}</span> : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function contextSourceRefDisplay(
+  ref: ConversationContextSourceRefLike,
+  messages: readonly ChannelMessage[],
+  decisions: readonly ChannelDecision[],
+  t: Translate,
+): { readonly primary: string; readonly secondary: string } {
+  const type = ref.type.trim().toLowerCase();
+  if (type === "message" || type === "channel_message" || type === "private_message") {
+    const message = messages.find((item) => item.id === ref.id);
+    return {
+      primary: t("Message {id}", { id: ref.id }),
+      secondary: message ? `${contextSourceMessageAuthorLabel(message.authorType, t)} · ${formatDateTime(message.createdAt)}` : t("Source ref"),
+    };
+  }
+  if (type === "decision" || type === "channel_decision") {
+    const decision = decisions.find((item) => item.id === ref.id);
+    return {
+      primary: decision?.title ?? t("Decision {id}", { id: ref.id }),
+      secondary: decision ? `${contextSourceDecisionStatusLabel(decision.status, t)} · ${ref.id}` : t("Source ref"),
+    };
+  }
+  const label = ref.label?.trim();
+  return {
+    primary: label || ref.id,
+    secondary: `${t("source {sourceKind}", { sourceKind: ref.type })} · ${ref.id}`,
+  };
+}
+
+function contextSourceMessageAuthorLabel(authorType: ChannelMessage["authorType"], t: Translate): string {
+  if (authorType === "local-user") {
+    return t("Local user");
+  }
+  if (authorType === "ai-teammate") {
+    return t("AI teammate");
+  }
+  if (authorType === "system") {
+    return t("System");
+  }
+  return authorType;
+}
+
+function contextSourceDecisionStatusLabel(status: ChannelDecision["status"], t: Translate): string {
+  const normalized = String(status);
+  if (normalized === "accepted" || normalized === "active") {
+    return t("Accepted");
+  }
+  if (normalized === "rejected") {
+    return t("Rejected");
+  }
+  if (normalized === "superseded") {
+    return t("Superseded");
+  }
+  return normalized;
+}
 
 function ChannelInspector({
   cwd,
@@ -8302,21 +8492,133 @@ function ActivityFilterToolbar({
   );
 }
 
+function buildActiveProgressSourceSummary({
+  contextSummaries,
+  workflowSteps,
+  selectedTask,
+  runningWorkflowStepId,
+  t,
+}: {
+  readonly contextSummaries: readonly ChannelContextSummary[];
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly selectedTask?: Task;
+  readonly runningWorkflowStepId: string;
+  readonly t: Translate;
+}): ConversationContextSourceSummary | undefined {
+  const activeStep = [
+    workflowSteps.find((step) => step.id === runningWorkflowStepId),
+    ...workflowSteps
+      .filter((step) => workflowStepHasActiveContext(step))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+  ].find((step): step is ChannelWorkflowStep => Boolean(step?.contextSummaryId));
+  const activeSummary = activeStep?.contextSummaryId
+    ? contextSummaries.find((summary) => summary.id === activeStep.contextSummaryId)
+    : undefined;
+  if (activeSummary) {
+    return buildConversationContextSourceSummaryFromChannelSummary(activeSummary, t);
+  }
+
+  if (selectedTask && taskIsActiveProgressPopoverTask(selectedTask)) {
+    const taskSummary = contextSummaries
+      .filter((summary) => summary.targetType === "task" && summary.targetId === selectedTask.id)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    return taskSummary ? buildConversationContextSourceSummaryFromChannelSummary(taskSummary, t) : undefined;
+  }
+
+  return undefined;
+}
+
+function workflowStepHasActiveContext(step: ChannelWorkflowStep): boolean {
+  return Boolean(step.contextSummaryId) && (
+    step.status === "claimed" ||
+    step.status === "running" ||
+    step.status === "waiting_for_approval" ||
+    step.status === "blocked"
+  );
+}
+
+function conversationContextSourceGroupIcon(type: string): ReactNode {
+  if (type === "message" || type === "channel_message" || type === "private_message") {
+    return <MessageSquare size={18} />;
+  }
+  if (type === "decision" || type === "channel_decision") {
+    return <FileCheck2 size={18} />;
+  }
+  if (type === "file" || type === "workspace_file" || type === "attachment") {
+    return <FileText size={18} />;
+  }
+  if (type === "artifact" || type === "run_artifact") {
+    return <Archive size={18} />;
+  }
+  if (type === "memory" || type === "project_memory") {
+    return <Database size={18} />;
+  }
+  if (type === "web" || type === "url" || type === "page") {
+    return <Link2 size={18} />;
+  }
+  if (type === "teammate" || type === "agent") {
+    return <UserPlus size={18} />;
+  }
+  if (type === "run" || type === "run_session" || type === "task" || type === "channel_task") {
+    return <SquareTerminal size={18} />;
+  }
+  return <FileText size={18} />;
+}
+
 function ProgressPopover({
   expanded,
   onExpandedChange,
   progressRows,
+  sourceSummary,
+  onOpenSourceGroup,
 }: {
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly progressRows: readonly AttentionProgressRow[];
+  readonly sourceSummary?: ConversationContextSourceSummary;
+  readonly onOpenSourceGroup?: (group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
   if (progressRows.length === 0) {
     return null;
   }
+  const sourceGroups = sourceSummary?.groups ?? [];
   return (
     <section className="attention-queue compact" aria-label={t("Progress")}>
+      {sourceSummary && sourceSummary.sourceCount > 0 ? (
+        <div className="attention-context-section" aria-label={t("Context source summary")}>
+          <div className="attention-section-head">
+            <strong>{t("Sources used")}</strong>
+            <small>{conversationContextSourceSummaryLabel(sourceSummary, t)}</small>
+          </div>
+          <div className="attention-context-list">
+            {sourceGroups.slice(0, 4).map((group) => (
+              <button
+                key={group.id}
+                className="attention-context-row interactive"
+                type="button"
+                onClick={() => onOpenSourceGroup?.(group, sourceSummary)}
+                aria-label={t("Open {label} sources", { label: group.label })}
+              >
+                <span className="attention-row-icon neutral">{conversationContextSourceGroupIcon(group.type)}</span>
+                <span className="attention-context-copy">
+                  <strong>{group.label}</strong>
+                  <small>
+                    {group.count === 1 ? t("1 item") : t("{count} items", { count: group.count })}
+                    {group.examples.length > 0 ? ` · ${group.examples.join(", ")}` : ""}
+                  </small>
+                </span>
+              </button>
+            ))}
+          </div>
+          {sourceSummary.droppedCount > 0 || sourceSummary.compactionCount > 0 ? (
+            <div className="attention-context-foot">
+              {sourceSummary.droppedCount > 0 ? <span>{t("{count} items omitted from model context", { count: sourceSummary.droppedCount })}</span> : null}
+              {sourceSummary.compactionCount > 0 ? <span>{t("{count} compacted context summaries", { count: sourceSummary.compactionCount })}</span> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {progressRows.length > 0 ? (
         <div className="attention-progress-preview">
           <div className="attention-section-head attention-progress-head">

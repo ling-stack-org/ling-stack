@@ -383,6 +383,135 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(restored.attentionCount).toBe(0);
 });
 
+test("progress popover shows active context source groups and opens source detail", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [
+    {
+      id: "msg_source_1",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      authorType: "local-user",
+      authorId: "local-user",
+      kind: "message",
+      intent: "chat",
+      body: "Use the v3 transcript style.",
+      status: "sent",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      createdAt: "2026-05-25T01:00:00.000Z",
+      updatedAt: "2026-05-25T01:00:00.000Z",
+    },
+    {
+      id: "msg_source_2",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      authorType: "local-user",
+      authorId: "local-user",
+      kind: "message",
+      intent: "chat",
+      body: "Keep details out of the main transcript.",
+      status: "sent",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      createdAt: "2026-05-25T01:01:00.000Z",
+      updatedAt: "2026-05-25T01:01:00.000Z",
+    },
+  ];
+  state.channelDecisions = [
+    {
+      id: "decision_source_1",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Conversation UI boundary",
+      decision: "Sources stay in the active popover and detail surfaces.",
+      rationale: "Avoid duplicating the main transcript.",
+      alternatives: [],
+      status: "accepted",
+      createdAt: "2026-05-25T01:02:00.000Z",
+      updatedAt: "2026-05-25T01:02:00.000Z",
+    },
+  ];
+  state.channelContextSummaries = [
+    {
+      id: "summary_sources",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      targetType: "thread",
+      targetId: "msg_source_1",
+      sourceMessageIds: ["msg_source_1", "msg_source_2"],
+      decisionIds: ["decision_source_1"],
+      summary: "Source summary fixture for active workflow progress.",
+      acceptanceCriteria: ["Show source groups in the progress popover."],
+      openQuestions: [],
+      authorType: "system",
+      createdAt: "2026-05-25T01:03:00.000Z",
+      updatedAt: "2026-05-25T01:03:00.000Z",
+    },
+  ];
+  state.channelWorkflows = [
+    {
+      id: "workflow_sources",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Update conversation sources",
+      objective: "Validate active source summary rendering.",
+      status: "running",
+      createdBy: "system",
+      createdAt: "2026-05-25T01:04:00.000Z",
+      updatedAt: "2026-05-25T01:04:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_sources",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_sources",
+      contextSummaryId: "summary_sources",
+      position: 1,
+      title: "Render source summary",
+      prompt: "Show compact context source groups in the active progress popover.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "running",
+      metadata: {},
+      createdAt: "2026-05-25T01:04:00.000Z",
+      updatedAt: "2026-05-25T01:05:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+
+  const popover = page.locator(".channel-progress-popover");
+  await expect(popover).toBeVisible();
+  await expect(popover).toContainText("Sources used");
+  await expect(popover).toContainText("3 sources");
+  await expect(popover).toContainText("Messages");
+  await expect(popover).toContainText("2 items");
+  await expect(popover).toContainText("Decisions");
+  await expect(popover).toContainText("1 item");
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+
+  await popover.getByRole("button", { name: "Open Messages sources" }).click();
+
+  const sidePanel = page.locator(".channel-side-panel");
+  await expect(sidePanel).toBeVisible();
+  await expect(sidePanel).toHaveAttribute("aria-label", "Context sources");
+  await expect(sidePanel).toContainText("Sources used");
+  await expect(sidePanel).toContainText("Messages");
+  await expect(sidePanel).toContainText("2 items");
+  await expect(sidePanel).toContainText("Message msg_source_1");
+  await expect(sidePanel).toContainText("Message msg_source_2");
+  await expect(sidePanel).not.toContainText("Progress");
+  await expect(sidePanel).not.toContainText("Update conversation sources");
+});
+
 test("channel drawer does not flash legacy create labels in section headers", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
