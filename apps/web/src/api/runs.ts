@@ -16,6 +16,7 @@ import type {
   LingThreadResumeRequest,
   LingThreadResumeResponse,
   LingThreadTurnsResponse,
+  ExecutionActionListResponse,
   RunArtifactListResponse,
   RunCancelResponse,
   RunEventsResponse,
@@ -35,6 +36,19 @@ export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
 
 export async function listRuns(cwd: string, options: RunListRequest | number = 50): Promise<RunListResponse> {
   return daemonClient.listRuns(cwd, options);
+}
+
+export async function listExecutionActions(
+  cwd: string,
+  options: {
+    readonly runId?: string;
+    readonly threadId?: string;
+    readonly status?: string;
+    readonly actionType?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<ExecutionActionListResponse> {
+  return daemonClient.listExecutionActions(cwd, options);
 }
 
 export async function listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {

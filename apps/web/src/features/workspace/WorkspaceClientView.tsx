@@ -183,6 +183,7 @@ import type {
   ChannelWorkflowStepStartMode,
   ChannelWorkspaceBinding,
   ChannelWorkspaceMode,
+  ExecutionAction,
   WorkflowContextInspectSummary,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
@@ -220,8 +221,8 @@ import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
-type ChannelSidePanelView = "files" | "context" | "settings" | "task" | "approval" | "sources";
-type ChannelDrawerRootView = Extract<ChannelSidePanelView, "files" | "settings">;
+type ChannelSidePanelView = "files" | "review" | "context" | "settings" | "task" | "approval" | "sources";
+type ChannelDrawerRootView = Extract<ChannelSidePanelView, "files" | "review" | "settings">;
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
@@ -295,7 +296,7 @@ interface ActiveMentionPicker {
   readonly end: number;
 }
 
-const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["files", "settings"];
+const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["files", "review", "settings"];
 const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
 const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "blocked", "failed", "pending"];
 const channelNotificationLevels: readonly ChannelNotificationLevel[] = ["all", "mentions", "muted"];
@@ -306,6 +307,9 @@ function channelSidePanelLabel(view: ChannelSidePanelView): string {
   }
   if (view === "sources") {
     return "Context sources";
+  }
+  if (view === "review") {
+    return "Review";
   }
   if (view === "context") {
     return "Context";
@@ -328,6 +332,9 @@ function channelSidePanelIcon(view: ChannelSidePanelView, size: number): JSX.Ele
   }
   if (view === "approval") {
     return <ShieldCheck size={size} />;
+  }
+  if (view === "review") {
+    return <CheckCircle2 size={size} />;
   }
   if (view === "sources") {
     return <FileCheck2 size={size} />;
@@ -481,6 +488,8 @@ export function WorkspaceClientView({
   channelLinkPreviews,
   channelArtifactsByRun,
   channelArtifactErrorsByRun,
+  channelExecutionActions,
+  channelExecutionActionError,
   channelBrief,
   channelCollaborationProtocol,
   channelDecisions,
@@ -624,6 +633,8 @@ export function WorkspaceClientView({
   readonly channelLinkPreviews: readonly ChannelLinkPreview[];
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly channelArtifactErrorsByRun: Readonly<Record<string, string>>;
+  readonly channelExecutionActions: readonly ExecutionAction[];
+  readonly channelExecutionActionError: string;
   readonly channelBrief: ChannelBrief | undefined;
   readonly channelCollaborationProtocol: ChannelCollaborationProtocolResponse | undefined;
   readonly channelDecisions: readonly ChannelDecision[];
@@ -995,6 +1006,7 @@ export function WorkspaceClientView({
         turnRunLinks: turnState?.status === "loaded" ? turnState.runLinks : undefined,
         approvals,
         artifactsByRun: channelArtifactsByRun,
+        executionActions: channelExecutionActions,
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
       });
@@ -1003,7 +1015,7 @@ export function WorkspaceClientView({
       }
     }
     return cells;
-  }, [approvals, channelArtifactsByRun, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t]);
+  }, [approvals, channelArtifactsByRun, channelExecutionActions, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t]);
   const workflowProgressByWorkflowId = useMemo(() => {
     const cells = new Map<string, WorkflowProgressModel>();
     for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
@@ -1017,12 +1029,13 @@ export function WorkspaceClientView({
         runs: channelRuns,
         approvals,
         artifactsByRun: channelArtifactsByRun,
+        executionActions: channelExecutionActions,
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
       }));
     }
     return cells;
-  }, [approvals, channelArtifactsByRun, channelRuns, channelWorkflowSteps, channelWorkflows, cwd, selectedChannelId, t]);
+  }, [approvals, channelArtifactsByRun, channelExecutionActions, channelRuns, channelWorkflowSteps, channelWorkflows, cwd, selectedChannelId, t]);
   const localCollaborationTaskCardByWorkflowId = useMemo(() => {
     const cards = new Map<string, CollaborationTaskCardModel>();
     for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
@@ -2116,6 +2129,62 @@ export function WorkspaceClientView({
     }
   }
 
+  function openReviewFromActivity(): void {
+    setActivityToolsOpen(false);
+    setChannelMoreOpen(false);
+    onSelectTask("");
+    setSidePanelView("review");
+    setSidePanelOpen(true);
+    setProgressPopoverOpen(false);
+    setCreateTaskOpen(false);
+    onRefreshRunApprovals();
+    onRefreshTasks();
+    onRefreshChannelFiles();
+  }
+
+  function revealConversationThreadFromActivity(threadId: string): void {
+    setActivityToolsOpen(false);
+    setChannelMoreOpen(false);
+    setActivityDrilldownItemId("");
+    onSelectTask("");
+    setSidePanelOpen(false);
+    setProgressPopoverOpen(false);
+    setCreateTaskOpen(false);
+    setActiveWorkThreadId("");
+    globalThis.setTimeout(() => {
+      const target = Array.from(document.querySelectorAll<HTMLElement>(".conversation-work-cell"))
+        .find((element) => element.dataset.threadId === threadId);
+      target?.scrollIntoView({ block: "center", behavior: "smooth" });
+      target?.classList.add("conversation-work-cell-locate-pulse");
+      if (target) {
+        globalThis.setTimeout(() => target.classList.remove("conversation-work-cell-locate-pulse"), 1400);
+      }
+    }, 80);
+  }
+
+  function revealRunFromActivity(runId: string): void {
+    const run = runById.get(runId);
+    if (run?.threadId && conversationWorkCellByThreadId.has(run.threadId)) {
+      revealConversationThreadFromActivity(run.threadId);
+      return;
+    }
+    openReviewFromActivity();
+  }
+
+  function revealTaskFromActivity(taskId: string): void {
+    const task = taskById.get(taskId);
+    const linkedRun = task?.currentRunId ? runById.get(task.currentRunId) : undefined;
+    const latestTaskRun = [...channelRuns]
+      .filter((run) => run.taskId === taskId)
+      .sort((left, right) => compareRunActivity(right, left))[0];
+    const run = linkedRun ?? latestTaskRun;
+    if (run?.threadId && conversationWorkCellByThreadId.has(run.threadId)) {
+      revealConversationThreadFromActivity(run.threadId);
+      return;
+    }
+    openReviewFromActivity();
+  }
+
   function openApprovalInPanel(approval: ApprovalRequest | undefined): void {
     if (!approval) {
       onOpenApprovals();
@@ -2333,35 +2402,27 @@ export function WorkspaceClientView({
   function openActivityDrilldownTarget(target: ChannelActivityDrilldownTarget): void {
     setActivityDrilldownItemId("");
     if (target.kind === "task") {
-      openTaskFromActivity(target.taskId);
+      revealTaskFromActivity(target.taskId);
       return;
     }
     if (target.kind === "run") {
-      openRunInPanel(target.runId);
+      revealRunFromActivity(target.runId);
       return;
     }
     if (target.kind === "approval") {
       openApprovalInPanel(pendingChannelApprovals.find((approval) => approval.runId === target.runId));
       return;
     }
-    openProtocolFromActivity(target.mode);
+    openReviewFromActivity();
   }
 
   function openActivityTriageResult(result: ChannelActivityTriageResult): void {
     setActivityDrilldownItemId("");
     if (result.kind === "task") {
-      openTaskFromActivity(result.task.id);
+      revealTaskFromActivity(result.task.id);
       return;
     }
-    if (result.kind === "handoff") {
-      openProtocolFromActivity("handoffs");
-      return;
-    }
-    if (result.kind === "decision") {
-      openProtocolFromActivity("decisions");
-      return;
-    }
-    openProtocolFromActivity("brief");
+    openReviewFromActivity();
   }
 
   function openThreadForMessage(message: ChannelMessage): void {
@@ -2660,6 +2721,8 @@ export function WorkspaceClientView({
       ? inspectorMode === "runtime" ? runtimeLoading : channelProtocolLoading
       : sidePanelView === "files"
         ? channelFilesLoading || channelRunArtifactsLoading
+        : sidePanelView === "review"
+          ? approvalsLoading || tasksLoading || channelRunArtifactsLoading
         : sidePanelView === "settings"
           ? channelsLoading || channelTeammateMembershipsLoading
           : sidePanelView === "approval"
@@ -2685,6 +2748,12 @@ export function WorkspaceClientView({
       return;
     }
     if (sidePanelView === "files") {
+      onRefreshChannelFiles();
+      return;
+    }
+    if (sidePanelView === "review") {
+      onRefreshRunApprovals();
+      onRefreshTasks();
       onRefreshChannelFiles();
       return;
     }
@@ -3488,6 +3557,7 @@ export function WorkspaceClientView({
       <div className="conversation-turn-operation" key={block.id}>
         <ConversationWorkCell
           model={block.operationCell}
+          cwd={cwd}
           detailsState={detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
           onLoadDetails={onLoadDetails}
@@ -3670,9 +3740,9 @@ export function WorkspaceClientView({
                 <CircleAlert size={14} />
                 {t("Reject")}
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("decisions")}>
-                <Workflow size={14} />
-                {t("Open context")}
+              <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                <CheckCircle2 size={14} />
+                {t("Review source")}
               </button>
             </>)
           }
@@ -3702,9 +3772,9 @@ export function WorkspaceClientView({
               <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>
                 {t("Complete")}
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("handoffs")}>
-                <Workflow size={14} />
-                {t("Open context")}
+              <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                <CheckCircle2 size={14} />
+                {t("Review source")}
               </button>
             </>)
           }
@@ -3724,6 +3794,7 @@ export function WorkspaceClientView({
         return (
           <ConversationWorkCell
             model={workCell}
+            cwd={cwd}
             detailsState={conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
             onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
             onLoadDetails={loadWorkflowWorkCellDetails}
@@ -3767,9 +3838,9 @@ export function WorkspaceClientView({
                 <Square size={14} />
                 {t("Cancel")}
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                <Workflow size={14} />
-                {t("Open context")}
+              <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                <CheckCircle2 size={14} />
+                {t("Review source")}
               </button>
             </>)
           }
@@ -3797,24 +3868,24 @@ export function WorkspaceClientView({
                   {runningWorkflowStepId === step.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
                   {t("Retry")}
                 </button>
-                <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                  <Workflow size={14} />
-                  {t("Open context")}
+                <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                  <CheckCircle2 size={14} />
+                  {t("Review source")}
                 </button>
               </>)
             ) : step.taskId ? (
               activityActionRow(item.id, <>
                 <span>{t("Task linked")}</span>
-                <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                  <Workflow size={14} />
-                  {t("Open context")}
+                <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                  <CheckCircle2 size={14} />
+                  {t("Review source")}
                 </button>
               </>)
             ) : (
               activityActionRow(item.id, (
-                <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                  <Workflow size={14} />
-                  {t("Open context")}
+                <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                  <CheckCircle2 size={14} />
+                  {t("Review source")}
                 </button>
               ))
             )
@@ -3834,9 +3905,9 @@ export function WorkspaceClientView({
           body={t("Task {title} is {status}.", { title: task.title, status: task.status })}
           action={
             activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={() => openTaskFromActivity(task.id)}>
+              <button className="secondary-button compact-button" type="button" onClick={() => revealTaskFromActivity(task.id)}>
                 <SquareTerminal size={14} />
-                {t("Open task")}
+                {t("Show in transcript")}
               </button>
             ))
           }
@@ -3853,6 +3924,7 @@ export function WorkspaceClientView({
         return (
           <ConversationWorkCell
             model={workCell}
+            cwd={cwd}
             detailsState={conversationWorkCellDetailsByKey[conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
             onOpenRun={openRunInPanel}
             onLoadDetails={loadConversationWorkCellDetails}
@@ -3871,9 +3943,9 @@ export function WorkspaceClientView({
           body={t("Run for {title} is {status}.", { title: taskTitle, status: run.status })}
           action={
             activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={() => openRunInPanel(run.id)}>
+              <button className="secondary-button compact-button" type="button" onClick={() => revealRunFromActivity(run.id)}>
                 <History size={14} />
-                {t("Open run")}
+                {t("Show in transcript")}
               </button>
             ))
           }
@@ -3925,13 +3997,13 @@ export function WorkspaceClientView({
                 type="button"
                 onClick={() => {
                   if (transition.entityType === "task") {
-                    openTaskFromActivity(transition.entityId);
+                    revealTaskFromActivity(transition.entityId);
                   } else if (transition.entityType === "run") {
-                    openRunInPanel(transition.entityId);
+                    revealRunFromActivity(transition.entityId);
                   } else if (transition.entityType === "approval") {
                     openApprovalInPanel(approvals.find((approval) => approval.id === transition.entityId));
                   } else {
-                    openProtocolFromActivity("runtime");
+                    openReviewFromActivity();
                   }
                 }}
               >
@@ -3958,9 +4030,9 @@ export function WorkspaceClientView({
               <Plus size={14} />
               {t("Create task")}
             </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("brief")}>
-              <Workflow size={14} />
-              {t("Open context")}
+            <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+              <CheckCircle2 size={14} />
+              {t("Review source")}
             </button>
           </>)
         }
@@ -4421,6 +4493,10 @@ export function WorkspaceClientView({
     setTeammateManagerOpen(false);
     if (view === "files") {
       onRefreshChannelFiles();
+    } else if (view === "review") {
+      onRefreshRunApprovals();
+      onRefreshTasks();
+      onRefreshChannelFiles();
     } else if (view === "context") {
       onRefreshChannelProtocol();
     } else if (view === "settings") {
@@ -4572,6 +4648,16 @@ export function WorkspaceClientView({
       runArtifactsLoading={channelRunArtifactsLoading}
       attachmentContentUrl={attachmentContentUrl}
       onDeleteAttachment={onDeleteAttachment}
+    />
+  ) : sidePanelView === "review" ? (
+    <ChannelReviewPanel
+      approvals={approvals}
+      runs={channelRunsForFiles}
+      tasks={tasks}
+      artifactsByRun={channelArtifactsByRun}
+      executionActionError={channelExecutionActionError}
+      loading={approvalsLoading || tasksLoading || channelRunArtifactsLoading}
+      onOpenApproval={openApprovalInPanel}
     />
   ) : sidePanelView === "context" ? (
     <div className="channel-protocol-tab-content">
@@ -5237,7 +5323,7 @@ export function WorkspaceClientView({
             icon={channelSidePanelIcon(sidePanelView, 16)}
             actions={sidePanelView === "sources" ? undefined : (
               <>
-                {sidePanelView !== "approval" ? (
+                {sidePanelView !== "approval" && sidePanelView !== "review" ? (
                   <button
                     className="icon-button"
                     type="button"
@@ -9016,15 +9102,15 @@ function activityAttentionLabel(attention: ChannelActivityAttention): string {
 
 function drilldownTargetLabel(target: ChannelActivityDrilldownTarget): string {
   if (target.kind === "task") {
-    return "Open task";
+    return "Show task in transcript";
   }
   if (target.kind === "run") {
-    return "Open run";
+    return "Show run in transcript";
   }
   if (target.kind === "approval") {
     return "Open approval";
   }
-  return "Open context";
+  return "Review source";
 }
 
 function drilldownTargetIcon(target: ChannelActivityDrilldownTarget): JSX.Element {
@@ -9054,7 +9140,7 @@ function triageActionIcon(action: ChannelActivityTriageActionKind): JSX.Element 
 }
 
 function activityTriageResultTargetLabel(result: ChannelActivityTriageResult): string {
-  return result.kind === "task" ? "Open in Tasks" : "Open in Context";
+  return result.kind === "task" ? "Show created task in transcript" : "Review created source";
 }
 
 function activityCategoryFilterLabel(filter: ActivityCategoryFilter): string {
@@ -9106,6 +9192,126 @@ function workflowCanAdvance(status: ChannelWorkflow["status"]): boolean {
 
 function workflowCanCancel(status: ChannelWorkflow["status"]): boolean {
   return status === "draft" || status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
+}
+
+function ChannelReviewPanel({
+  approvals,
+  runs,
+  tasks,
+  artifactsByRun,
+  executionActionError,
+  loading,
+  onOpenApproval,
+}: {
+  readonly approvals: readonly ApprovalRequest[];
+  readonly runs: readonly RunSession[];
+  readonly tasks: readonly Task[];
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly executionActionError: string;
+  readonly loading: boolean;
+  readonly onOpenApproval: (approval: ApprovalRequest | undefined) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const pendingApprovals = approvals
+    .filter((approval) => effectiveApprovalStatus(approval) === "pending")
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 3);
+  const terminalRuns = runs
+    .filter((run) => run.status !== "queued" && run.status !== "running" && run.status !== "waiting_for_approval")
+    .sort((left, right) => compareRunActivity(right, left))
+    .slice(0, 5);
+  const terminalArtifactCount = terminalRuns.reduce((count, run) => count + (artifactsByRun[run.id]?.length ?? 0), 0);
+  const failedRunCount = terminalRuns.filter((run) => run.status === "failed" || run.status === "cancelled").length;
+
+  return (
+    <section className="channel-review-panel" aria-label={t("Review")}>
+      {loading ? (
+        <div className="channel-review-loading" role="status">
+          <Loader2 className="spin" size={14} />
+          <span>{t("Refreshing review data...")}</span>
+        </div>
+      ) : null}
+
+      <div className="channel-review-summary" aria-label={t("Review summary")}>
+        <span>
+          <strong>{pendingApprovals.length}</strong>
+          <small>{t("Pending approvals")}</small>
+        </span>
+        <span>
+          <strong>{terminalRuns.length}</strong>
+          <small>{t("Completed runs")}</small>
+        </span>
+        <span>
+          <strong>{terminalArtifactCount}</strong>
+          <small>{t("Artifacts")}</small>
+        </span>
+      </div>
+      {executionActionError ? (
+        <p className="channel-review-error danger-text">{executionActionError}</p>
+      ) : null}
+
+      <div className="channel-review-section">
+        <div className="task-strip-head">
+          <span>
+            <ShieldCheck size={16} />
+            <strong>{t("Approvals")}</strong>
+          </span>
+        </div>
+        {pendingApprovals.length === 0 ? (
+          <div className="client-empty-state compact-empty">
+            <ShieldCheck />
+            <span>{t("No pending approval")}</span>
+          </div>
+        ) : (
+          <div className="channel-review-list">
+            {pendingApprovals.map((approval) => (
+              <button key={approval.id} className="channel-review-row button-row" type="button" onClick={() => onOpenApproval(approval)}>
+                <span className="channel-review-row-main">
+                  <strong>{approval.title}</strong>
+                  <small>{approval.actionType} · {approval.risk} · {formatDateTime(approval.createdAt)}</small>
+                </span>
+                <span className={`approval-state ${effectiveApprovalStatus(approval)}`}>{effectiveApprovalStatus(approval)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="channel-review-section">
+        <div className="task-strip-head">
+          <span>
+            <CheckCircle2 size={16} />
+            <strong>{t("Run results")}</strong>
+          </span>
+          {failedRunCount > 0 ? <small>{t("{count} need review", { count: failedRunCount })}</small> : null}
+        </div>
+        {terminalRuns.length === 0 ? (
+          <div className="client-empty-state compact-empty">
+            <CheckCircle2 />
+            <span>{t("No completed run to review")}</span>
+          </div>
+        ) : (
+          <div className="channel-review-list">
+            {terminalRuns.map((run) => {
+              const task = taskById.get(run.taskId);
+              const runArtifacts = artifactsByRun[run.id] ?? [];
+              return (
+                <div key={run.id} className="channel-review-row">
+                  <span className="channel-review-row-main">
+                    <strong>{task?.title ?? readRunTitle(run)}</strong>
+                    <small>{formatDateTime(run.endedAt ?? run.updatedAt)} · {t("{count} artifacts", { count: runArtifacts.length })}</small>
+                    {run.errorMessage ? <small className="danger-text">{run.errorMessage}</small> : null}
+                  </span>
+                  <StatusBadge status={run.status} />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function ChannelFiles({

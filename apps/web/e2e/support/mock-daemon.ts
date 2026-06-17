@@ -204,7 +204,9 @@ export interface MockExecutionAction {
   createdAt: string;
   updatedAt: string;
   approvedAt?: string;
+  resolvedAt?: string;
   executedAt?: string;
+  completedAt?: string;
   failureReason?: string;
 }
 
@@ -697,9 +699,18 @@ export async function openTaskFromAttentionQueue(page: Page, title: string): Pro
     await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   }
   await openChannelChatTools(page);
-  const taskEvent = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: title }).last();
-  await expect(taskEvent).toBeVisible();
-  await taskEvent.getByRole("button", { name: "Open task" }).click();
+  const workItem = page.getByRole("article", { name: title });
+  await expect(workItem).toBeVisible();
+  const openTask = workItem.getByRole("button", { name: "Open task" });
+  if (await openTask.count() > 0) {
+    await openTask.click();
+  } else {
+    const handleApproval = workItem.getByRole("button", { name: "Handle approval" });
+    await expect(handleApproval).toBeVisible();
+    await handleApproval.click();
+    await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Approval details");
+    await page.getByRole("button", { name: "Open linked task" }).click();
+  }
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
 }
 
@@ -7071,6 +7082,27 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, approvals } });
     return;
   }
+  if (request.method() === "GET" && path === "/execution-actions") {
+    const runId = url.searchParams.get("runId");
+    const threadId = url.searchParams.get("threadId");
+    const status = url.searchParams.get("status");
+    const actionType = url.searchParams.get("actionType");
+    const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 500);
+    const actions = state.executionActions
+      .filter((action) =>
+        (!runId || action.runId === runId) &&
+        (!threadId || action.threadId === threadId) &&
+        (!status || action.status === status) &&
+        (!actionType || action.actionType === actionType)
+      )
+      .sort((left, right) =>
+        (right.completedAt ?? right.executedAt ?? right.approvedAt ?? right.createdAt).localeCompare(left.completedAt ?? left.executedAt ?? left.approvedAt ?? left.createdAt) ||
+        right.id.localeCompare(left.id)
+      )
+      .slice(0, limit);
+    await route.fulfill({ json: { cwd, actions } });
+    return;
+  }
   if (request.method() === "GET" && path === "/work-items") {
     const channelId = url.searchParams.get("channelId");
     const status = url.searchParams.get("status");
@@ -7773,6 +7805,59 @@ export async function handleDaemonRoute(
     return;
   }
 
+  const artifactContentMatch = /^\/artifacts\/([^/]+)\/content$/.exec(path);
+  if (request.method() === "GET" && artifactContentMatch) {
+    const artifact = findMockArtifactById(state, decodeURIComponent(artifactContentMatch[1]));
+    if (!artifact) {
+      await route.fulfill({ status: 404, json: { error: "artifact_not_found" } });
+      return;
+    }
+    if (artifact.type === "image" || artifact.contentType?.startsWith("image/")) {
+      await route.fulfill({
+        contentType: artifact.contentType ?? "image/svg+xml",
+        body: Buffer.from(mockImageSvg(artifact.title ?? artifact.path ?? artifact.id), "utf8"),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: artifact.contentType ?? "text/plain; charset=utf-8",
+      body: `${artifact.title ?? artifact.path ?? artifact.id}\n`,
+    });
+    return;
+  }
+
+  const artifactPreviewMatch = /^\/artifacts\/([^/]+)\/preview$/.exec(path);
+  if (request.method() === "GET" && artifactPreviewMatch) {
+    const artifactId = decodeURIComponent(artifactPreviewMatch[1]);
+    const artifact = findMockArtifactById(state, artifactId);
+    if (!artifact) {
+      await route.fulfill({ status: 404, json: { error: "artifact_not_found" } });
+      return;
+    }
+    const image = artifact.type === "image" || artifact.contentType?.startsWith("image/");
+    await route.fulfill({
+      json: {
+        ref: {
+          id: artifact.id,
+          source: "artifact",
+          scope: "run",
+          label: artifact.title ?? artifact.path ?? artifact.id,
+          displayPath: artifact.path,
+          contentType: artifact.contentType,
+          sizeBytes: artifact.sizeBytes,
+          previewable: true,
+        },
+        kind: image ? "image" : artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : "plain_text",
+        text: image ? undefined : `${artifact.title ?? artifact.path ?? artifact.id}\n`,
+        imageUrl: image ? `/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}` : undefined,
+        truncated: false,
+        sizeBytes: artifact.sizeBytes,
+        redactionNotes: [],
+      },
+    });
+    return;
+  }
+
   const runArtifactsMatch = /^\/runs\/([^/]+)\/artifacts$/.exec(path);
   if (request.method() === "GET" && runArtifactsMatch) {
     const runId = decodeURIComponent(runArtifactsMatch[1]);
@@ -8084,6 +8169,26 @@ function buildMockWorkflowEvidence(state: MockState, workflow: Record<string, un
     artifacts,
     memoryCandidates: [],
   };
+}
+
+function findMockArtifactById(state: MockState, artifactId: string): MockArtifact | undefined {
+  return [
+    ...Object.values(state.artifactsByRun).flat(),
+    ...Object.values(state.artifactsByMediaJob).flat(),
+    ...Object.values(state.artifactsByExternalAction).flat(),
+  ].find((artifact) => artifact.id === artifactId);
+}
+
+function mockImageSvg(label: string): string {
+  const escapedLabel = label
+    .replace(/&/gu, "&amp;")
+    .replace(/</gu, "&lt;")
+    .replace(/>/gu, "&gt;");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <rect width="320" height="180" fill="#f5f5f5"/>
+  <rect x="1" y="1" width="318" height="178" fill="none" stroke="#d4d4d4"/>
+  <text x="160" y="92" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="16" fill="#525252">${escapedLabel}</text>
+</svg>`;
 }
 
 function buildMockWorkflowContextInspect(workflow: Record<string, unknown>, step: Record<string, unknown>): Record<string, unknown> {

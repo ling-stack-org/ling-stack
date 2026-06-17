@@ -13,6 +13,7 @@ import {
   listChannelIntentDecisions,
   listChannelWorkflowSteps,
   listChannelWorkflows,
+  listExecutionActions,
   listChannels,
   listMemoryObjects,
   listRunArtifacts,
@@ -45,6 +46,7 @@ import type {
   ChannelMessageRouteDecision,
   ChannelWorkflow,
   ChannelWorkflowStep,
+  ExecutionAction,
   MemoryObject,
   RunArtifact,
   RunSession,
@@ -96,6 +98,8 @@ export interface WorkspaceState {
   readonly channelLinkPreviews: readonly ChannelLinkPreview[];
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly channelArtifactErrorsByRun: Readonly<Record<string, string>>;
+  readonly channelExecutionActions: readonly ExecutionAction[];
+  readonly channelExecutionActionError: string;
   readonly channelBrief: ChannelBrief | undefined;
   readonly channelCollaborationProtocol: ChannelCollaborationProtocolResponse | undefined;
   readonly channelDecisions: readonly ChannelDecision[];
@@ -148,6 +152,7 @@ export interface WorkspaceActions {
   readonly upsertChannelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly refreshChannelFiles: (channelId?: string) => Promise<void>;
   readonly refreshChannelRunArtifacts: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
+  readonly refreshChannelExecutionActions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelActivityTransitions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelMessageRouteDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelIntentDecisions: (channelId?: string) => Promise<void>;
@@ -196,6 +201,8 @@ export function useWorkspaceDomain(input: {
   const [channelLinkPreviews, setChannelLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
   const [channelArtifactsByRun, setChannelArtifactsByRun] = useState<Record<string, readonly RunArtifact[]>>({});
   const [channelArtifactErrorsByRun, setChannelArtifactErrorsByRun] = useState<Record<string, string>>({});
+  const [channelExecutionActions, setChannelExecutionActions] = useState<readonly ExecutionAction[]>([]);
+  const [channelExecutionActionError, setChannelExecutionActionError] = useState("");
   const [channelBrief, setChannelBrief] = useState<ChannelBrief | undefined>();
   const [channelCollaborationProtocol, setChannelCollaborationProtocol] = useState<ChannelCollaborationProtocolResponse | undefined>();
   const [channelDecisions, setChannelDecisions] = useState<readonly ChannelDecision[]>([]);
@@ -458,6 +465,55 @@ export function useWorkspaceDomain(input: {
     setChannelRunArtifactsLoading(false);
   }
 
+  async function refreshChannelExecutionActions(
+    cwd = input.cwd.trim(),
+    channelId = selectedChannelId,
+    channelRuns: readonly RunSession[] = [],
+  ): Promise<void> {
+    if (!cwd || !channelId) {
+      setChannelExecutionActions([]);
+      setChannelExecutionActionError("");
+      return;
+    }
+    if (channelRuns.length === 0) {
+      setChannelExecutionActions([]);
+      setChannelExecutionActionError("");
+      return;
+    }
+
+    const token = loadGuard.next(`executionActions:${cwd}:${channelId}`);
+    const results = await Promise.all(
+      channelRuns.map(async (sourceRun) => {
+        try {
+          const response = await listExecutionActions(cwd, { runId: sourceRun.id, limit: 100 });
+          return { actions: response.actions } as const;
+        } catch (caught) {
+          return { error: caught instanceof Error ? caught.message : String(caught) } as const;
+        }
+      }),
+    );
+    if (!loadGuard.isCurrent(`executionActions:${cwd}:${channelId}`, token)) {
+      return;
+    }
+
+    const nextActions = new Map<string, ExecutionAction>();
+    const errors = new Set<string>();
+    for (const result of results) {
+      if ("error" in result) {
+        errors.add(result.error ?? "unknown_error");
+      } else {
+        for (const action of result.actions) {
+          nextActions.set(action.id, action);
+        }
+      }
+    }
+    setChannelExecutionActions([...nextActions.values()].sort((a, b) =>
+      (b.completedAt ?? b.executedAt ?? b.resolvedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.executedAt ?? a.resolvedAt ?? a.createdAt) ||
+      b.id.localeCompare(a.id),
+    ));
+    setChannelExecutionActionError(errors.size > 0 ? [...errors][0] : "");
+  }
+
   async function refreshChannelActivityTransitions(
     cwd = input.cwd.trim(),
     channelId = selectedChannelId,
@@ -665,6 +721,8 @@ export function useWorkspaceDomain(input: {
     setChannelLinkPreviews([]);
     setChannelArtifactsByRun({});
     setChannelArtifactErrorsByRun({});
+    setChannelExecutionActions([]);
+    setChannelExecutionActionError("");
     setChannelStateTransitions([]);
     setChannelActivityTransitionError("");
     setChannelActivityTransitionsLoading(false);
@@ -704,6 +762,8 @@ export function useWorkspaceDomain(input: {
     setChannelLinkPreviews([]);
     setChannelArtifactsByRun({});
     setChannelArtifactErrorsByRun({});
+    setChannelExecutionActions([]);
+    setChannelExecutionActionError("");
     setChannelMessagesLoading(false);
     setChannelFilesLoading(false);
     setChannelRunArtifactsLoading(false);
@@ -739,6 +799,8 @@ export function useWorkspaceDomain(input: {
       channelLinkPreviews,
       channelArtifactsByRun,
       channelArtifactErrorsByRun,
+      channelExecutionActions,
+      channelExecutionActionError,
       channelBrief,
       channelCollaborationProtocol,
       channelDecisions,
@@ -790,6 +852,7 @@ export function useWorkspaceDomain(input: {
       upsertChannelExecutionProposal,
       refreshChannelFiles,
       refreshChannelRunArtifacts,
+      refreshChannelExecutionActions,
       refreshChannelActivityTransitions,
       refreshChannelMessageRouteDecisions,
       refreshChannelIntentDecisions,

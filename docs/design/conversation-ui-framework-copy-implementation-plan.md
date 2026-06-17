@@ -3,8 +3,8 @@
 Status: active implementation plan; Slice 1 and Slice 2 require conformance recovery
 Date: 2026-06-14
 Scope: channel conversation feed, semantic operation projection, Ling Agent copy,
-multi-agent activity spans, floating run popover, right drawer detail, and regression
-fixtures
+multi-agent activity spans, floating run popover, right drawer result review, artifact
+preview, active motion, and regression fixtures
 
 Related docs:
 
@@ -81,7 +81,8 @@ Hard product rules:
 - Raw runtime records are evidence, not first-level conversation concepts.
 - The main feed owns narrative and semantic operation rows.
 - The floating popover owns only current active status.
-- The right drawer owns deep detail, raw/debug data, files, context, and settings.
+- The right drawer owns completed result review, file/artifact preview, source metadata,
+  raw/debug access, and settings. It does not own operation process detail.
 - Ling Agent copy describes task state and outcome, not the UI mechanism.
 
 Hard copy rules:
@@ -128,7 +129,7 @@ fallback and covered by a migration issue.
 | Collaboration projection | `apps/web/src/lib/collaboration-task-work-cell.ts` | Reuse, but remove card/report copy and map to AgentActivitySpan. |
 | Legacy collaboration card read model | `apps/web/src/lib/collaboration-task-card.ts` | Keep as internal input; stop treating it as a first-level UI card. |
 | Main operation renderer | `apps/web/src/shared/conversation/ConversationWorkCell.tsx` | Convert from work-cell/card rendering to borderless transcript rendering. |
-| Right drawer shell | `apps/web/src/shared/conversation/RightDrawer.tsx` | Keep shell, add operation detail page contract in parent view. |
+| Right drawer shell | `apps/web/src/shared/conversation/RightDrawer.tsx` | Keep shell, add completed result-review/file-preview contract in parent view. |
 | Channel assembly | `apps/web/src/features/workspace/WorkspaceClientView.tsx` | Keep orchestration in place for first slices; avoid large file split until behavior is correct. |
 | Floating progress popover | `apps/web/src/features/workspace/WorkspaceClientView.tsx`, `.channel-progress-popover` | Keep the popover, reduce content to active status. |
 | Styling | `apps/web/src/styles/components.css` | Apply Strict Daylight v3 transcript rules and remove residual card treatments. |
@@ -220,19 +221,19 @@ FloatingRunPopover
   Active actor + elapsed + latest action + optional source icons + stop/approval action
 
 RightDrawer
-  Root: Files | Context | Settings
-  Detail: Operation detail | Source detail | File detail | Approval detail | Raw detail
+  Root: Files | Review | Settings
+  Detail: File preview | Diff review | Artifact preview | Approval detail | Source metadata | Raw/debug detail
 ```
 
 Surface ownership:
 
 | Surface | Owns | Must not own |
 | --- | --- | --- |
-| Main feed | user text, coordinator narrative, operation rows, agent spans, final result, artifact strip | raw logs, ids, duplicate drawer copy |
-| Inline expansion | bounded semantic evidence | unbounded stdout, JSON, provider metadata |
+| Main feed | user text, coordinator narrative, operation rows, agent spans, final result, artifact strip, image thumbnails | raw logs, ids, duplicate drawer copy |
+| Inline expansion | bounded semantic evidence, operation process detail, agent process history | unbounded stdout, JSON, provider metadata |
 | Floating popover | current active status, one action, compact source icons | transcript, branch history, completed summaries |
-| Right drawer root pages | files, context, settings | active progress, copied main transcript |
-| Right drawer detail pages | exact commands, source detail, outputs, diffs, raw events | default conversation summary |
+| Right drawer root pages | files, completed review, settings | active progress, copied main transcript, operation process |
+| Right drawer detail pages | file previews, diffs, artifact previews, approval detail, source metadata, raw/debug payloads | default conversation summary or copied OperationCell rows |
 | Modal/blocking surface | approval, destructive confirmation, missing input | passive status |
 
 ## Implementation Phases
@@ -290,7 +291,7 @@ Work:
 - Identify current main-feed work cell states: active, completed, blocked, approval,
   multi-agent serial, multi-agent parallel.
 - Identify current duplicate surfaces from the old UI: main feed card, legacy right-side
-  progress card, drawer detail, floating popover, raw run bubble.
+  progress card, drawer/process detail, floating popover, raw run bubble.
 - Capture screenshots for at least desktop and narrow viewport.
 - Record current failing copy examples from UI fixtures.
 
@@ -391,7 +392,7 @@ Work:
 - Convert `conversation-work-cell-rail` to a stable 16px icon slot.
 - Render expanded detail as indented transcript content.
 - Bound command output to 5 lines per command in inline detail.
-- Remove default diagnostics/action buttons that duplicate drawer detail.
+- Remove default diagnostics/action buttons that duplicate inline detail or result review.
 - Render active-to-terminal changes on the same row. The row text may change from
   running copy to terminal copy, but the row id and expansion state remain stable.
 - Coalesce read/list/search command groups into one exploration/context row unless a
@@ -432,7 +433,8 @@ Acceptance:
 
 - Serial multi-agent work shows prior/current teammate rows without raw step spam.
 - Parallel multi-agent work shows one latest-action line per active teammate.
-- Raw sub-agent transcript opens only in drawer detail.
+- Semantic sub-agent process expands inline behind the agent row. Raw sub-agent transcript
+  is raw/debug access only.
 - Agent internal reasoning is never visible by default.
 
 ### CUI5. Coordinator Message And Final Result
@@ -526,8 +528,8 @@ Work:
 - Deduplicate by stable source key: tool/app id, normalized URL, memory id, file path, or
   artifact id.
 - Attach source refs to the owning operation or agent span before rendering.
-- Render compact source icons only in active popover, inline expanded evidence, or right
-  drawer source detail. Do not render a standalone main-feed Sources card.
+- Render compact source icons only in active popover, inline expanded evidence, or source
+  metadata detail. Do not render a standalone main-feed Sources card.
 
 Acceptance:
 
@@ -536,7 +538,8 @@ Acceptance:
 - Internal tools never appear in the source strip.
 - Source refs remain available after terminal commit and do not disappear with active
   status.
-- Source detail does not duplicate the final coordinator answer or operation transcript.
+- Source metadata detail does not duplicate the final coordinator answer or operation
+  transcript.
 - Memory source detail does not duplicate the message-level memory citation footer.
 
 ### CUI7. Floating Run Popover Boundary
@@ -569,20 +572,22 @@ Acceptance:
 - Popover source icons are compact evidence affordances, not progress rows.
 - Opening the right drawer does not create duplicate progress UI.
 
-### CUI8. Right Drawer Detail Boundary
+### CUI8. Right Drawer Result Review Boundary
 
 Type: Web drawer architecture.
 
-Goal: keep the right drawer as detail/workspace, not a second transcript.
+Goal: keep the right drawer as completed-result review/workspace, not a second
+transcript and not the default operation-process reader.
 
 Decision update:
 
 - The right drawer no longer has a `Progress` root page. Active progress belongs to the
   floating popover, and durable progress belongs to the main transcript.
-- Drawer root pages are `Files` and `Settings`. Context/source detail is a drill-down or
-  developer/debug surface, not an ordinary root page.
-- Task and approval drawer views remain explicit deep-detail surfaces opened from their
-  own affordances.
+- Drawer root pages are `Files`, `Review`, and `Settings`.
+- Operation process detail belongs to inline `OperationCell` / `AgentActivitySpan`
+  expansion in the main transcript.
+- Source metadata, approval detail, raw/debug detail, file preview, diff review, and
+  artifact preview remain explicit drill-down surfaces.
 
 Suggested files:
 
@@ -595,21 +600,25 @@ apps/web/src/shared/conversation/FileChangeEvidencePanel.tsx
 
 Work:
 
-- Keep root pages: `Files`, `Settings`. There is no `Progress` or ordinary `Context`
-  root page; active progress belongs to the floating popover.
-- Add operation detail page state opened from explicit drill-down actions.
-- Drawer `Summary` should show operation status and owner, not repeated final answer.
-- Drawer `Timeline` should show timestamped semantic events, not copied main rows.
-- Drawer source detail should show source label, type, target URL/file/app/tool metadata,
-  related operation, and raw detail ref when available.
+- Keep root pages: `Files`, `Review`, `Settings`. There is no `Progress` root page and no
+  ordinary `Context` root page.
+- Add result-review and file/artifact preview page state opened from explicit artifact,
+  file, approval, source, or raw/debug actions.
+- Do not add an operation-process drawer page. Expanded OperationCell detail is inline.
+- Drawer file/review pages should show changed files, generated artifacts, previews,
+  diffs, checks, approval decisions, and review/audit metadata.
+- Drawer source metadata should show source label, type, target URL/file/app/tool
+  metadata, related operation refs, and raw detail ref when available.
 - Raw events and JSON are folded by default.
 - Preserve main feed scroll position when opening/closing drawer.
 
 Acceptance:
 
 - Drawer root pages do not duplicate the main conversation.
-- Operation detail pages can show exact commands, cwd, exit code, duration, output,
-  changed files, checks, approvals, artifacts, and raw events.
+- Operation process rows do not move to the drawer and are still readable through inline
+  expansion after completion.
+- Drawer file/review pages can show full previews, diffs, checks, approvals, artifacts,
+  source metadata, and raw/debug refs.
 - Raw ids and JSON never appear in drawer root pages.
 
 ### CUI9. Legacy Collaboration Surface Retirement
@@ -635,7 +644,7 @@ Work:
   user surfaces; active status is already covered by the floating popover and durable
   history is covered by the transcript.
 - Update tests that currently assert `.collaboration-task-card` to assert operation rows,
-  agent spans, or drawer detail.
+  agent spans, or result review/raw-debug detail.
 
 Acceptance:
 
@@ -667,16 +676,53 @@ Work:
 
 - Add a compact artifact strip under terminal coordinator summary when artifacts exist.
 - Show file paths, changed file count, and check count.
+- Show produced images/screenshots as stable inline thumbnails under the artifact/result
+  area. Clicking a thumbnail opens a lightbox or preview overlay with filename and close
+  action.
 - Show message-level memory citation footer only when memory affected the answer. Do not
   render memory as an OperationCell row unless the memory event is run-only and has no
   owning assistant/coordinator message.
-- Keep full file previews and diffs in drawer detail.
+- Keep full file previews and diffs in drawer file/review detail.
 
 Acceptance:
 
 - Artifact strip appears only when there are outputs.
+- Image thumbnails fit inside the transcript column and do not cause text overlap or
+  layout shift while loading.
+- Lightbox preview does not duplicate operation progress or drawer review content.
 - Memory summary appears only when memory was used.
 - Drawer Files shows previews/diffs, not the same artifact strip repeated.
+
+### CUI10.5. Active Shimmer Motion
+
+Type: visual polish.
+
+Goal: add a subtle active-work breathing state without turning completed transcript rows
+into animated decoration.
+
+Suggested files:
+
+```text
+apps/web/src/styles/components.css
+apps/web/src/shared/conversation/ConversationWorkCell.tsx
+apps/web/src/features/workspace/WorkspaceClientView.tsx
+```
+
+Work:
+
+- Add one reusable shimmer/scanning-highlight token for active status text and active
+  OperationCell/AgentActivitySpan rows.
+- Use a `3000ms` cycle: about `800ms` left-to-right sweep and `2200ms` rest.
+- Disable sweep under `prefers-reduced-motion: reduce`.
+- Remove shimmer when the row reaches a terminal state.
+
+Acceptance:
+
+- Shimmer appears only while work is active or thinking/running.
+- Completed rows, artifact rows, images, final summaries, and the full transcript do not
+  animate.
+- The effect stays subtle on Strict Daylight surfaces and does not look like a loading
+  skeleton.
 
 ### CUI11. Regression Fixtures And Visual QA
 
@@ -698,7 +744,7 @@ Required fixture matrix:
 | single-agent running | active operation row mutating in place | running modal or duplicate run row |
 | single-agent completed | final coordinator result plus terminal operation rows | lingering floating success popover |
 | serial multi-agent | coordinator handoff, current agent, folded prior agent | collaboration record card |
-| parallel multi-agent | latest action per active teammate | full sub-agent transcripts |
+| parallel multi-agent | latest action per active teammate | full sub-agent transcripts as default feed |
 | waiting approval | approval row and blocking affordance | vague `continue?` copy |
 | blocked | human-readable blocker and next action | raw exception as default row |
 | interrupted redirect | cancelled source plus linked continuation | hidden prompt injection |
@@ -713,7 +759,7 @@ Copy regression assertions:
 - Main feed does not contain `细节放在折叠证据里`.
 - Main feed does not contain UI-mechanism copy such as `主会话会同步状态` or
   `查看右侧抽屉了解完整细节`.
-- Right drawer detail does not repeat the coordinator final summary.
+- Right drawer result review does not repeat the coordinator final summary.
 - Floating popover is hidden after terminal summary commits.
 
 Verification commands:
@@ -861,9 +907,9 @@ Acceptance:
 - Popover does not duplicate drawer progress.
 - Popover source icons are optional compact affordances, not additional progress rows.
 
-### Slice 5: Right Drawer Detail
+### Slice 5: Result Review, Artifacts, Images, And Motion
 
-Phases: CUI8 and CUI10.
+Phases: CUI8, CUI10, and CUI10.5.
 
 Files likely touched:
 
@@ -878,9 +924,12 @@ apps/web/e2e/channel.spec.ts
 Acceptance:
 
 - Drawer root pages do not duplicate main feed.
-- Operation detail page has Summary, Timeline, Commands, Files, Checks, Approvals,
-  Sources, Artifacts, and folded Raw events.
+- Operation process detail remains inline and does not become a drawer page.
+- Drawer result review has files, diffs/previews, checks, approvals, sources, artifacts,
+  and folded raw/debug refs.
 - Files/artifacts/memory follow the strip/detail boundary.
+- Image thumbnails and lightbox preview work in the main transcript.
+- Active shimmer appears only on active rows/popover text and stops on terminal rows.
 
 ### Slice 6: Legacy Cleanup And Fixture Matrix
 
@@ -949,8 +998,10 @@ Coverage:
 
 Coverage:
 
-- Root pages render `Files`, `Context`, `Settings`.
-- Operation detail opens from explicit action.
+- Root pages render `Files`, `Review`, `Settings`.
+- File preview, diff review, artifact preview, source metadata, approval detail, and
+  raw/debug detail open from explicit actions.
+- Operation process detail remains inline in the main transcript.
 - Raw JSON is folded.
 - Drawer summary does not repeat coordinator final summary.
 
@@ -960,7 +1011,9 @@ Coverage:
 
 - Desktop screenshot of single-agent running/completed.
 - Desktop screenshot of parallel multi-agent.
-- Desktop screenshot of drawer-open detail.
+- Desktop screenshot of inline expanded OperationCell detail.
+- Desktop screenshot of drawer-open result review/file preview.
+- Desktop screenshot of image thumbnail and lightbox preview.
 - Narrow viewport screenshot of active work and composer.
 
 ## Failure Modes
@@ -974,12 +1027,14 @@ Coverage:
 | Existing e2e depends on legacy card selectors | Migrate selectors slice by slice; do not delete all legacy classes in Slice 1. |
 | `WorkspaceClientView.tsx` diff becomes too large | Keep first slices behavior-focused; split components only after acceptance. |
 | Copy formatters become over-abstracted | Keep formatter functions small and explicit; no generic prose generator. |
-| Evidence becomes inaccessible after folding | RawDetailRef and drawer detail stay reachable from explicit drill-down. |
+| Evidence becomes inaccessible after folding | Semantic evidence stays reachable inline; raw/debug refs stay reachable from explicit drill-down. |
 
 Critical silent-failure guard:
 
-- If an implementation hides a raw/detail path without replacing it in drawer detail,
-  stop and restore audit access before continuing.
+- If an implementation hides semantic process evidence instead of folding it inline, stop
+  and restore the OperationCell/AgentActivitySpan expansion before continuing.
+- If an implementation hides a raw/debug path without replacing it with explicit raw/debug
+  access, stop and restore audit access before continuing.
 
 ## Not In Scope
 
@@ -1006,7 +1061,8 @@ R1-R3.1 pass.
 | AgentActivitySpan | `apps/web/src/lib/`, `apps/web/src/shared/conversation/` | OperationCell renderer |
 | Floating popover | `apps/web/src/features/workspace/`, `apps/web/src/styles/` | Projection and active lifecycle fields |
 | SourceSummaryStrip | `apps/web/src/lib/`, `apps/web/src/shared/conversation/`, `apps/web/src/features/workspace/` | Stable OperationCell and AgentActivitySpan ids |
-| Right drawer detail | `apps/web/src/shared/conversation/`, `apps/web/src/features/workspace/` | Projection model, evidence fields, source refs |
+| Right drawer result review | `apps/web/src/shared/conversation/`, `apps/web/src/features/workspace/` | Projection model, artifacts, file/change evidence, source refs |
+| Image/lightbox and shimmer | `apps/web/src/shared/conversation/`, `apps/web/src/styles/` | Artifact/result rows and active lifecycle fields |
 | E2E fixtures | `apps/web/e2e/` | Each corresponding slice |
 
 Execution:
@@ -1061,7 +1117,8 @@ The implementation is complete when:
 - Ling Agent copy follows the copy canon.
 - Active operation rows update in place.
 - Inline evidence is bounded and expandable.
-- Right drawer owns deep/raw/detail only.
+- Right drawer owns completed result review, file/artifact preview, source metadata,
+  settings, and explicit raw/debug access only.
 - Floating popover owns active status only and hides after completion.
 - Legacy collaboration cards no longer appear as first-level user concepts.
 - Full fixture matrix passes.

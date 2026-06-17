@@ -145,6 +145,7 @@ import type {
   ExternalWorkWorkflowMutationResponse,
   HardDeleteAiTeammateRequest,
   HardDeleteAiTeammateResponse,
+  ExecutionActionListResponse,
   ListApprovalsRequest,
   LingThreadArchiveRequest,
   LingThreadDetailResponse,
@@ -561,6 +562,26 @@ export class LingDaemonClient {
       workflowStepId: request.workflowStepId,
       threadId: request.threadId,
       limit: request.limit,
+    });
+  }
+
+  async listExecutionActions(
+    cwd: string,
+    options: {
+      readonly runId?: string;
+      readonly threadId?: string;
+      readonly status?: string;
+      readonly actionType?: string;
+      readonly limit?: number;
+    } = {},
+  ): Promise<ExecutionActionListResponse> {
+    return this.get("/execution-actions", {
+      cwd,
+      runId: options.runId,
+      threadId: options.threadId,
+      status: options.status,
+      actionType: options.actionType,
+      limit: options.limit,
     });
   }
 

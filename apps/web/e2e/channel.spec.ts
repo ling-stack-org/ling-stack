@@ -14,7 +14,6 @@ import {
   channelEventFilterToggle,
   channelEventFilters,
   openChannelChatTools,
-  openChannelContextPanel,
   openChannelFilesPanel,
   openTaskFromAttentionQueue,
   readScrollState,
@@ -3331,10 +3330,21 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   const panel = page.locator(".channel-side-panel");
   await expect(panel).toHaveAttribute("aria-label", "Files");
   await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Files" })).toBeVisible();
+  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Review" })).toBeVisible();
   await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Progress" })).toHaveCount(0);
   await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Context" })).toHaveCount(0);
   await expect(panel.locator(".collaboration-task-card")).toHaveCount(0);
+  await expect(panel).not.toContainText("Workflow evidence");
+  await expect(panel).not.toContainText("Ship workflow UI");
+
+  await panel.locator(".right-drawer-nav").getByRole("button", { name: "Review" }).click();
+  await expect(panel).toHaveAttribute("aria-label", "Review");
+  await expect(panel).toContainText("Approvals");
+  await expect(panel).toContainText("Run results");
+  await expect(panel.locator(".channel-side-panel-actions .icon-button")).toHaveCount(1);
+  await expect(panel).not.toContainText("Progress");
+  await expect(panel).not.toContainText("Context");
   await expect(panel).not.toContainText("Workflow evidence");
   await expect(panel).not.toContainText("Ship workflow UI");
 });
@@ -3344,6 +3354,34 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  const productRun = {
+    ...state.runs[0],
+    id: "run_r31_product",
+    status: "succeeded",
+    taskId: "task_r31_product",
+    channelId: "channel_engineering",
+    workflowStepId: "workflow_step_r31_product_acceptance",
+    threadId: "thread_r31_product",
+    createdAt: "2026-05-25T00:55:10.000Z",
+    startedAt: "2026-05-25T00:55:10.000Z",
+    updatedAt: "2026-05-25T00:55:20.000Z",
+    endedAt: "2026-05-25T00:55:20.000Z",
+    taskSnapshot: { id: "task_r31_product", title: "产品策略分析登录页 smoke" },
+  };
+  const qaRun = {
+    ...state.runs[0],
+    id: "run_r31_qa",
+    status: "succeeded",
+    taskId: "task_r31_qa",
+    channelId: "channel_engineering",
+    workflowStepId: "workflow_step_r31_qa_no_write",
+    threadId: "thread_r31_qa",
+    createdAt: "2026-05-25T00:55:18.000Z",
+    startedAt: "2026-05-25T00:55:18.000Z",
+    updatedAt: "2026-05-25T00:55:30.000Z",
+    endedAt: "2026-05-25T00:55:30.000Z",
+    taskSnapshot: { id: "task_r31_qa", title: "QA 验证登录页 smoke" },
+  };
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -3496,6 +3534,55 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
       updatedAt: "2026-05-25T00:55:30.000Z",
     },
   ];
+  state.runs = [productRun, qaRun];
+  state.artifactsByRun[productRun.id] = [
+    {
+      id: "artifact_r31_product_scope",
+      runId: productRun.id,
+      type: "file",
+      path: "docs/login-smoke-scope.md",
+      title: "login-smoke-scope.md",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 720,
+      createdAt: "2026-05-25T00:55:16.000Z",
+    },
+  ];
+  state.executionActions = [
+    {
+      id: "execution_action_r31_product_read",
+      workspaceId: "workspace_default",
+      runId: productRun.id,
+      actionType: "read",
+      risk: "low",
+      status: "succeeded",
+      title: "读取 smoke 范围笔记",
+      summary: "产品策略读取登录页 smoke 范围笔记。",
+      targetRefs: [{ type: "file", path: "docs/login-smoke-scope.md" }],
+      previewArtifactIds: [],
+      resultArtifactIds: ["artifact_r31_product_scope"],
+      createdAt: "2026-05-25T00:55:12.000Z",
+      updatedAt: "2026-05-25T00:55:16.000Z",
+      executedAt: "2026-05-25T00:55:12.000Z",
+      completedAt: "2026-05-25T00:55:16.000Z",
+    },
+    {
+      id: "execution_action_r31_qa_check",
+      workspaceId: "workspace_default",
+      runId: qaRun.id,
+      actionType: "bash",
+      risk: "medium",
+      status: "succeeded",
+      title: "运行 smoke 验收检查",
+      summary: "QA 运行登录页 smoke 验收检查。",
+      targetRefs: [{ type: "command", label: "pnpm --filter @ling-stack/web test:e2e -- login-smoke" }],
+      previewArtifactIds: [],
+      resultArtifactIds: [],
+      createdAt: "2026-05-25T00:55:22.000Z",
+      updatedAt: "2026-05-25T00:55:28.000Z",
+      executedAt: "2026-05-25T00:55:22.000Z",
+      completedAt: "2026-05-25T00:55:28.000Z",
+    },
+  ];
 
   await mockDaemon(page, state);
   await page.goto("/");
@@ -3506,7 +3593,8 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
   const assistantTranscript = turn.locator(".conversation-turn-assistant-row");
   await expect(assistantTranscript).toHaveCount(1);
   await expect(assistantTranscript).toContainText("产品策略分析登录页 smoke 的目标范围，仅输出结论");
-  await expect(assistantTranscript).toContainText("确认不需要修改文件");
+  await expect(assistantTranscript).toContainText("读取 smoke 范围笔记");
+  await expect(assistantTranscript).toContainText("运行 smoke 验收检查");
   await expect(assistantTranscript).toContainText("协作队友：产品策略、QA");
   await expect(feed).not.toContainText("确认需求：");
   await expect(feed).not.toContainText("完成：");
@@ -3519,8 +3607,8 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
   const workCell = assistantTranscript.locator(".conversation-work-cell").filter({ hasText: "产品策略" });
   await expect(workCell).toHaveAttribute("data-operation-source", "workflow");
   await expect(workCell.locator(".conversation-work-cell-agent-span")).toHaveCount(2);
-  await expect(workCell).toContainText("输出验收口径");
-  await expect(workCell).toContainText("确认不需要修改文件");
+  await expect(workCell).toContainText("读取 smoke 范围笔记");
+  await expect(workCell).toContainText("运行 smoke 验收检查");
   await expect(workCell).not.toContainText("Consult");
   await expect(workCell).not.toContainText("Review");
   await expect(workCell).not.toContainText("branch_product");
@@ -3531,6 +3619,10 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
   await productSpan.locator(".conversation-work-cell-agent-span-head").click();
   await expect(productSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("梳理登录页 smoke 的目标范围");
   await expect(productSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("输出验收口径");
+  await expect(productSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("读取 smoke 范围笔记");
+  const productActionRow = productSpan.locator(".conversation-work-cell-row").filter({ hasText: "读取 smoke 范围笔记" });
+  await productActionRow.locator(".conversation-work-cell-row-main").click();
+  await expect(productActionRow.locator(".conversation-work-cell-row-detail")).toContainText("docs/login-smoke-scope.md");
 
   const qaSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "QA" });
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toHaveCount(0);
@@ -3538,6 +3630,10 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
   await qaSpan.locator(".conversation-work-cell-agent-span-head").click();
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("验证验收口径覆盖登录页目标");
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("确认不需要修改文件");
+  await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("运行 smoke 验收检查");
+  const qaActionRow = qaSpan.locator(".conversation-work-cell-row").filter({ hasText: "运行 smoke 验收检查" });
+  await qaActionRow.locator(".conversation-work-cell-row-main").click();
+  await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web test:e2e -- login-smoke");
   await maybeCaptureR32Screenshot(page, "serial-multi-agent-expanded");
 });
 
@@ -4398,7 +4494,7 @@ test("channel files tab aggregates run artifacts and keeps other channel artifac
   await expect(page.getByText("Other channel report")).toHaveCount(0);
 });
 
-test("channel v1.1 protocol supports brief, decisions, handoffs, and context task creation", async ({ page }) => {
+test("channel review root replaces the legacy context drawer for protocol activity", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -4421,86 +4517,34 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
     },
   ];
   await mockDaemon(page, state);
-  const briefLoaded = page.waitForResponse((response) => response.url().includes("/channels/channel_engineering/brief") && response.request().method() === "GET");
   await page.goto("/");
-  await briefLoaded;
 
-  await expect(page.getByText("Loading protocol...")).toHaveCount(0);
-  await expect(page.getByLabel("Objective")).toHaveCount(0);
-  await openChannelContextPanel(page);
-  await page.getByRole("button", { name: "Brief", exact: true }).click();
-  await page.getByLabel("Objective").fill("Ship channel v1.1 protocol");
-  await page.getByLabel("Scope").fill("Brief, decisions, handoffs, context summaries");
-  await page.getByLabel("Acceptance criteria").fill("Brief saves\nActivity shows protocol items");
-  await page.getByRole("button", { name: "Save brief" }).click();
-  await expect.poll(() => {
-    const brief = state.channelBriefs.channel_engineering;
-    return isRecord(brief) ? brief.objective : undefined;
-  }).toBe("Ship channel v1.1 protocol");
-
-  await expect(page.getByLabel("Channel message feed")).toBeVisible();
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Keep v1.1 handoffs manual and visible.");
-  await page.getByRole("button", { name: "Send" }).click();
-  const plainMessage = page.locator(".message-bubble").filter({ hasText: "Keep v1.1 handoffs manual and visible." });
-  await expect(plainMessage).toBeVisible();
-  await expect(plainMessage.getByRole("button", { name: /Create task|Record decision|Create handoff|Create task with context|Details/ })).toHaveCount(0);
-
-  const taskEventBubble = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" });
-  const activityDetails = page.getByLabel("Activity details");
-  const openTriageActions = async () => {
-    const triageSection = activityDetails.locator(".activity-triage-section");
-    await expect(triageSection).toBeVisible();
-    if ((await triageSection.getAttribute("open")) === null) {
-      await triageSection.locator("summary").click();
-    }
-  };
+  await page.getByRole("button", { name: "More channel views" }).click();
+  const viewMenu = page.getByRole("menu", { name: "More channel views" });
+  await expect(viewMenu.getByRole("menuitem", { name: "Files" })).toBeVisible();
+  await expect(viewMenu.getByRole("menuitem", { name: "Review" })).toBeVisible();
+  await expect(viewMenu.getByRole("menuitem", { name: "Settings" })).toBeVisible();
+  await expect(viewMenu.getByRole("menuitem", { name: "Context" })).toHaveCount(0);
+  await expect(viewMenu.getByRole("menuitem", { name: "Progress" })).toHaveCount(0);
+  await viewMenu.getByRole("menuitem", { name: "Review" }).click();
+  const panel = page.locator(".channel-side-panel");
+  await expect(panel).toHaveAttribute("aria-label", "Review");
+  await expect(panel).toContainText("Approvals");
+  await expect(panel).toContainText("Run results");
+  await expect(panel).not.toContainText("Context");
 
   await openChannelChatTools(page);
-  await taskEventBubble.getByRole("button", { name: "Details" }).click();
-  await openTriageActions();
-  await activityDetails.getByRole("button", { name: "Record decision" }).click();
-  await activityDetails.getByLabel("Triage title").fill("Decision: Keep v1.1 handoffs manual");
-  await activityDetails.getByLabel("Decision text").fill("Keep v1.1 handoffs manual and visible.");
-  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
-  await expect.poll(() => state.channelDecisions.length).toBe(1);
-  await activityDetails.getByLabel("Close details").click();
-  await expect(page.getByText("Decision log")).toBeVisible();
-
-  await page.getByRole("button", { name: "Supersede" }).first().click();
-  await expect.poll(() => state.channelDecisions.filter((decision) => isRecord(decision) && decision.status === "active").length).toBe(1);
-  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.status === "superseded")).toBe(true);
-
-  await taskEventBubble.getByRole("button", { name: "Details" }).click();
-  await openTriageActions();
-  await activityDetails.getByRole("button", { name: "Create handoff" }).click();
-  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
-  await expect.poll(() => state.channelHandoffs.length).toBe(1);
-  await activityDetails.getByLabel("Close details").click();
-  await expect(page.getByText("Handoff", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "Complete" }).first().click();
-  await expect.poll(() => isRecord(state.channelHandoffs[0]) ? state.channelHandoffs[0].status : undefined).toBe("completed");
-  await expect.poll(() => isRecord(state.tasks.find((task) => isRecord(task) && task.id === "task_inspect")) ? state.tasks.find((task) => isRecord(task) && task.id === "task_inspect")?.status : undefined).toBe("failed");
-
-  const taskCount = state.tasks.length;
-  await taskEventBubble.getByRole("button", { name: "Details" }).click();
-  await openTriageActions();
-  await activityDetails.getByRole("button", { name: "Create context summary" }).click();
-  await activityDetails.getByLabel("Summary").fill("Summary from Inspect workspace.");
-  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
-  await expect.poll(() => state.channelContextSummaries.length).toBe(2);
-  await expect.poll(() => state.channelContextSummaries.some((summary) => isRecord(summary) && summary.summary === "Summary from Inspect workspace.")).toBe(true);
-  await activityDetails.getByLabel("Close details").click();
-  const summaryBubble = page.locator(".message-bubble").filter({ hasText: "Context summary" }).filter({ hasText: "Summary from Inspect workspace" });
+  const summaryBubble = page.locator(".message-bubble").filter({ hasText: "Context summary" }).filter({ hasText: "Seed context summary" });
   await expect(summaryBubble).toBeVisible();
+  const taskCount = state.tasks.length;
   await summaryBubble.getByRole("button", { name: "Create task" }).click();
   await expect.poll(() => state.tasks.length).toBe(taskCount + 1);
-
-  await page.reload();
-  await openChannelContextPanel(page);
-  await expect(page.getByLabel("Objective")).toHaveValue("Ship channel v1.1 protocol");
+  await summaryBubble.getByRole("button", { name: "Review source" }).click();
+  await expect(panel).toHaveAttribute("aria-label", "Review");
+  await expect(panel).not.toContainText("Context");
 });
 
-test("channel v1.2 handoff workflows can start steps and surface runtime context", async ({ page }) => {
+test("handoff activity starts workflows without restoring the legacy context drawer", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -4513,59 +4557,17 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
   await page.locator("article.task-detail").getByRole("button", { name: "Create handoff" }).click();
   await expect.poll(() => state.channelHandoffs.length).toBe(1);
 
-  await openChannelContextPanel(page);
-  await page.getByRole("button", { name: "Handoffs" }).click();
-  await page.getByRole("button", { name: "Start workflow" }).first().click();
+  await openChannelChatTools(page);
+  const handoffBubble = page.locator(".message-bubble").filter({ hasText: "Handoff" }).filter({ hasText: "Inspect workspace" });
+  await expect(handoffBubble).toBeVisible();
+  await handoffBubble.getByRole("button", { name: "Start workflow" }).click();
   await expect.poll(() => state.channelWorkflows.length).toBe(1);
   await expect.poll(() => state.channelWorkflowSteps.length).toBe(1);
-  await openChannelContextPanel(page);
-  await page.getByRole("button", { name: "Runtime" }).click();
-  await expect(page.getByText("Workflow queue")).toBeVisible();
-  await expect(page.getByText("Active decisions: 0")).toBeVisible();
-  const workflowStepLayout = await page.locator(".workflow-step-card").first().evaluate((element) => {
-    const cardRect = element.getBoundingClientRect();
-    const actionRow = element.querySelector(".activity-action-row");
-    const actionRect = actionRow?.getBoundingClientRect();
-    const buttons = Array.from(element.querySelectorAll<HTMLButtonElement>(".activity-action-row .compact-button")).map((button) => {
-      const rect = button.getBoundingClientRect();
-      return {
-        width: Math.round(rect.width),
-        left: Math.round(rect.left),
-        right: Math.round(rect.right),
-        whiteSpace: getComputedStyle(button).whiteSpace,
-      };
-    });
-    return {
-      cardLeft: Math.round(cardRect.left),
-      cardRight: Math.round(cardRect.right),
-      actionLeft: Math.round(actionRect?.left ?? 0),
-      actionRight: Math.round(actionRect?.right ?? 0),
-      gridColumns: getComputedStyle(element).gridTemplateColumns,
-      buttons,
-    };
-  });
-  expect(workflowStepLayout.gridColumns.split(" ").length).toBe(1);
-  expect(workflowStepLayout.actionLeft).toBeGreaterThanOrEqual(workflowStepLayout.cardLeft);
-  expect(workflowStepLayout.actionRight).toBeLessThanOrEqual(workflowStepLayout.cardRight);
-  for (const button of workflowStepLayout.buttons) {
-    expect(button.left).toBeGreaterThanOrEqual(workflowStepLayout.cardLeft);
-    expect(button.right).toBeLessThanOrEqual(workflowStepLayout.cardRight);
-    expect(button.width).toBeGreaterThanOrEqual(58);
-    expect(button.whiteSpace).toBe("nowrap");
-  }
-
-  const taskCount = state.tasks.length;
-  await page.getByRole("button", { name: "Start step" }).click();
-  await expect.poll(() => state.tasks.length).toBe(taskCount + 1);
-  await expect.poll(() => {
-    const step = state.channelWorkflowSteps[0];
-    return isRecord(step) ? step.status : undefined;
-  }).toBe("succeeded");
-  const createdWorkflowTaskTitle = isRecord(state.tasks[0]) && typeof state.tasks[0].title === "string"
-    ? state.tasks[0].title
-    : "Workflow task";
-  await openTaskFromAttentionQueue(page, createdWorkflowTaskTitle);
-  await expect(page.locator("article.task-detail")).toContainText("Source workflow");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow" }).filter({ hasText: "Inspect workspace workflow" })).toBeVisible();
+  await handoffBubble.getByRole("button", { name: "Review source" }).click();
+  const panel = page.locator(".channel-side-panel");
+  await expect(panel).toHaveAttribute("aria-label", "Review");
+  await expect(panel).not.toContainText("Context");
 
   const blockedStep = {
     id: "workflow_step_blocked",
@@ -4588,12 +4590,14 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
     workflow.status = "running";
   }
   await page.reload();
-  await openChannelContextPanel(page);
-  await page.getByRole("button", { name: "Runtime" }).click();
-  await expect(page.locator(".workflow-step-card").filter({ hasText: "Blocked follow-up" })).toContainText("Provider preflight failed.");
+  await openChannelChatTools(page);
+  const blockedStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked follow-up" });
+  await expect(blockedStepBubble).toContainText("Provider preflight failed.");
+  await blockedStepBubble.getByRole("button", { name: "Review source" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
 });
 
-test("channel v1.2 workflow start and run uses the existing run surface", async ({ page }) => {
+test("workflow activity uses review source instead of the legacy context run surface", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -4631,17 +4635,15 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openChannelContextPanel(page);
-  await page.getByRole("button", { name: "Runtime" }).click();
-  await page.getByRole("button", { name: "Start + run" }).click();
-  await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
-  await expect.poll(() => {
-    const step = state.channelWorkflowSteps.find((item) => isRecord(item) && item.id === "workflow_step_seed");
-    return isRecord(step) ? step.runId : undefined;
-  }).toBe("run_2");
-  await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await openChannelChatTools(page);
-  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Run seeded step" })).toContainText("succeeded");
+  const workflowBubble = page.locator(".message-bubble").filter({ hasText: "Workflow" }).filter({ hasText: "Seed workflow" });
+  await expect(workflowBubble).toBeVisible();
+  await expect(workflowBubble.getByRole("button", { name: "Review source" })).toBeVisible();
+  await workflowBubble.getByRole("button", { name: "Review source" }).click();
+  const panel = page.locator(".channel-side-panel");
+  await expect(panel).toHaveAttribute("aria-label", "Review");
+  await expect(panel).not.toContainText("Context");
+  await expect(panel).not.toContainText("Task detail");
 });
 
 test("durable Ling thread runs render as collapsed conversation work cells", async ({ page }) => {
@@ -4668,6 +4670,16 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
       contentType: "text/x-diff; charset=utf-8",
       sizeBytes: 512,
       createdAt: "2026-05-25T00:21:00.000Z",
+    },
+    {
+      id: "artifact_thread_screenshot",
+      runId: run.id,
+      type: "image",
+      path: "screenshots/channel-transcript.png",
+      title: "channel-transcript.png",
+      contentType: "image/png",
+      sizeBytes: 4096,
+      createdAt: "2026-05-25T00:21:05.000Z",
     },
     {
       id: "artifact_thread_context",
@@ -4779,7 +4791,19 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
   await expect(workCell).not.toContainText("Task completed");
   await expect(workCell).not.toContainText("Completed: Inspect workspace.");
+  await expect(workCell.locator(".conversation-work-cell-evidence-summary")).toContainText("2 artifacts");
   await expect(workCell.locator(".conversation-work-cell-evidence-summary")).toContainText("Changed 1 file");
+  await expect(workCell.getByLabel("Artifacts")).toContainText("WorkspaceClientView.tsx");
+  await expect(workCell.getByLabel("Artifacts")).toContainText("channel-transcript.png");
+  await expect(workCell.getByRole("button", { name: /Preview: WorkspaceClientView\.tsx/ })).toBeVisible();
+  await expect(workCell.getByRole("button", { name: /Preview: channel-transcript\.png/ })).toBeVisible();
+  await expect(workCell.locator(".conversation-work-cell-artifact-thumb img")).toHaveCount(1);
+  const defaultOperationStream = workCell.locator(".conversation-work-cell-active-stream");
+  await expect(defaultOperationStream).toContainText("Render conversation work cell");
+  await expect(defaultOperationStream).toContainText("Run typecheck");
+  const defaultCommandActionRow = defaultOperationStream.locator(".conversation-work-cell-row").filter({ hasText: "Run typecheck" });
+  await defaultCommandActionRow.locator(".conversation-work-cell-row-main").click();
+  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
   await expect(workCell).not.toContainText(".ling-stack/sessions/run_failed.jsonl");
   await expect(workCell).not.toContainText("Context Pack");
@@ -4813,7 +4837,13 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(workCell).not.toContainText("output.json");
   await expect(workCell).not.toContainText("provider_local");
   await expect(workCell).not.toContainText("tokens");
-  await expect(workCell.getByRole("link", { name: /WorkspaceClientView\.tsx/ })).toHaveAttribute("href", /\/artifacts\/artifact_thread_diff\/content/);
+  await workCell.getByRole("button", { name: /Preview: channel-transcript\.png/ }).click();
+  const lightbox = page.locator(".artifact-preview-lightbox");
+  await expect(lightbox).toBeVisible();
+  await expect(lightbox).toContainText("channel-transcript.png");
+  await expect(lightbox.locator(".artifact-preview-image-frame img")).toHaveAttribute("src", /\/artifacts\/artifact_thread_screenshot\/content/);
+  await lightbox.getByRole("button", { name: "Close preview" }).click();
+  await expect(lightbox).toHaveCount(0);
   expect(threadEvidenceRequests).toHaveLength(1);
 
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
@@ -5365,18 +5395,17 @@ test("channel activity derives task run approval transition and workflow events"
   await openDetailsFrom(workflowStepBubble, "Blocked timeline step");
 
   await taskEventBubble.getByRole("button", { name: "Details" }).click();
-  await activityDetails.getByRole("button", { name: "Open task" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
-  await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
+  await activityDetails.getByRole("button", { name: "Show task in transcript" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Task detail");
   await expect(activityDetails).toHaveCount(0);
 
   await openChannelChatTools(page);
   await runEventBubble.getByRole("button", { name: "Details" }).click();
-  await activityDetails.getByRole("button", { name: "Open run" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
-  await expect(page.locator("article.task-detail")).toContainText("Run linked");
-  await expect(page.locator("article.task-detail")).not.toContainText("Latest run");
-  await expect(page.locator("article.task-detail")).not.toContainText("Task complete");
+  await activityDetails.getByRole("button", { name: "Show run in transcript" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Task detail");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Context");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
@@ -5388,8 +5417,9 @@ test("channel activity derives task run approval transition and workflow events"
   await openChannelChatTools(page);
 
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
-  await activityDetails.getByRole("button", { name: "Open context" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Context");
+  await activityDetails.getByRole("button", { name: "Review source" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Context");
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await expect(activityDetails).toHaveCount(0);
 
@@ -5437,7 +5467,7 @@ test("channel activity derives task run approval transition and workflow events"
   await page.getByRole("button", { name: "Show details" }).click();
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
   const contextPanel = page.locator(".channel-side-panel");
-  await expect(contextPanel).toHaveAttribute("aria-label", "Files");
+  await expect(contextPanel).toHaveAttribute("aria-label", "Review");
   await expect(contextPanel.getByLabel("Attention counts")).toHaveCount(0);
   await expect(contextPanel.getByLabel("Top attention items")).toHaveCount(0);
   await expect(contextPanel.locator(".attention-queue-item")).toHaveCount(0);
@@ -5565,16 +5595,15 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(searchInput).toHaveValue("");
   await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
 
-  await page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Open task" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
-  await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
+  await page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Show in transcript" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Task detail");
 
   await openChannelChatTools(page);
-  await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Open run" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
-  await expect(page.locator("article.task-detail")).toContainText("Run linked");
-  await expect(page.locator("article.task-detail")).not.toContainText("Latest run");
-  await expect(page.locator("article.task-detail")).not.toContainText("Task complete");
+  await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Show in transcript" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Task detail");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Context");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
@@ -5584,8 +5613,9 @@ test("channel activity derives task run approval transition and workflow events"
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
-  await page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" }).getByRole("button", { name: "Open context" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Context");
+  await page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" }).getByRole("button", { name: "Review source" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Context");
 });
 
 test("channel activity triage actions create follow-up records and preserve local state", async ({ page }) => {
@@ -5690,9 +5720,9 @@ test("channel activity triage actions create follow-up records and preserve loca
   await activityDetails.getByRole("button", { name: "Retry" }).click();
   await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
   await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.title === "Investigate failed run triage")).toBe(true);
-  await activityDetails.getByRole("button", { name: "Open in Tasks" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
-  await expect(page.locator("article.task-detail")).toContainText("Investigate failed run triage");
+  await activityDetails.getByRole("button", { name: "Show created task in transcript" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Task detail");
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await openChannelChatTools(page);
@@ -5703,9 +5733,9 @@ test("channel activity triage actions create follow-up records and preserve loca
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();
   await expect.poll(() => state.channelHandoffs.some((handoff) => isRecord(handoff) && handoff.reason === "Escalate blocked triage step")).toBe(true);
   await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
-  await activityDetails.getByRole("button", { name: "Open in Context" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Context");
-  await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Escalate blocked triage step");
+  await activityDetails.getByRole("button", { name: "Review created source" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Context");
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await openChannelChatTools(page);
@@ -5716,8 +5746,9 @@ test("channel activity triage actions create follow-up records and preserve loca
   await activityDetails.getByLabel("Decision text").fill("Keep the approval pending until the user reviews the shell command.");
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();
   await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.title === "Decision: approval stays pending")).toBe(true);
-  await activityDetails.getByRole("button", { name: "Open in Context" }).click();
-  await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Decision: approval stays pending");
+  await activityDetails.getByRole("button", { name: "Review created source" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Review");
+  await expect(page.locator(".channel-side-panel")).not.toContainText("Context");
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await openChannelChatTools(page);
