@@ -63,6 +63,12 @@ export interface ConversationWorkCellEvidenceLink {
   readonly label: string;
   readonly meta?: string;
   readonly href?: string;
+  readonly artifactId?: string;
+  readonly artifactType?: RunArtifact["type"];
+  readonly contentType?: string;
+  readonly sizeBytes?: number;
+  readonly previewKind?: "file" | "image";
+  readonly previewable?: boolean;
 }
 
 export type ConversationArtifactStripItemKind = "artifact" | "changed" | "checked" | "attention" | "approval";
@@ -73,6 +79,12 @@ export interface ConversationArtifactStripItem {
   readonly label: string;
   readonly tone?: ConversationWorkCellRowTone;
   readonly href?: string;
+  readonly artifactId?: string;
+  readonly artifactType?: RunArtifact["type"];
+  readonly contentType?: string;
+  readonly sizeBytes?: number;
+  readonly previewKind?: "file" | "image";
+  readonly previewable?: boolean;
 }
 
 export interface ConversationWorkCellGroup {
@@ -147,16 +159,20 @@ export function buildConversationArtifactStripItems(input: {
   const checkedRows = input.groups.find((group) => group.id === "checked")?.rows ?? [];
   const attentionRows = input.groups.find((group) => group.id === "attention")?.rows ?? [];
   const items: ConversationArtifactStripItem[] = [];
-  const primaryArtifact = input.evidenceLinks.find((link) => link.label.trim());
+  const artifactLinks = input.evidenceLinks.filter((link) => link.label.trim()).slice(0, 4);
 
-  if (primaryArtifact) {
+  for (const artifactLink of artifactLinks) {
     items.push({
-      id: `artifact:${primaryArtifact.id}`,
+      id: `artifact:${artifactLink.id}`,
       kind: "artifact",
-      label: input.evidenceLinks.length > 1
-        ? input.t("Artifact {label} +{count}", { label: primaryArtifact.label, count: input.evidenceLinks.length - 1 })
-        : input.t("Artifact {label}", { label: primaryArtifact.label }),
-      href: primaryArtifact.href,
+      label: artifactLink.label,
+      href: artifactLink.href,
+      artifactId: artifactLink.artifactId,
+      artifactType: artifactLink.artifactType,
+      contentType: artifactLink.contentType,
+      sizeBytes: artifactLink.sizeBytes,
+      previewKind: artifactLink.previewKind,
+      previewable: artifactLink.previewable,
       tone: "neutral",
     });
   }
@@ -282,6 +298,12 @@ export function mainFeedArtifactEvidenceLinks(
     label: mainFeedArtifactLabel(artifact),
     meta: [artifact.type, artifact.sizeBytes !== undefined ? formatBytes(artifact.sizeBytes) : undefined].filter(Boolean).join(" · "),
     href: artifactHref?.(artifact),
+    artifactId: artifact.id,
+    artifactType: artifact.type,
+    contentType: artifact.contentType,
+    sizeBytes: artifact.sizeBytes,
+    previewKind: isImageArtifact(artifact) ? "image" : "file",
+    previewable: artifact.type !== "video",
   })));
 }
 
@@ -309,6 +331,10 @@ function mainFeedArtifactLabel(artifact: RunArtifact): string {
   }
   const path = artifact.path?.trim();
   return path || title || artifact.id;
+}
+
+function isImageArtifact(artifact: RunArtifact): boolean {
+  return artifact.type === "image" || artifact.contentType?.toLowerCase().startsWith("image/") === true;
 }
 
 function isLowSignalArtifactTitle(value: string): boolean {
@@ -543,14 +569,24 @@ function buildActiveRows(input: {
   readonly actions: readonly ExecutionAction[];
 }): readonly ConversationWorkCellRow[] {
   const rows: ConversationWorkCellRow[] = [];
-  rows.push({
-    id: `run:${input.latestRun.id}`,
-    kind: "watch",
-    title: runOperationTitle(input.latestRun.status, readRunTitle(input.latestRun), input.t),
-    description: input.latestRun.errorMessage ? truncatePreview(input.latestRun.errorMessage, 180) : undefined,
-    meta: operationStatusMeta(input.latestRun.status, input.t),
-    tone: runStatusTone(input.latestRun.status),
-  });
+  const artifactsById = artifactsByIdMap(input.artifacts);
+  const actionRows = [...input.actions]
+    .filter(isMainFeedActionRow)
+    .sort(compareExecutionActionTranscriptOrder)
+    .map((action) => executionActionEvidenceRow(action, artifactsById, input.t));
+
+  if (actionRows.length > 0) {
+    rows.push(...actionRows);
+  } else {
+    rows.push({
+      id: `run:${input.latestRun.id}`,
+      kind: "watch",
+      title: runOperationTitle(input.latestRun.status, readRunTitle(input.latestRun), input.t),
+      description: input.latestRun.errorMessage ? truncatePreview(input.latestRun.errorMessage, 180) : undefined,
+      meta: operationStatusMeta(input.latestRun.status, input.t),
+      tone: runStatusTone(input.latestRun.status),
+    });
+  }
 
   for (const approval of input.pendingApprovals.slice(0, 3)) {
     rows.push({
@@ -560,23 +596,6 @@ function buildActiveRows(input: {
       description: approval.description,
       meta: input.t("Approval required"),
       tone: "waiting",
-    });
-  }
-
-  for (const action of input.actions.slice(0, 4)) {
-    rows.push({
-      id: `action:${action.id}`,
-      kind: operationKindForExecutionAction(action),
-      title: action.title,
-      description: action.summary,
-      meta: operationStatusMeta(action.status, input.t),
-      tone: action.status === "failed" || action.status === "denied" || action.status === "expired"
-        ? "failed"
-        : action.status === "succeeded"
-          ? "success"
-          : action.status === "waiting_for_approval"
-            ? "waiting"
-            : "running",
     });
   }
 
@@ -745,6 +764,13 @@ function executionActionEvidenceRow(
     meta: operationStatusMeta(action.status, t),
     tone: executionActionTone(action),
   };
+}
+
+function compareExecutionActionTranscriptOrder(left: ExecutionAction, right: ExecutionAction): number {
+  const leftTime = left.executedAt ?? left.resolvedAt ?? left.completedAt ?? left.createdAt;
+  const rightTime = right.executedAt ?? right.resolvedAt ?? right.completedAt ?? right.createdAt;
+  const timeComparison = leftTime.localeCompare(rightTime);
+  return timeComparison === 0 ? left.id.localeCompare(right.id) : timeComparison;
 }
 
 function executionActionDetailLines(

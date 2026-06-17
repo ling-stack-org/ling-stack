@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronDown, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, ChevronDown, CircleAlert, Clock3, Eye, FileText, History, Image as ImageIcon, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
 import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../lib/conversation-work-cell.js";
+import { ArtifactPreviewDrawer } from "./ArtifactPreviewDrawer.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -14,6 +15,7 @@ export interface ConversationWorkCellDetailsState {
 
 export interface ConversationWorkCellProps {
   readonly model: ConversationOperationCellViewModel;
+  readonly cwd?: string;
   readonly detailsState?: ConversationWorkCellDetailsState;
   readonly onOpenRun?: (runId: string) => void;
   readonly onLoadDetails?: (threadId: string) => void;
@@ -22,6 +24,7 @@ export interface ConversationWorkCellProps {
 
 export function ConversationWorkCell({
   model,
+  cwd,
   detailsState,
   onOpenRun,
   onLoadDetails,
@@ -29,6 +32,7 @@ export function ConversationWorkCell({
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
   const [detailsCollapsed, setDetailsCollapsed] = useState(true);
+  const [previewItem, setPreviewItem] = useState<ConversationArtifactStripItem | undefined>();
   const active = model.mode === "active";
   const fallbackRows: readonly ConversationWorkCellRow[] = model.operationRows.length === 0 && model.agentSpans.length === 0
     ? [{
@@ -43,7 +47,8 @@ export function ConversationWorkCell({
   const agentSpans = model.agentSpans;
   const showOperationRows = operationRows.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
-  const artifactStripSummary = buildArtifactStripSummary(model.artifactStripItems);
+  const artifactStripSummary = buildArtifactStripSummary(model.artifactStripItems, t);
+  const visibleArtifactItems = model.artifactStripItems.filter((item) => item.kind === "artifact");
   const evidenceSummary = artifactStripSummary ?? buildEvidenceSummary(model, t);
   const diagnosticsHandler = model.showDiagnostics === true && !evidenceSummary ? onOpenRun : undefined;
   const rootClassName = [
@@ -98,6 +103,14 @@ export function ConversationWorkCell({
           </button>
         ) : null}
 
+        {visibleArtifactItems.length > 0 ? (
+          <ConversationArtifactStrip
+            items={visibleArtifactItems}
+            cwd={cwd}
+            onPreview={setPreviewItem}
+          />
+        ) : null}
+
         {diagnosticsHandler ? (
           <div className="conversation-work-cell-actions">
             <button
@@ -117,16 +130,130 @@ export function ConversationWorkCell({
             onRetry={() => onLoadDetails?.(model.threadId)}
           />
         ) : null}
+
+        <ArtifactPreviewDrawer
+          request={previewItem?.artifactId && cwd ? {
+            source: "artifact",
+            cwd,
+            artifactId: previewItem.artifactId,
+          } : undefined}
+          openHref={previewItem?.href}
+          downloadHref={previewItem?.href}
+          downloadName={previewItem?.label}
+          variant="lightbox"
+          onClose={() => setPreviewItem(undefined)}
+        />
       </div>
     </article>
   );
 }
 
-function buildArtifactStripSummary(items: readonly ConversationArtifactStripItem[]): string | undefined {
+function buildArtifactStripSummary(items: readonly ConversationArtifactStripItem[], t: Translate): string | undefined {
   if (items.length === 0) {
     return undefined;
   }
-  return items.map((item) => item.label).join(" · ");
+  const artifactCount = items.filter((item) => item.kind === "artifact").length;
+  const changedItem = items.find((item) => item.kind === "changed");
+  const checkedItem = items.find((item) => item.kind === "checked");
+  const attentionItem = items.find((item) => item.kind === "attention");
+  const approvalItem = items.find((item) => item.kind === "approval");
+  const pieces = [
+    artifactCount > 0 ? (artifactCount === 1 ? t("1 artifact") : t("{count} artifacts", { count: artifactCount })) : undefined,
+    changedItem?.label,
+    checkedItem?.label,
+    attentionItem?.label,
+    approvalItem?.label,
+  ].filter((piece): piece is string => Boolean(piece));
+  return pieces.join(" · ");
+}
+
+function ConversationArtifactStrip({
+  items,
+  cwd,
+  onPreview,
+}: {
+  readonly items: readonly ConversationArtifactStripItem[];
+  readonly cwd?: string;
+  readonly onPreview: (item: ConversationArtifactStripItem) => void;
+}): JSX.Element | null {
+  const { t } = useI18n();
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <div className="conversation-work-cell-artifacts" aria-label={t("Artifacts")}>
+      {items.map((item) => {
+        const previewable = Boolean(item.previewable && item.artifactId && cwd);
+        const meta = artifactItemMeta(item);
+        const icon = item.previewKind === "image" ? <ImageIcon size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />;
+        const content = (
+          <>
+            <span className="conversation-work-cell-artifact-thumb" aria-hidden="true">
+              {item.previewKind === "image" && item.href ? <img src={item.href} alt="" loading="lazy" /> : icon}
+            </span>
+            <span className="conversation-work-cell-artifact-copy">
+              <strong>{item.label}</strong>
+              {meta ? <small>{meta}</small> : null}
+            </span>
+          </>
+        );
+        return previewable ? (
+          <button
+            key={item.id}
+            className="conversation-work-cell-artifact-row"
+            type="button"
+            onClick={() => onPreview(item)}
+            aria-label={`${t("Preview")}: ${item.label}`}
+          >
+            {content}
+            <Eye size={13} aria-hidden="true" />
+          </button>
+        ) : item.href ? (
+          <a
+            key={item.id}
+            className="conversation-work-cell-artifact-row"
+            href={item.href}
+            target="_blank"
+            rel="noreferrer"
+            title={item.label}
+          >
+            {content}
+          </a>
+        ) : (
+          <span key={item.id} className="conversation-work-cell-artifact-row">
+            {content}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function artifactItemMeta(item: ConversationArtifactStripItem): string | undefined {
+  return [
+    artifactTypeLabel(item),
+    item.sizeBytes !== undefined ? formatArtifactSize(item.sizeBytes) : undefined,
+  ].filter(Boolean).join(" · ") || undefined;
+}
+
+function artifactTypeLabel(item: ConversationArtifactStripItem): string | undefined {
+  if (item.previewKind === "image") {
+    return "Image";
+  }
+  if (item.artifactType) {
+    return item.artifactType.toUpperCase();
+  }
+  return undefined;
+}
+
+function formatArtifactSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+  if (sizeBytes < 1024 * 1024) {
+    return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function buildEvidenceSummary(model: ConversationOperationCellViewModel, t: Translate): string | undefined {

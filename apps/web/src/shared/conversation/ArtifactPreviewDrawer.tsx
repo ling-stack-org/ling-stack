@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Download, ExternalLink, Loader2, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { loadPreviewContent, previewKindLabel, type PreviewRequest } from "../../lib/previews.js";
@@ -10,6 +11,7 @@ export interface ArtifactPreviewDrawerProps {
   readonly openHref?: string;
   readonly downloadHref?: string;
   readonly downloadName?: string;
+  readonly variant?: "drawer" | "lightbox";
   readonly onClose: () => void;
 }
 
@@ -18,6 +20,7 @@ export function ArtifactPreviewDrawer({
   openHref,
   downloadHref,
   downloadName,
+  variant = "drawer",
   onClose,
 }: ArtifactPreviewDrawerProps): JSX.Element | null {
   const { t } = useI18n();
@@ -62,9 +65,12 @@ export function ArtifactPreviewDrawer({
 
   const title = preview?.ref.label ?? t("Preview");
   const kind = preview ? previewKindLabel(preview.kind) : "";
+  const rootClassName = variant === "lightbox"
+    ? "artifact-preview-drawer artifact-preview-lightbox"
+    : "artifact-preview-drawer";
 
-  return (
-    <aside className="artifact-preview-drawer" aria-label={t("File preview")}>
+  const overlay = (
+    <aside className={rootClassName} aria-label={t("File preview")}>
       <div className="artifact-preview-panel">
         <header className="artifact-preview-head">
           <div>
@@ -120,6 +126,7 @@ export function ArtifactPreviewDrawer({
       </div>
     </aside>
   );
+  return typeof document === "undefined" ? overlay : createPortal(overlay, document.body);
 }
 
 function formatPreviewSize(sizeBytes: number): string {

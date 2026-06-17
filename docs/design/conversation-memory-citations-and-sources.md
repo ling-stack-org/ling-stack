@@ -72,8 +72,8 @@ The current gap is presentation:
 - memory use can be audited, but it is not a first-class transcript citation footer;
 - source summaries exist, but the active floating popover is not yet a Codex-like source
   overview;
-- memory citation, source inventory, operation evidence, and drawer detail can easily
-  duplicate each other if they are rendered from different UI paths.
+- memory citation, source inventory, operation evidence, result review, and raw/debug
+  detail can easily duplicate each other if they are rendered from different UI paths.
 
 ## Non-Goals
 
@@ -264,7 +264,8 @@ Rules:
 - It never repeats the coordinator answer.
 - It never repeats OperationCell rows.
 - It may show icons/counts/examples, not raw source content.
-- Clicking a source group opens source detail or the related transcript detail.
+- Clicking a source group opens source metadata detail or the related inline transcript
+  detail.
 
 Memory in source popover:
 
@@ -274,21 +275,23 @@ Memory in source popover:
 
 ## Right Drawer Boundary
 
-The drawer is detail navigation, not a second transcript.
+The drawer is result-review and metadata navigation, not a second transcript.
 
 Allowed drawer pages:
 
-- operation detail: timeline, commands, files, checks, approvals, artifacts, raw refs;
-- source detail: grouped source refs, source metadata, related operation/message ids;
+- file/artifact preview: generated files, changed files, diffs, rendered previews;
+- review detail: completed checks, approvals, artifact review, audit metadata;
+- source metadata: grouped source refs, source metadata, related operation/message ids;
 - memory detail: memory title, scope, review state, source refs, policy/event ids;
-- artifact/file preview.
+- raw/debug detail: raw refs, payload ids, JSON, full logs, full command output.
 
 Forbidden drawer behavior:
 
 - no duplicate progress list if the active popover already shows progress;
 - no duplicate main transcript text;
+- no operation process timeline that copies OperationCell or AgentActivitySpan rows;
 - no duplicate memory footer list as a root drawer card;
-- no raw event stream unless the user opens raw/detail explicitly.
+- no raw event stream unless the user opens raw/debug explicitly.
 
 ## Lifecycle
 
@@ -396,11 +399,12 @@ Acceptance:
 - Single-agent reply with workspace memory: footer appears on the Ling Agent message.
 - Channel reply with private teammate memory: footer appears only when policy allows the
   current teammate; body is not quoted by default.
-- Task run memory with no response message: citation attaches to OperationCell detail.
+- Task run memory with no response message: citation attaches to the owning inline
+  OperationCell detail.
 - Active turn with attachments/files/memory/artifact sources: popover shows grouped source
   counts, not a card stack.
 - Terminal turn: operation rows remain folded, memory footer remains visible, popover hides,
-  drawer detail remains available.
+  result review/raw-debug detail remains available.
 - Internal context refs: no raw prompt, provider id, token budget, context-pack id, or daemon
   helper appears in source groups.
 
@@ -413,5 +417,5 @@ Ling Memory stays authoritative for scope/review/recall.
 TranscriptMemoryCitation makes used memory readable near the answer.
 TranscriptSourceSummary makes active context inventory visible without polluting the feed.
 OperationCell keeps execution evidence.
-Right drawer owns deep detail only.
+Right drawer owns result review and explicit raw/debug detail only.
 ```

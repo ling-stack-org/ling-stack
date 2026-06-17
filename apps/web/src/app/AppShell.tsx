@@ -224,6 +224,8 @@ export function AppShell(): JSX.Element {
     channelLinkPreviews,
     channelArtifactsByRun,
     channelArtifactErrorsByRun,
+    channelExecutionActions,
+    channelExecutionActionError,
     channelBrief,
     channelCollaborationProtocol,
     channelDecisions,
@@ -273,6 +275,7 @@ export function AppShell(): JSX.Element {
     upsertChannelExecutionProposal,
     refreshChannelFiles,
     refreshChannelRunArtifacts,
+    refreshChannelExecutionActions,
     refreshChannelActivityTransitions,
     refreshChannelMessageRouteDecisions,
     refreshChannelIntentDecisions,
@@ -1194,6 +1197,13 @@ export function AppShell(): JSX.Element {
     if (activeView !== "workspace") {
       return;
     }
+    void refreshChannelExecutionActions(form.cwd.trim(), selectedChannelId, channelRunsForArtifacts);
+  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
+
+  useEffect(() => {
+    if (activeView !== "workspace") {
+      return;
+    }
     void refreshChannelActivityTransitions(form.cwd.trim(), selectedChannelId, channelRunsForArtifacts);
   }, [activeView, channelTransitionEntityKey, form.cwd, selectedChannelId]);
 
@@ -1504,6 +1514,8 @@ export function AppShell(): JSX.Element {
             channelLinkPreviews={channelLinkPreviews}
             channelArtifactsByRun={channelArtifactsByRun}
             channelArtifactErrorsByRun={channelArtifactErrorsByRun}
+            channelExecutionActions={channelExecutionActions}
+            channelExecutionActionError={channelExecutionActionError}
             channelBrief={channelBrief}
             channelCollaborationProtocol={channelCollaborationProtocol}
             channelDecisions={channelDecisions}

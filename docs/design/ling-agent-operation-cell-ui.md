@@ -238,7 +238,7 @@ Normalizer rules:
 
 ## Raw Event Mapping Table
 
-| Raw input | Normalized output | Default feed | Expanded detail | Raw/detail drawer |
+| Raw input | Normalized output | Default feed | Expanded detail | Raw/debug access |
 | --- | --- | --- | --- | --- |
 | user message committed | `UserMessageCell` | user text | attachments and referenced files | original message metadata |
 | coordinator text delta/final | `CoordinatorMessageCell` | natural reply or final result | related operation link | raw model item when debug is enabled |
@@ -247,9 +247,9 @@ Normalizer rules:
 | run started/progress/completed | active `OperationCell` mutation | current task state | row history | run events, attempt ids |
 | tool call start/output/end | `OperationRow` | `读取文件`, `运行检查`, `搜索文档` | command/tool summary and bounded output | full stdout/stderr, tool JSON |
 | file read/context packet | `read` row or evidence ref | hidden unless it explains action | file names, snippets if useful | packet payload, context ids |
-| file write/patch/artifact | `edit` row plus `ArtifactStrip` | changed file summary | diff/file preview | raw patch, artifact metadata |
+| file write/patch/artifact | `edit` row plus `ArtifactStrip` | changed file summary | inline changed-file summary; full preview/diff can open result review | raw patch, artifact metadata |
 | approval requested/resolved | `ApprovalCell` | waiting/approved/denied state | command/action and risk context | policy payload, request ids |
-| sub-agent spawned/updated/completed | `AgentActivitySpan` | agent label and latest action | branch transcript summary | sub-thread raw events |
+| sub-agent spawned/updated/completed | `AgentActivitySpan` | agent label and latest action | semantic process rows under the agent span | raw sub-thread events only |
 | memory surfaced | memory evidence row | hidden unless it affects answer | memory title/source | raw memory ids and scoring |
 | queued follow-up | active operation row | `Queued follow-up` | queued text preview | continuation request payload |
 | interrupt/redirect | active operation state | `Stopped and redirected` | lineage and reason | cancellation/run lineage events |
@@ -263,7 +263,7 @@ UI layers:
 | --- | --- | --- |
 | committed history cells | committed user/coordinator/operation rows | visible |
 | active cell | one mutable active operation per running span | visible, mutates in place |
-| transcript detail | expanded operation detail or raw/detail drawer | collapsed |
+| transcript detail | inline expanded operation, agent, source, and artifact detail | collapsed |
 | bottom pane / composer | input, queue follow-up, interrupt/redirect, approval affordances | visible near composer |
 | approval / ask user surfaces | explicit authority or missing-input requests | visible when blocking |
 | artifact/status surfaces | product files, changed files, checks, active status | compact summary |
@@ -286,7 +286,7 @@ framework rules, not visual-copy rules.
 | `exec_cell/model.rs` | `ExecCell` stores command calls keyed by `call_id`; output chunks append to that call; `complete_call` records output and duration. | Command/tool/file/check operations must have stable operation ids and update their own state in place. Stdout chunks update evidence, not the feed row list. |
 | `exec_cell/render.rs` | Exec display switches `Running` to `Ran`/`You ran`; read/list/search calls coalesce into `Exploring`/`Explored`; tool output defaults to bounded lines. | Low-level exploration commands group under semantic rows. User-meaningful commands get compact rows with bounded inline output and full raw detail elsewhere. |
 | `history_cell/search.rs` | `WebSearchCell` changes `Searching the web` to `Searched the web` by toggling cell state. | Lightweight browser/search/memory cells use the same status mutation pattern: running label becomes terminal label on the same row. |
-| `pager_overlay.rs` | Transcript overlay owns committed cells plus a cached live tail derived from the current active cell; cache key changes on revision/animation/width. | Right drawer/detail can include active live detail, but it must not duplicate the main transcript. Active detail must refresh when a cell mutates. |
+| `pager_overlay.rs` | Transcript overlay owns committed cells plus a cached live tail derived from the current active cell; cache key changes on revision/animation/width. | Inline expanded detail can include live active detail, but it must not duplicate the main transcript. Raw/debug detail surfaces must refresh when a cell mutates if they are explicitly open. |
 | `chatwidget/streaming.rs` | Assistant text deltas stream through a controller, then consolidate into one final markdown cell; reasoning deltas update status, not transcript. | Coordinator/assistant prose is streamed text inside the same turn transcript, not fixed start/end cards. Internal reasoning/status must not become default conversation rows. |
 
 The transferable model is:
@@ -350,8 +350,8 @@ Render-mode rules:
 | --- | --- | --- |
 | Main conversation feed | user messages, coordinator narrative, operation display rows, active cell, final summary, artifact strip | raw event logs, duplicate collaboration cards, workflow/run ids |
 | Floating run popover | current running state, active actor, elapsed time, interrupt affordance, latest one-line action, compact source icons while active | full transcript, raw output, historical collaboration record |
-| Right drawer | deep detail, raw/debug transcript, source detail, file preview, diff, cross-task Files/Context/Settings pages | active progress, a second copy of the main conversation, or the same inline evidence |
-| Inline expansion | semantic evidence needed for normal audit | unbounded logs, JSON dumps, provider metadata |
+| Right drawer | completed-result review, changed/generated files, artifact preview, file preview, diff/review, source metadata, settings, explicit raw/debug support | active progress, operation process transcript, AgentActivitySpan history, a second copy of the main conversation, or the same inline evidence |
+| Inline expansion | semantic evidence needed for normal audit: operation steps, commands, bounded output, files, checks, approvals, agent process rows, source summary | unbounded logs, JSON dumps, provider metadata |
 | Source summary strip | compact evidence sources from tools, web, memory, files, and apps | operation history, raw events, internal helper tools |
 | Modal / blocking view | approval, missing input, permission change, destructive confirmation | passive status or historical logs |
 | Composer active-work affordance | normal send, queue follow-up, stop-and-redirect | hidden prompt injection or implicit interruption |
@@ -362,7 +362,8 @@ Placement rules:
 - If main feed display already says an operation completed, the floating popover hides or
   moves to idle state.
 - If inline expansion already exposes semantic evidence, the right drawer opens only for
-  deeper raw/detail, not the same content.
+  completed result review, file/diff/artifact preview, source metadata, or explicit
+  raw/debug support. It must not reopen the same operation process as a second transcript.
 - If a modal is blocking, status surfaces may stay visible but should not compete with the
   blocking decision.
 - If multiple agents are active, the floating popover summarizes the coordinator view and
@@ -389,8 +390,9 @@ Default conversation feed rules:
 - Active cells update in place; they do not append a new card or toast for every event.
 - Agent spans use small labels, avatars, and faint lane lines, not cards.
 - Artifact strips may have a very light product affordance; operation logs may not.
-- The right drawer is for raw/deep/cross-task drilldown, not a duplicate of expanded
-  inline evidence.
+- The right drawer is for completed result review, file/diff/artifact preview, settings,
+  and explicit raw/debug support. It is not where normal `OperationCell` process detail
+  lives.
 - Do not show `workflow`, `run`, `work-unit`, `packet`, `attempt`, selector ids, raw
   event labels, provider metadata, token budgets, or JSON in the default feed.
 
@@ -412,6 +414,111 @@ Coordinator narrative
 + artifact strip
 ```
 
+## Transcript Visual Polish v4 Addendum
+
+This addendum captures the approved follow-up direction from the Strict Daylight v3 /
+Strict Codex Transcript v4 mockup. It is a UI-layer patch, not a new information model.
+
+### Inline Operation Detail
+
+`OperationCell` detail belongs in the main transcript. The default row is compact; the
+expanded state reveals semantic process rows in place.
+
+Rules:
+
+- Expand/collapse happens on the operation row itself.
+- Expanded content is indented transcript text, not a bordered panel, card, or drawer.
+- Commands, tool calls, file modifications, checks, approvals, bounded output excerpts,
+  source counts, and agent process rows can appear inline.
+- Completion freezes the same `OperationCell` as a committed folded row. The final
+  coordinator summary is appended after it; it must not replace it.
+- Normal audit should be possible without opening the right drawer.
+- Full raw payloads, provider metadata, ids, unbounded logs, and complete stdout/stderr
+  remain explicit raw/debug access.
+
+### Result Summary And Artifact Strip
+
+The terminal transcript must show useful outputs in the same turn, immediately after the
+coordinator terminal text.
+
+Default shape:
+
+```text
+产物 1 · 变更 3 个文件 · 检查 4 项通过
+
+产物
+  login.html  HTML · 已创建
+  login-preview.png  图片 · 1280×720
+
+变更
+  apps/web/src/login.html  +86 -0
+  apps/web/src/styles/login.css  +24 -0
+```
+
+Rules:
+
+- Show the compact result summary even when no drawer is opened.
+- Artifact rows are plain transcript rows with small type/icon affordances, not chips or
+  cards.
+- Changed-file rows can show path, action, and concise diff stats.
+- Check rows can show status and command/check name.
+- The right drawer may show full file preview, diff review, generated artifact preview,
+  and audit/review details after the task completes. It must not repeat the same artifact
+  strip as the first visible drawer content.
+
+### Inline Image And Screenshot Preview
+
+Images and screenshots produced by a task are first-class transcript artifacts.
+
+Rules:
+
+- Show a small inline thumbnail under the result/artifact section.
+- Thumbnail size is constrained and stable; it must not push text into overlap or resize
+  the transcript during load.
+- Clicking a thumbnail opens a larger preview/lightbox with filename, dimensions when
+  available, close action, and optional open/download action.
+- The lightbox is a preview surface, not a second transcript or progress surface.
+- If the same image also appears in the right drawer, the drawer version is for file
+  review after completion, not for operation process reading.
+
+### Active Shimmer Motion
+
+Use shimmer / scanning highlight / breathing shimmer only to indicate active work.
+
+Rules:
+
+- Apply to active status text or the active operation row background mask only; do not
+  animate completed rows, artifacts, final summaries, images, or the full transcript.
+- Cycle: `3000ms` total, about `800ms` left-to-right sweep and `2200ms` rest.
+- Visual weight: very light neutral highlight on Strict Daylight surfaces. It should feel
+  like a subtle breathing status, not a loading skeleton.
+- Running state examples: active coordinator thinking line, active `OperationCell`, active
+  agent latest-action row, and floating popover latest-action text.
+- Terminal transition removes shimmer on the same row when state changes to succeeded,
+  failed, blocked, cancelled, or interrupted.
+- Respect `prefers-reduced-motion: reduce` by disabling the sweep and using static tone
+  or spinner state instead.
+
+### Right Drawer Boundary After v4
+
+The right drawer is a completed-result and review surface:
+
+- `Files`: generated files, changed files, file preview, diff preview.
+- `Review`: completed-task audit/review details, approval decisions, checks, and artifact
+  review when needed.
+- `Settings`: channel/runtime settings.
+- Explicit raw/debug detail can be opened from developer/support affordances, but it is
+  not a normal user reading path.
+
+The drawer must not own:
+
+- active progress;
+- operation process transcript;
+- agent process history;
+- completed operation rows already available inline;
+- copied coordinator start/final text;
+- a root `Progress` page.
+
 ## User-Facing Cell Roles
 
 | Role | Default feed behavior | Detail behavior |
@@ -421,9 +528,9 @@ Coordinator narrative
 | `OperationCell` | one compact task/process cell, active or terminal | expands to semantic operation rows and evidence |
 | `AgentActivitySpan` | one compact latest-action row per participating teammate | expands to prior semantic actions and evidence refs |
 | `ApprovalCell` | visible only when user authority is needed | expands to command/action payload and policy context |
-| `SourceSummaryStrip` | compact source icons in active popover or detail surfaces | expands in right drawer to source names, urls, tool/app metadata, and related operation refs |
+| `SourceSummaryStrip` | compact source icons in active popover or inline detail surfaces | expands inline or in metadata detail to source names, urls, tool/app metadata, and related operation refs |
 | `MemoryCitationFooter` | compact used-memory footer under the owning coordinator/agent message | expands to memory title, scope, source refs, recall policy, and used-memory event ids |
-| `EvidenceDetail` | never shown by default | exact files, commands, outputs, raw events, JSON, logs |
+| `EvidenceDetail` | collapsed by default inside the owning transcript row | exact files, commands, bounded outputs, checks, approvals, source refs; raw events, JSON, and logs only through explicit raw/debug access |
 
 `Workflow`, `Run`, `WorkUnit`, `Attempt`, `Packet`, and `RouteDecision` are data model
 and audit terms. They should not appear as default UI labels in the main feed.
@@ -729,13 +836,13 @@ Section limits:
 | --- | --- | --- |
 | summary | 2 lines | truncate with ellipsis |
 | commands | 3 commands | remaining commands counted |
-| command output | 5 lines per command | full output in right drawer raw detail |
+| command output | 5 lines per command | full output through explicit raw/debug access |
 | changed files | 6 files | remaining files counted |
 | checks | 5 checks | show failed checks first |
 | approvals | 3 decisions | most recent first |
 | artifacts | 4 items | remaining artifacts counted |
-| agent activity history | latest 3 semantic actions per agent | full sub-agent transcript in drawer |
-| raw event ids | hidden | drawer only |
+| agent activity history | latest 3 semantic actions per agent | older semantic actions stay folded under the same agent span |
+| raw event ids | hidden | explicit raw/debug access only |
 
 Command detail shape:
 
@@ -777,7 +884,7 @@ Command/tool row rules:
 - Read/list/search commands should coalesce into an exploration/read-context row unless
   one command changes the user's next action.
 - Command output is bounded in inline expanded detail. Full stdout/stderr, exit code,
-  raw command array, environment, and call ids belong in raw/detail.
+  raw command array, environment, and call ids belong in explicit raw/debug access.
 - Output chunks mutate the command row's evidence; they do not create visible rows.
 - Completion records duration and status on the same row.
 
@@ -886,7 +993,8 @@ Folded history limits:
 - show latest 3 semantic actions by default;
 - keep failed/blocked action pinned even if older;
 - show changed files and checks before raw tool events;
-- raw sub-thread transcript opens only in right drawer detail.
+- semantic sub-agent history expands inline under the agent row;
+- raw sub-thread transcript is raw/debug access only.
 
 Parallel behavior:
 
@@ -943,84 +1051,83 @@ Actions:
 | queue follow-up | when composer has draft during active work | queues continuation; visible in active `OperationCell` |
 | redirect | after user chooses stop-and-redirect | creates linked continuation operation |
 | view approval | `waiting_for_approval` | focuses approval surface |
-| view detail | only when drawer is closed and detail is not inline | opens right drawer to deep detail |
+| view result/files | after terminal result when files, diffs, screenshots, or review details exist | opens right drawer result review or file preview |
+| raw/debug detail | only from explicit developer/support affordance | opens raw/debug detail |
 
 Do not put `workflow`, `run`, raw ids, stdout, or agent history in the popover.
 
-## Right Drawer Detail Micro-Spec
+## Right Drawer Result Review Micro-Spec
 
-The right drawer is a detail viewer and current-channel workspace. It must not become a
-second main conversation.
+The right drawer is a completed-result viewer and current-channel workspace. It must not
+become a second main conversation or the default way to read operation process.
 
 Root pages:
 
 | Root page | Purpose | Default content |
 | --- | --- | --- |
-| Files | artifacts and attachments | changed files, generated files, previews |
-| Context | decisions, memory, handoffs | brief, decisions, referenced context |
+| Files | generated and changed files | changed files, generated files, image/file previews, diffs |
+| Review | completed-task review | checks, approval decisions, artifact review, final audit notes |
 | Settings | current-channel configuration | channel teammate/runtime/provider settings |
 
 There is intentionally no `Progress` root page. Active progress is owned by the floating
-popover; completed or durable progress is owned by the main transcript. Task and approval
-views remain drawer detail pages only when opened from explicit task or approval
-affordances.
+popover; completed or durable process is owned by the main transcript. Operation process
+detail is read inline through `OperationCell` and `AgentActivitySpan` expansion.
 
-Operation detail pages are drill-down pages, opened from explicit operation, artifact,
-approval, or raw-detail actions. They are not root tabs.
+Result detail pages are drill-down pages opened from explicit artifact, file, approval,
+review, source-metadata, or raw/debug actions. They are not root tabs.
 
-Operation detail structure:
+Result review structure:
 
 ```text
-操作详情
-  Summary
-  Timeline
-  Commands
+结果详情
   Files
+  Diff / Preview
   Checks
   Approvals
   Artifacts
-  Raw events
+  Sources
+  Raw/debug refs
 ```
 
 Field rules:
 
 | Section | Allowed fields | Forbidden |
 | --- | --- | --- |
-| Summary | operation title, terminal status, owner, started/ended time | repeated coordinator final summary |
-| Timeline | semantic events with timestamps | full main conversation rows |
-| Commands | command, cwd, exit code, duration, bounded output | unrelated shell history |
-| Files | path, action, diff preview, artifact link | raw packet ids as labels |
+| Files | path, action, diff stats, artifact link, preview availability | copied artifact strip as the whole page |
+| Diff / Preview | rendered image/file preview, text diff, binary metadata | operation process transcript |
 | Checks | command/check name, status, duration, failure excerpt | full unbounded logs |
 | Approvals | action, scope, decision, actor, timestamp | vague approval labels |
 | Artifacts | name, type, size, preview availability | duplicate artifact strip copy |
-| Raw events | event id, source, timestamp, JSON payload | visible by default in root drawer |
+| Sources | source label, type, target URL/file/app/tool metadata, related operation refs | repeated source explanations from coordinator text |
+| Raw/debug refs | event id, source, timestamp, JSON payload | visible by default in root drawer |
 
 Drawer copy rules:
 
-- Drawer titles use nouns: `操作详情`, `Raw detail`, `文件变更`, `审批详情`.
+- Drawer titles use nouns: `文件变更`, `预览`, `审核`, `审批详情`, `Raw detail`.
 - The drawer may show internal ids only inside folded raw sections.
 - The drawer should not repeat the final result sentence if the main feed already has the
   final summary.
-- The drawer can show exact command/output text because the user explicitly asked for detail
-  by opening it.
+- The drawer can show exact command/output text only when the user explicitly opens
+  raw/debug detail. Normal file/review pages should not become command transcripts.
 
 Navigation rules:
 
-- Opening an operation detail preserves the main conversation scroll position.
+- Opening a file, result review, source metadata, or raw/debug detail preserves the main
+  conversation scroll position.
 - Closing the drawer returns the center feed to full width.
 - Opening the drawer hides the floating run popover unless the drawer is on a non-progress
   root page and active work needs attention.
-- Drawer back navigation returns from operation detail to the previous root page.
+- Drawer back navigation returns from detail to the previous root page.
 - Mobile drawer becomes a full-screen sheet but keeps the same content contract.
 
 Duplication guard:
 
 - If text appears in `CoordinatorMessageCell.display`, it should not appear verbatim in
   drawer Summary.
-- If an operation row appears in the main feed, drawer Timeline may show a shorter timestamped
-  event, not the same row copy.
-- If inline expanded detail shows command output, drawer Commands may show the full output,
-  but should not duplicate the bounded snippet at the top.
+- If an operation row appears in the main feed, the drawer should not show a Timeline that
+  copies the same row. Use inline expansion for semantic operation history.
+- If inline expanded detail shows command output, drawer file/review pages should not
+  duplicate it. Full command output is raw/debug detail only.
 - If an artifact strip lists files, drawer Files shows previews/diffs, not the same list as
   the first visible section.
 
@@ -1166,7 +1273,8 @@ Deep detail can show:
 
 Right drawer behavior:
 
-- Use the drawer for deep raw/detail navigation or cross-task work board views.
+- Use the drawer for completed result review, file/diff/artifact preview, settings, or
+  explicit raw/debug navigation.
 - Do not make the drawer the only way to inspect the same evidence already available in
   inline transcript detail.
 - Do not render a separate "open work evidence" button inside an operation group that
@@ -1217,7 +1325,7 @@ active popover
   -> shows compact source icons while the turn is active
 turn completed
   -> sourceRefs freeze as committed evidence summary
-right drawer detail
+source metadata detail
   -> shows source name, type, target, related operation, and raw detail ref
 ```
 
@@ -1228,7 +1336,8 @@ Placement:
   helps normal audit.
 - The right floating popover may show compact icons because it is already an active status
   surface.
-- The right drawer owns the source detail page. It must not repeat the main transcript or
+- Source metadata detail may live in the right drawer, but only as metadata/review. It
+  must not repeat the main transcript, OperationCell rows, AgentActivitySpan history, or
   final coordinator result.
 - Used-memory detail belongs to the owning message's memory citation footer first. Source
   summary may count memory as a source group, but must not duplicate the footer contents.
@@ -1349,7 +1458,7 @@ Acceptance:
 - default feed remains readable with collapsed evidence;
 - expanding the operation row/group shows enough file/check/artifact detail for normal
   audit;
-- raw/detail drawer is still available for support and developer diagnostics.
+- explicit raw/debug access is still available for support and developer diagnostics.
 
 ### P5. Composer Active-Work Actions
 
@@ -1376,7 +1485,7 @@ Acceptance:
   `attempt`, `selector`, or `raw event` labels;
 - coordinator fixtures contain no UI-mechanism phrasing such as `主会话会同步状态` or
   `查看右侧抽屉了解完整细节`;
-- right drawer detail fixtures do not repeat the coordinator final summary.
+- right drawer result-review fixtures do not repeat the coordinator final summary.
 
 ### P7. OperationCell Microstructure
 
@@ -1446,7 +1555,8 @@ Acceptance:
 - failed, blocked, or approval-waiting teammates remain visible until the coordinator
   resolves the task;
 - more than three active teammates collapse with an overflow count;
-- raw sub-agent transcript opens only through drawer detail.
+- semantic sub-agent process stays inline behind the agent row; raw sub-agent transcript
+  is raw/debug access only.
 
 ### P9. Floating Run Popover Boundary
 
@@ -1468,17 +1578,20 @@ Acceptance:
 
 Later surface, not Phase 1.
 
-Keep the right drawer as a detail/workspace surface, not a duplicate transcript.
+Keep the right drawer as a completed-result review/workspace surface, not a duplicate
+transcript.
 
 Acceptance:
 
-- drawer root pages remain `Files` and `Settings`; context/source detail is opened only
-  from explicit detail affordances, and active progress remains in the floating popover;
-- operation detail pages open only from explicit drill-down actions;
-- drawer `Summary` does not repeat the coordinator final message;
-- drawer `Timeline` uses timestamped semantic events, not copied main-feed rows;
-- drawer `Commands`, `Files`, `Checks`, `Approvals`, `Artifacts`, and `Raw events`
-  follow the field rules above;
+- drawer root pages are `Files`, `Review`, and `Settings`; active progress remains in the
+  floating popover and durable process remains in the main transcript;
+- operation process detail does not open as a drawer page; it expands inline in the
+  transcript;
+- drawer file/review pages do not repeat the coordinator final message;
+- drawer does not provide a copied operation timeline; semantic operation history belongs
+  to inline expansion;
+- drawer `Files`, `Diff / Preview`, `Checks`, `Approvals`, `Artifacts`, `Sources`, and
+  `Raw/debug refs` follow the field rules above;
 - raw ids and JSON are folded by default and never appear in the drawer root page;
 - opening the drawer preserves main feed scroll position and hides conflicting popover
   progress.
@@ -1495,7 +1608,7 @@ Required fixtures:
 | single-agent running | active operation row mutating in place | running modal or duplicate run row |
 | single-agent completed | final coordinator result plus terminal operation rows | lingering floating success popover |
 | serial multi-agent | coordinator handoff, current agent, folded prior agent | legacy collaboration surface |
-| parallel multi-agent | latest action per active teammate | full sub-agent transcripts |
+| parallel multi-agent | latest action per active teammate | full sub-agent transcripts as default feed |
 | waiting approval | approval row and blocking affordance | vague `continue?` copy |
 | blocked | human-readable blocker and next action | raw exception as default row |
 | interrupted redirect | cancelled source plus linked continuation | hidden prompt injection |

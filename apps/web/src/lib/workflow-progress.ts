@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, RunArtifact, RunSession, WorkflowEvidenceResponse } from "../types.js";
+import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, RunArtifact, RunSession, WorkflowEvidenceResponse } from "../types.js";
 import type { Translate } from "../i18n.js";
 import type {
   ConversationAgentActivitySpan,
@@ -48,6 +48,7 @@ export interface BuildWorkflowProgressInput {
   readonly runs: readonly RunSession[];
   readonly approvals: readonly ApprovalRequest[];
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly executionActions?: readonly ExecutionAction[];
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
 }
@@ -56,15 +57,19 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const orderedSteps = [...input.steps].sort((left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt));
   const stepRunIds = orderedSteps.map((step) => step.runId).filter((runId): runId is string => Boolean(runId));
   const stepIds = new Set(orderedSteps.map((step) => step.id));
-  const runById = new Map(input.runs.map((run) => [run.id, run]));
   const workflowRuns = input.runs.filter((run) =>
     stepRunIds.includes(run.id) || Boolean(run.workflowStepId && stepIds.has(run.workflowStepId)),
   );
+  const workflowRunsByStepId = groupWorkflowRunsByStepId(workflowRuns);
   const runIds = uniqueStrings([
     ...stepRunIds,
     ...workflowRuns.map((run) => run.id),
   ]);
   const artifacts = runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
+  const workflowRunIds = new Set(runIds);
+  const workflowActions = (input.executionActions ?? [])
+    .filter((action) => action.runId ? workflowRunIds.has(action.runId) : false)
+    .sort(compareWorkflowActionTranscriptOrder);
   const workflowApprovals = input.approvals.filter((approval) => approvalBelongsToWorkflow(approval, orderedSteps, workflowRuns));
   const pendingApprovals = workflowApprovals.filter((approval) => approval.status === "pending");
   const completedSteps = orderedSteps.filter((step) => step.status === "succeeded" || step.status === "skipped").length;
@@ -90,7 +95,7 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const anchorRunId = latestRun(workflowRuns)?.id ?? `workflow:${input.workflow.id}`;
   const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
   const groups = mainFeedEvidenceGroups(
-    buildWorkflowProgressGroups({ t: input.t, steps: orderedSteps, artifacts, approvals: workflowApprovals }),
+    buildWorkflowProgressGroups({ t: input.t, steps: orderedSteps, artifacts, approvals: workflowApprovals, actions: workflowActions }),
     input.t,
   );
 
@@ -121,6 +126,9 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     agentSpans: buildWorkflowAgentActivitySpans({
       t: input.t,
       steps: orderedSteps,
+      actions: workflowActions,
+      artifactsByRun: input.artifactsByRun,
+      runsByStepId: workflowRunsByStepId,
     }),
     stats: [
       { id: "steps", label: input.t("Steps"), value: `${completedSteps}/${orderedSteps.length}` },
@@ -378,7 +386,11 @@ function buildWorkflowOperationRows(input: {
 function buildWorkflowAgentActivitySpans(input: {
   readonly t: Translate;
   readonly steps: readonly ChannelWorkflowStep[];
+  readonly actions: readonly ExecutionAction[];
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly runsByStepId: ReadonlyMap<string, readonly RunSession[]>;
 }): readonly ConversationAgentActivitySpan[] {
+  const actionsByRun = groupWorkflowActionsByRun(input.actions);
   const groups = new Map<string, ChannelWorkflowStep[]>();
   for (const step of input.steps) {
     if (isCoordinatorWorkflowParticipant(step)) {
@@ -397,6 +409,13 @@ function buildWorkflowAgentActivitySpans(input: {
       const latestStep = workflowAgentFocusStep(orderedSteps);
       const groupStatus = workflowAgentGroupStatus(orderedSteps);
       const canonicalParticipantId = orderedSteps.find((step) => step.toParticipantId.trim())?.toParticipantId.trim();
+      const latestActionRow = latestStep ? workflowLatestActionRowForStep({
+        step: latestStep,
+        actionsByRun,
+        artifactsByRun: input.artifactsByRun,
+        runsByStepId: input.runsByStepId,
+        t: input.t,
+      }) : undefined;
       return {
         sortIndex: index,
         id: `agent:${participantId}`,
@@ -405,12 +424,108 @@ function buildWorkflowAgentActivitySpans(input: {
         label: latestStep?.toParticipantLabel.trim() || orderedSteps[0]?.toParticipantLabel.trim() || participantId,
         tone: workflowStepTone(groupStatus),
         stateLabel: workflowStepStatusMeta(groupStatus, input.t),
-        latestRow: latestStep ? workflowStepToAgentRow(latestStep, input.t, "latest") : undefined,
-        rows: orderedSteps.map((step) => workflowStepToAgentRow(step, input.t, "history")),
+        latestRow: latestActionRow ?? (latestStep ? workflowStepToAgentRow(latestStep, input.t, "latest") : undefined),
+        rows: buildWorkflowAgentActivityRows({
+          steps: orderedSteps,
+          actionsByRun,
+          artifactsByRun: input.artifactsByRun,
+          runsByStepId: input.runsByStepId,
+          t: input.t,
+        }),
       } satisfies ConversationAgentActivitySpan & { readonly sortIndex: number };
     })
     .sort((left, right) => left.sortIndex - right.sortIndex)
     .map(({ sortIndex: _sortIndex, ...span }) => span);
+}
+
+function buildWorkflowAgentActivityRows(input: {
+  readonly steps: readonly ChannelWorkflowStep[];
+  readonly actionsByRun: ReadonlyMap<string, readonly ExecutionAction[]>;
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly runsByStepId: ReadonlyMap<string, readonly RunSession[]>;
+  readonly t: Translate;
+}): readonly ConversationWorkCellRow[] {
+  return input.steps.flatMap((step) => [
+    workflowStepToAgentRow(step, input.t, "history"),
+    ...workflowActionRowsForStep({
+      step,
+      actionsByRun: input.actionsByRun,
+      artifactsByRun: input.artifactsByRun,
+      runsByStepId: input.runsByStepId,
+      t: input.t,
+      scope: "history",
+    }),
+  ]);
+}
+
+function workflowLatestActionRowForStep(input: {
+  readonly step: ChannelWorkflowStep;
+  readonly actionsByRun: ReadonlyMap<string, readonly ExecutionAction[]>;
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly runsByStepId: ReadonlyMap<string, readonly RunSession[]>;
+  readonly t: Translate;
+}): ConversationWorkCellRow | undefined {
+  return workflowActionRowsForStep({ ...input, scope: "latest" }).at(-1);
+}
+
+function workflowActionRowsForStep(input: {
+  readonly step: ChannelWorkflowStep;
+  readonly actionsByRun: ReadonlyMap<string, readonly ExecutionAction[]>;
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly runsByStepId: ReadonlyMap<string, readonly RunSession[]>;
+  readonly t: Translate;
+  readonly scope: "latest" | "history";
+}): readonly ConversationWorkCellRow[] {
+  const runIds = uniqueStrings([
+    input.step.runId,
+    ...(input.runsByStepId.get(input.step.id) ?? []).map((run) => run.id),
+  ].filter((runId): runId is string => Boolean(runId)));
+  if (runIds.length === 0) {
+    return [];
+  }
+  const actions = runIds
+    .flatMap((runId) => input.actionsByRun.get(runId) ?? [])
+    .sort(compareWorkflowActionTranscriptOrder);
+  if (actions.length === 0) {
+    return [];
+  }
+  return buildConversationExecutionActionEvidenceRows({
+    actions,
+    artifacts: runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []),
+    t: input.t,
+    limit: 8,
+  }).map((row) => ({
+    ...row,
+    id: `${input.scope}:workflow-step:${input.step.id}:${row.id}`,
+  }));
+}
+
+function groupWorkflowRunsByStepId(runs: readonly RunSession[]): ReadonlyMap<string, readonly RunSession[]> {
+  const groups = new Map<string, RunSession[]>();
+  for (const run of runs) {
+    if (!run.workflowStepId) {
+      continue;
+    }
+    groups.set(run.workflowStepId, [...(groups.get(run.workflowStepId) ?? []), run]);
+  }
+  return new Map([...groups.entries()].map(([workflowStepId, stepRuns]) => [
+    workflowStepId,
+    [...stepRuns].sort(compareWorkflowRunActivity),
+  ]));
+}
+
+function groupWorkflowActionsByRun(actions: readonly ExecutionAction[]): ReadonlyMap<string, readonly ExecutionAction[]> {
+  const groups = new Map<string, ExecutionAction[]>();
+  for (const action of actions) {
+    if (!action.runId) {
+      continue;
+    }
+    groups.set(action.runId, [...(groups.get(action.runId) ?? []), action]);
+  }
+  return new Map([...groups.entries()].map(([runId, runActions]) => [
+    runId,
+    [...runActions].sort(compareWorkflowActionTranscriptOrder),
+  ]));
 }
 
 function isCoordinatorWorkflowParticipant(step: ChannelWorkflowStep): boolean {
@@ -545,6 +660,7 @@ function buildWorkflowProgressGroups(input: {
   readonly steps: readonly ChannelWorkflowStep[];
   readonly artifacts: readonly RunArtifact[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly actions: readonly ExecutionAction[];
 }): readonly ConversationWorkCellGroup[] {
   const changedArtifacts = input.artifacts.filter((artifact) => artifact.type === "diff" || artifact.type === "file");
   const changedRows = uniqueBy(changedArtifacts, (artifact) => artifact.path || artifact.id).slice(0, 8).map((artifact) => ({
@@ -566,14 +682,22 @@ function buildWorkflowProgressGroups(input: {
       tone: workflowStepTone(step.status),
     };
   });
-  const evidenceRows: ConversationWorkCellRow[] = input.artifacts.slice(0, 10).map((artifact) => ({
-    id: `artifact:${artifact.id}`,
-    kind: artifact.type === "diff" || artifact.type === "file" ? "edit" as const : "verify" as const,
-    title: artifact.title || artifact.path || artifact.id,
-    description: artifact.path,
-    meta: artifact.type,
-    tone: "neutral" as const,
-  }));
+  const evidenceRows: ConversationWorkCellRow[] = [
+    ...buildConversationExecutionActionEvidenceRows({
+      actions: input.actions,
+      artifacts: input.artifacts,
+      t: input.t,
+      limit: 10,
+    }),
+    ...input.artifacts.slice(0, 10).map((artifact) => ({
+      id: `artifact:${artifact.id}`,
+      kind: artifact.type === "diff" || artifact.type === "file" ? "edit" as const : "verify" as const,
+      title: artifact.title || artifact.path || artifact.id,
+      description: artifact.path,
+      meta: artifact.type,
+      tone: "neutral" as const,
+    })),
+  ];
   evidenceRows.push(...input.approvals.slice(0, 8).map((approval) => ({
     id: `approval-evidence:${approval.id}`,
     kind: "approval" as const,
@@ -822,11 +946,21 @@ function approvalStatusTone(status: ApprovalRequest["status"]): ConversationWork
 }
 
 function latestRun(runs: readonly RunSession[]): RunSession | undefined {
-  return [...runs].sort((left, right) => {
-    const leftTime = left.endedAt ?? left.startedAt ?? left.updatedAt;
-    const rightTime = right.endedAt ?? right.startedAt ?? right.updatedAt;
-    return rightTime.localeCompare(leftTime);
-  })[0];
+  return [...runs].sort(compareWorkflowRunActivity)[0];
+}
+
+function compareWorkflowRunActivity(left: RunSession, right: RunSession): number {
+  const leftTime = left.endedAt ?? left.startedAt ?? left.updatedAt;
+  const rightTime = right.endedAt ?? right.startedAt ?? right.updatedAt;
+  const timeComparison = rightTime.localeCompare(leftTime);
+  return timeComparison === 0 ? right.id.localeCompare(left.id) : timeComparison;
+}
+
+function compareWorkflowActionTranscriptOrder(left: ExecutionAction, right: ExecutionAction): number {
+  const leftTime = left.executedAt ?? left.resolvedAt ?? left.completedAt ?? left.createdAt;
+  const rightTime = right.executedAt ?? right.resolvedAt ?? right.completedAt ?? right.createdAt;
+  const timeComparison = leftTime.localeCompare(rightTime);
+  return timeComparison === 0 ? left.id.localeCompare(right.id) : timeComparison;
 }
 
 function uniqueArtifacts(artifacts: readonly RunArtifact[]): readonly RunArtifact[] {
