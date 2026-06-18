@@ -1,23 +1,32 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import process from "node:process";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
   approvalToolDecisions,
+  buildMemoryMarkdownExport,
   createSqliteRunStore,
   defaultAllowedWritePaths,
   defaultApprovalToolDecisions,
   defaultProviderTemplates,
+  parseMemoryMarkdownImport,
+  registerResolvedWorkspace,
   resolveConfigPaths,
-  resolveRuntimePaths,
+  resolveStoragePaths,
   type ApprovalToolDecision,
+  type LingStackRuntimePaths,
+  type MemoryReviewState,
+  type MemoryScopeType,
+  type MemorySensitivity,
   type ProviderCheckResult,
   type ProviderPreset,
   type ProviderPresetInput,
   type RunTool,
+  type WorkspaceStateLocation,
 } from "@ling-stack/core";
 import { readDaemonLogLines } from "./daemon/logs.js";
 import { startBackgroundDaemon, stopDaemonProcess } from "./daemon/process.js";
@@ -62,6 +71,9 @@ const VALID_PROVIDER_APIS = new Set(["openai-completions", "openai-responses", "
 const VALID_PROVIDER_TRANSPORTS = new Set(["auto", "websocket", "websocket-cached", "sse"]);
 const VALID_PROVIDER_CAPABILITIES = new Set(["chat", "tool_call", "reasoning", "vision", "embedding", "image_generate", "image_edit", "video_generate", "tts", "asr"]);
 const VALID_PROVIDER_INPUTS = new Set(["text", "image"]);
+const VALID_MEMORY_SCOPE_TYPES = new Set(["workspace", "channel", "teammate", "task", "run"]);
+const VALID_MEMORY_REVIEW_STATES = new Set(["candidate", "active", "disabled", "archived", "rejected"]);
+const VALID_MEMORY_SENSITIVITIES = new Set(["normal", "private", "secret-adjacent"]);
 
 type QueryValue = string | number | boolean | undefined;
 
@@ -129,8 +141,85 @@ interface InitResult {
   readonly logsDir: string;
   readonly piDir: string;
   readonly configPath: string;
+  readonly workspaceId: string;
+  readonly stateLocation: string;
   readonly createdProviders: readonly ProviderPreset[];
   readonly skippedProviders: readonly ProviderPreset[];
+}
+
+interface WorkspaceStateMigrationResult {
+  readonly cwd: string;
+  readonly workspaceId: string;
+  readonly source: WorkspaceStateMigrationSide;
+  readonly target: WorkspaceStateMigrationSide;
+  readonly manifestPath: string;
+  readonly backupRoot: string;
+  readonly copiedPaths: readonly string[];
+}
+
+interface WorkspaceStateMigrationPreflightResult {
+  readonly cwd: string;
+  readonly workspaceId: string;
+  readonly canMigrate: boolean;
+  readonly source: WorkspaceStateMigrationSide;
+  readonly target: WorkspaceStateMigrationSide;
+  readonly plan: WorkspaceStateMigrationPreflightPlan;
+  readonly checks: readonly WorkspaceStateMigrationPreflightCheck[];
+}
+
+interface WorkspaceStateMigrationPreflightPlan {
+  readonly previewMigrationRoot: string;
+  readonly previewManifestPath: string;
+  readonly previewBackupRoot: string;
+  readonly previewStagingRoot: string;
+  readonly sourceWillRemain: boolean;
+  readonly targetWillBeBackedUp: boolean;
+  readonly repoPointerWillBeWritten: boolean;
+  readonly registryWillBeUpdated: boolean;
+}
+
+interface WorkspaceStateMigrationPreflightCheck {
+  readonly id: string;
+  readonly status: DoctorStatus;
+  readonly summary: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+  readonly remediation?: string;
+}
+
+interface WorkspaceRegistryRepairResult {
+  readonly cwd: string;
+  readonly workspaceId: string;
+  readonly dryRun: boolean;
+  readonly canRepair: boolean;
+  readonly changed: boolean;
+  readonly globalDatabasePath: string;
+  readonly resolved: WorkspaceRegistryRepairEntry;
+  readonly registry?: WorkspaceRegistryDiagnosticEntry;
+  readonly mismatches: readonly string[];
+  readonly checks: readonly WorkspaceStateMigrationPreflightCheck[];
+}
+
+interface WorkspaceRegistryRepairEntry {
+  readonly workspaceId: string;
+  readonly canonicalCwd: string;
+  readonly displayName: string;
+  readonly stateLocation: WorkspaceStateLocation;
+  readonly stateRoot: string;
+}
+
+interface WorkspaceStateMigrationSide {
+  readonly stateLocation: WorkspaceStateLocation;
+  readonly rootDir: string;
+  readonly databasePath: string;
+}
+
+interface WorkspaceRegistryDiagnosticEntry {
+  readonly workspaceId: string;
+  readonly canonicalCwd: string;
+  readonly displayName: string;
+  readonly stateLocation: WorkspaceStateLocation;
+  readonly stateRoot: string;
+  readonly lastOpenedAt: string;
 }
 
 interface DaemonListenOptions {
@@ -182,6 +271,10 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleInit(rest, parsed.options);
     case "doctor":
       return await handleDoctor(rest, parsed.options);
+    case "workspace":
+      return await handleWorkspace(rest, parsed.options);
+    case "memory":
+      return await handleMemory(rest, parsed.options);
     case "daemon":
       return await handleDaemon(rest, parsed.options);
     case "restart":
@@ -219,11 +312,13 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
 
 async function handleInit(args: readonly string[], options: GlobalOptions): Promise<number> {
   const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["workspace-state-location"]),
     booleanFlags: new Set(["with-provider-templates", "no-provider-templates"]),
   });
   assertNoPositionals(parsed.positionals, "init");
   const withProviderTemplates = readProviderTemplatesFlag(parsed);
-  const result = await initWorkspace(options.cwd, withProviderTemplates);
+  const workspaceStateLocation = readWorkspaceStateLocationFlag(getFlag(parsed, "workspace-state-location"));
+  const result = await initWorkspace(options.cwd, withProviderTemplates, workspaceStateLocation);
 
   if (options.json) {
     printJson({
@@ -236,6 +331,8 @@ async function handleInit(args: readonly string[], options: GlobalOptions): Prom
       logsDir: result.logsDir,
       piDir: result.piDir,
       configPath: result.configPath,
+      workspaceId: result.workspaceId,
+      stateLocation: result.stateLocation,
       createdProviderIds: result.createdProviders.map((provider) => provider.id),
       skippedProviderIds: result.skippedProviders.map((provider) => provider.id),
     });
@@ -245,6 +342,7 @@ async function handleInit(args: readonly string[], options: GlobalOptions): Prom
   console.log(`Initialized Ling Stack at ${result.rootDir}`);
   console.log(`Database: ${result.databasePath}`);
   console.log(`Config: ${result.configPath}`);
+  console.log(`Workspace state: ${result.stateLocation} (${result.workspaceId})`);
   if (withProviderTemplates) {
     console.log(`Provider templates: ${result.createdProviders.length} created, ${result.skippedProviders.length} skipped`);
   } else {
@@ -281,6 +379,275 @@ async function handleDoctor(args: readonly string[], options: GlobalOptions): Pr
     ascii: parsed.booleans.has("ascii"),
   });
   return checkStatusExitCode(report.overallStatus);
+}
+
+async function handleWorkspace(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "status", ...rest] = args;
+  switch (subcommand) {
+    case "migrate-state":
+    case "migrate":
+      return await handleWorkspaceMigrateState(rest, options);
+    case "repair-registry":
+      return await handleWorkspaceRepairRegistry(rest, options);
+    case "registry":
+      return await handleWorkspaceRegistry(rest, options);
+    default:
+      throw new CliError(2, "unknown_command", `Unknown workspace command: ${subcommand}`);
+  }
+}
+
+async function handleWorkspaceRegistry(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "repair", ...rest] = args;
+  switch (subcommand) {
+    case "repair":
+      return await handleWorkspaceRepairRegistry(rest, options);
+    default:
+      throw new CliError(2, "unknown_command", `Unknown workspace registry command: ${subcommand}`);
+  }
+}
+
+async function handleMemory(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "export", ...rest] = args;
+  switch (subcommand) {
+    case "export":
+      return await handleMemoryExport(rest, options);
+    case "import":
+      return await handleMemoryImport(rest, options);
+    default:
+      throw new CliError(2, "unknown_command", `Unknown memory command: ${subcommand}`);
+  }
+}
+
+async function handleMemoryExport(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["scope-type", "owner-id", "review-state", "sensitivity", "tag", "limit", "output"]),
+    booleanFlags: new Set(["include-secret-adjacent", "stdout"]),
+  });
+  assertNoPositionals(parsed.positionals, "memory export");
+  const paths = resolveStoragePaths(options.cwd).workspace;
+  const store = createSqliteRunStore(options.cwd, paths);
+  try {
+    const limit = readOptionalIntegerFlag(parsed, "limit");
+    const memories = store.listMemoryObjects({
+      scopeType: readMemoryScopeTypeFlag(getFlag(parsed, "scope-type")),
+      ownerId: getFlag(parsed, "owner-id"),
+      reviewState: readMemoryReviewStateFlag(getFlag(parsed, "review-state")),
+      sensitivity: readMemorySensitivityFlag(getFlag(parsed, "sensitivity")),
+      tag: getFlag(parsed, "tag"),
+      limit,
+    });
+    const markdownExport = buildMemoryMarkdownExport({
+      memories,
+      latestDecisionsByMemoryId: new Map(memories.map((memory) => [memory.id, store.getLatestMemoryReviewDecision(memory.id)])),
+      metadataByMemoryId: new Map(
+        store
+          .listMemorySelfImprovingMetadata({ limit: 1000 })
+          .filter((metadata) => memories.some((memory) => memory.id === metadata.memoryId))
+          .map((metadata) => [metadata.memoryId, metadata]),
+      ),
+      options: {
+        workspaceId: "workspace_default",
+        includeSecretAdjacent: parsed.booleans.has("include-secret-adjacent"),
+      },
+    });
+    const stdout = parsed.booleans.has("stdout");
+    const outputPath = stdout ? undefined : resolve(getFlag(parsed, "output") ?? join(paths.memoryExportsDir, markdownExport.suggestedFileName));
+    if (outputPath) {
+      await mkdir(dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, markdownExport.markdown, "utf8");
+    }
+
+    if (options.json) {
+      printJson({
+        ok: true,
+        cwd: options.cwd,
+        outputPath,
+        export: stdout ? markdownExport : omitMarkdown(markdownExport),
+      });
+      return 0;
+    }
+    if (stdout) {
+      process.stdout.write(markdownExport.markdown);
+      return 0;
+    }
+    console.log(`Memory export written: ${outputPath}`);
+    console.log(`Exported memories: ${markdownExport.memoryCount}`);
+    console.log(`Skipped secret-adjacent memories: ${markdownExport.skippedSecretAdjacentCount}`);
+    console.log(`Redaction applied: ${markdownExport.redactionApplied ? "yes" : "no"}`);
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+async function handleMemoryImport(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["file", "source-id", "source-label", "limit"]),
+    booleanFlags: new Set(["dry-run"]),
+  });
+  assertNoPositionals(parsed.positionals, "memory import");
+  const filePath = getFlag(parsed, "file");
+  if (!filePath) {
+    throw new CliError(2, "missing_option", "memory import requires --file <memory.md>.");
+  }
+  const inputPath = resolve(filePath);
+  const markdown = await readFile(inputPath, "utf8");
+  const plan = parseMemoryMarkdownImport(markdown, {
+    sourceId: getFlag(parsed, "source-id") ?? basename(inputPath),
+    sourceLabel: getFlag(parsed, "source-label") ?? basename(inputPath),
+    limit: readOptionalIntegerFlag(parsed, "limit"),
+  });
+  const dryRun = parsed.booleans.has("dry-run");
+  const paths = resolveStoragePaths(options.cwd).workspace;
+  const store = createSqliteRunStore(options.cwd, paths);
+  try {
+    const now = new Date().toISOString();
+    const memories = dryRun ? [] : plan.candidates.map((candidate) => store.createMemoryObject(candidate.createInput, now));
+    if (options.json) {
+      printJson({
+        ok: true,
+        cwd: options.cwd,
+        inputPath,
+        dryRun,
+        importedCount: memories.length,
+        plan,
+        memories,
+      });
+      return 0;
+    }
+    console.log(`Memory import ${dryRun ? "previewed" : "completed"}: ${inputPath}`);
+    console.log(`Candidates: ${plan.candidateCount}`);
+    console.log(`Skipped sections: ${plan.skippedCount}`);
+    console.log(`Imported memories: ${memories.length}`);
+    if (plan.candidates.some((candidate) => candidate.warnings.length > 0)) {
+      console.log("Warnings:");
+      for (const candidate of plan.candidates) {
+        for (const warning of candidate.warnings) {
+          console.log(`- ${candidate.title}: ${warning}`);
+        }
+      }
+    }
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+async function handleWorkspaceRepairRegistry(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    booleanFlags: new Set(["dry-run"]),
+  });
+  assertNoPositionals(parsed.positionals, "workspace repair-registry");
+  const dryRun = parsed.booleans.has("dry-run");
+  const result = await repairWorkspaceRegistry(options.cwd, dryRun);
+  if (options.json) {
+    printJson({
+      ok: result.canRepair,
+      dryRun: result.dryRun,
+      cwd: result.cwd,
+      workspaceId: result.workspaceId,
+      canRepair: result.canRepair,
+      changed: result.changed,
+      globalDatabasePath: result.globalDatabasePath,
+      resolved: result.resolved,
+      registry: result.registry,
+      mismatches: result.mismatches,
+      checks: result.checks,
+    });
+    return result.canRepair ? 0 : 4;
+  }
+  printWorkspaceRegistryRepair(result);
+  return result.canRepair ? 0 : 4;
+}
+
+async function handleWorkspaceMigrateState(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["to"]),
+    booleanFlags: new Set(["dry-run"]),
+  });
+  assertNoPositionals(parsed.positionals, "workspace migrate-state");
+  const targetStateLocation = readWorkspaceStateLocationFlag(getFlag(parsed, "to"));
+  if (!targetStateLocation) {
+    throw new CliError(2, "missing_option", "workspace migrate-state requires --to repo-local or --to user-data-dir.");
+  }
+  if (parsed.booleans.has("dry-run")) {
+    const preflight = await preflightWorkspaceStateMigration(options.cwd, targetStateLocation);
+    if (options.json) {
+      printJson({
+        ok: preflight.canMigrate,
+        dryRun: true,
+        cwd: preflight.cwd,
+        workspaceId: preflight.workspaceId,
+        canMigrate: preflight.canMigrate,
+        source: preflight.source,
+        target: preflight.target,
+        plan: preflight.plan,
+        checks: preflight.checks,
+      });
+    } else {
+      printWorkspaceStateMigrationPreflight(preflight);
+    }
+    return preflight.canMigrate ? 0 : 4;
+  }
+  const result = await migrateWorkspaceState(options.cwd, targetStateLocation);
+
+  if (options.json) {
+    printJson({
+      ok: true,
+      cwd: result.cwd,
+      workspaceId: result.workspaceId,
+      source: result.source,
+      target: result.target,
+      manifestPath: result.manifestPath,
+      backupRoot: result.backupRoot,
+      copiedPaths: result.copiedPaths,
+    });
+    return 0;
+  }
+
+  console.log(`Workspace state migrated: ${result.source.stateLocation} -> ${result.target.stateLocation}`);
+  console.log(`Workspace: ${result.workspaceId}`);
+  console.log(`Source: ${result.source.rootDir}`);
+  console.log(`Target: ${result.target.rootDir}`);
+  console.log(`Manifest: ${result.manifestPath}`);
+  console.log(`Backup: ${result.backupRoot}`);
+  return 0;
+}
+
+function printWorkspaceStateMigrationPreflight(preflight: WorkspaceStateMigrationPreflightResult): void {
+  console.log(`Workspace state migration dry run: ${preflight.source.stateLocation} -> ${preflight.target.stateLocation}`);
+  console.log(`Status: ${preflight.canMigrate ? "ok" : "blocked"}`);
+  console.log(`Workspace: ${preflight.workspaceId}`);
+  console.log(`Source: ${preflight.source.rootDir}`);
+  console.log(`Target: ${preflight.target.rootDir}`);
+  console.log(`Preview manifest: ${preflight.plan.previewManifestPath}`);
+  console.log(`Preview backup: ${preflight.plan.previewBackupRoot}`);
+  console.log("Checks:");
+  for (const check of preflight.checks) {
+    console.log(`  ${check.status.padEnd(7)} ${check.id}  ${check.summary}`);
+    if (check.remediation) {
+      console.log(`          Next: ${check.remediation}`);
+    }
+  }
+}
+
+function printWorkspaceRegistryRepair(result: WorkspaceRegistryRepairResult): void {
+  console.log(`Workspace registry repair${result.dryRun ? " dry run" : ""}`);
+  console.log(`Status: ${result.canRepair ? "ok" : "blocked"}`);
+  console.log(`Workspace: ${result.workspaceId}`);
+  console.log(`Global SQLite: ${result.globalDatabasePath}`);
+  console.log(`Resolved state: ${result.resolved.stateLocation} ${result.resolved.stateRoot}`);
+  console.log(`Changed: ${result.changed}`);
+  if (result.mismatches.length > 0) {
+    console.log(`Mismatches: ${result.mismatches.join(", ")}`);
+  }
+  console.log("Checks:");
+  for (const check of result.checks) {
+    console.log(`  ${check.status.padEnd(7)} ${check.id}  ${check.summary}`);
+    if (check.remediation) {
+      console.log(`          Next: ${check.remediation}`);
+    }
+  }
 }
 
 async function handleDaemonStatus(options: GlobalOptions): Promise<number> {
@@ -635,6 +1002,7 @@ function controlPlaneDomainResult(
 async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> {
   const snapshot = await readDaemonStateSnapshot(options.cwd);
   const daemon = await probeDaemonHealth(options);
+  const storagePaths = resolveStoragePaths(options.cwd);
   const dependencyUnavailable = !daemon.ok;
   const skippedDependency = skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable.");
   const controlPlaneSnapshotResult = dependencyUnavailable
@@ -743,7 +1111,7 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
   const checks: DoctorCheck[] = [
     await checkSystemNode(),
     await checkWorkspacePaths(options.cwd),
-    await checkWorkspaceSqlite(snapshot.paths.rootDir),
+    await checkWorkspaceSqlite(storagePaths.workspace.databasePath),
     checkDaemonProcessState(snapshot),
     checkDaemonHealth(options, daemon),
     await checkDaemonLogs(snapshot),
@@ -910,15 +1278,20 @@ async function buildDoctorConfigReport(options: GlobalOptions): Promise<DoctorRe
     await checkOptionalUserConfigFile("config.user_config", "user config is optional", paths.user.configPath),
     await checkOptionalUserConfigFile("config.user_settings", "user settings are optional", paths.user.settingsPath),
     await checkOptionalUserConfigFile("config.user_provider_profiles", "user provider profiles are optional", paths.user.providerProfilesPath),
-    await checkConfigFile(paths.workspace.rootDir),
-    await checkWorkspaceSqlite(paths.workspace.rootDir),
-    await checkRuntimeSettingsFile(paths.workspace.rootDir),
-    await checkPathExists("config.sessions", "config", "sessions directory is under .ling-stack", paths.workspace.sessionsDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.artifacts", "config", "artifacts directory is under .ling-stack", paths.workspace.artifactsDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.attachments", "config", "attachments directory is under .ling-stack", paths.workspace.attachmentsDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.pi", "config", "Pi agent directory is under .ling-stack", paths.workspace.piDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.plugins_cache", "config", "plugin cache is under .ling-stack", paths.workspace.pluginCacheDir, "directory", "Run ling-stack init."),
-    await checkPathExists("config.logs", "config", "logs directory is under .ling-stack", snapshot.paths.logsDir, "directory", "Run ling-stack daemon start."),
+    await checkOptionalUserConfigFile("config.global_sqlite", "global registry is optional", paths.user.globalDatabasePath),
+    checkWorkspaceIdentity(paths.workspace),
+    await checkWorkspaceRegistry(options.cwd, paths.user.globalDatabasePath, paths.workspace),
+    await checkWorkspaceCwdWritable(options.cwd, paths.workspace),
+    await checkRepoLocalStateConflict(options.cwd, paths.workspace),
+    await checkConfigFile(paths.workspace.configPath),
+    await checkWorkspaceSqlite(paths.workspace.databasePath),
+    await checkRuntimeSettingsFile(paths.workspace.runtimeSettingsPath),
+    await checkPathExists("config.sessions", "config", "sessions directory is under resolved workspace state root", paths.workspace.sessionsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.artifacts", "config", "artifacts directory is under resolved workspace state root", paths.workspace.artifactsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.attachments", "config", "attachments directory is under resolved workspace state root", paths.workspace.attachmentsDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.pi", "config", "Pi agent directory is under resolved workspace state root", paths.workspace.piDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.plugins_cache", "config", "plugin cache is under resolved workspace state root", paths.workspace.pluginCacheDir, "directory", "Run ling-stack init."),
+    await checkPathExists("config.logs", "config", "logs directory is under resolved workspace state root", snapshot.paths.logsDir, "directory", "Run ling-stack daemon start."),
     checkDaemonProcessState(snapshot),
     ...(startupResult ? buildStartupConfigChecks(startupResult) : []),
     await checkRootLogsLeak(options.cwd),
@@ -933,8 +1306,8 @@ async function buildDoctorConfigReport(options: GlobalOptions): Promise<DoctorRe
   };
 }
 
-async function checkConfigFile(rootDir: string): Promise<DoctorCheck> {
-  return checkPathExists("config.workspace_config", "config", ".ling-stack/config.json exists", join(rootDir, "config.json"), "file", "Run ling-stack init.");
+async function checkConfigFile(configPath: string): Promise<DoctorCheck> {
+  return checkPathExists("config.workspace_config", "config", "workspace config exists", configPath, "file", "Run ling-stack init.");
 }
 
 function buildStartupConfigChecks(result: DoctorDependencyResult): readonly DoctorCheck[] {
@@ -997,18 +1370,205 @@ function startupPhaseCheck(
   return warningCheck(id, "startup", `${phase} is ${status}`, details, remediation);
 }
 
-async function checkRuntimeSettingsFile(rootDir: string): Promise<DoctorCheck> {
+async function checkRuntimeSettingsFile(path: string): Promise<DoctorCheck> {
   const startedAt = Date.now();
-  const path = join(rootDir, "runtime-settings.json");
   try {
     const item = await stat(path);
     if (!item.isFile()) {
       return warningCheck("config.runtime_settings", "config", "runtime-settings path exists but is not a file", { path }, "Repair .ling-stack/runtime-settings.json.", Date.now() - startedAt);
     }
-    return okCheck("config.runtime_settings", "config", "runtime settings are under .ling-stack", { path }, Date.now() - startedAt);
+    return okCheck("config.runtime_settings", "config", "runtime settings are under resolved workspace state root", { path }, Date.now() - startedAt);
   } catch {
     return okCheck("config.runtime_settings", "config", "runtime settings use defaults", { path, exists: false }, Date.now() - startedAt);
   }
+}
+
+function checkWorkspaceIdentity(paths: LingStackRuntimePaths): DoctorCheck {
+  return okCheck("workspace.identity", "workspace", "workspace storage identity resolved", {
+    workspaceId: paths.identity.workspaceId,
+    canonicalCwd: paths.identity.canonicalCwd,
+    displayName: paths.identity.displayName,
+    stateLocation: paths.stateLocation,
+    stateRoot: paths.rootDir,
+  });
+}
+
+async function checkWorkspaceRegistry(
+  cwd: string,
+  globalDatabasePath: string,
+  paths: LingStackRuntimePaths,
+): Promise<DoctorCheck> {
+  const startedAt = Date.now();
+  try {
+    const databaseFile = await stat(globalDatabasePath);
+    if (!databaseFile.isFile()) {
+      return warningCheck("workspace.registry", "workspace", "global registry path exists but is not a file", {
+        globalDatabasePath,
+      }, "Repair ~/.ling-stack/global.sqlite or set LING_STACK_HOME to a valid user root.", Date.now() - startedAt);
+    }
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return okCheck("workspace.registry", "workspace", "global workspace registry is not initialized", {
+        globalDatabasePath,
+        exists: false,
+      }, Date.now() - startedAt);
+    }
+    return warningCheck("workspace.registry", "workspace", "global workspace registry could not be inspected", {
+      globalDatabasePath,
+      error: errorMessage(error),
+    }, "Inspect ~/.ling-stack/global.sqlite permissions.", Date.now() - startedAt);
+  }
+
+  let registryEntry: WorkspaceRegistryDiagnosticEntry | undefined;
+  try {
+    registryEntry = readWorkspaceRegistryEntryReadOnly(globalDatabasePath, resolve(cwd));
+  } catch (error) {
+    return warningCheck("workspace.registry", "workspace", "global workspace registry could not be read", {
+      globalDatabasePath,
+      error: errorMessage(error),
+    }, "Run ling-stack init or a future registry repair command after backing up workspace state.", Date.now() - startedAt);
+  }
+
+  if (!registryEntry) {
+    return warningCheck("workspace.registry", "workspace", "global workspace registry has no row for this cwd", {
+      globalDatabasePath,
+      canonicalCwd: paths.identity.canonicalCwd,
+      workspaceId: paths.identity.workspaceId,
+    }, "Run ling-stack init to register this workspace after confirming the active state root.", Date.now() - startedAt);
+  }
+
+  const mismatches = [];
+  if (registryEntry.workspaceId !== paths.identity.workspaceId) {
+    mismatches.push("workspace_id");
+  }
+  if (registryEntry.stateLocation !== paths.stateLocation) {
+    mismatches.push("state_location");
+  }
+  if (resolve(registryEntry.stateRoot) !== resolve(paths.rootDir)) {
+    mismatches.push("state_root");
+  }
+  if (registryEntry.canonicalCwd !== paths.identity.canonicalCwd) {
+    mismatches.push("canonical_cwd");
+  }
+  const details = {
+    globalDatabasePath,
+    resolved: {
+      workspaceId: paths.identity.workspaceId,
+      canonicalCwd: paths.identity.canonicalCwd,
+      stateLocation: paths.stateLocation,
+      stateRoot: paths.rootDir,
+    },
+    registry: registryEntry,
+    mismatches,
+  };
+  if (mismatches.length > 0) {
+    return warningCheck("workspace.registry", "workspace", "global workspace registry row is stale", details, "Run ling-stack init or a future registry repair command after confirming the active state root.", Date.now() - startedAt);
+  }
+  return okCheck("workspace.registry", "workspace", "global workspace registry matches resolved state", details, Date.now() - startedAt);
+}
+
+async function checkWorkspaceCwdWritable(cwd: string, paths: LingStackRuntimePaths): Promise<DoctorCheck> {
+  const startedAt = Date.now();
+  try {
+    await access(resolve(cwd), fsConstants.W_OK);
+    return okCheck("workspace.cwd_writable", "workspace", "workspace cwd is writable", {
+      cwd: resolve(cwd),
+      stateLocation: paths.stateLocation,
+    }, Date.now() - startedAt);
+  } catch (error) {
+    const details = {
+      cwd: resolve(cwd),
+      stateLocation: paths.stateLocation,
+      stateRoot: paths.rootDir,
+      writable: false,
+      error: errorMessage(error),
+    };
+    if (paths.stateLocation === "user-data-dir") {
+      return okCheck("workspace.cwd_writable", "workspace", "workspace cwd is read-only; user-data-dir state is selected", details, Date.now() - startedAt);
+    }
+    return warningCheck("workspace.cwd_writable", "workspace", "workspace cwd is not writable while repo-local state is selected", details, "Use user-data-dir for read-only repos: ling-stack workspace migrate-state --to user-data-dir.", Date.now() - startedAt);
+  }
+}
+
+function readWorkspaceRegistryEntryReadOnly(
+  globalDatabasePath: string,
+  canonicalCwd: string,
+): WorkspaceRegistryDiagnosticEntry | undefined {
+  const database = new DatabaseSync(globalDatabasePath, { readOnly: true });
+  try {
+    const row = database
+      .prepare(`
+        SELECT workspace_id, canonical_cwd, display_name, state_location, state_root, last_opened_at
+        FROM workspaces_registry
+        WHERE canonical_cwd = ? AND archived_at IS NULL
+        ORDER BY last_opened_at DESC
+        LIMIT 1
+      `)
+      .get(canonicalCwd) as Record<string, SQLOutputValue> | undefined;
+    if (!row) {
+      return undefined;
+    }
+    return {
+      workspaceId: readSqlString(row, "workspace_id"),
+      canonicalCwd: readSqlString(row, "canonical_cwd"),
+      displayName: readSqlString(row, "display_name"),
+      stateLocation: readSqlWorkspaceStateLocation(row, "state_location"),
+      stateRoot: readSqlString(row, "state_root"),
+      lastOpenedAt: readSqlString(row, "last_opened_at"),
+    };
+  } finally {
+    database.close();
+  }
+}
+
+function readSqlWorkspaceStateLocation(row: Record<string, SQLOutputValue>, key: string): WorkspaceStateLocation {
+  const value = readSqlString(row, key);
+  if (value === "repo-local" || value === "user-data-dir") {
+    return value;
+  }
+  throw new Error(`Unsupported workspace registry state location: ${value}`);
+}
+
+function readSqlString(row: Record<string, SQLOutputValue>, key: string): string {
+  const value = row[key];
+  if (typeof value !== "string") {
+    throw new Error(`Expected workspace registry ${key} to be a string`);
+  }
+  return value;
+}
+
+async function checkRepoLocalStateConflict(cwd: string, paths: LingStackRuntimePaths): Promise<DoctorCheck> {
+  const repoLocalDatabasePath = join(resolve(cwd), ".ling-stack", "ling-stack.sqlite");
+  if (paths.stateLocation !== "user-data-dir") {
+    return okCheck("workspace.repo_local_state", "workspace", "repo-local state is authoritative", {
+      stateLocation: paths.stateLocation,
+      databasePath: paths.databasePath,
+    });
+  }
+  try {
+    const database = await stat(repoLocalDatabasePath);
+    if (database.isFile()) {
+      return warningCheck("workspace.repo_local_state", "workspace", "repo-local database exists but user-data-dir is selected", {
+        stateLocation: paths.stateLocation,
+        authoritativeDatabasePath: paths.databasePath,
+        unusedDatabasePath: repoLocalDatabasePath,
+      }, "Run an explicit migration or archive the unused repo-local state before relying on backups.");
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      return warningCheck("workspace.repo_local_state", "workspace", "repo-local state could not be inspected", {
+        stateLocation: paths.stateLocation,
+        authoritativeDatabasePath: paths.databasePath,
+        repoLocalDatabasePath,
+        error: errorMessage(error),
+      }, "Inspect repo-local .ling-stack permissions.");
+    }
+  }
+  return okCheck("workspace.repo_local_state", "workspace", "user-data-dir state is authoritative", {
+    stateLocation: paths.stateLocation,
+    authoritativeDatabasePath: paths.databasePath,
+    repoLocalDatabasePath,
+  });
 }
 
 async function checkUserConfigRoot(path: string): Promise<DoctorCheck> {
@@ -1152,7 +1712,7 @@ async function checkWorkspacePaths(cwd: string): Promise<DoctorCheck> {
   try {
     const root = await stat(snapshot.paths.rootDir);
     if (!root.isDirectory()) {
-      return failCheck("workspace.paths", "workspace", ".ling-stack exists but is not a directory", {
+      return failCheck("workspace.paths", "workspace", "workspace state root exists but is not a directory", {
         rootDir: snapshot.paths.rootDir,
       }, "Remove the file and run ling-stack init.", Date.now() - startedAt);
     }
@@ -1163,16 +1723,15 @@ async function checkWorkspacePaths(cwd: string): Promise<DoctorCheck> {
       logsDir: snapshot.paths.logsDir,
     }, Date.now() - startedAt);
   } catch (error) {
-    return failCheck("workspace.paths", "workspace", ".ling-stack runtime directory is missing or not writable", {
+    return failCheck("workspace.paths", "workspace", "workspace state root is missing or not writable", {
       rootDir: snapshot.paths.rootDir,
       error: errorMessage(error),
     }, "Run ling-stack init.", Date.now() - startedAt);
   }
 }
 
-async function checkWorkspaceSqlite(rootDir: string): Promise<DoctorCheck> {
+async function checkWorkspaceSqlite(databasePath: string): Promise<DoctorCheck> {
   const startedAt = Date.now();
-  const databasePath = join(rootDir, "ling-stack.sqlite");
   try {
     const database = await stat(databasePath);
     if (!database.isFile()) {
@@ -1199,7 +1758,7 @@ function checkDaemonProcessState(snapshot: Awaited<ReturnType<typeof readDaemonS
     stateError: snapshot.stateError,
   };
   if (snapshot.pidError || snapshot.stateError) {
-    return warningCheck("daemon.process_state", "daemon", "daemon lifecycle metadata is malformed", details, "Inspect or remove stale .ling-stack/daemon files.");
+    return warningCheck("daemon.process_state", "daemon", "daemon lifecycle metadata is malformed", details, "Inspect or remove stale daemon files under the resolved workspace state root.");
   }
   if (snapshot.pid === undefined) {
     return okCheck("daemon.process_state", "daemon", "no daemon state file found", details);
@@ -3460,16 +4019,813 @@ async function handleExternalWorkReconcile(args: readonly string[], options: Glo
   return 0;
 }
 
-async function initWorkspace(cwd: string, withProviderTemplates: boolean): Promise<InitResult> {
-  const paths = resolveRuntimePaths(cwd);
+async function preflightWorkspaceStateMigration(
+  cwd: string,
+  targetStateLocation: WorkspaceStateLocation,
+): Promise<WorkspaceStateMigrationPreflightResult> {
+  const current = resolveStoragePaths(cwd);
+  const sourcePaths = current.workspace;
+  const target = resolveStoragePaths(cwd, {
+    workspaceStateLocation: targetStateLocation,
+  });
+  const targetPaths = target.workspace;
+  const startedAt = new Date().toISOString();
+  const migrationId = createWorkspaceMigrationId(sourcePaths, targetPaths, startedAt, "dry-run");
+  const migrationRoot = join(current.user.stateDir, "migrations", migrationId);
+  const backupRoot = join(migrationRoot, "backup");
+  const stagingRoot = workspaceMigrationStagingRoot(targetPaths, migrationId);
+  const targetRootStat = await statOptional(targetPaths.rootDir);
+  const checks = [
+    checkWorkspaceMigrationDirection(sourcePaths, targetPaths),
+    await checkWorkspaceMigrationDaemon(cwd),
+    await checkWorkspaceMigrationSourceRoot(sourcePaths),
+    await checkWorkspaceMigrationSourceDatabase(sourcePaths),
+    await checkWorkspaceMigrationTargetRoot(targetPaths, targetRootStat),
+    await checkWorkspaceMigrationTargetWritable(targetPaths),
+    await checkWorkspaceMigrationMetadataWritable(current.user.stateDir),
+    await checkWorkspaceMigrationRepoPointer(sourcePaths, targetPaths),
+    await checkWorkspaceMigrationRegistry(current.user.globalDatabasePath, sourcePaths, targetPaths),
+  ];
+  return {
+    cwd: sourcePaths.cwd,
+    workspaceId: sourcePaths.identity.workspaceId,
+    canMigrate: checks.every((check) => check.status !== "fail"),
+    source: workspaceMigrationSide(sourcePaths),
+    target: workspaceMigrationSide(targetPaths),
+    plan: {
+      previewMigrationRoot: migrationRoot,
+      previewManifestPath: join(migrationRoot, "manifest.json"),
+      previewBackupRoot: backupRoot,
+      previewStagingRoot: stagingRoot,
+      sourceWillRemain: true,
+      targetWillBeBackedUp: Boolean(targetRootStat?.isDirectory()),
+      repoPointerWillBeWritten: targetPaths.stateLocation === "user-data-dir",
+      registryWillBeUpdated: true,
+    },
+    checks,
+  };
+}
+
+function checkWorkspaceMigrationDirection(
+  sourcePaths: LingStackRuntimePaths,
+  targetPaths: LingStackRuntimePaths,
+): WorkspaceStateMigrationPreflightCheck {
+  if (sourcePaths.stateLocation === targetPaths.stateLocation) {
+    return migrationPreflightCheck("direction", "fail", `workspace state is already ${targetPaths.stateLocation}`, {
+      stateLocation: sourcePaths.stateLocation,
+    }, "Choose the other state location.");
+  }
+  if (resolve(sourcePaths.rootDir) === resolve(targetPaths.rootDir)) {
+    return migrationPreflightCheck("direction", "fail", "source and target state roots resolve to the same path", {
+      sourceRoot: sourcePaths.rootDir,
+      targetRoot: targetPaths.rootDir,
+    }, "Repair workspace path resolution before migrating.");
+  }
+  return migrationPreflightCheck("direction", "ok", `${sourcePaths.stateLocation} can migrate to ${targetPaths.stateLocation}`, {
+    sourceLocation: sourcePaths.stateLocation,
+    targetLocation: targetPaths.stateLocation,
+  });
+}
+
+async function checkWorkspaceMigrationDaemon(cwd: string): Promise<WorkspaceStateMigrationPreflightCheck> {
+  const snapshot = await readDaemonStateSnapshot(cwd);
+  const details = {
+    pid: snapshot.pid,
+    pidAlive: snapshot.pidAlive,
+    pidPath: snapshot.paths.pidPath,
+    statePath: snapshot.paths.statePath,
+    pidError: snapshot.pidError,
+    stateError: snapshot.stateError,
+  };
+  if (snapshot.pidAlive) {
+    return migrationPreflightCheck("daemon_stopped", "fail", "daemon is running", details, "Stop the daemon before migrating: ling-stack daemon stop.");
+  }
+  if (snapshot.pidError || snapshot.stateError) {
+    return migrationPreflightCheck("daemon_stopped", "warning", "daemon lifecycle metadata is malformed but no live pid was detected", details, "Inspect stale daemon metadata if migration fails.");
+  }
+  return migrationPreflightCheck("daemon_stopped", "ok", "daemon is not running", details);
+}
+
+async function checkWorkspaceMigrationSourceRoot(paths: LingStackRuntimePaths): Promise<WorkspaceStateMigrationPreflightCheck> {
+  try {
+    const root = await stat(paths.rootDir);
+    if (!root.isDirectory()) {
+      return migrationPreflightCheck("source_root", "fail", "source state root is not a directory", {
+        sourceRoot: paths.rootDir,
+      }, "Repair the source state root before migrating.");
+    }
+    return migrationPreflightCheck("source_root", "ok", "source state root exists", {
+      sourceRoot: paths.rootDir,
+    });
+  } catch (error) {
+    return migrationPreflightCheck("source_root", "fail", "source state root is missing or unreadable", {
+      sourceRoot: paths.rootDir,
+      error: errorMessage(error),
+    }, "Run ling-stack init or restore the source state root before migrating.");
+  }
+}
+
+async function checkWorkspaceMigrationSourceDatabase(paths: LingStackRuntimePaths): Promise<WorkspaceStateMigrationPreflightCheck> {
+  try {
+    const database = await stat(paths.databasePath);
+    if (!database.isFile()) {
+      return migrationPreflightCheck("source_database", "fail", "source SQLite path is not a file", {
+        databasePath: paths.databasePath,
+      }, "Repair the source database path before migrating.");
+    }
+    return migrationPreflightCheck("source_database", "ok", "source SQLite database exists", {
+      databasePath: paths.databasePath,
+    });
+  } catch (error) {
+    return migrationPreflightCheck("source_database", "fail", "source SQLite database is missing or unreadable", {
+      databasePath: paths.databasePath,
+      error: errorMessage(error),
+    }, "Run ling-stack init or restore the source database before migrating.");
+  }
+}
+
+async function checkWorkspaceMigrationTargetRoot(
+  paths: LingStackRuntimePaths,
+  targetRootStat: Awaited<ReturnType<typeof stat>> | undefined,
+): Promise<WorkspaceStateMigrationPreflightCheck> {
+  if (!targetRootStat) {
+    return migrationPreflightCheck("target_root", "ok", "target state root does not exist yet", {
+      targetRoot: paths.rootDir,
+    });
+  }
+  if (!targetRootStat.isDirectory()) {
+    return migrationPreflightCheck("target_root", "fail", "target state root exists but is not a directory", {
+      targetRoot: paths.rootDir,
+    }, "Move or remove the target path before migrating.");
+  }
+  return migrationPreflightCheck("target_root", "warning", "target state root exists and will be backed up before replacement", {
+    targetRoot: paths.rootDir,
+  });
+}
+
+async function checkWorkspaceMigrationTargetWritable(paths: LingStackRuntimePaths): Promise<WorkspaceStateMigrationPreflightCheck> {
+  const targetParent = dirname(paths.rootDir);
+  const ancestor = await findExistingAncestor(targetParent);
+  try {
+    await access(ancestor, fsConstants.W_OK);
+    return migrationPreflightCheck("target_writable", "ok", "target parent path is writable", {
+      targetRoot: paths.rootDir,
+      checkedPath: ancestor,
+    });
+  } catch (error) {
+    return migrationPreflightCheck("target_writable", "fail", "target parent path is not writable", {
+      targetRoot: paths.rootDir,
+      checkedPath: ancestor,
+      error: errorMessage(error),
+    }, "Choose a writable user root or repair directory permissions before migrating.");
+  }
+}
+
+async function checkWorkspaceMigrationMetadataWritable(userStateDir: string): Promise<WorkspaceStateMigrationPreflightCheck> {
+  const ancestor = await findExistingAncestor(userStateDir);
+  try {
+    await access(ancestor, fsConstants.W_OK);
+    return migrationPreflightCheck("metadata_writable", "ok", "migration metadata path is writable", {
+      stateDir: userStateDir,
+      checkedPath: ancestor,
+    });
+  } catch (error) {
+    return migrationPreflightCheck("metadata_writable", "fail", "migration metadata path is not writable", {
+      stateDir: userStateDir,
+      checkedPath: ancestor,
+      error: errorMessage(error),
+    }, "Repair ~/.ling-stack permissions before migrating.");
+  }
+}
+
+async function checkWorkspaceMigrationRepoPointer(
+  sourcePaths: LingStackRuntimePaths,
+  targetPaths: LingStackRuntimePaths,
+): Promise<WorkspaceStateMigrationPreflightCheck> {
+  if (targetPaths.stateLocation !== "user-data-dir") {
+    return migrationPreflightCheck("repo_pointer", "ok", "repo-local target does not need a relocated-state pointer", {
+      targetLocation: targetPaths.stateLocation,
+    });
+  }
+  try {
+    await access(sourcePaths.rootDir, fsConstants.W_OK);
+    return migrationPreflightCheck("repo_pointer", "ok", "repo-local config pointer can be written", {
+      pointerPath: join(sourcePaths.rootDir, "config.json"),
+    });
+  } catch (error) {
+    return migrationPreflightCheck("repo_pointer", "fail", "repo-local config pointer cannot be written", {
+      pointerPath: join(sourcePaths.rootDir, "config.json"),
+      error: errorMessage(error),
+    }, "Make repo .ling-stack writable before migrating to user-data-dir.");
+  }
+}
+
+async function checkWorkspaceMigrationRegistry(
+  globalDatabasePath: string,
+  sourcePaths: LingStackRuntimePaths,
+  targetPaths: LingStackRuntimePaths,
+): Promise<WorkspaceStateMigrationPreflightCheck> {
+  try {
+    const registryStat = await stat(globalDatabasePath);
+    if (!registryStat.isFile()) {
+      return migrationPreflightCheck("registry_update", "fail", "global registry path exists but is not a file", {
+        globalDatabasePath,
+      }, "Repair ~/.ling-stack/global.sqlite before migrating.");
+    }
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return migrationPreflightCheck("registry_update", "ok", "global registry will be created or updated", {
+        globalDatabasePath,
+        exists: false,
+      });
+    }
+    return migrationPreflightCheck("registry_update", "fail", "global registry path could not be inspected", {
+      globalDatabasePath,
+      error: errorMessage(error),
+    }, "Repair ~/.ling-stack permissions before migrating.");
+  }
+
+  let registryEntry: WorkspaceRegistryDiagnosticEntry | undefined;
+  try {
+    registryEntry = readWorkspaceRegistryEntryReadOnly(globalDatabasePath, sourcePaths.identity.canonicalCwd);
+  } catch (error) {
+    const message = errorMessage(error);
+    if (/no such table/i.test(message)) {
+      return migrationPreflightCheck("registry_update", "warning", "global registry table is missing and will be initialized", {
+        globalDatabasePath,
+      });
+    }
+    return migrationPreflightCheck("registry_update", "fail", "global registry could not be read", {
+      globalDatabasePath,
+      error: message,
+    }, "Repair or back up ~/.ling-stack/global.sqlite before migrating.");
+  }
+
+  if (!registryEntry) {
+    return migrationPreflightCheck("registry_update", "warning", "global registry has no row for this workspace and will be updated", {
+      globalDatabasePath,
+      workspaceId: sourcePaths.identity.workspaceId,
+      targetStateLocation: targetPaths.stateLocation,
+    });
+  }
+  const mismatches = [];
+  if (registryEntry.workspaceId !== sourcePaths.identity.workspaceId) {
+    mismatches.push("workspace_id");
+  }
+  if (registryEntry.stateLocation !== sourcePaths.stateLocation) {
+    mismatches.push("state_location");
+  }
+  if (resolve(registryEntry.stateRoot) !== resolve(sourcePaths.rootDir)) {
+    mismatches.push("state_root");
+  }
+  if (mismatches.length > 0) {
+    return migrationPreflightCheck("registry_update", "warning", "global registry row differs from the current source and will be overwritten on success", {
+      globalDatabasePath,
+      mismatches,
+      registry: registryEntry,
+      source: workspaceMigrationSide(sourcePaths),
+      target: workspaceMigrationSide(targetPaths),
+    });
+  }
+  return migrationPreflightCheck("registry_update", "ok", "global registry can be updated", {
+    globalDatabasePath,
+    registry: registryEntry,
+    targetStateLocation: targetPaths.stateLocation,
+  });
+}
+
+async function findExistingAncestor(path: string): Promise<string> {
+  let current = resolve(path);
+  for (;;) {
+    if (await statOptional(current)) {
+      return current;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return current;
+    }
+    current = parent;
+  }
+}
+
+function migrationPreflightCheck(
+  id: string,
+  status: DoctorStatus,
+  summary: string,
+  details: Readonly<Record<string, unknown>> = {},
+  remediation?: string,
+): WorkspaceStateMigrationPreflightCheck {
+  return removeUndefined({
+    id,
+    status,
+    summary,
+    details,
+    remediation,
+  }) as unknown as WorkspaceStateMigrationPreflightCheck;
+}
+
+async function repairWorkspaceRegistry(cwd: string, dryRun: boolean): Promise<WorkspaceRegistryRepairResult> {
+  const paths = resolveStoragePaths(cwd);
+  const resolved = workspaceRegistryRepairEntry(paths.workspace);
+  const globalDatabasePath = paths.user.globalDatabasePath;
+  const { registry, checks } = await preflightWorkspaceRegistryRepair(globalDatabasePath, resolved);
+  const mismatches = registry ? workspaceRegistryMismatches(registry, resolved) : ["missing_row"];
+  const canRepair = checks.every((check) => check.status !== "fail");
+  const changed = canRepair && mismatches.length > 0;
+  if (changed && !dryRun) {
+    registerResolvedWorkspace(cwd, { workspaceStateLocation: paths.workspace.stateLocation });
+  }
+  return {
+    cwd: paths.cwd,
+    workspaceId: paths.workspace.identity.workspaceId,
+    dryRun,
+    canRepair,
+    changed,
+    globalDatabasePath,
+    resolved,
+    registry,
+    mismatches,
+    checks: changed && !dryRun
+      ? [
+        ...checks,
+        migrationPreflightCheck("registry_written", "ok", "global registry row was written", {
+          globalDatabasePath,
+          workspaceId: resolved.workspaceId,
+          stateLocation: resolved.stateLocation,
+          stateRoot: resolved.stateRoot,
+        }),
+      ]
+      : checks,
+  };
+}
+
+async function preflightWorkspaceRegistryRepair(
+  globalDatabasePath: string,
+  resolved: WorkspaceRegistryRepairEntry,
+): Promise<{
+  readonly registry?: WorkspaceRegistryDiagnosticEntry;
+  readonly checks: readonly WorkspaceStateMigrationPreflightCheck[];
+}> {
+  const checks: WorkspaceStateMigrationPreflightCheck[] = [];
+  try {
+    const registryPath = await stat(globalDatabasePath);
+    if (!registryPath.isFile()) {
+      return {
+        checks: [
+          migrationPreflightCheck("registry_path", "fail", "global registry path exists but is not a file", {
+            globalDatabasePath,
+          }, "Move or remove the non-file global.sqlite path before repairing the registry."),
+        ],
+      };
+    }
+    checks.push(migrationPreflightCheck("registry_path", "ok", "global registry file exists", {
+      globalDatabasePath,
+    }));
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      checks.push(migrationPreflightCheck("registry_path", "ok", "global registry will be created", {
+        globalDatabasePath,
+        exists: false,
+      }));
+      return {
+        checks: [
+          ...checks,
+          migrationPreflightCheck("registry_row", "warning", "global registry has no row for this workspace and will be written", {
+            workspaceId: resolved.workspaceId,
+            stateLocation: resolved.stateLocation,
+            stateRoot: resolved.stateRoot,
+          }),
+        ],
+      };
+    }
+    return {
+      checks: [
+        migrationPreflightCheck("registry_path", "fail", "global registry path could not be inspected", {
+          globalDatabasePath,
+          error: errorMessage(error),
+        }, "Repair ~/.ling-stack permissions before repairing the registry."),
+      ],
+    };
+  }
+
+  let registry: WorkspaceRegistryDiagnosticEntry | undefined;
+  try {
+    registry = readWorkspaceRegistryEntryReadOnly(globalDatabasePath, resolved.canonicalCwd);
+  } catch (error) {
+    const message = errorMessage(error);
+    if (!/no such table/i.test(message)) {
+      return {
+        checks: [
+          ...checks,
+          migrationPreflightCheck("registry_read", "fail", "global registry could not be read", {
+            globalDatabasePath,
+            error: message,
+          }, "Back up or repair ~/.ling-stack/global.sqlite before repairing the row."),
+        ],
+      };
+    }
+    checks.push(migrationPreflightCheck("registry_read", "warning", "global registry table is missing and will be initialized", {
+      globalDatabasePath,
+    }));
+  }
+
+  if (!registry) {
+    return {
+      registry,
+      checks: [
+        ...checks,
+        migrationPreflightCheck("registry_row", "warning", "global registry has no row for this workspace and will be written", {
+          workspaceId: resolved.workspaceId,
+          stateLocation: resolved.stateLocation,
+          stateRoot: resolved.stateRoot,
+        }),
+      ],
+    };
+  }
+
+  const mismatches = workspaceRegistryMismatches(registry, resolved);
+  if (mismatches.length === 0) {
+    return {
+      registry,
+      checks: [
+        ...checks,
+        migrationPreflightCheck("registry_row", "ok", "global registry row already matches resolved workspace state", {
+          registry,
+        }),
+      ],
+    };
+  }
+  return {
+    registry,
+    checks: [
+      ...checks,
+      migrationPreflightCheck("registry_row", "warning", "global registry row will be updated to match resolved workspace state", {
+        mismatches,
+        registry,
+        resolved,
+      }),
+    ],
+  };
+}
+
+function workspaceRegistryRepairEntry(paths: LingStackRuntimePaths): WorkspaceRegistryRepairEntry {
+  return {
+    workspaceId: paths.identity.workspaceId,
+    canonicalCwd: paths.identity.canonicalCwd,
+    displayName: paths.identity.displayName,
+    stateLocation: paths.stateLocation,
+    stateRoot: paths.rootDir,
+  };
+}
+
+function workspaceRegistryMismatches(
+  registry: WorkspaceRegistryDiagnosticEntry,
+  resolved: WorkspaceRegistryRepairEntry,
+): readonly string[] {
+  const mismatches = [];
+  if (registry.workspaceId !== resolved.workspaceId) {
+    mismatches.push("workspace_id");
+  }
+  if (registry.canonicalCwd !== resolved.canonicalCwd) {
+    mismatches.push("canonical_cwd");
+  }
+  if (registry.displayName !== resolved.displayName) {
+    mismatches.push("display_name");
+  }
+  if (registry.stateLocation !== resolved.stateLocation) {
+    mismatches.push("state_location");
+  }
+  if (resolve(registry.stateRoot) !== resolve(resolved.stateRoot)) {
+    mismatches.push("state_root");
+  }
+  return mismatches;
+}
+
+async function migrateWorkspaceState(
+  cwd: string,
+  targetStateLocation: WorkspaceStateLocation,
+): Promise<WorkspaceStateMigrationResult> {
+  const current = resolveStoragePaths(cwd);
+  const sourcePaths = current.workspace;
+  if (sourcePaths.stateLocation === targetStateLocation) {
+    throw new CliError(2, "already_selected", `Workspace state is already ${targetStateLocation}.`);
+  }
+
+  await assertDaemonStoppedForWorkspaceMigration(cwd);
+  await assertWorkspaceStateSource(sourcePaths);
+
+  const target = resolveStoragePaths(cwd, {
+    workspaceStateLocation: targetStateLocation,
+  });
+  const targetPaths = target.workspace;
+  if (resolve(sourcePaths.rootDir) === resolve(targetPaths.rootDir)) {
+    throw new CliError(2, "same_state_root", "Source and target workspace state roots resolve to the same path.");
+  }
+
+  const startedAt = new Date().toISOString();
+  const migrationId = createWorkspaceMigrationId(sourcePaths, targetPaths, startedAt);
+  const migrationRoot = join(current.user.stateDir, "migrations", migrationId);
+  const backupRoot = join(migrationRoot, "backup");
+  const manifestPath = join(migrationRoot, "manifest.json");
+  const stagingRoot = workspaceMigrationStagingRoot(targetPaths, migrationId);
+  const source = workspaceMigrationSide(sourcePaths);
+  const targetSide = workspaceMigrationSide(targetPaths);
+  const baseManifest = {
+    schemaVersion: 1,
+    migrationId,
+    status: "started",
+    startedAt,
+    cwd: sourcePaths.cwd,
+    workspaceId: sourcePaths.identity.workspaceId,
+    source,
+    target: targetSide,
+    stagingRoot,
+    backupRoot,
+  };
+
+  await mkdir(backupRoot, { recursive: true });
+  await writeJsonDocument(manifestPath, baseManifest);
+
+  let targetBackupRoot: string | undefined;
+  let sourceConfigBackupPath: string | undefined;
+  let sourceConfigReplaced = false;
+  let targetExistingRemoved = false;
+  let targetInstalled = false;
+  let registryUpdated = false;
+
+  try {
+    await assertWorkspaceStateTarget(targetPaths.rootDir);
+    await mkdir(dirname(stagingRoot), { recursive: true });
+    await cp(sourcePaths.rootDir, stagingRoot, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+      preserveTimestamps: true,
+    });
+    await writeWorkspaceConfig(join(stagingRoot, "config.json"), targetPaths, "ling-stack workspace migrate-state", {
+      exclusive: false,
+    });
+    const copiedPaths = await listTopLevelPaths(stagingRoot);
+
+    targetBackupRoot = await backupExistingStateRoot(targetPaths.rootDir, backupRoot);
+    if (targetBackupRoot) {
+      await rm(targetPaths.rootDir, { recursive: true, force: true });
+      targetExistingRemoved = true;
+    }
+    await mkdir(dirname(targetPaths.rootDir), { recursive: true });
+    await moveStagingStateRoot(stagingRoot, targetPaths.rootDir);
+    targetInstalled = true;
+
+    if (targetPaths.stateLocation === "user-data-dir") {
+      sourceConfigBackupPath = await backupFileIfPresent(sourcePaths.configPath, backupRoot, "repo-local-config-before.json");
+      await writeRepoLocalWorkspacePointer(cwd, targetPaths, {
+        createdBy: "ling-stack workspace migrate-state pointer",
+        replaceExisting: true,
+      });
+      sourceConfigReplaced = true;
+    }
+
+    registerResolvedWorkspace(cwd, { workspaceStateLocation: targetPaths.stateLocation });
+    registryUpdated = true;
+
+    const completedAt = new Date().toISOString();
+    await writeJsonDocument(manifestPath, {
+      ...baseManifest,
+      status: "succeeded",
+      completedAt,
+      copiedPaths,
+      backups: {
+        targetExistingRoot: targetBackupRoot,
+        repoLocalConfigBefore: sourceConfigBackupPath,
+      },
+    });
+
+    return {
+      cwd: sourcePaths.cwd,
+      workspaceId: sourcePaths.identity.workspaceId,
+      source,
+      target: targetSide,
+      manifestPath,
+      backupRoot,
+      copiedPaths,
+    };
+  } catch (error) {
+    await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+    if (sourceConfigReplaced) {
+      await restoreFileBackup(sourceConfigBackupPath, sourcePaths.configPath).catch(() => undefined);
+    }
+    if (targetInstalled || targetExistingRemoved) {
+      await restoreStateRootBackup(targetBackupRoot, targetPaths.rootDir).catch(() => undefined);
+    }
+    if (registryUpdated) {
+      try {
+        registerResolvedWorkspace(cwd, { workspaceStateLocation: sourcePaths.stateLocation });
+      } catch {
+        // The manifest below records the original failure; registry repair is best effort.
+      }
+    }
+    await writeJsonDocument(manifestPath, {
+      ...baseManifest,
+      status: "failed",
+      failedAt: new Date().toISOString(),
+      error: errorMessage(error),
+      backups: {
+        targetExistingRoot: targetBackupRoot,
+        repoLocalConfigBefore: sourceConfigBackupPath,
+      },
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function assertDaemonStoppedForWorkspaceMigration(cwd: string): Promise<void> {
+  const snapshot = await readDaemonStateSnapshot(cwd);
+  if (snapshot.pidAlive) {
+    throw new CliError(
+      2,
+      "daemon_running",
+      `Stop the Ling Stack daemon before migrating workspace state. Active daemon pid: ${snapshot.pid}.`,
+    );
+  }
+}
+
+async function assertWorkspaceStateSource(paths: LingStackRuntimePaths): Promise<void> {
+  const root = await statRequired(paths.rootDir, "source_state_missing", "Source workspace state root is missing.");
+  if (!root.isDirectory()) {
+    throw new CliError(2, "source_state_invalid", `Source workspace state root is not a directory: ${paths.rootDir}`);
+  }
+  const database = await statRequired(paths.databasePath, "source_database_missing", "Source workspace database is missing.");
+  if (!database.isFile()) {
+    throw new CliError(2, "source_database_invalid", `Source workspace database is not a file: ${paths.databasePath}`);
+  }
+}
+
+async function assertWorkspaceStateTarget(targetRoot: string): Promise<void> {
+  const target = await statOptional(targetRoot);
+  if (target && !target.isDirectory()) {
+    throw new CliError(2, "target_state_invalid", `Target workspace state root exists but is not a directory: ${targetRoot}`);
+  }
+}
+
+async function statRequired(path: string, code: string, message: string): Promise<Awaited<ReturnType<typeof stat>>> {
+  try {
+    return await stat(path);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      throw new CliError(2, code, message);
+    }
+    throw error;
+  }
+}
+
+async function statOptional(path: string): Promise<Awaited<ReturnType<typeof stat>> | undefined> {
+  try {
+    return await stat(path);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function createWorkspaceMigrationId(
+  sourcePaths: LingStackRuntimePaths,
+  targetPaths: LingStackRuntimePaths,
+  startedAt: string,
+  suffixOverride?: string,
+): string {
+  const timestamp = startedAt.replace(/[:.]/g, "-");
+  const suffix = suffixOverride ?? randomUUID().replace(/-/g, "").slice(0, 8);
+  return `migration_${timestamp}_${sourcePaths.identity.workspaceId}_${sourcePaths.stateLocation}_to_${targetPaths.stateLocation}_${suffix}`;
+}
+
+function workspaceMigrationStagingRoot(targetPaths: LingStackRuntimePaths, migrationId: string): string {
+  const targetName = basename(targetPaths.rootDir).replace(/^\.+/, "") || "workspace-state";
+  return join(dirname(targetPaths.rootDir), `.${targetName}.${migrationId}.staging`);
+}
+
+function workspaceMigrationSide(paths: LingStackRuntimePaths): WorkspaceStateMigrationSide {
+  return {
+    stateLocation: paths.stateLocation,
+    rootDir: paths.rootDir,
+    databasePath: paths.databasePath,
+  };
+}
+
+async function backupExistingStateRoot(targetRoot: string, backupRoot: string): Promise<string | undefined> {
+  const target = await statOptional(targetRoot);
+  if (!target) {
+    return undefined;
+  }
+  if (!target.isDirectory()) {
+    throw new CliError(2, "target_state_invalid", `Target workspace state root exists but is not a directory: ${targetRoot}`);
+  }
+  const backupPath = join(backupRoot, "target-existing");
+  await cp(targetRoot, backupPath, {
+    recursive: true,
+    force: false,
+    errorOnExist: true,
+    preserveTimestamps: true,
+  });
+  return backupPath;
+}
+
+async function backupFileIfPresent(filePath: string, backupRoot: string, backupName: string): Promise<string | undefined> {
+  const item = await statOptional(filePath);
+  if (!item) {
+    return undefined;
+  }
+  if (!item.isFile()) {
+    return undefined;
+  }
+  const backupPath = join(backupRoot, backupName);
+  await cp(filePath, backupPath, {
+    force: false,
+    errorOnExist: true,
+    preserveTimestamps: true,
+  });
+  return backupPath;
+}
+
+async function restoreFileBackup(backupPath: string | undefined, targetPath: string): Promise<void> {
+  if (!backupPath) {
+    await rm(targetPath, { force: true });
+    return;
+  }
+  await mkdir(dirname(targetPath), { recursive: true });
+  await cp(backupPath, targetPath, {
+    force: true,
+    preserveTimestamps: true,
+  });
+}
+
+async function restoreStateRootBackup(backupRoot: string | undefined, targetRoot: string): Promise<void> {
+  await rm(targetRoot, { recursive: true, force: true });
+  if (!backupRoot) {
+    return;
+  }
+  await cp(backupRoot, targetRoot, {
+    recursive: true,
+    force: false,
+    errorOnExist: true,
+    preserveTimestamps: true,
+  });
+}
+
+async function moveStagingStateRoot(stagingRoot: string, targetRoot: string): Promise<void> {
+  try {
+    await rename(stagingRoot, targetRoot);
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "EXDEV") {
+      throw error;
+    }
+    await cp(stagingRoot, targetRoot, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+      preserveTimestamps: true,
+    });
+    await rm(stagingRoot, { recursive: true, force: true });
+  }
+}
+
+async function listTopLevelPaths(rootDir: string): Promise<readonly string[]> {
+  const entries = await readdir(rootDir);
+  return entries.sort();
+}
+
+async function writeJsonDocument(filePath: string, value: unknown): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function initWorkspace(
+  cwd: string,
+  withProviderTemplates: boolean,
+  workspaceStateLocation?: WorkspaceStateLocation,
+): Promise<InitResult> {
+  const storagePaths = resolveStoragePaths(cwd, workspaceStateLocation ? { workspaceStateLocation } : {});
+  const paths = storagePaths.workspace;
+  if (paths.stateLocation === "user-data-dir") {
+    await assertUserDataDirInitHasNoRepoLocalDatabase(cwd);
+  }
   await mkdir(paths.rootDir, { recursive: true });
   await mkdir(paths.sessionsDir, { recursive: true });
   await mkdir(paths.artifactsDir, { recursive: true });
+  await mkdir(paths.attachmentsDir, { recursive: true });
   await mkdir(paths.logsDir, { recursive: true });
   await mkdir(paths.piDir, { recursive: true });
-  await writeDefaultConfig(paths.rootDir);
+  await mkdir(paths.pluginsDir, { recursive: true });
+  await mkdir(paths.pluginCacheDir, { recursive: true });
+  await mkdir(paths.worktreesDir, { recursive: true });
+  await mkdir(paths.memoryExportsDir, { recursive: true });
+  await writeDefaultConfig(paths.configPath, paths);
+  if (paths.stateLocation === "user-data-dir") {
+    await writeRepoLocalWorkspacePointer(cwd, paths);
+  }
 
-  const store = createSqliteRunStore(cwd);
+  const store = createSqliteRunStore(cwd, paths);
   const createdProviders: ProviderPreset[] = [];
   const skippedProviders: ProviderPreset[] = [];
   try {
@@ -3490,6 +4846,7 @@ async function initWorkspace(cwd: string, withProviderTemplates: boolean): Promi
   } finally {
     store.close();
   }
+  registerResolvedWorkspace(cwd, { workspaceStateLocation: paths.stateLocation });
 
   return {
     cwd,
@@ -3500,25 +4857,99 @@ async function initWorkspace(cwd: string, withProviderTemplates: boolean): Promi
     logsDir: paths.logsDir,
     piDir: paths.piDir,
     configPath: paths.configPath,
+    workspaceId: paths.identity.workspaceId,
+    stateLocation: paths.stateLocation,
     createdProviders,
     skippedProviders,
   };
 }
 
-async function writeDefaultConfig(rootDir: string): Promise<void> {
-  const configPath = join(rootDir, "config.json");
-  const config = {
-    schemaVersion: 1,
-    product: "ling-stack",
-    providerTemplates: "sqlite",
-    secrets: "env/keychain refs",
-    createdBy: "ling-stack init",
-  };
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: "wx" }).catch((error: unknown) => {
+async function writeDefaultConfig(configPath: string, paths: LingStackRuntimePaths): Promise<void> {
+  await writeWorkspaceConfig(configPath, paths, "ling-stack init", { exclusive: true }).catch((error: unknown) => {
     if (isNodeError(error) && error.code === "EEXIST") {
       return;
     }
     throw error;
+  });
+}
+
+async function writeWorkspaceConfig(
+  configPath: string,
+  paths: LingStackRuntimePaths,
+  createdBy: string,
+  options: { readonly exclusive?: boolean } = {},
+): Promise<void> {
+  const config = {
+    schemaVersion: 1,
+    product: "ling-stack",
+    workspaceId: paths.identity.workspaceId,
+    workspaceStateLocation: paths.stateLocation,
+    providerTemplates: "sqlite",
+    secrets: "env/keychain refs",
+    createdBy,
+  };
+  await mkdir(dirname(configPath), { recursive: true });
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
+    flag: options.exclusive ? "wx" : "w",
+  });
+}
+
+async function assertUserDataDirInitHasNoRepoLocalDatabase(cwd: string): Promise<void> {
+  const repoLocalDatabasePath = join(resolve(cwd), ".ling-stack", "ling-stack.sqlite");
+  try {
+    const database = await stat(repoLocalDatabasePath);
+    if (database.isFile()) {
+      throw new CliError(
+        2,
+        "migration_required",
+        "A repo-local Ling Stack database already exists. user-data-dir init would require an explicit migration command.",
+      );
+    }
+  } catch (error) {
+    if (error instanceof CliError) {
+      throw error;
+    }
+    if (!isMissingPathError(error)) {
+      throw new CliError(1, "workspace_state_inspect_failed", `Could not inspect repo-local workspace database: ${errorMessage(error)}`);
+    }
+  }
+}
+
+async function writeRepoLocalWorkspacePointer(
+  cwd: string,
+  paths: LingStackRuntimePaths,
+  options: { readonly createdBy?: string; readonly replaceExisting?: boolean } = {},
+): Promise<void> {
+  const pointerDir = join(resolve(cwd), ".ling-stack");
+  const pointerPath = join(pointerDir, "config.json");
+  await mkdir(pointerDir, { recursive: true });
+  const pointer = {
+    schemaVersion: 1,
+    product: "ling-stack",
+    workspaceId: paths.identity.workspaceId,
+    workspaceStateLocation: "user-data-dir",
+    stateRoot: paths.rootDir,
+    configPath: paths.configPath,
+    createdBy: options.createdBy ?? "ling-stack init pointer",
+  };
+  await writeFile(pointerPath, `${JSON.stringify(pointer, null, 2)}\n`, {
+    flag: options.replaceExisting ? "w" : "wx",
+  }).catch(async (error: unknown) => {
+    if (options.replaceExisting) {
+      throw error;
+    }
+    if (!isNodeError(error) || error.code !== "EEXIST") {
+      throw error;
+    }
+    const existing = await readJsonFile(pointerPath, "workspace pointer").catch(() => undefined);
+    if (isRecord(existing) && existing.workspaceStateLocation === "user-data-dir") {
+      return;
+    }
+    throw new CliError(
+      2,
+      "migration_required",
+      "A repo-local Ling Stack config already exists. user-data-dir init would require an explicit migration command.",
+    );
   });
 }
 
@@ -3542,6 +4973,16 @@ function readProviderTemplatesFlag(parsed: ParsedCommandArgs): boolean {
     throw new CliError(2, "bad_option", "Use either --with-provider-templates or --no-provider-templates, not both.");
   }
   return !withoutTemplates;
+}
+
+function readWorkspaceStateLocationFlag(value: string | undefined): WorkspaceStateLocation | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "repo-local" || value === "user-data-dir") {
+    return value;
+  }
+  throw new CliError(2, "bad_option", "--workspace-state-location must be repo-local or user-data-dir.");
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
@@ -4383,6 +5824,30 @@ function readAllowedOptionalFlag(parsed: ParsedCommandArgs, key: string, allowed
     assertAllowed(key, value, allowed);
   }
   return value;
+}
+
+function readMemoryScopeTypeFlag(value: string | undefined): MemoryScopeType | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  assertAllowed("scope-type", value, VALID_MEMORY_SCOPE_TYPES);
+  return value as MemoryScopeType;
+}
+
+function readMemoryReviewStateFlag(value: string | undefined): MemoryReviewState | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  assertAllowed("review-state", value, VALID_MEMORY_REVIEW_STATES);
+  return value as MemoryReviewState;
+}
+
+function readMemorySensitivityFlag(value: string | undefined): MemorySensitivity | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  assertAllowed("sensitivity", value, VALID_MEMORY_SENSITIVITIES);
+  return value as MemorySensitivity;
 }
 
 function readHeaders(parsed: ParsedCommandArgs): Record<string, string> | undefined {
@@ -5945,6 +7410,11 @@ function removeUndefined<T extends Record<string, unknown>>(value: T): Record<st
   return Object.fromEntries(Object.entries(value).filter(([, entryValue]) => entryValue !== undefined));
 }
 
+function omitMarkdown<T extends { readonly markdown: string }>(value: T): Omit<T, "markdown"> {
+  const { markdown: _markdown, ...rest } = value;
+  return rest;
+}
+
 function removeUndefinedDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(removeUndefinedDeep);
@@ -5977,6 +7447,14 @@ function printCommandHelp(command: string, subcommand?: string): void {
   }
   if (command === "doctor") {
     printDoctorHelp();
+    return;
+  }
+  if (command === "workspace") {
+    printWorkspaceHelp();
+    return;
+  }
+  if (command === "memory") {
+    printMemoryHelp();
     return;
   }
   if (command === "restart" || command === "status" || command === "logs") {
@@ -6039,6 +7517,10 @@ Usage:
   ling logs
   ling-stack [global options] init
   ling-stack [global options] doctor [config]
+  ling-stack [global options] workspace migrate-state --to <repo-local|user-data-dir> [--dry-run]
+  ling-stack [global options] workspace repair-registry [--dry-run]
+  ling-stack [global options] memory export [--output memory.md] [--stdout]
+  ling-stack [global options] memory import --file memory.md [--dry-run]
   ling-stack [global options] restart
   ling-stack [global options] status
   ling-stack [global options] logs
@@ -6112,10 +7594,57 @@ function printInitHelp(): void {
   ling-stack init
   ling-stack init --cwd /path/to/project
   ling-stack init --no-provider-templates
+  ling-stack init --workspace-state-location user-data-dir
 
 Behavior:
-  Creates .ling-stack/, SQLite runtime state, sessions/, artifacts/, logs/, pi/, and config.json.
+  Creates workspace runtime state, SQLite, sessions/, artifacts/, logs/, pi/, and config.json.
+  Default state location is repo-local under .ling-stack/.
+  --workspace-state-location user-data-dir stores workspace state under ~/.ling-stack/workspaces/<workspace-id>/ and writes a repo-local pointer config.
   Provider templates are created disabled by default and use secret refs such as env:NAME or keychain:NAME.
+`);
+}
+
+function printWorkspaceHelp(): void {
+  console.log(`Usage:
+  ling-stack workspace migrate-state --to user-data-dir [--dry-run]
+  ling-stack workspace migrate-state --to repo-local [--dry-run]
+  ling-stack workspace repair-registry [--dry-run]
+  ling-stack workspace registry repair [--dry-run]
+
+Behavior:
+  Explicitly migrates workspace runtime state between repo-local .ling-stack/ and ~/.ling-stack/workspaces/<workspace-id>/.
+  --dry-run prints source, target, backup, registry, daemon, and writability preflight checks without copying files or writing manifests.
+  The source state root is not removed. The command writes a migration manifest and backups under ~/.ling-stack/state/migrations/.
+  Stop the Ling Stack daemon before migrating so SQLite, sessions, artifacts, and logs are copied from a stable state.
+  repair-registry updates only ~/.ling-stack/global.sqlite so the current workspace row matches the resolved state root.
+`);
+}
+
+function printMemoryHelp(): void {
+  console.log(`Usage:
+  ling-stack memory export [--output memory.md]
+  ling-stack memory export --stdout
+  ling-stack memory import --file memory.md [--dry-run]
+
+Options:
+  --scope-type workspace|channel|teammate|task|run
+  --owner-id <id>
+  --review-state candidate|active|disabled|archived|rejected
+  --sensitivity normal|private|secret-adjacent
+  --tag <tag>
+  --limit <n>
+  --include-secret-adjacent
+  --file <memory.md>
+  --source-label <label>
+  --dry-run
+
+Behavior:
+  Exports a read-only Markdown projection from the resolved workspace SQLite database.
+  SQL remains authoritative. Secret-adjacent memories are skipped by default; secret-like
+  tokens in exported text are redacted.
+  Imports parse Ling memory Markdown projections into review candidates only. Import
+  never restores active, disabled, archived, rejected, retrieval, or review authority
+  fields without a separate review action.
 `);
 }
 
@@ -6338,7 +7867,7 @@ function printDoctorHelp(): void {
 
 Checks:
   daemon health, providers, provider preflight, channels, tasks, and approval policy.
-  doctor config audits Ling project state under .ling-stack and flags scattered Ling state.
+  doctor config audits resolved Ling project state and flags scattered Ling state.
 
 Exit codes:
   0 ready

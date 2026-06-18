@@ -104,6 +104,7 @@ export class DirectReplyControlService {
       assertDirectFileRefsWithinWorkspace({
         thread,
         workspaceCwd: input.store.paths.cwd,
+        workspacePaths: input.store.paths,
         fileRefs: input.messagePayload.fileRefs,
       });
     }

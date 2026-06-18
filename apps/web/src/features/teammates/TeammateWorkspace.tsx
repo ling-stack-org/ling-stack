@@ -48,6 +48,8 @@ import {
   getTeammateDirectRuntime,
   getTeammateDirectWorkspace,
   getMemoryReviewPolicy,
+  exportMemoryMarkdown,
+  importMemoryMarkdown,
   listMemoryObjects,
   listMemoryPromotionInbox,
   listSkills,
@@ -107,6 +109,7 @@ import type {
   Channel,
   EffectiveTeammateSkill,
   MemoryHealthReport,
+  MemoryMarkdownImportPlan,
   MemoryObject,
   MemoryPromotionInboxItem,
   MemoryReviewAction,
@@ -259,6 +262,11 @@ export function TeammateWorkspace({
   const [memoryPolicySaving, setMemoryPolicySaving] = useState(false);
   const [memoryEditId, setMemoryEditId] = useState("");
   const [memoryEditForm, setMemoryEditForm] = useState<MemoryReviewEditForm>({ title: "", body: "", sensitivity: "normal" });
+  const [memoryTransferBusy, setMemoryTransferBusy] = useState<"" | "export" | "preview" | "import">("");
+  const [memoryExportIncludeSecretAdjacent, setMemoryExportIncludeSecretAdjacent] = useState(false);
+  const [memoryImportContent, setMemoryImportContent] = useState("");
+  const [memoryImportSourceLabel, setMemoryImportSourceLabel] = useState("");
+  const [memoryImportPlan, setMemoryImportPlan] = useState<MemoryMarkdownImportPlan | undefined>();
   const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [activityItems, setActivityItems] = useState<readonly TeammateActivityItem[]>([]);
@@ -1111,6 +1119,102 @@ export function TeammateWorkspace({
     setMemoryHealthReport(memoryHealthResponse.report);
     setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
     setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
+  }
+
+  async function exportMemoryProjection(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || memoryTransferBusy) {
+      return;
+    }
+    setMemoryTransferBusy("export");
+    try {
+      setWorkspaceError("");
+      setMemoryReviewMessage("");
+      const response = await exportMemoryMarkdown(workspaceCwd, {
+        includeMarkdown: true,
+        includeSecretAdjacent: memoryExportIncludeSecretAdjacent,
+      });
+      if (!("markdown" in response.export)) {
+        throw new Error("Memory export response did not include Markdown.");
+      }
+      downloadTextFile(response.export.suggestedFileName, response.export.markdown);
+      setMemoryReviewMessage(t("Downloaded {count} memories", { count: response.export.memoryCount }));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMemoryTransferBusy("");
+    }
+  }
+
+  async function loadMemoryImportFile(file: File | undefined): Promise<void> {
+    if (!file) {
+      return;
+    }
+    try {
+      setWorkspaceError("");
+      setMemoryReviewMessage("");
+      setMemoryImportContent(await file.text());
+      setMemoryImportSourceLabel(file.name);
+      setMemoryImportPlan(undefined);
+      setMemoryReviewMessage(t("Loaded {name}", { name: file.name }));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function previewMemoryImport(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || memoryTransferBusy) {
+      return;
+    }
+    if (!memoryImportContent.trim()) {
+      setMemoryReviewMessage(t("Paste or choose a Markdown export first"));
+      return;
+    }
+    setMemoryTransferBusy("preview");
+    try {
+      setWorkspaceError("");
+      setMemoryReviewMessage("");
+      const response = await importMemoryMarkdown(workspaceCwd, {
+        markdown: memoryImportContent,
+        sourceLabel: memoryImportSourceLabel.trim() || undefined,
+        dryRun: true,
+      });
+      setMemoryImportPlan(response.plan);
+      setMemoryReviewMessage(t("Preview ready: {count} candidates", { count: response.plan.candidateCount }));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMemoryTransferBusy("");
+    }
+  }
+
+  async function importMemoryCandidates(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || memoryTransferBusy) {
+      return;
+    }
+    if (!memoryImportContent.trim()) {
+      setMemoryReviewMessage(t("Paste or choose a Markdown export first"));
+      return;
+    }
+    setMemoryTransferBusy("import");
+    try {
+      setWorkspaceError("");
+      setMemoryReviewMessage("");
+      const response = await importMemoryMarkdown(workspaceCwd, {
+        markdown: memoryImportContent,
+        sourceLabel: memoryImportSourceLabel.trim() || undefined,
+        dryRun: false,
+      });
+      setMemoryImportPlan(response.plan);
+      setMemoryReviewMessage(t("Imported {count} candidates", { count: response.importedCount }));
+      await refreshMemoryReviewData();
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMemoryTransferBusy("");
+    }
   }
 
   async function changeMemoryReviewMode(mode: MemoryReviewMode): Promise<void> {
@@ -2800,6 +2904,121 @@ export function TeammateWorkspace({
               <small className="teammate-memory-review-message">{t("No memory health findings")}</small>
             )}
           </article>
+          <article className="teammate-memory-transfer-panel" aria-label={t("Memory export and import")}>
+            <div className="teammate-memory-review-head">
+              <span>
+                <FileText size={15} />
+                <strong>{t("Markdown transfer")}</strong>
+              </span>
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => void exportMemoryProjection()}
+                disabled={Boolean(memoryTransferBusy)}
+              >
+                {memoryTransferBusy === "export" ? <Loader2 className="spin" size={14} /> : <ArrowDown size={14} />}
+                {t("Export")}
+              </button>
+            </div>
+            <label className="teammate-toggle inline-toggle compact">
+              <input
+                type="checkbox"
+                checked={memoryExportIncludeSecretAdjacent}
+                onChange={(event) => setMemoryExportIncludeSecretAdjacent(event.currentTarget.checked)}
+                disabled={Boolean(memoryTransferBusy)}
+              />
+              <ShieldCheck size={15} />
+              <span>
+                <strong>{t("Include secret-adjacent exports")}</strong>
+                <small>{t("Disabled by default; import still creates disabled candidates for secret-adjacent content.")}</small>
+              </span>
+            </label>
+            <div className="teammate-memory-import-grid">
+              <label className="field">
+                <span>{t("Source label")}</span>
+                <input
+                  value={memoryImportSourceLabel}
+                  onChange={(event) => setMemoryImportSourceLabel(event.currentTarget.value)}
+                  placeholder="memory-export.md"
+                  disabled={Boolean(memoryTransferBusy)}
+                />
+              </label>
+              <label className="secondary-button compact-button teammate-memory-file-button">
+                <Upload size={14} />
+                {t("Choose Markdown")}
+                <input
+                  type="file"
+                  accept=".md,text/markdown,text/plain"
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = "";
+                    void loadMemoryImportFile(file);
+                  }}
+                  disabled={Boolean(memoryTransferBusy)}
+                />
+              </label>
+              <label className="field teammate-memory-import-content">
+                <span>{t("Markdown")}</span>
+                <textarea
+                  rows={6}
+                  value={memoryImportContent}
+                  onChange={(event) => {
+                    setMemoryImportContent(event.currentTarget.value);
+                    setMemoryImportPlan(undefined);
+                  }}
+                  placeholder={t("Paste a Ling memory Markdown export")}
+                  disabled={Boolean(memoryTransferBusy)}
+                />
+              </label>
+            </div>
+            {memoryImportPlan ? (
+              <div className="teammate-memory-import-preview">
+                <span>
+                  <strong>{memoryImportPlan.candidateCount}</strong>
+                  <small>{t("Candidates")}</small>
+                </span>
+                <span>
+                  <strong>{memoryImportPlan.skippedCount}</strong>
+                  <small>{t("Skipped")}</small>
+                </span>
+                <span>
+                  <strong>{memoryImportPlan.candidates.reduce((count, candidate) => count + candidate.warnings.length, 0)}</strong>
+                  <small>{t("Warnings")}</small>
+                </span>
+              </div>
+            ) : null}
+            {memoryImportPlan && memoryImportPlan.candidates.some((candidate) => candidate.warnings.length > 0) ? (
+              <div className="teammate-memory-import-warnings">
+                {memoryImportPlan.candidates.slice(0, 3).flatMap((candidate) =>
+                  candidate.warnings.slice(0, 2).map((warning, index) => (
+                    <small key={`${candidate.index}:${index}:${warning}`} className="teammate-warning warning">
+                      {candidate.title}: {warning}
+                    </small>
+                  )),
+                )}
+              </div>
+            ) : null}
+            <div className="teammate-memory-review-actions">
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => void previewMemoryImport()}
+                disabled={Boolean(memoryTransferBusy) || !memoryImportContent.trim()}
+              >
+                {memoryTransferBusy === "preview" ? <Loader2 className="spin" size={14} /> : <Search size={14} />}
+                {t("Preview import")}
+              </button>
+              <button
+                className="primary-button compact-button"
+                type="button"
+                onClick={() => void importMemoryCandidates()}
+                disabled={Boolean(memoryTransferBusy) || !memoryImportContent.trim()}
+              >
+                {memoryTransferBusy === "import" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                {t("Import candidates")}
+              </button>
+            </div>
+          </article>
           <article className="teammate-data-row teammate-memory-policy-row">
             <span>
               <strong>{t("Memory review mode")}</strong>
@@ -3287,6 +3506,18 @@ export function TeammateWorkspace({
       ) : null}
     </div>
   );
+}
+
+function downloadTextFile(fileName: string, content: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.rel = "noopener";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function truncateText(value: string, maxLength: number): string {

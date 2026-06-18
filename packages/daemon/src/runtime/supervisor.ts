@@ -26,6 +26,7 @@ const RUNTIME_SCHEMA_VERSION = 22;
 export class RuntimeSupervisor {
   private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
   private readonly lockedCwds = new Set<string>();
+  private readonly runtimeLockPathsByCwd = new Map<string, string>();
   private readonly reconciledCwds = new Set<string>();
 
   constructor(private readonly config: ResolvedDaemonConfig) {}
@@ -87,7 +88,7 @@ export class RuntimeSupervisor {
 
   releaseAll(): void {
     for (const [cwd, runtime] of this.runtimesByCwd.entries()) {
-      const lockPath = join(cwd, ".ling-stack", "runtime.lock");
+      const lockPath = this.runtimeLockPathsByCwd.get(cwd) ?? join(cwd, ".ling-stack", "runtime.lock");
       try {
         const current = parseRuntimeLock(readFileSync(lockPath, "utf8"));
         if (current?.runtimeInstanceId === runtime.runtimeInstanceId) {
@@ -99,6 +100,7 @@ export class RuntimeSupervisor {
     }
     this.runtimesByCwd.clear();
     this.lockedCwds.clear();
+    this.runtimeLockPathsByCwd.clear();
     this.reconciledCwds.clear();
   }
 
@@ -118,6 +120,7 @@ export class RuntimeSupervisor {
     try {
       writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
       this.lockedCwds.add(cwd);
+      this.runtimeLockPathsByCwd.set(cwd, lockPath);
       return;
     } catch (error) {
       if (!isFsErrorCode(error, "EEXIST")) {
@@ -135,6 +138,7 @@ export class RuntimeSupervisor {
         );
       }
       this.lockedCwds.add(cwd);
+      this.runtimeLockPathsByCwd.set(cwd, lockPath);
       return;
     }
 
@@ -145,10 +149,12 @@ export class RuntimeSupervisor {
     }
     writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
     this.lockedCwds.add(cwd);
+    this.runtimeLockPathsByCwd.set(cwd, lockPath);
   }
 
   private writeRuntimeLock(store: RunStore, runtime: RuntimeInstance): void {
     const lockPath = join(store.paths.rootDir, "runtime.lock");
+    this.runtimeLockPathsByCwd.set(store.paths.cwd, lockPath);
     writeFileSync(
       lockPath,
       `${JSON.stringify(

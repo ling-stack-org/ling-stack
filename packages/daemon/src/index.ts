@@ -4,6 +4,7 @@ import {
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   createCompositeSecretResolver,
+  resolveStoragePaths,
 } from "@ling-stack/core";
 import { createPiRunner, getPiRunnerExtension } from "@ling-stack/runner-pi";
 import {
@@ -89,7 +90,7 @@ export function createDaemonServer(
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
   let automationSchedulers: AutomationSchedulerRegistry;
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
-  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore, {
+  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     onStoreInitialized: (cwd, store) => {
       startupOptionalWarmups?.start(cwd, store);
     },
@@ -171,8 +172,8 @@ export function createDaemonServer(
       });
       startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
     },
-    stop: () =>
-      new Promise<void>((resolve, reject) => {
+    stop: async () => {
+      await new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
         activeDirectReplies.cancelAll();
         runtimeSupervisor.releaseAll();
@@ -180,15 +181,21 @@ export function createDaemonServer(
         automationSchedulers.stopAll();
         controlPlaneEvents.closeAll();
         server.close((error) => {
-          storeRegistry.closeAll();
           if (error) {
             reject(error);
             return;
           }
           resolve();
         });
-      }),
+      });
+      await activeRuns.waitForIdle();
+      storeRegistry.closeAll();
+    },
   };
+}
+
+function createDefaultRunStore(cwd: string) {
+  return createSqliteRunStore(cwd, resolveStoragePaths(cwd).workspace);
 }
 
 export const LOCAL_CHANNEL_SOURCE_EXTENSION_ID = "channel-source:local";

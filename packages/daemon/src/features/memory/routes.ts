@@ -1,11 +1,13 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { buildMemoryHealthReport, DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
+import { join } from "node:path";
+import { buildMemoryHealthReport, buildMemoryMarkdownExport, DEFAULT_WORKSPACE_ID, parseMemoryMarkdownImport } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { readJsonBody, readOptionalBooleanQuery, readOptionalIntegerQuery } from "../../shared/request.js";
+import { readJsonBody, readOptionalBooleanQuery, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { runMemoryConsolidationJob } from "./consolidation.js";
 import {
@@ -168,6 +170,145 @@ export async function handleMemoryConsolidationJobs(
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /memory/consolidation-jobs` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleMemoryExport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const queryOptions = parseMemoryExportQuery(url);
+    const bodyOptions = request.method === "POST"
+      ? parseMemoryExportBody(await readOptionalJsonBody(request, config.maxBodyBytes))
+      : {};
+    const exportOptions = { ...queryOptions, ...bodyOptions };
+    const store = storeRegistry.getStore(cwd);
+    const memories = store.listMemoryObjects({
+      scopeType: exportOptions.scopeType,
+      ownerId: exportOptions.ownerId,
+      reviewState: exportOptions.reviewState,
+      sensitivity: exportOptions.sensitivity,
+      tag: exportOptions.tag,
+      limit: exportOptions.limit,
+    });
+    const markdownExport = buildMemoryMarkdownExport({
+      memories,
+      latestDecisionsByMemoryId: new Map(memories.map((memory) => [memory.id, store.getLatestMemoryReviewDecision(memory.id)])),
+      metadataByMemoryId: new Map(
+        store
+          .listMemorySelfImprovingMetadata({ limit: 1000 })
+          .filter((metadata) => memories.some((memory) => memory.id === metadata.memoryId))
+          .map((metadata) => [metadata.memoryId, metadata]),
+      ),
+      options: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        generatedAt: exportOptions.generatedAt,
+        includeSecretAdjacent: exportOptions.includeSecretAdjacent,
+      },
+    });
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        export: exportOptions.includeMarkdown === false ? omitMarkdown(markdownExport) : markdownExport,
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const fileName = exportOptions.fileName ?? markdownExport.suggestedFileName;
+      assertSafeMemoryExportFileName(fileName);
+      await mkdir(store.paths.memoryExportsDir, { recursive: true });
+      const filePath = join(store.paths.memoryExportsDir, fileName);
+      await writeFile(filePath, markdownExport.markdown, "utf8");
+      writeJson(response, 201, {
+        cwd,
+        filePath,
+        export: exportOptions.includeMarkdown === true ? markdownExport : omitMarkdown(markdownExport),
+      });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /memory/export` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleMemoryImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  controlPlaneEvents: ControlPlaneEventHub,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /memory/import` });
+    return;
+  }
+
+  try {
+    const body = parseMemoryImportBody(await readJsonBody(request, config.maxBodyBytes));
+    const now = new Date().toISOString();
+    const plan = parseMemoryMarkdownImport(body.markdown, {
+      sourceId: body.sourceId ?? body.fileName ?? body.sourceLabel,
+      sourceLabel: body.sourceLabel ?? body.fileName,
+      importedAt: now,
+      limit: body.limit,
+    });
+    const store = storeRegistry.getStore(cwd);
+    const memories = body.dryRun
+      ? []
+      : plan.candidates.map((candidate) => store.createMemoryObject(candidate.createInput, now));
+    if (!body.dryRun) {
+      for (const memory of memories) {
+        appendControlPlaneEvent(store, controlPlaneEvents, {
+          workspaceId: DEFAULT_WORKSPACE_ID,
+          cwd,
+          domain: "memory",
+          entityType: "memory",
+          entityId: memory.id,
+          action: "memory.candidate_imported",
+          data: {
+            scopeType: memory.scopeType,
+            ownerId: memory.ownerId,
+            sensitivity: memory.sensitivity,
+            sourceId: plan.source.id,
+          },
+        }, now);
+      }
+    }
+    writeJson(response, body.dryRun ? 200 : 201, {
+      cwd,
+      dryRun: body.dryRun,
+      importedCount: memories.length,
+      plan,
+      memories,
+    });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -354,6 +495,143 @@ function readOptionalStringField(value: unknown, key: string): string | undefine
   }
   const field = (value as Record<string, unknown>)[key];
   return typeof field === "string" ? field : undefined;
+}
+
+interface MemoryExportOptions {
+  readonly scopeType?: ReturnType<typeof readOptionalMemoryScopeTypeQuery>;
+  readonly ownerId?: string;
+  readonly reviewState?: ReturnType<typeof readOptionalMemoryReviewStateQuery>;
+  readonly sensitivity?: ReturnType<typeof readOptionalMemorySensitivityQuery>;
+  readonly tag?: string;
+  readonly limit?: number;
+  readonly includeSecretAdjacent?: boolean;
+  readonly includeMarkdown?: boolean;
+  readonly fileName?: string;
+  readonly generatedAt?: string;
+}
+
+interface MemoryImportOptions {
+  readonly markdown: string;
+  readonly dryRun: boolean;
+  readonly sourceId?: string;
+  readonly sourceLabel?: string;
+  readonly fileName?: string;
+  readonly limit?: number;
+}
+
+function parseMemoryExportQuery(url: URL): MemoryExportOptions {
+  return {
+    scopeType: readOptionalMemoryScopeTypeQuery(url),
+    ownerId: url.searchParams.get("ownerId") ?? undefined,
+    reviewState: readOptionalMemoryReviewStateQuery(url),
+    sensitivity: readOptionalMemorySensitivityQuery(url),
+    tag: url.searchParams.get("tag") ?? undefined,
+    limit: readOptionalIntegerQuery(url, "limit", 1),
+    includeSecretAdjacent: readOptionalBooleanQuery(url, "includeSecretAdjacent"),
+    includeMarkdown: readOptionalBooleanQuery(url, "includeMarkdown"),
+    fileName: url.searchParams.get("fileName") ?? undefined,
+    generatedAt: url.searchParams.get("generatedAt") ?? undefined,
+  };
+}
+
+function parseMemoryImportBody(value: unknown): MemoryImportOptions {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "bad_request", "Memory import body must be a JSON object.");
+  }
+  const record = value as Record<string, unknown>;
+  const markdown = readOptionalStringBody(record, "markdown");
+  if (!markdown?.trim()) {
+    throw new HttpError(400, "bad_request", "markdown must be a non-empty string.");
+  }
+  return {
+    markdown,
+    dryRun: readOptionalBooleanBody(record, "dryRun") ?? false,
+    sourceId: readOptionalStringBody(record, "sourceId"),
+    sourceLabel: readOptionalStringBody(record, "sourceLabel"),
+    fileName: readOptionalStringBody(record, "fileName"),
+    limit: readOptionalIntegerBody(record, "limit"),
+  };
+}
+
+function parseMemoryExportBody(value: unknown): MemoryExportOptions {
+  if (value === undefined) {
+    return {};
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "bad_request", "Memory export body must be a JSON object.");
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    scopeType: readOptionalStringUnion(record, "scopeType", ["workspace", "channel", "teammate", "task", "run"]),
+    ownerId: readOptionalStringBody(record, "ownerId"),
+    reviewState: readOptionalStringUnion(record, "reviewState", ["candidate", "active", "disabled", "archived", "rejected"]),
+    sensitivity: readOptionalStringUnion(record, "sensitivity", ["normal", "private", "secret-adjacent"]),
+    tag: readOptionalStringBody(record, "tag"),
+    limit: readOptionalIntegerBody(record, "limit"),
+    includeSecretAdjacent: readOptionalBooleanBody(record, "includeSecretAdjacent"),
+    includeMarkdown: readOptionalBooleanBody(record, "includeMarkdown"),
+    fileName: readOptionalStringBody(record, "fileName"),
+    generatedAt: readOptionalStringBody(record, "generatedAt"),
+  };
+}
+
+function assertSafeMemoryExportFileName(fileName: string): void {
+  if (!fileName.endsWith(".md") || fileName.includes("/") || fileName.includes("\\") || fileName.includes("..")) {
+    throw new HttpError(400, "bad_export_file_name", "Memory export fileName must be a simple .md file name.");
+  }
+}
+
+function omitMarkdown<T extends { readonly markdown: string }>(value: T): Omit<T, "markdown"> {
+  const { markdown: _markdown, ...rest } = value;
+  return rest;
+}
+
+function readOptionalStringBody(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new HttpError(400, "bad_request", `${key} must be a string.`);
+  }
+  return value;
+}
+
+function readOptionalBooleanBody(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new HttpError(400, "bad_request", `${key} must be a boolean.`);
+  }
+  return value;
+}
+
+function readOptionalIntegerBody(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new HttpError(400, "bad_request", `${key} must be an integer greater than or equal to 1.`);
+  }
+  return value;
+}
+
+function readOptionalStringUnion<const T extends string>(
+  record: Record<string, unknown>,
+  key: string,
+  allowed: readonly T[],
+): T | undefined {
+  const value = readOptionalStringBody(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!allowed.includes(value as T)) {
+    throw new HttpError(400, "bad_request", `${key} must be one of: ${allowed.join(", ")}.`);
+  }
+  return value as T;
 }
 
 export async function handleMemoryRecall(

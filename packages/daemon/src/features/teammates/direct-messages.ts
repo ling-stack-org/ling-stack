@@ -115,6 +115,7 @@ export async function handleTeammateDirectMessagesCollection(
       assertDirectFileRefsWithinWorkspace({
         thread,
         workspaceCwd: store.paths.cwd,
+        workspacePaths: store.paths,
         fileRefs: input.fileRefs,
       });
       const now = new Date().toISOString();
@@ -188,6 +189,7 @@ export async function handleTeammateDirectMessageStream(
     assertDirectFileRefsWithinWorkspace({
       thread,
       workspaceCwd: store.paths.cwd,
+      workspacePaths: store.paths,
       fileRefs: messageInput.fileRefs,
     });
     const now = new Date().toISOString();

@@ -9,6 +9,7 @@ import {
   resolveChannelExecutionCwd,
   type Channel,
   type ChannelWorkspaceBinding,
+  type LingStackRuntimePaths,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -91,7 +92,7 @@ export async function handleChannelWorkspace(
       const baseBranch = typeof body === "object" && body !== null && !Array.isArray(body) && typeof (body as { baseBranch?: unknown }).baseBranch === "string"
         ? (body as { baseBranch: string }).baseBranch.trim()
         : "";
-      const result = await createManagedWorktreeBinding(channel, cwd, baseBranch || undefined);
+      const result = await createManagedWorktreeBinding(channel, cwd, store.paths, baseBranch || undefined);
       if (!result.ok) {
         writeJson(response, 400, { error: result.code, message: result.message });
         return;
@@ -179,6 +180,7 @@ function readHandoffBinding(value: unknown, channel: Channel, workspaceCwd: stri
 export async function createManagedWorktreeBinding(
   channel: ChannelWorktreeTarget,
   workspaceCwd: string,
+  workspacePaths: LingStackRuntimePaths,
   requestedBaseBranch?: string,
 ): Promise<
   | { readonly ok: true; readonly binding: ChannelWorkspaceBinding }
@@ -195,7 +197,7 @@ export async function createManagedWorktreeBinding(
   const currentBranch = (await git(repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
   const baseBranch = requestedBaseBranch || currentBranch || baseCommit;
   const branchName = `ling/channel-${channel.id}`;
-  const worktreePath = resolvePath(workspaceCwd, ".ling-stack", "worktrees", "channels", channel.id);
+  const worktreePath = resolvePath(workspacePaths.worktreesDir, "channels", channel.id);
   if (!existsSync(worktreePath)) {
     await mkdir(dirname(worktreePath), { recursive: true });
     await git(repoRoot, ["worktree", "add", "-B", branchName, worktreePath, baseBranch]).catch((error: unknown) => {

@@ -9,6 +9,7 @@ import {
   type ChannelMessageFileRef,
   type DirectWorkspaceBinding,
   type DirectWorkspaceSnapshot,
+  type LingStackRuntimePaths,
   type RunStore,
   type TeammateDirectThread,
 } from "@ling-stack/core";
@@ -28,8 +29,12 @@ export interface DirectWorkspaceReady {
   readonly executionCwd: string;
 }
 
-export function defaultDirectWorkspaceBinding(thread: TeammateDirectThread, workspaceCwd: string): DirectWorkspaceBinding {
-  const worktreePath = directWorktreePath(workspaceCwd, thread.teammateId, thread.id);
+export function defaultDirectWorkspaceBinding(
+  thread: TeammateDirectThread,
+  workspaceCwd: string,
+  workspacePaths?: LingStackRuntimePaths,
+): DirectWorkspaceBinding {
+  const worktreePath = directWorktreePath(workspaceCwd, thread.teammateId, thread.id, workspacePaths);
   return {
     mode: "managed_worktree",
     status: "not_created",
@@ -43,12 +48,13 @@ export function defaultDirectWorkspaceBinding(thread: TeammateDirectThread, work
 export function assertDirectFileRefsWithinWorkspace(input: {
   readonly thread: TeammateDirectThread;
   readonly workspaceCwd: string;
+  readonly workspacePaths?: LingStackRuntimePaths;
   readonly fileRefs: readonly ChannelMessageFileRef[];
 }): void {
   if (input.fileRefs.length === 0) {
     return;
   }
-  const binding = input.thread.workspaceBinding ?? defaultDirectWorkspaceBinding(input.thread, input.workspaceCwd);
+  const binding = input.thread.workspaceBinding ?? defaultDirectWorkspaceBinding(input.thread, input.workspaceCwd, input.workspacePaths);
   const bases = uniquePaths([
     input.workspaceCwd,
     binding.executionPath,
@@ -76,7 +82,7 @@ export async function ensureDirectWorkspaceReady(input: {
   | { readonly ok: true; readonly workspace: DirectWorkspaceReady }
   | { readonly ok: false; readonly code: string; readonly message: string; readonly thread: TeammateDirectThread; readonly binding: DirectWorkspaceBinding }
 > {
-  const refreshed = refreshDirectWorkspaceBinding(input.thread, input.workspaceCwd, new Date().toISOString());
+  const refreshed = refreshDirectWorkspaceBinding(input.thread, input.workspaceCwd, input.store.paths, new Date().toISOString());
   if (refreshed.mode === "local" || refreshed.mode === "external_path") {
     if (refreshed.status === "ready" && existsSync(refreshed.executionPath ?? input.workspaceCwd)) {
       const updated = input.store.updateTeammateDirectThreadWorkspace(input.thread.id, refreshed, refreshed.updatedAt) ?? input.thread;
@@ -108,7 +114,7 @@ export async function ensureDirectWorkspaceReady(input: {
     };
   }
 
-  const created = await createManagedDirectWorktreeBinding(input.thread, input.workspaceCwd);
+  const created = await createManagedDirectWorktreeBinding(input.thread, input.workspaceCwd, input.store.paths);
   if (!created.ok) {
     const failed: DirectWorkspaceBinding = {
       ...refreshed,
@@ -149,22 +155,22 @@ export async function handleTeammateDirectWorkspace(
     const thread = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
 
     if (!action && request.method === "GET") {
-      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, thread));
+      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, thread, store.paths));
       return;
     }
 
     if (action === "refresh" && request.method === "POST") {
-      const binding = refreshDirectWorkspaceBinding(thread, cwd, new Date().toISOString());
+      const binding = refreshDirectWorkspaceBinding(thread, cwd, store.paths, new Date().toISOString());
       const updated = store.updateTeammateDirectThreadWorkspace(thread.id, binding, binding.updatedAt) ?? thread;
-      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated));
+      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
 
     if (action === "handoff" && request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const binding = readHandoffBinding(body, thread, cwd, new Date().toISOString());
+      const binding = readHandoffBinding(body, thread, cwd, store.paths, new Date().toISOString());
       const updated = store.updateTeammateDirectThreadWorkspace(thread.id, binding, binding.updatedAt) ?? thread;
-      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated));
+      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
 
@@ -173,13 +179,13 @@ export async function handleTeammateDirectWorkspace(
       const baseBranch = typeof body === "object" && body !== null && !Array.isArray(body) && typeof (body as { baseBranch?: unknown }).baseBranch === "string"
         ? (body as { baseBranch: string }).baseBranch.trim()
         : "";
-      const result = await createManagedDirectWorktreeBinding(thread, cwd, baseBranch || undefined);
+      const result = await createManagedDirectWorktreeBinding(thread, cwd, store.paths, baseBranch || undefined);
       if (!result.ok) {
         writeJson(response, 400, { error: result.code, message: result.message });
         return;
       }
       const updated = store.updateTeammateDirectThreadWorkspace(thread.id, result.binding, result.binding.updatedAt) ?? thread;
-      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated));
+      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
 
@@ -192,8 +198,8 @@ export async function handleTeammateDirectWorkspace(
   }
 }
 
-function buildDirectWorkspaceResponse(cwd: string, teammateId: string, thread: TeammateDirectThread) {
-  const binding = thread.workspaceBinding ?? defaultDirectWorkspaceBinding(thread, cwd);
+function buildDirectWorkspaceResponse(cwd: string, teammateId: string, thread: TeammateDirectThread, workspacePaths: LingStackRuntimePaths) {
+  const binding = thread.workspaceBinding ?? defaultDirectWorkspaceBinding(thread, cwd, workspacePaths);
   const boundThread = { ...thread, workspaceBinding: binding };
   return {
     cwd,
@@ -215,8 +221,13 @@ function buildDirectWorkspaceReady(workspaceCwd: string, thread: TeammateDirectT
   };
 }
 
-function refreshDirectWorkspaceBinding(thread: TeammateDirectThread, workspaceCwd: string, now: string): DirectWorkspaceBinding {
-  const binding = thread.workspaceBinding ?? defaultDirectWorkspaceBinding(thread, workspaceCwd);
+function refreshDirectWorkspaceBinding(
+  thread: TeammateDirectThread,
+  workspaceCwd: string,
+  workspacePaths: LingStackRuntimePaths,
+  now: string,
+): DirectWorkspaceBinding {
+  const binding = thread.workspaceBinding ?? defaultDirectWorkspaceBinding(thread, workspaceCwd, workspacePaths);
   if (binding.mode === "local") {
     return { ...binding, executionPath: workspaceCwd, status: "ready", checkedAt: now, updatedAt: now };
   }
@@ -232,7 +243,7 @@ function refreshDirectWorkspaceBinding(thread: TeammateDirectThread, workspaceCw
       updatedAt: now,
     };
   }
-  const worktreePath = binding.worktreePath ?? directWorktreePath(workspaceCwd, thread.teammateId, thread.id);
+  const worktreePath = binding.worktreePath ?? directWorktreePath(workspaceCwd, thread.teammateId, thread.id, workspacePaths);
   const exists = existsSync(worktreePath);
   const hasCreatedBinding = Boolean(thread.workspaceBinding?.createdAt);
   return {
@@ -247,7 +258,13 @@ function refreshDirectWorkspaceBinding(thread: TeammateDirectThread, workspaceCw
   };
 }
 
-function readHandoffBinding(value: unknown, thread: TeammateDirectThread, workspaceCwd: string, now: string): DirectWorkspaceBinding {
+function readHandoffBinding(
+  value: unknown,
+  thread: TeammateDirectThread,
+  workspaceCwd: string,
+  workspacePaths: LingStackRuntimePaths,
+  now: string,
+): DirectWorkspaceBinding {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Workspace handoff request must be a JSON object");
   }
@@ -283,12 +300,13 @@ function readHandoffBinding(value: unknown, thread: TeammateDirectThread, worksp
   if (existing?.mode !== "managed_worktree" || !existing.worktreePath) {
     throw new Error("Managed worktree has not been created for this direct chat.");
   }
-  return refreshDirectWorkspaceBinding({ ...thread, workspaceBinding: existing }, workspaceCwd, now);
+  return refreshDirectWorkspaceBinding({ ...thread, workspaceBinding: existing }, workspaceCwd, workspacePaths, now);
 }
 
 async function createManagedDirectWorktreeBinding(
   thread: DirectWorktreeTarget,
   workspaceCwd: string,
+  workspacePaths: LingStackRuntimePaths,
   requestedBaseBranch?: string,
 ): Promise<
   | { readonly ok: true; readonly binding: DirectWorkspaceBinding }
@@ -304,7 +322,7 @@ async function createManagedDirectWorktreeBinding(
   const currentBranch = (await git(repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
   const baseBranch = requestedBaseBranch || currentBranch || baseCommit;
   const branchName = directWorktreeBranchName(thread.teammateId, thread.id);
-  const worktreePath = directWorktreePath(workspaceCwd, thread.teammateId, thread.id);
+  const worktreePath = directWorktreePath(workspaceCwd, thread.teammateId, thread.id, workspacePaths);
   if (!existsSync(worktreePath)) {
     await mkdir(dirname(worktreePath), { recursive: true });
     try {
@@ -330,8 +348,14 @@ async function createManagedDirectWorktreeBinding(
   };
 }
 
-function directWorktreePath(workspaceCwd: string, teammateId: string, threadId: string): string {
-  return resolvePath(workspaceCwd, ".ling-stack", "worktrees", "teammates", teammateId, threadId);
+function directWorktreePath(
+  workspaceCwd: string,
+  teammateId: string,
+  threadId: string,
+  workspacePaths?: LingStackRuntimePaths,
+): string {
+  const worktreesDir = workspacePaths?.worktreesDir ?? resolvePath(workspaceCwd, ".ling-stack", "worktrees");
+  return resolvePath(worktreesDir, "teammates", teammateId, threadId);
 }
 
 function directWorktreeBranchName(teammateId: string, threadId: string): string {

@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { expect, type Locator, type Page, type Request, type Route } from "@playwright/test";
-import { buildEffectiveTeammateSkills } from "@ling-stack/core";
+import { buildEffectiveTeammateSkills, buildMemoryMarkdownExport, parseMemoryMarkdownImport } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
+import type { MemoryObject } from "@ling-stack/core";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -41,6 +42,7 @@ export interface MockState {
   teammateMemoryScopes: unknown[];
   memoryObjects: unknown[];
   usedMemoryEvents: unknown[];
+  memoryMarkdownImportCalls: MockMemoryMarkdownImportCall[];
   teammateDirectThreads: Record<string, unknown>;
   teammateDirectMessages: unknown[];
   teammateDirectInterventions: MockTeammateDirectIntervention[];
@@ -263,6 +265,13 @@ export interface MockTeammateDirectIntervention {
   startedAt?: string;
   completedAt?: string;
   failureReason?: string;
+}
+
+export interface MockMemoryMarkdownImportCall {
+  readonly dryRun: boolean;
+  readonly sourceLabel?: string;
+  readonly candidateCount: number;
+  readonly skippedCount: number;
 }
 
 export interface MockRunEvent {
@@ -867,6 +876,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     teammateMemoryScopes: [],
     memoryObjects: [],
     usedMemoryEvents: [],
+    memoryMarkdownImportCalls: [],
     teammateDirectThreads: {},
     teammateDirectMessages: [],
     teammateDirectInterventions: [],
@@ -3619,6 +3629,79 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if ((request.method() === "GET" || request.method() === "POST") && path === "/memory/export") {
+    const includeSecretAdjacent = url.searchParams.get("includeSecretAdjacent") === "true";
+    const generatedAt = url.searchParams.get("generatedAt") ?? "2026-06-18T00:00:00.000Z";
+    const body = request.method() === "POST" ? await request.postDataJSON() as Record<string, unknown> : {};
+    const result = buildMemoryMarkdownExport({
+      memories: state.memoryObjects.filter(isMemoryObject),
+      options: {
+        workspaceId: "workspace_default",
+        generatedAt,
+        includeSecretAdjacent,
+      },
+    });
+    const includeMarkdown = request.method() === "GET"
+      ? url.searchParams.get("includeMarkdown") === "true"
+      : body.includeMarkdown === true;
+    const { markdown: _markdown, ...metadataOnlyResult } = result;
+    await route.fulfill({
+      json: {
+        cwd,
+        export: includeMarkdown ? result : metadataOnlyResult,
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/memory/import") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const markdown = typeof body.markdown === "string" ? body.markdown : "";
+    const sourceLabel = typeof body.sourceLabel === "string" ? body.sourceLabel : undefined;
+    const dryRun = body.dryRun === true;
+    const plan = parseMemoryMarkdownImport(markdown, {
+      workspaceId: "workspace_default",
+      sourceLabel,
+      importedAt: "2026-06-18T00:00:00.000Z",
+    });
+    state.memoryMarkdownImportCalls.push({
+      dryRun,
+      sourceLabel,
+      candidateCount: plan.candidateCount,
+      skippedCount: plan.skippedCount,
+    });
+    const memories = dryRun
+      ? []
+      : plan.candidates.map((candidate, index): MemoryObject => ({
+          id: `memory_imported_${state.memoryObjects.length + index + 1}`,
+          workspaceId: candidate.createInput.workspaceId ?? "workspace_default",
+          scopeType: candidate.createInput.scopeType ?? "workspace",
+          ownerId: candidate.createInput.ownerId ?? "workspace_default",
+          title: candidate.createInput.title,
+          body: candidate.createInput.body,
+          tags: candidate.createInput.tags ?? [],
+          sourceRefs: candidate.createInput.sourceRefs ?? [],
+          reviewState: candidate.createInput.reviewState ?? "candidate",
+          enabled: candidate.createInput.enabled ?? true,
+          sensitivity: candidate.createInput.sensitivity ?? "normal",
+          verifyBeforeUse: candidate.createInput.verifyBeforeUse ?? false,
+          createdBy: candidate.createInput.createdBy,
+          createdAt: "2026-06-18T00:00:00.000Z",
+          updatedAt: "2026-06-18T00:00:00.000Z",
+        }));
+    if (!dryRun) {
+      state.memoryObjects.push(...memories);
+    }
+    await route.fulfill({
+      json: {
+        cwd,
+        dryRun,
+        importedCount: dryRun ? 0 : memories.length,
+        plan,
+        memories,
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/memory/review-policy") {
     await route.fulfill({
       json: {
@@ -3639,7 +3722,16 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/memory/promotion-inbox") {
-    await route.fulfill({ json: { cwd, items: [] } });
+    await route.fulfill({
+      json: {
+        cwd,
+        items: state.memoryObjects.filter(isMemoryObject).filter((memory) => memory.reviewState === "candidate").map((memory) => ({
+          memory,
+          sourceSummary: memory.sourceRefs.map((ref) => ref.label ?? ref.id).join(", ") || "Candidate memory",
+          recommendedAction: memory.sensitivity === "secret-adjacent" ? "quarantine" : "approve",
+        })),
+      },
+    });
     return;
   }
   if (request.method() === "GET" && path === "/memory/health") {
@@ -8523,6 +8615,24 @@ function truncateMockPreview(value: string, maxLength: number): string {
     return normalized;
   }
   return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function isMemoryObject(value: unknown): value is MemoryObject {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.workspaceId === "string" &&
+    typeof value.scopeType === "string" &&
+    typeof value.ownerId === "string" &&
+    typeof value.title === "string" &&
+    typeof value.body === "string" &&
+    Array.isArray(value.tags) &&
+    Array.isArray(value.sourceRefs) &&
+    typeof value.reviewState === "string" &&
+    typeof value.enabled === "boolean" &&
+    typeof value.sensitivity === "string" &&
+    typeof value.verifyBeforeUse === "boolean" &&
+    typeof value.createdAt === "string" &&
+    typeof value.updatedAt === "string";
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

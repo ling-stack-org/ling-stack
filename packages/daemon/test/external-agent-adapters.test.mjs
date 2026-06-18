@@ -11,6 +11,7 @@ import { createOpenClawAcpAdapter } from "../dist/runtime/adapters/openclaw-acp.
 
 test("openclaw-acp registry selection executes fake ACP through normalized events", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-adapter-"));
+  const artifactRoot = resolve(cwd, "runtime-state", "artifacts");
   const acp = await startFakeAcpServer({
     runResult: {
       taskId: "task_external",
@@ -44,6 +45,7 @@ test("openclaw-acp registry selection executes fake ACP through normalized event
     const events = [];
     const result = await resolution.runner.adapter.runTask({
       ...baseRunOptions(cwd),
+      runtimePaths: { artifactsDir: artifactRoot },
       onEvent: (event) => events.push(event),
     });
 
@@ -61,6 +63,7 @@ test("openclaw-acp registry selection executes fake ACP through normalized event
     assert.equal(JSON.stringify(events).includes("sk-test-secret"), false);
     const artifactEvent = events.find((event) => event.type === "tool_end" && event.toolName === "artifact_import");
     assert.ok(artifactEvent);
+    assert.equal(artifactEvent.result.path.startsWith(artifactRoot), true);
     const artifactContent = await readFile(artifactEvent.result.path, "utf8");
     assert.equal(artifactContent.includes("sk-test-secret"), false);
     assert.deepEqual(readMethods(acp.requests), ["initialize", "session/run"]);

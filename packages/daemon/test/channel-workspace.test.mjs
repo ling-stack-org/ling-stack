@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { createCompositeSecretResolver, createSqliteRunStore } from "../../core/dist/index.js";
+import { createCompositeSecretResolver, createSqliteRunStore, resolveStoragePaths } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
@@ -2426,7 +2426,7 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
 
     assertCoordinatorWorkflowStartReply(created);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 3);
-    assert.equal(runner.runs.length, 3);
+    await waitForCondition(() => runner.runs.length === 3, "direct workflow proposal runner sequence");
     const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
     assertCoordinatorWorkflowTerminalReply(listedMessages.messages);
 
@@ -6208,6 +6208,41 @@ test("channel creation creates an isolated managed worktree by default", async (
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("managed channel and direct worktrees use resolved workspace worktrees directory", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-resolved-worktrees-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-resolved-worktrees-user-"));
+  let workspacePaths;
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const paths = resolveStoragePaths(storeCwd, {
+        userRootDir: userRoot,
+        workspaceStateLocation: "user-data-dir",
+      }).workspace;
+      if (storeCwd === cwd) {
+        workspacePaths = paths;
+      }
+      return createSqliteRunStore(storeCwd, paths);
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    assert.ok(workspacePaths);
+    assert.equal(channel.workspaceBinding?.worktreePath?.startsWith(resolve(workspacePaths.worktreesDir, "channels")), true);
+    await access(channel.workspaceBinding?.worktreePath ?? "");
+
+    const teammateId = "teammate_builtin_engineer";
+    const direct = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(direct.binding.worktreePath.startsWith(resolve(workspacePaths.worktreesDir, "teammates")), true);
+    await access(direct.binding.worktreePath);
+
+    await assert.rejects(() => access(resolve(cwd, ".ling-stack", "worktrees")), /ENOENT/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
   }
 });
 

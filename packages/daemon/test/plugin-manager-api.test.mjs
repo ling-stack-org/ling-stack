@@ -4,9 +4,11 @@ import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { createCompositeSecretResolver } from "@ling-stack/core";
+import { createCompositeSecretResolver, resolveStoragePaths } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import { materializeBundledPluginPackage } from "../dist/features/plugins/package-cache.js";
 import { loadPluginPackageFromRoot } from "../dist/features/plugins/manifest.js";
+import { getBundledPluginPackage } from "../dist/features/plugins/source-index.js";
 
 const cuaPluginId = "trusted-local:cua-driver";
 const bundledCuaPluginId = "bundled:cua-driver";
@@ -87,6 +89,32 @@ test("daemon exposes bundled plugin sources packages and side-effect-free valida
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bundled plugin package cache uses resolved workspace plugin cache path", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-cache-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-cache-user-"));
+  try {
+    const paths = resolveStoragePaths(cwd, {
+      userRootDir: userRoot,
+      workspaceStateLocation: "user-data-dir",
+    }).workspace;
+    const pluginPackage = getBundledPluginPackage(bundledCuaPluginId);
+    assert.ok(pluginPackage);
+
+    const materialized = materializeBundledPluginPackage({
+      paths,
+      pluginPackage,
+      now: "2026-06-18T00:00:00.000Z",
+    });
+
+    assert.equal(materialized.packageRoot.startsWith(paths.pluginCacheDir), true);
+    assert.equal(existsSync(join(paths.pluginCacheDir, materialized.cacheRef)), true);
+    assert.equal(existsSync(join(cwd, ".ling-stack", "plugins", "cache", materialized.cacheRef)), false);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
   }
 });
 

@@ -298,7 +298,7 @@ class RpcConnection {
     };
   }
 
-  private maybeContinueRunInterventions(terminalRun: RunSession): void {
+  private async maybeContinueRunInterventions(terminalRun: RunSession): Promise<void> {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
     const workspaceCwd = readRunWorkspaceCwd(terminalRun) ?? terminalRun.cwd;
     const store = this.context.storeRegistry.findStoreForRun(sourceRunId, workspaceCwd) ??
@@ -306,7 +306,7 @@ class RpcConnection {
     if (!store) {
       return;
     }
-    maybeStartNextRunInterventionContinuation({
+    await maybeStartNextRunInterventionContinuation({
       sourceRunId,
       store,
       runnerRegistry: this.context.runnerRegistry,

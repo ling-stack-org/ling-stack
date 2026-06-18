@@ -217,9 +217,9 @@ export class AutomationSchedulerRegistry {
             this.mcpBroker,
             {
               onRunReady: hooks.onRunReady,
-              afterRunTerminal: (terminalRun) => {
-                hooks.afterRunTerminal?.(terminalRun);
-                this.maybeContinueRunInterventions(terminalRun);
+              afterRunTerminal: async (terminalRun) => {
+                await hooks.afterRunTerminal?.(terminalRun);
+                await this.maybeContinueRunInterventions(terminalRun);
               },
               controlPlaneEvents: this.controlPlaneEvents,
               startupState: this.startupState,
@@ -263,13 +263,13 @@ export class AutomationSchedulerRegistry {
     }
   }
 
-  private maybeContinueRunInterventions(terminalRun: RunSession): void {
+  private async maybeContinueRunInterventions(terminalRun: RunSession): Promise<void> {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
     const store = this.storeRegistry.findStoreForRun(sourceRunId, terminalRun.cwd) ?? this.storeRegistry.findStoreForRun(terminalRun.id, terminalRun.cwd);
     if (!store) {
       return;
     }
-    maybeStartNextRunInterventionContinuation({
+    await maybeStartNextRunInterventionContinuation({
       sourceRunId,
       store,
       runnerRegistry: this.runnerRegistry,

@@ -7,6 +7,10 @@ import type {
   MemoryHealthRequest,
   MemoryHealthResponse,
   MemoryListResponse,
+  MemoryMarkdownExportRequest,
+  MemoryMarkdownExportResponse,
+  MemoryMarkdownImportRequest,
+  MemoryMarkdownImportResponse,
   MemoryMutationResponse,
   MemoryPromotionInboxResponse,
   MemoryRecallRequest,
@@ -25,6 +29,14 @@ export async function listMemoryObjects(cwd: string): Promise<MemoryListResponse
 
 export async function createMemoryObject(cwd: string, input: CreateMemoryObjectRequest): Promise<MemoryMutationResponse> {
   return daemonClient.createMemoryObject(cwd, input);
+}
+
+export async function exportMemoryMarkdown(cwd: string, options: MemoryMarkdownExportRequest = {}): Promise<MemoryMarkdownExportResponse> {
+  return daemonClient.exportMemoryMarkdown(cwd, options);
+}
+
+export async function importMemoryMarkdown(cwd: string, input: MemoryMarkdownImportRequest): Promise<MemoryMarkdownImportResponse> {
+  return daemonClient.importMemoryMarkdown(cwd, input);
 }
 
 export async function getMemoryHealth(cwd: string, options: MemoryHealthRequest = {}): Promise<MemoryHealthResponse> {

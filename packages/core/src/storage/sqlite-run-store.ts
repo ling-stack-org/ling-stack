@@ -14885,8 +14885,8 @@ export class SqliteRunStore implements RunStore {
   }
 }
 
-export function createSqliteRunStore(cwd: string): SqliteRunStore {
-  return new SqliteRunStore({ cwd });
+export function createSqliteRunStore(cwd: string, paths?: LingStackRuntimePaths): SqliteRunStore {
+  return new SqliteRunStore({ cwd, paths });
 }
 
 function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
