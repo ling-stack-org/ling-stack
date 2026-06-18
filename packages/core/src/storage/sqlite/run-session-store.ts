@@ -18,7 +18,7 @@ import {
   type TransitionResult,
 } from "../../state-machines.js";
 import { redactSecrets } from "../../redaction.js";
-import { stringifyJson } from "./helpers.js";
+import { readString, stringifyJson } from "./helpers.js";
 import { mapRunSession } from "./run-mappers.js";
 import { runSessionSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -160,6 +160,13 @@ export class SqliteRunSessionStore {
       .prepare(`${runSessionSelectSql(whereClause)} ORDER BY created_at DESC LIMIT ?`)
       .all(...params)
       .map((row) => mapRunSession(row as Record<string, SQLOutputValue>));
+  }
+
+  listRecoverableRunIds(): string[] {
+    return this.context.database
+      .prepare("SELECT id FROM run_sessions WHERE status IN ('queued', 'running', 'waiting_for_approval')")
+      .all()
+      .map((row) => readString(row as Record<string, SQLOutputValue>, "id"));
   }
 
   linkRunToWorkUnit(runId: string, workUnitId: string, now: string): RunSession | undefined {
