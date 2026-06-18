@@ -195,7 +195,6 @@ import {
 import {
   createRuntimeEventId,
   createRuntimeHeartbeatId,
-  createRuntimeSemaphoreSlotId,
   createWorkUnitAttemptId,
   createWorkUnitId,
   defaultRuntimeTimeoutPolicy,
@@ -371,6 +370,7 @@ import { SqliteArtifactStore } from "./sqlite/artifact-store.js";
 import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
+import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
 import { SqliteTaskStore } from "./sqlite/task-store.js";
@@ -398,7 +398,6 @@ import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-schedul
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import {
   mapRuntimeEvent,
-  mapRuntimeSemaphoreSlot,
   mapWorkUnit,
   mapWorkUnitAttempt,
   normalizeStoredRunnerId,
@@ -423,7 +422,6 @@ import {
   workUnitSelectSql,
   workUnitAttemptSelectSql,
   runtimeEventSelectSql,
-  runtimeSemaphoreSlotSelectSql,
 } from "./sqlite/select-sql.js";
 
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
@@ -447,6 +445,7 @@ export class SqliteRunStore implements RunStore {
   private readonly controlPlane: SqliteControlPlaneStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
+  private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
   private readonly skillRegistry: SqliteSkillRegistryStore;
   private readonly tasks: SqliteTaskStore;
@@ -509,6 +508,7 @@ export class SqliteRunStore implements RunStore {
     this.controlPlane = new SqliteControlPlaneStore({ database: this.database });
     this.stateTransitions = new SqliteStateTransitionStore({ database: this.database });
     this.resourceLeases = new SqliteResourceLeaseStore({ database: this.database });
+    this.runtimeSemaphores = new SqliteRuntimeSemaphoreStore({ database: this.database });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
     this.tasks = new SqliteTaskStore({ database: this.database });
@@ -2058,118 +2058,20 @@ export class SqliteRunStore implements RunStore {
     this.database
       .prepare("UPDATE resource_leases SET last_renewed_at = ? WHERE attempt_id = ? AND status = 'active'")
       .run(input.ts, input.attemptId);
-    this.database
-      .prepare("UPDATE runtime_semaphore_slots SET last_renewed_at = ? WHERE attempt_id = ? AND status = 'active'")
-      .run(input.ts, input.attemptId);
+    this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(input.attemptId, input.ts);
     return heartbeat;
   }
 
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined {
-    const id = createRuntimeSemaphoreSlotId();
-    try {
-      this.database.exec("BEGIN IMMEDIATE;");
-      const activeCount = readNumber(
-        this.database
-          .prepare(`
-            SELECT COUNT(*) AS count
-            FROM runtime_semaphore_slots
-            WHERE workspace_id = ? AND resource_type = ? AND resource_key = ? AND status = 'active'
-          `)
-          .get(input.workspaceId, input.resourceType, input.resourceKey),
-        "count",
-      );
-      if (activeCount >= input.limit) {
-        this.database.exec("ROLLBACK;");
-        return undefined;
-      }
-      this.database
-        .prepare(`
-          INSERT INTO runtime_semaphore_slots (
-            id,
-            workspace_id,
-            resource_type,
-            resource_key,
-            owner_type,
-            owner_id,
-            work_unit_id,
-            attempt_id,
-            status,
-            acquired_at,
-            last_renewed_at,
-            expires_at,
-            released_at,
-            release_reason
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
-        `)
-        .run(
-          id,
-          input.workspaceId,
-          input.resourceType,
-          input.resourceKey,
-          input.ownerType,
-          input.ownerId,
-          input.workUnitId,
-          input.attemptId,
-          input.acquiredAt,
-          input.acquiredAt,
-          input.expiresAt,
-          null,
-          null,
-        );
-      this.database.exec("COMMIT;");
-    } catch (error) {
-      try {
-        this.database.exec("ROLLBACK;");
-      } catch {
-        // Ignore rollback failure; original error path returns no slot.
-      }
-      return undefined;
-    }
-    const slot = this.database.prepare(runtimeSemaphoreSlotSelectSql("WHERE id = ?")).get(id);
-    return slot ? mapRuntimeSemaphoreSlot(slot) : undefined;
+    return this.runtimeSemaphores.acquireRuntimeSemaphoreSlot(input);
   }
 
   releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number {
-    const result = this.database
-      .prepare(`
-        UPDATE runtime_semaphore_slots
-        SET status = 'released', released_at = ?, release_reason = ?
-        WHERE owner_id = ? AND status = 'active'
-      `)
-      .run(releasedAt, releaseReason, ownerId);
-    return Number(result.changes);
+    return this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForOwner(ownerId, releasedAt, releaseReason);
   }
 
   listRuntimeSemaphoreSlots(options: ListRuntimeSemaphoreSlotsOptions = {}): RuntimeSemaphoreSlot[] {
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.resourceType) {
-      clauses.push("resource_type = ?");
-      params.push(options.resourceType);
-    }
-    if (options.resourceKey) {
-      clauses.push("resource_key = ?");
-      params.push(options.resourceKey);
-    }
-    if (options.ownerId) {
-      clauses.push("owner_id = ?");
-      params.push(options.ownerId);
-    }
-    if (options.workUnitId) {
-      clauses.push("work_unit_id = ?");
-      params.push(options.workUnitId);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    return this.database
-      .prepare(`${runtimeSemaphoreSlotSelectSql(whereClause)} ORDER BY acquired_at DESC, id DESC LIMIT ?`)
-      .all(...params)
-      .map(mapRuntimeSemaphoreSlot);
+    return this.runtimeSemaphores.listRuntimeSemaphoreSlots(options);
   }
 
   createArtifact(input: CreateRunArtifactInput): RunArtifact {
