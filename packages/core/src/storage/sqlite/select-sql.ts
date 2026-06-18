@@ -24,6 +24,40 @@ export function runInterventionSelectSql(whereClause: string): string {
   `;
 }
 
+export function runSessionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      status,
+      cwd,
+      task_id,
+      channel_id,
+      teammate_id,
+      workflow_step_id,
+      selected_skill_id,
+      provider_preset_id,
+      provider_name,
+      provider_model,
+      task_snapshot_json,
+      provider_snapshot_json,
+      request_snapshot_json,
+      event_log_path,
+      thread_id,
+      work_unit_id,
+      parent_run_id,
+      intervention_id,
+      continuation_reason,
+      summary_path,
+      error_message,
+      created_at,
+      started_at,
+      ended_at,
+      updated_at
+    FROM run_sessions
+    ${whereClause}
+  `;
+}
+
 export function lingThreadSelectSql(whereClause: string): string {
   return `
     SELECT
