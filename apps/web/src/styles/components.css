@@ -8644,7 +8644,6 @@ textarea {
   .run-history-layout,
   .workspace-task-grid,
   .provider-layout,
-  .media-jobs-layout,
   .teammate-management-grid {
     grid-template-columns: 1fr;
   }

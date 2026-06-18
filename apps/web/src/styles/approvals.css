@@ -37,6 +37,68 @@
   overflow: auto;
 }
 
+.review-queue-empty-state {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 260px;
+  padding: 28px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.review-queue-empty-state strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.review-queue-empty-state p {
+  max-width: 360px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.review-queue-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.review-queue-category-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: min(100%, 520px);
+  margin-top: 8px;
+  text-align: left;
+}
+
+.review-queue-category-grid span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel-strong);
+}
+
+.review-queue-category-grid strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.review-queue-category-grid small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .review-queue-row {
   display: grid;
   gap: 6px;
@@ -153,6 +215,35 @@
   color: var(--text-strong);
   font-size: 15px;
   line-height: 1.25;
+}
+
+.review-queue-detail-action-summary {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel-strong);
+}
+
+.review-queue-detail-action-summary span {
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.review-queue-detail-action-summary p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.review-queue-detail-action-summary strong {
+  color: var(--text-strong);
+  font-size: 12px;
 }
 
 .review-queue-detail-badges {
@@ -690,6 +781,10 @@
 }
 
 @media (max-width: 640px) {
+  .review-queue-category-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .review-queue-detail-meta {
     grid-template-columns: minmax(0, 1fr);
   }

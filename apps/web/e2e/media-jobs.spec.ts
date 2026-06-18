@@ -195,7 +195,7 @@ test("generation tasks page surfaces live generation cost approvals", async ({ p
   await expect(jobRow).toContainText("waiting_for_approval");
   await expect(jobRow).toContainText("Approval required before live execution");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Review Queue" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
   const mediaApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve generation cost" });
   await expect(mediaApproval).toContainText("media_cost");
   await expect(mediaApproval).toContainText("generation task");

@@ -53,6 +53,7 @@ import {
   LazyThreadPage as ThreadPage,
   LazyWorkspaceClientView as WorkspaceClientView,
 } from "./lazy-pages.js";
+import type { WorkBoardScope } from "../features/work-board/GlobalWorkBoardPage.js";
 import {
   buildRunApprovalSummaries,
   effectiveApprovalStatus,
@@ -145,6 +146,7 @@ export function AppShell(): JSX.Element {
   }));
   const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
+  const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
   const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
@@ -1484,6 +1486,10 @@ export function AppShell(): JSX.Element {
               ? "workspace workspace-teammates-surface"
               : activeView === "providers"
                 ? "workspace workspace-provider-surface"
+              : activeView === "automations"
+                ? "workspace workspace-automations-surface"
+              : activeView === "media"
+                ? "workspace workspace-generation-surface"
               : "workspace"
         }
       >
@@ -1858,6 +1864,7 @@ export function AppShell(): JSX.Element {
                     onFailWorkItem={(workItemId, claimToken) => void failDurableWorkItem(workItemId, claimToken)}
                     routingExternalWorkId={routingExternalWorkId}
                     busyWorkItemId={busyWorkItemId}
+                    requestedScope={workBoardRequestedScope}
                   />
                 ) : activeView === "media" ? (
                   <MediaJobsPage
@@ -1987,6 +1994,11 @@ export function AppShell(): JSX.Element {
                 onExecuteExternalAction={(actionId) => void executeExternalAction(actionId)}
                 onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inbox")}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onOpenWorkBoard={(scope) => {
+                  setWorkBoardRequestedScope(scope ?? "actionable");
+                  setActiveView("work_board");
+                  setActiveSidebarTarget("work_board");
+                }}
                 onClearRepair={() => setApprovalRepairRunId("")}
                 channels={channels}
                 onRouteExternalWork={(externalWorkId, channelId) => void routeExternalWorkToChannel(externalWorkId, channelId)}

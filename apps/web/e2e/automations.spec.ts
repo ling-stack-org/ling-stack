@@ -61,7 +61,7 @@ test("automations page uses Codex-style inbox, manual composer, templates, and a
   await expect(manualDialog.getByLabel("计划")).toBeVisible();
   await expect(manualDialog.getByLabel("时间")).toHaveValue("09:00");
 
-  await manualDialog.locator(".automation-risk-tooltip").hover();
+  await manualDialog.locator(".automation-risk-tooltip").focus();
   await expect(manualDialog.getByText("自动化会按计划运行。只读工具风险最低；写入或 Shell 权限应保持显式审批。")).toBeVisible();
 
   await manualDialog.getByRole("button", { name: "创建" }).click();

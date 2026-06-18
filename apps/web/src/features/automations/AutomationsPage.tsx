@@ -159,6 +159,9 @@ export function AutomationsPage({
     [automations],
   );
   const recentRuns = automationRuns.slice(0, 8);
+  const runningRunCount = automationRuns.filter((run) => run.status === "running" || run.status === "queued" || run.status === "waiting_for_approval").length;
+  const recentFailedRunCount = recentRuns.filter((run) => run.status === "failed").length;
+  const readyDraftCount = automationDrafts.filter((draft) => draft.status === "ready_for_confirmation").length;
   const scheduler = schedulers[0];
 
   useEffect(() => {
@@ -189,6 +192,20 @@ export function AutomationsPage({
     };
   }, [cwd]);
 
+  useEffect(() => {
+    if (!dialog) {
+      return undefined;
+    }
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
+    };
+  }, [dialog]);
+
   function openCreateDialog(mode: CreateMode): void {
     setCreateMode(mode);
     setCreateMenuOpen(false);
@@ -217,6 +234,13 @@ export function AutomationsPage({
         <div>
           <h1>{t("Automations")}</h1>
           <p>{scheduler?.nextRunAt ? `${t("Next")} ${formatDateTime(scheduler.nextRunAt)}` : t("Daemon will restore scheduled automations automatically")}</p>
+          <div className="automation-header-meta" aria-label={t("Automation action summary")}>
+            <span>{t("Current")} {activeAutomations.length}</span>
+            <span>{t("Running or queued")} {runningRunCount}</span>
+            <span>{t("Paused")} {pausedAutomations.length}</span>
+            <span className={readyDraftCount > 0 ? "attention" : ""}>{t("Awaiting confirmation")} {readyDraftCount}</span>
+            <span className={recentFailedRunCount > 0 ? "danger" : ""}>{t("Recent failures")} {recentFailedRunCount}</span>
+          </div>
         </div>
         <div className="automation-create-dropdown">
           <button className="automation-create-trigger" type="button" onClick={() => openCreateDialog(createMode)} disabled={isLoading}>
@@ -255,127 +279,133 @@ export function AutomationsPage({
       </header>
 
       <main className="automations-inbox-main" aria-labelledby="automations-title">
-        <h2 id="automations-title">{t("Current")}</h2>
-        <AutomationInboxSection
-          emptyLabel={isLoading ? t("Loading automations...") : t("No automations yet")}
-          automations={activeAutomations}
-          automationRuns={automationRuns}
-          selectedAutomationId={selectedAutomationId}
-          mutatingAutomationId={mutatingAutomationId}
-          onSelect={(automationId) => {
-            onSelectDraft("");
-            onSelectAutomation(automationId);
-          }}
-          onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
-          onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus(automation.status === "enabled" ? "paused" : "enabled"))}
-          onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
-          onOpenThread={onOpenThread}
-          t={t}
-        />
+        <section className="automation-current-pane" aria-labelledby="automations-title">
+          <h2 id="automations-title">{t("Current")}</h2>
+          <AutomationInboxSection
+            emptyLabel={isLoading ? t("Loading automations...") : t("No automations yet")}
+            automations={activeAutomations}
+            automationRuns={automationRuns}
+            selectedAutomationId={selectedAutomationId}
+            mutatingAutomationId={mutatingAutomationId}
+            onSelect={(automationId) => {
+              onSelectDraft("");
+              onSelectAutomation(automationId);
+            }}
+            onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
+            onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus(automation.status === "enabled" ? "paused" : "enabled"))}
+            onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
+            onOpenThread={onOpenThread}
+            t={t}
+          />
 
-        {pausedAutomations.length > 0 ? (
-          <>
-            <h2>{t("Paused")}</h2>
-            <AutomationInboxSection
-              emptyLabel={t("No paused automations")}
-              automations={pausedAutomations}
-              automationRuns={automationRuns}
-              selectedAutomationId={selectedAutomationId}
-              mutatingAutomationId={mutatingAutomationId}
-              onSelect={(automationId) => {
-                onSelectDraft("");
-                onSelectAutomation(automationId);
-              }}
-              onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
-              onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus("enabled"))}
-              onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
-              onOpenThread={onOpenThread}
-              t={t}
-            />
-          </>
-        ) : null}
+          {pausedAutomations.length > 0 ? (
+            <section className="automation-secondary-section" aria-label={t("Paused")}>
+              <h2>{t("Paused")}</h2>
+              <AutomationInboxSection
+                emptyLabel={t("No paused automations")}
+                automations={pausedAutomations}
+                automationRuns={automationRuns}
+                selectedAutomationId={selectedAutomationId}
+                mutatingAutomationId={mutatingAutomationId}
+                onSelect={(automationId) => {
+                  onSelectDraft("");
+                  onSelectAutomation(automationId);
+                }}
+                onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
+                onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus("enabled"))}
+                onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
+                onOpenThread={onOpenThread}
+                t={t}
+              />
+            </section>
+          ) : null}
 
-        {automationDrafts.length > 0 ? (
-          <section className="automation-draft-lite-list" aria-label={t("Draft review")}>
-            <h2>{t("Draft review")}</h2>
-            {automationDrafts.map((draft) => {
-              const busy = mutatingDraftId === draft.id;
-              const ready = draft.status === "ready_for_confirmation";
-              return (
-                <div
-                  key={draft.id}
-                  className={draft.id === selectedDraftId ? "automation-inbox-row selected draft" : "automation-inbox-row draft"}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onSelectDraft(draft.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onSelectDraft(draft.id);
-                    }
-                  }}
-                >
-                  <span className="automation-row-dot" />
-                  <span className="automation-inbox-row-main">
-                    <strong>{draft.title ?? t("Untitled draft")}</strong>
-                    <small>{automationDraftSourceLabel(draft.source, t)} · {draft.kind ? automationKindLabel(draft.kind, t) : t("Missing")}</small>
-                  </span>
-                  <span className="automation-row-schedule">{automationTriggerLabel(draft.trigger, t)}</span>
-                  <span className="automation-row-actions">
-                    <StatusBadge status={draft.status} />
-                    <button
-                      className="ghost-icon-button"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void onConfirmDraft(draft.id);
-                      }}
-                      disabled={busy || !ready}
-                      aria-label={t("Confirm automation")}
-                      title={t("Confirm automation")}
+          {automationDrafts.length > 0 ? (
+            <section className="automation-draft-lite-list automation-secondary-section" aria-label={t("Draft review")}>
+              <h2>{t("Draft review")}</h2>
+              {automationDrafts.map((draft) => {
+                const busy = mutatingDraftId === draft.id;
+                const ready = draft.status === "ready_for_confirmation";
+                return (
+                  <div
+                    key={draft.id}
+                    className={draft.id === selectedDraftId ? "automation-inbox-row selected draft" : "automation-inbox-row draft"}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelectDraft(draft.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelectDraft(draft.id);
+                      }
+                    }}
                     >
-                      {busy ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
-                    </button>
-                    <button
-                      className="ghost-icon-button danger"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void onDiscardDraft(draft.id);
-                      }}
-                      disabled={busy}
-                      aria-label={t("Discard draft")}
-                      title={t("Discard draft")}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </span>
-                </div>
-              );
-            })}
-          </section>
-        ) : null}
+                    <span className="automation-row-dot" />
+                    <span className="automation-inbox-row-main">
+                      <strong>{draft.title ?? t("Untitled draft")}</strong>
+                      <small>
+                        {automationDraftSourceLabel(draft.source, t)} · {draft.kind ? automationKindLabel(draft.kind, t) : t("Missing")} · {automationTriggerLabel(draft.trigger, t)}
+                      </small>
+                    </span>
+                    <span className="automation-row-actions">
+                      <StatusBadge status={draft.status} />
+                      <button
+                        className="ghost-icon-button"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onConfirmDraft(draft.id);
+                        }}
+                        disabled={busy || !ready}
+                        aria-label={t("Confirm automation")}
+                        title={t("Confirm automation")}
+                      >
+                        {busy ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+                      </button>
+                      <button
+                        className="ghost-icon-button danger"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onDiscardDraft(draft.id);
+                        }}
+                        disabled={busy}
+                        aria-label={t("Discard draft")}
+                        title={t("Discard draft")}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
+            </section>
+          ) : null}
+        </section>
 
-        {recentRuns.length > 0 ? (
-          <section className="automation-history-lite" aria-label={t("History")}>
-            <h2>{t("History")}</h2>
-            {recentRuns.map((run) => (
-              <button
-                key={run.id}
-                className="automation-inbox-row history"
-                type="button"
-                onClick={() => run.runId ? onOpenRun(run.runId) : undefined}
-              >
-                <span className={`status-dot ${run.status}`} />
-                  <span className="automation-inbox-row-main">
-                    <strong>{automations.find((automation) => automation.id === run.automationId)?.title ?? run.automationId}</strong>
-                  <small>{automationRunTriggerLabel(run, t)} · {formatDateTime(run.firedAt)} · {t(run.status)}</small>
-                </span>
-                <span className="automation-row-schedule">{run.runId ? t("Open run") : t(run.status)}</span>
-              </button>
-            ))}
-          </section>
-        ) : null}
+        <section className="automation-history-lite" aria-label={t("Recent runs")}>
+          <h2>{t("Recent runs")}</h2>
+          {recentRuns.length === 0 ? (
+            <div className="automation-inbox-empty compact">
+              <Play size={16} />
+              <span>{t("No runs yet")}</span>
+            </div>
+          ) : recentRuns.map((run) => (
+            <button
+              key={run.id}
+              className="automation-inbox-row history"
+              type="button"
+              onClick={() => run.runId ? onOpenRun(run.runId) : undefined}
+            >
+              <span className={`status-dot ${run.status}`} />
+              <span className="automation-inbox-row-main">
+                <strong>{automations.find((automation) => automation.id === run.automationId)?.title ?? run.automationId}</strong>
+                <small>{automationRunTriggerLabel(run, t)} · {formatDateTime(run.firedAt)} · {t(run.status)}</small>
+              </span>
+              <span className="automation-row-schedule">{run.runId ? t("Open run") : t(run.status)}</span>
+            </button>
+          ))}
+        </section>
       </main>
 
       {dialog === "templates" ? (
@@ -451,6 +481,8 @@ function AutomationInboxSection({
       {automations.map((automation) => {
         const latestRun = automationRuns.find((run) => run.automationId === automation.id);
         const busy = mutatingAutomationId === automation.id;
+        const primaryActionLabel = automation.status === "paused" ? t("Resume") : t("Run now");
+        const primaryActionDisabled = busy || (automation.status !== "enabled" && automation.status !== "paused");
         return (
           <div
             key={automation.id}
@@ -468,37 +500,43 @@ function AutomationInboxSection({
             <span className="automation-row-dot" />
             <span className="automation-inbox-row-main">
               <strong>{automation.title}</strong>
-              <small>{automationModeLabel(automation, t)} · {automationTargetSummary(automation, t)}</small>
+              <small>{automationModeLabel(automation, t)} · {automationTargetSummary(automation, t)} · {automationScheduleLabel(automation, t)}</small>
             </span>
-            <span className="automation-row-schedule">{automationScheduleLabel(automation, t)}</span>
             <span className="automation-row-actions">
               {latestRun ? <StatusBadge status={latestRun.status} /> : <StatusBadge status={automation.status} />}
               <button
-                className="ghost-icon-button"
+                className="automation-row-primary-action"
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
+                  if (automation.status === "paused") {
+                    onToggle(automation);
+                    return;
+                  }
                   onRun(automation.id);
                 }}
-                disabled={busy || automation.status !== "enabled"}
-                aria-label={t("Run now")}
-                title={t("Run now")}
+                disabled={primaryActionDisabled}
+                aria-label={primaryActionLabel}
+                title={primaryActionLabel}
               >
                 {busy ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                {primaryActionLabel}
               </button>
-              <button
-                className="ghost-icon-button"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggle(automation);
-                }}
-                disabled={busy || automation.status === "error"}
-                aria-label={automation.status === "enabled" ? t("Pause") : t("Resume")}
-                title={automation.status === "enabled" ? t("Pause") : t("Resume")}
-              >
-                {automation.status === "enabled" ? <Pause size={14} /> : <Play size={14} />}
-              </button>
+              {automation.status === "enabled" ? (
+                <button
+                  className="ghost-icon-button"
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggle(automation);
+                  }}
+                  disabled={busy}
+                  aria-label={t("Pause")}
+                  title={t("Pause")}
+                >
+                  <Pause size={14} />
+                </button>
+              ) : null}
               <button
                 className="ghost-icon-button"
                 type="button"
@@ -1208,7 +1246,9 @@ function AutomationModal({
             </button>
           </span>
         </div>
-        {children}
+        <div className="automation-modal-body">
+          {children}
+        </div>
       </div>
     </div>
   );

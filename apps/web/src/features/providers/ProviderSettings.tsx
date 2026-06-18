@@ -5,6 +5,7 @@ import {
   EyeOff,
   History,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Play,
   PlugZap,
@@ -33,7 +34,6 @@ import {
   providerCheckGuidance,
   providerCheckMessage,
   providerCheckStatusLabel,
-  providerCodingTaskLabel,
   providerFormToTemplate,
   providerFormWithSelectedModel,
   providerLastCheckClass,
@@ -139,9 +139,7 @@ export function ProviderSettings({
   readonly onClearRepair: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const savedProviderCount = providers.length;
   const workbenchReadyProviderCount = providers.filter(isWorkbenchReadyProvider).length;
-  const preflightReadyProviderCount = providers.filter(providerPreflightReady).length;
   const batchCheckProviderCount = providers.filter(canWorkbenchBatchCheckProvider).length;
   const missingSecretCount = providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length;
   const disabledProviderCount = providers.filter((provider) => !provider.enabled).length;
@@ -154,6 +152,7 @@ export function ProviderSettings({
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [providerSearch, setProviderSearch] = useState("");
   const [providerStatusFilter, setProviderStatusFilter] = useState<ProviderStatusFilter>("all");
+  const [openProviderMenuId, setOpenProviderMenuId] = useState("");
   const [showApiKey, setShowApiKey] = useState(true);
   const [modelOptions, setModelOptions] = useState<readonly ProviderModelOption[]>([]);
   const [modelOptionsContext, setModelOptionsContext] = useState<ProviderFormState | undefined>(undefined);
@@ -216,7 +215,6 @@ export function ProviderSettings({
       }),
     [providerSearch, providerStatusFilter, providers],
   );
-  const filteredSupplierCount = useMemo(() => countProviderSuppliers(filteredProviders, templates), [filteredProviders, templates]);
   const visibleModelOptions = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
     if (!query) {
@@ -392,80 +390,52 @@ export function ProviderSettings({
           <div>
             <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>
             <p>{t("Manage and configure all available model presets.")}</p>
+            <div className="provider-page-meta" aria-label={t("Provider workbench action summary")}>
+              <span>{t("Ready to use")} {workbenchReadyProviderCount}</span>
+              <span>{t("Needs config")} {needsAttentionProviderCount}</span>
+              <span>{t("Missing key")} {missingSecretCount}</span>
+              <span>{t("Disabled")} {disabledProviderCount}</span>
+            </div>
           </div>
-          <div className="provider-title-actions">
-            <button className="primary-button compact-button" type="button" onClick={openNewProviderSheet}>
-              <Plus size={15} />
-              {t("Add model")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onCheckBatch} disabled={isCheckingProviders || batchCheckProviderCount === 0}>
-              {isBatchChecking ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}
-              {t("Check all")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading || isCheckingProviders}>
-              {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-              {t("Refresh")}
-            </button>
+          <div className="provider-header-tools">
+            <div className="provider-title-actions">
+              <button className="primary-button compact-button" type="button" onClick={openNewProviderSheet}>
+                <Plus size={15} />
+                {t("Add model")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={onCheckBatch} disabled={isCheckingProviders || batchCheckProviderCount === 0}>
+                {isBatchChecking ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}
+                {t("Check all")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading || isCheckingProviders}>
+                {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                {t("Refresh")}
+              </button>
+            </div>
+            <div className="provider-toolbar-controls" aria-label={t("Model preset filters")}>
+              <label className="provider-search-field">
+                <Search size={15} />
+                <input
+                  aria-label={t("Search model presets")}
+                  value={providerSearch}
+                  placeholder={t("Search name, model, or endpoint")}
+                  onChange={(event) => setProviderSearch(event.target.value)}
+                />
+              </label>
+              <select
+                aria-label={t("Filter model presets")}
+                value={providerStatusFilter}
+                onChange={(event) => setProviderStatusFilter(event.target.value as ProviderStatusFilter)}
+              >
+                <option value="all">{t("All presets")}</option>
+                <option value="ready">{t("Ready presets")}</option>
+                <option value="needsAttention">{t("Needs attention")}</option>
+                <option value="missingKey">{t("Missing key")}</option>
+                <option value="disabled">{t("Disabled providers")}</option>
+              </select>
+            </div>
           </div>
         </header>
-
-        <div className="provider-toolbar" aria-label={t("Model preset filters")}>
-          <div className="provider-status-tabs" aria-label={t("Provider workbench status")}>
-            <button
-              className={providerStatusFilter === "ready" ? "selected" : ""}
-              type="button"
-              onClick={() => setProviderStatusFilter("ready")}
-            >
-              <span className="provider-status-dot ready" />
-              {t("Available")} <strong>{workbenchReadyProviderCount}</strong>
-            </button>
-            <button
-              className={providerStatusFilter === "needsAttention" ? "selected" : ""}
-              type="button"
-              onClick={() => setProviderStatusFilter("needsAttention")}
-            >
-              <span className="provider-status-dot warning" />
-              {t("Needs config")} <strong>{needsAttentionProviderCount}</strong>
-            </button>
-            <button
-              className={providerStatusFilter === "disabled" ? "selected" : ""}
-              type="button"
-              onClick={() => setProviderStatusFilter("disabled")}
-            >
-              <span className="provider-status-dot muted" />
-              {t("Disabled providers")} <strong>{disabledProviderCount}</strong>
-            </button>
-          </div>
-          <div className="provider-toolbar-controls">
-            <label className="provider-search-field">
-              <Search size={15} />
-              <input
-                aria-label={t("Search model presets")}
-                value={providerSearch}
-                placeholder={t("Search name, model, or endpoint")}
-                onChange={(event) => setProviderSearch(event.target.value)}
-              />
-            </label>
-            <select
-              aria-label={t("Filter model presets")}
-              value={providerStatusFilter}
-              onChange={(event) => setProviderStatusFilter(event.target.value as ProviderStatusFilter)}
-            >
-              <option value="all">{t("All presets")}</option>
-              <option value="ready">{t("Ready presets")}</option>
-              <option value="needsAttention">{t("Needs attention")}</option>
-              <option value="missingKey">{t("Missing key")}</option>
-              <option value="disabled">{t("Disabled providers")}</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="provider-capability-summary" aria-label={t("Provider workbench status")}>
-          <span>{t("Saved presets")} <strong>{savedProviderCount}</strong></span>
-          <span>{t("Suppliers")} <strong>{filteredSupplierCount}</strong></span>
-          <span>{t("Coding ready")} <strong>{preflightReadyProviderCount}</strong></span>
-          <span>{t("Missing secrets")} <strong>{missingSecretCount}</strong></span>
-        </div>
 
         {errorMessage ? (
           <div className="inline-error">
@@ -537,11 +507,40 @@ export function ProviderSettings({
                   const providerSelectedForRun = provider.id === selectedProviderId;
                   const providerCanBeDefault = providerPreflightReady(provider);
                   const providerIsChatCapable = provider.capabilities.includes("chat") && provider.api !== "media-job";
+                  const providerIsGenerationCapable = provider.capabilities.some((capability) =>
+                    capability === "image_generate" || capability === "image_edit" || capability === "video_generate"
+                  );
                   const providerIsChecking = checkingProviderIds.includes(provider.id);
                   const rowCheckResult = checkScope === "row" && checkedProviderId === provider.id ? checkResult : undefined;
                   const rowCheckMessage = rowCheckResult ? providerCheckDisplayMessage(rowCheckResult, provider, t) : "";
                   const rowCheckGuidance = rowCheckResult ? providerCheckDisplayGuidance(rowCheckResult, provider, t) : "";
                   const effectiveBaseUrl = providerEffectiveBaseUrl(provider, templates) || t("default endpoint");
+                  const providerReady = providerPreflightReady(provider);
+                  const providerPrimaryStatusLabel = providerMissingApiKey
+                    ? t("Needs config")
+                    : !provider.enabled
+                      ? t("disabled")
+                      : providerSelectedForRun
+                        ? t("Current default")
+                        : providerReady
+                          ? t("Ready to use")
+                          : providerIsGenerationCapable && !providerIsChatCapable
+                            ? t("Generation model")
+                          : canUseProviderForRun(provider)
+                            ? t("needs check")
+                            : providerRunBlockerLabel(provider, t);
+                  const providerPrimaryStatusClass = providerMissingApiKey
+                    ? "provider-state check-unknown"
+                    : providerSelectedForRun || providerReady || (providerIsGenerationCapable && !providerIsChatCapable)
+                      ? "provider-state run-ready"
+                      : provider.enabled
+                        ? "provider-state run-blocked"
+                        : "provider-state disabled";
+                  const providerStatusHint =
+                    providerMissingApiKey || !provider.enabled || (!providerReady && providerIsChatCapable)
+                      ? (providerRunPreflightBlocker(provider, t) ?? rowCheckGuidance)
+                      : "";
+                  const providerMainActionIsCheck = !providerMissingApiKey && !providerReady && canUseProviderForRun(provider);
                   return (
                     <Fragment key={provider.id}>
                       <tr className={provider.id === selectedProviderId ? "provider-row selected" : "provider-row"}>
@@ -550,14 +549,12 @@ export function ProviderSettings({
                             <span className="provider-avatar" aria-hidden="true">{providerInitial(provider.displayName)}</span>
                             <span className="provider-name-copy">
                               <strong>{provider.displayName}</strong>
-                              <small>{provider.providerId}</small>
                             </span>
                           </span>
                         </td>
                         <td>
                           <span className="provider-model-name">{provider.model}</span>
                           <div className="provider-meta-line provider-table-compat-line">
-                            <span>{t("Model")}: {provider.model}</span>
                             <span>{t("Capabilities")}: {providerCapabilityChipLabels(provider, t).join(" / ")}</span>
                             <span>{provider.lastCheck ? t("last check {time}", { time: formatDateTime(provider.lastCheck.checkedAt) }) : t("not checked")}</span>
                           </div>
@@ -583,91 +580,130 @@ export function ProviderSettings({
                         </td>
                         <td className="provider-status-cell">
                           <span className="provider-status-stack">
-                            {providerMissingApiKey ? (
-                              <span className="provider-state check-unknown">{t("Needs config")}</span>
-                            ) : null}
-                            {!providerMissingApiKey ? (
-                              <span className={provider.enabled ? "provider-state enabled" : "provider-state disabled"}>
-                                {provider.enabled ? t("enabled") : t("disabled")}
+                            <span className={providerPrimaryStatusClass}>{providerPrimaryStatusLabel}</span>
+                            {providerStatusHint ? (
+                              <span
+                                className="provider-status-hint"
+                                data-tooltip={providerStatusHint}
+                                title={providerStatusHint}
+                                aria-label={providerStatusHint}
+                                tabIndex={0}
+                              >
+                                <CircleAlert size={12} />
                               </span>
                             ) : null}
-                            {providerSelectedForRun ? (
-                              <span className="provider-state default">
-                                {t("Current default")}
-                              </span>
-                            ) : null}
-                            {!providerMissingApiKey ? (
-                              <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
-                                {providerPreflightReady(provider) ? t("preflight ready") : canUseProviderForRun(provider) ? t("needs check") : providerRunBlockerLabel(provider, t)}
-                              </span>
-                            ) : null}
-                            {!providerMissingApiKey ? (
-                              <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
-                                {t("Run readiness")}: {providerCodingTaskLabel(provider, t)}
-                              </span>
-                            ) : null}
-                            <span className="provider-capability-chip-row" aria-label={t("Capability chips")}>
-                              {providerCapabilityChipLabels(provider, t).map((label) => (
-                                <span className="provider-capability-chip" key={label}>{label}</span>
-                              ))}
-                            </span>
                           </span>
                         </td>
                         <td>
                           <div className="provider-actions">
-                            <button
-                              className="secondary-button compact-button"
-                              type="button"
-                              disabled={!providerSelectedForRun && !providerCanBeDefault}
-                              onClick={() => {
-                                if (providerSelectedForRun) {
-                                  onStopUse(provider);
-                                  return;
+                            {providerMissingApiKey ? (
+                              <button className="secondary-button compact-button provider-main-action" type="button" onClick={() => openEditProviderSheet(provider)}>
+                                <Pencil size={14} />
+                                {t("Fix config")}
+                              </button>
+                            ) : !providerReady && canUseProviderForRun(provider) ? (
+                              <button className="secondary-button compact-button provider-main-action" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
+                                {providerIsChecking && checkScope === "row" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                                {t("Check")}
+                              </button>
+                            ) : providerIsChatCapable ? (
+                              <button
+                                className="secondary-button compact-button provider-main-action"
+                                type="button"
+                                disabled={!providerSelectedForRun && !providerCanBeDefault}
+                                onClick={() => {
+                                  if (providerSelectedForRun) {
+                                    onStopUse(provider);
+                                    return;
+                                  }
+                                  onUse(provider);
+                                }}
+                              >
+                                {providerSelectedForRun ? <X size={14} /> : <Play size={14} />}
+                                {providerSelectedForRun ? t("Clear default") : t("Set default")}
+                              </button>
+                            ) : (
+                              <span className={providerIsGenerationCapable ? "provider-action-note" : "provider-action-note muted"}>
+                                {providerIsGenerationCapable ? t("Generation model") : t("Not for chat")}
+                              </span>
+                            )}
+                            <span
+                              className={openProviderMenuId === provider.id ? "provider-row-menu hover-action-menu open" : "provider-row-menu hover-action-menu"}
+                              onMouseEnter={() => setOpenProviderMenuId(provider.id)}
+                              onMouseLeave={() => setOpenProviderMenuId("")}
+                              onFocus={() => setOpenProviderMenuId(provider.id)}
+                              onBlur={(event) => {
+                                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                                  setOpenProviderMenuId("");
                                 }
-                                onUse(provider);
                               }}
                             >
-                              {providerSelectedForRun ? <X size={14} /> : <Play size={14} />}
-                              {providerSelectedForRun ? t("Clear default") : providerIsChatCapable ? t("Set default") : t("Not a chat model")}
-                            </button>
-                            <button
-                              className="secondary-button compact-button icon-button"
-                              type="button"
-                              disabled={isCheckingProviders}
-                              aria-label={provider.enabled ? t("Disable") : t("Enable")}
-                              title={provider.enabled ? t("Disable") : t("Enable")}
-                              onClick={() => onToggleEnabled(provider, !provider.enabled)}
-                            >
-                              {provider.enabled ? <X size={14} /> : <CheckCircle2 size={14} />}
-                            </button>
-                            <button
-                              className="secondary-button compact-button icon-button"
-                              type="button"
-                              aria-label={t("Edit")}
-                              title={t("Edit")}
-                              onClick={() => openEditProviderSheet(provider)}
-                            >
-                              <Pencil size={14} />
-                            </button>
-                            <button
-                              className="secondary-button compact-button icon-button"
-                              type="button"
-                              disabled={isCheckingProviders}
-                              aria-label={t("Check")}
-                              title={t("Check")}
-                              onClick={() => onCheck(provider.id)}
-                            >
-                              {providerIsChecking && checkScope === "row" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                            </button>
-                            <button
-                              className="secondary-button compact-button icon-button danger"
-                              type="button"
-                              aria-label={t("Delete")}
-                              title={t("Delete")}
-                              onClick={() => onDelete(provider.id)}
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                              <button
+                                className="provider-row-menu-trigger hover-action-menu-trigger"
+                                type="button"
+                                aria-label={t("More")}
+                                title={t("More")}
+                                aria-haspopup="menu"
+                                onMouseDown={(event) => event.preventDefault()}
+                              >
+                                <MoreHorizontal size={15} />
+                              </button>
+                              <span
+                                className="provider-row-menu-popover hover-action-menu-popover"
+                                role="menu"
+                                hidden={openProviderMenuId !== provider.id}
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setOpenProviderMenuId("");
+                                    openEditProviderSheet(provider);
+                                  }}
+                                >
+                                  <Pencil size={14} />
+                                  {t("Edit")}
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  disabled={isCheckingProviders}
+                                  onClick={() => {
+                                    setOpenProviderMenuId("");
+                                    onToggleEnabled(provider, !provider.enabled);
+                                  }}
+                                >
+                                  {provider.enabled ? <X size={14} /> : <CheckCircle2 size={14} />}
+                                  {provider.enabled ? t("Disable") : t("Enable")}
+                                </button>
+                                {!providerMainActionIsCheck ? (
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    disabled={isCheckingProviders || providerMissingApiKey}
+                                    onClick={() => {
+                                      setOpenProviderMenuId("");
+                                      onCheck(provider.id);
+                                    }}
+                                  >
+                                    {providerIsChecking && checkScope === "row" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                                    {t("Check")}
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="danger"
+                                  onClick={() => {
+                                    setOpenProviderMenuId("");
+                                    onDelete(provider.id);
+                                  }}
+                                >
+                                  <Trash2 size={14} />
+                                  {t("Delete")}
+                                </button>
+                              </span>
+                            </span>
                           </div>
                         </td>
                       </tr>
@@ -698,10 +734,6 @@ export function ProviderSettings({
         {filteredProviders.length > 0 ? (
           <div className="provider-table-footer" aria-label={t("Model preset table summary")}>
             <span>{t("{count} model presets", { count: filteredProviders.length })}</span>
-            <span className="provider-table-pagination">
-              <button type="button" disabled>{t("Previous page")}</button>
-              <button type="button" disabled>{t("Next page")}</button>
-            </span>
           </div>
         ) : null}
       </section>
@@ -1025,22 +1057,6 @@ function dedupeProviderTemplates(templates: readonly ProviderTemplate[]): readon
     result.push(template);
   }
   return result;
-}
-
-function countProviderSuppliers(
-  providers: readonly ProviderPreset[],
-  templates: readonly ProviderTemplate[],
-): number {
-  const keys = new Set<string>();
-  for (const provider of providers) {
-    keys.add([
-      provider.providerId,
-      provider.api,
-      normalizeProviderEndpoint(providerEffectiveBaseUrl(provider, templates)),
-      provider.apiKeyRef ?? "",
-    ].join("\u0000"));
-  }
-  return keys.size;
 }
 
 function ProviderNextAction({

@@ -88,13 +88,14 @@ test("AI teammates page creates a durable teammate and opens its private workspa
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
   await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
-  await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" }).locator(".teammate-status-dot.ready")).toBeVisible();
   const lingEngineerRow = page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" });
+  await expect(lingEngineerRow.locator(".teammate-row-status.ready")).toContainText("Ready teammate");
   await expect(lingEngineerRow.getByLabel("Teammate actions")).toBeVisible();
   await expect(page.getByLabel("Workflow")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
 
-  await lingEngineerRow.getByLabel("Teammate actions").click();
+  await lingEngineerRow.getByLabel("Teammate actions").hover();
+  await expect(lingEngineerRow.getByRole("menuitem", { name: "Delete" })).toBeVisible();
   await lingEngineerRow.getByRole("menuitem", { name: "Delete" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.displayName === "Ling Engineer");

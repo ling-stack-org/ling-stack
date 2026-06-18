@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, CircleAlert, ClipboardList, ExternalLink, Inbox, Kanban, RefreshCw, Route, SquareTerminal, UserCheck, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { CheckCircle2, CircleAlert, ClipboardList, ExternalLink, Inbox, Kanban, ListFilter, RefreshCw, Route, SquareTerminal, UserCheck, XCircle } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
@@ -31,7 +31,7 @@ import type {
 } from "../../types.js";
 import { WorkItemRow } from "./WorkItemRow.js";
 
-type WorkBoardScope = "actionable" | "global" | "channel" | "mine" | "blocked" | "history";
+export type WorkBoardScope = "actionable" | "global" | "channel" | "mine" | "blocked" | "history";
 
 const workBoardScopeOrder: readonly WorkBoardScope[] = ["actionable", "global", "channel", "mine", "blocked", "history"];
 
@@ -58,6 +58,7 @@ export function GlobalWorkBoardPage({
   onFailWorkItem,
   routingExternalWorkId,
   busyWorkItemId,
+  requestedScope,
 }: {
   readonly channels: readonly Channel[];
   readonly tasks: readonly Task[];
@@ -81,14 +82,17 @@ export function GlobalWorkBoardPage({
   readonly onFailWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly routingExternalWorkId?: string;
   readonly busyWorkItemId?: string;
+  readonly requestedScope?: WorkBoardScope;
 }): JSX.Element {
   const { t } = useI18n();
   const [channelFilter, setChannelFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<WorkItemStatus | "">("");
   const [sourceFilter, setSourceFilter] = useState<WorkItemSourceType | "">("");
   const [waitingFilter, setWaitingFilter] = useState<WorkItemWaitingReason | "">("");
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [activeScope, setActiveScope] = useState<WorkBoardScope>("actionable");
   const [selectedWorkItemId, setSelectedWorkItemId] = useState("");
+  const appliedRequestedScopeRef = useRef<WorkBoardScope | undefined>();
   const channelById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
   const items = useMemo(
     () => buildWorkItemViews({
@@ -107,17 +111,49 @@ export function GlobalWorkBoardPage({
     () => filterByScope(items, activeScope),
     [activeScope, items],
   );
+  const filtersActive = Boolean(channelFilter || statusFilter || sourceFilter || waitingFilter);
   const filteredItems = scopedItems.filter((item) =>
     (!channelFilter || item.channelId === channelFilter) &&
     (!statusFilter || item.status === statusFilter) &&
     (!sourceFilter || item.sourceType === sourceFilter) &&
     (!waitingFilter || item.waitingReason === waitingFilter)
   );
-  const selectedItem = filteredItems.find((item) => item.id === selectedWorkItemId) ?? filteredItems[0];
+  const selectedItem = filteredItems.find((item) => item.id === selectedWorkItemId) ?? (filteredItems.length > 0 ? filteredItems[0] : undefined);
   const sourceOptions = [...new Set(scopedItems.map((item) => item.sourceType))].sort();
   const waitingOptions = [...new Set(scopedItems.map((item) => item.waitingReason).filter(Boolean))].sort() as WorkItemWaitingReason[];
-  const stats = useMemo(() => readWorkBoardStats(scopedItems), [scopedItems]);
-  const visibleGroups = useMemo(() => buildVisibleWorkBoardGroups(filteredItems), [filteredItems]);
+  const stats = useMemo(() => readWorkBoardStats(items), [items]);
+  const visibleGroups = useMemo(() => buildVisibleWorkBoardGroups(filteredItems, activeScope), [activeScope, filteredItems]);
+  const filterSummary = readFilterSummary({
+    channelName: channelFilter ? channelById.get(channelFilter)?.name : undefined,
+    statusFilter,
+    sourceFilter,
+    waitingFilter,
+    t,
+  });
+  const selectScope = (scope: WorkBoardScope): void => {
+    setActiveScope(scope);
+    setSelectedWorkItemId("");
+  };
+  useEffect(() => {
+    if (!requestedScope || requestedScope === appliedRequestedScopeRef.current) {
+      return;
+    }
+    appliedRequestedScopeRef.current = requestedScope;
+    setActiveScope(requestedScope);
+    setSelectedWorkItemId("");
+  }, [requestedScope]);
+  const clearFilters = (): void => {
+    setChannelFilter("");
+    setStatusFilter("");
+    setSourceFilter("");
+    setWaitingFilter("");
+    setFiltersExpanded(false);
+  };
+  const openHistoryScope = (): void => {
+    selectScope("history");
+  };
+  const headerTitle = t(scopeTitle(activeScope));
+  const headerDescription = t(scopeDescription(activeScope));
 
   return (
     <section className="panel work-board-page" aria-labelledby="global-work-board-title">
@@ -125,8 +161,8 @@ export function GlobalWorkBoardPage({
         <span className="work-board-heading">
           <Kanban size={18} />
           <span>
-            <h2 id="global-work-board-title">{t("Needs action")}</h2>
-            <small>{t("Action inbox across channels, runs, approvals, and durable work.")}</small>
+            <h2 id="global-work-board-title">{headerTitle}</h2>
+            <small>{headerDescription}</small>
           </span>
         </span>
         <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
@@ -144,56 +180,78 @@ export function GlobalWorkBoardPage({
                   type="button"
                   className={activeScope === scope ? "active" : ""}
                   aria-pressed={activeScope === scope}
-                  onClick={() => {
-                    setActiveScope(scope);
-                    setSelectedWorkItemId("");
-                  }}
+                  onClick={() => selectScope(scope)}
                 >
                   {t(scopeLabel(scope))}
                 </button>
               ))}
             </div>
             <div className="work-board-count-line">
-              <span>{t("{count} need action", { count: stats.actionable })}</span>
-              <span>{t("{count} running", { count: stats.running })}</span>
-              <span>{t("{count} blocked or failed", { count: stats.blocked })}</span>
-              <span>{t("{count} recently completed", { count: stats.completed })}</span>
+              <button className={activeScope === "actionable" ? "active" : ""} type="button" onClick={() => selectScope("actionable")}>{t("{count} need action", { count: stats.actionable })}</button>
+              <button className={activeScope === "global" ? "active" : ""} type="button" onClick={() => selectScope("global")}>{t("{count} running", { count: stats.running })}</button>
+              <button className={activeScope === "blocked" ? "active" : ""} type="button" onClick={() => selectScope("blocked")}>{t("{count} blocked or failed", { count: stats.blocked })}</button>
+              <button className={activeScope === "history" ? "active" : ""} type="button" onClick={() => selectScope("history")}>{t("{count} recently completed", { count: stats.completed })}</button>
             </div>
           </div>
 
-          <div className="work-board-filters">
-            <label>
-              <span>{t("Channel")}</span>
-              <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)}>
-                <option value="">{t("All")}</option>
-                {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>{t("Status")}</span>
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as WorkItemStatus | "")}>
-                <option value="">{t("All")}</option>
-                {workItemStatusOrder.map((status) => <option key={status} value={status}>{t(workItemStatusLabel(status))}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>{t("Source")}</span>
-              <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as WorkItemSourceType | "")}>
-                <option value="">{t("All")}</option>
-                {sourceOptions.map((source) => <option key={source} value={source}>{t(source)}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>{t("Waiting reason")}</span>
-              <select value={waitingFilter} onChange={(event) => setWaitingFilter(event.target.value as WorkItemWaitingReason | "")}>
-                <option value="">{t("All")}</option>
-                {waitingOptions.map((reason) => <option key={reason} value={reason}>{t(reason)}</option>)}
-              </select>
-            </label>
+          <div className={filtersExpanded ? "work-board-filter-card expanded" : "work-board-filter-card"}>
+            <div className="work-board-filter-bar">
+              <button className="secondary-button compact-button" type="button" onClick={() => setFiltersExpanded((current) => !current)}>
+                <ListFilter size={14} />
+                {filtersExpanded ? t("Hide filters") : t("Show filters")}
+              </button>
+              <span>{filtersActive ? t("Current filters: {summary}", { summary: filterSummary }) : t("Showing all work items")}</span>
+              {filtersActive ? (
+                <button className="text-button" type="button" onClick={clearFilters}>
+                  {t("Clear filters")}
+                </button>
+              ) : null}
+            </div>
+            {filtersExpanded ? (
+              <div className="work-board-filters">
+                <label>
+                  <span>{t("Channel")}</span>
+                  <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)}>
+                    <option value="">{t("All")}</option>
+                    {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>{t("Status")}</span>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as WorkItemStatus | "")}>
+                    <option value="">{t("All")}</option>
+                    {workItemStatusOrder.map((status) => <option key={status} value={status}>{t(workItemStatusLabel(status))}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>{t("Source")}</span>
+                  <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as WorkItemSourceType | "")}>
+                    <option value="">{t("All")}</option>
+                    {sourceOptions.map((source) => <option key={source} value={source}>{t(source)}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>{t("Waiting reason")}</span>
+                  <select value={waitingFilter} onChange={(event) => setWaitingFilter(event.target.value as WorkItemWaitingReason | "")}>
+                    <option value="">{t("All")}</option>
+                    {waitingOptions.map((reason) => <option key={reason} value={reason}>{t(reason)}</option>)}
+                  </select>
+                </label>
+              </div>
+            ) : null}
           </div>
 
           {filteredItems.length === 0 ? (
-            <div className="client-empty-state compact-empty"><Kanban /><span>{t("No work items match these filters")}</span></div>
+            <WorkBoardEmptyState
+              scopedCount={scopedItems.length}
+              filtersActive={filtersActive}
+              activeScope={activeScope}
+              channelFilter={channelFilter}
+              channelName={channelFilter ? channelById.get(channelFilter)?.name : undefined}
+              onClearFilters={clearFilters}
+              onViewHistory={openHistoryScope}
+              onOpenChannel={channelFilter ? () => onOpenChannel(channelFilter) : undefined}
+            />
           ) : (
             <div className="work-board-groups">
               {visibleGroups.map(({ key, label, items: group }) => {
@@ -238,6 +296,11 @@ export function GlobalWorkBoardPage({
         </div>
         <WorkItemDetailDrawer
           item={selectedItem}
+          activeScope={activeScope}
+          scopedCount={scopedItems.length}
+          filtersActive={filtersActive}
+          onClearFilters={clearFilters}
+          onViewHistory={openHistoryScope}
           channels={channels}
           channelName={selectedItem?.channelId ? channelById.get(selectedItem.channelId)?.name : undefined}
           routing={selectedItem?.externalWorkId === routingExternalWorkId}
@@ -255,6 +318,66 @@ export function GlobalWorkBoardPage({
         />
       </div>
     </section>
+  );
+}
+
+function WorkBoardEmptyState({
+  scopedCount,
+  filtersActive,
+  activeScope,
+  channelFilter,
+  channelName,
+  onClearFilters,
+  onViewHistory,
+  onOpenChannel,
+}: {
+  readonly scopedCount: number;
+  readonly filtersActive: boolean;
+  readonly activeScope: WorkBoardScope;
+  readonly channelFilter: string;
+  readonly channelName?: string;
+  readonly onClearFilters: () => void;
+  readonly onViewHistory: () => void;
+  readonly onOpenChannel?: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const title = scopedCount === 0
+    ? activeScope === "actionable"
+      ? t("No work needs your attention")
+      : t("No work items in this view")
+    : filtersActive
+      ? t("No work items match these filters")
+      : t("No work items to show");
+  const description = scopedCount === 0
+    ? activeScope === "actionable"
+      ? t("When approvals, failed runs, blockers, or claimable work appear, they will show up here.")
+      : t("This view is empty right now. You can switch views or inspect completed history.")
+    : t("Try clearing filters or opening the related channel to continue.");
+
+  return (
+    <div className="work-board-empty-state compact-empty">
+      <ClipboardList size={22} />
+      <strong>{title}</strong>
+      <p>{description}</p>
+      <div className="work-board-empty-actions">
+        {filtersActive ? (
+          <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>
+            {t("Clear filters")}
+          </button>
+        ) : null}
+        {activeScope !== "history" ? (
+          <button className="secondary-button compact-button" type="button" onClick={onViewHistory}>
+            {t("View history")}
+          </button>
+        ) : null}
+        {channelFilter && onOpenChannel ? (
+          <button className="secondary-button compact-button" type="button" onClick={onOpenChannel}>
+            <ExternalLink size={14} />
+            {channelName ? t("Open {channelName}", { channelName }) : t("Open channel")}
+          </button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -296,6 +419,44 @@ function scopeLabel(scope: WorkBoardScope): string {
   return "All active";
 }
 
+function scopeTitle(scope: WorkBoardScope): string {
+  if (scope === "global") {
+    return "All active work";
+  }
+  if (scope === "channel") {
+    return "Channel work";
+  }
+  if (scope === "mine") {
+    return "My work";
+  }
+  if (scope === "blocked") {
+    return "Blocked work";
+  }
+  if (scope === "history") {
+    return "Work history";
+  }
+  return "Needs action";
+}
+
+function scopeDescription(scope: WorkBoardScope): string {
+  if (scope === "global") {
+    return "All non-finished work across channels, runs, approvals, and durable work.";
+  }
+  if (scope === "channel") {
+    return "Active work that is attached to a channel.";
+  }
+  if (scope === "mine") {
+    return "Work assigned to a teammate or currently claimed.";
+  }
+  if (scope === "blocked") {
+    return "Blocked, failed, or waiting work that needs recovery.";
+  }
+  if (scope === "history") {
+    return "Recently finished work grouped by completion date.";
+  }
+  return "Action inbox across channels, runs, approvals, and durable work.";
+}
+
 function readWorkBoardStats(items: readonly WorkItemView[]): {
   readonly actionable: number;
   readonly running: number;
@@ -305,27 +466,74 @@ function readWorkBoardStats(items: readonly WorkItemView[]): {
   return {
     actionable: items.filter(isActionableWorkItem).length,
     running: items.filter((item) => item.status === "running").length,
-    blocked: items.filter((item) => item.status === "blocked").length,
-    completed: items.filter((item) => item.status === "done").length,
+    blocked: items.filter((item) => item.status === "blocked" || item.status === "waiting").length,
+    completed: items.filter(isTerminalWorkItemView).length,
   };
 }
 
-function buildVisibleWorkBoardGroups(items: readonly WorkItemView[]): ReadonlyArray<{
+function readFilterSummary({
+  channelName,
+  statusFilter,
+  sourceFilter,
+  waitingFilter,
+  t,
+}: {
+  readonly channelName?: string;
+  readonly statusFilter: WorkItemStatus | "";
+  readonly sourceFilter: WorkItemSourceType | "";
+  readonly waitingFilter: WorkItemWaitingReason | "";
+  readonly t: (key: string, values?: Readonly<Record<string, string | number>>) => string;
+}): string {
+  const parts = [
+    channelName ? t("Channel: {value}", { value: channelName }) : undefined,
+    statusFilter ? t("Status: {value}", { value: t(workItemStatusLabel(statusFilter)) }) : undefined,
+    sourceFilter ? t("Source: {value}", { value: t(sourceFilter) }) : undefined,
+    waitingFilter ? t("Waiting: {value}", { value: t(waitingFilter) }) : undefined,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function buildVisibleWorkBoardGroups(items: readonly WorkItemView[], activeScope: WorkBoardScope): ReadonlyArray<{
   readonly key: string;
   readonly label: string;
   readonly items: readonly WorkItemView[];
 }> {
+  if (activeScope === "history") {
+    const groups = new Map<string, WorkItemView[]>();
+    for (const item of [...items].sort(compareWorkItemUpdatedDesc)) {
+      const key = readWorkItemDateKey(item.updatedAt);
+      groups.set(key, [...(groups.get(key) ?? []), item]);
+    }
+    return [...groups.entries()].map(([key, groupItems]) => ({
+      key,
+      label: key === "unknown" ? "Unknown date" : key,
+      items: groupItems,
+    }));
+  }
   return workItemActionGroupOrder
     .map((groupKey) => ({
       key: groupKey,
       label: workItemActionGroupLabel(groupKey),
-      items: items.filter((item) => workItemActionGroup(item) === groupKey),
+      items: items.filter((item) => workItemActionGroup(item) === groupKey).sort(compareWorkItemUpdatedDesc),
     }))
     .filter((group) => group.items.length > 0);
 }
 
+function compareWorkItemUpdatedDesc(left: WorkItemView, right: WorkItemView): number {
+  return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+}
+
+function readWorkItemDateKey(value: string): string {
+  return value.includes("T") ? value.slice(0, 10) : value || "unknown";
+}
+
 function WorkItemDetailDrawer({
   item,
+  activeScope,
+  scopedCount,
+  filtersActive,
+  onClearFilters,
+  onViewHistory,
   channels,
   channelName,
   routing,
@@ -342,6 +550,11 @@ function WorkItemDetailDrawer({
   onFailWorkItem,
 }: {
   readonly item?: WorkItemView;
+  readonly activeScope: WorkBoardScope;
+  readonly scopedCount: number;
+  readonly filtersActive: boolean;
+  readonly onClearFilters: () => void;
+  readonly onViewHistory: () => void;
   readonly channels: readonly Channel[];
   readonly channelName?: string;
   readonly routing?: boolean;
@@ -362,10 +575,38 @@ function WorkItemDetailDrawer({
 
   if (!item) {
     return (
-      <aside className="work-board-detail empty" aria-label={t("Work detail")}>
+      <aside className="work-board-detail empty guide" aria-label={t("Work detail")}>
         <ClipboardList size={22} />
-        <strong>{t("No work item selected")}</strong>
-        <p>{t("Select a row to inspect its linked run, approval, channel, and diagnostics.")}</p>
+        <strong>{t("Work handling guide")}</strong>
+        <p>{scopedCount === 0 && activeScope === "actionable"
+          ? t("You are clear for now. This panel explains where new work will appear.")
+          : t("Use the left list to choose a work item, or use the shortcuts below to recover context.")}</p>
+        <div className="work-board-guide-list">
+          <span>
+            <strong>{t("Approvals land in Inbox")}</strong>
+            <small>{t("High-risk local actions and external confirmations wait for your decision there.")}</small>
+          </span>
+          <span>
+            <strong>{t("Failures land in Needs action")}</strong>
+            <small>{t("Blocked runs and claimable durable work stay visible until handled.")}</small>
+          </span>
+          <span>
+            <strong>{t("Finished work moves to History")}</strong>
+            <small>{t("Use history when you need evidence, artifacts, or completed run context.")}</small>
+          </span>
+        </div>
+        <div className="work-board-empty-actions">
+          {filtersActive ? (
+            <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>
+              {t("Clear filters")}
+            </button>
+          ) : null}
+          {activeScope !== "history" ? (
+            <button className="secondary-button compact-button" type="button" onClick={onViewHistory}>
+              {t("View history work")}
+            </button>
+          ) : null}
+        </div>
       </aside>
     );
   }

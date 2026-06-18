@@ -902,6 +902,27 @@
   min-width: 0;
 }
 
+.teammate-panel-title .teammate-panel-heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.teammate-panel-title h2 {
+  margin: 0;
+}
+
+.teammate-panel-meta {
+  overflow: hidden;
+  max-width: 480px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .teammate-template-list,
 .teammate-skill-list,
 .teammate-draft-list {
@@ -1157,7 +1178,7 @@
 }
 
 .teammate-draft-row {
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto auto auto;
   align-items: center;
   min-height: 62px;
   padding: 9px;
@@ -1174,16 +1195,64 @@
   align-items: center;
   justify-content: flex-end;
   flex-wrap: nowrap;
-  gap: 6px;
+  gap: 8px;
   width: auto;
   padding-top: 0;
   border-top: 0;
+  min-height: 32px;
 }
 
 .teammate-row-actions .icon-button.active {
   border-color: rgba(22, 140, 120, 0.24);
   background: rgba(233, 248, 243, 0.88);
   color: #116149;
+}
+
+.teammate-row-status,
+.teammate-row-primary-action {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.teammate-row-status {
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-panel-strong);
+  color: var(--text-secondary);
+}
+
+.teammate-row-status.ready {
+  border-color: #a9cfc0;
+  background: #e7f5ef;
+  color: #116149;
+}
+
+.teammate-row-status.warning {
+  border-color: #f1d18a;
+  background: #fffbeb;
+  color: #8a5a0a;
+}
+
+.teammate-row-primary-action {
+  padding: 0 8px;
+  border: 1px solid var(--accent-border);
+  background: var(--surface-selected);
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.teammate-row-primary-action:hover {
+  background: rgba(233, 248, 243, 0.98);
 }
 
 .teammate-workflow-panel {
@@ -2419,7 +2488,7 @@
 
 .workspace-teammates-surface .teammate-management-grid {
   grid-template-columns: minmax(360px, 0.96fr) minmax(360px, 1fr);
-  gap: 20px;
+  gap: 16px;
   height: 100%;
   min-height: 0;
 }
@@ -2430,14 +2499,15 @@
   flex-direction: column;
   min-height: 0;
   padding: 16px;
-  border: 1px solid #e5e5e5;
-  border-radius: 6px;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
   background: #ffffff;
   box-shadow: none;
 }
 
 .workspace-teammates-surface .teammate-add-panel > .panel-title,
 .workspace-teammates-surface .teammate-template-panel > .panel-title {
+  align-items: center;
   min-height: 28px;
   margin-bottom: 14px;
   padding-bottom: 0;
@@ -2457,6 +2527,16 @@
   height: 14px;
   color: #111111;
   stroke-width: 2;
+}
+
+.workspace-teammates-surface .panel-title .primary-button,
+.workspace-teammates-surface .panel-title .compact-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  line-height: 1;
 }
 
 .workspace-teammates-surface .panel-title small,
@@ -2487,8 +2567,9 @@
 .teammate-use-list span,
 .teammate-skill-row,
 .workflow-step-card {
-  border: 1px solid #e5e5e5;
-  border-radius: 6px;
+  border: 0;
+  border-bottom: 1px solid #eeeeee;
+  border-radius: 0;
   background: #ffffff;
   color: #111111;
   box-shadow: none;
@@ -2496,18 +2577,21 @@
 
 .teammate-template-row {
   grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
   min-height: 76px;
   padding: 12px;
 }
 
 .teammate-draft-row {
   position: relative;
-  grid-template-columns: 34px minmax(0, 1fr) 8px 28px;
-  min-height: 60px;
-  padding: 10px 8px 10px 10px;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(188px, auto);
+  align-items: center;
+  gap: 12px;
+  min-height: 68px;
+  padding: 12px 8px;
 }
 
-.teammate-draft-row:has(.teammate-row-menu[open]) {
+.teammate-draft-row:has(.teammate-row-menu.open) {
   z-index: 20;
 }
 
@@ -2516,8 +2600,8 @@
 .teammate-draft-row:hover,
 .teammate-provider-row:hover,
 .teammate-provider-row.selected {
-  border-color: #111111;
-  background: #f5f5f5;
+  border-color: #eeeeee;
+  background: #fafafa;
   box-shadow: none;
 }
 
@@ -2536,6 +2620,7 @@
 .teammate-draft-copy {
   display: grid;
   gap: 3px;
+  align-content: center;
   min-width: 0;
 }
 
@@ -2559,6 +2644,9 @@
 }
 
 .template-skill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 22px;
   padding: 0 8px;
   border: 1px solid #e5e5e5;
@@ -2567,6 +2655,7 @@
   color: #6b6b6b;
   font-size: 11px;
   font-weight: 500;
+  line-height: 1;
 }
 
 .teammate-role-icon {
@@ -2591,46 +2680,30 @@
   stroke-width: 2;
 }
 
-.teammate-status-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-}
-
-.teammate-status-dot.ready {
-  background: #10b981;
-}
-
-.teammate-status-dot.blocked {
-  background: #6b6b6b;
-}
-
 .teammate-row-menu {
   position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
 }
 
-.teammate-row-menu[open] {
+.teammate-row-menu.open {
   z-index: 30;
 }
 
-.teammate-row-menu summary {
+.teammate-row-menu-trigger {
   display: inline-grid;
   place-items: center;
   width: 28px;
   height: 28px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   color: #6b6b6b;
   cursor: pointer;
-  list-style: none;
 }
 
-.teammate-row-menu summary::-webkit-details-marker {
-  display: none;
-}
-
-.teammate-row-menu summary:hover,
-.teammate-row-menu[open] summary {
+.teammate-row-menu-trigger:hover,
+.teammate-row-menu.open .teammate-row-menu-trigger {
   background: #f5f5f5;
   color: #111111;
 }
@@ -2639,8 +2712,8 @@
   position: absolute;
   top: 32px;
   right: 0;
-  z-index: 8;
-  display: grid;
+  z-index: 80;
+  display: none;
   gap: 2px;
   width: 132px;
   padding: 4px;
@@ -2650,9 +2723,18 @@
   box-shadow: 0 8px 24px rgba(17, 17, 17, 0.08);
 }
 
+.teammate-row-menu-popover[hidden] {
+  display: none !important;
+}
+
+.teammate-row-menu.open .teammate-row-menu-popover {
+  display: grid;
+}
+
 .teammate-row-menu-popover button {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   min-height: 30px;
   padding: 0 8px;
@@ -3941,7 +4023,95 @@
   background: #e5e5e5;
 }
 
+.teammates-page > .teammate-management-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.95fr);
+  gap: 18px;
+  align-items: stretch;
+  height: min(760px, calc(100vh - 150px));
+  min-height: 0;
+}
+
+.teammates-page .teammate-add-panel,
+.teammates-page .teammate-template-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px 16px;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.teammates-page .teammate-add-panel > .panel-title,
+.teammates-page .teammate-template-panel > .panel-title {
+  min-height: 30px;
+  margin-bottom: 10px;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.teammates-page .teammate-draft-list,
+.teammates-page .teammate-template-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  gap: 0;
+  overflow-y: auto;
+  padding: 0 2px 0 0;
+}
+
+.teammates-page .teammate-template-row,
+.teammates-page .teammate-draft-row {
+  border: 0;
+  border-bottom: 1px solid #eeeeee;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.teammates-page .teammate-template-row {
+  min-height: 64px;
+  padding: 10px 4px;
+  align-items: center;
+}
+
+.teammates-page .teammate-draft-row {
+  grid-template-columns: 34px minmax(0, 1fr) minmax(188px, auto);
+  align-items: center;
+  gap: 12px;
+  min-height: 68px;
+  padding: 12px 8px;
+}
+
+.teammates-page .teammate-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.teammates-page .teammate-template-row:hover,
+.teammates-page .teammate-template-row.selected,
+.teammates-page .teammate-draft-row:hover {
+  background: #fafafa;
+}
+
+.teammates-page .template-skill-count {
+  border-color: #e5e5e5;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-weight: 500;
+}
+
 @media (max-width: 1100px) {
+  .teammates-page > .teammate-management-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
   .teammate-workspace.chat-mode,
   .teammate-workspace.settings-mode {
     grid-template-columns: 1fr;
