@@ -31,11 +31,15 @@ packages/core/src/storage/
 
 - Ling thread, turn, run, and run-event orchestration.
 - Runtime work units, attempts, heartbeats, semaphores, and stale-run recovery.
-- External work import/action/CI-triage coordination.
-- Work item claim, heartbeat, release, complete, and fail behavior.
+- External work import/action/CI-triage coordination that crosses tasks, artifacts,
+  approvals, workflows, and scheduler state.
 - Cross-domain assertions that verify channel, task, run, workflow, artifact, and
   approval references.
 - Public facade methods that preserve the existing `RunStore` API.
+
+The external-work/work-item aggregate stores are already extracted. `SqliteRunStore`
+remains the facade and currently keeps `createOrReuseExternalWorkWorkflow` as a
+coordinator-like method.
 
 Existing extracted stores should remain narrow delegates. They should receive:
 
@@ -85,11 +89,13 @@ This is closest to a small hexagonal architecture:
 - ports name cross-domain dependencies.
 - coordinators/process managers own multi-step orchestration.
 
-## Candidate Slice A: External Work And Work Items
+## Completed Slice A: External Work And Work Items
 
-This is the preferred next slice if we continue modularizing storage.
+This slice has been implemented for aggregate-local persistence. The optional
+`SqliteExternalWorkCoordinator` remains a later extraction if the cross-aggregate import
+and action flows grow further.
 
-### Target Modules
+### Modules
 
 ```text
 packages/core/src/storage/sqlite/
@@ -98,7 +104,6 @@ packages/core/src/storage/sqlite/
   external-work-ci-triage-store.ts
   external-work-scheduler-store.ts
   work-item-store.ts
-  external-work-coordinator.ts
 ```
 
 ### Store Ownership
@@ -134,14 +139,15 @@ packages/core/src/storage/sqlite/
 - claim, heartbeat, release, complete, and fail updates when they only affect work-item
   rows.
 
-`SqliteExternalWorkCoordinator` should own only flows that cross aggregates, for example:
+If introduced later, `SqliteExternalWorkCoordinator` should own only flows that cross
+aggregates, for example:
 
 - create or reuse the workflow for an external work item;
 - create linked tasks and artifacts when importing external work or CI triage;
 - route external work into a work item;
 - coordinate approval-backed external action proposals.
 
-### Required Ports
+### Coordinator Ports
 
 The coordinator may use ports such as:
 
@@ -187,19 +193,96 @@ packages/core/src/storage/sqlite/
   runtime-recovery-coordinator.ts
 ```
 
-### Ownership Questions To Answer First
+### Ownership Decisions
 
-Before implementing this slice, decide:
+The state-machine definitions stay in `packages/core/src/state-machines.ts`. SQLite
+stores own applying those transitions to durable rows through compare-and-set updates,
+idempotency checks, and transition-event persistence.
 
-- Does `RunSessionStore` own `transitionRunStatus`, or does `SqliteRunStore` keep all
-  state-machine transitions?
-- Does `RuntimeWorkUnitStore` own lease release side effects, or does a coordinator own
-  them?
-- Does stale recovery live in a runtime process manager, or remain in `SqliteRunStore`
-  until runtime supervision is redesigned?
-- Are run events and runtime events independent stores, or one execution-log boundary?
+`SqliteRunSessionStore` should own:
 
-Until those questions are answered, this slice should not start.
+- run session create/get/list behavior;
+- `transitionRunStatus`, including current-status reads, idempotency lookup, the
+  `transitionRun` call, compare-and-set update, and state-transition event recording;
+- legacy `markRunStarted`, `markRunWaitingForApproval`, `markRunRunning`,
+  `markRunSucceeded`, `markRunFailed`, and `markRunCancelled` wrappers as compatibility
+  methods only;
+- run-to-work-unit linking when it updates both `run_sessions` and `work_units`.
+
+`SqliteRunSessionStore` must use narrow ports for:
+
+- `recordStateTransitionEvent(input)`;
+- `findStateTransitionByIdempotency(entityType, entityId, idempotencyKey)`;
+- `reconcileLingTurnStatusForRun(runId, now)`;
+- `tryRebuildLingThreadMetadata(threadId, now)`;
+- `updateLinkedWorkUnitRunId(workUnitId, runId, now)`.
+
+`SqliteRunEventStore` should own:
+
+- run event append/list/count behavior;
+- run event sequence assignment;
+- terminal event detection for recovery;
+- event-log file append for persisted run events.
+
+Run events remain the authoritative run execution log. Runtime events are a separate
+diagnostic/progress log for work units and attempts. Do not merge them into one
+execution-log store.
+
+`SqliteRunInterventionStore` should own:
+
+- intervention create/get/list/update/cancel behavior;
+- continuation run/work-unit links that are local to intervention rows.
+
+`SqliteRuntimeWorkUnitStore` should own:
+
+- work unit create/get/list and idempotency lookup behavior;
+- `transitionWorkUnitStatus`, including current-status reads, idempotency lookup, the
+  `transitionWorkUnit` call, compare-and-set update, and state-transition event
+  recording;
+- work unit attempt create/get/list/update behavior;
+- runtime event append/list behavior and runtime event sequence assignment;
+- runtime heartbeat insertion and the work-unit/attempt heartbeat timestamp updates.
+
+`SqliteRuntimeWorkUnitStore` must not own broad lease cleanup. Heartbeat renewal may use
+ports to renew active resource leases and runtime semaphore slots for an attempt, but
+terminal release, stale release, and cancellation cleanup belong to process managers or
+the recovery coordinator.
+
+`SqliteRuntimeSemaphoreStore` should own:
+
+- semaphore slot acquire/list/release behavior;
+- active-slot counting and limit enforcement inside the acquire transaction;
+- attempt-based renewal for active semaphore slots.
+
+`SqliteRuntimeRecoveryCoordinator` should own startup recovery flows:
+
+- expire resource leases before stale-run recovery;
+- find queued, running, and waiting-for-approval runs left behind by daemon shutdown;
+- append a terminal run error if the run has no terminal event;
+- fail stale runs and reconcile linked Ling thread state;
+- reconcile recoverable channel workflows and workflow steps from linked terminal runs,
+  missing runs, claimed steps, and approval outcomes;
+- aggregate workflow status repair after step recovery.
+
+The recovery coordinator is not a table store. It coordinates `RunSessionStore`,
+`RunEventStore`, `ResourceLeaseStore`, `ApprovalRequestStore`, `ChannelWorkflowStore`,
+Ling thread ports, and state-transition ports. The daemon remains the runtime process
+owner and continues to trigger recovery during store initialization.
+
+### Implementation Order
+
+Use this order to keep each slice coherent and reversible:
+
+1. Extract `runtime-semaphore-store.ts`.
+2. Extract `runtime-work-unit-store.ts`, using ports for transition events and heartbeat
+   lease/semaphore renewal.
+3. Extract `run-event-store.ts`.
+4. Extract `run-intervention-store.ts`.
+5. Extract `run-session-store.ts`, including `transitionRunStatus` and legacy wrappers.
+6. Extract `runtime-recovery-coordinator.ts` after the underlying stores exist.
+
+Do not start by moving stale recovery. It is the cross-domain process manager for this
+slice and should move after the storage adapters it coordinates are in place.
 
 ### Invariants
 
