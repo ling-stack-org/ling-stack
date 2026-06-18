@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
   ensureRuntimePaths,
@@ -216,15 +215,12 @@ import {
   type WorkUnitStatus,
 } from "../runtime-supervisor-types.js";
 import {
-  createExternalWorkActionId,
-  createExternalWorkCiTriageId,
   createExternalWorkId,
   type CreateExternalWorkActionInput,
   type CreateExternalWorkCiTriageInput,
   type CreateExternalWorkWorkflowInput,
   type ExternalWorkAction,
   type ExternalWorkCiTriageRecord,
-  type ExternalWorkItem,
   type ExternalWorkRecord,
   type ExternalWorkRouteRequest,
   type ExternalWorkSchedulerState,
@@ -315,7 +311,6 @@ import {
   type UpdateAutomationRunInput,
 } from "../automation-types.js";
 import {
-  createWorkItemId,
   type ListWorkItemsOptions,
   type UpsertWorkItemInput,
   type WorkItem,
@@ -326,7 +321,6 @@ import {
   type WorkItemHeartbeatRequest,
   type WorkItemReleaseRequest,
   type WorkItemRouteRequest,
-  type WorkItemSourceType,
 } from "../work-item-types.js";
 import {
   type ApplyMemoryReviewActionInput,
@@ -397,16 +391,14 @@ import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-
 import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelWorkflowStore } from "./sqlite/channel-workflow-store.js";
 import { SqliteChannelCoreStore } from "./sqlite/channel-core-store.js";
-import {
-  mapExternalWorkAction,
-  mapExternalWorkCiTriage,
-  mapExternalWorkRecord,
-  mapExternalWorkSchedulerState,
-} from "./sqlite/external-work-mappers.js";
+import { SqliteExternalWorkStore } from "./sqlite/external-work-store.js";
+import { SqliteExternalWorkActionStore } from "./sqlite/external-work-action-store.js";
+import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triage-store.js";
+import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
+import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import {
   mapRuntimeEvent,
   mapRuntimeSemaphoreSlot,
-  mapWorkItem,
   mapWorkUnit,
   mapWorkUnitAttempt,
   normalizeStoredRunnerId,
@@ -432,12 +424,6 @@ import {
   workUnitAttemptSelectSql,
   runtimeEventSelectSql,
   runtimeSemaphoreSlotSelectSql,
-  externalWorkSelectSql,
-  externalWorkSelectColumnsFromAlias,
-  workItemSelectSql,
-  externalWorkSchedulerStateSelectSql,
-  externalWorkActionSelectSql,
-  externalWorkCiTriageSelectSql,
 } from "./sqlite/select-sql.js";
 
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
@@ -481,6 +467,11 @@ export class SqliteRunStore implements RunStore {
   private readonly channelProtocols: SqliteChannelProtocolStore;
   private readonly channelWorkflows: SqliteChannelWorkflowStore;
   private readonly channelCore: SqliteChannelCoreStore;
+  private readonly externalWork: SqliteExternalWorkStore;
+  private readonly externalWorkActions: SqliteExternalWorkActionStore;
+  private readonly externalWorkCiTriage: SqliteExternalWorkCiTriageStore;
+  private readonly externalWorkScheduler: SqliteExternalWorkSchedulerStore;
+  private readonly workItems: SqliteWorkItemStore;
 
   constructor(options: SqliteRunStoreOptions) {
     this.paths = options.paths ?? resolveRuntimePaths(options.cwd);
@@ -629,6 +620,38 @@ export class SqliteRunStore implements RunStore {
     this.channelCore = new SqliteChannelCoreStore(
       { database: this.database },
       { ensureLingAgentChannelMemberships: (now, channelId) => this.ensureLingAgentChannelMemberships(now, channelId) },
+    );
+    this.externalWork = new SqliteExternalWorkStore(
+      { database: this.database },
+      { assertChannelExists: (channelId) => this.assertChannelExists(channelId) },
+    );
+    this.externalWorkActions = new SqliteExternalWorkActionStore(
+      { database: this.database },
+      {
+        assertChannelExists: (channelId) => this.assertChannelExists(channelId),
+        getExternalWorkRecord: (id) => this.getExternalWorkRecord(id),
+      },
+    );
+    this.externalWorkCiTriage = new SqliteExternalWorkCiTriageStore(
+      { database: this.database },
+      {
+        assertChannelExists: (channelId) => this.assertChannelExists(channelId),
+        getExternalWorkRecord: (id) => this.getExternalWorkRecord(id),
+      },
+    );
+    this.externalWorkScheduler = new SqliteExternalWorkSchedulerStore(
+      { database: this.database },
+      {
+        assertChannelExists: (channelId) => this.assertChannelExists(channelId),
+        hasExternalWorkRecord: (id) => Boolean(this.getExternalWorkRecord(id)),
+      },
+    );
+    this.workItems = new SqliteWorkItemStore(
+      { database: this.database },
+      {
+        assertChannelExists: (channelId) => this.assertChannelExists(channelId),
+        hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
+      },
     );
     configureSqliteRunStoreDatabase(this.database);
     applySqliteRunStoreMigrations({
@@ -3287,46 +3310,7 @@ export class SqliteRunStore implements RunStore {
       updatedAt: now,
     };
 
-    this.database
-      .prepare(`
-        INSERT INTO external_work_items (
-          id,
-          workspace_id,
-          channel_id,
-          source_kind,
-          work_item_kind,
-          external_id,
-          identifier,
-          idempotency_key,
-          workflow_id,
-          workflow_step_id,
-          artifact_ids_json,
-          item_json,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        record.id,
-        record.workspaceId,
-        record.channelId,
-        record.sourceKind,
-        record.workItemKind,
-        record.externalId,
-        record.identifier,
-        record.idempotencyKey,
-        record.workflowId,
-        record.workflowStepId,
-        stringifyJson(record.artifactIds),
-        stringifyJson(record.item),
-        record.createdAt,
-        record.updatedAt,
-      );
-
-    const created = this.getExternalWorkRecord(record.id);
-    if (!created) {
-      throw new Error(`Failed to create external work item: ${record.id}`);
-    }
+    const created = this.externalWork.createExternalWorkRecord(record);
     return {
       externalWork: created,
       workflow,
@@ -3336,485 +3320,74 @@ export class SqliteRunStore implements RunStore {
   }
 
   getExternalWorkRecord(id: string): ExternalWorkRecord | undefined {
-    const row = this.database.prepare(externalWorkSelectSql("WHERE id = ?")).get(id);
-    return row ? mapExternalWorkRecord(row) : undefined;
+    return this.externalWork.getExternalWorkRecord(id);
   }
 
   listExternalWorkRecords(options: ListExternalWorkRecordsOptions = {}): ExternalWorkRecord[] {
-    const clauses = ["w.workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.channelId) {
-      clauses.push("w.channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.sourceKind) {
-      clauses.push("w.source_kind = ?");
-      params.push(options.sourceKind);
-    }
-    if (options.workItemKind) {
-      clauses.push("w.work_item_kind = ?");
-      params.push(options.workItemKind);
-    }
-    if (options.schedulerStatus) {
-      clauses.push("s.scheduler_status = ?");
-      params.push(options.schedulerStatus);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`
-        SELECT
-          ${externalWorkSelectColumnsFromAlias("w")}
-        FROM external_work_items w
-        LEFT JOIN external_work_scheduler_state s ON s.external_work_id = w.id
-        WHERE ${clauses.join(" AND ")}
-        ORDER BY w.updated_at DESC, w.id DESC
-        LIMIT ?
-      `)
-      .all(...params)
-      .map(mapExternalWorkRecord);
+    return this.externalWork.listExternalWorkRecords(options);
   }
 
   countExternalWorkRecords(options: Omit<ListExternalWorkRecordsOptions, "limit"> = {}): number {
-    const clauses = ["w.workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.channelId) {
-      clauses.push("w.channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.sourceKind) {
-      clauses.push("w.source_kind = ?");
-      params.push(options.sourceKind);
-    }
-    if (options.workItemKind) {
-      clauses.push("w.work_item_kind = ?");
-      params.push(options.workItemKind);
-    }
-    if (options.schedulerStatus) {
-      clauses.push("s.scheduler_status = ?");
-      params.push(options.schedulerStatus);
-    }
-    const row = this.database
-      .prepare(`
-        SELECT COUNT(*) AS count
-        FROM external_work_items w
-        LEFT JOIN external_work_scheduler_state s ON s.external_work_id = w.id
-        WHERE ${clauses.join(" AND ")}
-      `)
-      .get(...params) as { readonly count?: number } | undefined;
-    return Number(row?.count ?? 0);
+    return this.externalWork.countExternalWorkRecords(options);
   }
 
   getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined {
-    const row = this.database
-      .prepare(externalWorkSelectSql("WHERE workspace_id = ? AND source_kind = ? AND idempotency_key = ?"))
-      .get(DEFAULT_WORKSPACE_ID, sourceKind, idempotencyKey);
-    return row ? mapExternalWorkRecord(row) : undefined;
+    return this.externalWork.getExternalWorkRecordByIdempotency(sourceKind, idempotencyKey);
   }
 
   updateExternalWorkArtifacts(id: string, artifactIds: readonly string[], now: string): ExternalWorkRecord | undefined {
-    const existing = this.getExternalWorkRecord(id);
-    if (!existing) {
-      return undefined;
-    }
-    this.database
-      .prepare("UPDATE external_work_items SET artifact_ids_json = ?, updated_at = ? WHERE id = ?")
-      .run(stringifyJson([...artifactIds]), now, id);
-    return this.getExternalWorkRecord(id);
+    return this.externalWork.updateExternalWorkArtifacts(id, artifactIds, now);
   }
 
   routeExternalWorkRecord(id: string, input: ExternalWorkRouteRequest, now: string): ExternalWorkRecord | undefined {
-    const existing = this.getExternalWorkRecord(id);
-    if (!existing) {
-      return undefined;
-    }
-    this.assertChannelExists(input.channelId);
-    const nextItem: ExternalWorkItem = input.priority === undefined
-      ? existing.item
-      : { ...existing.item, priority: input.priority };
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      this.database
-        .prepare(`
-          UPDATE external_work_items
-          SET channel_id = ?, item_json = ?, updated_at = ?
-          WHERE id = ?
-        `)
-        .run(input.channelId, stringifyJson(nextItem), now, id);
-      this.database
-        .prepare("UPDATE external_work_scheduler_state SET channel_id = ?, updated_at = ? WHERE external_work_id = ?")
-        .run(input.channelId, now, id);
-      this.database
-        .prepare("UPDATE external_work_actions SET channel_id = ?, updated_at = ? WHERE external_work_id = ?")
-        .run(input.channelId, now, id);
-      this.database.exec("COMMIT");
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
-    }
-    return this.getExternalWorkRecord(id);
+    return this.externalWork.routeExternalWorkRecord(id, input, now);
   }
 
   createExternalWorkAction(input: CreateExternalWorkActionInput, now: string): ExternalWorkAction {
-    this.assertChannelExists(input.channelId);
-    const externalWork = this.getExternalWorkRecord(input.externalWorkId);
-    if (!externalWork) {
-      throw new Error(`External work item not found: ${input.externalWorkId}`);
-    }
-    if (externalWork.channelId !== input.channelId) {
-      throw new Error(`External work item does not belong to channel: ${input.channelId}`);
-    }
-    const existing = this.getExternalWorkActionByIdempotency(input.sourceKind, input.idempotencyKey);
-    if (existing) {
-      return existing;
-    }
-    const action: ExternalWorkAction = omitUndefined({
-      id: createExternalWorkActionId(),
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      channelId: input.channelId,
-      externalWorkId: input.externalWorkId,
-      sourceKind: input.sourceKind,
-      actionKind: input.actionKind,
-      status: input.status,
-      approvalId: input.approvalId,
-      idempotencyKey: input.idempotencyKey,
-      target: input.target,
-      payload: input.payload,
-      approvalRequirement: input.approvalRequirement,
-      artifactIds: [...(input.artifactIds ?? [])],
-      executionAttemptCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    this.database
-      .prepare(`
-        INSERT INTO external_work_actions (
-          id,
-          workspace_id,
-          channel_id,
-          external_work_id,
-          source_kind,
-          action_kind,
-          status,
-          approval_id,
-          idempotency_key,
-          target_json,
-          payload_json,
-          approval_requirement,
-          artifact_ids_json,
-          execution_attempt_count,
-          last_attempt_at,
-          next_attempt_at,
-          last_error_code,
-          last_error_message,
-          created_at,
-          updated_at,
-          executed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        action.id,
-        action.workspaceId,
-        action.channelId,
-        action.externalWorkId,
-        action.sourceKind,
-        action.actionKind,
-        action.status,
-        action.approvalId ?? null,
-        action.idempotencyKey,
-        stringifyJson(action.target),
-        stringifyJson(action.payload),
-        action.approvalRequirement,
-        stringifyJson(action.artifactIds),
-        action.executionAttemptCount,
-        null,
-        null,
-        null,
-        null,
-        action.createdAt,
-        action.updatedAt,
-        null,
-      );
-
-    const created = this.getExternalWorkAction(action.id);
-    if (!created) {
-      throw new Error(`Failed to create external work action: ${action.id}`);
-    }
-    return created;
+    return this.externalWorkActions.createExternalWorkAction(input, now);
   }
 
   getExternalWorkAction(id: string): ExternalWorkAction | undefined {
-    const row = this.database.prepare(externalWorkActionSelectSql("WHERE id = ?")).get(id);
-    return row ? mapExternalWorkAction(row) : undefined;
+    return this.externalWorkActions.getExternalWorkAction(id);
   }
 
   getExternalWorkActionByIdempotency(sourceKind: ExternalWorkAction["sourceKind"], idempotencyKey: string): ExternalWorkAction | undefined {
-    const row = this.database
-      .prepare(externalWorkActionSelectSql("WHERE workspace_id = ? AND source_kind = ? AND idempotency_key = ?"))
-      .get(DEFAULT_WORKSPACE_ID, sourceKind, idempotencyKey);
-    return row ? mapExternalWorkAction(row) : undefined;
+    return this.externalWorkActions.getExternalWorkActionByIdempotency(sourceKind, idempotencyKey);
   }
 
   listExternalWorkActions(options: ListExternalWorkActionsOptions = {}): ExternalWorkAction[] {
-    const clauses = ["workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.externalWorkId) {
-      clauses.push("external_work_id = ?");
-      params.push(options.externalWorkId);
-    }
-    if (options.channelId) {
-      clauses.push("channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.actionKind) {
-      clauses.push("action_kind = ?");
-      params.push(options.actionKind);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`${externalWorkActionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
-      .all(...params)
-      .map(mapExternalWorkAction);
+    return this.externalWorkActions.listExternalWorkActions(options);
   }
 
   countExternalWorkActions(options: Omit<ListExternalWorkActionsOptions, "limit"> = {}): number {
-    const clauses = ["workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.externalWorkId) {
-      clauses.push("external_work_id = ?");
-      params.push(options.externalWorkId);
-    }
-    if (options.channelId) {
-      clauses.push("channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.actionKind) {
-      clauses.push("action_kind = ?");
-      params.push(options.actionKind);
-    }
-    const row = this.database
-      .prepare(`SELECT COUNT(*) AS count FROM external_work_actions WHERE ${clauses.join(" AND ")}`)
-      .get(...params) as { readonly count?: number } | undefined;
-    return Number(row?.count ?? 0);
+    return this.externalWorkActions.countExternalWorkActions(options);
   }
 
   updateExternalWorkAction(id: string, input: UpdateExternalWorkActionInput, now: string): ExternalWorkAction | undefined {
-    const existing = this.getExternalWorkAction(id);
-    if (!existing) {
-      return undefined;
-    }
-    this.database
-      .prepare(`
-        UPDATE external_work_actions
-        SET
-          status = ?,
-          approval_id = ?,
-          artifact_ids_json = ?,
-          execution_attempt_count = ?,
-          last_attempt_at = ?,
-          next_attempt_at = ?,
-          last_error_code = ?,
-          last_error_message = ?,
-          updated_at = ?,
-          executed_at = ?
-        WHERE id = ?
-      `)
-      .run(
-        input.status ?? existing.status,
-        input.approvalId === undefined ? existing.approvalId ?? null : input.approvalId,
-        stringifyJson(input.artifactIds ?? existing.artifactIds),
-        input.executionAttemptCount ?? existing.executionAttemptCount,
-        input.lastAttemptAt === undefined ? existing.lastAttemptAt ?? null : input.lastAttemptAt,
-        input.nextAttemptAt === undefined ? existing.nextAttemptAt ?? null : input.nextAttemptAt,
-        input.lastErrorCode === undefined ? existing.lastErrorCode ?? null : input.lastErrorCode,
-        input.lastErrorMessage === undefined ? existing.lastErrorMessage ?? null : input.lastErrorMessage,
-        now,
-        input.executedAt === undefined ? existing.executedAt ?? null : input.executedAt,
-        id,
-      );
-    return this.getExternalWorkAction(id);
+    return this.externalWorkActions.updateExternalWorkAction(id, input, now);
   }
 
   createExternalWorkCiTriage(input: CreateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord {
-    this.assertChannelExists(input.channelId);
-    const externalWork = this.getExternalWorkRecord(input.externalWorkId);
-    if (!externalWork) {
-      throw new Error(`External work item not found: ${input.externalWorkId}`);
-    }
-    if (externalWork.channelId !== input.channelId) {
-      throw new Error(`External work item does not belong to channel: ${input.channelId}`);
-    }
-    const existing = this.getExternalWorkCiTriageByFailureKey(input.sourceKind, input.failureKey);
-    if (existing) {
-      return existing;
-    }
-
-    const record: ExternalWorkCiTriageRecord = omitUndefined({
-      id: createExternalWorkCiTriageId(),
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      channelId: input.channelId,
-      externalWorkId: input.externalWorkId,
-      sourceKind: input.sourceKind,
-      repository: input.repository,
-      subjectKind: input.subjectKind,
-      subjectNumber: input.subjectNumber,
-      headSha: input.headSha,
-      failureKey: input.failureKey,
-      status: input.status,
-      checkName: input.checkName,
-      workflowName: input.workflowName,
-      jobName: input.jobName,
-      conclusion: input.conclusion,
-      htmlUrl: input.htmlUrl,
-      firstFailingCommand: input.firstFailingCommand,
-      reproductionCommand: input.reproductionCommand,
-      suspectedSourcePath: input.suspectedSourcePath,
-      taskId: input.taskId,
-      runId: input.runId,
-      artifactIds: [...(input.artifactIds ?? [])],
-      failure: input.failure,
-      lastErrorCode: input.lastErrorCode,
-      lastErrorMessage: input.lastErrorMessage,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    this.database
-      .prepare(`
-        INSERT INTO external_work_ci_triage (
-          id,
-          workspace_id,
-          channel_id,
-          external_work_id,
-          source_kind,
-          repository,
-          subject_kind,
-          subject_number,
-          head_sha,
-          failure_key,
-          status,
-          check_name,
-          workflow_name,
-          job_name,
-          conclusion,
-          html_url,
-          first_failing_command,
-          reproduction_command,
-          suspected_source_path,
-          task_id,
-          run_id,
-          artifact_ids_json,
-          failure_json,
-          last_error_code,
-          last_error_message,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        record.id,
-        record.workspaceId,
-        record.channelId,
-        record.externalWorkId,
-        record.sourceKind,
-        record.repository,
-        record.subjectKind,
-        record.subjectNumber,
-        record.headSha,
-        record.failureKey,
-        record.status,
-        record.checkName,
-        record.workflowName ?? null,
-        record.jobName ?? null,
-        record.conclusion,
-        record.htmlUrl ?? null,
-        record.firstFailingCommand ?? null,
-        record.reproductionCommand ?? null,
-        record.suspectedSourcePath ?? null,
-        record.taskId ?? null,
-        record.runId ?? null,
-        stringifyJson(record.artifactIds),
-        stringifyJson(record.failure),
-        record.lastErrorCode ?? null,
-        record.lastErrorMessage ?? null,
-        record.createdAt,
-        record.updatedAt,
-      );
-
-    const created = this.getExternalWorkCiTriage(record.id);
-    if (!created) {
-      throw new Error(`Failed to create external work CI triage: ${record.id}`);
-    }
-    return created;
+    return this.externalWorkCiTriage.createExternalWorkCiTriage(input, now);
   }
 
   getExternalWorkCiTriage(id: string): ExternalWorkCiTriageRecord | undefined {
-    const row = this.database.prepare(externalWorkCiTriageSelectSql("WHERE id = ?")).get(id);
-    return row ? mapExternalWorkCiTriage(row) : undefined;
+    return this.externalWorkCiTriage.getExternalWorkCiTriage(id);
   }
 
   getExternalWorkCiTriageByFailureKey(
     sourceKind: ExternalWorkCiTriageRecord["sourceKind"],
     failureKey: string,
   ): ExternalWorkCiTriageRecord | undefined {
-    const row = this.database
-      .prepare(externalWorkCiTriageSelectSql("WHERE workspace_id = ? AND source_kind = ? AND failure_key = ?"))
-      .get(DEFAULT_WORKSPACE_ID, sourceKind, failureKey);
-    return row ? mapExternalWorkCiTriage(row) : undefined;
+    return this.externalWorkCiTriage.getExternalWorkCiTriageByFailureKey(sourceKind, failureKey);
   }
 
   listExternalWorkCiTriage(options: ListExternalWorkCiTriageOptions = {}): ExternalWorkCiTriageRecord[] {
-    const clauses = ["workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.externalWorkId) {
-      clauses.push("external_work_id = ?");
-      params.push(options.externalWorkId);
-    }
-    if (options.channelId) {
-      clauses.push("channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`${externalWorkCiTriageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
-      .all(...params)
-      .map(mapExternalWorkCiTriage);
+    return this.externalWorkCiTriage.listExternalWorkCiTriage(options);
   }
 
   countExternalWorkCiTriage(options: Omit<ListExternalWorkCiTriageOptions, "limit"> = {}): number {
-    const clauses = ["workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.externalWorkId) {
-      clauses.push("external_work_id = ?");
-      params.push(options.externalWorkId);
-    }
-    if (options.channelId) {
-      clauses.push("channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    const row = this.database
-      .prepare(`SELECT COUNT(*) AS count FROM external_work_ci_triage WHERE ${clauses.join(" AND ")}`)
-      .get(...params) as { readonly count?: number } | undefined;
-    return Number(row?.count ?? 0);
+    return this.externalWorkCiTriage.countExternalWorkCiTriage(options);
   }
 
   updateExternalWorkCiTriage(
@@ -3822,164 +3395,23 @@ export class SqliteRunStore implements RunStore {
     input: UpdateExternalWorkCiTriageInput,
     now: string,
   ): ExternalWorkCiTriageRecord | undefined {
-    const existing = this.getExternalWorkCiTriage(id);
-    if (!existing) {
-      return undefined;
-    }
-    this.database
-      .prepare(`
-        UPDATE external_work_ci_triage
-        SET
-          status = ?,
-          first_failing_command = ?,
-          reproduction_command = ?,
-          suspected_source_path = ?,
-          task_id = ?,
-          run_id = ?,
-          artifact_ids_json = ?,
-          failure_json = ?,
-          last_error_code = ?,
-          last_error_message = ?,
-          updated_at = ?
-        WHERE id = ?
-      `)
-      .run(
-        input.status ?? existing.status,
-        nullableUpdate(input.firstFailingCommand, existing.firstFailingCommand) ?? null,
-        nullableUpdate(input.reproductionCommand, existing.reproductionCommand) ?? null,
-        nullableUpdate(input.suspectedSourcePath, existing.suspectedSourcePath) ?? null,
-        nullableUpdate(input.taskId, existing.taskId) ?? null,
-        nullableUpdate(input.runId, existing.runId) ?? null,
-        stringifyJson(input.artifactIds ?? existing.artifactIds),
-        stringifyJson(input.failure ?? existing.failure),
-        nullableUpdate(input.lastErrorCode, existing.lastErrorCode) ?? null,
-        nullableUpdate(input.lastErrorMessage, existing.lastErrorMessage) ?? null,
-        now,
-        id,
-      );
-    return this.getExternalWorkCiTriage(id);
+    return this.externalWorkCiTriage.updateExternalWorkCiTriage(id, input, now);
   }
 
   upsertExternalWorkSchedulerState(input: UpsertExternalWorkSchedulerStateInput, now: string): ExternalWorkSchedulerState {
-    this.assertChannelExists(input.channelId);
-    if (!this.getExternalWorkRecord(input.externalWorkId)) {
-      throw new Error(`External work item not found: ${input.externalWorkId}`);
-    }
-    this.database
-      .prepare(`
-        INSERT INTO external_work_scheduler_state (
-          external_work_id,
-          workspace_id,
-          channel_id,
-          subject_key,
-          source_key,
-          workflow_id,
-          workflow_step_id,
-          scheduler_status,
-          attempt_count,
-          last_attempt_at,
-          next_attempt_at,
-          max_retry_backoff_ms,
-          last_error_code,
-          last_error_message,
-          workspace_path,
-          workspace_mode,
-          hook_artifact_ids_json,
-          last_reconciled_at,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(external_work_id) DO UPDATE SET
-          channel_id = excluded.channel_id,
-          subject_key = excluded.subject_key,
-          source_key = excluded.source_key,
-          workflow_id = excluded.workflow_id,
-          workflow_step_id = excluded.workflow_step_id,
-          scheduler_status = excluded.scheduler_status,
-          attempt_count = excluded.attempt_count,
-          last_attempt_at = excluded.last_attempt_at,
-          next_attempt_at = excluded.next_attempt_at,
-          max_retry_backoff_ms = excluded.max_retry_backoff_ms,
-          last_error_code = excluded.last_error_code,
-          last_error_message = excluded.last_error_message,
-          workspace_path = excluded.workspace_path,
-          workspace_mode = excluded.workspace_mode,
-          hook_artifact_ids_json = excluded.hook_artifact_ids_json,
-          last_reconciled_at = excluded.last_reconciled_at,
-          updated_at = excluded.updated_at
-      `)
-      .run(
-        input.externalWorkId,
-        DEFAULT_WORKSPACE_ID,
-        input.channelId,
-        input.subjectKey,
-        input.sourceKey,
-        input.workflowId,
-        input.workflowStepId,
-        input.schedulerStatus,
-        input.attemptCount ?? 0,
-        input.lastAttemptAt ?? null,
-        input.nextAttemptAt ?? null,
-        input.maxRetryBackoffMs,
-        input.lastErrorCode ?? null,
-        input.lastErrorMessage ?? null,
-        input.workspacePath ?? null,
-        input.workspaceMode ?? null,
-        stringifyJson(input.hookArtifactIds ?? []),
-        input.lastReconciledAt ?? null,
-        now,
-        now,
-      );
-    const created = this.getExternalWorkSchedulerState(input.externalWorkId);
-    if (!created) {
-      throw new Error(`Failed to upsert external work scheduler state: ${input.externalWorkId}`);
-    }
-    return created;
+    return this.externalWorkScheduler.upsertExternalWorkSchedulerState(input, now);
   }
 
   getExternalWorkSchedulerState(externalWorkId: string): ExternalWorkSchedulerState | undefined {
-    const row = this.database.prepare(externalWorkSchedulerStateSelectSql("WHERE external_work_id = ?")).get(externalWorkId);
-    return row ? mapExternalWorkSchedulerState(row) : undefined;
+    return this.externalWorkScheduler.getExternalWorkSchedulerState(externalWorkId);
   }
 
   findActiveExternalWorkSchedulerState(sourceKey: string, subjectKey: string): ExternalWorkSchedulerState | undefined {
-    const row = this.database
-      .prepare(`
-        ${externalWorkSchedulerStateSelectSql(
-          "WHERE workspace_id = ? AND source_key = ? AND subject_key = ? AND scheduler_status IN ('discovered', 'claimed', 'workspace_preparing', 'ready', 'retry_wait')",
-        )}
-        ORDER BY updated_at DESC
-        LIMIT 1
-      `)
-      .get(DEFAULT_WORKSPACE_ID, sourceKey, subjectKey);
-    return row ? mapExternalWorkSchedulerState(row) : undefined;
+    return this.externalWorkScheduler.findActiveExternalWorkSchedulerState(sourceKey, subjectKey);
   }
 
   listExternalWorkSchedulerStates(options: ListExternalWorkSchedulerStatesOptions = {}): ExternalWorkSchedulerState[] {
-    const clauses = ["workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.channelId) {
-      clauses.push("channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.schedulerStatus) {
-      clauses.push("scheduler_status = ?");
-      params.push(options.schedulerStatus);
-    }
-    if (options.sourceKey) {
-      clauses.push("source_key = ?");
-      params.push(options.sourceKey);
-    }
-    if (options.subjectKey) {
-      clauses.push("subject_key = ?");
-      params.push(options.subjectKey);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`${externalWorkSchedulerStateSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, external_work_id DESC LIMIT ?`)
-      .all(...params)
-      .map(mapExternalWorkSchedulerState);
+    return this.externalWorkScheduler.listExternalWorkSchedulerStates(options);
   }
 
   updateExternalWorkSchedulerState(
@@ -3987,237 +3419,23 @@ export class SqliteRunStore implements RunStore {
     input: UpdateExternalWorkSchedulerStateInput,
     now: string,
   ): ExternalWorkSchedulerState | undefined {
-    const existing = this.getExternalWorkSchedulerState(externalWorkId);
-    if (!existing) {
-      return undefined;
-    }
-    const next = {
-      schedulerStatus: input.schedulerStatus ?? existing.schedulerStatus,
-      attemptCount: input.attemptCount ?? existing.attemptCount,
-      lastAttemptAt: nullableUpdate(input.lastAttemptAt, existing.lastAttemptAt),
-      nextAttemptAt: nullableUpdate(input.nextAttemptAt, existing.nextAttemptAt),
-      maxRetryBackoffMs: input.maxRetryBackoffMs ?? existing.maxRetryBackoffMs,
-      lastErrorCode: nullableUpdate(input.lastErrorCode, existing.lastErrorCode),
-      lastErrorMessage: nullableUpdate(input.lastErrorMessage, existing.lastErrorMessage),
-      workspacePath: nullableUpdate(input.workspacePath, existing.workspacePath),
-      workspaceMode: nullableUpdate(input.workspaceMode, existing.workspaceMode),
-      hookArtifactIds: input.hookArtifactIds ?? existing.hookArtifactIds,
-      lastReconciledAt: nullableUpdate(input.lastReconciledAt, existing.lastReconciledAt),
-    };
-    this.database
-      .prepare(`
-        UPDATE external_work_scheduler_state
-        SET
-          scheduler_status = ?,
-          attempt_count = ?,
-          last_attempt_at = ?,
-          next_attempt_at = ?,
-          max_retry_backoff_ms = ?,
-          last_error_code = ?,
-          last_error_message = ?,
-          workspace_path = ?,
-          workspace_mode = ?,
-          hook_artifact_ids_json = ?,
-          last_reconciled_at = ?,
-          updated_at = ?
-        WHERE external_work_id = ?
-      `)
-      .run(
-        next.schedulerStatus,
-        next.attemptCount,
-        next.lastAttemptAt ?? null,
-        next.nextAttemptAt ?? null,
-        next.maxRetryBackoffMs,
-        next.lastErrorCode ?? null,
-        next.lastErrorMessage ?? null,
-        next.workspacePath ?? null,
-        next.workspaceMode ?? null,
-        stringifyJson(next.hookArtifactIds),
-        next.lastReconciledAt ?? null,
-        now,
-        externalWorkId,
-      );
-    return this.getExternalWorkSchedulerState(externalWorkId);
+    return this.externalWorkScheduler.updateExternalWorkSchedulerState(externalWorkId, input, now);
   }
 
   upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem {
-    if (input.channelId) {
-      this.assertChannelExists(input.channelId);
-    }
-    if (input.assigneeTeammateId && !this.getAiTeammate(input.assigneeTeammateId)) {
-      throw new Error(`AI teammate not found: ${input.assigneeTeammateId}`);
-    }
-    const existing = this.getWorkItemBySource(input.sourceType, input.sourceId);
-    const id = existing?.id ?? input.id ?? createWorkItemId();
-    const createdAt = existing?.createdAt ?? now;
-    const labels = input.labels ?? existing?.labels ?? [];
-    const artifactIds = input.artifactIds ?? existing?.artifactIds ?? [];
-    const proofArtifactIds = input.proofArtifactIds ?? existing?.proofArtifactIds ?? [];
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      this.database
-        .prepare(`
-          INSERT INTO work_items (
-            id,
-            workspace_id,
-            channel_id,
-            source_type,
-            source_id,
-            title,
-            description,
-            status,
-            waiting_reason,
-            priority,
-            labels_json,
-            assignee_teammate_id,
-            task_id,
-            run_id,
-            workflow_id,
-            workflow_step_id,
-            external_work_id,
-            external_work_action_id,
-            approval_id,
-            artifact_ids_json,
-            proof_artifact_ids_json,
-            claim_owner_id,
-            claim_token,
-            claimed_at,
-            heartbeat_at,
-            claim_expires_at,
-            attempt_count,
-            retry_budget,
-            completed_at,
-            failed_at,
-            failure_reason,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(workspace_id, source_type, source_id) DO UPDATE SET
-            channel_id = excluded.channel_id,
-            title = excluded.title,
-            description = excluded.description,
-            status = excluded.status,
-            waiting_reason = excluded.waiting_reason,
-            priority = excluded.priority,
-            labels_json = excluded.labels_json,
-            assignee_teammate_id = excluded.assignee_teammate_id,
-            task_id = excluded.task_id,
-            run_id = excluded.run_id,
-            workflow_id = excluded.workflow_id,
-            workflow_step_id = excluded.workflow_step_id,
-            external_work_id = excluded.external_work_id,
-            external_work_action_id = excluded.external_work_action_id,
-            approval_id = excluded.approval_id,
-            artifact_ids_json = excluded.artifact_ids_json,
-            proof_artifact_ids_json = excluded.proof_artifact_ids_json,
-            retry_budget = excluded.retry_budget,
-            updated_at = excluded.updated_at
-        `)
-        .run(
-          id,
-          DEFAULT_WORKSPACE_ID,
-          input.channelId ?? existing?.channelId ?? null,
-          input.sourceType,
-          input.sourceId,
-          input.title,
-          input.description ?? existing?.description ?? null,
-          input.status ?? existing?.status ?? "ready",
-          input.waitingReason ?? existing?.waitingReason ?? null,
-          input.priority ?? existing?.priority ?? "normal",
-          stringifyJson(labels),
-          input.assigneeTeammateId ?? existing?.assigneeTeammateId ?? null,
-          input.taskId ?? existing?.taskId ?? null,
-          input.runId ?? existing?.runId ?? null,
-          input.workflowId ?? existing?.workflowId ?? null,
-          input.workflowStepId ?? existing?.workflowStepId ?? null,
-          input.externalWorkId ?? existing?.externalWorkId ?? null,
-          input.externalWorkActionId ?? existing?.externalWorkActionId ?? null,
-          input.approvalId ?? existing?.approvalId ?? null,
-          stringifyJson(artifactIds),
-          stringifyJson(proofArtifactIds),
-          existing?.claim?.ownerId ?? null,
-          existing?.claim?.token ?? null,
-          existing?.claim?.claimedAt ?? null,
-          existing?.claim?.heartbeatAt ?? null,
-          existing?.claim?.expiresAt ?? null,
-          existing?.attemptCount ?? 0,
-          input.retryBudget ?? existing?.retryBudget ?? 3,
-          existing?.completedAt ?? null,
-          existing?.failedAt ?? null,
-          existing?.failureReason ?? null,
-          createdAt,
-          now,
-        );
-      this.replaceWorkItemDependencies(id, input.dependencyIds ?? existing?.dependencyIds ?? [], now);
-      this.database.exec("COMMIT");
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
-    }
-    const item = this.getWorkItem(id);
-    if (!item) {
-      throw new Error(`Failed to upsert work item: ${id}`);
-    }
-    return item;
+    return this.workItems.upsertWorkItem(input, now);
   }
 
   getWorkItem(id: string): WorkItem | undefined {
-    const row = this.database.prepare(workItemSelectSql("WHERE id = ?")).get(id);
-    return row ? mapWorkItem(row, this.getWorkItemDependencyIds(id)) : undefined;
+    return this.workItems.getWorkItem(id);
   }
 
   listWorkItems(options: ListWorkItemsOptions = {}, now?: string): WorkItem[] {
-    const clauses = ["workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.channelId) {
-      clauses.push("channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.sourceType) {
-      clauses.push("source_type = ?");
-      params.push(options.sourceType);
-    }
-    if (options.assigneeTeammateId) {
-      clauses.push("assignee_teammate_id = ?");
-      params.push(options.assigneeTeammateId);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`${workItemSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
-      .all(...params)
-      .map((row) => mapWorkItem(row, this.getWorkItemDependencyIds(readString(row, "id")), now));
+    return this.workItems.listWorkItems(options, now);
   }
 
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined {
-    const existing = this.getWorkItem(id);
-    if (!existing) {
-      return undefined;
-    }
-    if (input.channelId) {
-      this.assertChannelExists(input.channelId);
-    }
-    if (input.assigneeTeammateId && !this.getAiTeammate(input.assigneeTeammateId)) {
-      throw new Error(`AI teammate not found: ${input.assigneeTeammateId}`);
-    }
-    this.database
-      .prepare(`
-        UPDATE work_items
-        SET channel_id = ?, priority = ?, assignee_teammate_id = ?, updated_at = ?
-        WHERE id = ?
-      `)
-      .run(
-        input.channelId === undefined ? existing.channelId ?? null : input.channelId,
-        input.priority ?? existing.priority,
-        input.assigneeTeammateId === undefined ? existing.assigneeTeammateId ?? null : input.assigneeTeammateId,
-        now,
-        id,
-      );
-    return this.getWorkItem(id);
+    return this.workItems.routeWorkItem(id, input, now);
   }
 
   claimWorkItem(
@@ -4225,138 +3443,23 @@ export class SqliteRunStore implements RunStore {
     input: WorkItemClaimRequest,
     now: string,
   ): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined {
-    const existing = this.getWorkItem(id);
-    if (!existing) {
-      return undefined;
-    }
-    const blocker = this.workItemClaimBlocker(existing, now);
-    if (blocker) {
-      return { workItem: existing, blocker };
-    }
-    const claimToken = createWorkItemClaimToken();
-    const expiresAt = new Date(Date.parse(now) + clampWorkItemLeaseMs(input.leaseMs)).toISOString();
-    this.database
-      .prepare(`
-        UPDATE work_items
-        SET status = ?, claim_owner_id = ?, claim_token = ?, claimed_at = ?, heartbeat_at = ?, claim_expires_at = ?, attempt_count = ?, updated_at = ?
-        WHERE id = ?
-      `)
-      .run("running", input.ownerId, claimToken, now, now, expiresAt, existing.attemptCount + 1, now, id);
-    const workItem = this.getWorkItem(id);
-    if (!workItem) {
-      throw new Error(`Failed to claim work item: ${id}`);
-    }
-    return { workItem, claimToken };
+    return this.workItems.claimWorkItem(id, input, now);
   }
 
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined {
-    const existing = this.getWorkItem(id);
-    if (!existing || existing.claim?.token !== input.claimToken) {
-      return undefined;
-    }
-    const expiresAt = new Date(Date.parse(now) + clampWorkItemLeaseMs(input.leaseMs)).toISOString();
-    this.database
-      .prepare("UPDATE work_items SET heartbeat_at = ?, claim_expires_at = ?, updated_at = ? WHERE id = ?")
-      .run(now, expiresAt, now, id);
-    return this.getWorkItem(id);
+    return this.workItems.heartbeatWorkItem(id, input, now);
   }
 
   releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined {
-    const existing = this.getWorkItem(id);
-    if (!existing || existing.claim?.token !== input.claimToken) {
-      return undefined;
-    }
-    this.database
-      .prepare(`
-        UPDATE work_items
-        SET status = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, updated_at = ?
-        WHERE id = ?
-      `)
-      .run("ready", now, id);
-    return this.getWorkItem(id);
+    return this.workItems.releaseWorkItem(id, input, now);
   }
 
   completeWorkItem(id: string, input: WorkItemCompleteRequest, now: string): WorkItem | undefined {
-    const existing = this.getWorkItem(id);
-    if (!existing || existing.claim?.token !== input.claimToken) {
-      return undefined;
-    }
-    const proofArtifactIds = input.proofArtifactIds ?? existing.proofArtifactIds;
-    this.database
-      .prepare(`
-        UPDATE work_items
-        SET status = ?, proof_artifact_ids_json = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, completed_at = ?, failed_at = NULL, failure_reason = NULL, updated_at = ?
-        WHERE id = ?
-      `)
-      .run("done", stringifyJson(proofArtifactIds), now, now, id);
-    return this.getWorkItem(id);
+    return this.workItems.completeWorkItem(id, input, now);
   }
 
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined {
-    const existing = this.getWorkItem(id);
-    if (!existing || existing.claim?.token !== input.claimToken) {
-      return undefined;
-    }
-    const canRetry = input.retry === true && existing.attemptCount < existing.retryBudget;
-    this.database
-      .prepare(`
-        UPDATE work_items
-        SET status = ?, waiting_reason = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, failed_at = ?, failure_reason = ?, updated_at = ?
-        WHERE id = ?
-      `)
-      .run(canRetry ? "ready" : "blocked", canRetry ? null : "user", now, input.reason, now, id);
-    return this.getWorkItem(id);
-  }
-
-  private getWorkItemBySource(sourceType: WorkItemSourceType, sourceId: string): WorkItem | undefined {
-    const row = this.database
-      .prepare(workItemSelectSql("WHERE workspace_id = ? AND source_type = ? AND source_id = ?"))
-      .get(DEFAULT_WORKSPACE_ID, sourceType, sourceId);
-    return row ? mapWorkItem(row, this.getWorkItemDependencyIds(readString(row, "id"))) : undefined;
-  }
-
-  private getWorkItemDependencyIds(id: string): string[] {
-    return this.database
-      .prepare("SELECT depends_on_work_item_id FROM work_item_dependencies WHERE work_item_id = ? ORDER BY depends_on_work_item_id ASC")
-      .all(id)
-      .map((row) => readString(row, "depends_on_work_item_id"));
-  }
-
-  private replaceWorkItemDependencies(id: string, dependencyIds: readonly string[], now: string): void {
-    this.database.prepare("DELETE FROM work_item_dependencies WHERE work_item_id = ?").run(id);
-    const insert = this.database.prepare("INSERT OR IGNORE INTO work_item_dependencies (work_item_id, depends_on_work_item_id, created_at) VALUES (?, ?, ?)");
-    for (const dependencyId of [...new Set(dependencyIds)].filter((dependencyId) => dependencyId !== id)) {
-      insert.run(id, dependencyId, now);
-    }
-  }
-
-  private workItemClaimBlocker(item: WorkItem, now: string): WorkItemClaimBlocker | undefined {
-    if (item.status === "done" || item.status === "archived") {
-      return { code: "terminal", message: `Work item is terminal: ${item.status}` };
-    }
-    if (item.attemptCount >= item.retryBudget) {
-      return { code: "retry_budget_exhausted", message: "Work item retry budget is exhausted." };
-    }
-    if (item.claim && item.claim.expiresAt > now) {
-      return {
-        code: "already_claimed",
-        message: "Work item already has an active claim.",
-        claimedBy: item.claim.ownerId,
-        claimExpiresAt: item.claim.expiresAt,
-      };
-    }
-    const incompleteDependencies = item.dependencyIds.filter((dependencyId) => {
-      const dependency = this.getWorkItem(dependencyId);
-      return !dependency || dependency.status !== "done";
-    });
-    if (incompleteDependencies.length > 0) {
-      return {
-        code: "dependency_blocked",
-        message: "Work item dependencies are not complete.",
-        dependencyIds: incompleteDependencies,
-      };
-    }
-    return undefined;
+    return this.workItems.failWorkItem(id, input, now);
   }
 
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
@@ -5397,17 +4500,6 @@ function labelForParticipant(participantId: string): string {
     return "Engineer";
   }
   return participantId;
-}
-
-function createWorkItemClaimToken(): string {
-  return `work_item_claim_${randomUUID().replaceAll("-", "")}`;
-}
-
-function clampWorkItemLeaseMs(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return 60_000;
-  }
-  return Math.min(Math.max(Math.trunc(value), 5_000), 15 * 60_000);
 }
 
 function normalizeLingThreadSearchQuery(query: string): string {
