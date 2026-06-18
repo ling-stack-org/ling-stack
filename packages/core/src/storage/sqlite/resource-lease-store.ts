@@ -85,6 +85,13 @@ export class SqliteResourceLeaseStore {
     return Number(result.changes);
   }
 
+  renewActiveResourceLeasesForAttempt(attemptId: string, renewedAt: string): number {
+    const result = this.context.database
+      .prepare("UPDATE resource_leases SET last_renewed_at = ? WHERE attempt_id = ? AND status = 'active'")
+      .run(renewedAt, attemptId);
+    return Number(result.changes);
+  }
+
   expireResourceLeases(now: string): number {
     const result = this.context.database
       .prepare(`
