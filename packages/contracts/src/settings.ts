@@ -50,9 +50,13 @@ export interface EffectiveConfigPaths {
     readonly settingsPath: string;
     readonly providerProfilesPath: string;
     readonly pluginCacheDir: string;
+    readonly globalDatabasePath?: string;
+    readonly workspacesDir?: string;
     readonly logsDir: string;
   };
   readonly workspace: {
+    readonly stateLocation?: "repo-local" | "user-data-dir";
+    readonly workspaceId?: string;
     readonly rootDir: string;
     readonly configPath: string;
     readonly databasePath: string;
@@ -61,6 +65,8 @@ export interface EffectiveConfigPaths {
     readonly artifactsDir: string;
     readonly attachmentsDir: string;
     readonly pluginCacheDir: string;
+    readonly worktreesDir?: string;
+    readonly memoryExportsDir?: string;
     readonly logsDir: string;
   };
 }

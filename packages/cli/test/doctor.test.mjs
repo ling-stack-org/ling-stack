@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
@@ -264,6 +265,407 @@ test("doctor config treats missing user layer as built-in defaults", async () =>
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(dirname(userRoot), { recursive: true, force: true });
+  }
+});
+
+test("init can opt a workspace into user-data-dir state and doctor resolves it", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-user-data-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-user-data-root-"));
+  try {
+    const init = await runCli("http://127.0.0.1:9", cwd, [
+      "init",
+      "--workspace-state-location",
+      "user-data-dir",
+      "--no-provider-templates",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(init.code, 0, init.stderr);
+    const initBody = JSON.parse(init.stdout);
+    assert.equal(initBody.stateLocation, "user-data-dir");
+    assert.equal(initBody.rootDir.startsWith(resolve(userRoot, "workspaces")), true);
+    assert.equal(initBody.databasePath, resolve(initBody.rootDir, "ling-stack.sqlite"));
+
+    const pointer = JSON.parse(await readFile(resolve(cwd, ".ling-stack", "config.json"), "utf8"));
+    assert.equal(pointer.workspaceStateLocation, "user-data-dir");
+    assert.equal(pointer.workspaceId, initBody.workspaceId);
+    assert.equal(pointer.stateRoot, initBody.rootDir);
+
+    const doctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(doctor.code, 0, doctor.stderr);
+    const doctorBody = JSON.parse(doctor.stdout);
+    const checks = new Map(doctorBody.checks.map((check) => [check.id, check]));
+
+    assert.equal(doctorBody.overallStatus, "ok");
+    assert.equal(checks.get("workspace.identity").details.stateLocation, "user-data-dir");
+    assert.equal(checks.get("workspace.identity").details.stateRoot, initBody.rootDir);
+    assert.equal(checks.get("workspace.repo_local_state").status, "ok");
+    assert.equal(checks.get("workspace.repo_local_state").details.authoritativeDatabasePath, initBody.databasePath);
+    assert.equal(checks.get("config.workspace_config").details.path, initBody.configPath);
+    assert.equal(checks.get("workspace.sqlite").details.databasePath, initBody.databasePath);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("doctor config warns when the workspace registry row is stale", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-stale-registry-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-stale-registry-root-"));
+  try {
+    const init = await runCli("http://127.0.0.1:9", cwd, [
+      "init",
+      "--no-provider-templates",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(init.code, 0, init.stderr);
+
+    const database = new DatabaseSync(resolve(userRoot, "global.sqlite"));
+    try {
+      database
+        .prepare("UPDATE workspaces_registry SET state_root = ? WHERE canonical_cwd = ?")
+        .run(resolve(userRoot, "workspaces", "stale-workspace"), cwd);
+    } finally {
+      database.close();
+    }
+
+    const doctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    const body = JSON.parse(doctor.stdout);
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+
+    assert.equal(doctor.code, 0, doctor.stderr);
+    assert.equal(body.overallStatus, "warning");
+    assert.equal(checks.get("workspace.registry").status, "warning");
+    assert.deepEqual(checks.get("workspace.registry").details.mismatches, ["state_root"]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("workspace repair-registry previews and repairs a stale registry row", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-repair-registry-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-repair-registry-root-"));
+  try {
+    const init = await runCli("http://127.0.0.1:9", cwd, [
+      "init",
+      "--no-provider-templates",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(init.code, 0, init.stderr);
+    const initBody = JSON.parse(init.stdout);
+
+    const staleStateRoot = resolve(userRoot, "workspaces", "stale-workspace");
+    const database = new DatabaseSync(resolve(userRoot, "global.sqlite"));
+    try {
+      database
+        .prepare("UPDATE workspaces_registry SET state_root = ? WHERE canonical_cwd = ?")
+        .run(staleStateRoot, cwd);
+    } finally {
+      database.close();
+    }
+
+    const dryRun = await runCli("http://127.0.0.1:9", cwd, [
+      "workspace",
+      "registry",
+      "repair",
+      "--dry-run",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(dryRun.code, 0, dryRun.stderr);
+    const dryRunBody = JSON.parse(dryRun.stdout);
+
+    assert.equal(dryRunBody.dryRun, true);
+    assert.equal(dryRunBody.changed, true);
+    assert.deepEqual(dryRunBody.mismatches, ["state_root"]);
+    assert.equal(dryRunBody.registry.stateRoot, staleStateRoot);
+    assert.equal(dryRunBody.resolved.stateRoot, initBody.rootDir);
+    assert.ok(dryRunBody.checks.some((check) => check.id === "registry_row" && check.status === "warning"));
+
+    const staleDoctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    const staleDoctorBody = JSON.parse(staleDoctor.stdout);
+    const staleChecks = new Map(staleDoctorBody.checks.map((check) => [check.id, check]));
+    assert.equal(staleChecks.get("workspace.registry").status, "warning");
+
+    const repair = await runCli("http://127.0.0.1:9", cwd, [
+      "workspace",
+      "repair-registry",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(repair.code, 0, repair.stderr);
+    const repairBody = JSON.parse(repair.stdout);
+    assert.equal(repairBody.dryRun, false);
+    assert.equal(repairBody.changed, true);
+    assert.ok(repairBody.checks.some((check) => check.id === "registry_written" && check.status === "ok"));
+
+    const doctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(doctor.code, 0, doctor.stderr);
+    const doctorBody = JSON.parse(doctor.stdout);
+    const checks = new Map(doctorBody.checks.map((check) => [check.id, check]));
+    assert.equal(doctorBody.overallStatus, "ok");
+    assert.equal(checks.get("workspace.registry").status, "ok");
+    assert.equal(checks.get("workspace.registry").details.registry.stateRoot, initBody.rootDir);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("doctor config treats read-only cwd as ok when user-data-dir state is selected", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-readonly-user-data-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-readonly-user-data-root-"));
+  try {
+    const init = await runCli("http://127.0.0.1:9", cwd, [
+      "init",
+      "--workspace-state-location",
+      "user-data-dir",
+      "--no-provider-templates",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(init.code, 0, init.stderr);
+
+    await chmod(cwd, 0o555);
+    const doctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    const body = JSON.parse(doctor.stdout);
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+
+    assert.equal(doctor.code, 0, doctor.stderr);
+    assert.equal(body.overallStatus, "ok");
+    assert.equal(checks.get("workspace.cwd_writable").status, "ok");
+    assert.equal(checks.get("workspace.cwd_writable").details.writable, false);
+    assert.equal(checks.get("workspace.cwd_writable").details.stateLocation, "user-data-dir");
+  } finally {
+    await chmod(cwd, 0o755).catch(() => undefined);
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("workspace migrate-state dry-run reports a migration plan without copying state", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-migrate-dry-run-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-migrate-dry-run-root-"));
+  try {
+    const init = await runCli("http://127.0.0.1:9", cwd, [
+      "init",
+      "--no-provider-templates",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(init.code, 0, init.stderr);
+    await writeFile(resolve(cwd, ".ling-stack", "sessions", "run_dry.jsonl"), "{\"event\":\"dry\"}\n", "utf8");
+
+    const dryRun = await runCli("http://127.0.0.1:9", cwd, [
+      "workspace",
+      "migrate-state",
+      "--to",
+      "user-data-dir",
+      "--dry-run",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(dryRun.code, 0, dryRun.stderr);
+    const body = JSON.parse(dryRun.stdout);
+
+    assert.equal(body.ok, true);
+    assert.equal(body.dryRun, true);
+    assert.equal(body.canMigrate, true);
+    assert.equal(body.source.stateLocation, "repo-local");
+    assert.equal(body.target.stateLocation, "user-data-dir");
+    assert.equal(body.plan.sourceWillRemain, true);
+    assert.equal(body.plan.targetWillBeBackedUp, false);
+    assert.equal(body.plan.repoPointerWillBeWritten, true);
+    assert.ok(body.plan.previewManifestPath.includes("dry-run"));
+    assert.ok(body.checks.some((check) => check.id === "daemon_stopped" && check.status === "ok"));
+    assert.ok(body.checks.some((check) => check.id === "repo_pointer" && check.status === "ok"));
+
+    await assert.rejects(stat(body.target.rootDir), { code: "ENOENT" });
+    await assert.rejects(stat(body.plan.previewManifestPath), { code: "ENOENT" });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("workspace migrate-state dry-run reports blockers without mutating", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-migrate-dry-run-blocked-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-migrate-dry-run-blocked-root-"));
+  try {
+    const init = await runCli("http://127.0.0.1:9", cwd, [
+      "init",
+      "--no-provider-templates",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(init.code, 0, init.stderr);
+
+    const dryRun = await runCli("http://127.0.0.1:9", cwd, [
+      "workspace",
+      "migrate-state",
+      "--to",
+      "repo-local",
+      "--dry-run",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(dryRun.code, 4);
+    const body = JSON.parse(dryRun.stdout);
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+
+    assert.equal(body.ok, false);
+    assert.equal(body.canMigrate, false);
+    assert.equal(checks.get("direction").status, "fail");
+    assert.match(checks.get("direction").summary, /already repo-local/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("workspace migrate-state moves repo-local state to user-data-dir", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-migrate-to-user-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-migrate-to-user-root-"));
+  try {
+    const init = await runCli("http://127.0.0.1:9", cwd, [
+      "init",
+      "--no-provider-templates",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(init.code, 0, init.stderr);
+
+    await writeFile(resolve(cwd, ".ling-stack", "sessions", "run_migrate.jsonl"), "{\"event\":\"ok\"}\n", "utf8");
+    await writeFile(resolve(cwd, ".ling-stack", "runtime-settings.json"), "{\"mode\":\"repo-local\"}\n", "utf8");
+
+    const migration = await runCli("http://127.0.0.1:9", cwd, [
+      "workspace",
+      "migrate-state",
+      "--to",
+      "user-data-dir",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(migration.code, 0, migration.stderr);
+    const body = JSON.parse(migration.stdout);
+
+    assert.equal(body.source.stateLocation, "repo-local");
+    assert.equal(body.target.stateLocation, "user-data-dir");
+    assert.equal(body.target.rootDir.startsWith(resolve(userRoot, "workspaces")), true);
+    assert.equal(await readFile(resolve(body.target.rootDir, "sessions", "run_migrate.jsonl"), "utf8"), "{\"event\":\"ok\"}\n");
+    assert.equal(await readFile(resolve(body.target.rootDir, "runtime-settings.json"), "utf8"), "{\"mode\":\"repo-local\"}\n");
+
+    const pointer = JSON.parse(await readFile(resolve(cwd, ".ling-stack", "config.json"), "utf8"));
+    assert.equal(pointer.workspaceStateLocation, "user-data-dir");
+    assert.equal(pointer.workspaceId, body.workspaceId);
+    assert.equal(pointer.stateRoot, body.target.rootDir);
+
+    const manifest = JSON.parse(await readFile(body.manifestPath, "utf8"));
+    assert.equal(manifest.status, "succeeded");
+    assert.equal(manifest.source.stateLocation, "repo-local");
+    assert.equal(manifest.target.stateLocation, "user-data-dir");
+    assert.ok(manifest.copiedPaths.includes("ling-stack.sqlite"));
+    assert.ok(manifest.copiedPaths.includes("sessions"));
+
+    const doctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(doctor.code, 0, doctor.stderr);
+    const doctorBody = JSON.parse(doctor.stdout);
+    const checks = new Map(doctorBody.checks.map((check) => [check.id, check]));
+    assert.equal(doctorBody.overallStatus, "warning");
+    assert.equal(checks.get("workspace.identity").details.stateLocation, "user-data-dir");
+    assert.equal(checks.get("workspace.identity").details.stateRoot, body.target.rootDir);
+    assert.equal(checks.get("workspace.repo_local_state").status, "warning");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("workspace migrate-state moves user-data-dir state back to repo-local", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-migrate-to-repo-cwd-"));
+  const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-migrate-to-repo-root-"));
+  try {
+    const init = await runCli("http://127.0.0.1:9", cwd, [
+      "init",
+      "--workspace-state-location",
+      "user-data-dir",
+      "--no-provider-templates",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(init.code, 0, init.stderr);
+    const initBody = JSON.parse(init.stdout);
+
+    await writeFile(resolve(initBody.rootDir, "artifacts", "artifact.txt"), "artifact\n", "utf8");
+
+    const migration = await runCli("http://127.0.0.1:9", cwd, [
+      "workspace",
+      "migrate-state",
+      "--to",
+      "repo-local",
+      "--json",
+    ], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(migration.code, 0, migration.stderr);
+    const body = JSON.parse(migration.stdout);
+
+    assert.equal(body.source.stateLocation, "user-data-dir");
+    assert.equal(body.target.stateLocation, "repo-local");
+    assert.equal(body.target.rootDir, resolve(cwd, ".ling-stack"));
+    assert.equal(await readFile(resolve(cwd, ".ling-stack", "artifacts", "artifact.txt"), "utf8"), "artifact\n");
+    assert.equal(await readFile(resolve(initBody.rootDir, "artifacts", "artifact.txt"), "utf8"), "artifact\n");
+
+    const config = JSON.parse(await readFile(resolve(cwd, ".ling-stack", "config.json"), "utf8"));
+    assert.equal(config.workspaceStateLocation, "repo-local");
+    assert.equal(config.workspaceId, body.workspaceId);
+
+    const manifest = JSON.parse(await readFile(body.manifestPath, "utf8"));
+    assert.equal(manifest.status, "succeeded");
+    assert.equal(manifest.source.stateLocation, "user-data-dir");
+    assert.equal(manifest.target.stateLocation, "repo-local");
+    assert.equal(typeof manifest.backups.targetExistingRoot, "string");
+
+    const doctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
+      env: { LING_STACK_HOME: userRoot },
+    });
+    assert.equal(doctor.code, 0, doctor.stderr);
+    const doctorBody = JSON.parse(doctor.stdout);
+    const checks = new Map(doctorBody.checks.map((check) => [check.id, check]));
+    assert.equal(doctorBody.overallStatus, "ok");
+    assert.equal(checks.get("workspace.identity").details.stateLocation, "repo-local");
+    assert.equal(checks.get("workspace.identity").details.stateRoot, resolve(cwd, ".ling-stack"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(userRoot, { recursive: true, force: true });
   }
 });
 

@@ -104,6 +104,10 @@ import type {
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
   CreateMemoryConsolidationJobRequest,
+  MemoryMarkdownExportRequest,
+  MemoryMarkdownExportResponse,
+  MemoryMarkdownImportRequest,
+  MemoryMarkdownImportResponse,
   CreateMediaJobRequest,
   CreateRunInterventionRequest,
   CreateTaskRequest,
@@ -719,6 +723,26 @@ export class LingDaemonClient {
 
   async createMemoryObject(cwd: string, input: CreateMemoryObjectRequest): Promise<MemoryMutationResponse> {
     return this.post("/memory", { cwd }, input);
+  }
+
+  async exportMemoryMarkdown(cwd: string, options: MemoryMarkdownExportRequest = {}): Promise<MemoryMarkdownExportResponse> {
+    return this.get("/memory/export", {
+      cwd,
+      scopeType: options.scopeType,
+      ownerId: options.ownerId,
+      reviewState: options.reviewState,
+      sensitivity: options.sensitivity,
+      tag: options.tag,
+      limit: options.limit,
+      includeSecretAdjacent: options.includeSecretAdjacent,
+      includeMarkdown: options.includeMarkdown,
+      fileName: options.fileName,
+      generatedAt: options.generatedAt,
+    });
+  }
+
+  async importMemoryMarkdown(cwd: string, input: MemoryMarkdownImportRequest): Promise<MemoryMarkdownImportResponse> {
+    return this.post("/memory/import", { cwd }, input);
   }
 
   async getMemoryHealth(cwd: string, options: MemoryHealthRequest = {}): Promise<MemoryHealthResponse> {

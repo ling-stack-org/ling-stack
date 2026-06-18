@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, readFileSync, renameSync } from "node:fs";
 import { basename, join, relative } from "node:path";
-import { resolveRuntimePaths } from "@ling-stack/core";
+import type { LingStackRuntimePaths } from "@ling-stack/core";
 import type { LoadedPluginPackage } from "./manifest.js";
 import { loadPluginPackageFromRoot } from "./manifest.js";
 
@@ -13,14 +13,13 @@ export interface MaterializedPluginPackage {
 }
 
 export function materializeBundledPluginPackage(input: {
-  readonly cwd: string;
+  readonly paths: LingStackRuntimePaths;
   readonly pluginPackage: LoadedPluginPackage;
   readonly now: string;
 }): MaterializedPluginPackage {
-  const paths = resolveRuntimePaths(input.cwd);
   const sourceRoot = input.pluginPackage.packageRoot;
   const packageName = packageNameFromPluginId(input.pluginPackage.id);
-  const stagingParent = join(paths.pluginCacheDir, ".staging");
+  const stagingParent = join(input.paths.pluginCacheDir, ".staging");
   const stagingRoot = join(stagingParent, `${packageName}-${Date.parse(input.now)}-${process.pid}`);
   rmSync(stagingRoot, { recursive: true, force: true });
   mkdirSync(stagingParent, { recursive: true });
@@ -39,7 +38,7 @@ export function materializeBundledPluginPackage(input: {
 
   const packageHash = hashDirectory(stagingRoot);
   const cacheRef = `${input.pluginPackage.sourceKind}/${packageName}/${input.pluginPackage.manifest.version}/${packageHash.slice(0, 12)}`;
-  const finalRoot = join(paths.pluginCacheDir, cacheRef);
+  const finalRoot = join(input.paths.pluginCacheDir, cacheRef);
   if (existsSync(finalRoot)) {
     rmSync(stagingRoot, { recursive: true, force: true });
   } else {

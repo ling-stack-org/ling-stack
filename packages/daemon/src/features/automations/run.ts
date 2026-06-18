@@ -19,7 +19,7 @@ import type { AutomationRunRequest } from "./schemas.js";
 
 export interface AutomationRunHooks {
   readonly onRunReady?: (runId: string) => void;
-  readonly afterRunTerminal?: (run: RunSession) => void;
+  readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
 }
 
 export type StartAutomationRunExecution = (

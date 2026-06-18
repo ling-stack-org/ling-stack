@@ -30,7 +30,7 @@ export class PiRunnerAdapter {
     }
 
     const cwd = options.cwd;
-    const agentDir = options.agentDir ?? join(cwd, ".ling-stack", "pi");
+    const agentDir = options.agentDir ?? options.runtimePaths?.piDir ?? join(cwd, ".ling-stack", "pi");
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 1 },

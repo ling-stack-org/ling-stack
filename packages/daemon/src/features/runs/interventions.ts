@@ -125,7 +125,7 @@ export async function handleRunInterventions(
       instruction: intervention.instruction,
     });
     if (isTerminalRunStatus(sourceRun.status)) {
-      void maybeStartNextRunInterventionContinuation({
+      await maybeStartNextRunInterventionContinuation({
         sourceRunId,
         store,
         runnerRegistry,
@@ -242,7 +242,7 @@ export function handleRunInterventionPromote(
 
   const currentRun = findCurrentRunForIntervention(resolved.store, sourceRun);
   if (!currentRun || isTerminalRunStatus(currentRun.status)) {
-    maybeStartNextRunInterventionContinuation({
+    void maybeStartNextRunInterventionContinuation({
       sourceRunId: intervention.sourceRunId,
       store: resolved.store,
       runnerRegistry,
@@ -253,7 +253,7 @@ export function handleRunInterventionPromote(
       mcpBroker,
       controlPlaneEvents,
       startupState,
-    });
+    }).catch(() => {});
     writeJson(response, 202, {
       cwd: resolved.cwd,
       intervention: resolved.store.getRunIntervention(intervention.id) ?? intervention,
@@ -279,7 +279,7 @@ export function handleRunInterventionPromote(
     run: currentRun,
     activeRun: activeRuns.get(currentRun.id),
   });
-  maybeStartNextRunInterventionContinuation({
+  void maybeStartNextRunInterventionContinuation({
     sourceRunId: intervention.sourceRunId,
     store: resolved.store,
     runnerRegistry,
@@ -290,7 +290,7 @@ export function handleRunInterventionPromote(
     mcpBroker,
     controlPlaneEvents,
     startupState,
-  });
+  }).catch(() => {});
 
   writeJson(response, 200, {
     cwd: resolved.cwd,
@@ -300,7 +300,7 @@ export function handleRunInterventionPromote(
   });
 }
 
-export function maybeStartNextRunInterventionContinuation(input: {
+export async function maybeStartNextRunInterventionContinuation(input: {
   readonly sourceRunId: string;
   readonly store: RunStore;
   readonly runnerRegistry: RunnerRegistry;
@@ -311,7 +311,7 @@ export function maybeStartNextRunInterventionContinuation(input: {
   readonly mcpBroker: McpBroker;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly startupState?: StartupStateRegistry;
-}): void {
+}): Promise<void> {
   const sourceRun = input.store.getRun(input.sourceRunId);
   if (!sourceRun || !isTerminalRunStatus(sourceRun.status)) {
     return;
@@ -337,54 +337,52 @@ export function maybeStartNextRunInterventionContinuation(input: {
     mode: starting.mode,
   });
   const continuationRequest = buildRunInterventionContinuationRequest(sourceRun, starting);
-  void (async () => {
-    const continuationRunId = await executeRunRequest(
-      continuationRequest,
-      createDetachedRunExecutionSink(),
-      input.runnerRegistry,
-      input.storeRegistry,
-      input.activeRuns,
-      input.runtimeSupervisor,
-      input.secretResolver,
-      input.mcpBroker,
-      {
-        controlPlaneEvents: input.controlPlaneEvents,
-        startupState: input.startupState,
-        onRunReady: (runId) => {
-          const run = input.store.getRun(runId);
-          input.store.updateRunInterventionStatus({
-            interventionId: starting.id,
-            status: "started",
-            continuationRunId: runId,
-            continuationWorkUnitId: run?.workUnitId ?? null,
-            now: new Date().toISOString(),
-          });
-          streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_started", {
-            interventionId: starting.id,
-            continuationRunId: runId,
-            continuationWorkUnitId: run?.workUnitId,
-          });
-        },
-        afterRunTerminal: (terminalRun) => {
-          const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
-          maybeStartNextRunInterventionContinuation({ ...input, sourceRunId });
-        },
+  const continuationRunId = await executeRunRequest(
+    continuationRequest,
+    createDetachedRunExecutionSink(),
+    input.runnerRegistry,
+    input.storeRegistry,
+    input.activeRuns,
+    input.runtimeSupervisor,
+    input.secretResolver,
+    input.mcpBroker,
+    {
+      controlPlaneEvents: input.controlPlaneEvents,
+      startupState: input.startupState,
+      onRunReady: (runId) => {
+        const run = input.store.getRun(runId);
+        input.store.updateRunInterventionStatus({
+          interventionId: starting.id,
+          status: "started",
+          continuationRunId: runId,
+          continuationWorkUnitId: run?.workUnitId ?? null,
+          now: new Date().toISOString(),
+        });
+        streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_started", {
+          interventionId: starting.id,
+          continuationRunId: runId,
+          continuationWorkUnitId: run?.workUnitId,
+        });
       },
-    );
-    if (!continuationRunId) {
-      input.store.updateRunInterventionStatus({
-        interventionId: starting.id,
-        status: "failed",
-        completedAt: new Date().toISOString(),
-        failureReason: "Continuation run failed to start.",
-        now: new Date().toISOString(),
-      });
-      streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_intervention_failed", {
-        interventionId: starting.id,
-        message: "Continuation run failed to start.",
-      });
-    }
-  })();
+      afterRunTerminal: async (terminalRun) => {
+        const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
+        await maybeStartNextRunInterventionContinuation({ ...input, sourceRunId });
+      },
+    },
+  );
+  if (!continuationRunId) {
+    input.store.updateRunInterventionStatus({
+      interventionId: starting.id,
+      status: "failed",
+      completedAt: new Date().toISOString(),
+      failureReason: "Continuation run failed to start.",
+      now: new Date().toISOString(),
+    });
+    streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_intervention_failed", {
+      interventionId: starting.id,
+      message: "Continuation run failed to start.",
+    });
+  }
 }
 
 function parseRunInterventionCreateRequest(value: unknown): {

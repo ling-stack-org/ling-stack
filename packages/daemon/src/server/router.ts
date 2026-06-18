@@ -106,7 +106,9 @@ import {
   handleListUsedMemoryEvents,
   handleMemoryCollection,
   handleMemoryConsolidationJobs,
+  handleMemoryExport,
   handleMemoryHealth,
+  handleMemoryImport,
   handleMemoryItem,
   handleMemoryPromotionInbox,
   handleMemoryRecall,
@@ -290,14 +292,14 @@ export async function routeRequest(
   }
 
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
-  const maybeContinueRunInterventions = (terminalRun: RunSession): void => {
+  const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
     const workspaceCwd = readRunWorkspaceCwd(terminalRun) ?? terminalRun.cwd;
     const store = storeRegistry.findStoreForRun(sourceRunId, workspaceCwd) ?? storeRegistry.findStoreForRun(terminalRun.id, workspaceCwd);
     if (!store) {
       return;
     }
-    maybeStartNextRunInterventionContinuation({
+    await maybeStartNextRunInterventionContinuation({
       sourceRunId,
       store,
       runnerRegistry,
@@ -439,9 +441,9 @@ export async function routeRequest(
                 hooks.onRunReady?.(runId);
                 onRunReady(runId);
               },
-              afterRunTerminal: (terminalRun) => {
-                hooks.afterRunTerminal?.(terminalRun);
-                maybeContinueRunInterventions(terminalRun);
+              afterRunTerminal: async (terminalRun) => {
+                await hooks.afterRunTerminal?.(terminalRun);
+                await maybeContinueRunInterventions(terminalRun);
               },
               controlPlaneEvents,
               startupState,
@@ -799,6 +801,16 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/memory/export") {
+    await handleMemoryExport(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/memory/import") {
+    await handleMemoryImport(request, response, config, storeRegistry, controlPlaneEvents);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/memory/health") {
     handleMemoryHealth(response, url, storeRegistry);
     return;
@@ -1106,11 +1118,11 @@ export async function routeRequest(
               }
               resolveOnce(runId);
             },
-            afterRunTerminal: (terminalRun) => {
+            afterRunTerminal: async (terminalRun) => {
               finalizeOrchestratedWorkflowStepRun(store, workflowStep.id, taskId, terminalRun);
-              maybeContinueRunInterventions(terminalRun);
+              await maybeContinueRunInterventions(terminalRun);
               if (terminalRun.status === "succeeded") {
-                void orchestrateChannelWorkflow({
+                await orchestrateChannelWorkflow({
                   store,
                   cwd,
                   workflowId: workflow.id,

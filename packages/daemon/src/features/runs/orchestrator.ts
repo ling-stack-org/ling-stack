@@ -36,6 +36,7 @@ import { UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } fr
 import { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { ensureStartupReadyForRun } from "../../startup/run-gate.js";
+import { ensureWorkspaceStateWritableForRun } from "../../startup/workspace-state-gate.js";
 import type { StartupStateRegistry } from "../../startup/state.js";
 import {
   isActiveWorkUnitStatus,
@@ -91,7 +92,7 @@ import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 
 export interface ExecuteRunRequestOptions {
   readonly onRunReady?: (runId: string) => void;
-  readonly afterRunTerminal?: (run: RunSession) => void;
+  readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly startupState?: StartupStateRegistry;
 }
@@ -203,6 +204,7 @@ export async function executeRunRequest(
   let workspaceCwd = "";
   try {
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
+    await ensureWorkspaceStateWritableForRun(workspaceCwd);
     await ensureStartupReadyForRun({
       cwd: workspaceCwd,
       startupState: options.startupState,
@@ -308,6 +310,10 @@ export async function executeRunRequest(
       systemPrompt: runRequest.systemPrompt,
       appendSystemPrompt: appendSystemPrompt.length > 0 ? appendSystemPrompt : undefined,
       agentDir: runRequest.agentDir,
+      runtimePaths: {
+        piDir: store.paths.piDir,
+        artifactsDir: store.paths.artifactsDir,
+      },
       runtimeToolFeatures,
       onMcpToolCall: mcpTools.length > 0 ? createMcpToolCallHandler(store, secretResolver, mcpBroker, mcpTools) : undefined,
     };
@@ -648,6 +654,10 @@ export async function executeRunRequest(
   }
 
   const abortController = new AbortController();
+  let resolveRunCompletion: (() => void) | undefined;
+  const runCompletion = new Promise<void>((resolve) => {
+    resolveRunCompletion = resolve;
+  });
   let runStartedAt: string | undefined;
   let persistedRunError = false;
   let persistenceError: unknown;
@@ -667,6 +677,7 @@ export async function executeRunRequest(
   activeRuns.add(run.id, {
     abortController,
     streamEnvelope,
+    completion: runCompletion,
   });
 
   let lastRuntimeActivityAt = Date.now();
@@ -1085,9 +1096,13 @@ export async function executeRunRequest(
     store.releaseResourceLeasesForOwner("run", run.id, new Date().toISOString());
     store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, new Date().toISOString(), "run-finished");
     activeRuns.delete(run.id);
-    const terminalRun = store.getRun(run.id);
-    if (terminalRun && isTerminalRunStatus(terminalRun.status)) {
-      options.afterRunTerminal?.(terminalRun);
+    try {
+      const terminalRun = store.getRun(run.id);
+      if (terminalRun && isTerminalRunStatus(terminalRun.status)) {
+        await options.afterRunTerminal?.(terminalRun);
+      }
+    } finally {
+      resolveRunCompletion?.();
     }
   }
   return run.id;

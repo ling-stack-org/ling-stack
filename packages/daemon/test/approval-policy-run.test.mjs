@@ -3786,16 +3786,13 @@ class BlockingRunner {
   }
 
   async waitUntilStarted(count = 1) {
-    if (this._startedCount >= count) {
-      return;
-    }
-    await withTimeout(
-      new Promise((resolveStarted) => {
-        this._startedResolvers.push(resolveStarted);
-      }),
-      5_000,
-      "Timed out waiting for blocking runner to start.",
-    );
+    await withTimeout((async () => {
+      while (this._startedCount < count) {
+        await new Promise((resolveStarted) => {
+          this._startedResolvers.push(resolveStarted);
+        });
+      }
+    })(), 5_000, "Timed out waiting for blocking runner to start.");
   }
 
   release() {

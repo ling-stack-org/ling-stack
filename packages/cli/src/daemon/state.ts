@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { resolveConfigPaths } from "@ling-stack/core";
 
 export interface DaemonLifecyclePaths {
   readonly cwd: string;
@@ -39,12 +40,12 @@ export interface DaemonStateSnapshot {
 }
 
 export function resolveDaemonLifecyclePaths(cwd: string): DaemonLifecyclePaths {
-  const resolvedCwd = resolve(cwd);
-  const rootDir = join(resolvedCwd, ".ling-stack");
+  const workspacePaths = resolveConfigPaths(cwd).workspace;
+  const rootDir = workspacePaths.rootDir;
   const daemonDir = join(rootDir, "daemon");
-  const logsDir = join(rootDir, "logs");
+  const logsDir = workspacePaths.logsDir;
   return {
-    cwd: resolvedCwd,
+    cwd: workspacePaths.cwd,
     rootDir,
     daemonDir,
     logsDir,

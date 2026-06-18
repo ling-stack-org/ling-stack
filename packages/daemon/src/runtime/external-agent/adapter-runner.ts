@@ -185,7 +185,7 @@ function handleArtifact(
   emit: (event: PiRunnerEvent) => void,
 ): void {
   const summary = importExternalAgentArtifact({
-    artifactRoot: join(input.options.cwd, ".ling-stack", "artifacts"),
+    artifactRoot: input.options.runtimePaths?.artifactsDir ?? join(input.options.cwd, ".ling-stack", "artifacts"),
     runId: input.options.task.id,
     toolCallId: artifact.toolCallId,
     role: artifact.role,

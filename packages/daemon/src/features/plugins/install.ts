@@ -37,7 +37,7 @@ export async function installBundledPluginPackage(input: {
   }
 
   const materialized = materializeBundledPluginPackage({
-    cwd: input.cwd,
+    paths: input.store.paths,
     pluginPackage,
     now: input.now,
   });

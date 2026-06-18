@@ -127,6 +127,11 @@ export interface PiRunnerRuntimeToolFeatures {
   readonly shellSnapshot?: boolean;
 }
 
+export interface PiRunnerRuntimePaths {
+  readonly piDir?: string;
+  readonly artifactsDir?: string;
+}
+
 export interface PiRunnerRunOptions {
   readonly cwd: string;
   readonly task: PiRunnerTask;
@@ -137,6 +142,7 @@ export interface PiRunnerRunOptions {
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
   readonly agentDir?: string;
+  readonly runtimePaths?: PiRunnerRuntimePaths;
   readonly runtimeToolFeatures?: PiRunnerRuntimeToolFeatures;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: PiRunnerEvent) => void;

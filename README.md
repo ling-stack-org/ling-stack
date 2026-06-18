@@ -22,6 +22,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Daemon lifecycle and doctor P0](docs/design/daemon-lifecycle-p0.md)
 - [Startup readiness chain](docs/design/startup-readiness-chain.md)
 - [Two-layer configuration](docs/design/two-layer-configuration.md)
+- [Workspace state storage](docs/design/workspace-state-storage.md)
 - [Runtime, provider, and secrets inheritance](docs/design/runtime-provider-secrets-inheritance.md)
 - [CLI run I/O and completion P1](docs/design/cli-run-io-completion-p1.md)
 - [CLI run I/O and completion P1 implementation plan](docs/design/cli-run-io-completion-p1-implementation-plan.md)
@@ -290,6 +291,19 @@ node packages/cli/dist/index.js provider update provider_... --enabled true --ap
 node packages/cli/dist/index.js provider check-all
 node packages/cli/dist/index.js doctor
 ```
+
+Use `node packages/cli/dist/index.js init --workspace-state-location user-data-dir`
+only for an explicit opt-in workspace whose runtime state should live under
+`~/.ling-stack/workspaces/<workspace-id>/` instead of the repo-local `.ling-stack/`
+state root. This does not migrate an existing repo-local database.
+Use `node packages/cli/dist/index.js workspace migrate-state --to user-data-dir` or
+`--to repo-local` for an explicit, manifest-backed migration between the two locations.
+Add `--dry-run --json` first to preview source, target, backup, daemon, registry, and
+writability checks without copying files.
+Run `node packages/cli/dist/index.js doctor config --json` to inspect the resolved state
+root, registry row, and whether a read-only repo is relying on user-data-dir state.
+If the registry row is stale, run `node packages/cli/dist/index.js workspace repair-registry --dry-run --json`
+first, then run without `--dry-run` to update only the registry row.
 
 The Web UI exposes the same flow in Model Workbench: choose GPT/Claude, domestic AI, OpenAI-compatible relay, or custom OpenAI-compatible access; save the preset; set the shown `env:NAME`; run Check; then use only preflight-ready chat providers in Workspace. Media providers remain visible but stay in Media Jobs and cannot run coding tasks.
 

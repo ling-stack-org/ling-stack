@@ -264,6 +264,101 @@ export interface MemoryListResponse {
   };
 }
 
+export interface MemoryMarkdownExportItem {
+  readonly id: string;
+  readonly title: string;
+  readonly scopeType: MemoryScopeType;
+  readonly ownerId: string;
+  readonly reviewState: MemoryReviewState;
+  readonly sensitivity: MemorySensitivity;
+  readonly confidence: MemoryReviewConfidence | "unknown";
+  readonly tagCount: number;
+  readonly sourceRefCount: number;
+  readonly redactionApplied: boolean;
+}
+
+export interface MemoryMarkdownExportResult {
+  readonly schemaVersion: 1;
+  readonly kind: "ling-memory-markdown-export";
+  readonly workspaceId: string;
+  readonly generatedAt: string;
+  readonly suggestedFileName: string;
+  readonly memoryCount: number;
+  readonly skippedSecretAdjacentCount: number;
+  readonly skippedSecretAdjacentIds: readonly string[];
+  readonly redactionApplied: boolean;
+  readonly items: readonly MemoryMarkdownExportItem[];
+  readonly markdown: string;
+}
+
+export interface MemoryMarkdownExportRequest {
+  readonly scopeType?: MemoryScopeType;
+  readonly ownerId?: string;
+  readonly reviewState?: MemoryReviewState;
+  readonly sensitivity?: MemorySensitivity;
+  readonly tag?: string;
+  readonly limit?: number;
+  readonly includeSecretAdjacent?: boolean;
+  readonly includeMarkdown?: boolean;
+  readonly fileName?: string;
+  readonly generatedAt?: string;
+}
+
+export interface MemoryMarkdownExportResponse {
+  readonly cwd: string;
+  readonly filePath?: string;
+  readonly export: MemoryMarkdownExportResult | Omit<MemoryMarkdownExportResult, "markdown">;
+}
+
+export interface MemoryMarkdownImportSource {
+  readonly id: string;
+  readonly label: string;
+  readonly importedAt: string;
+  readonly originalKind?: string;
+  readonly originalWorkspaceId?: string;
+}
+
+export interface MemoryMarkdownImportCandidate {
+  readonly index: number;
+  readonly originalId?: string;
+  readonly title: string;
+  readonly createInput: CreateMemoryObjectRequest;
+  readonly warnings: readonly string[];
+}
+
+export interface MemoryMarkdownImportSkipped {
+  readonly index: number;
+  readonly title?: string;
+  readonly reason: string;
+}
+
+export interface MemoryMarkdownImportPlan {
+  readonly schemaVersion: 1;
+  readonly kind: "ling-memory-markdown-import";
+  readonly source: MemoryMarkdownImportSource;
+  readonly candidateCount: number;
+  readonly skippedCount: number;
+  readonly candidates: readonly MemoryMarkdownImportCandidate[];
+  readonly skipped: readonly MemoryMarkdownImportSkipped[];
+}
+
+export interface MemoryMarkdownImportRequest {
+  readonly markdown: string;
+  readonly dryRun?: boolean;
+  readonly sourceId?: string;
+  readonly sourceLabel?: string;
+  readonly fileName?: string;
+  readonly limit?: number;
+}
+
+export interface MemoryMarkdownImportResponse {
+  readonly cwd: string;
+  readonly dryRun: boolean;
+  readonly importedCount: number;
+  readonly plan: MemoryMarkdownImportPlan;
+  readonly memories: readonly MemoryObject[];
+}
+
 export interface MemoryHealthRequest {
   readonly scopeType?: MemoryScopeType;
   readonly ownerId?: string;

@@ -556,6 +556,91 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(deletedHistoryMessage).not.toContainText(teammateId);
 });
 
+test("AI teammate memory tab imports Markdown as review candidates", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_builtin_engineer";
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
+  state.memoryObjects = [
+    {
+      id: "memory_existing_export",
+      workspaceId: "workspace_default",
+      scopeType: "workspace",
+      ownerId: "workspace_default",
+      title: "Existing export memory",
+      body: "Existing memory can be exported from the Memory tab.",
+      tags: ["export"],
+      sourceRefs: [{ type: "manual", id: "manual_export", label: "Manual export" }],
+      reviewState: "active",
+      enabled: true,
+      sensitivity: "normal",
+      verifyBeforeUse: false,
+      createdAt: "2026-06-18T00:00:00.000Z",
+      updatedAt: "2026-06-18T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Memory/ }).click();
+
+  const memoryPanel = page.locator(".teammate-memory-panel");
+  await expect(memoryPanel.getByRole("heading", { name: "Memory" })).toBeVisible();
+  await expect(memoryPanel.getByText("Markdown transfer")).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await memoryPanel.getByRole("button", { name: "Export" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/memory-export-workspace_default-/);
+  await expect(memoryPanel).toContainText("Downloaded 1 memories");
+
+  await memoryPanel.getByLabel("Source label").fill("web-import.md");
+  await memoryPanel.getByPlaceholder("Paste a Ling memory Markdown export").fill(markdownImportFixture());
+  await memoryPanel.getByRole("button", { name: "Preview import" }).click();
+
+  await expect(memoryPanel).toContainText("Preview ready: 1 candidates");
+  const preview = memoryPanel.locator(".teammate-memory-import-preview");
+  await expect(preview.locator("span").filter({ hasText: "Candidates" }).locator("strong")).toHaveText("1");
+  await expect(preview.locator("span").filter({ hasText: "Skipped" }).locator("strong")).toHaveText("0");
+  await expect(preview.locator("span").filter({ hasText: "Warnings" }).locator("strong")).toHaveText("2");
+  await expect(memoryPanel).toContainText("retrievalProviderId was not imported.");
+  await expect(memoryPanel).toContainText('Original reviewState "active" was imported as candidate.');
+  await expect.poll(() => state.memoryMarkdownImportCalls).toEqual([
+    {
+      dryRun: true,
+      sourceLabel: "web-import.md",
+      candidateCount: 1,
+      skippedCount: 0,
+    },
+  ]);
+  await expect.poll(() => state.memoryObjects.map((item) => isRecord(item) ? item.title : undefined)).not.toContain("Web import preview memory");
+
+  await memoryPanel.getByRole("button", { name: "Import candidates" }).click();
+  await expect(memoryPanel).toContainText("Imported 1 candidates");
+  await expect.poll(() => state.memoryMarkdownImportCalls.map((call) => call.dryRun)).toEqual([true, false]);
+  await expect.poll(() => {
+    const imported = state.memoryObjects.find((item) => isRecord(item) && item.title === "Web import preview memory");
+    return isRecord(imported)
+      ? {
+          reviewState: imported.reviewState,
+          enabled: imported.enabled,
+          retrievalProviderId: imported.retrievalProviderId,
+          sourceRefs: Array.isArray(imported.sourceRefs) ? imported.sourceRefs.map((ref) => isRecord(ref) ? ref.type : undefined) : [],
+        }
+      : undefined;
+  }).toEqual({
+    reviewState: "candidate",
+    enabled: true,
+    retrievalProviderId: undefined,
+    sourceRefs: ["manual", "import"],
+  });
+  await expect(memoryPanel.locator(".teammate-memory-review-card").filter({ hasText: "Web import preview memory" })).toBeVisible();
+});
+
 test("AI teammate settings save status and visibility fields", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -996,3 +1081,48 @@ test("AI teammate private chat keeps queued guidance from bypassing into a new m
   await expect.poll(() => state.teammateDirectMessages.length).toBe(0);
   await expect(page.getByText("已有排队引导，先执行或删除队列消息。")).toBeVisible();
 });
+
+function markdownImportFixture(): string {
+  return [
+    "---",
+    JSON.stringify({
+      schemaVersion: 1,
+      product: "ling-stack",
+      kind: "ling-memory-markdown-export",
+      workspaceId: "workspace_default",
+      generatedAt: "2026-06-18T00:00:00.000Z",
+      memoryCount: 1,
+      skippedSecretAdjacentCount: 0,
+      redactionApplied: false,
+      authority: "projection-only",
+    }),
+    "---",
+    "",
+    "# Ling Memory Export",
+    "",
+    "## Web import preview memory",
+    "",
+    "### Metadata",
+    "```json",
+    JSON.stringify({
+      id: "mem_exported_test",
+      workspaceId: "workspace_default",
+      scopeType: "workspace",
+      ownerId: "workspace_default",
+      reviewState: "active",
+      sensitivity: "normal",
+      enabled: true,
+      verifyBeforeUse: true,
+      tags: ["web", "import"],
+      sourceRefs: [{ type: "manual", id: "manual_1", label: "Browser QA" }],
+      retrievalProviderId: "vector-main",
+    }),
+    "```",
+    "",
+    "### Body",
+    "```text",
+    "Browser preview should create a candidate only.",
+    "```",
+    "",
+  ].join("\n");
+}

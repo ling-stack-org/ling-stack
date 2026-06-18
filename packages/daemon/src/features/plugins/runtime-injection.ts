@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
-  resolveRuntimePaths,
+  type LingStackRuntimePaths,
   type ManagedPluginDescriptor,
   type ManagedPluginLinkedResource,
   type ManagedPluginPackageRecord,
@@ -26,7 +26,7 @@ export function buildManagedPluginRuntimePreview(input: {
   }
   if (!packageRecord || packageRecord.status !== "installed") {
     blockers.push("Plugin package is not installed.");
-  } else if (!cacheRefExists(input.cwd, packageRecord.cacheRef)) {
+  } else if (!cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
     blockers.push("Installed plugin package cache is missing.");
   }
   const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id, input.now);
@@ -105,8 +105,8 @@ export function toManagedPluginPackageView(packageRecord: ManagedPluginPackageRe
   };
 }
 
-function cacheRefExists(cwd: string, cacheRef: string): boolean {
-  return existsSync(join(resolveRuntimePaths(cwd).pluginCacheDir, cacheRef));
+function cacheRefExists(paths: LingStackRuntimePaths, cacheRef: string): boolean {
+  return existsSync(join(paths.pluginCacheDir, cacheRef));
 }
 
 function resolveLinkedResources(store: RunStore, descriptor: ManagedPluginDescriptor): ManagedPluginLinkedResource[] {

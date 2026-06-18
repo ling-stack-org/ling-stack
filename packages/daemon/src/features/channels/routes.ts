@@ -82,6 +82,7 @@ export async function handleChannelsCollection(
           workspaceBinding: undefined,
         },
         cwd,
+        store.paths,
       );
       if (!worktreeResult.ok) {
         writeJson(response, 400, { error: worktreeResult.code, message: worktreeResult.message });
