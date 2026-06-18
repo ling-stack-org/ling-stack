@@ -193,11 +193,6 @@ import {
   type UpdateRunInterventionStatusInput,
 } from "../run-types.js";
 import {
-  createRuntimeEventId,
-  createRuntimeHeartbeatId,
-  createWorkUnitAttemptId,
-  createWorkUnitId,
-  defaultRuntimeTimeoutPolicy,
   type AcquireRuntimeSemaphoreSlotInput,
   type AppendRuntimeEventInput,
   type CreateWorkUnitAttemptInput,
@@ -245,7 +240,6 @@ import {
 import {
   transitionRun,
   transitionTask,
-  transitionWorkUnit,
   type RunTransitionEvent,
   type StateTransitionActor,
   type TaskTransitionEvent,
@@ -371,6 +365,7 @@ import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
 import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
+import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
 import { SqliteTaskStore } from "./sqlite/task-store.js";
@@ -397,12 +392,6 @@ import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triag
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import {
-  mapRuntimeEvent,
-  mapWorkUnit,
-  mapWorkUnitAttempt,
-  normalizeStoredRunnerId,
-} from "./sqlite/runtime-work-mappers.js";
-import {
   mapRunIntervention,
   normalizeRunInterventionMessagePayload,
 } from "./sqlite/intervention-mappers.js";
@@ -419,9 +408,6 @@ import {
   runInterventionSelectSql,
   lingThreadSelectSql,
   lingTurnSelectSql,
-  workUnitSelectSql,
-  workUnitAttemptSelectSql,
-  runtimeEventSelectSql,
 } from "./sqlite/select-sql.js";
 
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
@@ -446,6 +432,7 @@ export class SqliteRunStore implements RunStore {
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
+  private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
   private readonly skillRegistry: SqliteSkillRegistryStore;
   private readonly tasks: SqliteTaskStore;
@@ -509,6 +496,18 @@ export class SqliteRunStore implements RunStore {
     this.stateTransitions = new SqliteStateTransitionStore({ database: this.database });
     this.resourceLeases = new SqliteResourceLeaseStore({ database: this.database });
     this.runtimeSemaphores = new SqliteRuntimeSemaphoreStore({ database: this.database });
+    this.runtimeWorkUnits = new SqliteRuntimeWorkUnitStore(
+      { database: this.database },
+      {
+        findStateTransitionByIdempotency: (entityType, entityId, idempotencyKey) =>
+          this.findStateTransitionByIdempotency(entityType, entityId, idempotencyKey),
+        recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
+        renewResourceLeasesForAttempt: (attemptId, renewedAt) =>
+          this.resourceLeases.renewActiveResourceLeasesForAttempt(attemptId, renewedAt),
+        renewRuntimeSemaphoreSlotsForAttempt: (attemptId, renewedAt) =>
+          this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(attemptId, renewedAt),
+      },
+    );
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
     this.tasks = new SqliteTaskStore({ database: this.database });
@@ -1624,139 +1623,15 @@ export class SqliteRunStore implements RunStore {
   }
 
   createWorkUnit(input: CreateWorkUnitInput): WorkUnit {
-    const id = input.id ?? createWorkUnitId();
-    const timeoutPolicy = input.timeoutPolicy ?? defaultRuntimeTimeoutPolicy;
-    const status = input.status ?? "queued";
-    this.database
-      .prepare(`
-        INSERT INTO work_units (
-          id,
-          workspace_id,
-          kind,
-          owner_type,
-          owner_id,
-          channel_id,
-          task_id,
-          teammate_id,
-          provider_preset_id,
-          runner_id,
-          requested_runner_id,
-          effective_runner_id,
-          runner_fallback_reason_json,
-          idempotency_key,
-          status,
-          priority,
-          attempt_count,
-          active_attempt_id,
-          created_by_client_id,
-          created_by_actor,
-          request_json,
-          timeout_policy_json,
-          linked_run_id,
-          linked_message_id,
-          linked_media_job_id,
-          linked_external_work_id,
-          created_at,
-          updated_at,
-          started_at,
-          ended_at,
-          last_event_at,
-          last_heartbeat_at,
-          error_code,
-          error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        id,
-        input.workspaceId,
-        input.kind,
-        input.ownerType,
-        input.ownerId,
-        input.channelId ?? null,
-        input.taskId ?? null,
-        input.teammateId ?? null,
-        input.providerPresetId ?? null,
-        normalizeStoredRunnerId(input.runnerId ?? input.effectiveRunnerId) ?? null,
-        normalizeStoredRunnerId(input.requestedRunnerId) ?? null,
-        normalizeStoredRunnerId(input.effectiveRunnerId ?? input.runnerId) ?? null,
-        input.fallbackReason ? stringifyJson(input.fallbackReason) : null,
-        input.idempotencyKey,
-        status,
-        input.priority ?? 0,
-        0,
-        null,
-        input.createdByClientId ?? null,
-        input.createdByActor,
-        stringifyJson(redactSecrets(input.request)),
-        stringifyJson(timeoutPolicy),
-        input.linkedRunId ?? null,
-        input.linkedMessageId ?? null,
-        input.linkedMediaJobId ?? null,
-        input.linkedExternalWorkId ?? null,
-        input.now,
-        input.now,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-      );
-
-    const workUnit = this.getWorkUnit(id);
-    if (!workUnit) {
-      throw new Error(`Failed to create work unit: ${id}`);
-    }
-    return workUnit;
+    return this.runtimeWorkUnits.createWorkUnit(input);
   }
 
   getWorkUnit(workUnitId: string): WorkUnit | undefined {
-    const row = this.database.prepare(workUnitSelectSql("WHERE id = ?")).get(workUnitId);
-    return row ? mapWorkUnit(row) : undefined;
+    return this.runtimeWorkUnits.getWorkUnit(workUnitId);
   }
 
   listWorkUnits(options: ListWorkUnitsOptions = {}): WorkUnit[] {
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.kind) {
-      clauses.push("kind = ?");
-      params.push(options.kind);
-    }
-    if (options.ownerType) {
-      clauses.push("owner_type = ?");
-      params.push(options.ownerType);
-    }
-    if (options.ownerId) {
-      clauses.push("owner_id = ?");
-      params.push(options.ownerId);
-    }
-    if (options.channelId) {
-      clauses.push("channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.teammateId) {
-      clauses.push("teammate_id = ?");
-      params.push(options.teammateId);
-    }
-    if (options.linkedRunId) {
-      clauses.push("linked_run_id = ?");
-      params.push(options.linkedRunId);
-    }
-    if (options.linkedMessageId) {
-      clauses.push("linked_message_id = ?");
-      params.push(options.linkedMessageId);
-    }
-    params.push(limit);
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    return this.database
-      .prepare(`${workUnitSelectSql(whereClause)} ORDER BY created_at DESC, id DESC LIMIT ?`)
-      .all(...params)
-      .map(mapWorkUnit);
+    return this.runtimeWorkUnits.listWorkUnits(options);
   }
 
   findWorkUnitByIdempotency(input: {
@@ -1765,10 +1640,7 @@ export class SqliteRunStore implements RunStore {
     readonly ownerId: string;
     readonly idempotencyKey: string;
   }): WorkUnit | undefined {
-    const row = this.database
-      .prepare(workUnitSelectSql("WHERE workspace_id = ? AND kind = ? AND owner_type = ? AND owner_id = ? AND idempotency_key = ?"))
-      .get(DEFAULT_WORKSPACE_ID, input.kind, input.ownerType, input.ownerId, input.idempotencyKey);
-    return row ? mapWorkUnit(row) : undefined;
+    return this.runtimeWorkUnits.findWorkUnitByIdempotency(input);
   }
 
   linkRunToWorkUnit(runId: string, workUnitId: string, now: string): RunSession | undefined {
@@ -1797,147 +1669,19 @@ export class SqliteRunStore implements RunStore {
     readonly errorCode?: string | null;
     readonly errorMessage?: string | null;
   }): TransitionResult<WorkUnitStatus> {
-    const workUnit = this.getWorkUnit(input.workUnitId);
-    if (!workUnit) {
-      return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
-    }
-    if (input.idempotencyKey) {
-      const existing = this.findStateTransitionByIdempotency("work_unit", input.workUnitId, input.idempotencyKey);
-      if (existing) {
-        return { ok: true, from: workUnit.status, to: workUnit.status, duplicate: true };
-      }
-    }
-
-    const result = transitionWorkUnit({
-      entityId: input.workUnitId,
-      currentStatus: workUnit.status,
-      expectedStatus: input.expectedStatus,
-      event: input.event,
-      actor: input.actor,
-      reason: input.reason,
-      idempotencyKey: input.idempotencyKey,
-    });
-    if (!result.ok) {
-      return result;
-    }
-
-    const update = this.database
-      .prepare(`
-        UPDATE work_units
-        SET
-          status = ?,
-          active_attempt_id = ?,
-          updated_at = ?,
-          started_at = ?,
-          ended_at = ?,
-          last_event_at = ?,
-          last_heartbeat_at = ?,
-          error_code = ?,
-          error_message = ?
-        WHERE id = ? AND status = ?
-      `)
-      .run(
-        result.to,
-        input.activeAttemptId === undefined ? workUnit.activeAttemptId ?? null : input.activeAttemptId,
-        input.now,
-        input.startedAt ?? workUnit.startedAt ?? null,
-        input.endedAt === undefined ? workUnit.endedAt ?? null : input.endedAt,
-        input.lastEventAt ?? workUnit.lastEventAt ?? null,
-        input.lastHeartbeatAt ?? workUnit.lastHeartbeatAt ?? null,
-        input.errorCode === undefined ? workUnit.errorCode ?? null : input.errorCode,
-        input.errorMessage === undefined ? workUnit.errorMessage ?? null : input.errorMessage,
-        input.workUnitId,
-        result.from,
-      );
-    if (Number(update.changes) === 0) {
-      const current = this.getWorkUnit(input.workUnitId);
-      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? workUnit.status };
-    }
-
-    this.recordStateTransitionEvent({
-      workspaceId: workUnit.workspaceId,
-      entityType: "work_unit",
-      entityId: input.workUnitId,
-      fromStatus: result.from,
-      toStatus: result.to,
-      event: input.event,
-      actor: input.actor,
-      reason: input.reason,
-      idempotencyKey: input.idempotencyKey,
-      createdAt: input.now,
-    });
-    return result;
+    return this.runtimeWorkUnits.transitionWorkUnitStatus(input);
   }
 
   createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt {
-    const id = input.id ?? createWorkUnitAttemptId();
-    const workUnit = this.getWorkUnit(input.workUnitId);
-    if (!workUnit) {
-      throw new Error(`Work unit not found: ${input.workUnitId}`);
-    }
-    this.database
-      .prepare(`
-        INSERT INTO work_unit_attempts (
-          id,
-          work_unit_id,
-          attempt_number,
-          runtime_instance_id,
-          runner_id,
-          requested_runner_id,
-          effective_runner_id,
-          runner_fallback_reason_json,
-          provider_preset_id,
-          status,
-          created_at,
-          started_at,
-          ended_at,
-          last_event_at,
-          last_heartbeat_at,
-          abort_requested_at,
-          error_code,
-          error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        id,
-        input.workUnitId,
-        input.attemptNumber,
-        input.runtimeInstanceId,
-        normalizeStoredRunnerId(input.runnerId) ?? input.runnerId,
-        normalizeStoredRunnerId(input.requestedRunnerId) ?? null,
-        normalizeStoredRunnerId(input.effectiveRunnerId ?? input.runnerId) ?? input.runnerId,
-        input.fallbackReason ? stringifyJson(input.fallbackReason) : null,
-        input.providerPresetId ?? null,
-        input.status ?? "created",
-        input.now,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-      );
-    this.database
-      .prepare("UPDATE work_units SET attempt_count = MAX(attempt_count, ?), active_attempt_id = ?, updated_at = ? WHERE id = ?")
-      .run(input.attemptNumber, id, input.now, input.workUnitId);
-    const attempt = this.getWorkUnitAttempt(id);
-    if (!attempt) {
-      throw new Error(`Failed to create work unit attempt: ${id}`);
-    }
-    return attempt;
+    return this.runtimeWorkUnits.createWorkUnitAttempt(input);
   }
 
   getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined {
-    const row = this.database.prepare(workUnitAttemptSelectSql("WHERE id = ?")).get(attemptId);
-    return row ? mapWorkUnitAttempt(row) : undefined;
+    return this.runtimeWorkUnits.getWorkUnitAttempt(attemptId);
   }
 
   listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[] {
-    return this.database
-      .prepare(`${workUnitAttemptSelectSql("WHERE work_unit_id = ?")} ORDER BY attempt_number ASC, created_at ASC`)
-      .all(workUnitId)
-      .map(mapWorkUnitAttempt);
+    return this.runtimeWorkUnits.listWorkUnitAttempts(workUnitId);
   }
 
   updateWorkUnitAttemptStatus(input: {
@@ -1952,114 +1696,19 @@ export class SqliteRunStore implements RunStore {
     readonly errorCode?: string | null;
     readonly errorMessage?: string | null;
   }): WorkUnitAttempt | undefined {
-    const attempt = this.getWorkUnitAttempt(input.attemptId);
-    if (!attempt) {
-      return undefined;
-    }
-    this.database
-      .prepare(`
-        UPDATE work_unit_attempts
-        SET
-          status = ?,
-          started_at = ?,
-          ended_at = ?,
-          last_event_at = ?,
-          last_heartbeat_at = ?,
-          abort_requested_at = ?,
-          error_code = ?,
-          error_message = ?
-        WHERE id = ?
-      `)
-      .run(
-        input.status,
-        input.startedAt ?? attempt.startedAt ?? null,
-        input.endedAt === undefined ? attempt.endedAt ?? null : input.endedAt,
-        input.lastEventAt ?? attempt.lastEventAt ?? null,
-        input.lastHeartbeatAt ?? attempt.lastHeartbeatAt ?? null,
-        input.abortRequestedAt ?? attempt.abortRequestedAt ?? null,
-        input.errorCode === undefined ? attempt.errorCode ?? null : input.errorCode,
-        input.errorMessage === undefined ? attempt.errorMessage ?? null : input.errorMessage,
-        input.attemptId,
-      );
-    return this.getWorkUnitAttempt(input.attemptId);
+    return this.runtimeWorkUnits.updateWorkUnitAttemptStatus(input);
   }
 
   appendRuntimeEvent(input: AppendRuntimeEventInput): RuntimeEvent {
-    const workUnit = this.getWorkUnit(input.workUnitId);
-    if (!workUnit) {
-      throw new Error(`Work unit not found: ${input.workUnitId}`);
-    }
-    const event: RuntimeEvent = {
-      id: createRuntimeEventId(),
-      workUnitId: input.workUnitId,
-      ...(input.attemptId ? { attemptId: input.attemptId } : {}),
-      seq: this.nextRuntimeEventSeq(input.workUnitId),
-      ts: input.ts,
-      type: input.type,
-      actor: input.actor,
-      data: redactSecrets(input.data),
-    };
-    this.database
-      .prepare(`
-        INSERT INTO runtime_events (id, work_unit_id, attempt_id, seq, ts, type, actor, data_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(event.id, event.workUnitId, event.attemptId ?? null, event.seq, event.ts, event.type, event.actor, stringifyJson(event.data));
-    this.database
-      .prepare("UPDATE work_units SET last_event_at = ?, updated_at = ? WHERE id = ?")
-      .run(event.ts, event.ts, input.workUnitId);
-    if (input.attemptId) {
-      this.database
-        .prepare("UPDATE work_unit_attempts SET last_event_at = ? WHERE id = ?")
-        .run(event.ts, input.attemptId);
-    }
-    return event;
+    return this.runtimeWorkUnits.appendRuntimeEvent(input);
   }
 
   listRuntimeEvents(workUnitId: string, options: ListRuntimeEventsOptions = {}): RuntimeEvent[] {
-    const afterSeq = options.afterSeq ?? 0;
-    const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
-    return this.database
-      .prepare(`${runtimeEventSelectSql("WHERE work_unit_id = ? AND seq > ?")} ORDER BY seq ASC LIMIT ?`)
-      .all(workUnitId, afterSeq, limit)
-      .map(mapRuntimeEvent);
+    return this.runtimeWorkUnits.listRuntimeEvents(workUnitId, options);
   }
 
   recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat {
-    const heartbeat: RuntimeHeartbeat = {
-      id: createRuntimeHeartbeatId(),
-      workUnitId: input.workUnitId,
-      attemptId: input.attemptId,
-      runtimeInstanceId: input.runtimeInstanceId,
-      ts: input.ts,
-      source: input.source,
-      ...(input.detail !== undefined ? { detail: redactSecrets(input.detail) } : {}),
-    };
-    this.database
-      .prepare(`
-        INSERT INTO runtime_heartbeats (id, work_unit_id, attempt_id, runtime_instance_id, ts, source, detail_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        heartbeat.id,
-        heartbeat.workUnitId,
-        heartbeat.attemptId,
-        heartbeat.runtimeInstanceId,
-        heartbeat.ts,
-        heartbeat.source,
-        heartbeat.detail === undefined ? null : stringifyJson(heartbeat.detail),
-      );
-    this.database
-      .prepare("UPDATE work_units SET last_heartbeat_at = ?, updated_at = ? WHERE id = ?")
-      .run(input.ts, input.ts, input.workUnitId);
-    this.database
-      .prepare("UPDATE work_unit_attempts SET last_heartbeat_at = ? WHERE id = ?")
-      .run(input.ts, input.attemptId);
-    this.database
-      .prepare("UPDATE resource_leases SET last_renewed_at = ? WHERE attempt_id = ? AND status = 'active'")
-      .run(input.ts, input.attemptId);
-    this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(input.attemptId, input.ts);
-    return heartbeat;
+    return this.runtimeWorkUnits.recordRuntimeHeartbeat(input);
   }
 
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined {
@@ -3818,13 +3467,6 @@ export class SqliteRunStore implements RunStore {
 
   private nextEventSeq(runId: string): number {
     const row = this.database.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM run_events WHERE run_id = ?").get(runId);
-    return readNumber(row, "next_seq");
-  }
-
-  private nextRuntimeEventSeq(workUnitId: string): number {
-    const row = this.database
-      .prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM runtime_events WHERE work_unit_id = ?")
-      .get(workUnitId);
     return readNumber(row, "next_seq");
   }
 
