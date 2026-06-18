@@ -8,8 +8,8 @@ test("approval inbox shows expired approvals without decision buttons", async ({
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Review Queue" }).click();
-  await expect(page.locator(".approvals-panel").getByRole("heading", { name: "Review Queue" })).toBeVisible();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  await expect(page.locator(".approvals-panel").getByRole("heading", { name: "Inbox" })).toBeVisible();
   const approvalRows = page.locator(".approval-list .approval-row");
   await expect(approvalRows).toContainText("expired");
   await expect(approvalRows).toContainText("expired ");
@@ -29,7 +29,7 @@ test("review queue resolves offline local approvals and refreshes state", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Review Queue" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
   const approvalRows = page.locator(".approval-list .approval-row").filter({ hasText: "Approve offline shell command" });
   await expect(approvalRows).toContainText("pending");
   await expect(page.locator(".review-queue-summary")).toContainText("Offline local approval");
@@ -37,5 +37,5 @@ test("review queue resolves offline local approvals and refreshes state", async 
   await approvalRows.getByRole("button", { name: "Deny" }).click();
   await expect.poll(() => state.approvals[0]?.status).toBe("denied");
   await expect(approvalRows).toHaveCount(0);
-  await expect(page.locator(".approval-list")).toContainText("Review Queue is clear");
+  await expect(page.locator(".approval-list")).toContainText("Inbox is clear");
 });

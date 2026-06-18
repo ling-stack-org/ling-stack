@@ -41,6 +41,11 @@ test("work board merges durable items and supports claim heartbeat", async ({ pa
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" }).click();
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toBeVisible();
+  await page.getByLabel("Work board views").getByRole("button", { name: "All active" }).click();
+  await expect(page.locator(".work-board-page").getByRole("heading", { name: "All active work" })).toBeVisible();
+  await page.getByLabel("Work board views").getByRole("button", { name: "History" }).click();
+  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Work history" })).toBeVisible();
+  await page.getByLabel("Work board views").getByRole("button", { name: "Needs action" }).click();
   const durableRow = page.locator(".work-item-row").filter({ hasText: "Durable inspect handoff" });
   await expect(durableRow).toContainText("durable");
   await expect(durableRow).toContainText("Claim to handle");

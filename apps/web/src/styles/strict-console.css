@@ -391,8 +391,26 @@
 }
 
 .workspace.workspace-provider-surface {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: #ffffff;
   color: #111111;
+}
+
+.workspace.workspace-automations-surface,
+.workspace.workspace-generation-surface {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+  color: #111111;
+}
+
+.workspace.workspace-automations-surface {
+  padding: 0;
 }
 
 .workspace-provider-surface .provider-sheet-backdrop {
@@ -604,4 +622,289 @@
 :root[data-theme="dark"] .channel-daylight-shell .task-workbench-window .primary-button:disabled {
   color: #ffffff;
   opacity: 0.48;
+}
+
+/* Daylight product tone recovery for the top work pages.
+   This file is imported last, so keep these overrides token-based instead of
+   letting recent strict black/white rules flatten the whole app. */
+.workspace.workspace-provider-surface,
+.workspace.workspace-automations-surface,
+.workspace.workspace-generation-surface,
+.workspace.workspace-teammates-surface {
+  background: var(--app-bg);
+  color: var(--text);
+}
+
+.workspace-provider-surface .provider-workbench.provider-list-panel,
+.workspace-provider-surface .provider-table,
+.workspace-provider-surface .provider-form-panel.provider-sheet,
+.workspace-provider-surface .provider-sheet-header.panel-title,
+.workspace-provider-surface .provider-sheet-footer,
+.workspace-provider-surface .provider-template-card,
+.workspace-provider-surface .provider-model-card,
+.workspace-provider-surface .provider-model-discovery,
+.workspace-provider-surface .provider-next-action,
+.workspace-provider-surface .provider-batch-result,
+.workspace-provider-surface .provider-run-repair,
+.workspace-provider-surface .provider-run-notice,
+.workspace-provider-surface .provider-repair-queue,
+.workspace-provider-surface .provider-repair-item,
+.workspace-provider-surface .inline-error {
+  background: var(--surface-panel);
+  color: var(--text);
+}
+
+.workspace-provider-surface .provider-table-shell,
+.workspace-provider-surface .provider-table-footer,
+.workspace-provider-surface .provider-table th:nth-child(7),
+.workspace-provider-surface .provider-table td:nth-child(7),
+.workspace-provider-surface .provider-search-field,
+.workspace-provider-surface .provider-toolbar-controls select,
+.workspace-provider-surface .provider-avatar,
+.workspace-provider-surface .provider-state,
+.workspace-provider-surface .capability-list span,
+.workspace-provider-surface .provider-actions .compact-button,
+.workspace-provider-surface .provider-row-menu-trigger,
+.workspace-provider-surface .provider-row-menu-popover,
+.workspace-provider-surface .provider-sheet input,
+.workspace-provider-surface .provider-sheet select,
+.workspace-provider-surface .provider-sheet textarea,
+.workspace-provider-surface .settings-toggle,
+.workspace-provider-surface .provider-check-feedback {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
+}
+
+.workspace-provider-surface .provider-table th,
+.workspace-provider-surface .provider-table td:nth-child(7),
+.workspace-provider-surface .provider-check-feedback-row td {
+  background: var(--surface-panel);
+}
+
+.workspace-provider-surface .provider-row {
+  background: var(--surface-panel);
+}
+
+.workspace-provider-surface .provider-row:hover,
+.workspace-provider-surface .provider-row:focus-within,
+.workspace-provider-surface .provider-row:hover td:nth-child(7),
+.workspace-provider-surface .provider-row:focus-within td:nth-child(7),
+.workspace-provider-surface .provider-actions .compact-button:hover:not(:disabled),
+.workspace-provider-surface .provider-row-menu-trigger:hover,
+.workspace-provider-surface .provider-row-menu.open .provider-row-menu-trigger,
+.workspace-provider-surface .provider-row-menu-popover button:hover:not(:disabled),
+.workspace-provider-surface .provider-template-card:hover,
+.workspace-provider-surface .provider-model-card:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.workspace-provider-surface .provider-row.selected,
+.workspace-provider-surface .provider-row.selected td:nth-child(7),
+.workspace-provider-surface .provider-template-card.selected,
+.workspace-provider-surface .provider-model-card.selected {
+  border-color: var(--accent-border);
+  background: var(--surface-selected);
+  color: var(--text-strong);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.workspace-provider-surface .provider-workbench-header h1,
+.workspace-provider-surface .provider-name-copy strong,
+.workspace-provider-surface .provider-model-name,
+.workspace-provider-surface .provider-template-card strong,
+.workspace-provider-surface .provider-sheet-header.panel-title h2,
+.workspace-provider-surface .provider-sheet .field span,
+.workspace-provider-surface .provider-sheet .field > span {
+  color: var(--text-strong);
+}
+
+.workspace-provider-surface .provider-workbench-header p,
+.workspace-provider-surface .provider-page-meta,
+.workspace-provider-surface .provider-name-copy small,
+.workspace-provider-surface .provider-meta-line,
+.workspace-provider-surface .provider-meta-line.mono,
+.workspace-provider-surface .provider-template-kind,
+.workspace-provider-surface .provider-template-model,
+.workspace-provider-surface .provider-template-card small,
+.workspace-provider-surface .provider-action-note,
+.workspace-provider-surface .provider-table th,
+.workspace-provider-surface .provider-table-footer {
+  color: var(--text-muted);
+}
+
+.workspace-provider-surface .provider-workbench .primary-button,
+.workspace-provider-surface .provider-sheet .primary-button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--window-bg);
+}
+
+.workspace-provider-surface .provider-workbench .primary-button:hover:not(:disabled),
+.workspace-provider-surface .provider-sheet .primary-button:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+
+.workspace-provider-surface .provider-workbench .secondary-button,
+.workspace-provider-surface .provider-sheet .secondary-button {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text-strong);
+}
+
+.workspace-provider-surface .provider-template-tab {
+  color: var(--text-muted);
+}
+
+.workspace-provider-surface .provider-template-tab:hover,
+.workspace-provider-surface .provider-template-tab.selected {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.workspace-provider-surface .provider-page-meta span + span::before {
+  background: color-mix(in srgb, var(--text-muted) 38%, transparent);
+}
+
+.workspace-provider-surface .provider-status-hint {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.workspace-provider-surface .provider-status-hint::after,
+.workspace-provider-surface .provider-status-hint::before {
+  border-color: var(--danger-border);
+  background: var(--surface-panel);
+}
+
+.workspace-automations-surface .automation-inbox-row.selected {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.workspace-automations-surface .automation-current-pane,
+.workspace-automations-surface .automation-history-lite,
+.workspace-automations-surface .automation-modal,
+.workspace-automations-surface .automation-create-dropdown,
+.workspace-automations-surface .automation-create-menu,
+.workspace-automations-surface .automation-popover-panel,
+.workspace-generation-surface .media-job-list-panel,
+.workspace-generation-surface .media-job-form-panel,
+.workspace-generation-surface .media-job-row {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
+}
+
+.workspace-automations-surface .automation-row-primary-action,
+.workspace-automations-surface .automation-tool-button,
+.workspace-generation-surface .media-job-row,
+.workspace-generation-surface .media-job-result-preview {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+}
+
+.workspace-automations-surface .automation-row-primary-action:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.workspace-generation-surface .media-job-row-head strong {
+  color: var(--text-strong);
+}
+
+.workspace-generation-surface .media-job-title small,
+.workspace-generation-surface .media-job-row p {
+  color: var(--text-muted);
+}
+
+.workspace-teammates-surface .workspace-head h1,
+.workspace-teammates-surface .panel-title h2,
+.workspace-teammates-surface .teammate-template-row strong,
+.workspace-teammates-surface .teammate-draft-row strong,
+.workspace-teammates-surface .teammate-skill-row strong,
+.workspace-teammates-surface .workflow-step-card strong,
+.workspace-teammates-surface .teammate-provider-row strong,
+.workspace-teammates-surface .teammate-detail-hero h2,
+.workspace-teammates-surface .teammate-create-section-title span,
+.workspace-teammates-surface .teammate-create-advanced summary span,
+.workspace-teammates-surface .teammate-section h3,
+.workspace-teammates-surface .teammate-create-advanced-body h3 {
+  color: var(--text-strong);
+}
+
+.workspace-teammates-surface .workspace-head p,
+.workspace-teammates-surface .panel-title small,
+.workspace-teammates-surface .teammate-create-header p,
+.workspace-teammates-surface .teammate-detail-hero p,
+.workspace-teammates-surface .teammate-readable-copy,
+.workspace-teammates-surface .teammate-template-row small,
+.workspace-teammates-surface .teammate-draft-row small,
+.workspace-teammates-surface .teammate-skill-row small,
+.workspace-teammates-surface .workflow-step-card small,
+.workspace-teammates-surface .teammate-provider-row small,
+.workspace-teammates-surface .teammate-pack-label {
+  color: var(--text-muted);
+}
+
+.workspace-teammates-surface .teammate-template-panel,
+.workspace-teammates-surface .teammate-add-panel,
+.workspace-teammates-surface .teammate-create-sheet,
+.workspace-teammates-surface .teammate-detail-sheet,
+.workspace-teammates-surface .teammate-create-header,
+.workspace-teammates-surface .teammate-detail-sheet-header,
+.workspace-teammates-surface .teammate-create-section,
+.workspace-teammates-surface .teammate-advanced-detail,
+.workspace-teammates-surface .teammate-workflow-panel,
+.workspace-teammates-surface .teammate-template-row,
+.workspace-teammates-surface .teammate-draft-row,
+.workspace-teammates-surface .teammate-provider-row,
+.workspace-teammates-surface .teammate-use-list span,
+.workspace-teammates-surface .teammate-skill-row,
+.workspace-teammates-surface .workflow-step-card,
+.workspace-teammates-surface .teammate-row-menu-popover,
+.workspace-teammates-surface .teammate-create-fields input,
+.workspace-teammates-surface .teammate-create-fields textarea,
+.workspace-teammates-surface .teammate-chip,
+.workspace-teammates-surface .teammate-toggle,
+.workspace-teammates-surface .phase-token,
+.workspace-teammates-surface .approval-profile-badge,
+.workspace-teammates-surface .teammate-prompt-preview {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
+}
+
+.workspace-teammates-surface .teammate-template-row:hover,
+.workspace-teammates-surface .teammate-template-row.selected,
+.workspace-teammates-surface .teammate-draft-row:hover,
+.workspace-teammates-surface .teammate-provider-row:hover,
+.workspace-teammates-surface .teammate-provider-row.selected,
+.workspace-teammates-surface .teammate-row-menu-trigger:hover,
+.workspace-teammates-surface .teammate-row-menu.open .teammate-row-menu-trigger,
+.workspace-teammates-surface .teammate-row-menu-popover button:hover,
+.workspace-teammates-surface .teammate-filter-tabs button:hover,
+.workspace-teammates-surface .teammate-filter-tabs button.active,
+.workspace-teammates-surface .teammate-chip.selected {
+  border-color: var(--accent-border);
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.workspace-teammates-surface .teammate-role-icon,
+.workspace-teammates-surface .teammate-template-row .avatar-initial,
+.workspace-teammates-surface .teammate-draft-row .avatar-initial,
+.workspace-teammates-surface .template-skill-count,
+.workspace-teammates-surface .teammate-row-menu-trigger {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text-strong);
+}
+
+.workspace-teammates-surface .teammate-sheet-backdrop,
+.workspace-provider-surface .provider-sheet-backdrop {
+  background: color-mix(in srgb, var(--app-bg) 68%, transparent);
 }

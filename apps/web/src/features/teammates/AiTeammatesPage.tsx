@@ -100,6 +100,16 @@ export function AiTeammatesPage({
     () => localTeammates.filter((teammate) => !teammate.disabled),
     [localTeammates],
   );
+  const readyLocalTeammateCount = activeLocalTeammates.filter((teammate) => {
+    const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
+    return Boolean(provider && providerPreflightReady(provider));
+  }).length;
+  const needsModelTeammateCount = activeLocalTeammates.filter((teammate) => {
+    const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
+    return !provider || !providerPreflightReady(provider);
+  }).length;
+  const noChannelTeammateCount = activeLocalTeammates.filter((teammate) => teammate.channelIds.length === 0).length;
+  const hiddenTeammateCount = localTeammates.filter((teammate) => teammate.hidden && !teammate.disabled).length;
   const [selectedTemplateId, setSelectedTemplateId] = useState(() => templates[0]?.id ?? "");
   const [templateFilter, setTemplateFilter] = useState<TeammateTemplateFilter>("all");
   const [draftName, setDraftName] = useState(() => templates[0] ? t(templates[0].name) : t("Custom teammate"));
@@ -108,6 +118,7 @@ export function AiTeammatesPage({
   const [selectedChannelIds, setSelectedChannelIds] = useState<readonly string[]>(() => channels[0] ? [channels[0].id] : []);
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [detailTemplateId, setDetailTemplateId] = useState<string>("");
+  const [openTeammateMenuId, setOpenTeammateMenuId] = useState("");
   const wizardRef = useRef<HTMLElement | null>(null);
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
   const detailTemplate = templates.find((template) => template.id === detailTemplateId);
@@ -367,10 +378,15 @@ export function AiTeammatesPage({
 
       <div className="teammate-management-grid">
         <section className="teammate-add-panel" aria-label={t("Workspace teammates")}>
-          <div className="panel-title split">
+          <div className="panel-title split teammate-panel-title">
             <span>
               <Users size={16} />
-              <h2>{t("Workspace teammates")}</h2>
+              <span className="teammate-panel-heading">
+                <h2>{t("Workspace teammates")}</h2>
+                <small className="teammate-panel-meta" aria-label={t("AI teammate action summary")}>
+                  {t("Ready")} {readyLocalTeammateCount} · {t("Needs model")} {needsModelTeammateCount} · {t("No channel")} {noChannelTeammateCount} · {t("Hidden")} {hiddenTeammateCount}
+                </small>
+              </span>
             </span>
             <small>{t("{count} configured", { count: activeLocalTeammates.length })}</small>
           </div>
@@ -388,33 +404,65 @@ export function AiTeammatesPage({
                   .filter((name): name is string => Boolean(name));
                 const provider = draft.providerPresetId ? providers.find((item) => item.id === draft.providerPresetId) : undefined;
                 const ready = provider ? providerPreflightReady(provider) : false;
+                const modelLabel = draft.modelLabel === "No model selected" ? t("No model selected") : draft.modelLabel;
+                const channelLabel = draftChannels.length ? draftChannels.join(", ") : t("No channel");
+                const readinessLabel = !provider ? t("Needs model") : ready ? t("Ready teammate") : t("Model needs check");
                 return (
                   <article key={draft.id} className={draft.hidden ? "teammate-draft-row hidden-row" : "teammate-draft-row"}>
                     <TeammateAvatarView teammate={draft} cwd={cwd} compact />
                     <span className="teammate-draft-copy">
                       <strong>{draft.displayName}</strong>
-                      <small>{draft.modelLabel} · {draftChannels.length ? draftChannels.join(", ") : t("No channel")}</small>
+                      <small>{modelLabel} · {channelLabel}</small>
                     </span>
-                    <span className={ready ? "teammate-status-dot ready" : "teammate-status-dot blocked"} aria-label={ready ? t("ready") : t("needs check")} />
-                    <details className="teammate-row-menu">
-                      <summary aria-label={t("Teammate actions")} title={t("Teammate actions")}>
-                        <MoreHorizontal size={16} />
-                      </summary>
-                      <div className="teammate-row-menu-popover" role="menu">
-                        <button type="button" onClick={() => onToggleTeammatePinned(draft.id)} role="menuitem">
-                          {draft.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-                          {draft.pinned ? t("Unpin") : t("Pin")}
+                    <span className="teammate-row-actions">
+                      <span className={ready ? "teammate-row-status ready" : "teammate-row-status warning"}>{readinessLabel}</span>
+                      {!ready ? (
+                        <button className="teammate-row-primary-action" type="button" onClick={onOpenProviders}>
+                          <PlugZap size={13} />
+                          {t("Configure model")}
                         </button>
-                        <button type="button" onClick={() => onToggleTeammateHidden(draft.id)} role="menuitem">
-                          <EyeOff size={14} />
-                          {draft.hidden ? t("Show") : t("Hide")}
+                      ) : null}
+                      <span
+                        className={openTeammateMenuId === draft.id ? "teammate-row-menu hover-action-menu open" : "teammate-row-menu hover-action-menu"}
+                        onMouseEnter={() => setOpenTeammateMenuId(draft.id)}
+                        onMouseLeave={() => setOpenTeammateMenuId("")}
+                        onFocus={() => setOpenTeammateMenuId(draft.id)}
+                        onBlur={(event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            setOpenTeammateMenuId("");
+                          }
+                        }}
+                      >
+                        <button
+                          className="teammate-row-menu-trigger hover-action-menu-trigger"
+                          type="button"
+                          aria-label={t("Teammate actions")}
+                          title={t("Teammate actions")}
+                          aria-haspopup="menu"
+                          onMouseDown={(event) => event.preventDefault()}
+                        >
+                          <MoreHorizontal size={16} />
                         </button>
-                        <button type="button" onClick={() => onRemoveTeammate(draft.id)} role="menuitem">
-                          <Trash2 size={14} />
-                          {t("Delete")}
-                        </button>
-                      </div>
-                    </details>
+                        <span
+                          className="teammate-row-menu-popover hover-action-menu-popover"
+                          role="menu"
+                          hidden={openTeammateMenuId !== draft.id}
+                        >
+                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammatePinned(draft.id); }} role="menuitem">
+                            {draft.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                            {draft.pinned ? t("Unpin") : t("Pin")}
+                          </button>
+                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammateHidden(draft.id); }} role="menuitem">
+                            <EyeOff size={14} />
+                            {draft.hidden ? t("Show") : t("Hide")}
+                          </button>
+                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onRemoveTeammate(draft.id); }} role="menuitem">
+                            <Trash2 size={14} />
+                            {t("Delete")}
+                          </button>
+                        </span>
+                      </span>
+                    </span>
                   </article>
                 );
               })}

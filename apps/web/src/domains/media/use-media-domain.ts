@@ -18,7 +18,7 @@ import { canUseGenerationProviderForOperation } from "../../lib/providers.js";
 export const defaultMediaJobForm: MediaJobFormState = {
   providerPresetId: "",
   operation: "image_generate",
-  prompt: "Generate a concise visual concept for the selected workspace outcome.",
+  prompt: "",
   inputText: "",
 };
 

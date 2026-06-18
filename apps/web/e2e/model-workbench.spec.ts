@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -7,6 +7,18 @@ import {
   createMediaProvider,
   isRecord,
 } from "./support/mock-state";
+
+async function openProviderRowMenu(row: Locator): Promise<Locator> {
+  await row.locator(".provider-row-menu-trigger").hover();
+  const menu = row.locator(".provider-row-menu-popover");
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+async function clickProviderRowMenuItem(row: Locator, name: string | RegExp): Promise<void> {
+  const menu = await openProviderRowMenu(row);
+  await menu.getByRole("menuitem", { name }).click();
+}
 
 test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
   await page.addInitScript(() => {
@@ -29,8 +41,11 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.getByRole("heading", { name: "模型工作台" })).toHaveCount(1);
   await expect(page.getByRole("heading", { name: "模型预设" })).toHaveCount(0);
   await expect(page.locator(".provider-table")).toBeVisible();
+  await expect(page.getByText("上一页")).toHaveCount(0);
+  await expect(page.getByText("下一页")).toHaveCount(0);
   await expect(page.locator(".provider-group-row")).toHaveCount(0);
   await expect(page.locator(".provider-row")).toHaveCount(1);
+  await expect(page.locator(".provider-table-footer")).toContainText("1 个模型");
   const workbenchBounds = await page.locator(".provider-workbench").evaluate((workbench) => {
     const workspaceElement = workbench.closest(".workspace");
     const workspace = workspaceElement?.getBoundingClientRect();
@@ -50,12 +65,13 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(workbenchBounds?.workbench.right).toBeLessThanOrEqual((workbenchBounds?.workspaceContent.right ?? 0) + 1.5);
   expect(workbenchBounds ? workbenchBounds.workspaceContent.right - workbenchBounds.workbench.right : 0).toBeLessThanOrEqual(1.5);
   await expect(page.locator(".workspace-head .status-badge")).toHaveCount(0);
-  await expect(page.getByText("已保存")).toBeVisible();
-  await expect(page.locator(".provider-capability-summary")).toContainText("供应商");
-  await expect(page.locator(".provider-capability-summary")).not.toContainText("聊天模型");
-  await expect(page.locator(".provider-capability-summary")).not.toContainText("媒体模型");
+  await expect(page.locator(".provider-page-meta")).toContainText("可直接使用");
+  await expect(page.locator(".provider-page-meta")).toContainText("需配置");
+  await expect(page.locator(".provider-page-meta")).toContainText("缺少 Key");
+  await expect(page.locator(".provider-page-meta")).not.toContainText("聊天模型");
+  await expect(page.locator(".provider-page-meta")).not.toContainText("媒体模型");
   await expect(page.getByText("Chat-capable")).toHaveCount(0);
-  await expect(page.locator(".provider-capability-summary")).not.toContainText("模板");
+  await expect(page.locator(".provider-page-meta")).not.toContainText("模板");
   await expect(page.getByRole("button", { name: "添加模型" })).toBeVisible();
   await expect(page.getByText("修复队列")).toHaveCount(0);
   await expect(page.getByText("Repair queue")).toHaveCount(0);
@@ -64,9 +80,23 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.getByText("New preset")).toHaveCount(0);
   await expect(page.getByLabel("Model Workbench context")).toHaveCount(0);
   const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
-  await expect(missingKeyGatewayRow.getByRole("button", { name: "设为默认" })).toBeVisible();
-  await expect(missingKeyGatewayRow.getByRole("button", { name: "设为默认" })).toBeDisabled();
-  await expect(missingKeyGatewayRow.getByRole("button", { name: "停用" })).toBeVisible();
+  await expect(missingKeyGatewayRow.getByRole("button", { name: "修复配置" })).toBeVisible();
+  const missingKeyStatusHint = missingKeyGatewayRow.locator(".provider-status-hint");
+  await expect(missingKeyStatusHint).toBeVisible();
+  await missingKeyStatusHint.hover();
+  await expect.poll(() =>
+    missingKeyStatusHint.evaluate((element) => ({
+      content: getComputedStyle(element, "::after").content,
+      opacity: getComputedStyle(element, "::after").opacity,
+    })),
+  ).toEqual(expect.objectContaining({ opacity: "1" }));
+  await expect.poll(() =>
+    missingKeyStatusHint.evaluate((element) => getComputedStyle(element, "::after").content),
+  ).toContain("Missing Key Gateway");
+  const missingKeyMenu = await openProviderRowMenu(missingKeyGatewayRow);
+  await expect(missingKeyMenu.getByRole("menuitem", { name: "停用" })).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(missingKeyMenu).toBeHidden();
   await expect(missingKeyGatewayRow.getByRole("button", { name: "使用" })).toHaveCount(0);
   const tableLayout = await missingKeyGatewayRow.evaluate((row) => {
     const cells = Array.from(row.children).map((cell) => {
@@ -110,6 +140,19 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(stickyActionLayout).toBeDefined();
   expect(stickyActionLayout?.actionCell.right).toBeLessThanOrEqual((stickyActionLayout?.shell.right ?? 0) + 1);
   expect(stickyActionLayout?.actionCell.left).toBeGreaterThanOrEqual((stickyActionLayout?.shell.left ?? 0) - 1);
+  const shellHeights = await page.locator(".provider-workbench").evaluate((workbench) => {
+    const shell = workbench.querySelector(".provider-table-shell");
+    const rect = workbench.getBoundingClientRect();
+    const shellRect = shell?.getBoundingClientRect();
+    return shellRect
+      ? {
+        workbenchHeight: rect.height,
+        shellHeight: shellRect.height,
+      }
+      : undefined;
+  });
+  expect(shellHeights).toBeDefined();
+  expect(shellHeights?.shellHeight ?? 0).toBeGreaterThan((shellHeights?.workbenchHeight ?? 0) * 0.45);
 
   await page.getByRole("button", { name: "添加模型" }).first().click();
   const editor = page.getByRole("dialog", { name: "新建预设" });
@@ -394,7 +437,7 @@ test("model workbench edits media presets from the unified supplier picker", asy
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
   const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
-  await seedreamRow.getByRole("button", { name: "编辑" }).click();
+  await clickProviderRowMenuItem(seedreamRow, "编辑");
   const editor = page.getByRole("dialog", { name: "编辑预设" });
   await expect(editor.getByRole("tab")).toHaveCount(0);
   await expect(editor.getByLabel("模型供应商")).toHaveValue("seedream-image");
@@ -402,7 +445,7 @@ test("model workbench edits media presets from the unified supplier picker", asy
   await page.getByRole("button", { name: "关闭模型预设编辑器" }).click();
 
   const seedanceRow = page.locator(".provider-row").filter({ hasText: "Seedance Video" });
-  await seedanceRow.getByRole("button", { name: "编辑" }).click();
+  await clickProviderRowMenuItem(seedanceRow, "编辑");
   const seedanceEditor = page.getByRole("dialog", { name: "编辑预设" });
   await expect(seedanceEditor.getByRole("tab")).toHaveCount(0);
   await expect(seedanceEditor.getByLabel("模型供应商")).toHaveValue("seedance-video");
@@ -514,11 +557,11 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
-  await expect(page.getByText("Saved presets")).toBeVisible();
-  await expect(page.locator(".provider-capability-summary")).toContainText("Suppliers");
-  await expect(page.locator(".provider-capability-summary")).not.toContainText("Chat models");
-  await expect(page.locator(".provider-capability-summary")).not.toContainText("Media models");
-  await expect(page.getByText("Coding ready")).toBeVisible();
+  await expect(page.locator(".provider-page-meta")).toContainText("Ready to use");
+  await expect(page.locator(".provider-page-meta")).toContainText("Needs config");
+  await expect(page.locator(".provider-page-meta")).toContainText("Missing key");
+  await expect(page.locator(".provider-page-meta")).not.toContainText("Chat models");
+  await expect(page.locator(".provider-page-meta")).not.toContainText("Media models");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
   const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
@@ -531,7 +574,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" })).toContainText("auth failed");
   const readyLocalRelayRow = page.locator(".provider-row").filter({ hasText: "Ready Local Relay" });
   await expect(readyLocalRelayRow).toContainText("check ready");
-  await expect(readyLocalRelayRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(readyLocalRelayRow).toContainText("Current default");
   await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toBeVisible();
   await readyLocalRelayRow.getByRole("button", { name: "Clear default" }).click();
@@ -539,22 +582,24 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect.poll(() =>
     state.channels.every((channel) => !isRecord(channel) || channel.defaultProviderPresetId === undefined)
   ).toBe(true);
-  await expect(readyLocalRelayRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(readyLocalRelayRow.locator(".provider-state.disabled")).toHaveCount(0);
   const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
   await expect(seedreamRow).not.toContainText("Media task");
   await expect(seedreamRow).toContainText("Image");
-  await expect(seedreamRow).toContainText("Run readiness: blocked");
+  await expect(seedreamRow).not.toContainText("not chat-capable");
+  await expect(seedreamRow.locator(".provider-action-note")).toContainText("Generation model");
+  await expect(seedreamRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
   const legacyOpenAiRow = page.locator(".provider-row").filter({ hasText: "Legacy OpenAI Without Stored Endpoint" });
   await expect(legacyOpenAiRow).toContainText("https://api.openai.com/v1");
-  await legacyOpenAiRow.getByRole("button", { name: "Edit" }).click();
+  await clickProviderRowMenuItem(legacyOpenAiRow, "Edit");
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
   await expect(page.getByLabel("Base URL")).toHaveValue("https://api.openai.com/v1");
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
   await expect(page.getByLabel("API protocol")).toBeDisabled();
   await page.getByRole("button", { name: "Close model preset editor" }).click();
   const openAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
-  await openAiProxyRow.getByRole("button", { name: "Edit" }).click();
+  await clickProviderRowMenuItem(openAiProxyRow, "Edit");
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
   await expect(page.getByLabel("Base URL")).toHaveValue("http://192.168.80.114:8317/v1");
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
@@ -570,16 +615,15 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
     )
   ).toBe(true);
   await expect(openAiProxyRow.getByRole("button", { name: "Clear default" })).toBeVisible();
-  await expect(openAiProxyRow.locator(".provider-state.enabled")).toHaveCount(1);
-  await expect(readyLocalRelayRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(openAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
+  await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
 
   await page.reload();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
   const reloadedOpenAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
   await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Clear default" })).toBeVisible();
-  await expect(reloadedOpenAiProxyRow.locator(".provider-state.enabled")).toHaveCount(1);
-  await reloadedOpenAiProxyRow.getByRole("button", { name: "Disable" }).click();
-  await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Enable" })).toBeVisible();
+  await expect(reloadedOpenAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
+  await clickProviderRowMenuItem(reloadedOpenAiProxyRow, "Disable");
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.disabled")).toHaveCount(1);
   await expect(reloadedOpenAiProxyRow).not.toContainText("Current default");
   await expect.poll(() =>
@@ -650,7 +694,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(customProviderRow).toContainText("key ready");
   await expect(customProviderRow).toContainText("check ready");
   await expect(customDoubaoRow).toBeVisible();
-  await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("Model:");
+  await expect(customProviderRow.locator(".provider-model-name")).toContainText("cliproxy-gpt-4o");
   await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("Capabilities:");
   await expect(customProviderRow.locator(".provider-meta-line").first()).not.toContainText("custom-openai-compatible");
   await expect(customProviderRow).not.toContainText("Current default");
@@ -671,7 +715,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
     ).length
   ).toBe(2);
 
-  await customProviderRow.getByRole("button", { name: "Edit" }).click();
+  await clickProviderRowMenuItem(customProviderRow, "Edit");
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
   await expect(page.getByLabel("API protocol")).toBeEnabled();
@@ -717,25 +761,22 @@ test("model workbench status counts align with saved chat and media presets", as
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
-  const statusTabs = page.locator(".provider-status-tabs");
-  await expect(statusTabs.getByRole("button", { name: /Available 3/ })).toBeVisible();
-  await expect(statusTabs.getByRole("button", { name: /Needs config 0/ })).toBeVisible();
-  await expect(statusTabs.getByRole("button", { name: /Disabled providers 0/ })).toBeVisible();
-  const summary = page.locator(".provider-capability-summary");
-  await expect(summary).toContainText("Saved presets 3");
-  await expect(summary).toContainText("Suppliers 3");
+  const filters = page.getByLabel("Filter model presets");
+  const summary = page.locator(".provider-page-meta");
+  await expect(summary).toContainText("Ready to use 3");
+  await expect(summary).toContainText("Needs config 0");
+  await expect(summary).toContainText("Missing key 0");
+  await expect(summary).toContainText("Disabled 0");
   await expect(summary).not.toContainText("Chat models");
   await expect(summary).not.toContainText("Media models");
-  await expect(summary).toContainText("Coding ready 1");
-  await expect(summary).toContainText("Missing secrets 0");
   await expect(summary).not.toContainText("Templates");
   await expect(page.locator(".provider-group-row")).toHaveCount(0);
   await expect(page.locator(".provider-row")).toHaveCount(3);
 
-  await statusTabs.getByRole("button", { name: /Available 3/ }).click();
+  await filters.selectOption("ready");
   await expect(page.locator(".provider-row")).toHaveCount(3);
   await expect(page.locator(".provider-group-row")).toHaveCount(0);
-  await statusTabs.getByRole("button", { name: /Needs config 0/ }).click();
+  await filters.selectOption("needsAttention");
   await expect(page.locator(".provider-row")).toHaveCount(0);
   await expect(page.locator(".provider-group-row")).toHaveCount(0);
 });
@@ -782,7 +823,7 @@ test("model workbench row checks show inline feedback without spinning batch che
   await expect(page.locator(".provider-check-feedback-row")).toHaveCount(1);
 
   const mediaRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
-  await mediaRow.getByRole("button", { name: "Check" }).click();
+  await clickProviderRowMenuItem(mediaRow, "Check");
   const mediaFeedback = page.locator(".provider-check-feedback-row.ok").filter({ hasText: "Generated a real image successfully." });
   await expect(mediaFeedback).toContainText("Check passed");
   await expect(mediaFeedback).not.toContainText("Media vendor transport");
@@ -818,11 +859,11 @@ test("save and check enables a disabled provider before checking", async ({ page
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Disabled Relay" });
-  await disabledRow.getByRole("button", { name: "Edit" }).click();
+  await clickProviderRowMenuItem(disabledRow, "Edit");
   await page.getByLabel("API key", { exact: true }).fill("disabled-provider-key");
   await page.getByRole("button", { name: "Save" }).click();
 
-  await expect(disabledRow).toContainText("enabled");
+  await expect(disabledRow).toContainText("Ready to use");
   await expect(disabledRow).toContainText("check ready");
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
@@ -852,9 +893,9 @@ test("row check enables a configured disabled chat provider before checking", as
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Configured Disabled Relay" });
-  await disabledRow.getByRole("button", { name: "Check" }).click();
+  await clickProviderRowMenuItem(disabledRow, "Check");
 
-  await expect(disabledRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(disabledRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(disabledRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await expect(disabledRow).toContainText("check ready");
   await expect.poll(() => {

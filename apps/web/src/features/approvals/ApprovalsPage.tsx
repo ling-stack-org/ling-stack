@@ -43,6 +43,7 @@ export function ApprovalsPage({
   onExecuteExternalAction,
   onCancelExternalAction,
   onOpenRun,
+  onOpenWorkBoard,
   onClearRepair,
   channels,
   onRouteExternalWork,
@@ -66,6 +67,7 @@ export function ApprovalsPage({
   readonly onExecuteExternalAction: (actionId: string) => void;
   readonly onCancelExternalAction: (actionId: string) => void;
   readonly onOpenRun: (runId: string) => void;
+  readonly onOpenWorkBoard?: (scope?: "actionable" | "history") => void;
   readonly onClearRepair: () => void;
   readonly channels?: readonly Channel[];
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
@@ -81,14 +83,14 @@ export function ApprovalsPage({
   });
   const focusedApprovals = repairRunId ? approvals.filter((approval) => approval.runId === repairRunId) : reviewQueueItems.map((item) => item.approval);
   const selectedReviewQueueItem = reviewQueueItems.find((item) => item.approval.id === selectedApprovalId) ?? reviewQueueItems[0];
-  const listEmptyCopy = repairRunId ? t("No approval records for this run") : t("Review Queue is clear");
+  const listEmptyCopy = repairRunId ? t("No approval records for this run") : t("Review queue is clear");
 
   return (
     <section className="panel approvals-panel" aria-labelledby="approvals-title">
       <div className="panel-title split">
         <span>
           <ShieldCheck size={18} />
-          <h2 id="approvals-title">{repairRunId ? t("Approval requests") : t("Review Queue")}</h2>
+          <h2 id="approvals-title">{repairRunId ? t("Approval requests") : t("Inbox")}</h2>
         </span>
         <button
           className="secondary-button compact-button"
@@ -121,7 +123,7 @@ export function ApprovalsPage({
       ) : null}
 
       {!repairRunId ? (
-        <div className="review-queue-summary" aria-label={t("Review Queue summary")}>
+        <div className="review-queue-summary" aria-label={t("Inbox summary")}>
           <span>{t("{count} review items", { count: reviewQueueItems.length })}</span>
           {[...new Set(reviewQueueItems.map((item) => item.category))].map((category) => (
             <span key={category}>{t(reviewQueueCategoryLabel(category))}</span>
@@ -161,6 +163,8 @@ export function ApprovalsPage({
           selectedItem={selectedReviewQueueItem}
           isLoading={isLoading}
           listEmptyCopy={listEmptyCopy}
+          onRefresh={onRefresh}
+          onOpenWorkBoard={onOpenWorkBoard}
           channels={channels}
           routingExternalWorkId={routingExternalWorkId}
           externalActionBusy={externalActionBusy}
@@ -182,6 +186,8 @@ function ReviewQueueLayout({
   selectedItem,
   isLoading,
   listEmptyCopy,
+  onRefresh,
+  onOpenWorkBoard,
   channels,
   routingExternalWorkId,
   externalActionBusy,
@@ -197,6 +203,8 @@ function ReviewQueueLayout({
   readonly selectedItem?: ReviewQueueItem;
   readonly isLoading: boolean;
   readonly listEmptyCopy: string;
+  readonly onRefresh: () => void;
+  readonly onOpenWorkBoard?: (scope?: "actionable" | "history") => void;
   readonly channels?: readonly Channel[];
   readonly routingExternalWorkId?: string;
   readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
@@ -212,9 +220,50 @@ function ReviewQueueLayout({
   if (items.length === 0) {
     return (
       <div className="review-queue-layout approval-list empty">
-        <div className="empty-state compact-empty">
+        <div className="review-queue-empty-state compact-empty">
           {isLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
-          <span>{isLoading ? t("Loading approvals...") : listEmptyCopy}</span>
+          <strong>{isLoading ? t("Loading approvals...") : listEmptyCopy}</strong>
+          {!isLoading ? (
+            <>
+              <p>{t("External action approvals, channel attention items, and high-risk local approvals will appear here.")}</p>
+              <div className="review-queue-category-grid" aria-label={t("Inbox categories")}>
+                <span>
+                  <strong>{t("Needs my attention")}</strong>
+                  <small>{t("High-risk approvals and decisions that need a human answer.")}</small>
+                </span>
+                <span>
+                  <strong>{t("Channel reminders")}</strong>
+                  <small>{t("Channel work that needs attention will be summarized here.")}</small>
+                </span>
+                <span>
+                  <strong>{t("External actions")}</strong>
+                  <small>{t("GitHub, CI, or other external actions wait here before execution.")}</small>
+                </span>
+                <span>
+                  <strong>{t("Local approvals")}</strong>
+                  <small>{t("Local file, command, and write-risk approvals stay visible here.")}</small>
+                </span>
+              </div>
+              <div className="review-queue-empty-actions">
+                <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
+                  <RefreshCw size={14} />
+                  {t("Refresh")}
+                </button>
+                {onOpenWorkBoard ? (
+                  <button className="secondary-button compact-button" type="button" onClick={() => onOpenWorkBoard("actionable")}>
+                    <History size={14} />
+                    {t("Open Work Board")}
+                  </button>
+                ) : null}
+                {onOpenWorkBoard ? (
+                  <button className="secondary-button compact-button" type="button" onClick={() => onOpenWorkBoard("history")}>
+                    <History size={14} />
+                    {t("View approval history")}
+                  </button>
+                ) : null}
+              </div>
+            </>
+          ) : null}
         </div>
         <ReviewQueueDetailPanel
           cwd={cwd}
@@ -223,6 +272,8 @@ function ReviewQueueLayout({
           routingExternalWorkId={routingExternalWorkId}
           externalActionBusy={externalActionBusy}
           resolvingApprovals={resolvingApprovals}
+          onRefresh={onRefresh}
+          onOpenWorkBoard={onOpenWorkBoard}
           onRouteExternalWork={onRouteExternalWork}
           onSelectApproval={onSelectApproval}
           onResolve={onResolve}
@@ -235,7 +286,7 @@ function ReviewQueueLayout({
 
   return (
     <div className="review-queue-layout approval-list">
-      <div className="review-queue-list" aria-label={t("Review Queue")}>
+      <div className="review-queue-list" aria-label={t("Inbox")}>
         {items.map((item) => (
           <ReviewQueueRow
             key={item.id}
@@ -252,6 +303,8 @@ function ReviewQueueLayout({
         routingExternalWorkId={routingExternalWorkId}
         externalActionBusy={externalActionBusy}
         resolvingApprovals={resolvingApprovals}
+        onRefresh={onRefresh}
+        onOpenWorkBoard={onOpenWorkBoard}
         onRouteExternalWork={onRouteExternalWork}
         onSelectApproval={onSelectApproval}
         onResolve={onResolve}
@@ -311,6 +364,22 @@ function translateReviewQueueTimingLabel(timing: string, t: (key: string, values
   return timing;
 }
 
+function readReviewQueueRecommendedAction(item: ReviewQueueItem): string {
+  if (item.category === "approve_external_action") {
+    return "Approve or reject this external action";
+  }
+  if (item.category === "execute_approved_action") {
+    return "Execute or cancel the approved action";
+  }
+  if (item.category === "route") {
+    return "Route it to the right channel";
+  }
+  if (item.category === "repair") {
+    return "Open the linked run and fix the blocker";
+  }
+  return "Review the local action risk";
+}
+
 function ReviewQueueDetailPanel({
   cwd,
   item,
@@ -318,6 +387,8 @@ function ReviewQueueDetailPanel({
   routingExternalWorkId,
   externalActionBusy,
   resolvingApprovals,
+  onRefresh,
+  onOpenWorkBoard,
   onRouteExternalWork,
   onSelectApproval,
   onResolve,
@@ -330,6 +401,8 @@ function ReviewQueueDetailPanel({
   readonly routingExternalWorkId?: string;
   readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly onRefresh?: () => void;
+  readonly onOpenWorkBoard?: (scope?: "actionable" | "history") => void;
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
   readonly onSelectApproval: (approvalId: string) => void;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
@@ -342,8 +415,28 @@ function ReviewQueueDetailPanel({
     return (
       <aside className="review-queue-detail empty" aria-label={t("Review item detail")}>
         <ShieldCheck size={22} />
-        <strong>{t("No review item selected")}</strong>
-        <p>{t("Select a queue item to inspect its approval payload, target, and available actions.")}</p>
+        <strong>{t("Inbox handling panel")}</strong>
+        <p>{t("Select an inbox item to see the current issue, recommended action, related run, and risk details.")}</p>
+        <div className="review-queue-empty-actions">
+          {onRefresh ? (
+            <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
+              <RefreshCw size={14} />
+              {t("Refresh")}
+            </button>
+          ) : null}
+          {onOpenWorkBoard ? (
+            <button className="secondary-button compact-button" type="button" onClick={() => onOpenWorkBoard("actionable")}>
+              <History size={14} />
+              {t("Open Work Board")}
+            </button>
+          ) : null}
+          {onOpenWorkBoard ? (
+            <button className="secondary-button compact-button" type="button" onClick={() => onOpenWorkBoard("history")}>
+              <History size={14} />
+              {t("View approval history")}
+            </button>
+          ) : null}
+        </div>
       </aside>
     );
   }
@@ -360,6 +453,12 @@ function ReviewQueueDetailPanel({
           <span className={`approval-risk ${item.approval.risk}`}>{t(item.approval.risk)}</span>
           <span>{t(item.priority)}</span>
         </div>
+      </div>
+
+      <div className="review-queue-detail-action-summary">
+        <span>{t("Current issue")}</span>
+        <p>{item.description}</p>
+        <strong>{t("Recommended action: {action}", { action: t(readReviewQueueRecommendedAction(item)) })}</strong>
       </div>
 
       <div className="review-queue-detail-meta">
@@ -464,6 +563,7 @@ function ApprovalRunRepairPanel({
   readonly onOpenRun: () => void;
   readonly onClear: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const pendingApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
   const resolvedApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) !== "pending");
   const highestRisk = highestApprovalRisk(approvals);
@@ -475,32 +575,32 @@ function ApprovalRunRepairPanel({
       <div className="approval-run-repair-head">
         <span>
           <ShieldCheck size={16} />
-          <strong>Resolve run approvals</strong>
+          <strong>{t("Resolve run approvals")}</strong>
         </span>
         <button className="secondary-button compact-button" type="button" onClick={onClear}>
-          Clear
+          {t("Clear")}
         </button>
       </div>
       <div className="approval-run-repair-copy">
         <span>
-          Run <code>{runId}</code> is focused for approval repair.
+          {t("Run {runId} is focused for approval repair.", { runId })}
         </span>
-        <small>Task: {taskLabel}</small>
+        <small>{t("Task")}: {taskLabel}</small>
       </div>
       <div className="approval-run-repair-meta">
-        <span className="approval-state pending">{pendingApprovals.length} pending</span>
-        <span className="approval-state approved">{resolvedApprovals.length} resolved</span>
-        <span className={`approval-risk ${highestRisk}`}>{highestRisk}</span>
+        <span className="approval-state pending">{t("{count} pending", { count: pendingApprovals.length })}</span>
+        <span className="approval-state approved">{t("{count} resolved", { count: resolvedApprovals.length })}</span>
+        <span className={`approval-risk ${highestRisk}`}>{t(highestRisk)}</span>
         {actionTypes.length > 0 ? <span className="approval-state">{actionTypes.join(", ")}</span> : null}
       </div>
       <div className="approval-run-repair-actions">
         <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
           {isLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          Reload
+          {t("Reload")}
         </button>
         <button className="primary-button compact-button" type="button" onClick={onOpenRun}>
           <History size={14} />
-          Back to run
+          {t("Back to run")}
         </button>
       </div>
     </div>
