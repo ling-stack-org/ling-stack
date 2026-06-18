@@ -363,6 +363,7 @@ import { SqliteRunSessionStore } from "./sqlite/run-session-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
 import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
+import { SqliteRuntimeRecoveryCoordinator } from "./sqlite/runtime-recovery-coordinator.js";
 import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
@@ -401,8 +402,6 @@ import {
   lingTurnSelectSql,
 } from "./sqlite/select-sql.js";
 
-const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
-
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
   readonly paths?: LingStackRuntimePaths;
@@ -426,6 +425,7 @@ export class SqliteRunStore implements RunStore {
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
+  private readonly runtimeRecovery: SqliteRuntimeRecoveryCoordinator;
   private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
   private readonly skillRegistry: SqliteSkillRegistryStore;
@@ -531,6 +531,22 @@ export class SqliteRunStore implements RunStore {
         assertLinkPreviewInChannel: (channelId, linkPreviewId) => this.assertLinkPreviewInChannel(channelId, linkPreviewId),
       },
     );
+    this.runtimeRecovery = new SqliteRuntimeRecoveryCoordinator({
+      expireResourceLeases: (now) => this.expireResourceLeases(now),
+      listRecoverableRunIds: () => this.runSessions.listRecoverableRunIds(),
+      hasTerminalRunEvent: (runId) => this.runEvents.hasTerminalEvent(runId),
+      appendRunEvent: (runId, type, data) => this.appendEvent(runId, type, data),
+      markRunFailed: (runId, endedAt, errorMessage) => this.markRunFailed(runId, endedAt, errorMessage),
+      getRun: (runId) => this.getRun(runId),
+      getLingThread: (threadId) => this.getLingThread(threadId),
+      updateLingThread: (threadId, input, now) => this.updateLingThread(threadId, input, now),
+      listRecoverableChannelWorkflows: () => this.channelWorkflows.listRecoverableChannelWorkflows(),
+      listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
+      getApprovalRequest: (id) => this.getApprovalRequest(id),
+      transitionChannelWorkflowStepStatus: (input) => this.transitionChannelWorkflowStepStatus(input),
+      getChannelWorkflow: (workflowId) => this.getChannelWorkflow(workflowId),
+      transitionChannelWorkflowStatus: (input) => this.transitionChannelWorkflowStatus(input),
+    });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
     this.tasks = new SqliteTaskStore({ database: this.database });
@@ -1412,230 +1428,11 @@ export class SqliteRunStore implements RunStore {
   }
 
   recoverStaleRuns(now: string): number {
-    this.expireResourceLeases(now);
-    const staleRuns = this.database
-      .prepare("SELECT id FROM run_sessions WHERE status IN ('queued', 'running', 'waiting_for_approval')")
-      .all()
-      .map((row) => readString(row, "id"));
-
-    for (const runId of staleRuns) {
-      if (!this.hasTerminalEvent(runId)) {
-        this.appendEvent(runId, "run_error", { message: STALE_RUN_ERROR });
-      }
-      this.markRunFailed(runId, now, STALE_RUN_ERROR);
-      const run = this.getRun(runId);
-      const thread = run?.threadId ? this.getLingThread(run.threadId) : undefined;
-      if (run?.threadId && thread) {
-        this.updateLingThread(
-          run.threadId,
-          {
-            status: "failed",
-            activeRunId: thread.activeRunId === run.id ? null : thread.activeRunId,
-            lastRunId: run.id,
-          },
-          now,
-        );
-      }
-    }
-
-    return staleRuns.length;
+    return this.runtimeRecovery.recoverStaleRuns(now);
   }
 
   recoverStaleChannelWorkflows(now: string): number {
-    let recovered = 0;
-    const workflows = this.listRecoverableChannelWorkflows();
-
-    for (const workflow of workflows) {
-      const steps = this.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
-      for (const step of steps) {
-        if (step.status === "running" && step.runId) {
-          const run = this.getRun(step.runId);
-          if (run?.status === "succeeded") {
-            recovered += this.recoverWorkflowStepSucceeded(step, run, now) ? 1 : 0;
-          } else if (run?.status === "failed" || run?.status === "cancelled") {
-            recovered += this.recoverWorkflowStepFailed(step, run, now) ? 1 : 0;
-          } else if (!run) {
-            recovered += this.recoverWorkflowStepBlocked(step, "Linked run is missing after daemon restart.", now) ? 1 : 0;
-          }
-          continue;
-        }
-        if (step.status === "running" && !step.runId) {
-          recovered += this.recoverWorkflowStepBlocked(step, "Daemon restarted before workflow step run started; retry required.", now) ? 1 : 0;
-          continue;
-        }
-        if (step.status === "claimed") {
-          recovered += this.recoverWorkflowClaimedStepBlocked(step, "Daemon restarted after workflow step was claimed; retry required.", now) ? 1 : 0;
-          continue;
-        }
-        if (step.status === "waiting_for_approval" && step.metadata?.preStepApprovalId) {
-          const approval = this.getApprovalRequest(step.metadata.preStepApprovalId);
-          if (approval?.status === "approved") {
-            recovered += this.recoverWorkflowStepBlocked(step, "Daemon restarted after approval but before workflow step run started; retry required.", now) ? 1 : 0;
-          } else if (approval && approval.status !== "pending") {
-            recovered += this.recoverWorkflowStepApprovalFailed(step, approval.status, approval.decisionReason ?? `Workflow step approval ${approval.status}.`, now) ? 1 : 0;
-          }
-        }
-      }
-      recovered += this.recoverWorkflowAggregateStatus(workflow.id, now);
-    }
-
-    return recovered;
-  }
-
-  private recoverWorkflowStepSucceeded(step: ChannelWorkflowStep, run: RunSession, now: string): boolean {
-    const result = this.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "running",
-      event: "succeed",
-      actor: "system",
-      reason: `startup_recovery:${run.id}`,
-      now,
-      taskId: step.taskId ?? run.taskId,
-      runId: run.id,
-      resultSummary: "Recovered from linked terminal run.",
-    });
-    return result.ok;
-  }
-
-  private listRecoverableChannelWorkflows(): ChannelWorkflow[] {
-    return this.channelWorkflows.listRecoverableChannelWorkflows();
-  }
-
-  private recoverWorkflowStepFailed(step: ChannelWorkflowStep, run: RunSession, now: string): boolean {
-    const result = this.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "running",
-      event: run.status === "cancelled" ? "cancel" : "fail",
-      actor: "system",
-      reason: run.errorMessage ?? `startup_recovery:${run.id}`,
-      now,
-      taskId: step.taskId ?? run.taskId,
-      runId: run.id,
-      blocker: run.errorMessage ?? `Linked run ${run.status} during startup recovery.`,
-    });
-    return result.ok;
-  }
-
-  private recoverWorkflowClaimedStepBlocked(step: ChannelWorkflowStep, blocker: string, now: string): boolean {
-    const started = this.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      reason: "startup_recovery",
-      now,
-      blocker: null,
-    });
-    if (!started.ok) {
-      return false;
-    }
-    return this.recoverWorkflowStepBlocked({ ...step, status: "running" }, blocker, now);
-  }
-
-  private recoverWorkflowStepBlocked(step: ChannelWorkflowStep, blocker: string, now: string): boolean {
-    if (step.status === "waiting_for_approval") {
-      const approved = this.transitionChannelWorkflowStepStatus({
-        workflowStepId: step.id,
-        expectedStatus: "waiting_for_approval",
-        event: "approval_approved",
-        actor: "system",
-        reason: "startup_recovery",
-        now,
-        blocker: null,
-      });
-      if (!approved.ok) {
-        return false;
-      }
-      return this.recoverWorkflowStepBlocked({ ...step, status: "running" }, blocker, now);
-    }
-    const result = this.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: step.status,
-      event: "blocked",
-      actor: "system",
-      reason: blocker,
-      now,
-      blocker,
-    });
-    return result.ok;
-  }
-
-  private recoverWorkflowStepApprovalFailed(step: ChannelWorkflowStep, status: string, blocker: string, now: string): boolean {
-    const result = this.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "waiting_for_approval",
-      event: "fail",
-      actor: "system",
-      reason: blocker,
-      now,
-      blocker,
-    });
-    if (result.ok) {
-      this.transitionChannelWorkflowStatus({
-        workflowId: step.workflowId,
-        expectedStatus: this.getChannelWorkflow(step.workflowId)?.status,
-        event: "step_failed",
-        actor: "system",
-        reason: `approval_${status}`,
-        now,
-      });
-    }
-    return result.ok;
-  }
-
-  private recoverWorkflowAggregateStatus(workflowId: string, now: string): number {
-    const workflow = this.getChannelWorkflow(workflowId);
-    if (!workflow || workflow.status === "succeeded" || workflow.status === "failed" || workflow.status === "cancelled") {
-      return 0;
-    }
-    const steps = this.listChannelWorkflowSteps({ workflowId, limit: 500 });
-    if (steps.length > 0 && steps.every((step) => step.status === "succeeded" || step.status === "skipped")) {
-      const result = this.transitionChannelWorkflowStatus({
-        workflowId,
-        expectedStatus: workflow.status,
-        event: workflow.status === "waiting_for_approval" ? "approval_approved" : "all_steps_succeeded",
-        actor: "system",
-        reason: "startup_recovery",
-        now,
-      });
-      if (result.ok && result.to !== "succeeded") {
-        const succeeded = this.transitionChannelWorkflowStatus({
-          workflowId,
-          expectedStatus: "running",
-          event: "all_steps_succeeded",
-          actor: "system",
-          reason: "startup_recovery",
-          now,
-        });
-        return succeeded.ok ? 2 : 1;
-      }
-      return result.ok ? 1 : 0;
-    }
-    const failed = steps.find((step) => step.status === "failed" || step.status === "cancelled");
-    if (failed) {
-      const result = this.transitionChannelWorkflowStatus({
-        workflowId,
-        expectedStatus: workflow.status,
-        event: "step_failed",
-        actor: "system",
-        reason: failed.blocker ?? "startup_recovery",
-        now,
-      });
-      return result.ok ? 1 : 0;
-    }
-    const blocked = steps.find((step) => step.status === "blocked");
-    if (blocked && workflow.status === "running") {
-      const result = this.transitionChannelWorkflowStatus({
-        workflowId,
-        expectedStatus: "running",
-        event: "step_blocked",
-        actor: "system",
-        reason: blocked.blocker ?? "startup_recovery",
-        now,
-      });
-      return result.ok ? 1 : 0;
-    }
-    return 0;
+    return this.runtimeRecovery.recoverStaleChannelWorkflows(now);
   }
 
   listStateTransitionEvents(options: ListStateTransitionEventsOptions = {}): StateTransitionEvent[] {
@@ -3066,10 +2863,6 @@ export class SqliteRunStore implements RunStore {
     this.database
       .prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)")
       .run(version, name, new Date().toISOString());
-  }
-
-  private hasTerminalEvent(runId: string): boolean {
-    return this.runEvents.hasTerminalEvent(runId);
   }
 
   private assertChannelExists(channelId: string): void {
