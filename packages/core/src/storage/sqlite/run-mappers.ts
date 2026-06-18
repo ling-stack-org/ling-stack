@@ -1,0 +1,181 @@
+import type { SQLOutputValue } from "node:sqlite";
+import { runContinuationReasons, type LingThread, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
+import { omitUndefined, parseJson, readNullableString, readNumber, readString } from "./helpers.js";
+
+export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    kind: readString(row, "kind") as LingThreadKind,
+    channelId: readNullableString(row, "channel_id"),
+    taskId: readNullableString(row, "task_id"),
+    teammateId: readNullableString(row, "teammate_id"),
+    workflowId: readNullableString(row, "workflow_id"),
+    workflowStepId: readNullableString(row, "workflow_step_id"),
+    externalWorkId: readNullableString(row, "external_work_id"),
+    title: readString(row, "title"),
+    objective: readString(row, "objective"),
+    status: readString(row, "status") as LingThreadStatus,
+    activeRunId: readNullableString(row, "active_run_id"),
+    lastRunId: readNullableString(row, "last_run_id"),
+    parentThreadId: readNullableString(row, "parent_thread_id"),
+    parentTurnId: readNullableString(row, "parent_turn_id"),
+    forkedFromRunId: readNullableString(row, "forked_from_run_id"),
+    metadata: parseOptionalLingThreadMetadata(readNullableString(row, "metadata_json")),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    pinnedAt: readNullableString(row, "pinned_at"),
+    archivedAt: readNullableString(row, "archived_at"),
+    archivedReason: readNullableString(row, "archived_reason"),
+  });
+}
+
+export function mapLingTurn(row: Record<string, SQLOutputValue>): LingTurn {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    threadId: readString(row, "thread_id"),
+    kind: readString(row, "kind") as LingTurnKind,
+    status: readString(row, "status") as LingTurnStatus,
+    title: readString(row, "title"),
+    userInstruction: readString(row, "user_instruction"),
+    channelId: readNullableString(row, "channel_id"),
+    taskId: readNullableString(row, "task_id"),
+    teammateId: readNullableString(row, "teammate_id"),
+    workflowStepId: readNullableString(row, "workflow_step_id"),
+    externalWorkId: readNullableString(row, "external_work_id"),
+    automationId: readNullableString(row, "automation_id"),
+    sourceMessageId: readNullableString(row, "source_message_id"),
+    sourceTurnId: readNullableString(row, "source_turn_id"),
+    interventionId: readNullableString(row, "intervention_id"),
+    activeRunId: readNullableString(row, "active_run_id"),
+    lastRunId: readNullableString(row, "last_run_id"),
+    createdByActor: readString(row, "created_by_actor") as LingTurn["createdByActor"],
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    completedAt: readNullableString(row, "completed_at"),
+  });
+}
+
+export function mapLingTurnRun(row: Record<string, SQLOutputValue>): LingTurnRun {
+  return {
+    turnId: readString(row, "turn_id"),
+    runId: readString(row, "run_id"),
+    attemptNumber: readNumber(row, "attempt_number"),
+    role: readString(row, "role") as LingTurnRunRole,
+    createdAt: readString(row, "created_at"),
+  };
+}
+
+export function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
+  return omitUndefined({
+    id: readString(row, "id"),
+    status: readString(row, "status") as RunStatus,
+    cwd: readString(row, "cwd"),
+    taskId: readString(row, "task_id"),
+    channelId: readNullableString(row, "channel_id"),
+    teammateId: readNullableString(row, "teammate_id"),
+    workflowStepId: readNullableString(row, "workflow_step_id"),
+    selectedSkillId: readNullableString(row, "selected_skill_id"),
+    providerPresetId: readNullableString(row, "provider_preset_id"),
+    providerName: readString(row, "provider_name"),
+    providerModel: readString(row, "provider_model"),
+    taskSnapshot: parseJson(readString(row, "task_snapshot_json")),
+    providerSnapshot: parseJson(readString(row, "provider_snapshot_json")),
+    requestSnapshot: parseJson(readString(row, "request_snapshot_json")),
+    eventLogPath: readString(row, "event_log_path"),
+    threadId: readNullableString(row, "thread_id"),
+    workUnitId: readNullableString(row, "work_unit_id"),
+    parentRunId: readNullableString(row, "parent_run_id"),
+    interventionId: readNullableString(row, "intervention_id"),
+    continuationReason: readNullableRunContinuationReason(row, "continuation_reason"),
+    summaryPath: readNullableString(row, "summary_path"),
+    errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    startedAt: readNullableString(row, "started_at"),
+    endedAt: readNullableString(row, "ended_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+export function mapRunEvent(row: Record<string, SQLOutputValue>): RunEventEnvelope {
+  return {
+    id: readString(row, "id"),
+    runId: readString(row, "run_id"),
+    seq: readNumber(row, "seq"),
+    ts: readString(row, "ts"),
+    type: readString(row, "type") as RunEventType,
+    data: parseJson(readString(row, "data_json")),
+  };
+}
+
+function parseOptionalLingThreadMetadata(value: string | undefined): LingThreadMetadata | undefined {
+  if (!value) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  if (record.schemaVersion !== 1 || typeof record.rebuiltAt !== "string") {
+    return undefined;
+  }
+  const pendingApprovalCount = readRequiredNonNegativeIntegerValue(record.pendingApprovalCount);
+  const blockedCount = readRequiredNonNegativeIntegerValue(record.blockedCount);
+  const failedAttemptCount = readRequiredNonNegativeIntegerValue(record.failedAttemptCount);
+  const artifactCount = readRequiredNonNegativeIntegerValue(record.artifactCount);
+  if (
+    pendingApprovalCount === undefined ||
+    blockedCount === undefined ||
+    failedAttemptCount === undefined ||
+    artifactCount === undefined
+  ) {
+    return undefined;
+  }
+  return omitUndefined({
+    schemaVersion: 1 as const,
+    summary: readOptionalStringValue(record.summary),
+    pinnedAt: readOptionalStringValue(record.pinnedAt),
+    lastTurnId: readOptionalStringValue(record.lastTurnId),
+    lastActivityAt: readOptionalStringValue(record.lastActivityAt),
+    pendingApprovalCount,
+    blockedCount,
+    failedAttemptCount,
+    artifactCount,
+    latestFailureRunId: readOptionalStringValue(record.latestFailureRunId),
+    latestEvidenceArtifactId: readOptionalStringValue(record.latestEvidenceArtifactId),
+    rebuiltAt: record.rebuiltAt,
+  });
+}
+
+function readNullableRunContinuationReason(row: Record<string, SQLOutputValue>, key: string): RunContinuationReason | undefined {
+  const value = readNullableString(row, key);
+  return value && runContinuationReasons.includes(value as RunContinuationReason)
+    ? value as RunContinuationReason
+    : undefined;
+}
+
+export function runActivityAt(run: RunSession): string {
+  return run.updatedAt || run.endedAt || run.startedAt || run.createdAt;
+}
+
+export function runStatusToLingTurnStatus(status: RunStatus): LingTurnStatus {
+  if (status === "queued" || status === "running") {
+    return "running";
+  }
+  return status;
+}
+
+function readOptionalStringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readRequiredNonNegativeIntegerValue(value: unknown): number | undefined {
+  return Number.isInteger(value) && typeof value === "number" && value >= 0 ? value : undefined;
+}
