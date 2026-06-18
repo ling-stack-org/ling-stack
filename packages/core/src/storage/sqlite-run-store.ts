@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
   ensureRuntimePaths,
-  getRunEventLogPath,
   resolveRuntimePaths,
   type LingStackRuntimePaths,
 } from "../runtime-paths.js";
@@ -151,10 +150,8 @@ import {
   type SkillRegistryEntry,
 } from "../skill-types.js";
 import {
-  createEventId,
   createLingThreadId,
   createLingTurnId,
-  createRunInterventionId,
   type AppendControlPlaneEventInput,
   type ControlPlaneEvent,
   type CreateLingThreadInput,
@@ -238,7 +235,6 @@ import {
   type StateTransitionEvent,
 } from "../channel-runtime-types.js";
 import {
-  transitionRun,
   transitionTask,
   type RunTransitionEvent,
   type StateTransitionActor,
@@ -338,7 +334,6 @@ import {
   type UpsertMemorySelfImprovingMetadataInput,
 } from "../memory-types.js";
 import { redactSecrets } from "../redaction.js";
-import { appendEventLogLine } from "./event-log.js";
 import { applySqliteRunStoreMigrations, configureSqliteRunStoreDatabase } from "./sqlite/migrations.js";
 import {
   isJsonRecord,
@@ -362,6 +357,9 @@ import { SqliteApprovalPolicyStore } from "./sqlite/approval-policy-store.js";
 import { SqliteApprovalRequestStore } from "./sqlite/approval-request-store.js";
 import { SqliteArtifactStore } from "./sqlite/artifact-store.js";
 import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
+import { SqliteRunEventStore } from "./sqlite/run-event-store.js";
+import { SqliteRunInterventionStore } from "./sqlite/run-intervention-store.js";
+import { SqliteRunSessionStore } from "./sqlite/run-session-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
 import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
@@ -392,20 +390,13 @@ import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triag
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import {
-  mapRunIntervention,
-  normalizeRunInterventionMessagePayload,
-} from "./sqlite/intervention-mappers.js";
-import {
   mapLingThread,
   mapLingTurn,
   mapLingTurnRun,
-  mapRunEvent,
-  mapRunSession,
   runActivityAt,
   runStatusToLingTurnStatus,
 } from "./sqlite/run-mappers.js";
 import {
-  runInterventionSelectSql,
   lingThreadSelectSql,
   lingTurnSelectSql,
 } from "./sqlite/select-sql.js";
@@ -429,6 +420,9 @@ export class SqliteRunStore implements RunStore {
   private readonly approvalRequests: SqliteApprovalRequestStore;
   private readonly artifacts: SqliteArtifactStore;
   private readonly controlPlane: SqliteControlPlaneStore;
+  private readonly runEvents: SqliteRunEventStore;
+  private readonly runInterventions: SqliteRunInterventionStore;
+  private readonly runSessions: SqliteRunSessionStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
@@ -506,6 +500,35 @@ export class SqliteRunStore implements RunStore {
           this.resourceLeases.renewActiveResourceLeasesForAttempt(attemptId, renewedAt),
         renewRuntimeSemaphoreSlotsForAttempt: (attemptId, renewedAt) =>
           this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(attemptId, renewedAt),
+      },
+    );
+    this.runSessions = new SqliteRunSessionStore(
+      { database: this.database },
+      this.paths,
+      {
+        insertLingTurnRun: (turnId, runId, role, createdAt) => this.insertLingTurnRun(turnId, runId, role, createdAt),
+        reconcileLingTurnStatus: (turnId, now) => this.reconcileLingTurnStatus(turnId, now),
+        rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now),
+        findStateTransitionByIdempotency: (entityType, entityId, idempotencyKey) =>
+          this.findStateTransitionByIdempotency(entityType, entityId, idempotencyKey),
+        recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
+        reconcileLingTurnStatusForRun: (runId, now) => this.reconcileLingTurnStatusForRun(runId, now),
+        updateLinkedWorkUnitRunId: (workUnitId, runId, now) => this.runtimeWorkUnits.updateLinkedRunId(workUnitId, runId, now),
+      },
+    );
+    this.runEvents = new SqliteRunEventStore(
+      { database: this.database },
+      {
+        getRun: (runId) => this.getRun(runId),
+        rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now),
+      },
+    );
+    this.runInterventions = new SqliteRunInterventionStore(
+      { database: this.database },
+      {
+        getRun: (runId) => this.getRun(runId),
+        assertAttachmentInChannel: (channelId, attachmentId) => this.assertAttachmentInChannel(channelId, attachmentId),
+        assertLinkPreviewInChannel: (channelId, linkPreviewId) => this.assertLinkPreviewInChannel(channelId, linkPreviewId),
       },
     );
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
@@ -1194,137 +1217,35 @@ export class SqliteRunStore implements RunStore {
   }
 
   createRun(input: CreateRunInput): RunSession {
-    const eventLogPath = getRunEventLogPath(this.paths, input.id);
-    const redactedTaskSnapshot = redactSecrets(input.taskSnapshot);
-    const redactedProviderSnapshot = redactSecrets(input.providerSnapshot);
-    const redactedRequestSnapshot = redactSecrets(input.requestSnapshot);
-
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      this.database
-        .prepare(`
-          INSERT INTO run_sessions (
-            id,
-            status,
-            cwd,
-            task_id,
-            channel_id,
-            teammate_id,
-            workflow_step_id,
-            selected_skill_id,
-            provider_preset_id,
-            provider_name,
-            provider_model,
-            task_snapshot_json,
-            provider_snapshot_json,
-            request_snapshot_json,
-            event_log_path,
-            thread_id,
-            work_unit_id,
-            parent_run_id,
-            intervention_id,
-            continuation_reason,
-            summary_path,
-            error_message,
-            created_at,
-            started_at,
-            ended_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        .run(
-          input.id,
-          "queued",
-          input.cwd,
-          input.taskId,
-          input.channelId ?? null,
-          input.teammateId ?? null,
-          input.workflowStepId ?? null,
-          input.selectedSkillId ?? null,
-          input.providerPresetId ?? null,
-          input.providerName,
-          input.providerModel,
-          stringifyJson(redactedTaskSnapshot),
-          stringifyJson(redactedProviderSnapshot),
-          stringifyJson(redactedRequestSnapshot),
-          eventLogPath,
-          input.threadId ?? null,
-          input.workUnitId ?? null,
-          input.parentRunId ?? null,
-          input.interventionId ?? null,
-          input.continuationReason ?? null,
-          null,
-          null,
-          input.createdAt,
-          null,
-          null,
-          input.createdAt,
-        );
-      if (input.turnId) {
-        this.insertLingTurnRun(input.turnId, input.id, input.turnRunRole ?? "primary", input.createdAt);
-        this.reconcileLingTurnStatus(input.turnId, input.createdAt);
-      }
-      this.database.exec("COMMIT");
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
-    }
-
-    const session = this.getRun(input.id);
-    if (!session) {
-      throw new Error(`Failed to create run session: ${input.id}`);
-    }
-    this.tryRebuildLingThreadMetadata(session.threadId, session.createdAt);
-    return session;
+    return this.runSessions.createRun(input);
   }
 
   markRunStarted(runId: string, startedAt: string): void {
-    this.updateRunStatus(runId, "running", startedAt, null, undefined, undefined, startedAt);
+    this.runSessions.markRunStarted(runId, startedAt);
   }
 
   markRunWaitingForApproval(runId: string, updatedAt: string): void {
-    this.updateRunStatus(runId, "waiting_for_approval", undefined, undefined, undefined, undefined, updatedAt);
+    this.runSessions.markRunWaitingForApproval(runId, updatedAt);
   }
 
   markRunRunning(runId: string, updatedAt: string): void {
-    this.updateRunStatus(runId, "running", undefined, undefined, undefined, undefined, updatedAt);
+    this.runSessions.markRunRunning(runId, updatedAt);
   }
 
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void {
-    this.updateRunStatus(runId, "succeeded", undefined, endedAt, null, summaryPath, endedAt);
+    this.runSessions.markRunSucceeded(runId, endedAt, summaryPath);
   }
 
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void {
-    this.updateRunStatus(runId, "failed", undefined, endedAt, errorMessage, summaryPath, endedAt);
+    this.runSessions.markRunFailed(runId, endedAt, errorMessage, summaryPath);
   }
 
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void {
-    this.updateRunStatus(runId, "cancelled", undefined, endedAt, null, summaryPath, endedAt);
+    this.runSessions.markRunCancelled(runId, endedAt, summaryPath);
   }
 
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope {
-    const run = this.getRun(runId);
-    if (!run) {
-      throw new Error(`Run session not found: ${runId}`);
-    }
-
-    const envelope: RunEventEnvelope = {
-      id: createEventId(),
-      runId,
-      seq: this.nextEventSeq(runId),
-      ts: new Date().toISOString(),
-      type,
-      data: redactSecrets(data),
-    };
-
-    this.database
-      .prepare("INSERT INTO run_events (id, run_id, seq, ts, type, data_json) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(envelope.id, envelope.runId, envelope.seq, envelope.ts, envelope.type, stringifyJson(envelope.data));
-    appendEventLogLine(run.eventLogPath, envelope);
-    if (type === "tool_start" || type === "tool_update" || type === "tool_end") {
-      this.tryRebuildLingThreadMetadata(run.threadId, envelope.ts);
-    }
-    return envelope;
+    return this.runEvents.appendEvent(runId, type, data);
   }
 
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent {
@@ -1340,286 +1261,39 @@ export class SqliteRunStore implements RunStore {
   }
 
   getRun(runId: string): RunSession | undefined {
-    const row = this.database
-      .prepare(
-        `
-          SELECT
-            id,
-            status,
-            cwd,
-            task_id,
-            channel_id,
-            teammate_id,
-            workflow_step_id,
-            selected_skill_id,
-            provider_preset_id,
-            provider_name,
-            provider_model,
-            task_snapshot_json,
-            provider_snapshot_json,
-	            request_snapshot_json,
-	            event_log_path,
-	            thread_id,
-	            work_unit_id,
-            parent_run_id,
-            intervention_id,
-            continuation_reason,
-            summary_path,
-            error_message,
-            created_at,
-            started_at,
-            ended_at,
-            updated_at
-          FROM run_sessions
-          WHERE id = ?
-        `,
-      )
-      .get(runId);
-
-    return row ? mapRunSession(row) : undefined;
+    return this.runSessions.getRun(runId);
   }
 
   listRuns(options: ListRunsOptions = {}): RunSession[] {
-    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.teammateId) {
-      clauses.push("teammate_id = ?");
-      params.push(options.teammateId);
-    }
-    if (options.workflowStepId) {
-      clauses.push("workflow_step_id = ?");
-      params.push(options.workflowStepId);
-    }
-    if (options.threadId) {
-      clauses.push("thread_id = ?");
-      params.push(options.threadId);
-    }
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    params.push(limit);
-    const statement = this.database.prepare(`
-      SELECT
-        id,
-        status,
-        cwd,
-        task_id,
-        channel_id,
-        teammate_id,
-        workflow_step_id,
-        selected_skill_id,
-        provider_preset_id,
-        provider_name,
-        provider_model,
-        task_snapshot_json,
-        provider_snapshot_json,
-	        request_snapshot_json,
-	        event_log_path,
-	        thread_id,
-	        work_unit_id,
-        parent_run_id,
-        intervention_id,
-        continuation_reason,
-        summary_path,
-        error_message,
-        created_at,
-        started_at,
-        ended_at,
-        updated_at
-      FROM run_sessions
-      ${whereClause}
-      ORDER BY created_at DESC
-      LIMIT ?
-    `);
-    const rows = statement.all(...params);
-    return rows.map(mapRunSession);
+    return this.runSessions.listRuns(options);
   }
 
   listEvents(runId: string, options: ListRunEventsOptions = {}): RunEventEnvelope[] {
-    const afterSeq = options.afterSeq ?? 0;
-    const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
-    return this.database
-      .prepare(
-        `
-          SELECT id, run_id, seq, ts, type, data_json
-          FROM run_events
-          WHERE run_id = ? AND seq > ?
-          ORDER BY seq ASC
-          LIMIT ?
-        `,
-      )
-      .all(runId, afterSeq, limit)
-      .map(mapRunEvent);
+    return this.runEvents.listEvents(runId, options);
   }
 
   countEvents(runId: string): number {
-    const row = this.database.prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ?").get(runId);
-    return readNumber(row, "count");
+    return this.runEvents.countEvents(runId);
   }
 
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention {
-    const existing = this.database
-      .prepare(runInterventionSelectSql("WHERE source_run_id = ? AND idempotency_key = ?"))
-      .get(input.sourceRunId, input.idempotencyKey);
-    if (existing) {
-      return mapRunIntervention(existing);
-    }
-    const sourceRun = this.getRun(input.sourceRunId);
-    if (!sourceRun) {
-      throw new Error(`Source run not found: ${input.sourceRunId}`);
-    }
-    const messagePayload = input.messagePayload ? normalizeRunInterventionMessagePayload(input.messagePayload) : undefined;
-    if (messagePayload && (messagePayload.attachmentIds.length > 0 || messagePayload.linkPreviewIds.length > 0)) {
-      if (!sourceRun.channelId) {
-        throw new Error(`Run intervention payload requires a channel run: ${input.sourceRunId}`);
-      }
-      if (messagePayload.attachmentIds.length > 10) {
-        throw new Error("A run intervention can reference at most 10 attachments");
-      }
-      if (messagePayload.linkPreviewIds.length > 10) {
-        throw new Error("A run intervention can reference at most 10 link previews");
-      }
-      for (const attachmentId of messagePayload.attachmentIds) {
-        this.assertAttachmentInChannel(sourceRun.channelId, attachmentId);
-      }
-      for (const linkPreviewId of messagePayload.linkPreviewIds) {
-        this.assertLinkPreviewInChannel(sourceRun.channelId, linkPreviewId);
-      }
-    }
-    const id = input.id ?? createRunInterventionId();
-    const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
-    this.database
-      .prepare(`
-        INSERT INTO run_interventions (
-          id,
-          workspace_id,
-          source_run_id,
-          source_work_unit_id,
-          source_attempt_id,
-          continuation_run_id,
-          continuation_work_unit_id,
-          mode,
-          status,
-          instruction,
-          message_payload_json,
-          requested_by,
-          idempotency_key,
-          created_at,
-          updated_at,
-          started_at,
-          completed_at,
-          failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        id,
-        workspaceId,
-        input.sourceRunId,
-        input.sourceWorkUnitId ?? null,
-        input.sourceAttemptId ?? null,
-        null,
-        null,
-        input.mode,
-        "queued",
-        input.instruction,
-        messagePayload ? stringifyJson(messagePayload) : null,
-        input.requestedBy ?? "local-user",
-        input.idempotencyKey,
-        now,
-        now,
-        null,
-        null,
-        null,
-      );
-    const created = this.getRunIntervention(id);
-    if (!created) {
-      throw new Error(`Failed to create run intervention: ${id}`);
-    }
-    return created;
+    return this.runInterventions.createRunIntervention(input, now);
   }
 
   getRunIntervention(interventionId: string): RunIntervention | undefined {
-    const row = this.database.prepare(runInterventionSelectSql("WHERE id = ?")).get(interventionId);
-    return row ? mapRunIntervention(row) : undefined;
+    return this.runInterventions.getRunIntervention(interventionId);
   }
 
   listRunInterventions(options: ListRunInterventionsOptions = {}): RunIntervention[] {
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
-    if (options.sourceRunId) {
-      clauses.push("source_run_id = ?");
-      params.push(options.sourceRunId);
-    }
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    if (options.mode) {
-      clauses.push("mode = ?");
-      params.push(options.mode);
-    }
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    params.push(limit);
-    return this.database
-      .prepare(`${runInterventionSelectSql(whereClause)} ORDER BY created_at ASC, id ASC LIMIT ?`)
-      .all(...params)
-      .map(mapRunIntervention);
+    return this.runInterventions.listRunInterventions(options);
   }
 
   updateRunInterventionStatus(input: UpdateRunInterventionStatusInput): RunIntervention | undefined {
-    const existing = this.getRunIntervention(input.interventionId);
-    if (!existing) {
-      return undefined;
-    }
-    const continuationRunId = input.continuationRunId === undefined ? existing.continuationRunId ?? null : input.continuationRunId;
-    const continuationWorkUnitId = input.continuationWorkUnitId === undefined ? existing.continuationWorkUnitId ?? null : input.continuationWorkUnitId;
-    const startedAt = input.startedAt === undefined ? existing.startedAt ?? null : input.startedAt;
-    const completedAt = input.completedAt === undefined ? existing.completedAt ?? null : input.completedAt;
-    const failureReason = input.failureReason === undefined ? existing.failureReason ?? null : input.failureReason;
-    this.database
-      .prepare(`
-        UPDATE run_interventions
-        SET status = ?,
-            continuation_run_id = ?,
-            continuation_work_unit_id = ?,
-            updated_at = ?,
-            started_at = ?,
-            completed_at = ?,
-            failure_reason = ?
-        WHERE id = ?
-      `)
-      .run(
-        input.status,
-        continuationRunId,
-        continuationWorkUnitId,
-        input.now,
-        startedAt,
-        completedAt,
-        failureReason,
-        input.interventionId,
-      );
-    return this.getRunIntervention(input.interventionId);
+    return this.runInterventions.updateRunInterventionStatus(input);
   }
 
   cancelRunIntervention(interventionId: string, now: string, reason?: string): RunIntervention | undefined {
-    const existing = this.getRunIntervention(interventionId);
-    if (!existing) {
-      return undefined;
-    }
-    if (existing.status === "started" || existing.status === "cancelled" || existing.status === "failed") {
-      return existing;
-    }
-    return this.updateRunInterventionStatus({
-      interventionId,
-      status: "cancelled",
-      completedAt: now,
-      failureReason: reason ?? "cancelled",
-      now,
-    });
+    return this.runInterventions.cancelRunIntervention(interventionId, now, reason);
   }
 
   createWorkUnit(input: CreateWorkUnitInput): WorkUnit {
@@ -1644,13 +1318,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   linkRunToWorkUnit(runId: string, workUnitId: string, now: string): RunSession | undefined {
-    this.database
-      .prepare("UPDATE run_sessions SET work_unit_id = ?, updated_at = ? WHERE id = ?")
-      .run(workUnitId, now, runId);
-    this.database
-      .prepare("UPDATE work_units SET linked_run_id = ?, updated_at = ? WHERE id = ?")
-      .run(runId, now, workUnitId);
-    return this.getRun(runId);
+    return this.runSessions.linkRunToWorkUnit(runId, workUnitId, now);
   }
 
   transitionWorkUnitStatus(input: {
@@ -2072,72 +1740,7 @@ export class SqliteRunStore implements RunStore {
     readonly summaryPath?: string;
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus> {
-    const run = this.getRun(input.runId);
-    if (!run) {
-      return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
-    }
-    if (input.idempotencyKey) {
-      const existing = this.findStateTransitionByIdempotency("run", input.runId, input.idempotencyKey);
-      if (existing) {
-        return { ok: true, from: run.status, to: run.status, duplicate: true };
-      }
-    }
-
-    const result = transitionRun({
-      entityId: input.runId,
-      currentStatus: run.status,
-      expectedStatus: input.expectedStatus,
-      event: input.event,
-      actor: input.actor,
-      reason: input.reason,
-      idempotencyKey: input.idempotencyKey,
-    });
-    if (!result.ok) {
-      return result;
-    }
-
-    const update = this.database
-      .prepare(`
-        UPDATE run_sessions
-        SET
-          status = ?,
-          started_at = ?,
-          ended_at = ?,
-          error_message = ?,
-          summary_path = ?,
-          updated_at = ?
-        WHERE id = ? AND status = ?
-      `)
-      .run(
-        result.to,
-        input.startedAt ?? run.startedAt ?? null,
-        input.endedAt === undefined ? run.endedAt ?? null : input.endedAt,
-        input.errorMessage === undefined ? run.errorMessage ?? null : input.errorMessage,
-        input.summaryPath ?? run.summaryPath ?? null,
-        input.now,
-        input.runId,
-        result.from,
-      );
-    if (Number(update.changes) === 0) {
-      const current = this.getRun(input.runId);
-      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? run.status };
-    }
-
-    this.recordStateTransitionEvent({
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      entityType: "run",
-      entityId: input.runId,
-      fromStatus: result.from,
-      toStatus: result.to,
-      event: input.event,
-      actor: input.actor,
-      reason: input.reason,
-      idempotencyKey: input.idempotencyKey,
-      createdAt: input.now,
-    });
-    this.reconcileLingTurnStatusForRun(input.runId, input.now);
-    this.tryRebuildLingThreadMetadata(run.threadId, input.now);
-    return result;
+    return this.runSessions.transitionRunStatus(input);
   }
 
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined {
@@ -3465,16 +3068,8 @@ export class SqliteRunStore implements RunStore {
       .run(version, name, new Date().toISOString());
   }
 
-  private nextEventSeq(runId: string): number {
-    const row = this.database.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM run_events WHERE run_id = ?").get(runId);
-    return readNumber(row, "next_seq");
-  }
-
   private hasTerminalEvent(runId: string): boolean {
-    const row = this.database
-      .prepare("SELECT 1 AS found FROM run_events WHERE run_id = ? AND type IN ('run_end', 'run_error', 'run_cancelled', 'result') LIMIT 1")
-      .get(runId);
-    return Boolean(row);
+    return this.runEvents.hasTerminalEvent(runId);
   }
 
   private assertChannelExists(channelId: string): void {
@@ -3864,47 +3459,6 @@ export class SqliteRunStore implements RunStore {
     }
   }
 
-  private updateRunStatus(
-    runId: string,
-    status: RunStatus,
-    startedAt: string | undefined,
-    endedAt: string | null | undefined,
-    errorMessage: string | null | undefined,
-    summaryPath: string | undefined,
-    updatedAt: string,
-  ): void {
-    const existing = this.getRun(runId);
-    if (!existing) {
-      throw new Error(`Run session not found: ${runId}`);
-    }
-
-    this.database
-      .prepare(
-        `
-          UPDATE run_sessions
-          SET
-            status = ?,
-            started_at = ?,
-            ended_at = ?,
-            error_message = ?,
-            summary_path = ?,
-            updated_at = ?
-          WHERE id = ?
-        `,
-      )
-      .run(
-        status,
-        startedAt ?? existing.startedAt ?? null,
-        endedAt === undefined ? existing.endedAt ?? null : endedAt,
-        errorMessage === undefined ? existing.errorMessage ?? null : errorMessage,
-        summaryPath ?? existing.summaryPath ?? null,
-        updatedAt,
-        runId,
-      );
-    this.reconcileLingTurnStatusForRun(runId, updatedAt);
-    this.tryRebuildLingThreadMetadata(existing.threadId, updatedAt);
-  }
-
   private tryRebuildLingThreadMetadata(threadId: string | undefined, now: string): void {
     if (!threadId) {
       return;
@@ -3956,19 +3510,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   private readLatestRunActionActivityAt(runIds: readonly string[]): string | undefined {
-    if (runIds.length === 0) {
-      return undefined;
-    }
-    const placeholders = runIds.map(() => "?").join(", ");
-    const row = this.database
-      .prepare(`
-        SELECT MAX(ts) AS latest_ts
-        FROM run_events
-        WHERE run_id IN (${placeholders})
-          AND type IN ('tool_start', 'tool_update', 'tool_end')
-      `)
-      .get(...runIds);
-    return row ? readNullableString(row, "latest_ts") : undefined;
+    return this.runEvents.readLatestRunActionActivityAt(runIds);
   }
 
   private insertLingTurnRun(turnId: string, runId: string, role: LingTurnRunRole, createdAt: string): LingTurnRun {

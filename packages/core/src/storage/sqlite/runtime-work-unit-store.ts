@@ -205,6 +205,13 @@ export class SqliteRuntimeWorkUnitStore {
     return row ? mapWorkUnit(row as Record<string, SQLOutputValue>) : undefined;
   }
 
+  updateLinkedRunId(workUnitId: string, runId: string, now: string): number {
+    const result = this.context.database
+      .prepare("UPDATE work_units SET linked_run_id = ?, updated_at = ? WHERE id = ?")
+      .run(runId, now, workUnitId);
+    return Number(result.changes);
+  }
+
   transitionWorkUnitStatus(input: {
     readonly workUnitId: string;
     readonly expectedStatus?: WorkUnitStatus;
