@@ -1,18 +1,22 @@
 import type {
   ApprovalRequest,
+  ApprovalStoreFacet,
   ChannelWorkflow,
   ChannelWorkflowStep,
+  ChannelStoreFacet,
   CollaborationExecutionMode,
   CollaborationTaskBranch,
   CollaborationTaskCardModel,
   CollaborationTaskCardStep,
   CollaborationTaskStepState,
+  RunExecutionStoreFacet,
   RunSession,
-  RunStore,
 } from "@ling-stack/core";
 
+type ChannelCollaborationCardStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet;
+
 export function buildChannelCollaborationCardsFromStore(input: {
-  readonly store: RunStore;
+  readonly store: ChannelCollaborationCardStore;
   readonly channelId: string;
   readonly limit?: number;
 }): readonly CollaborationTaskCardModel[] {
@@ -23,7 +27,7 @@ export function buildChannelCollaborationCardsFromStore(input: {
 }
 
 export function buildWorkflowCollaborationCardFromStore(input: {
-  readonly store: RunStore;
+  readonly store: ChannelCollaborationCardStore;
   readonly workflow: ChannelWorkflow;
 }): CollaborationTaskCardModel | undefined {
   const steps = input.store.listChannelWorkflowSteps({ workflowId: input.workflow.id, limit: 500 });
@@ -97,7 +101,7 @@ export function buildWorkflowCollaborationCard(input: {
   };
 }
 
-function collectWorkflowRuns(store: RunStore, steps: readonly ChannelWorkflowStep[]): readonly RunSession[] {
+function collectWorkflowRuns(store: RunExecutionStoreFacet, steps: readonly ChannelWorkflowStep[]): readonly RunSession[] {
   const runs = new Map<string, RunSession>();
   for (const step of steps) {
     if (step.runId) {
@@ -114,7 +118,7 @@ function collectWorkflowRuns(store: RunStore, steps: readonly ChannelWorkflowSte
 }
 
 function collectWorkflowApprovals(
-  store: RunStore,
+  store: ApprovalStoreFacet,
   steps: readonly ChannelWorkflowStep[],
   runs: readonly RunSession[],
 ): readonly ApprovalRequest[] {
