@@ -1,4 +1,4 @@
-import type { RunStore } from "@ling-stack/core";
+import type { MemoryStoreFacet } from "@ling-stack/core";
 import {
   MEMORY_USE_ISOLATION_POLICY_VERSION,
   memoryEligibilityForView,
@@ -7,8 +7,10 @@ import {
 } from "../channels/context-processing/memory.js";
 import type { ChannelContextDroppedSource, ChannelContextSource, ChannelContextViewKind } from "../channels/context-processing/types.js";
 
+type RecalledMemoryItems = ReturnType<MemoryStoreFacet["recallMemory"]>["memories"];
+
 export interface RenderUsedMemoryPromptForViewInput {
-  readonly memories: ReturnType<RunStore["recallMemory"]>["memories"];
+  readonly memories: RecalledMemoryItems;
   readonly recallPolicyVersion: string;
   readonly viewKind: ChannelContextViewKind;
   readonly workspaceId?: string;
@@ -24,7 +26,7 @@ export interface RenderUsedMemoryPromptForViewResult {
   readonly policyVersion: string;
 }
 
-export function renderUsedMemoryPrompt(memories: ReturnType<RunStore["recallMemory"]>["memories"]): string | undefined {
+export function renderUsedMemoryPrompt(memories: RecalledMemoryItems): string | undefined {
   if (memories.length === 0) {
     return undefined;
   }
@@ -48,7 +50,7 @@ export function renderUsedMemoryPrompt(memories: ReturnType<RunStore["recallMemo
 
 export function renderUsedMemoryPromptForView(input: RenderUsedMemoryPromptForViewInput): RenderUsedMemoryPromptForViewResult {
   const promptItems: Array<{
-    readonly item: ReturnType<RunStore["recallMemory"]>["memories"][number];
+    readonly item: RecalledMemoryItems[number];
     readonly source: ChannelContextSource;
     readonly eligibility: ChannelContextMemoryEligibility;
   }> = [];
@@ -84,7 +86,7 @@ export function renderUsedMemoryPromptForView(input: RenderUsedMemoryPromptForVi
 
 function renderPromptItems(
   items: readonly {
-    readonly item: ReturnType<RunStore["recallMemory"]>["memories"][number];
+    readonly item: RecalledMemoryItems[number];
     readonly source: ChannelContextSource;
     readonly eligibility: ChannelContextMemoryEligibility;
   }[],
