@@ -4,17 +4,20 @@ import {
   redactSecrets,
   type ApprovalRequest,
   type ArtifactType,
+  type RunExecutionStoreFacet,
   type RunArtifact,
   type RunEventEnvelope,
+  type RunStorePathsFacet,
   type RunSession,
-  type RunStore,
 } from "@ling-stack/core";
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { isRecord } from "../../shared/validation.js";
 import { buildGitCommandPreview } from "./action-classifier.js";
 
+type ActionArtifactStore = RunStorePathsFacet & RunExecutionStoreFacet;
+
 export function createExecutionActionPreviewArtifacts(input: {
-  readonly store: RunStore;
+  readonly store: ActionArtifactStore;
   readonly run: RunSession;
   readonly approval: ApprovalRequest;
   readonly toolName: string;
@@ -43,7 +46,7 @@ export function createExecutionActionPreviewArtifacts(input: {
 }
 
 export function createExecutionActionResultArtifact(input: {
-  readonly store: RunStore;
+  readonly store: ActionArtifactStore;
   readonly run: RunSession;
   readonly approval: ApprovalRequest;
   readonly filename: string;
@@ -67,7 +70,7 @@ export function createExecutionActionResultArtifact(input: {
   });
 }
 
-export function previewArtifactIdsForApproval(store: RunStore, approval: ApprovalRequest): string[] {
+export function previewArtifactIdsForApproval(store: RunExecutionStoreFacet, approval: ApprovalRequest): string[] {
   if (!approval.runId) {
     return [];
   }
@@ -77,7 +80,7 @@ export function previewArtifactIdsForApproval(store: RunStore, approval: Approva
     .map((artifact) => artifact.id);
 }
 
-export function resultArtifactIdsForApproval(store: RunStore, approval: ApprovalRequest): string[] {
+export function resultArtifactIdsForApproval(store: RunExecutionStoreFacet, approval: ApprovalRequest): string[] {
   if (!approval.runId || !approval.toolCallId) {
     return [];
   }
@@ -193,7 +196,7 @@ function buildPreviewArtifacts(input: {
 }
 
 function writeActionArtifact(input: {
-  readonly store: RunStore;
+  readonly store: ActionArtifactStore;
   readonly run: RunSession;
   readonly approval: ApprovalRequest;
   readonly role: "preview" | "result";

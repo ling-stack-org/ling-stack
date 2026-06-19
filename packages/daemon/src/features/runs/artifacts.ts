@@ -3,9 +3,10 @@ import { basename, extname, isAbsolute, relative, resolve as resolvePath } from 
 import {
   redactSecrets,
   type ArtifactType,
+  type RunExecutionStoreFacet,
   type RunArtifact,
+  type RunStorePathsFacet,
   type RunSession,
-  type RunStore,
 } from "@ling-stack/core";
 import type { PiRunnerEvent } from "@ling-stack/runner-pi";
 import { isPathInsideRoot, normalizeArtifactPath } from "../../shared/path.js";
@@ -13,6 +14,8 @@ import { isRecord } from "../../shared/validation.js";
 
 const MAX_EXTRACTED_ARTIFACT_BYTES = 256 * 1024;
 const MAX_EXTRACTED_ARTIFACTS_PER_TOOL = 6;
+
+type RunArtifactStore = RunStorePathsFacet & RunExecutionStoreFacet;
 
 interface ExtractedArtifactCandidate {
   readonly type: ArtifactType;
@@ -23,7 +26,7 @@ interface ExtractedArtifactCandidate {
 }
 
 export function persistExtractedArtifacts(options: {
-  readonly store: RunStore;
+  readonly store: RunArtifactStore;
   readonly run: RunSession;
   readonly event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>;
   readonly sourceArgs: unknown;
@@ -41,7 +44,7 @@ export function persistExtractedArtifacts(options: {
   return artifacts;
 }
 
-export function resolveArtifactContentPath(store: RunStore, artifact: RunArtifact): string {
+export function resolveArtifactContentPath(store: RunStorePathsFacet, artifact: RunArtifact): string {
   const artifactRoot = store.paths.artifactsDir;
   const absolutePath = isAbsolute(artifact.path) ? artifact.path : resolvePath(artifactRoot, artifact.path);
   const relativePath = relative(artifactRoot, absolutePath);
@@ -56,7 +59,7 @@ export function inferArtifactContentType(artifact: RunArtifact): string {
 }
 
 function extractArtifactCandidates(options: {
-  readonly store: RunStore;
+  readonly store: RunStorePathsFacet;
   readonly run: RunSession;
   readonly event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>;
   readonly sourceArgs: unknown;
@@ -252,7 +255,7 @@ function resolveExistingArtifactPath(artifactRoot: string, cwd: string, rawPath:
 }
 
 function materializeExtractedArtifact(
-  store: RunStore,
+  store: RunArtifactStore,
   runId: string,
   candidate: ExtractedArtifactCandidate,
   index: number,

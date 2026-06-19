@@ -3,8 +3,8 @@ import {
   type ProviderPreset,
   type ProviderPresetInput,
   type PublicProviderPreset,
+  type ProviderStoreFacet,
   type ResolvedSecret,
-  type RunStore,
   type SecretPurpose,
   type SecretResolver,
   type SecretStatus,
@@ -12,7 +12,7 @@ import {
 
 const draftProviderSecretRef = "keychain:LING_STACK_DRAFT_PROVIDER_API_KEY";
 
-export function saveLocalProviderSecret(store: RunStore, preset: ProviderPreset, apiKey: string, now: string): ProviderPreset {
+export function saveLocalProviderSecret(store: ProviderStoreFacet, preset: ProviderPreset, apiKey: string, now: string): ProviderPreset {
   store.setProviderSecret(preset.id, apiKey, now);
   return store.updateProviderPreset(preset.id, { apiKeyRef: localProviderSecretRef(preset.id) }, now) ?? preset;
 }
@@ -74,7 +74,7 @@ export function localProviderSecretRef(providerId: string): string {
 }
 
 export function providerSecretStatus(
-  store: RunStore,
+  store: ProviderStoreFacet,
   preset: Pick<ProviderPreset, "id" | "apiKeyRef">,
   secretResolver: SecretResolver,
 ): SecretStatus {
@@ -103,7 +103,7 @@ export function providerSecretStatus(
 }
 
 export function resolveProviderSecret(
-  store: RunStore,
+  store: ProviderStoreFacet,
   preset: Pick<ProviderPreset, "id" | "apiKeyRef">,
   secretResolver: SecretResolver,
 ): ResolvedSecret {
@@ -133,7 +133,7 @@ export function readLocalProviderSecretProviderId(ref: string): string {
   return ref.slice("local:".length);
 }
 
-export function toPublicProviderPreset(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): PublicProviderPreset {
+export function toPublicProviderPreset(store: ProviderStoreFacet, preset: ProviderPreset, secretResolver: SecretResolver): PublicProviderPreset {
   const apiKeyStatus = preset.apiKeyRef ? providerSecretStatus(store, preset, secretResolver) : undefined;
   return {
     ...preset,
@@ -143,7 +143,7 @@ export function toPublicProviderPreset(store: RunStore, preset: ProviderPreset, 
 }
 
 export function toProviderSecretResponse(
-  store: RunStore,
+  store: ProviderStoreFacet,
   preset: ProviderPreset,
 ): { readonly providerId: string; readonly apiKey: string; readonly apiKeyRef?: string; readonly configured: boolean } {
   if (!preset.apiKeyRef || !isLocalProviderSecretRef(preset.apiKeyRef)) {

@@ -1,9 +1,9 @@
 import {
   createBuiltinAiTeammateId,
   type AiTeammate,
-  type RunStore,
+  type TeammateStoreFacet,
 } from "@ling-stack/core";
 
-export function resolveAiTeammateReference(store: RunStore, teammateId: string): AiTeammate | undefined {
+export function resolveAiTeammateReference(store: TeammateStoreFacet, teammateId: string): AiTeammate | undefined {
   return store.getAiTeammate(teammateId) ?? store.getAiTeammate(createBuiltinAiTeammateId(teammateId));
 }

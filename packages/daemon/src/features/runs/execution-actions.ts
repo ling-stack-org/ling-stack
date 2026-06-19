@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
   approvalActionTypes,
+  type ApprovalStoreFacet,
   type ApprovalActionType,
   type ApprovalRequest,
   type ApprovalStatus,
@@ -9,8 +10,8 @@ import {
   type ExecutionActionStatus,
   type ExecutionActionTargetRef,
   type RunEventEnvelope,
+  type RunExecutionStoreFacet,
   type RunSession,
-  type RunStore,
 } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery } from "../../shared/request.js";
@@ -34,6 +35,8 @@ export interface ListExecutionActionsOptions {
   readonly actionType?: ApprovalActionType;
   readonly limit?: number;
 }
+
+type ExecutionActionStore = ApprovalStoreFacet & RunExecutionStoreFacet;
 
 export function handleExecutionActionsCollection(
   request: IncomingMessage,
@@ -75,7 +78,7 @@ export function handleExecutionActionsCollection(
   }
 }
 
-export function listExecutionActions(store: RunStore, options: ListExecutionActionsOptions = {}): ExecutionAction[] {
+export function listExecutionActions(store: ExecutionActionStore, options: ListExecutionActionsOptions = {}): ExecutionAction[] {
   const approvalStatus = options.status ? approvalStatusFromExecutionActionStatus(options.status) : undefined;
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
   const approvals = store.listApprovalRequests({
@@ -97,7 +100,7 @@ export function listExecutionActions(store: RunStore, options: ListExecutionActi
     .slice(0, limit);
 }
 
-function approvalToExecutionAction(store: RunStore, approval: ApprovalRequest): ExecutionAction {
+function approvalToExecutionAction(store: ExecutionActionStore, approval: ApprovalRequest): ExecutionAction {
   const run = approval.runId ? store.getRun(approval.runId) : undefined;
   const classified = classifyApprovalAction(approval, run);
   return {
@@ -126,7 +129,7 @@ function approvalToExecutionAction(store: RunStore, approval: ApprovalRequest): 
 }
 
 function listNonApprovalToolActions(
-  store: RunStore,
+  store: ExecutionActionStore,
   options: ListExecutionActionsOptions,
   limit: number,
   approvalActions: readonly ExecutionAction[],
@@ -136,7 +139,7 @@ function listNonApprovalToolActions(
   return runs.flatMap((run) => deriveToolActionsForRun(store, run, approvalToolCallIds));
 }
 
-function collectRunsForActionReadModel(store: RunStore, options: ListExecutionActionsOptions, limit: number): RunSession[] {
+function collectRunsForActionReadModel(store: ExecutionActionStore, options: ListExecutionActionsOptions, limit: number): RunSession[] {
   if (options.runId) {
     const run = store.getRun(options.runId);
     return run ? [run] : [];
@@ -150,7 +153,7 @@ function collectRunsForActionReadModel(store: RunStore, options: ListExecutionAc
 }
 
 function deriveToolActionsForRun(
-  store: RunStore,
+  store: ExecutionActionStore,
   run: RunSession,
   approvalToolCallIds: ReadonlySet<string>,
 ): ExecutionAction[] {

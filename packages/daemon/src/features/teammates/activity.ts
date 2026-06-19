@@ -1,5 +1,18 @@
-import type { RunStore } from "@ling-stack/core";
+import type {
+  ApprovalStoreFacet,
+  ChannelStoreFacet,
+  RunExecutionStoreFacet,
+  TeammateStoreFacet,
+  WorkspaceStoreFacet,
+} from "@ling-stack/core";
 import { isRecord } from "../../shared/validation.js";
+
+type TeammateActivityStore =
+  TeammateStoreFacet &
+  WorkspaceStoreFacet &
+  RunExecutionStoreFacet &
+  ApprovalStoreFacet &
+  ChannelStoreFacet;
 
 export interface TeammateActivityItem {
   readonly id: string;
@@ -12,7 +25,7 @@ export interface TeammateActivityItem {
 }
 
 export function buildTeammateActivityItems(
-  store: RunStore,
+  store: TeammateActivityStore,
   teammateId: string,
   limit: number,
 ): TeammateActivityItem[] {
