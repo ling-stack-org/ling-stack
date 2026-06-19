@@ -6,8 +6,10 @@ import {
   type ResourceLease,
   type RuntimeInstance,
   type RuntimeSemaphoreSlot,
+  type RunExecutionStoreFacet,
   type RunSession,
-  type RunStore,
+  type RunStorePathsFacet,
+  type RuntimeSupervisorStoreFacet,
   type WorkUnit,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../config.js";
@@ -22,6 +24,8 @@ import {
 } from "./work-units.js";
 
 const RUNTIME_SCHEMA_VERSION = 22;
+
+type RuntimeSupervisorRuntimeStore = RunStorePathsFacet & RuntimeSupervisorStoreFacet & RunExecutionStoreFacet;
 
 export class RuntimeSupervisor {
   private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
@@ -39,7 +43,7 @@ export class RuntimeSupervisor {
     return this.config.transports;
   }
 
-  getRuntime(cwd: string, store: RunStore): RuntimeInstance {
+  getRuntime(cwd: string, store: RuntimeSupervisorRuntimeStore): RuntimeInstance {
     const existing = this.runtimesByCwd.get(cwd);
     if (existing) {
       return existing;
@@ -64,7 +68,7 @@ export class RuntimeSupervisor {
     return runtime;
   }
 
-  getDiagnostics(cwd: string, store: RunStore): {
+  getDiagnostics(cwd: string, store: RuntimeSupervisorRuntimeStore): {
     readonly runtime: RuntimeInstance;
     readonly active: readonly WorkUnit[];
     readonly stuck: readonly WorkUnit[];
@@ -104,7 +108,7 @@ export class RuntimeSupervisor {
     this.reconciledCwds.clear();
   }
 
-  private ensureRuntimeLock(cwd: string, store: RunStore): void {
+  private ensureRuntimeLock(cwd: string, store: RuntimeSupervisorRuntimeStore): void {
     if (this.lockedCwds.has(cwd)) {
       return;
     }
@@ -152,7 +156,7 @@ export class RuntimeSupervisor {
     this.runtimeLockPathsByCwd.set(cwd, lockPath);
   }
 
-  private writeRuntimeLock(store: RunStore, runtime: RuntimeInstance): void {
+  private writeRuntimeLock(store: RuntimeSupervisorRuntimeStore, runtime: RuntimeInstance): void {
     const lockPath = join(store.paths.rootDir, "runtime.lock");
     this.runtimeLockPathsByCwd.set(store.paths.cwd, lockPath);
     writeFileSync(
@@ -173,7 +177,7 @@ export class RuntimeSupervisor {
     );
   }
 
-  private reconcileStartup(cwd: string, store: RunStore): void {
+  private reconcileStartup(cwd: string, store: RuntimeSupervisorRuntimeStore): void {
     if (this.reconciledCwds.has(cwd)) {
       return;
     }
@@ -194,7 +198,7 @@ export class RuntimeSupervisor {
   }
 }
 
-function reconcileActiveWorkUnitFromLinkedTerminalRun(store: RunStore, workUnit: WorkUnit, now: string): boolean {
+function reconcileActiveWorkUnitFromLinkedTerminalRun(store: RuntimeSupervisorRuntimeStore, workUnit: WorkUnit, now: string): boolean {
   if (!workUnit.linkedRunId) {
     return false;
   }

@@ -1,7 +1,9 @@
 import {
   DEFAULT_WORKSPACE_ID,
   type RunnerFallbackReason,
-  type RunStore,
+  type RunExecutionStoreFacet,
+  type RunStorePathsFacet,
+  type RuntimeSupervisorStoreFacet,
   type RuntimeEvent,
   type WorkUnit,
   type WorkUnitAttempt,
@@ -13,7 +15,12 @@ import type { RuntimeSupervisor } from "./supervisor.js";
 
 export { DEFAULT_RUNNER_ID } from "./runners.js";
 
-export function listActiveWorkUnits(store: RunStore): WorkUnit[] {
+type RuntimeWorkUnitStore = RuntimeSupervisorStoreFacet;
+type RuntimeWorkUnitStartStore = RuntimeSupervisorStoreFacet & RunStorePathsFacet & RunExecutionStoreFacet;
+type WorkUnitTransitionEvent = Parameters<RuntimeSupervisorStoreFacet["transitionWorkUnitStatus"]>[0]["event"];
+type WorkUnitTransitionActor = Parameters<RuntimeSupervisorStoreFacet["transitionWorkUnitStatus"]>[0]["actor"];
+
+export function listActiveWorkUnits(store: RuntimeWorkUnitStore): WorkUnit[] {
   return [
     ...store.listWorkUnits({ status: "claimed", limit: 500 }),
     ...store.listWorkUnits({ status: "running", limit: 500 }),
@@ -50,7 +57,7 @@ function ageMs(value: string | undefined, now: Date): number | undefined {
   return Number.isFinite(parsed) ? now.getTime() - parsed : undefined;
 }
 
-export function markWorkUnitStale(store: RunStore, workUnit: WorkUnit, now: string, reason: string): WorkUnit {
+export function markWorkUnitStale(store: RuntimeWorkUnitStore, workUnit: WorkUnit, now: string, reason: string): WorkUnit {
   const attempt = workUnit.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
   const event = workUnit.status === "cancelling" ? "cancel_timeout" : "runner_lost";
   const transition = store.transitionWorkUnitStatus({
@@ -92,7 +99,7 @@ export function markWorkUnitStale(store: RunStore, workUnit: WorkUnit, now: stri
 }
 
 export function startRuntimeWorkUnit(input: {
-  readonly store: RunStore;
+  readonly store: RuntimeWorkUnitStartStore;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly kind: WorkUnitKind;
   readonly ownerType: string;
@@ -192,7 +199,7 @@ export function startRuntimeWorkUnit(input: {
   };
 }
 
-export function cancelStandaloneWorkUnit(store: RunStore, workUnit: WorkUnit, reason: string): WorkUnit {
+export function cancelStandaloneWorkUnit(store: RuntimeWorkUnitStore, workUnit: WorkUnit, reason: string): WorkUnit {
   const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
   if (attemptId) {
     transitionWorkUnitCancelled(store, workUnit.id, attemptId, reason);
@@ -223,7 +230,7 @@ export function cancelStandaloneWorkUnit(store: RunStore, workUnit: WorkUnit, re
 }
 
 export function releaseWorkUnitRuntimeResources(
-  store: RunStore,
+  store: RuntimeWorkUnitStore,
   workUnit: WorkUnit,
   now: string,
   releaseReason: string,
@@ -238,14 +245,14 @@ export function releaseWorkUnitRuntimeResources(
 }
 
 export function transitionWorkUnitTerminal(
-  store: RunStore,
+  store: RuntimeWorkUnitStore,
   input: {
     readonly workUnitId: string;
     readonly attemptId: string;
-    readonly event: Parameters<RunStore["transitionWorkUnitStatus"]>[0]["event"];
+    readonly event: WorkUnitTransitionEvent;
     readonly attemptStatus: WorkUnitAttempt["status"];
     readonly runtimeEventType: RuntimeEvent["type"];
-    readonly actor: Parameters<RunStore["transitionWorkUnitStatus"]>[0]["actor"];
+    readonly actor: WorkUnitTransitionActor;
     readonly now: string;
     readonly errorCode?: string;
     readonly errorMessage?: string;
@@ -291,7 +298,7 @@ export function transitionWorkUnitTerminal(
   });
 }
 
-export function transitionWorkUnitCancelled(store: RunStore, workUnitId: string, attemptId: string, reason: string): void {
+export function transitionWorkUnitCancelled(store: RuntimeWorkUnitStore, workUnitId: string, attemptId: string, reason: string): void {
   const current = store.getWorkUnit(workUnitId);
   if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
     return;
