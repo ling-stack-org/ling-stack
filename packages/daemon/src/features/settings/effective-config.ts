@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
 import {
   resolveConfigPaths,
-  type RunStore,
+  type RunStorePathsFacet,
   type UpdateWorkspaceSettingsInput,
+  type WorkspaceStoreFacet,
   type WorkspaceSettings,
 } from "@ling-stack/core";
 import type {
@@ -29,9 +30,11 @@ interface UserConfigLayer {
   readonly runtimeDefaults?: UserRuntimeDefaults;
 }
 
+type EffectiveConfigStore = RunStorePathsFacet & WorkspaceStoreFacet;
+
 export async function buildEffectiveConfigResponse(input: {
   readonly cwd: string;
-  readonly store: RunStore;
+  readonly store: EffectiveConfigStore;
   readonly runnerRegistry: RunnerRegistry;
 }): Promise<EffectiveConfigResponse> {
   const paths = resolveConfigPaths(input.cwd);
