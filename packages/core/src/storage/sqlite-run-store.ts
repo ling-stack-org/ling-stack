@@ -12,6 +12,12 @@ import {
   type ResolveApprovalRequestInput,
 } from "../approval-types.js";
 import {
+  type CreateApprovalCheckpointInput,
+  type LingApprovalCheckpoint,
+  type ListApprovalCheckpointsOptions,
+  type UpdateApprovalCheckpointStatusInput,
+} from "../approval-checkpoints.js";
+import {
   type ListProviderPresetsOptions,
   type ProviderCheckResult,
   type ProviderPreset,
@@ -355,6 +361,7 @@ import { SqliteManagedPluginStore } from "./sqlite/managed-plugin-store.js";
 import { SqliteMediaStore } from "./sqlite/media-store.js";
 import { SqliteApprovalPolicyStore } from "./sqlite/approval-policy-store.js";
 import { SqliteApprovalRequestStore } from "./sqlite/approval-request-store.js";
+import { SqliteApprovalCheckpointStore } from "./sqlite/approval-checkpoint-store.js";
 import { SqliteArtifactStore } from "./sqlite/artifact-store.js";
 import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteRunEventStore } from "./sqlite/run-event-store.js";
@@ -416,6 +423,7 @@ export class SqliteRunStore implements RunStore {
   private readonly managedPlugins: SqliteManagedPluginStore;
   private readonly mediaJobs: SqliteMediaStore;
   private readonly approvalPolicies: SqliteApprovalPolicyStore;
+  private readonly approvalCheckpoints: SqliteApprovalCheckpointStore;
   private readonly approvalRequests: SqliteApprovalRequestStore;
   private readonly artifacts: SqliteArtifactStore;
   private readonly controlPlane: SqliteControlPlaneStore;
@@ -467,6 +475,7 @@ export class SqliteRunStore implements RunStore {
     this.managedPlugins = new SqliteManagedPluginStore({ database: this.database });
     this.mediaJobs = new SqliteMediaStore({ database: this.database });
     this.approvalPolicies = new SqliteApprovalPolicyStore({ database: this.database });
+    this.approvalCheckpoints = new SqliteApprovalCheckpointStore({ database: this.database });
     this.approvalRequests = new SqliteApprovalRequestStore(
       { database: this.database },
       {
@@ -474,6 +483,12 @@ export class SqliteRunStore implements RunStore {
         hasMediaJob: (id) => Boolean(this.getMediaJob(id)),
         hasExternalWorkAction: (id) => Boolean(this.getExternalWorkAction(id)),
         hasWorkflowStep: (id) => Boolean(this.getChannelWorkflowStep(id)),
+        createApprovalCheckpoint: (approval, now) => {
+          this.approvalCheckpoints.createApprovalCheckpoint({ approval }, now);
+        },
+        syncApprovalCheckpointForApproval: (approval, now) => {
+          this.approvalCheckpoints.syncApprovalCheckpointForApproval(approval, now);
+        },
         rebuildLingThreadMetadataForApproval: (approval, now) => this.tryRebuildLingThreadMetadataForApproval(approval, now),
       },
     );
@@ -2715,6 +2730,30 @@ export class SqliteRunStore implements RunStore {
 
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
     return this.approvalRequests.cancelApprovalRequest(id, input, now);
+  }
+
+  createApprovalCheckpoint(input: CreateApprovalCheckpointInput, now: string): LingApprovalCheckpoint {
+    return this.approvalCheckpoints.createApprovalCheckpoint(input, now);
+  }
+
+  getApprovalCheckpoint(id: string): LingApprovalCheckpoint | undefined {
+    return this.approvalCheckpoints.getApprovalCheckpoint(id);
+  }
+
+  getApprovalCheckpointForApproval(approvalId: string): LingApprovalCheckpoint | undefined {
+    return this.approvalCheckpoints.getApprovalCheckpointForApproval(approvalId);
+  }
+
+  listApprovalCheckpoints(options: ListApprovalCheckpointsOptions = {}): LingApprovalCheckpoint[] {
+    return this.approvalCheckpoints.listApprovalCheckpoints(options);
+  }
+
+  updateApprovalCheckpointStatus(
+    id: string,
+    input: UpdateApprovalCheckpointStatusInput,
+    now: string,
+  ): LingApprovalCheckpoint | undefined {
+    return this.approvalCheckpoints.updateApprovalCheckpointStatus(id, input, now);
   }
 
   getApprovalPolicy(): ApprovalPolicy {

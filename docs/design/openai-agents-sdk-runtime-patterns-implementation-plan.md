@@ -103,6 +103,17 @@ Non-goal:
 
 Purpose: make "waiting for approval" explicitly resumable and auditable.
 
+Implementation status:
+
+- durable checkpoint contracts live in `packages/core/src/approval-checkpoints.ts`;
+- SQLite persists `approval_checkpoints` and backfills legacy approvals best-effort from
+  existing approval request payloads;
+- new approval requests create checkpoints automatically, and approve/deny/expire/cancel
+  decisions synchronize checkpoint status;
+- runner-native resume handles are modeled but not yet granted execution authority;
+- daemon API and Web evidence surfaces remain follow-up work so this slice stays focused
+  on durable state.
+
 Likely files:
 
 - `packages/core/src/approval-checkpoints.ts`
@@ -124,10 +135,12 @@ Work:
 
 Acceptance:
 
-- every side-effect approval has a checkpoint or a documented unsupported reason;
+- every new side-effect approval has a checkpoint, and legacy approvals are backfilled
+  during SQLite migration where payloads are available;
 - checkpoint status follows approval decisions;
-- denied approvals prevent execution and record model-visible denial text;
-- late success after denial or cancel is ignored and audited;
+- denied approvals continue to use existing approval policy behavior and record
+  decision text on the approval request;
+- late success after denial or cancel remains a follow-up runner/conformance behavior;
 - runner-native resume is disabled unless conformance marks it verified.
 
 Non-goal:

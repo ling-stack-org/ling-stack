@@ -1213,6 +1213,37 @@ export function approvalRequestSelectSql(whereClause: string): string {
   `;
 }
 
+export function approvalCheckpointSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      approval_id,
+      run_id,
+      task_id,
+      media_job_id,
+      external_work_action_id,
+      workflow_step_id,
+      channel_id,
+      tool_call_id,
+      action_type,
+      risk,
+      title,
+      description,
+      status,
+      side_effect_json,
+      preview_artifact_ids_json,
+      result_artifact_ids_json,
+      runner_resume_handle_json,
+      created_at,
+      updated_at,
+      resolved_at,
+      resumed_at,
+      resume_failure_reason
+    FROM approval_checkpoints
+    ${whereClause}
+  `;
+}
+
 export function mcpServerSelectSql(whereClause: string): string {
   return `
     SELECT

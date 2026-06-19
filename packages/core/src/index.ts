@@ -1,6 +1,7 @@
 export * from "./runtime-paths.js";
 export * from "./approval-policy.js";
 export * from "./approval-types.js";
+export * from "./approval-checkpoints.js";
 export * from "./session-permissions.js";
 export * from "./media-types.js";
 export * from "./memory-types.js";

@@ -142,6 +142,8 @@ const AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_VERSION = 65;
 const AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_NAME = "add_automation_codex_style_fields";
 const TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_VERSION = 66;
 const TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_NAME = "add_teammate_direct_workspace_and_payload";
+const APPROVAL_CHECKPOINTS_MIGRATION_VERSION = 67;
+const APPROVAL_CHECKPOINTS_MIGRATION_NAME = "create_approval_checkpoints";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3355,6 +3357,107 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasChannelProtocolDraftsMigration) {
         context.recordMigration(CHANNEL_PROTOCOL_DRAFTS_MIGRATION_VERSION, CHANNEL_PROTOCOL_DRAFTS_MIGRATION_NAME);
+      }
+    }
+
+    const hasApprovalCheckpointsMigration = context.hasMigration(APPROVAL_CHECKPOINTS_MIGRATION_VERSION);
+    if (!hasApprovalCheckpointsMigration || !context.hasTable("approval_checkpoints")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS approval_checkpoints (
+          id TEXT PRIMARY KEY,
+          approval_id TEXT NOT NULL UNIQUE,
+          run_id TEXT,
+          task_id TEXT,
+          media_job_id TEXT,
+          external_work_action_id TEXT,
+          workflow_step_id TEXT,
+          channel_id TEXT,
+          tool_call_id TEXT,
+          action_type TEXT NOT NULL,
+          risk TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          status TEXT NOT NULL,
+          side_effect_json TEXT NOT NULL,
+          preview_artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+          result_artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+          runner_resume_handle_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          resolved_at TEXT,
+          resumed_at TEXT,
+          resume_failure_reason TEXT,
+          FOREIGN KEY(approval_id) REFERENCES approval_requests(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_approval_checkpoints_approval
+        ON approval_checkpoints(approval_id);
+
+        CREATE INDEX IF NOT EXISTS idx_approval_checkpoints_run
+        ON approval_checkpoints(run_id);
+
+        CREATE INDEX IF NOT EXISTS idx_approval_checkpoints_workflow_step
+        ON approval_checkpoints(workflow_step_id);
+
+        CREATE INDEX IF NOT EXISTS idx_approval_checkpoints_status
+        ON approval_checkpoints(status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_approval_checkpoints_created_at
+        ON approval_checkpoints(created_at);
+
+        INSERT OR IGNORE INTO approval_checkpoints (
+          id,
+          approval_id,
+          run_id,
+          task_id,
+          media_job_id,
+          external_work_action_id,
+          workflow_step_id,
+          channel_id,
+          tool_call_id,
+          action_type,
+          risk,
+          title,
+          description,
+          status,
+          side_effect_json,
+          preview_artifact_ids_json,
+          result_artifact_ids_json,
+          runner_resume_handle_json,
+          created_at,
+          updated_at,
+          resolved_at,
+          resumed_at,
+          resume_failure_reason
+        )
+        SELECT
+          'approval_checkpoint_' || id,
+          id,
+          run_id,
+          task_id,
+          media_job_id,
+          external_work_action_id,
+          workflow_step_id,
+          channel_id,
+          tool_call_id,
+          action_type,
+          risk,
+          title,
+          description,
+          status,
+          payload_json,
+          '[]',
+          '[]',
+          NULL,
+          created_at,
+          COALESCE(resolved_at, created_at),
+          resolved_at,
+          NULL,
+          NULL
+        FROM approval_requests;
+      `);
+      if (!hasApprovalCheckpointsMigration) {
+        context.recordMigration(APPROVAL_CHECKPOINTS_MIGRATION_VERSION, APPROVAL_CHECKPOINTS_MIGRATION_NAME);
       }
     }
 }
