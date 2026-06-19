@@ -1,4 +1,12 @@
-import type { Channel, ChannelMessage, ChannelProtocolSourceRef, RunStore } from "@ling-stack/core";
+import type {
+  ApprovalStoreFacet,
+  Channel,
+  ChannelMessage,
+  ChannelProtocolSourceRef,
+  ChannelStoreFacet,
+  RunExecutionStoreFacet,
+  RunStorePathsFacet,
+} from "@ling-stack/core";
 import {
   buildLingAgentTurnEnvelope,
   renderLingAgentTurnEnvelopeForPrompt,
@@ -14,8 +22,10 @@ import {
 import type { ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import { buildChannelContextView } from "./views.js";
 
+type WorkflowProposalContextStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet & RunStorePathsFacet;
+
 export interface BuildWorkflowProposalContextViewInput {
-  readonly store: RunStore;
+  readonly store: WorkflowProposalContextStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly turnEnvelope?: LingAgentTurnEnvelope;
