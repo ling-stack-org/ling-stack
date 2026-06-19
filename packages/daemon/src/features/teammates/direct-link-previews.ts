@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { RunStore, TeammateDirectLinkPreview } from "@ling-stack/core";
+import type { TeammateDirectLinkPreview, TeammateStoreFacet } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -65,7 +65,7 @@ export async function handleTeammateDirectLinkPreviews(
 }
 
 async function createOrFetchTeammateDirectLinkPreview(
-  store: RunStore,
+  store: TeammateStoreFacet,
   teammateId: string,
   threadId: string,
   input: ChannelLinkPreviewRequest,

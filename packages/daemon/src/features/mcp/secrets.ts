@@ -1,4 +1,4 @@
-import type { McpServer, PublicMcpServer, RunStore, SecretPurpose, SecretResolver, SecretStatus } from "@ling-stack/core";
+import type { McpServer, McpStoreFacet, PublicMcpServer, SecretPurpose, SecretResolver, SecretStatus } from "@ling-stack/core";
 import { deriveMcpServerStatus } from "./status.js";
 
 export interface McpTransportSecretRef {
@@ -8,7 +8,7 @@ export interface McpTransportSecretRef {
 }
 
 export function toPublicMcpServer(input: {
-  readonly store: RunStore;
+  readonly store: McpStoreFacet;
   readonly server: McpServer;
   readonly secretResolver: SecretResolver;
   readonly now: string;

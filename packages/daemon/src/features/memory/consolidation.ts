@@ -6,7 +6,7 @@ import {
   type MemoryReviewDecision,
   type MemoryReviewOutcome,
   type MemoryReviewState,
-  type RunStore,
+  type MemoryStoreFacet,
 } from "@ling-stack/core";
 import type { ParsedMemoryConsolidationJobRequest } from "./schemas.js";
 
@@ -17,7 +17,7 @@ export interface MemoryConsolidationJobResult {
 }
 
 export function runMemoryConsolidationJob(
-  store: RunStore,
+  store: MemoryStoreFacet,
   input: ParsedMemoryConsolidationJobRequest,
   now: string,
 ): MemoryConsolidationJobResult {
