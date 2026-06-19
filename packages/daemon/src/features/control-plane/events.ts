@@ -3,7 +3,7 @@ import type {
   AppendControlPlaneEventInput,
   ControlPlaneDomain,
   ControlPlaneEvent,
-  RunStore,
+  RunExecutionStoreFacet,
 } from "@ling-stack/core";
 import { writeSse } from "../../shared/response.js";
 
@@ -161,7 +161,7 @@ export class ControlPlaneEventHub {
 }
 
 export function appendControlPlaneEvent(
-  store: RunStore,
+  store: RunExecutionStoreFacet,
   hub: ControlPlaneEventHub,
   input: AppendControlPlaneEventInput,
   now = new Date().toISOString(),
