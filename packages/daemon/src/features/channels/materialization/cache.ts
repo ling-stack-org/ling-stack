@@ -1,8 +1,9 @@
 import type {
   ChannelAttachment,
   ChannelInputMaterialization,
+  ChannelStoreFacet,
   LingMaterializationSourceKind,
-  RunStore,
+  RunStorePathsFacet,
 } from "@ling-stack/core";
 import {
   attachmentContentDigest,
@@ -10,8 +11,11 @@ import {
 } from "./fingerprints.js";
 import type { LingInputExtractor, LingMaterializationResult } from "./registry.js";
 
+type ChannelMaterializationStore = ChannelStoreFacet;
+type AttachmentMaterializationStore = ChannelStoreFacet & RunStorePathsFacet;
+
 export interface FindChannelInputMaterializationInput {
-  readonly store: RunStore;
+  readonly store: ChannelMaterializationStore;
   readonly channelId: string;
   readonly sourceKind: LingMaterializationSourceKind;
   readonly sourceId: string;
@@ -20,7 +24,7 @@ export interface FindChannelInputMaterializationInput {
 }
 
 export interface WriteChannelInputMaterializationInput {
-  readonly store: RunStore;
+  readonly store: ChannelMaterializationStore;
   readonly channelId: string;
   readonly sourceKind: LingMaterializationSourceKind;
   readonly sourceId: string;
@@ -67,7 +71,7 @@ export function findAvailableChannelInputMaterializationForSource(
 }
 
 export interface FindReusableChannelAttachmentMaterializationInput {
-  readonly store: RunStore;
+  readonly store: AttachmentMaterializationStore;
   readonly channelId: string;
   readonly attachment: ChannelAttachment;
   readonly extractorId: string;
