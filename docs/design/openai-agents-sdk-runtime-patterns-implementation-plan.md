@@ -244,7 +244,8 @@ Acceptance:
   execution authority by this read model;
 - MCP server identity stays visible on MCP tools;
 - core tools remain governed by approval policy;
-- context budget enforcement before materialization is a follow-up daemon concern.
+- context budget enforcement happens in the daemon before materialization evidence is
+  written.
 
 Non-goal:
 
@@ -416,6 +417,8 @@ Implementation status:
 - runtime evidence stores only ids, counts, approval distribution, scope kind, and boolean
   request metadata. It does not store input schemas, raw reason text, or idempotency key
   values; retry dedupe stores only an idempotency digest;
+- materialization now includes a bounded context budget summary and rejects requests that
+  cannot fit the selected namespace/tool payload before any runtime evidence is appended;
 - `packages/api-client/src/endpoints/runs.ts` exposes `getToolSurface` and
   `createToolLoadRequest` helpers.
 
@@ -427,7 +430,36 @@ Acceptance:
 - MCP server identity remains visible through namespace ids and owner ids;
 - materialization is observable by trace/runtime readers, but it is not a runner prompt
   injection path and not an execution grant;
-- context budget enforcement before materialization remains a follow-up daemon concern.
+- context budget enforcement happens before runtime event append; over-budget requests
+  return `tool_materialization_over_budget` and do not create materialization evidence.
+
+## Slice P9: Tool Materialization Context Budget Enforcement
+
+Purpose: close the remaining P8 runtime gap by making daemon-controlled tool schema
+materialization budget-aware before it can become prompt-eligible evidence.
+
+Implementation status:
+
+- `ToolMaterializationSummary` now carries a bounded `budget` object with the decision,
+  estimated tokens, input budget, remaining budget, requested tool count, max tool count,
+  tokenizer mode, and provider capability source/confidence;
+- `POST /runs/:id/tool-load-requests` resolves the run provider preset through the same
+  context budget machinery used by channel/workflow context packs;
+- the daemon estimates the selected namespace/tool descriptor and schema payload before
+  materialization, then rejects over-budget requests with HTTP 413
+  `tool_materialization_over_budget`;
+- successful runtime evidence stores only the budget summary plus ids/counts/approval
+  distribution. It still omits input schemas, raw reason text, and raw idempotency keys;
+- rejected requests do not append `tool_namespace_materialized` events and do not change
+  workspace approval policy.
+
+Acceptance:
+
+- loading a namespace/tool schema still does not approve tool execution;
+- over-budget selection is blocked before materialization evidence is written;
+- idempotent retries of accepted materialization return the original budget summary;
+- budget errors expose only budget metadata, not schemas, reason text, or idempotency
+  values.
 
 ## Migration Strategy
 
@@ -454,6 +486,7 @@ Recommended order:
 | P6 conformance | required | no | no | disabled runner reasons |
 | P7 Web surfaces | optional | no | required | run evidence review |
 | P8 tool materialization API | optional | required | optional | tool catalog endpoint |
+| P9 materialization budget enforcement | optional | required | no | over-budget namespace rejection |
 
 ## Rollback
 
@@ -468,6 +501,8 @@ Each slice should be separately reversible:
 - P7 can hide new panels behind existing feature flags.
 - P8 can disable `/tool-surfaces` and `/runs/:id/tool-load-requests`; existing runner
   execution paths continue using approval policy directly.
+- P9 can remove the budget gate and budget DTO field while keeping P8 catalog/materialization
+  endpoints intact.
 
 ## Recommended Decisions
 
