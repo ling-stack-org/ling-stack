@@ -1,6 +1,15 @@
 import { statSync } from "node:fs";
 import { isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
-import type { Channel, ChannelAttachment, ChannelLinkPreview, ChannelMention, ChannelMessage, ChannelMessageFileRef, RunStore } from "@ling-stack/core";
+import type {
+  Channel,
+  ChannelAttachment,
+  ChannelLinkPreview,
+  ChannelMention,
+  ChannelMessage,
+  ChannelMessageFileRef,
+  ChannelStoreFacet,
+  RunStorePathsFacet,
+} from "@ling-stack/core";
 import {
   findAvailableChannelInputMaterializationForSource,
   findChannelInputMaterialization,
@@ -81,7 +90,7 @@ export interface LingAgentTurnEnvelope {
 }
 
 export interface BuildLingAgentTurnEnvelopeInput {
-  readonly store: RunStore;
+  readonly store: LingAgentTurnEnvelopeStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly activeRunId?: string;
@@ -90,6 +99,8 @@ export interface BuildLingAgentTurnEnvelopeInput {
 
 const MAX_LINK_PREVIEW_CHARS = 1_200;
 const MAX_FILE_REFS = 8;
+
+type LingAgentTurnEnvelopeStore = ChannelStoreFacet & RunStorePathsFacet;
 
 export function buildLingAgentTurnEnvelope(input: BuildLingAgentTurnEnvelopeInput): LingAgentTurnEnvelope {
   return {
@@ -159,7 +170,7 @@ export function renderLingAgentTurnEnvelopeSearchText(envelope: LingAgentTurnEnv
   ].join("\n").trim();
 }
 
-function buildAttachmentRef(store: RunStore, channelId: string, attachmentId: string): LingTurnAttachmentRef {
+function buildAttachmentRef(store: LingAgentTurnEnvelopeStore, channelId: string, attachmentId: string): LingTurnAttachmentRef {
   const attachment = store.getChannelAttachment(attachmentId);
   if (!attachment) {
     return {
@@ -196,7 +207,7 @@ function buildAttachmentRef(store: RunStore, channelId: string, attachmentId: st
 }
 
 function materializeAttachmentPreview(
-  store: RunStore,
+  store: LingAgentTurnEnvelopeStore,
   channelId: string,
   attachment: ChannelAttachment,
 ): Pick<LingTurnAttachmentRef, "previewStatus" | "materializationStatus" | "materializationId" | "previewText" | "reason"> {
@@ -266,7 +277,7 @@ function previewStatusForCachedMaterialization(status: LingTurnMaterializationSt
   return "not_loaded";
 }
 
-function buildLinkPreviewRef(store: RunStore, channelId: string, linkPreviewId: string): LingTurnLinkPreviewRef {
+function buildLinkPreviewRef(store: LingAgentTurnEnvelopeStore, channelId: string, linkPreviewId: string): LingTurnLinkPreviewRef {
   const preview = store.getChannelLinkPreview(linkPreviewId);
   if (!preview) {
     return {
@@ -379,7 +390,7 @@ function materializationStatusForLinkPreview(preview: ChannelLinkPreview): LingT
 }
 
 function buildWorkspaceFileRefs(
-  store: RunStore,
+  store: LingAgentTurnEnvelopeStore,
   channelId: string,
   messageFileRefs: readonly ChannelMessageFileRef[],
   body: string,
@@ -425,7 +436,7 @@ function buildWorkspaceFileRefs(
 }
 
 function buildWorkspaceFileRef(
-  store: RunStore,
+  store: LingAgentTurnEnvelopeStore,
   channelId: string,
   input: Pick<ChannelMessageFileRef, "path" | "label" | "source" | "line">,
 ): LingTurnWorkspaceFileRef {
@@ -458,7 +469,7 @@ function buildWorkspaceFileRef(
 }
 
 function withWorkspaceFileRefMaterialization(
-  store: RunStore,
+  store: LingAgentTurnEnvelopeStore,
   channelId: string,
   ref: LingTurnWorkspaceFileRef,
 ): LingTurnWorkspaceFileRef {
