@@ -1,4 +1,13 @@
-import type { Channel, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunArtifact, RunStore } from "@ling-stack/core";
+import type {
+  ApprovalStoreFacet,
+  Channel,
+  ChannelMessage,
+  ChannelStoreFacet,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
+  RunArtifact,
+  RunExecutionStoreFacet,
+} from "@ling-stack/core";
 import type { LingAgentTurnEnvelope, LingTurnMaterializationStatus } from "../ling-agent-turn-envelope.js";
 import {
   artifactEvidenceSensitivity,
@@ -7,6 +16,10 @@ import {
   workflowPacketKindForArtifact,
 } from "./evidence.js";
 import type { ChannelContextSource, ChannelContextSourceRef } from "./types.js";
+
+type ChannelContextConversationStore = ChannelStoreFacet & RunExecutionStoreFacet;
+type ChannelContextActiveWorkStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet;
+type WorkflowEvidenceStore = RunExecutionStoreFacet;
 
 export function collectTurnSource(input: {
   readonly workspaceId?: string;
@@ -203,7 +216,7 @@ export function collectRecentConversationSources(input: {
 }
 
 export function listChannelContextMessages(input: {
-  readonly store: RunStore;
+  readonly store: ChannelContextConversationStore;
   readonly channelId: string;
   readonly sourceMessage: ChannelMessage;
   readonly limit?: number;
@@ -220,7 +233,7 @@ export function listChannelContextMessages(input: {
 }
 
 export function listPriorChannelContextMessages(input: {
-  readonly store: RunStore;
+  readonly store: ChannelContextConversationStore;
   readonly channelId: string;
   readonly sourceMessage: ChannelMessage;
   readonly limit?: number;
@@ -234,7 +247,7 @@ export function listPriorChannelContextMessages(input: {
 }
 
 export function collectPriorConversationSources(input: {
-  readonly store: RunStore;
+  readonly store: ChannelContextConversationStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly limit?: number;
@@ -253,7 +266,7 @@ export function collectPriorConversationSources(input: {
 }
 
 export function collectSelectorConversationSources(input: {
-  readonly store: RunStore;
+  readonly store: ChannelContextConversationStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly limit?: number;
@@ -272,7 +285,7 @@ export function collectSelectorConversationSources(input: {
 }
 
 export function collectActiveWorkSources(input: {
-  readonly store: RunStore;
+  readonly store: ChannelContextActiveWorkStore;
   readonly channel: Channel;
   readonly limit?: number;
 }): readonly ChannelContextSource[] {
@@ -422,7 +435,7 @@ export function collectActiveWorkSources(input: {
 }
 
 export function collectWorkflowEvidenceSources(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowEvidenceStore;
   readonly channel: Channel;
   readonly workflow?: ChannelWorkflow;
   readonly step?: ChannelWorkflowStep;
