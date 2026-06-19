@@ -10,7 +10,8 @@ import {
   type DirectWorkspaceBinding,
   type DirectWorkspaceSnapshot,
   type LingStackRuntimePaths,
-  type RunStore,
+  type RunStorePathsFacet,
+  type TeammateStoreFacet,
   type TeammateDirectThread,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -21,6 +22,7 @@ import { writeJson } from "../../shared/response.js";
 const execFileAsync = promisify(execFile);
 
 type DirectWorktreeTarget = Pick<TeammateDirectThread, "id" | "teammateId" | "workspaceBinding">;
+type DirectWorkspaceStore = RunStorePathsFacet & TeammateStoreFacet;
 
 export interface DirectWorkspaceReady {
   readonly thread: TeammateDirectThread;
@@ -75,7 +77,7 @@ export function assertDirectFileRefsWithinWorkspace(input: {
 }
 
 export async function ensureDirectWorkspaceReady(input: {
-  readonly store: RunStore;
+  readonly store: DirectWorkspaceStore;
   readonly thread: TeammateDirectThread;
   readonly workspaceCwd: string;
 }): Promise<
