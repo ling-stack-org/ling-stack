@@ -516,6 +516,10 @@ interface LingRunnerHydratedToolSurface {
 }
 ```
 
+`LingRunnerHydratedToolSurface` is a runner-only DTO. It may be extended with sanitized
+`inputSchema` payloads for the active runner turn. The public P8/P9 materialization
+response remains summary-only for Web/API and runtime evidence.
+
 The runner-facing flow is:
 
 ```text
@@ -550,6 +554,9 @@ the normal approval policy and side-effect gates.
   hidden MCP/plugin schemas from local config.
 - Hydration responses may include schema payloads for the active runner turn, but runtime
   events and Web evidence must continue storing bounded summaries rather than raw schemas.
+- P11 implements hydration in a fake conformance runner first, then in embedded Pi behind
+  a feature flag. Other adapters remain unsupported until they pass the same conformance
+  suite.
 
 ## Pattern 5: Sandbox Manifest And Capabilities
 
@@ -660,6 +667,9 @@ artifact importer
 - Hosted sandbox providers require feature flags, doctor checks, and conformance tests.
 - `local_unix` is acceptable for development, but it is not isolation. Docker or hosted
   backends are required before treating untrusted input as isolated.
+- P12 targets Docker as the first real sandbox backend. Hosted and external backends stay
+  future adapter decisions after Docker artifact import, network policy, and secret
+  redaction conformance pass.
 
 ## Cross-Pattern Data Flow
 

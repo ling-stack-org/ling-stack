@@ -181,8 +181,8 @@ Initial profile kinds:
 
 | Backend kind | Meaning | Status |
 | --- | --- | --- |
-| `local_unix` | A local process boundary with Ling-owned artifact import paths. | Contract only |
-| `docker` | A container-backed execution boundary. | Disabled until conformance |
+| `local_unix` | A local process boundary with Ling-owned artifact import paths. | Development diagnostics only; not strong isolation |
+| `docker` | A container-backed execution boundary. | P12 first backend candidate; disabled until conformance |
 | `hosted` | A hosted sandbox provider such as E2B, Modal, Runloop, Vercel, Cloudflare, or OpenAI. | Disabled until adapter decision and conformance |
 | `external` | A runner-owned sandbox exposed through an agent protocol. | Disabled until capability negotiation proves Ling gates |
 

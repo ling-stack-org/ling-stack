@@ -478,6 +478,17 @@ Implementation status:
   events and Web evidence continue storing only bounded summaries;
 - sandbox backend selection remains a separate future decision and is not part of P10.
 
+Decision update:
+
+- P11 implementation order is fake conformance runner first, then embedded Pi. The fake
+  runner proves the policy, budget, idempotency, trace, and denial behavior before the
+  default product runner changes prompt assembly.
+- P11 will introduce a runner-only hydrated-schema DTO. P8/P9 public materialization
+  responses stay summary-only so Web/API evidence does not grow raw schema payloads.
+- P12 will use Docker as the first real sandbox backend candidate. `local_unix` remains
+  development-only and not strong isolation; hosted/external backends remain later
+  adapter decisions.
+
 Work:
 
 1. Add runner capability metadata for `daemon_hydrated` tool search/hydration support.
@@ -568,6 +579,9 @@ the start of each slice if code evidence contradicts them.
 | Tool namespace exposure | Build an internal daemon/Web catalog first; do not expose deferred tool loading to the model prompt until a runner supports it cleanly. | Capability catalog / lazy loading | P4 start |
 | Sandbox backend | Land only contracts, readiness blockers, and conformance expectations first; keep all concrete sandbox backends fail-closed. | Capability-based security / fail closed | P5 start |
 | Runner-native tool hydration | Let only conformance-verified runners request daemon-hydrated schemas; never let runners self-load MCP/plugin schemas or treat hydration as approval. | Brokered capability / policy-preserving lazy loading | P10 start |
+| First hydration runner | Implement fake conformance coverage first, then wire embedded Pi behind a feature flag. | Characterization test / adapter conformance | P11 start |
+| Hydrated schema DTO | Add a runner-only DTO for sanitized schema payloads; keep P8/P9 Web/API responses as bounded summaries. | Interface segregation / least privilege | P11 start |
+| First sandbox backend | Target Docker first after contracts; keep `local_unix` for development diagnostics only. | Isolation-first adapter slice | P12 start |
 
 Rationale:
 
@@ -585,6 +599,13 @@ Rationale:
   pass conformance.
 - P10 is the first point where deferred loading may become model-visible. That boundary
   belongs in the runner adapter contract, not in Web or ad hoc prompt assembly.
+- P11 should prove the contract with a fake runner before touching embedded Pi. That keeps
+  prompt changes, approval gates, and materialization idempotency testable in isolation.
+- Runner-only DTOs keep prompt payloads separate from evidence payloads. This preserves
+  P8/P9's no-raw-schema evidence boundary while still letting verified runners receive
+  schemas for the next model turn.
+- Docker is the first useful sandbox target because it gives a real filesystem/process
+  boundary without adding hosted-account, billing, or provider-specific API risk.
 
 ## Remaining Implementation Gates After P9
 
@@ -598,13 +619,17 @@ Resolved gates:
 
 Open gates:
 
-1. Which runner adapter should be the first to implement `daemon_hydrated` tool search.
-   Default: keep embedded Pi unchanged until an adapter can produce structured hydration
-   events and pass conformance.
-2. Whether hydrated schema payloads need a new runner-only response DTO or can reuse the
-   existing materialization response plus a sanitized schema envelope.
-3. Which sandbox backend, if any, is worth implementing first after the contract lands.
+1. None for P11 start. The first hydration target is decided: fake conformance runner,
+   then embedded Pi behind a feature flag.
+2. None for P11 start. Hydrated schemas use a runner-only DTO and do not expand P8/P9
+   public summary responses.
+3. None for P12 start. The first real sandbox backend candidate is Docker; `local_unix`
+   remains development-only and hosted/external backends stay future decisions.
 
 Current P10 answer: expose deferred loading to runner prompts only through a
 conformance-verified runner hydration capability. Do not inject P8/P9 materialization into
 the current runner prompt, and do not select a sandbox backend in the same slice.
+
+Current P11/P12 decision: implement P11 first with fake conformance coverage and embedded
+Pi as the first product runner, then implement P12 with Docker as the first real sandbox
+backend candidate.
