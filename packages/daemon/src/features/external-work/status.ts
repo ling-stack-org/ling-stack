@@ -5,10 +5,11 @@ import {
   parseExternalWorkflowMarkdown,
   type Channel,
   type ExternalWorkBackgroundScheduler,
+  type ExternalWorkStoreFacet,
   type ExternalWorkflowDefinition,
   type ExternalWorkStatusResponse,
-  type RunStore,
   type SecretResolver,
+  type WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -18,6 +19,10 @@ import { writeJson } from "../../shared/response.js";
 export interface ExternalWorkBackgroundSchedulerList {
   list(cwd: string): readonly ExternalWorkBackgroundScheduler[];
 }
+
+type ExternalWorkStatusStore =
+  ExternalWorkStoreFacet &
+  WorkspaceStoreFacet;
 
 export async function handleExternalWorkStatus(
   request: IncomingMessage,
@@ -195,7 +200,7 @@ export function buildExternalWorkStatusSecret(
   };
 }
 
-function buildExternalWorkStatusCounts(store: RunStore, channelId: string): ExternalWorkStatusResponse["records"] {
+function buildExternalWorkStatusCounts(store: ExternalWorkStatusStore, channelId: string): ExternalWorkStatusResponse["records"] {
   return {
     externalWork: {
       total: store.countExternalWorkRecords({ channelId }),

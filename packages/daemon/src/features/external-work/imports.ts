@@ -8,8 +8,11 @@ import {
   renderExternalWorkflowPrompt,
   type ExternalWorkImportResponse,
   type ExternalWorkItem,
+  type ExternalWorkStoreFacet,
   type RunArtifact,
-  type RunStore,
+  type RunExecutionStoreFacet,
+  type RunStorePathsFacet,
+  type WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -18,6 +21,12 @@ import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { parseExternalGitHubImportRequest, parseExternalLinearImportRequest } from "./schemas.js";
 import { readExternalWorkflowMarkdown } from "./workflow.js";
+
+type ExternalWorkImportStore =
+  ExternalWorkStoreFacet &
+  WorkspaceStoreFacet &
+  RunExecutionStoreFacet &
+  RunStorePathsFacet;
 
 export async function handleExternalGitHubImport(
   request: IncomingMessage,
@@ -158,7 +167,7 @@ export async function handleExternalLinearImport(
 }
 
 function createExternalWorkEvidenceArtifacts(
-  store: RunStore,
+  store: ExternalWorkImportStore,
   externalWorkId: string,
   externalWorkItem: ExternalWorkItem,
   renderedPrompt: string,
