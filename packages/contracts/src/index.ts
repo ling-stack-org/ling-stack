@@ -20,6 +20,7 @@ export type * from "./unified-exec.js";
 export type * from "./shell-snapshots.js";
 export type * from "./providers.js";
 export type * from "./mcp.js";
+export type * from "./tool-surfaces.js";
 export type * from "./plugins.js";
 export type * from "./skills.js";
 export type * from "./teammates.js";

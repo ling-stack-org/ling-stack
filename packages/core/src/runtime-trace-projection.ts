@@ -383,7 +383,7 @@ function statusFromRuntimeEvent(type: RuntimeEvent["type"]): LingTraceStatus {
   if (type === "work_unit_cancelled" || type === "stale_runner_completion_ignored") {
     return "cancelled";
   }
-  if (type === "work_unit_succeeded" || type === "artifact_created") {
+  if (type === "work_unit_succeeded" || type === "artifact_created" || type === "tool_namespace_materialized") {
     return "succeeded";
   }
   if (type === "work_unit_queued" || type === "work_unit_created") {

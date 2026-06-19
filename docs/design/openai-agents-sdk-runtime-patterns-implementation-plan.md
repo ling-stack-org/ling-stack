@@ -198,12 +198,15 @@ Purpose: reduce large tool surfaces while preserving approval policy.
 Implementation status:
 
 - `LingToolNamespaceCatalog` contracts and pure catalog builder live in
-  `packages/core/src/tool-surface-types.ts`;
+  `packages/core/src/tool-surface-types.ts`, with API DTOs mirrored in
+  `packages/contracts/src/tool-surfaces.ts`;
 - the catalog compiles core tools, MCP tools, skill-required tool references, runner
   support metadata, and approval policy decisions into one read model;
 - schema visibility never changes `executionApproval`, so deferred loading cannot upgrade
   `ask` or `deny` into execution authority;
-- daemon catalog endpoints and tool-load request materialization remain follow-up work.
+- daemon `GET /tool-surfaces` and `POST /runs/:id/tool-load-requests` endpoints now expose
+  the catalog and record materialization summary evidence without granting execution
+  approval.
 
 Likely files:
 
@@ -363,8 +366,8 @@ Implementation status:
   input, expected output, risk summary, and validation blockers;
 - trace tool-call rows render bounded tool namespace/materialization summaries when the
   trace read model provides safe redacted attributes;
-- a full daemon tool catalog/materialization endpoint remains follow-up work. This slice
-  intentionally does not add mutating runtime controls.
+- full daemon tool catalog/materialization endpoints are handled by P8. P7 intentionally
+  does not add mutating runtime controls.
 
 Likely files:
 
@@ -388,6 +391,43 @@ Acceptance:
 - every UI action calls daemon APIs;
 - stale or missing trace data degrades to existing evidence views;
 - approval and sandbox details link back to source artifacts.
+
+## Slice P8: Daemon Tool Surface Materialization Endpoint
+
+Purpose: make the P4 tool catalog usable by daemon clients without treating schema loading
+as execution permission.
+
+Implementation status:
+
+- `packages/contracts/src/tool-surfaces.ts` defines the public catalog, namespace,
+  descriptor, load request, and materialization response DTOs;
+- `packages/daemon/src/features/runs/tool-surfaces.ts` serves:
+
+  ```text
+  GET /tool-surfaces?cwd=...&runId=...
+  POST /runs/:id/tool-load-requests?cwd=...
+  ```
+
+- the GET endpoint builds a catalog from the workspace approval policy, core tools, MCP
+  servers/tools, skill requirements, and runner support metadata;
+- the POST endpoint resolves either a namespace or one tool, returns the same catalog plus
+  a bounded `ToolMaterializationSummary`, and appends `tool_namespace_materialized` runtime
+  evidence when the run has a work unit;
+- runtime evidence stores only ids, counts, approval distribution, scope kind, and boolean
+  request metadata. It does not store input schemas, raw reason text, or idempotency key
+  values; retry dedupe stores only an idempotency digest;
+- `packages/api-client/src/endpoints/runs.ts` exposes `getToolSurface` and
+  `createToolLoadRequest` helpers.
+
+Acceptance:
+
+- loading a namespace/tool schema does not change workspace approval policy;
+- denied or otherwise disabled tools stay disabled in the returned catalog and may still
+  be counted in materialization evidence;
+- MCP server identity remains visible through namespace ids and owner ids;
+- materialization is observable by trace/runtime readers, but it is not a runner prompt
+  injection path and not an execution grant;
+- context budget enforcement before materialization remains a follow-up daemon concern.
 
 ## Migration Strategy
 
@@ -413,6 +453,7 @@ Recommended order:
 | P5 sandbox profiles | required | optional | no | readiness diagnostics |
 | P6 conformance | required | no | no | disabled runner reasons |
 | P7 Web surfaces | optional | no | required | run evidence review |
+| P8 tool materialization API | optional | required | optional | tool catalog endpoint |
 
 ## Rollback
 
@@ -425,6 +466,8 @@ Each slice should be separately reversible:
 - P5 has no enabled backend, so rollback removes types and diagnostics only.
 - P6 only tightens future runner gates.
 - P7 can hide new panels behind existing feature flags.
+- P8 can disable `/tool-surfaces` and `/runs/:id/tool-load-requests`; existing runner
+  execution paths continue using approval policy directly.
 
 ## Recommended Decisions
 
@@ -465,3 +508,7 @@ These are the same decision points expressed as implementation gates:
 3. Whether tool namespace materialization is exposed to the model through the current runner
    prompt or only used internally by the daemon until a runner supports tool search.
 4. Which sandbox backend, if any, is worth implementing first after the contract lands.
+
+Current P8 answer: keep materialization internal to daemon/API clients only. Do not expose
+deferred tool loading to the current runner prompt until a runner supports tool search and
+approval-preserving schema hydration cleanly.

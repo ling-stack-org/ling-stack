@@ -36,6 +36,7 @@ export function parseRunRoute(
   | { kind: "shell-snapshot"; runId: string; snapshotId: string }
   | { kind: "cancel"; runId: string }
   | { kind: "interventions"; runId: string }
+  | { kind: "tool-load-requests"; runId: string }
   | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "runs") {
@@ -58,6 +59,9 @@ export function parseRunRoute(
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "interventions") {
     return { kind: "interventions", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "tool-load-requests") {
+    return { kind: "tool-load-requests", runId: segments[1] };
   }
   return undefined;
 }

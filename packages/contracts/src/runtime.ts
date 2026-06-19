@@ -150,6 +150,7 @@ export type RuntimeEventType =
   | "semaphore_acquired"
   | "semaphore_released"
   | "artifact_created"
+  | "tool_namespace_materialized"
   | "stale_runner_completion_ignored"
   | "diagnostic_stuck_detected";
 
