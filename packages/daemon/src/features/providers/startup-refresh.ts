@@ -14,7 +14,7 @@ import { providerSecretStatus } from "./secrets.js";
 
 const STARTUP_CHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-type ProviderStartupRefreshStore = ProviderStoreFacet & RunExecutionStoreFacet;
+export type ProviderStartupRefreshStore = ProviderStoreFacet & RunExecutionStoreFacet;
 
 export class ProviderStartupRefreshService {
   private readonly refreshesByCwd = new Map<string, Promise<readonly ProviderCheckResult[]>>();
