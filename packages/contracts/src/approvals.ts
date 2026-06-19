@@ -23,6 +23,17 @@ export type ApprovalActionType =
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+export type LingApprovalCheckpointStatus = ApprovalStatus | "resume_pending" | "resumed" | "resume_failed";
+
+export interface RunnerResumeHandle {
+  readonly kind: "ling_continuation" | "runner_native";
+  readonly runnerId?: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly handleRef?: string;
+  readonly payload?: Record<string, unknown>;
+  readonly verified?: boolean;
+}
 
 export interface ApprovalRequest {
   readonly id: string;
@@ -44,6 +55,32 @@ export interface ApprovalRequest {
   readonly resolvedAt?: string;
   readonly resolvedBy?: "local-user";
   readonly decisionReason?: string;
+}
+
+export interface LingApprovalCheckpoint {
+  readonly id: string;
+  readonly approvalId: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly mediaJobId?: string;
+  readonly externalWorkActionId?: string;
+  readonly workflowStepId?: string;
+  readonly channelId?: string;
+  readonly toolCallId?: string;
+  readonly actionType: ApprovalActionType;
+  readonly risk: ApprovalRisk;
+  readonly title: string;
+  readonly description: string;
+  readonly status: LingApprovalCheckpointStatus;
+  readonly sideEffect: unknown;
+  readonly previewArtifactIds: readonly string[];
+  readonly resultArtifactIds: readonly string[];
+  readonly runnerResumeHandle?: RunnerResumeHandle;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly resolvedAt?: string;
+  readonly resumedAt?: string;
+  readonly resumeFailureReason?: string;
 }
 
 export interface ApprovalListResponse {

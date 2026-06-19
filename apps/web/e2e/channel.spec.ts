@@ -2905,6 +2905,86 @@ test("workflow context inspect details stay out of main feed expansion", async (
       updatedAt: "2026-05-25T00:52:00.000Z",
     },
   ];
+  state.approvals = [
+    {
+      id: "approval_context_checkpoint",
+      runId: contextRun.id,
+      taskId: "task_context_inspect",
+      workflowStepId: "workflow_step_context_inspect",
+      channelId: "channel_engineering",
+      actionType: "bash",
+      risk: "medium",
+      title: "Resume workflow execution",
+      description: "Run focused workflow evidence checks.",
+      payload: { type: "bash", command: "pnpm --filter @ling-stack/web test", hidden: "raw_resume_payload" },
+      status: "approved",
+      createdAt: "2026-05-25T00:50:20.000Z",
+      resolvedAt: "2026-05-25T00:50:25.000Z",
+      resolvedBy: "local-user",
+    },
+  ];
+  state.approvalCheckpoints = [
+    {
+      id: "checkpoint_context_resume",
+      approvalId: "approval_context_checkpoint",
+      runId: contextRun.id,
+      taskId: "task_context_inspect",
+      workflowStepId: "workflow_step_context_inspect",
+      channelId: "channel_engineering",
+      actionType: "bash",
+      risk: "medium",
+      title: "Resume workflow execution",
+      description: "Run focused workflow evidence checks.",
+      status: "resumed",
+      sideEffect: { type: "bash", command: "pnpm --filter @ling-stack/web test", hidden: "raw_resume_payload" },
+      previewArtifactIds: [],
+      resultArtifactIds: ["artifact_context_inspect_file"],
+      runnerResumeHandle: {
+        kind: "ling_continuation",
+        runId: contextRun.id,
+        handleRef: "runner_handle_context_secret",
+        verified: true,
+        payload: { hidden: "raw_resume_payload" },
+      },
+      createdAt: "2026-05-25T00:50:20.000Z",
+      updatedAt: "2026-05-25T00:52:00.000Z",
+      resolvedAt: "2026-05-25T00:50:25.000Z",
+      resumedAt: "2026-05-25T00:50:30.000Z",
+    },
+  ];
+  state.workflowHandoffIntents = [
+    {
+      schemaVersion: 1,
+      id: "handoff_intent_context",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_context_inspect",
+      sourceWorkflowStepId: "workflow_step_context_inspect",
+      sourceRunId: contextRun.id,
+      fromParticipantId: "engineer",
+      fromParticipantLabel: "Engineer",
+      toParticipantId: "reviewer",
+      toParticipantLabel: "Reviewer",
+      reason: "Review the bounded evidence projection before release.",
+      requiredInput: "Inspect the workflow evidence rows and confirm raw internals stay hidden.",
+      expectedOutput: "A reviewer verdict with any blocker called out.",
+      riskSummary: "Requires reviewer confirmation before shipping.",
+      sourceRefs: [],
+      status: "validated",
+      validation: {
+        targetTeammateExists: true,
+        targetTeammateActive: true,
+        skillExecutable: true,
+        providerRunnable: true,
+        approvalProfileCompatible: true,
+        resourceLeaseAvailable: true,
+        blockers: [],
+      },
+      createdBy: "orchestrator",
+      createdAt: "2026-05-25T00:50:40.000Z",
+      updatedAt: "2026-05-25T00:50:50.000Z",
+    },
+  ];
   state.artifactsByRun[contextRun.id] = [
     {
       id: "artifact_context_inspect_file",
@@ -2995,12 +3075,28 @@ test("workflow context inspect details stay out of main feed expansion", async (
   const evidenceRegion = workCell.getByRole("region", { name: "Evidence" });
   await expect(evidenceRegion).toContainText("Update workflow evidence projection");
   await expect(evidenceRegion).toContainText("Run focused workflow UI test");
+  await expect(evidenceRegion).toContainText("Handoff: Engineer -> Reviewer");
+  await expect(evidenceRegion).toContainText("Approval checkpoint: Resume workflow execution");
   await expect(evidenceRegion).not.toContainText("execution_action_workflow_edit");
+  await expect(evidenceRegion).not.toContainText("handoff_intent_context");
+  await expect(evidenceRegion).not.toContainText("checkpoint_context_resume");
+  await expect(evidenceRegion).not.toContainText("approval_context_checkpoint");
   const editActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Update workflow evidence projection" });
   await editActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("apps/web/src/lib/workflow-progress.ts");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("1 output recorded");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("artifact_context_inspect_file");
+  const handoffRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Handoff: Engineer -> Reviewer" });
+  await handoffRow.locator(".conversation-work-cell-row-main").click();
+  await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Required input: Inspect the workflow evidence rows");
+  await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Expected output: A reviewer verdict");
+  await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Risk: Requires reviewer confirmation before shipping.");
+  const checkpointRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Approval checkpoint: Resume workflow execution" });
+  await checkpointRow.locator(".conversation-work-cell-row-main").click();
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Action: bash");
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Resume handle: verified");
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("runner_handle_context_secret");
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("raw_resume_payload");
   const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Run focused workflow UI test" });
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
@@ -4712,6 +4808,51 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
       createdAt: "2026-05-25T00:21:12.000Z",
     },
   ];
+  state.approvals = [
+    {
+      id: "approval_thread_checkpoint",
+      runId: run.id,
+      taskId: run.taskId,
+      channelId: "channel_engineering",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve typecheck",
+      description: "pnpm typecheck",
+      payload: { type: "bash", command: "pnpm typecheck", hidden: "raw_thread_resume_payload" },
+      status: "approved",
+      createdAt: "2026-05-25T00:20:10.000Z",
+      resolvedAt: "2026-05-25T00:20:15.000Z",
+      resolvedBy: "local-user",
+    },
+  ];
+  state.approvalCheckpoints = [
+    {
+      id: "checkpoint_thread_resume",
+      approvalId: "approval_thread_checkpoint",
+      runId: run.id,
+      taskId: run.taskId,
+      channelId: "channel_engineering",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve typecheck",
+      description: "pnpm typecheck",
+      status: "resumed",
+      sideEffect: { type: "bash", command: "pnpm typecheck", hidden: "raw_thread_resume_payload" },
+      previewArtifactIds: [],
+      resultArtifactIds: [],
+      runnerResumeHandle: {
+        kind: "ling_continuation",
+        runId: run.id,
+        handleRef: "runner_handle_thread_secret",
+        verified: true,
+        payload: { hidden: "raw_thread_resume_payload" },
+      },
+      createdAt: "2026-05-25T00:20:10.000Z",
+      updatedAt: "2026-05-25T00:21:00.000Z",
+      resolvedAt: "2026-05-25T00:20:15.000Z",
+      resumedAt: "2026-05-25T00:20:20.000Z",
+    },
+  ];
   state.executionActions = [
     {
       id: "execution_action_thread_ui",
@@ -4831,9 +4972,12 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(evidenceRegion).toContainText("Run typecheck");
   await expect(evidenceRegion).toContainText("Trace: Agent run");
   await expect(evidenceRegion).toContainText("Trace: Tool call");
+  await expect(evidenceRegion).toContainText("Approval checkpoint: Approve typecheck");
   await expect(evidenceRegion).not.toContainText("artifact_thread_diff");
   await expect(evidenceRegion).not.toContainText("trace_thread_thread_inspect");
   await expect(evidenceRegion).not.toContainText("span_trace_thread_thread_inspect");
+  await expect(evidenceRegion).not.toContainText("checkpoint_thread_resume");
+  await expect(evidenceRegion).not.toContainText("approval_thread_checkpoint");
   await expect(evidenceRegion).not.toContainText("run_failed");
   const editActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Render conversation work cell" });
   await editActionRow.locator(".conversation-work-cell-row-main").click();
@@ -4843,6 +4987,17 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Run typecheck" });
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
+  const checkpointRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Approval checkpoint: Approve typecheck" });
+  await checkpointRow.locator(".conversation-work-cell-row-main").click();
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Action: bash");
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Status: Resumed");
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Resume handle: verified");
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("runner_handle_thread_secret");
+  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("raw_thread_resume_payload");
+  const traceToolRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Trace: Tool call" }).first();
+  await traceToolRow.locator(".conversation-work-cell-row-main").click();
+  await expect(traceToolRow.locator(".conversation-work-cell-row-detail")).toContainText("Tool namespace: core");
+  await expect(traceToolRow.locator(".conversation-work-cell-row-detail")).toContainText("Tool materialization: recorded");
   await maybeCaptureR32Screenshot(page, "thread-action-details-expanded");
   await expect(workCell.locator(".conversation-work-cell-group.attention")).toHaveCount(0);
   await expect(workCell).not.toContainText("No items recorded");

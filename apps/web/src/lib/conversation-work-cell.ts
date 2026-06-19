@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ChannelWorkflow, ExecutionAction, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
+import type { ApprovalRequest, ChannelWorkflow, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
@@ -485,11 +485,121 @@ export function buildConversationWorkCellDetailsFromThreadEvidence(input: {
     runIds: input.runIds,
     t: input.t,
   });
-  const groups = mergeTraceEvidenceRows(cell?.groups ?? emptyWorkCellGroups(input.t), traceRows, input.t);
+  const checkpointRows = buildConversationApprovalCheckpointRows({
+    checkpoints: filterEvidenceApprovalCheckpoints(input.evidence.approvalCheckpoints ?? [], input.runIds),
+    t: input.t,
+  });
+  const groups = mergeTraceEvidenceRows(
+    mergeRowsIntoMainFeedGroup(
+      mergeRowsIntoMainFeedGroup(cell?.groups ?? emptyWorkCellGroups(input.t), "evidence", checkpointRows.evidenceRows, input.t),
+      "attention",
+      checkpointRows.attentionRows,
+      input.t,
+    ),
+    traceRows,
+    input.t,
+  );
   return {
     groups,
     evidenceLinks: mainFeedEvidenceLinks(cell?.evidenceLinks ?? []),
   };
+}
+
+export function buildConversationApprovalCheckpointRows(input: {
+  readonly checkpoints: readonly LingApprovalCheckpoint[];
+  readonly t: Translate;
+}): { readonly evidenceRows: readonly ConversationWorkCellRow[]; readonly attentionRows: readonly ConversationWorkCellRow[] } {
+  const evidenceRows: ConversationWorkCellRow[] = [];
+  const attentionRows: ConversationWorkCellRow[] = [];
+  for (const checkpoint of input.checkpoints.slice(0, 12)) {
+    const row = approvalCheckpointRow(checkpoint, input.t);
+    if (isApprovalCheckpointAttentionStatus(checkpoint.status)) {
+      attentionRows.push(row);
+    } else {
+      evidenceRows.push(row);
+    }
+  }
+  return { evidenceRows, attentionRows };
+}
+
+function approvalCheckpointRow(checkpoint: LingApprovalCheckpoint, t: Translate): ConversationWorkCellRow {
+  const detailLines: ConversationWorkCellRowDetailLine[] = [
+    { text: t("Action: {action}", { action: checkpoint.actionType }) },
+    { text: t("Risk: {risk}", { risk: checkpoint.risk }) },
+    { text: t("Status: {status}", { status: approvalCheckpointStatusLabel(checkpoint.status, t) }) },
+  ];
+  if (checkpoint.runnerResumeHandle) {
+    detailLines.push({
+      text: t("Resume handle: {status}", {
+        status: checkpoint.runnerResumeHandle.verified === false ? t("unverified") : t("verified"),
+      }),
+    });
+  }
+  if (checkpoint.resumeFailureReason) {
+    detailLines.push({ text: t("Resume failure: {reason}", { reason: truncatePreview(checkpoint.resumeFailureReason, 140) }) });
+  }
+  if (checkpoint.resultArtifactIds.length > 0) {
+    detailLines.push({ text: t("{count} output recorded", { count: checkpoint.resultArtifactIds.length }) });
+  }
+  return {
+    id: `approval-checkpoint:${checkpoint.id}`,
+    kind: "approval",
+    title: t("Approval checkpoint: {title}", { title: checkpoint.title }),
+    description: truncatePreview(checkpoint.description, 180),
+    detailLines,
+    meta: approvalCheckpointStatusLabel(checkpoint.status, t),
+    tone: approvalCheckpointTone(checkpoint.status),
+  };
+}
+
+function filterEvidenceApprovalCheckpoints(
+  checkpoints: readonly LingApprovalCheckpoint[],
+  runIds: readonly string[] | undefined,
+): readonly LingApprovalCheckpoint[] {
+  if (!runIds || runIds.length === 0) {
+    return checkpoints;
+  }
+  const runIdSet = new Set(runIds);
+  const filtered = checkpoints.filter((checkpoint) => checkpoint.runId ? runIdSet.has(checkpoint.runId) : true);
+  return filtered.length > 0 ? filtered : checkpoints;
+}
+
+function isApprovalCheckpointAttentionStatus(status: LingApprovalCheckpoint["status"]): boolean {
+  return status === "pending" ||
+    status === "resume_pending" ||
+    status === "denied" ||
+    status === "expired" ||
+    status === "cancelled" ||
+    status === "resume_failed";
+}
+
+function approvalCheckpointTone(status: LingApprovalCheckpoint["status"]): ConversationWorkCellRowTone {
+  if (status === "approved" || status === "resumed") {
+    return "success";
+  }
+  if (status === "pending" || status === "resume_pending") {
+    return "waiting";
+  }
+  if (status === "denied" || status === "expired" || status === "cancelled" || status === "resume_failed") {
+    return "failed";
+  }
+  return "neutral";
+}
+
+function approvalCheckpointStatusLabel(status: LingApprovalCheckpoint["status"], t: Translate): string {
+  if (status === "pending") {
+    return t("Waiting for approval");
+  }
+  if (status === "resume_pending") {
+    return t("Resume pending");
+  }
+  if (status === "resume_failed") {
+    return t("Resume failed");
+  }
+  if (status === "resumed") {
+    return t("Resumed");
+  }
+  return t(status);
 }
 
 function buildTraceEvidenceRows(input: {
@@ -522,32 +632,42 @@ function mergeTraceEvidenceRows(
   traceRows: readonly ConversationWorkCellRow[],
   t: Translate,
 ): readonly ConversationWorkCellGroup[] {
-  if (traceRows.length === 0) {
+  return mergeRowsIntoMainFeedGroup(groups, "evidence", traceRows, t);
+}
+
+function mergeRowsIntoMainFeedGroup(
+  groups: readonly ConversationWorkCellGroup[],
+  groupId: ConversationWorkCellGroupKind,
+  rowsToAppend: readonly ConversationWorkCellRow[],
+  t: Translate,
+): readonly ConversationWorkCellGroup[] {
+  if (rowsToAppend.length === 0) {
     return groups;
   }
-  let mergedEvidence = false;
+  let mergedGroup = false;
   const merged = groups.map((group) => {
-    if (group.id !== "evidence") {
+    if (group.id !== groupId) {
       return group;
     }
-    mergedEvidence = true;
-    const rows = [...group.rows, ...traceRows];
+    mergedGroup = true;
+    const rows = [...group.rows, ...rowsToAppend].filter(isMainFeedSafeRow);
     return {
       ...group,
       rows,
-      summary: mainFeedGroupSummary("evidence", rows.length, t),
+      summary: mainFeedGroupSummary(groupId, rows.length, t),
     };
   });
-  if (mergedEvidence) {
+  if (mergedGroup) {
     return merged;
   }
+  const rows = rowsToAppend.filter(isMainFeedSafeRow);
   return [
     ...groups,
     {
-      id: "evidence",
-      label: t("Evidence"),
-      summary: mainFeedGroupSummary("evidence", traceRows.length, t),
-      rows: traceRows,
+      id: groupId,
+      label: groupId === "attention" ? t("Attention") : groupId === "evidence" ? t("Evidence") : t("Evidence"),
+      summary: mainFeedGroupSummary(groupId, rows.length, t),
+      rows,
     },
   ];
 }
@@ -656,6 +776,18 @@ function traceSpanAttributeSummaries(span: LingTraceSpan, t: Translate): readonl
     }
   };
 
+  if (span.kind === "tool_call") {
+    pushAttribute(t("Tool"), "toolName");
+    const toolNamespace = traceToolNamespace(attributes);
+    if (toolNamespace) {
+      rows.push(t("Tool namespace: {namespace}", { namespace: toolNamespace }));
+    }
+    const materialization = traceAttributeText(attributes.materializationStatus) ??
+      traceAttributeText(attributes.toolMaterializationStatus);
+    if (materialization) {
+      rows.push(t("Tool materialization: {status}", { status: materialization }));
+    }
+  }
   if (span.kind === "tool_call" || span.kind === "approval" || span.kind === "external_action") {
     pushAttribute(t("Action"), "actionType");
     pushAttribute(t("Risk"), "risk");
@@ -669,6 +801,26 @@ function traceSpanAttributeSummaries(span: LingTraceSpan, t: Translate): readonl
     pushAttribute(t("Backend"), "backend");
   }
   return rows.filter((row) => isMainFeedSafeText(row));
+}
+
+function traceToolNamespace(attributes: Record<string, unknown>): string | undefined {
+  const explicitNamespace = traceAttributeText(attributes.toolNamespace);
+  if (explicitNamespace) {
+    return explicitNamespace;
+  }
+  const toolName = traceAttributeText(attributes.toolName);
+  const actionType = traceAttributeText(attributes.actionType);
+  const name = toolName ?? actionType;
+  if (!name) {
+    return undefined;
+  }
+  if (name === "mcp_tool_call" || name.startsWith("mcp__") || name.includes(":")) {
+    return "mcp";
+  }
+  if (name === "external_send" || name === "deploy") {
+    return "external";
+  }
+  return "core";
 }
 
 function traceAttributeText(value: unknown): string | undefined {

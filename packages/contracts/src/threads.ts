@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from "./approvals.js";
+import type { ApprovalRequest, LingApprovalCheckpoint } from "./approvals.js";
 import type { RunArtifact } from "./artifacts.js";
 import type { RunEventEnvelope, RunSession, RuntimeEvent } from "./runtime.js";
 import type { ExecutionAction } from "./execution-actions.js";
@@ -115,6 +115,7 @@ export interface LingThreadEvidenceResponse {
   readonly generatedAt: string;
   readonly runs: readonly LingThreadEvidenceRun[];
   readonly actions: readonly ExecutionAction[];
+  readonly approvalCheckpoints: readonly LingApprovalCheckpoint[];
   readonly transitions: readonly StateTransitionEvent[];
 }
 

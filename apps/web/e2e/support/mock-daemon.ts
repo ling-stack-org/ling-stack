@@ -3,7 +3,7 @@ import { expect, type Locator, type Page, type Request, type Route } from "@play
 import { buildEffectiveTeammateSkills, buildMemoryMarkdownExport, parseMemoryMarkdownImport } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, WorkflowHandoffIntent, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -32,6 +32,7 @@ export interface MockState {
   channelBriefs: Record<string, unknown>;
   channelDecisions: unknown[];
   channelHandoffs: unknown[];
+  workflowHandoffIntents: WorkflowHandoffIntent[];
   channelContextSummaries: unknown[];
   channelWorkflows: unknown[];
   channelWorkflowSteps: unknown[];
@@ -66,6 +67,7 @@ export interface MockState {
   failNextTaskCreate?: boolean;
   linkPreviewDelayMs?: number;
   approvals: MockApproval[];
+  approvalCheckpoints: LingApprovalCheckpoint[];
   approvalPolicy: MockApprovalPolicy;
   lastApprovalPolicyPatch?: Record<string, unknown>;
   externalWorkActions: MockExternalWorkAction[];
@@ -292,7 +294,9 @@ export interface MockApproval {
   taskId?: string;
   mediaJobId?: string;
   externalWorkActionId?: string;
+  workflowStepId?: string;
   channelId?: string;
+  toolCallId?: string;
   actionType: string;
   risk: string;
   title: string;
@@ -868,6 +872,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelBriefs: {},
     channelDecisions: [],
     channelHandoffs: [],
+    workflowHandoffIntents: [],
     channelContextSummaries: [],
     channelWorkflows: [],
     channelWorkflowSteps: [],
@@ -919,6 +924,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
         decisionReason: options.approvalStatus === "expired" ? "Approval request expired before a decision was received." : undefined,
       },
     ],
+    approvalCheckpoints: [],
     approvalPolicy: {
       workspaceId: "workspace_default",
       toolDecisions: {
@@ -1085,18 +1091,35 @@ export function buildMockThreadEvidence(state: MockState, thread: MockLingThread
     }
     return linked;
   });
+  const approvalIds = new Set<string>();
+  const evidenceRuns = threadRuns.map((run) => {
+    const approvals = state.approvals.filter((approval) =>
+      approval.runId === run.id ||
+      (thread.workflowStepId !== undefined && approval.workflowStepId === thread.workflowStepId)
+    );
+    for (const approval of approvals) {
+      approvalIds.add(approval.id);
+    }
+    return {
+      run,
+      events: state.eventsByRun[run.id] ?? [],
+      approvals,
+      artifacts: state.artifactsByRun[run.id] ?? [],
+      runtimeEvents: run.workUnitId ? state.runtimeEventsByWorkUnit[run.workUnitId] ?? [] : [],
+    };
+  });
+  const approvalCheckpoints = state.approvalCheckpoints.filter((checkpoint) =>
+    approvalIds.has(checkpoint.approvalId) ||
+    (checkpoint.runId !== undefined && runIds.has(checkpoint.runId)) ||
+    (thread.workflowStepId !== undefined && checkpoint.workflowStepId === thread.workflowStepId)
+  );
   return {
     cwd,
     thread,
     generatedAt: "2026-05-25T00:39:00.000Z",
-    runs: threadRuns.map((run) => ({
-      run,
-      events: state.eventsByRun[run.id] ?? [],
-      approvals: state.approvals.filter((approval) => approval.runId === run.id),
-      artifacts: state.artifactsByRun[run.id] ?? [],
-      runtimeEvents: run.workUnitId ? state.runtimeEventsByWorkUnit[run.workUnitId] ?? [] : [],
-    })),
+    runs: evidenceRuns,
     actions,
+    approvalCheckpoints,
     transitions: state.stateTransitions.filter((transition) =>
       isRecord(transition) &&
       (
@@ -1234,9 +1257,11 @@ function buildMockTraceSpans(
         toolCallId: action.toolCallId,
       },
       redactedAttributes: {
+        toolName: action.actionType,
         actionType: action.actionType,
         risk: action.risk,
         status: action.status,
+        materializationStatus: "recorded",
         previewArtifactCount: action.previewArtifactIds.length,
         resultArtifactCount: action.resultArtifactIds.length,
       },
@@ -8571,6 +8596,12 @@ function buildMockWorkflowEvidence(state: MockState, workflow: Record<string, un
     .filter(([runId]) => stepRunIds.has(runId))
     .flatMap(([, runArtifacts]) => runArtifacts);
   const actions = state.executionActions.filter((action) => action.runId ? stepRunIds.has(action.runId) : false);
+  const approvals = state.approvals.filter((approval) => {
+    const approvalRecord = approval as unknown as Record<string, unknown>;
+    return steps.some((step) => approval.runId === readString(step, "runId") || readString(approvalRecord, "workflowStepId") === readString(step, "id"));
+  });
+  const approvalIds = new Set(approvals.map((approval) => approval.id));
+  const workflowStepIds = new Set(steps.map((step) => readString(step, "id")).filter(Boolean));
   return {
     workflow,
     steps: steps.map((step) => {
@@ -8584,12 +8615,13 @@ function buildMockWorkflowEvidence(state: MockState, workflow: Record<string, un
       };
     }),
     selectorDecisions: state.channelMessageRouteDecisions.filter((decision) => isRecord(decision) && decision.workflowId === workflowId),
-    handoffIntents: [],
+    handoffIntents: state.workflowHandoffIntents.filter((intent) => intent.workflowId === workflowId),
     handoffs: state.channelHandoffs.filter((handoff) => isRecord(handoff) && handoff.workflowId === workflowId),
-    approvals: state.approvals.filter((approval) => {
-      const approvalRecord = approval as unknown as Record<string, unknown>;
-      return steps.some((step) => approval.runId === readString(step, "runId") || readString(approvalRecord, "workflowStepId") === readString(step, "id"));
-    }),
+    approvals,
+    approvalCheckpoints: state.approvalCheckpoints.filter((checkpoint) =>
+      approvalIds.has(checkpoint.approvalId) ||
+      (checkpoint.workflowStepId !== undefined && workflowStepIds.has(checkpoint.workflowStepId))
+    ),
     actions,
     artifacts,
     memoryCandidates: [],

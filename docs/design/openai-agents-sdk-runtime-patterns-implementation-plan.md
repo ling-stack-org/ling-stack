@@ -356,9 +356,15 @@ Implementation status:
 - missing or failing trace reads degrade to the existing thread evidence view;
 - runtime runner settings render daemon-provided readiness status and blocking reasons,
   including sandbox blocker codes, as read-only diagnostics;
-- approval checkpoint cards, handoff packet detail panels, and tool namespace
-  materialization remain follow-up UI work. This slice intentionally does not add
-  mutating runtime controls.
+- thread and workflow evidence read models expose durable approval checkpoints, and Web
+  renders them as bounded checkpoint rows with action/risk/status/resume verification
+  while hiding checkpoint ids, approval ids, resume payloads, and handle refs;
+- workflow evidence renders handoff intent packet detail rows with reason, required
+  input, expected output, risk summary, and validation blockers;
+- trace tool-call rows render bounded tool namespace/materialization summaries when the
+  trace read model provides safe redacted attributes;
+- a full daemon tool catalog/materialization endpoint remains follow-up work. This slice
+  intentionally does not add mutating runtime controls.
 
 Likely files:
 
@@ -454,10 +460,8 @@ These are the same decision points expressed as implementation gates:
 
 1. Whether trace projection should live entirely in `packages/core` or have daemon-specific
    enrichers for artifact paths and Web URLs.
-2. Whether approval checkpoints should be a new table immediately or a projection from
-   approval requests plus execution actions for the first slice.
-3. Whether existing `ChannelHandoff` and workflow handoff intent records should be migrated
+2. Whether existing `ChannelHandoff` and workflow handoff intent records should be migrated
    into one storage table or normalized only at API boundaries.
-4. Whether tool namespace materialization is exposed to the model through the current runner
+3. Whether tool namespace materialization is exposed to the model through the current runner
    prompt or only used internally by the daemon until a runner supports tool search.
-5. Which sandbox backend, if any, is worth implementing first after the contract lands.
+4. Which sandbox backend, if any, is worth implementing first after the contract lands.

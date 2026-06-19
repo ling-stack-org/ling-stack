@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, RunArtifact, RunSession, WorkflowEvidenceResponse } from "../types.js";
+import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, RunArtifact, RunSession, WorkflowEvidenceResponse, WorkflowHandoffIntent } from "../types.js";
 import type { Translate } from "../i18n.js";
 import type {
   ConversationAgentActivitySpan,
@@ -10,7 +10,7 @@ import type {
   ConversationWorkCellRowTone,
   ConversationWorkCellViewModel,
 } from "./conversation-work-cell.js";
-import { buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, normalizeConversationOperationCell } from "./conversation-work-cell.js";
+import { buildConversationApprovalCheckpointRows, buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import { truncatePreview } from "./data.js";
 
 export type WorkflowProgressMode = "active" | "completed";
@@ -196,6 +196,10 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
       tone: workflowStepTone(step.status),
     };
   });
+  const checkpointRows = buildConversationApprovalCheckpointRows({
+    checkpoints: input.evidence.approvalCheckpoints ?? [],
+    t,
+  });
   const evidenceRows: ConversationWorkCellRow[] = [
     ...buildConversationExecutionActionEvidenceRows({
       actions: input.evidence.actions ?? [],
@@ -203,6 +207,8 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
       t,
       limit: 8,
     }),
+    ...workflowHandoffIntentRows(input.evidence.handoffIntents ?? [], t, "evidence"),
+    ...checkpointRows.evidenceRows,
     ...artifacts.slice(0, 10).map((artifact) => ({
       id: `artifact:${artifact.id}`,
       kind: artifact.type === "diff" || artifact.type === "file" || artifact.path ? "edit" as const : "verify" as const,
@@ -243,7 +249,8 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
       meta: step.status,
       tone: step.status === "failed" ? "failed" as const : "waiting" as const,
     }));
-  const attentionRows = [...approvalRows, ...blockedRows, ...diagnosticRows].slice(0, 16);
+  const handoffAttentionRows = workflowHandoffIntentRows(input.evidence.handoffIntents ?? [], t, "attention");
+  const attentionRows = [...checkpointRows.attentionRows, ...approvalRows, ...handoffAttentionRows, ...blockedRows, ...diagnosticRows].slice(0, 16);
   const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
 
   return {
@@ -275,6 +282,93 @@ export function buildConversationWorkCellDetailsFromWorkflowEvidence(input: {
     ], t),
     evidenceLinks,
   };
+}
+
+function workflowHandoffIntentRows(
+  intents: readonly WorkflowHandoffIntent[],
+  t: Translate,
+  surface: "evidence" | "attention",
+): readonly ConversationWorkCellRow[] {
+  return intents
+    .filter((intent) => surface === "attention" ? isWorkflowHandoffAttentionIntent(intent) : !isWorkflowHandoffAttentionIntent(intent))
+    .slice(0, 8)
+    .map((intent) => workflowHandoffIntentRow(intent, t));
+}
+
+function workflowHandoffIntentRow(intent: WorkflowHandoffIntent, t: Translate): ConversationWorkCellRow {
+  const target = intent.toParticipantLabel?.trim() || intent.toParticipantId;
+  const detailLines: ConversationWorkCellRow["detailLines"] = [
+    { text: t("Required input: {value}", { value: truncatePreview(intent.requiredInput, 160) }) },
+    { text: t("Expected output: {value}", { value: truncatePreview(intent.expectedOutput, 160) }) },
+    intent.riskSummary ? { text: t("Risk: {value}", { value: truncatePreview(intent.riskSummary, 140) }) } : undefined,
+    { text: t("Status: {status}", { status: workflowHandoffStatusLabel(intent.status, t) }) },
+    ...workflowHandoffValidationLines(intent, t),
+  ].filter((line): line is NonNullable<typeof line> => Boolean(line));
+  return {
+    id: `handoff-intent:${intent.id}`,
+    kind: "handoff",
+    title: t("Handoff: {from} -> {to}", {
+      from: intent.fromParticipantLabel,
+      to: target,
+    }),
+    description: truncatePreview(intent.reason, 180),
+    detailLines,
+    meta: workflowHandoffStatusLabel(intent.status, t),
+    tone: workflowHandoffTone(intent),
+  };
+}
+
+function workflowHandoffValidationLines(intent: WorkflowHandoffIntent, t: Translate): readonly NonNullable<ConversationWorkCellRow["detailLines"]>[number][] {
+  const blockers = intent.validation?.blockers ?? [];
+  if (blockers.length === 0) {
+    return [];
+  }
+  const summary = blockers.length === 1
+    ? truncatePreview(blockers[0] ?? "", 140)
+    : t("{count} blockers", { count: blockers.length });
+  return [{ text: t("Validation blockers: {summary}", { summary }) }];
+}
+
+function isWorkflowHandoffAttentionIntent(intent: WorkflowHandoffIntent): boolean {
+  const blockers = intent.validation?.blockers ?? [];
+  return intent.status === "failed" ||
+    intent.status === "declined" ||
+    (intent.status === "proposed" && blockers.length > 0);
+}
+
+function workflowHandoffStatusLabel(status: WorkflowHandoffIntent["status"], t: Translate): string {
+  if (status === "proposed") {
+    return t("Proposed");
+  }
+  if (status === "validated") {
+    return t("Validated");
+  }
+  if (status === "accepted") {
+    return t("Accepted");
+  }
+  if (status === "declined") {
+    return t("Declined");
+  }
+  if (status === "converted") {
+    return t("Converted");
+  }
+  if (status === "failed") {
+    return t("Failed");
+  }
+  return status;
+}
+
+function workflowHandoffTone(intent: WorkflowHandoffIntent): ConversationWorkCellRowTone {
+  if (intent.status === "failed" || intent.status === "declined") {
+    return "failed";
+  }
+  if (isWorkflowHandoffAttentionIntent(intent) || intent.status === "proposed") {
+    return "waiting";
+  }
+  if (intent.status === "validated" || intent.status === "accepted" || intent.status === "converted") {
+    return "success";
+  }
+  return "neutral";
 }
 
 function buildWorkflowProgressSummary(input: {
