@@ -151,10 +151,21 @@ Non-goal:
 
 Purpose: make handoff proposals explicit, typed, and safe before workflow execution.
 
+Implementation status:
+
+- shared `LingHandoffIntent` and `LingHandoffInputPacket` DTOs live in
+  `packages/core/src/handoff-intents.ts`;
+- existing `ChannelHandoff` and `WorkflowHandoffIntent` records normalize into the shared
+  read model without a storage migration;
+- source refs are derived or preserved so downstream API/Web surfaces can link back to
+  messages, tasks, runs, workflows, steps, and artifacts;
+- daemon API consolidation and Web rendering remain follow-up work.
+
 Likely files:
 
 - `packages/core/src/workspace-types.ts`
 - `packages/core/src/workflow-graph-types.ts`
+- `packages/core/src/handoff-intents.ts`
 - `packages/daemon/src/features/channels/workflow-handoffs.ts`
 - `packages/daemon/src/features/channels/workflow-step-packets.ts`
 - `packages/daemon/src/features/channels/workflow-selector.ts`
@@ -171,10 +182,10 @@ Work:
 
 Acceptance:
 
-- a model-produced handoff cannot start hidden work;
-- handoff input is bounded and reviewable;
-- receiving teammate does not get unbounded hidden transcript;
-- handoff status transitions are persisted and test-covered.
+- a model-produced handoff cannot start hidden work through this read model;
+- handoff input is bounded and reviewable through a normalized input packet;
+- receiving teammate does not get unbounded hidden transcript from the normalized DTO;
+- existing handoff status transitions stay persisted on their source records.
 
 Non-goal:
 
