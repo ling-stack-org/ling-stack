@@ -3,7 +3,7 @@ import type {
   ManagedPluginDescriptor,
   ManagedPluginPolicyOverlayView,
   ManagedPluginSideEffectLevel,
-  RunStore,
+  McpStoreFacet,
 } from "@ling-stack/core";
 import { CUA_DRIVER_MCP_SERVER_ID } from "./presets.js";
 
@@ -20,7 +20,7 @@ const cuaReadOnlyTools = new Set([
 const cuaDenyTools = new Set(["replay_trajectory"]);
 
 export function buildManagedPluginPolicyOverlays(input: {
-  readonly store: RunStore;
+  readonly store: McpStoreFacet;
   readonly descriptor: ManagedPluginDescriptor;
 }): readonly ManagedPluginPolicyOverlayView[] {
   if (input.descriptor.id !== "bundled:cua-driver") {
