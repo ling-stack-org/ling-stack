@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ChannelLinkPreview, RunStore } from "@ling-stack/core";
+import type { ChannelLinkPreview, ChannelStoreFacet } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -106,7 +106,7 @@ export async function handleChannelLinkPreviewItem(
 }
 
 async function createOrFetchChannelLinkPreview(
-  store: RunStore,
+  store: ChannelStoreFacet,
   channelId: string,
   input: ChannelLinkPreviewRequest,
 ): Promise<ChannelLinkPreview> {
