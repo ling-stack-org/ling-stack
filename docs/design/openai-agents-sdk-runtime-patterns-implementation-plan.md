@@ -251,6 +251,19 @@ Non-goal:
 
 Purpose: define sandbox execution boundaries without enabling a sandbox backend.
 
+Implementation status:
+
+- sandbox contracts and the fail-closed readiness evaluator live in
+  `packages/core/src/sandbox-types.ts`;
+- daemon runner readiness can now name sandbox blocker codes, but no runner is granted
+  sandbox execution authority by this slice;
+- manifests reject raw secret-looking env values and require secret refs for injected
+  secrets;
+- network policy defaults to disabled and only accepts explicit allowlists when enabled;
+- sandbox session refs are opaque and runner-native resume tokens must remain secret refs;
+- all Docker, hosted, and external sandbox backends remain disabled until a future adapter
+  passes conformance.
+
 Likely files:
 
 - `packages/core/src/sandbox-types.ts`
@@ -272,7 +285,7 @@ Work:
    sandbox_network_policy_unverified
    ```
 
-3. Add conformance helpers that assert sandbox artifacts import into Ling artifact roots.
+3. Add readiness helpers that assert sandbox artifacts import into Ling artifact roots.
 4. Add docs for local Unix, Docker, hosted, and external sandbox backend semantics.
 5. Keep every sandbox backend disabled until a later adapter implementation.
 
