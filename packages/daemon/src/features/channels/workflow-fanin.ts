@@ -1,17 +1,22 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import {
+  type ChannelStoreFacet,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
+  type MemoryStoreFacet,
+  type RunExecutionStoreFacet,
   type RunSession,
-  type RunStore,
+  type RunStorePathsFacet,
   type WorkflowStepOutputRef,
 } from "@ling-stack/core";
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { readWorkflowStepOutputPacketArtifact } from "./workflow-step-packets.js";
 
+type WorkflowFanInStore = ChannelStoreFacet & RunExecutionStoreFacet & RunStorePathsFacet & MemoryStoreFacet;
+
 export function maybeCreateWorkflowFanInEvidence(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowFanInStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
@@ -67,7 +72,7 @@ export function maybeCreateWorkflowFanInEvidence(input: {
 }
 
 function collectDependencyOutputs(
-  store: RunStore,
+  store: WorkflowFanInStore,
   workflowId: string,
   step: ChannelWorkflowStep,
 ): readonly WorkflowStepOutputRef[] {
@@ -95,7 +100,7 @@ function collectDependencyOutputs(
 }
 
 function writeFanInSummaryArtifact(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowFanInStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
@@ -143,7 +148,7 @@ function renderFanInSummary(input: {
 }
 
 function createFanInMemoryCandidates(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowFanInStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
