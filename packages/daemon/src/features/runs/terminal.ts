@@ -1,7 +1,7 @@
 import {
   writeRunSummary,
+  type RunExecutionStoreFacet,
   type RunEventEnvelope,
-  type RunStore,
   type RunSummary,
 } from "@ling-stack/core";
 
@@ -15,7 +15,7 @@ export function writeTerminalSummary(summaryPath: string, summary: RunSummary): 
 }
 
 export function appendFailureEvent(
-  store: RunStore,
+  store: RunExecutionStoreFacet,
   runId: string,
   message: string,
   sinkClosed: boolean,
