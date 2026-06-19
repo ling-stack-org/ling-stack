@@ -1,6 +1,5 @@
-import type { RunStore } from "@ling-stack/core";
 import type { AutomationSchedulerRegistry } from "../features/automations/scheduler.js";
-import type { ProviderStartupRefreshService } from "../features/providers/startup-refresh.js";
+import type { ProviderStartupRefreshService, ProviderStartupRefreshStore } from "../features/providers/startup-refresh.js";
 import { listBundledPackageDescriptors } from "../features/plugins/source-index.js";
 import type { StartupStateRegistry } from "./state.js";
 
@@ -13,7 +12,7 @@ export interface StartupOptionalWarmupCoordinatorOptions {
 export class StartupOptionalWarmupCoordinator {
   constructor(private readonly options: StartupOptionalWarmupCoordinatorOptions) {}
 
-  start(cwd: string, store: RunStore, startOptions: { readonly forceProviderRefresh?: boolean } = {}): void {
+  start(cwd: string, store: ProviderStartupRefreshStore, startOptions: { readonly forceProviderRefresh?: boolean } = {}): void {
     void this.options.providerStartupRefresh.start(cwd, store, { force: startOptions.forceProviderRefresh });
     try {
       this.options.automationSchedulers.start(cwd);
