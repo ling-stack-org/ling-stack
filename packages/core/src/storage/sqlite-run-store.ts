@@ -150,8 +150,6 @@ import {
   type SkillRegistryEntry,
 } from "../skill-types.js";
 import {
-  createLingThreadId,
-  createLingTurnId,
   type AppendControlPlaneEventInput,
   type ControlPlaneEvent,
   type CreateLingThreadInput,
@@ -167,9 +165,7 @@ import {
   type LingThreadMetadata,
   type LingThreadStatus,
   type LingTurn,
-  type LingTurnKind,
   type LingTurnRun,
-  type LingTurnRunRole,
   type LingTurnStatus,
   type ListControlPlaneEventsOptions,
   type ListLingThreadsOptions,
@@ -360,6 +356,8 @@ import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteRunEventStore } from "./sqlite/run-event-store.js";
 import { SqliteRunInterventionStore } from "./sqlite/run-intervention-store.js";
 import { SqliteRunSessionStore } from "./sqlite/run-session-store.js";
+import { SqliteLingThreadStore } from "./sqlite/ling-thread-store.js";
+import { SqliteLingTurnStore } from "./sqlite/ling-turn-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
 import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
@@ -390,17 +388,7 @@ import { SqliteExternalWorkActionStore } from "./sqlite/external-work-action-sto
 import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triage-store.js";
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
-import {
-  mapLingThread,
-  mapLingTurn,
-  mapLingTurnRun,
-  runActivityAt,
-  runStatusToLingTurnStatus,
-} from "./sqlite/run-mappers.js";
-import {
-  lingThreadSelectSql,
-  lingTurnSelectSql,
-} from "./sqlite/select-sql.js";
+import { runActivityAt } from "./sqlite/run-mappers.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -422,6 +410,8 @@ export class SqliteRunStore implements RunStore {
   private readonly runEvents: SqliteRunEventStore;
   private readonly runInterventions: SqliteRunInterventionStore;
   private readonly runSessions: SqliteRunSessionStore;
+  private readonly lingThreads: SqliteLingThreadStore;
+  private readonly lingTurns: SqliteLingTurnStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
@@ -502,17 +492,30 @@ export class SqliteRunStore implements RunStore {
           this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(attemptId, renewedAt),
       },
     );
+    this.lingThreads = new SqliteLingThreadStore(
+      { database: this.database },
+      { rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now) },
+    );
+    this.lingTurns = new SqliteLingTurnStore(
+      { database: this.database },
+      {
+        getLingThread: (threadId) => this.getLingThread(threadId),
+        getRun: (runId) => this.getRun(runId),
+        rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now),
+        rebuildLingThreadMetadataForTurn: (turnId, now) => this.tryRebuildLingThreadMetadataForTurn(turnId, now),
+      },
+    );
     this.runSessions = new SqliteRunSessionStore(
       { database: this.database },
       this.paths,
       {
-        insertLingTurnRun: (turnId, runId, role, createdAt) => this.insertLingTurnRun(turnId, runId, role, createdAt),
+        insertLingTurnRun: (turnId, runId, role, createdAt) => this.lingTurns.insertLingTurnRun(turnId, runId, role, createdAt),
         reconcileLingTurnStatus: (turnId, now) => this.reconcileLingTurnStatus(turnId, now),
         rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now),
         findStateTransitionByIdempotency: (entityType, entityId, idempotencyKey) =>
           this.findStateTransitionByIdempotency(entityType, entityId, idempotencyKey),
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
-        reconcileLingTurnStatusForRun: (runId, now) => this.reconcileLingTurnStatusForRun(runId, now),
+        reconcileLingTurnStatusForRun: (runId, now) => this.lingTurns.reconcileLingTurnStatusForRun(runId, now),
         updateLinkedWorkUnitRunId: (workUnitId, runId, now) => this.runtimeWorkUnits.updateLinkedRunId(workUnitId, runId, now),
       },
     );
@@ -709,71 +712,11 @@ export class SqliteRunStore implements RunStore {
   }
 
   createLingThread(input: CreateLingThreadInput, now: string): LingThread {
-    const id = input.id ?? createLingThreadId();
-    this.database
-      .prepare(`
-        INSERT INTO ling_threads (
-          id,
-          workspace_id,
-          kind,
-          channel_id,
-          task_id,
-          teammate_id,
-          workflow_id,
-          workflow_step_id,
-          external_work_id,
-          title,
-          objective,
-          status,
-          active_run_id,
-          last_run_id,
-          parent_thread_id,
-          parent_turn_id,
-          forked_from_run_id,
-          metadata_json,
-          created_at,
-          updated_at,
-          pinned_at,
-          archived_at,
-          archived_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        id,
-        DEFAULT_WORKSPACE_ID,
-        input.kind,
-        input.channelId ?? null,
-        input.taskId ?? null,
-        input.teammateId ?? null,
-        input.workflowId ?? null,
-        input.workflowStepId ?? null,
-        input.externalWorkId ?? null,
-        input.title,
-        input.objective,
-        input.status ?? "open",
-        input.activeRunId ?? null,
-        input.lastRunId ?? null,
-        input.parentThreadId ?? null,
-        input.parentTurnId ?? null,
-        input.forkedFromRunId ?? null,
-        null,
-        now,
-        now,
-        input.pinnedAt ?? null,
-        input.archivedAt ?? null,
-        input.archivedReason ?? null,
-      );
-    this.tryRebuildLingThreadMetadata(id, now);
-    const thread = this.getLingThread(id);
-    if (!thread) {
-      throw new Error(`Failed to create Ling thread: ${id}`);
-    }
-    return thread;
+    return this.lingThreads.createLingThread(input, now);
   }
 
   getLingThread(threadId: string): LingThread | undefined {
-    const row = this.database.prepare(lingThreadSelectSql("WHERE id = ?")).get(threadId);
-    return row ? mapLingThread(row) : undefined;
+    return this.lingThreads.getLingThread(threadId);
   }
 
   findLingThreadByOwner(input: {
@@ -784,60 +727,11 @@ export class SqliteRunStore implements RunStore {
     readonly teammateId?: string;
     readonly channelId?: string;
   }): LingThread | undefined {
-    const clauses = ["workspace_id = ?", "kind = ?"];
-    const params: string[] = [DEFAULT_WORKSPACE_ID, input.kind];
-    appendNullableOwnerClause(clauses, params, "task_id", input.taskId);
-    appendNullableOwnerClause(clauses, params, "workflow_step_id", input.workflowStepId);
-    appendNullableOwnerClause(clauses, params, "external_work_id", input.externalWorkId);
-    appendNullableOwnerClause(clauses, params, "teammate_id", input.teammateId);
-    appendNullableOwnerClause(clauses, params, "channel_id", input.channelId);
-    const row = this.database.prepare(`${lingThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC LIMIT 1`).get(...params);
-    return row ? mapLingThread(row) : undefined;
+    return this.lingThreads.findLingThreadByOwner(input);
   }
 
   listLingThreads(options: ListLingThreadsOptions = {}): LingThread[] {
-    const clauses = ["workspace_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
-    if (options.kind) {
-      clauses.push("kind = ?");
-      params.push(options.kind);
-    }
-    if (options.channelId) {
-      clauses.push("channel_id = ?");
-      params.push(options.channelId);
-    }
-    if (options.taskId) {
-      clauses.push("task_id = ?");
-      params.push(options.taskId);
-    }
-    if (options.teammateId) {
-      clauses.push("teammate_id = ?");
-      params.push(options.teammateId);
-    }
-    if (options.workflowStepId) {
-      clauses.push("workflow_step_id = ?");
-      params.push(options.workflowStepId);
-    }
-    if (options.externalWorkId) {
-      clauses.push("external_work_id = ?");
-      params.push(options.externalWorkId);
-    }
-    if (options.status) {
-      clauses.push("status = ?");
-      params.push(options.status);
-    }
-    const archivedFilter = options.archived ?? (options.includeArchived || options.status ? "include" : "exclude");
-    if (archivedFilter === "exclude") {
-      clauses.push("(archived_at IS NULL AND status != 'archived')");
-    } else if (archivedFilter === "only") {
-      clauses.push("(archived_at IS NOT NULL OR status = 'archived')");
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`${lingThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY pinned_at IS NULL ASC, pinned_at DESC, updated_at DESC LIMIT ?`)
-      .all(...params)
-      .map(mapLingThread);
+    return this.lingThreads.listLingThreads(options);
   }
 
   searchLingThreads(options: ListLingThreadsOptions & { readonly q: string }): SearchLingThreadsResult {
@@ -925,50 +819,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
-    const existing = this.getLingThread(threadId);
-    if (!existing) {
-      return undefined;
-    }
-    const next: LingThread = {
-      ...existing,
-      title: input.title ?? existing.title,
-      objective: input.objective ?? existing.objective,
-      status: input.status ?? existing.status,
-      activeRunId: nullableUpdate(input.activeRunId, existing.activeRunId),
-      lastRunId: nullableUpdate(input.lastRunId, existing.lastRunId),
-      pinnedAt: nullableUpdate(input.pinnedAt, existing.pinnedAt),
-      archivedAt: nullableUpdate(input.archivedAt, existing.archivedAt),
-      archivedReason: nullableUpdate(input.archivedReason, existing.archivedReason),
-      updatedAt: now,
-    };
-    this.database
-      .prepare(`
-        UPDATE ling_threads
-        SET title = ?,
-            objective = ?,
-            status = ?,
-            active_run_id = ?,
-            last_run_id = ?,
-            updated_at = ?,
-            pinned_at = ?,
-            archived_at = ?,
-            archived_reason = ?
-        WHERE id = ?
-      `)
-      .run(
-        next.title,
-        next.objective,
-        next.status,
-        next.activeRunId ?? null,
-        next.lastRunId ?? null,
-        next.updatedAt,
-        next.pinnedAt ?? null,
-        next.archivedAt ?? null,
-        next.archivedReason ?? null,
-        threadId,
-      );
-    this.tryRebuildLingThreadMetadata(threadId, now);
-    return this.getLingThread(threadId);
+    return this.lingThreads.updateLingThread(threadId, input, now);
   }
 
   rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined {
@@ -1033,203 +884,31 @@ export class SqliteRunStore implements RunStore {
   }
 
   createLingTurn(input: CreateLingTurnInput, now: string): LingTurn {
-    const thread = this.getLingThread(input.threadId);
-    if (!thread) {
-      throw new Error(`Ling thread not found: ${input.threadId}`);
-    }
-    if (thread.status === "archived") {
-      throw new Error(`Ling thread is archived: ${input.threadId}`);
-    }
-    if (input.sourceTurnId) {
-      const sourceTurn = this.getLingTurn(input.sourceTurnId);
-      if (!sourceTurn) {
-        throw new Error(`Source Ling turn not found: ${input.sourceTurnId}`);
-      }
-      if (sourceTurn.threadId !== input.threadId) {
-        throw new Error(`Source Ling turn does not belong to thread: ${input.sourceTurnId}`);
-      }
-    }
-    if (input.activeRunId) {
-      this.assertLingTurnRunReference(input.activeRunId, input.threadId, "activeRunId");
-    }
-    if (input.lastRunId) {
-      this.assertLingTurnRunReference(input.lastRunId, input.threadId, "lastRunId");
-    }
-
-    const id = input.id ?? createLingTurnId();
-    this.database
-      .prepare(`
-        INSERT INTO ling_turns (
-          id,
-          workspace_id,
-          thread_id,
-          kind,
-          status,
-          title,
-          user_instruction,
-          channel_id,
-          task_id,
-          teammate_id,
-          workflow_step_id,
-          external_work_id,
-          automation_id,
-          source_message_id,
-          source_turn_id,
-          intervention_id,
-          active_run_id,
-          last_run_id,
-          created_by_actor,
-          created_at,
-          updated_at,
-          completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        id,
-        DEFAULT_WORKSPACE_ID,
-        input.threadId,
-        input.kind,
-        input.status ?? "open",
-        String(redactSecrets(input.title)),
-        String(redactSecrets(input.userInstruction)),
-        input.channelId ?? thread.channelId ?? null,
-        input.taskId ?? thread.taskId ?? null,
-        input.teammateId ?? thread.teammateId ?? null,
-        input.workflowStepId ?? thread.workflowStepId ?? null,
-        input.externalWorkId ?? thread.externalWorkId ?? null,
-        input.automationId ?? null,
-        input.sourceMessageId ?? null,
-        input.sourceTurnId ?? null,
-        input.interventionId ?? null,
-        input.activeRunId ?? null,
-        input.lastRunId ?? null,
-        input.createdByActor ?? "local-user",
-        now,
-        now,
-        null,
-      );
-    const turn = this.getLingTurn(id);
-    if (!turn) {
-      throw new Error(`Failed to create Ling turn: ${id}`);
-    }
-    this.tryRebuildLingThreadMetadata(input.threadId, now);
-    return turn;
+    return this.lingTurns.createLingTurn(input, now);
   }
 
   getLingTurn(turnId: string): LingTurn | undefined {
-    const row = this.database.prepare(lingTurnSelectSql("WHERE id = ?")).get(turnId);
-    return row ? mapLingTurn(row) : undefined;
+    return this.lingTurns.getLingTurn(turnId);
   }
 
   listLingTurns(options: ListLingTurnsOptions): LingTurn[] {
-    const clauses = ["workspace_id = ?", "thread_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.threadId];
-    if (options.beforeUpdatedAt) {
-      clauses.push("updated_at < ?");
-      params.push(options.beforeUpdatedAt);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`${lingTurnSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
-      .all(...params)
-      .map(mapLingTurn);
+    return this.lingTurns.listLingTurns(options);
   }
 
   linkRunToLingTurn(input: LinkRunToLingTurnInput): LingTurnRun {
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      const link = this.insertLingTurnRun(input.turnId, input.runId, input.role ?? "primary", input.now);
-      this.reconcileLingTurnStatus(input.turnId, input.now);
-      this.database.exec("COMMIT");
-      this.tryRebuildLingThreadMetadataForTurn(input.turnId, input.now);
-      return link;
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
-    }
+    return this.lingTurns.linkRunToLingTurn(input);
   }
 
   getLingTurnForRun(runId: string): LingTurn | undefined {
-    const row = this.database
-      .prepare(`
-        ${lingTurnSelectSql("INNER JOIN ling_turn_runs ON ling_turn_runs.turn_id = ling_turns.id WHERE ling_turn_runs.run_id = ?")}
-      `)
-      .get(runId);
-    return row ? mapLingTurn(row) : undefined;
+    return this.lingTurns.getLingTurnForRun(runId);
   }
 
   listLingTurnRuns(turnId: string): LingTurnRun[] {
-    return this.database
-      .prepare(`
-        SELECT turn_id, run_id, attempt_number, role, created_at
-        FROM ling_turn_runs
-        WHERE turn_id = ?
-        ORDER BY attempt_number ASC, created_at ASC, run_id ASC
-      `)
-      .all(turnId)
-      .map(mapLingTurnRun);
+    return this.lingTurns.listLingTurnRuns(turnId);
   }
 
   reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined {
-    const turn = this.getLingTurn(turnId);
-    if (!turn) {
-      return undefined;
-    }
-    const links = this.listLingTurnRuns(turnId);
-    const runs = links
-      .map((link) => ({ link, run: this.getRun(link.runId) }))
-      .filter((item): item is { readonly link: LingTurnRun; readonly run: RunSession } => Boolean(item.run));
-    const latest = [...runs]
-      .sort((left, right) =>
-        right.link.attemptNumber - left.link.attemptNumber ||
-        right.run.updatedAt.localeCompare(left.run.updatedAt) ||
-        right.run.id.localeCompare(left.run.id),
-      )[0];
-    const latestWaiting = [...runs]
-      .filter((item) => item.run.status === "waiting_for_approval")
-      .sort((left, right) =>
-        right.link.attemptNumber - left.link.attemptNumber ||
-        right.run.updatedAt.localeCompare(left.run.updatedAt) ||
-        right.run.id.localeCompare(left.run.id),
-      )[0];
-    const latestActive = latestWaiting ?? [...runs]
-      .filter((item) => item.run.status === "queued" || item.run.status === "running")
-      .sort((left, right) =>
-        right.link.attemptNumber - left.link.attemptNumber ||
-        right.run.updatedAt.localeCompare(left.run.updatedAt) ||
-        right.run.id.localeCompare(left.run.id),
-      )[0];
-    const nextStatus: LingTurnStatus = turn.status === "superseded"
-      ? "superseded"
-      : latestWaiting
-        ? "waiting_for_approval"
-        : latestActive
-          ? "running"
-          : latest
-            ? runStatusToLingTurnStatus(latest.run.status)
-            : "open";
-    const terminal = nextStatus === "succeeded" || nextStatus === "failed" || nextStatus === "cancelled" || nextStatus === "superseded";
-    this.database
-      .prepare(`
-        UPDATE ling_turns
-        SET status = ?,
-            active_run_id = ?,
-            last_run_id = ?,
-            updated_at = ?,
-            completed_at = ?
-        WHERE id = ?
-      `)
-      .run(
-        nextStatus,
-        latestActive?.run.id ?? null,
-        latest?.run.id ?? null,
-        now,
-        terminal ? (turn.completedAt ?? now) : null,
-        turnId,
-      );
-    this.tryRebuildLingThreadMetadata(turn.threadId, now);
-    return this.getLingTurn(turnId);
+    return this.lingTurns.reconcileLingTurnStatus(turnId, now);
   }
 
   createRun(input: CreateRunInput): RunSession {
@@ -3306,60 +2985,6 @@ export class SqliteRunStore implements RunStore {
     return this.runEvents.readLatestRunActionActivityAt(runIds);
   }
 
-  private insertLingTurnRun(turnId: string, runId: string, role: LingTurnRunRole, createdAt: string): LingTurnRun {
-    const turn = this.getLingTurn(turnId);
-    if (!turn) {
-      throw new Error(`Ling turn not found: ${turnId}`);
-    }
-    const thread = this.getLingThread(turn.threadId);
-    if (!thread) {
-      throw new Error(`Ling thread not found for turn: ${turn.threadId}`);
-    }
-    if (thread.status === "archived") {
-      throw new Error(`Ling thread is archived: ${thread.id}`);
-    }
-    const run = this.getRun(runId);
-    if (!run) {
-      throw new Error(`Run session not found: ${runId}`);
-    }
-    if (run.threadId !== turn.threadId) {
-      throw new Error(`Run does not belong to Ling turn thread: ${runId}`);
-    }
-    const row = this.database
-      .prepare("SELECT COALESCE(MAX(attempt_number), 0) + 1 AS next_attempt FROM ling_turn_runs WHERE turn_id = ?")
-      .get(turnId);
-    const attemptNumber = readNumber(row, "next_attempt");
-    this.database
-      .prepare(`
-        INSERT INTO ling_turn_runs (turn_id, run_id, attempt_number, role, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `)
-      .run(turnId, runId, attemptNumber, role, createdAt);
-    return {
-      turnId,
-      runId,
-      attemptNumber,
-      role,
-      createdAt,
-    };
-  }
-
-  private reconcileLingTurnStatusForRun(runId: string, now: string): void {
-    const turn = this.getLingTurnForRun(runId);
-    if (turn) {
-      this.reconcileLingTurnStatus(turn.id, now);
-    }
-  }
-
-  private assertLingTurnRunReference(runId: string, threadId: string, fieldName: string): void {
-    const run = this.getRun(runId);
-    if (!run) {
-      throw new Error(`${fieldName} run not found: ${runId}`);
-    }
-    if (run.threadId !== threadId) {
-      throw new Error(`${fieldName} run does not belong to Ling turn thread: ${runId}`);
-    }
-  }
 }
 
 export function createSqliteRunStore(cwd: string, paths?: LingStackRuntimePaths): SqliteRunStore {
@@ -3497,13 +3122,4 @@ function maxIsoTimestamp(values: readonly (string | undefined)[]): string | unde
 
 function compareIsoDesc(left: string | undefined, right: string | undefined): number {
   return (right ?? "").localeCompare(left ?? "");
-}
-
-function appendNullableOwnerClause(clauses: string[], params: string[], column: string, value: string | undefined): void {
-  if (value === undefined) {
-    clauses.push(`${column} IS NULL`);
-    return;
-  }
-  clauses.push(`${column} = ?`);
-  params.push(value);
 }
