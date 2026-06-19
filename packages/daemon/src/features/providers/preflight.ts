@@ -2,8 +2,8 @@ import {
   normalizeProviderBaseUrlForAdapter,
   type ProviderCheckResult,
   type ProviderPreset,
+  type ProviderStoreFacet,
   type ResolvedSecret,
-  type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
 import { executeMediaJob as executeMediaAdapterJob, resolveMediaVendorTransportGateConfig } from "@ling-stack/providers";
@@ -15,7 +15,7 @@ import { providerSecretStatus, resolveProviderSecret } from "./secrets.js";
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 
 export async function checkProviderPreset(
-  store: RunStore,
+  store: ProviderStoreFacet,
   preset: ProviderPreset,
   secretResolver: SecretResolver,
 ): Promise<ProviderCheckResult> {
@@ -115,7 +115,7 @@ export async function checkProviderPreset(
 }
 
 async function probeChatProvider(
-  store: RunStore,
+  store: ProviderStoreFacet,
   preset: ProviderPreset,
   checkedAt: string,
   secretResolver: SecretResolver,
@@ -164,7 +164,7 @@ function normalizeProviderBaseUrl(preset: ProviderPreset): string {
 }
 
 async function probeLiveSeedreamProvider(
-  store: RunStore,
+  store: ProviderStoreFacet,
   preset: ProviderPreset,
   checkedAt: string,
   secretResolver: SecretResolver,
@@ -212,7 +212,7 @@ async function probeLiveSeedreamProvider(
   };
 }
 
-function buildProviderCheckHeaders(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): Record<string, string> {
+function buildProviderCheckHeaders(store: ProviderStoreFacet, preset: ProviderPreset, secretResolver: SecretResolver): Record<string, string> {
   const secret: ResolvedSecret = preset.apiKeyRef ? resolveProviderSecret(store, preset, secretResolver) : { configured: false };
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

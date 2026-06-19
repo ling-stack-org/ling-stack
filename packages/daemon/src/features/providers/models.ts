@@ -10,8 +10,8 @@ import {
   type ProviderModelListResponse,
   type ProviderModelOption,
   type ProviderPreset,
+  type ProviderStoreFacet,
   type ResolvedSecret,
-  type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
@@ -24,7 +24,7 @@ const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 const providerModelInputTypes = ["text", "image"] as const;
 
 export async function listProviderModels(
-  store: RunStore,
+  store: ProviderStoreFacet,
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
 ): Promise<ProviderModelListResponse> {
@@ -75,7 +75,7 @@ export async function listProviderModels(
 }
 
 async function listMediaProviderModels(
-  store: RunStore,
+  store: ProviderStoreFacet,
   preset: ProviderPreset,
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
@@ -152,7 +152,7 @@ function providerModelListInputToPreset(input: ProviderModelListRequest): Provid
 }
 
 function resolveProviderModelListSecret(
-  store: RunStore,
+  store: ProviderStoreFacet,
   preset: ProviderPreset,
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,

@@ -2,7 +2,8 @@ import {
   DEFAULT_WORKSPACE_ID,
   type ProviderCheckResult,
   type ProviderPreset,
-  type RunStore,
+  type ProviderStoreFacet,
+  type RunExecutionStoreFacet,
   type SecretResolver,
 } from "@ling-stack/core";
 import type { StartupStateRegistry } from "../../startup/state.js";
@@ -12,6 +13,8 @@ import { checkProviderPreset } from "./preflight.js";
 import { providerSecretStatus } from "./secrets.js";
 
 const STARTUP_CHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+type ProviderStartupRefreshStore = ProviderStoreFacet & RunExecutionStoreFacet;
 
 export class ProviderStartupRefreshService {
   private readonly refreshesByCwd = new Map<string, Promise<readonly ProviderCheckResult[]>>();
@@ -24,7 +27,7 @@ export class ProviderStartupRefreshService {
     },
   ) {}
 
-  start(cwd: string, store: RunStore, options: { readonly force?: boolean } = {}): Promise<readonly ProviderCheckResult[]> {
+  start(cwd: string, store: ProviderStartupRefreshStore, options: { readonly force?: boolean } = {}): Promise<readonly ProviderCheckResult[]> {
     const existing = this.refreshesByCwd.get(cwd);
     if (existing && !options.force) {
       this.markWarming(cwd);
@@ -54,7 +57,7 @@ export class ProviderStartupRefreshService {
 
   async refreshBeforeRun(input: {
     readonly cwd: string;
-    readonly store: RunStore;
+    readonly store: ProviderStartupRefreshStore;
     readonly providerPresetId?: string;
   }): Promise<void> {
     if (!input.providerPresetId) {
@@ -101,7 +104,7 @@ export class ProviderStartupRefreshService {
 
 export async function refreshProvidersOnStartup(input: {
   readonly cwd: string;
-  readonly store: RunStore;
+  readonly store: ProviderStartupRefreshStore;
   readonly secretResolver: SecretResolver;
   readonly controlPlaneEvents: ControlPlaneEventHub;
 }): Promise<readonly ProviderCheckResult[]> {
@@ -146,7 +149,7 @@ function withStartupRefreshMessage(result: ProviderCheckResult): ProviderCheckRe
 }
 
 export function shouldRefreshProviderOnStartup(
-  store: RunStore,
+  store: ProviderStoreFacet,
   provider: ProviderPreset,
   secretResolver: SecretResolver,
   nowMs = Date.now(),
@@ -167,7 +170,7 @@ export function shouldRefreshProviderOnStartup(
   return !Number.isFinite(checkedAtMs) || nowMs - checkedAtMs > STARTUP_CHECK_MAX_AGE_MS;
 }
 
-function providerSecretCanBeChecked(store: RunStore, provider: ProviderPreset, secretResolver: SecretResolver): boolean {
+function providerSecretCanBeChecked(store: ProviderStoreFacet, provider: ProviderPreset, secretResolver: SecretResolver): boolean {
   const needsSecret = provider.api === "anthropic-messages" || provider.authHeader !== false;
   if (provider.apiKeyRef) {
     return providerSecretStatus(store, provider, secretResolver).configured === true;

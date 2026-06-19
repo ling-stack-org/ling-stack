@@ -1,9 +1,9 @@
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
 import {
   type ProviderPreset,
+  type ProviderStoreFacet,
   type ProviderTransport,
   type ResolvedSecret,
-  type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
@@ -12,7 +12,7 @@ import { removeUndefined } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
 
 export function resolveProviderForRun(
-  store: RunStore,
+  store: ProviderStoreFacet,
   runRequest: RunRequest,
   secretResolver: SecretResolver,
   options: { readonly providerWebSocketFallbackEnabled?: boolean } = {},
@@ -84,7 +84,7 @@ function resolveEffectiveProviderTransport(
   return providerWebSocketFallbackEnabled ? configured ?? "auto" : "sse";
 }
 
-function assertProviderRunPreflight(store: RunStore, preset: ProviderPreset, skipProviderPreflight: boolean, secretResolver: SecretResolver): void {
+function assertProviderRunPreflight(store: ProviderStoreFacet, preset: ProviderPreset, skipProviderPreflight: boolean, secretResolver: SecretResolver): void {
   if (skipProviderPreflight) {
     return;
   }
@@ -106,7 +106,7 @@ function assertProviderRunPreflight(store: RunStore, preset: ProviderPreset, ski
   }
 }
 
-function providerSecretPreflightBlocker(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): string | undefined {
+function providerSecretPreflightBlocker(store: ProviderStoreFacet, preset: ProviderPreset, secretResolver: SecretResolver): string | undefined {
   const needsSecret = preset.api !== "media-job" && (preset.api === "anthropic-messages" || preset.authHeader !== false);
   if (needsSecret && !preset.apiKeyRef) {
     return "API key missing.";

@@ -3,8 +3,8 @@ import {
   normalizeProviderBaseUrlForAdapter,
   type Channel,
   type ProviderPreset,
+  type ProviderStoreFacet,
   type ResolvedSecret,
-  type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
 import { readLimitedResponseText } from "../../../shared/http.js";
@@ -29,7 +29,7 @@ const IMAGE_VISION_TIMEOUT_MS = 20_000;
 const IMAGE_VISION_MAX_OUTPUT_TOKENS = 700;
 
 export interface CreateProviderBackedImageVisionSummarizerInput {
-  readonly store: RunStore;
+  readonly store: ProviderStoreFacet;
   readonly channel?: Pick<Channel, "defaultProviderPresetId">;
   readonly requestedProviderPresetId?: string;
   readonly secretResolver: SecretResolver;
