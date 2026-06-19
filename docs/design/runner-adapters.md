@@ -49,12 +49,17 @@ Implemented:
   adapter and conformance gate exist.
 - Settings runtime runner UI shows disabled runner feature flags and disabled reasons
   while preventing disabled runners from being selected.
+- sandbox profile contracts now define fail-closed backend verification, network policy,
+  artifact import, secret-ref, and opaque session-ref gates without enabling a sandbox
+  backend.
 
 Still future:
 
 - real Codex app-server health probe, stream adapter, approval bridge, and resume handle;
 - real OpenClaw/ACP capability negotiation, client bridge, violation handling, and
   workspace-bound session lifecycle;
+- wiring sandbox profile readiness into a concrete runner adapter after artifact import,
+  network policy, and secret redaction conformance exists;
 - adapter decision records for Hermes, Claude, Gemini, or other future runtimes only when
   they expose an executable agent session rather than only a model API;
 - feature-flag UI that enables a non-Pi runner only after conformance passes.
@@ -166,6 +171,38 @@ Rules:
 - opaque handles are never rendered as primary UI labels;
 - secret-like tokens use secret refs, not raw stored values;
 - native resume is optional. Ling resume context remains the universal fallback.
+
+## Sandbox Profiles
+
+Sandbox profiles describe an execution boundary. They do not create Ling state, grant
+tool authority, or make a disabled runner selectable.
+
+Initial profile kinds:
+
+| Backend kind | Meaning | Status |
+| --- | --- | --- |
+| `local_unix` | A local process boundary with Ling-owned artifact import paths. | Contract only |
+| `docker` | A container-backed execution boundary. | Disabled until conformance |
+| `hosted` | A hosted sandbox provider such as E2B, Modal, Runloop, Vercel, Cloudflare, or OpenAI. | Disabled until adapter decision and conformance |
+| `external` | A runner-owned sandbox exposed through an agent protocol. | Disabled until capability negotiation proves Ling gates |
+
+Rules:
+
+- profiles must verify backend behavior before readiness can become `ready`;
+- network defaults to disabled, or an explicit non-wildcard allowlist;
+- artifacts must be imported into Ling-owned artifact roots and redacted before appearing
+  as Ling artifacts;
+- injected secrets use `env:` or `keychain:` refs, never raw manifest values;
+- session refs are opaque diagnostics, not user-facing labels or execution authority.
+
+Required blocker codes for any future sandbox-backed runner:
+
+```text
+sandbox_profile_missing
+sandbox_backend_unverified
+sandbox_artifact_import_unverified
+sandbox_network_policy_unverified
+```
 
 ## Adapter A: Codex App-Server
 

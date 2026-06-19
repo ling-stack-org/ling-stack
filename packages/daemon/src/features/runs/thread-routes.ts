@@ -5,6 +5,7 @@ import {
   sessionPermissionModes,
   type ApprovalRequest,
   type CreateLingTurnInput,
+  type LingApprovalCheckpoint,
   type LingThread,
   type LingThreadArchivedFilter,
   type LingThreadKind,
@@ -988,6 +989,7 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
     readonly runtimeEvents: ReturnType<RunStore["listRuntimeEvents"]>;
   }[];
   readonly actions: ReturnType<typeof listExecutionActions>;
+  readonly approvalCheckpoints: readonly LingApprovalCheckpoint[];
   readonly transitions: ReturnType<RunStore["listStateTransitionEvents"]>;
 } {
   const runs = [...store.listRuns({ threadId: thread.id, limit: 100 })]
@@ -1017,6 +1019,9 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
       runtimeEvents: run.workUnitId ? store.listRuntimeEvents(run.workUnitId, { limit: 1000 }) : [],
     };
   });
+  const approvalCheckpoints = [...approvalIds]
+    .map((approvalId) => store.getApprovalCheckpointForApproval(approvalId))
+    .filter((checkpoint): checkpoint is LingApprovalCheckpoint => Boolean(checkpoint));
   const transitions = collectThreadStateTransitions(store, thread, runs, approvalIds);
   return {
     cwd,
@@ -1024,6 +1029,7 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
     generatedAt: new Date().toISOString(),
     runs: evidenceRuns,
     actions,
+    approvalCheckpoints,
     transitions,
   };
 }

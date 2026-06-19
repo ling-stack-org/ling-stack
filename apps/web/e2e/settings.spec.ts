@@ -184,6 +184,27 @@ test("settings interface preferences do not expose the channel protocol editor",
   await expect(settingsPanel.getByRole("button", { name: "Open editor" })).toHaveCount(0);
 });
 
+test("settings runtime runners show daemon readiness blockers", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Runtime runners/ }).click();
+  const settingsPanel = page.locator(".runtime-runner-settings-panel");
+  await expect(page.getByRole("heading", { name: "Runtime runners" })).toBeVisible();
+  await expect(settingsPanel).toContainText("Pi Runner");
+  await expect(settingsPanel).toContainText("readiness ready");
+  await expect(settingsPanel).toContainText("Codex App Server");
+  await expect(settingsPanel).toContainText("readiness blocked, 2 blockers");
+  await expect(settingsPanel.getByLabel("Codex App Server readiness blockers")).toContainText("Sandbox profile has not been configured.");
+  await expect(settingsPanel.getByLabel("Codex App Server readiness blockers")).toContainText("Sandbox backend has not been verified by conformance.");
+  await expect(settingsPanel).not.toContainText("sandbox_profile_missing");
+  await expect(settingsPanel).not.toContainText("sandbox_backend_unverified");
+});
+
 test("settings approval policy loads, edits, and saves tool decisions and write paths", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

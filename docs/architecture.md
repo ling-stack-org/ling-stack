@@ -214,6 +214,7 @@ The next implementation slices are documented separately so the platform archite
 - [Runner Registry](design/runner-registry.md): introduce multi-runner resolution while keeping Pi as the default execution backend.
 - [Multi-Agent Orchestrator](design/multi-agent-orchestrator.md): compile workflow templates into durable multi-teammate workflow steps that execute through normal task/run state machines.
 - [Codex-like Execution](design/codex-like-execution.md): complete approval action auditing, evidence replay, long-lived threads, and resume/redirect behavior.
+- [OpenAI Agents SDK Runtime Patterns](design/openai-agents-sdk-runtime-patterns.md): borrow trace/span, approval/resume, handoff, tool namespace, and sandbox patterns without replacing Ling's daemon-owned runtime.
 - [Desktop Shell](design/desktop-shell.md): package the Web UI and daemon behind a desktop shell without forking the product model.
 - [Two-Layer Configuration](design/two-layer-configuration.md): split user defaults from workspace execution state without introducing a third localStorage layer.
 - [Secrets and Keychain](design/secrets-keychain.md): keep `env:` and fail-closed `keychain:` refs behind one resolver while keeping raw secret values out of renderer, logs, and artifacts.

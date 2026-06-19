@@ -230,6 +230,27 @@
   background: #fffaf0;
 }
 
+.runtime-runner-settings-panel .runtime-runner-row {
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.runtime-runner-settings-panel .runtime-runner-row input {
+  grid-row: 1 / span 3;
+}
+
+.runtime-runner-settings-panel .runtime-runner-row small,
+.runtime-runner-readiness {
+  grid-column: 3;
+}
+
+.runtime-runner-readiness {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .startup-empty {
   min-height: 96px;
 }

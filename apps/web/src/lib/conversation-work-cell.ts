@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ChannelWorkflow, ExecutionAction, LingThreadEvidenceResponse, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
+import type { ApprovalRequest, ChannelWorkflow, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
@@ -460,6 +460,7 @@ export function groupRunsByThreadId(runs: readonly RunSession[]): ReadonlyMap<st
 export function buildConversationWorkCellDetailsFromThreadEvidence(input: {
   readonly threadId: string;
   readonly evidence: LingThreadEvidenceResponse;
+  readonly trace?: LingTraceDetailResponse;
   readonly runIds?: readonly string[];
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
@@ -479,10 +480,388 @@ export function buildConversationWorkCellDetailsFromThreadEvidence(input: {
     t: input.t,
     artifactHref: input.artifactHref,
   });
+  const traceRows = buildTraceEvidenceRows({
+    trace: input.trace,
+    runIds: input.runIds,
+    t: input.t,
+  });
+  const checkpointRows = buildConversationApprovalCheckpointRows({
+    checkpoints: filterEvidenceApprovalCheckpoints(input.evidence.approvalCheckpoints ?? [], input.runIds),
+    t: input.t,
+  });
+  const groups = mergeTraceEvidenceRows(
+    mergeRowsIntoMainFeedGroup(
+      mergeRowsIntoMainFeedGroup(cell?.groups ?? emptyWorkCellGroups(input.t), "evidence", checkpointRows.evidenceRows, input.t),
+      "attention",
+      checkpointRows.attentionRows,
+      input.t,
+    ),
+    traceRows,
+    input.t,
+  );
   return {
-    groups: cell?.groups ?? emptyWorkCellGroups(input.t),
+    groups,
     evidenceLinks: mainFeedEvidenceLinks(cell?.evidenceLinks ?? []),
   };
+}
+
+export function buildConversationApprovalCheckpointRows(input: {
+  readonly checkpoints: readonly LingApprovalCheckpoint[];
+  readonly t: Translate;
+}): { readonly evidenceRows: readonly ConversationWorkCellRow[]; readonly attentionRows: readonly ConversationWorkCellRow[] } {
+  const evidenceRows: ConversationWorkCellRow[] = [];
+  const attentionRows: ConversationWorkCellRow[] = [];
+  for (const checkpoint of input.checkpoints.slice(0, 12)) {
+    const row = approvalCheckpointRow(checkpoint, input.t);
+    if (isApprovalCheckpointAttentionStatus(checkpoint.status)) {
+      attentionRows.push(row);
+    } else {
+      evidenceRows.push(row);
+    }
+  }
+  return { evidenceRows, attentionRows };
+}
+
+function approvalCheckpointRow(checkpoint: LingApprovalCheckpoint, t: Translate): ConversationWorkCellRow {
+  const detailLines: ConversationWorkCellRowDetailLine[] = [
+    { text: t("Action: {action}", { action: checkpoint.actionType }) },
+    { text: t("Risk: {risk}", { risk: checkpoint.risk }) },
+    { text: t("Status: {status}", { status: approvalCheckpointStatusLabel(checkpoint.status, t) }) },
+  ];
+  if (checkpoint.runnerResumeHandle) {
+    detailLines.push({
+      text: t("Resume handle: {status}", {
+        status: checkpoint.runnerResumeHandle.verified === false ? t("unverified") : t("verified"),
+      }),
+    });
+  }
+  if (checkpoint.resumeFailureReason) {
+    detailLines.push({ text: t("Resume failure: {reason}", { reason: truncatePreview(checkpoint.resumeFailureReason, 140) }) });
+  }
+  if (checkpoint.resultArtifactIds.length > 0) {
+    detailLines.push({ text: t("{count} output recorded", { count: checkpoint.resultArtifactIds.length }) });
+  }
+  return {
+    id: `approval-checkpoint:${checkpoint.id}`,
+    kind: "approval",
+    title: t("Approval checkpoint: {title}", { title: checkpoint.title }),
+    description: truncatePreview(checkpoint.description, 180),
+    detailLines,
+    meta: approvalCheckpointStatusLabel(checkpoint.status, t),
+    tone: approvalCheckpointTone(checkpoint.status),
+  };
+}
+
+function filterEvidenceApprovalCheckpoints(
+  checkpoints: readonly LingApprovalCheckpoint[],
+  runIds: readonly string[] | undefined,
+): readonly LingApprovalCheckpoint[] {
+  if (!runIds || runIds.length === 0) {
+    return checkpoints;
+  }
+  const runIdSet = new Set(runIds);
+  const filtered = checkpoints.filter((checkpoint) => checkpoint.runId ? runIdSet.has(checkpoint.runId) : true);
+  return filtered.length > 0 ? filtered : checkpoints;
+}
+
+function isApprovalCheckpointAttentionStatus(status: LingApprovalCheckpoint["status"]): boolean {
+  return status === "pending" ||
+    status === "resume_pending" ||
+    status === "denied" ||
+    status === "expired" ||
+    status === "cancelled" ||
+    status === "resume_failed";
+}
+
+function approvalCheckpointTone(status: LingApprovalCheckpoint["status"]): ConversationWorkCellRowTone {
+  if (status === "approved" || status === "resumed") {
+    return "success";
+  }
+  if (status === "pending" || status === "resume_pending") {
+    return "waiting";
+  }
+  if (status === "denied" || status === "expired" || status === "cancelled" || status === "resume_failed") {
+    return "failed";
+  }
+  return "neutral";
+}
+
+function approvalCheckpointStatusLabel(status: LingApprovalCheckpoint["status"], t: Translate): string {
+  if (status === "pending") {
+    return t("Waiting for approval");
+  }
+  if (status === "resume_pending") {
+    return t("Resume pending");
+  }
+  if (status === "resume_failed") {
+    return t("Resume failed");
+  }
+  if (status === "resumed") {
+    return t("Resumed");
+  }
+  return t(status);
+}
+
+function buildTraceEvidenceRows(input: {
+  readonly trace?: LingTraceDetailResponse;
+  readonly runIds?: readonly string[];
+  readonly t: Translate;
+}): readonly ConversationWorkCellRow[] {
+  if (!input.trace) {
+    return [];
+  }
+  const runIdSet = input.runIds && input.runIds.length > 0 ? new Set(input.runIds) : undefined;
+  return input.trace.spans
+    .filter((span) => traceSpanMatchesRuns(span, runIdSet))
+    .filter((span) => isTraceSpanUsefulForEvidence(span))
+    .slice(0, 8)
+    .map((span): ConversationWorkCellRow => ({
+      id: `trace:${span.id}`,
+      kind: traceSpanOperationKind(span),
+      title: input.t("Trace: {kind}", { kind: traceSpanKindLabel(span.kind, input.t) }),
+      description: traceSpanDescription(span),
+      detailLines: traceSpanDetailLines(span, input.t),
+      meta: traceSpanStatusMeta(span.status, input.t),
+      tone: traceSpanStatusTone(span.status),
+    }))
+    .filter(isMainFeedSafeRow);
+}
+
+function mergeTraceEvidenceRows(
+  groups: readonly ConversationWorkCellGroup[],
+  traceRows: readonly ConversationWorkCellRow[],
+  t: Translate,
+): readonly ConversationWorkCellGroup[] {
+  return mergeRowsIntoMainFeedGroup(groups, "evidence", traceRows, t);
+}
+
+function mergeRowsIntoMainFeedGroup(
+  groups: readonly ConversationWorkCellGroup[],
+  groupId: ConversationWorkCellGroupKind,
+  rowsToAppend: readonly ConversationWorkCellRow[],
+  t: Translate,
+): readonly ConversationWorkCellGroup[] {
+  if (rowsToAppend.length === 0) {
+    return groups;
+  }
+  let mergedGroup = false;
+  const merged = groups.map((group) => {
+    if (group.id !== groupId) {
+      return group;
+    }
+    mergedGroup = true;
+    const rows = [...group.rows, ...rowsToAppend].filter(isMainFeedSafeRow);
+    return {
+      ...group,
+      rows,
+      summary: mainFeedGroupSummary(groupId, rows.length, t),
+    };
+  });
+  if (mergedGroup) {
+    return merged;
+  }
+  const rows = rowsToAppend.filter(isMainFeedSafeRow);
+  return [
+    ...groups,
+    {
+      id: groupId,
+      label: groupId === "attention" ? t("Attention") : groupId === "evidence" ? t("Evidence") : t("Evidence"),
+      summary: mainFeedGroupSummary(groupId, rows.length, t),
+      rows,
+    },
+  ];
+}
+
+function traceSpanMatchesRuns(span: LingTraceSpan, runIdSet: ReadonlySet<string> | undefined): boolean {
+  if (!runIdSet || runIdSet.size === 0) {
+    return true;
+  }
+  return span.refs.runId ? runIdSet.has(span.refs.runId) : true;
+}
+
+function isTraceSpanUsefulForEvidence(span: LingTraceSpan): boolean {
+  return span.kind === "agent_run" ||
+    span.kind === "tool_call" ||
+    span.kind === "approval" ||
+    span.kind === "handoff" ||
+    span.kind === "sandbox" ||
+    span.kind === "artifact" ||
+    span.kind === "external_action" ||
+    span.kind === "runtime_event" ||
+    span.kind === "error";
+}
+
+function traceSpanOperationKind(span: LingTraceSpan): ConversationOperationKind {
+  if (span.kind === "approval") {
+    return "approval";
+  }
+  if (span.kind === "handoff") {
+    return "handoff";
+  }
+  if (span.kind === "artifact") {
+    return "edit";
+  }
+  if (span.kind === "tool_call" || span.kind === "external_action") {
+    return "run_command";
+  }
+  if (span.kind === "sandbox" || span.kind === "runtime_event" || span.kind === "error") {
+    return "verify";
+  }
+  return "watch";
+}
+
+function traceSpanKindLabel(kind: LingTraceSpan["kind"], t: Translate): string {
+  if (kind === "agent_run") {
+    return t("Agent run");
+  }
+  if (kind === "tool_call") {
+    return t("Tool call");
+  }
+  if (kind === "approval") {
+    return t("Approval checkpoint");
+  }
+  if (kind === "handoff") {
+    return t("Handoff");
+  }
+  if (kind === "sandbox") {
+    return t("Sandbox check");
+  }
+  if (kind === "artifact") {
+    return t("Artifact");
+  }
+  if (kind === "external_action") {
+    return t("External action");
+  }
+  if (kind === "runtime_event") {
+    return t("Runtime event");
+  }
+  if (kind === "error") {
+    return t("Error");
+  }
+  if (kind === "model_generation") {
+    return t("Model generation");
+  }
+  if (kind === "workflow_step") {
+    return t("Workflow step");
+  }
+  return t("Trace span");
+}
+
+function traceSpanDescription(span: LingTraceSpan): string | undefined {
+  const summary = safeTraceText(span.summary);
+  if (summary) {
+    return summary;
+  }
+  return safeTraceText(span.title);
+}
+
+function traceSpanDetailLines(span: LingTraceSpan, t: Translate): readonly ConversationWorkCellRowDetailLine[] {
+  const lines: ConversationWorkCellRowDetailLine[] = [
+    { text: t("Kind: {kind}", { kind: traceSpanKindLabel(span.kind, t) }) },
+    { text: t("Status: {status}", { status: span.status }) },
+  ];
+  for (const text of traceSpanAttributeSummaries(span, t)) {
+    lines.push({ text });
+  }
+  return lines.filter((line) => isMainFeedSafeText(line.text)).slice(0, 5);
+}
+
+function traceSpanAttributeSummaries(span: LingTraceSpan, t: Translate): readonly string[] {
+  const attributes = span.redactedAttributes ?? {};
+  const rows: string[] = [];
+  const pushAttribute = (label: string, key: string): void => {
+    const value = traceAttributeText(attributes[key]);
+    if (value) {
+      rows.push(t("{label}: {value}", { label, value }));
+    }
+  };
+
+  if (span.kind === "tool_call") {
+    pushAttribute(t("Tool"), "toolName");
+    const toolNamespace = traceToolNamespace(attributes);
+    if (toolNamespace) {
+      rows.push(t("Tool namespace: {namespace}", { namespace: toolNamespace }));
+    }
+    const materialization = traceAttributeText(attributes.materializationStatus) ??
+      traceAttributeText(attributes.toolMaterializationStatus);
+    if (materialization) {
+      rows.push(t("Tool materialization: {status}", { status: materialization }));
+    }
+  }
+  if (span.kind === "tool_call" || span.kind === "approval" || span.kind === "external_action") {
+    pushAttribute(t("Action"), "actionType");
+    pushAttribute(t("Risk"), "risk");
+    pushAttribute(t("Outputs"), "resultArtifactCount");
+  } else if (span.kind === "artifact") {
+    pushAttribute(t("Artifact type"), "type");
+    pushAttribute(t("Content type"), "contentType");
+    pushAttribute(t("Size"), "sizeBytes");
+  } else if (span.kind === "sandbox") {
+    pushAttribute(t("Sandbox"), "status");
+    pushAttribute(t("Backend"), "backend");
+  }
+  return rows.filter((row) => isMainFeedSafeText(row));
+}
+
+function traceToolNamespace(attributes: Record<string, unknown>): string | undefined {
+  const explicitNamespace = traceAttributeText(attributes.toolNamespace);
+  if (explicitNamespace) {
+    return explicitNamespace;
+  }
+  const toolName = traceAttributeText(attributes.toolName);
+  const actionType = traceAttributeText(attributes.actionType);
+  const name = toolName ?? actionType;
+  if (!name) {
+    return undefined;
+  }
+  if (name === "mcp_tool_call" || name.startsWith("mcp__") || name.includes(":")) {
+    return "mcp";
+  }
+  if (name === "external_send" || name === "deploy") {
+    return "external";
+  }
+  return "core";
+}
+
+function traceAttributeText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return safeTraceText(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
+function safeTraceText(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  if (!text || !isMainFeedSafeText(text)) {
+    return undefined;
+  }
+  return truncatePreview(text, 160);
+}
+
+function traceSpanStatusMeta(status: LingTraceSpan["status"], t: Translate): string {
+  if (status === "succeeded") {
+    return t("Recorded");
+  }
+  return operationStatusMeta(status, t) ?? status;
+}
+
+function traceSpanStatusTone(status: LingTraceSpan["status"]): ConversationWorkCellRowTone {
+  if (status === "succeeded") {
+    return "success";
+  }
+  if (status === "failed" || status === "cancelled") {
+    return "failed";
+  }
+  if (status === "waiting_for_approval") {
+    return "waiting";
+  }
+  if (status === "queued" || status === "running") {
+    return "running";
+  }
+  return "neutral";
 }
 
 function buildVisibleTurnContext(input: BuildConversationWorkCellInput): { readonly turn: LingTurn; readonly runs: readonly RunSession[] } | undefined {

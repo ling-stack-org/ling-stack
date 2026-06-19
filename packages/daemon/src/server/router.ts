@@ -162,6 +162,8 @@ import {
   handleRun,
 } from "../features/runs/routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
+import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
+import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
@@ -243,6 +245,7 @@ import {
   parseTeammateDirectInterventionRoute,
   parseTeammateDirectReplyRoute,
   parseTeammateRoute,
+  parseTraceRoute,
   parseWorkItemRoute,
   parseWorkUnitRoute,
 } from "./routes.js";
@@ -731,6 +734,30 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/traces") {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /traces` });
+      return;
+    }
+    handleTracesCollection(response, url, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/tool-surfaces") {
+    handleToolSurfacesCollection(request, response, url, storeRegistry, runnerRegistry);
+    return;
+  }
+
+  const traceRoute = parseTraceRoute(url.pathname);
+  if (traceRoute) {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for trace routes` });
+      return;
+    }
+    handleTraceItem(response, url, storeRegistry, traceRoute);
+    return;
+  }
+
   const lingThreadRoute = parseLingThreadRoute(url.pathname);
   if (lingThreadRoute) {
     await handleLingThreadItem(request, response, url, storeRegistry, lingThreadRoute, {
@@ -961,6 +988,10 @@ export async function routeRequest(
       startupState,
       runRoute.runId,
     );
+    return;
+  }
+  if (runRoute?.kind === "tool-load-requests") {
+    await handleToolLoadRequestsCollection(request, response, config, url, storeRegistry, runnerRegistry, runRoute.runId);
     return;
   }
   if (request.method === "GET" && runRoute?.kind === "run") {

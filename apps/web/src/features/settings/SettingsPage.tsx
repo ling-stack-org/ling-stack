@@ -991,7 +991,7 @@ export function SettingsPage({
             </div>
           ) : (
             runners.map((runner) => (
-              <label key={runner.id} className="runtime-list-row">
+              <label key={runner.id} className="runtime-list-row runtime-runner-row">
                 <input
                   type="checkbox"
                   checked={runtimeSettingsForm.allowedRunnerIds.includes(runner.id)}
@@ -1004,7 +1004,13 @@ export function SettingsPage({
                   {runner.id}
                   {runner.featureFlag ? ` · ${runner.featureFlag}` : ""}
                   {runner.disabledReason ? ` · ${runner.disabledReason}` : ""}
+                  {runner.readiness ? ` · ${runnerReadinessLabel(runner, t)}` : ""}
                 </small>
+                {runner.readiness?.blockingReasons.length ? (
+                  <span className="runtime-runner-readiness" aria-label={t("{runner} readiness blockers", { runner: runner.displayName })}>
+                    {runner.readiness.blockingReasons.slice(0, 3).map((blocker) => blocker.message).join(" · ")}
+                  </span>
+                ) : null}
               </label>
             ))
           )}
@@ -1261,6 +1267,18 @@ function workflowStatusLabel(status: ExternalWorkStatusResponse | undefined): st
     return "missing";
   }
   return status.workflow.valid ? "valid" : "invalid";
+}
+
+function runnerReadinessLabel(runner: RunnerListItem, t: Translate): string {
+  const readiness = runner.readiness;
+  if (!readiness) {
+    return t("readiness unknown");
+  }
+  const blockerCount = readiness.blockingReasons.length;
+  if (blockerCount === 0) {
+    return t("readiness {status}", { status: readiness.status });
+  }
+  return t("readiness {status}, {count} blockers", { status: readiness.status, count: blockerCount });
 }
 
 function configSourceLabel(source: EffectiveConfigResponse["values"]["theme"]["source"] | undefined, t: Translate): string {

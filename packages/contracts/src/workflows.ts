@@ -1,4 +1,4 @@
-import type { ApprovalRequest, SkillApprovalProfile } from "./approvals.js";
+import type { ApprovalRequest, LingApprovalCheckpoint, SkillApprovalProfile } from "./approvals.js";
 import type { ExecutionAction } from "./execution-actions.js";
 import type { RunArtifact } from "./artifacts.js";
 import type { ChannelExecutionProposal, ChannelHandoff } from "./channels.js";
@@ -516,6 +516,7 @@ export interface WorkflowEvidenceResponse {
   readonly handoffIntents: readonly WorkflowHandoffIntent[];
   readonly handoffs: readonly ChannelHandoff[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly approvalCheckpoints: readonly LingApprovalCheckpoint[];
   readonly actions: readonly ExecutionAction[];
   readonly artifacts: readonly RunArtifact[];
   readonly memoryCandidates: readonly WorkflowMemoryCandidateSummary[];
@@ -528,6 +529,7 @@ export interface WorkflowStepEvidenceResponse {
   readonly handoffIntents: readonly WorkflowHandoffIntent[];
   readonly handoffs: readonly ChannelHandoff[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly approvalCheckpoints: readonly LingApprovalCheckpoint[];
   readonly memoryCandidates: readonly WorkflowMemoryCandidateSummary[];
 }
 

@@ -7,6 +7,7 @@ import {
   type ChannelWorkflowStatus,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepStatus,
+  type LingApprovalCheckpoint,
   type MemoryObject,
   type RunArtifact,
   type RunStore,
@@ -513,6 +514,7 @@ export async function handleChannelWorkflowStepEvidence(
       handoffIntents: evidence.handoffIntents.filter((intent) => intent.sourceWorkflowStepId === workflowStepId),
       handoffs: evidence.handoffs,
       approvals: evidence.approvals.filter((approval) => approval.workflowStepId === workflowStepId),
+      approvalCheckpoints: evidence.approvalCheckpoints.filter((checkpoint) => checkpoint.workflowStepId === workflowStepId),
       memoryCandidates: evidence.memoryCandidates.filter((candidate) => candidate.sourceWorkflowStepIds.includes(workflowStepId)),
     });
   } catch (error) {
@@ -1098,6 +1100,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
   readonly handoffIntents: ReturnType<RunStore["listWorkflowHandoffIntents"]>;
   readonly handoffs: readonly ChannelHandoff[];
   readonly approvals: ReturnType<RunStore["listApprovalRequests"]>;
+  readonly approvalCheckpoints: readonly LingApprovalCheckpoint[];
   readonly actions: ReturnType<typeof listExecutionActions>;
   readonly artifacts: readonly RunArtifact[];
   readonly memoryCandidates: readonly {
@@ -1123,6 +1126,9 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
     .map((handoffId) => handoffId ? store.getChannelHandoff(handoffId) : undefined)
     .filter((handoff): handoff is ChannelHandoff => Boolean(handoff));
   const approvals = steps.flatMap((step) => store.listApprovalRequests({ workflowStepId: step.id, limit: 500 }));
+  const approvalCheckpoints = approvals
+    .map((approval) => store.getApprovalCheckpointForApproval(approval.id))
+    .filter((checkpoint): checkpoint is LingApprovalCheckpoint => Boolean(checkpoint));
   const actions = uniqueExecutionActions(evidenceSteps.flatMap((step) =>
     step.linkedRun ? listExecutionActions(store, { runId: step.linkedRun.id, limit: 500 }) : [],
   ));
@@ -1134,6 +1140,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
     handoffIntents,
     handoffs,
     approvals,
+    approvalCheckpoints,
     actions,
     artifacts,
     memoryCandidates: collectWorkflowMemoryCandidates(store, workflow, steps, artifacts),

@@ -12,6 +12,12 @@ import type {
   ApprovalPolicyUpdateInput,
 } from "./approval-policy.js";
 import type {
+  CreateApprovalCheckpointInput,
+  LingApprovalCheckpoint,
+  ListApprovalCheckpointsOptions,
+  UpdateApprovalCheckpointStatusInput,
+} from "./approval-checkpoints.js";
+import type {
   ListProviderPresetsOptions,
   ProviderCheckResult,
   ProviderPreset,
@@ -1209,6 +1215,11 @@ export interface RunStore {
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  createApprovalCheckpoint(input: CreateApprovalCheckpointInput, now: string): LingApprovalCheckpoint;
+  getApprovalCheckpoint(id: string): LingApprovalCheckpoint | undefined;
+  getApprovalCheckpointForApproval(approvalId: string): LingApprovalCheckpoint | undefined;
+  listApprovalCheckpoints(options?: ListApprovalCheckpointsOptions): LingApprovalCheckpoint[];
+  updateApprovalCheckpointStatus(id: string, input: UpdateApprovalCheckpointStatusInput, now: string): LingApprovalCheckpoint | undefined;
   getApprovalPolicy(): ApprovalPolicy;
   updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy;
   createOrReuseExternalWorkWorkflow(input: CreateExternalWorkWorkflowInput, now: string): ExternalWorkWorkflowResult;

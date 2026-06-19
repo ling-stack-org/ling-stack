@@ -461,6 +461,177 @@ test("sqlite store expires pending approval requests", async () => {
   }
 });
 
+test("sqlite store creates approval checkpoints and syncs approval lifecycle", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-checkpoints-"));
+  const now = "2026-06-19T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_checkpoints",
+      cwd,
+      taskId: "task_approval_checkpoints",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_checkpoints", title: "Approval checkpoints" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+
+    const cases = [
+      {
+        suffix: "approved",
+        method: "approveApprovalRequest",
+        expectedStatus: "approved",
+        reason: "Approved for smoke.",
+        resolvedAt: "2026-06-19T00:01:00.000Z",
+      },
+      {
+        suffix: "denied",
+        method: "denyApprovalRequest",
+        expectedStatus: "denied",
+        reason: "Too risky.",
+        resolvedAt: "2026-06-19T00:02:00.000Z",
+      },
+      {
+        suffix: "expired",
+        method: "expireApprovalRequest",
+        expectedStatus: "expired",
+        reason: "Timed out.",
+        resolvedAt: "2026-06-19T00:03:00.000Z",
+      },
+      {
+        suffix: "cancelled",
+        method: "cancelApprovalRequest",
+        expectedStatus: "cancelled",
+        reason: "Run stopped.",
+        resolvedAt: "2026-06-19T00:04:00.000Z",
+      },
+    ];
+
+    for (const entry of cases) {
+      const approval = store.createApprovalRequest(
+        {
+          runId: "run_approval_checkpoints",
+          taskId: "task_approval_checkpoints",
+          toolCallId: `tool_${entry.suffix}`,
+          actionType: "bash",
+          risk: "medium",
+          title: `Approve ${entry.suffix}`,
+          description: `echo ${entry.suffix}`,
+          payload: { type: "bash", cwd, command: `echo ${entry.suffix}`, riskFlags: [] },
+        },
+        now,
+      );
+
+      const checkpoint = store.getApprovalCheckpointForApproval(approval.id);
+      assert.ok(checkpoint);
+      assert.equal(checkpoint.approvalId, approval.id);
+      assert.equal(checkpoint.runId, "run_approval_checkpoints");
+      assert.equal(checkpoint.taskId, "task_approval_checkpoints");
+      assert.equal(checkpoint.toolCallId, `tool_${entry.suffix}`);
+      assert.equal(checkpoint.status, "pending");
+      assert.equal(checkpoint.actionType, "bash");
+      assert.deepEqual(checkpoint.sideEffect, approval.payload);
+      assert.deepEqual(checkpoint.previewArtifactIds, []);
+      assert.deepEqual(checkpoint.resultArtifactIds, []);
+
+      const resolved = store[entry.method](approval.id, { reason: entry.reason }, entry.resolvedAt);
+      assert.ok(resolved);
+      assert.equal(resolved.status, entry.expectedStatus);
+
+      const synced = store.getApprovalCheckpointForApproval(approval.id);
+      assert.ok(synced);
+      assert.equal(synced.status, entry.expectedStatus);
+      assert.equal(synced.resolvedAt, entry.resolvedAt);
+      assert.equal(synced.updatedAt, entry.resolvedAt);
+      assert.deepEqual(store.listApprovalCheckpoints({ status: entry.expectedStatus }).map((item) => item.approvalId), [approval.id]);
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite store updates approval checkpoint resume metadata", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-resume-"));
+  const now = "2026-06-19T01:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_resume",
+      cwd,
+      taskId: "task_approval_resume",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_resume", title: "Approval resume" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+
+    const approval = store.createApprovalRequest(
+      {
+        runId: "run_approval_resume",
+        taskId: "task_approval_resume",
+        actionType: "bash",
+        risk: "high",
+        title: "Approve resumable command",
+        description: "echo resume",
+        payload: { type: "bash", cwd, command: "echo resume", riskFlags: ["writes"] },
+      },
+      now,
+    );
+    const checkpoint = store.getApprovalCheckpointForApproval(approval.id);
+    assert.ok(checkpoint);
+
+    const resumePending = store.updateApprovalCheckpointStatus(
+      checkpoint.id,
+      {
+        status: "resume_pending",
+        previewArtifactIds: ["artifact_preview"],
+        resultArtifactIds: ["artifact_result"],
+        runnerResumeHandle: {
+          kind: "ling_continuation",
+          runId: "run_approval_resume",
+          attemptId: "attempt_approval_resume",
+          verified: true,
+        },
+      },
+      "2026-06-19T01:01:00.000Z",
+    );
+
+    assert.ok(resumePending);
+    assert.equal(resumePending.status, "resume_pending");
+    assert.deepEqual(resumePending.previewArtifactIds, ["artifact_preview"]);
+    assert.deepEqual(resumePending.resultArtifactIds, ["artifact_result"]);
+    assert.deepEqual(resumePending.runnerResumeHandle, {
+      kind: "ling_continuation",
+      runId: "run_approval_resume",
+      attemptId: "attempt_approval_resume",
+      verified: true,
+    });
+
+    const resumeFailed = store.updateApprovalCheckpointStatus(
+      checkpoint.id,
+      {
+        status: "resume_failed",
+        runnerResumeHandle: null,
+        resumeFailureReason: "Runner rejected resume handle.",
+      },
+      "2026-06-19T01:02:00.000Z",
+    );
+
+    assert.ok(resumeFailed);
+    assert.equal(resumeFailed.status, "resume_failed");
+    assert.equal(resumeFailed.runnerResumeHandle, undefined);
+    assert.equal(resumeFailed.resumeFailureReason, "Runner rejected resume handle.");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite store creates and resolves media approval requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-approval-"));
   const createdAt = "2026-05-24T00:00:00.000Z";
@@ -632,6 +803,14 @@ test("sqlite migration preserves legacy run approval owners", async () => {
     assert.equal(approvals[0].runId, "run_legacy_approval");
     assert.equal(approvals[0].taskId, "task_legacy_approval");
     assert.equal(approvals[0].mediaJobId, undefined);
+    const checkpoint = store.getApprovalCheckpointForApproval("approval_legacy");
+    assert.ok(checkpoint);
+    assert.equal(checkpoint.id, "approval_checkpoint_approval_legacy");
+    assert.equal(checkpoint.runId, "run_legacy_approval");
+    assert.equal(checkpoint.taskId, "task_legacy_approval");
+    assert.equal(checkpoint.status, "pending");
+    assert.equal(checkpoint.createdAt, now);
+    assert.deepEqual(checkpoint.sideEffect, { type: "bash", cwd, command: "echo legacy", riskFlags: [] });
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

@@ -17,6 +17,8 @@ export interface SqliteApprovalRequestStorePorts {
   readonly hasMediaJob: (id: string) => boolean;
   readonly hasExternalWorkAction: (id: string) => boolean;
   readonly hasWorkflowStep: (id: string) => boolean;
+  readonly createApprovalCheckpoint: (approval: ApprovalRequest, now: string) => void;
+  readonly syncApprovalCheckpointForApproval: (approval: ApprovalRequest, now: string) => void;
   readonly rebuildLingThreadMetadataForApproval: (approval: ApprovalRequest | undefined, now: string) => void;
 }
 
@@ -127,6 +129,7 @@ export class SqliteApprovalRequestStore {
     if (!created) {
       throw new Error(`Failed to create approval request: ${approval.id}`);
     }
+    this.ports.createApprovalCheckpoint(created, now);
     this.ports.rebuildLingThreadMetadataForApproval(created, now);
     return created;
   }
@@ -217,6 +220,9 @@ export class SqliteApprovalRequestStore {
       );
 
     const resolved = this.getApprovalRequest(id);
+    if (resolved) {
+      this.ports.syncApprovalCheckpointForApproval(resolved, now);
+    }
     this.ports.rebuildLingThreadMetadataForApproval(resolved, now);
     return resolved;
   }
