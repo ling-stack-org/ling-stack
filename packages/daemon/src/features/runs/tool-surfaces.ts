@@ -16,6 +16,9 @@ import type {
   ToolMaterializationSummary,
   ToolSurfaceDefaultApproval,
   ToolSurfaceResponse,
+  RunnerHydratedToolDescriptor,
+  RunnerToolHydrationRequest,
+  RunnerToolHydrationResponse,
 } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
@@ -105,28 +108,19 @@ export async function handleToolLoadRequestsCollection(
     }
 
     const input = parseCreateToolLoadRequest(await readJsonBody(request, config.maxBodyBytes));
-    const now = new Date().toISOString();
-    const catalog = buildToolCatalog(store, runnerRegistry, now);
-    const selection = resolveToolLoadScope(catalog, input.scope);
-    const budget = buildMaterializationBudget(store, run, selection.namespace, selection.tools);
-    const idempotencyDigest = input.idempotencyKey ? hashIdempotencyKey(input.idempotencyKey) : undefined;
-    const existingMaterialization = idempotencyDigest
-      ? findExistingMaterialization(store, run.workUnitId, runId, idempotencyDigest, budget)
-      : undefined;
-    if (!existingMaterialization) {
-      assertMaterializationWithinBudget(budget);
-    }
-    const materialization = existingMaterialization ?? buildMaterializationSummary(runId, selection.namespace, selection.tools, budget, now);
-
-    if (!existingMaterialization) {
-      appendToolMaterializationRuntimeEvent(store, run.workUnitId, materialization, input, now, idempotencyDigest);
-    }
+    const result = materializeToolSurface({
+      store,
+      runnerRegistry,
+      run,
+      request: input,
+      now: new Date().toISOString(),
+    });
 
     const body: ToolLoadRequestResponse = {
       cwd,
       runId,
-      catalog,
-      materialization,
+      catalog: result.catalog,
+      materialization: result.materialization,
     };
     writeJson(response, 201, body);
   } catch (error) {
@@ -145,6 +139,62 @@ export async function handleToolLoadRequestsCollection(
   }
 }
 
+export function hydrateRunnerToolSurface(input: {
+  readonly store: RunStore;
+  readonly runnerRegistry: RunnerRegistry;
+  readonly run: RunSession;
+  readonly request: RunnerToolHydrationRequest;
+  readonly now?: string;
+}): RunnerToolHydrationResponse {
+  const generatedAt = input.now ?? new Date().toISOString();
+  try {
+    const result = materializeToolSurface({
+      store: input.store,
+      runnerRegistry: input.runnerRegistry,
+      run: input.run,
+      request: {
+        scope: input.request.scope,
+        reason: input.request.reason,
+        idempotencyKey: input.request.idempotencyKey,
+      },
+      now: generatedAt,
+    });
+    return {
+      ok: true,
+      materialization: result.materialization,
+      tools: result.tools.map(toRunnerHydratedToolDescriptor),
+      generatedAt,
+    };
+  } catch (error) {
+    if (error instanceof ToolMaterializationBudgetError) {
+      return {
+        ok: false,
+        code: "tool_materialization_over_budget",
+        message: error.message,
+        retryable: false,
+        budget: error.budget,
+        generatedAt,
+      };
+    }
+    if (error instanceof HttpError && isRunnerHydrationRejectionCode(error.code)) {
+      return {
+        ok: false,
+        code: error.code,
+        message: error.message,
+        retryable: false,
+        generatedAt,
+      };
+    }
+    return {
+      ok: false,
+      code: "invalid_hydration_request",
+      message: error instanceof Error ? error.message : String(error),
+      retryable: false,
+      generatedAt,
+    };
+  }
+}
+
 function buildToolCatalog(store: RunStore, runnerRegistry: RunnerRegistry, generatedAt: string): LingToolNamespaceCatalog {
   return buildLingToolNamespaceCatalog({
     approvalPolicy: store.getApprovalPolicy(),
@@ -159,6 +209,67 @@ function buildToolCatalog(store: RunStore, runnerRegistry: RunnerRegistry, gener
     })),
     generatedAt,
   });
+}
+
+function materializeToolSurface(input: {
+  readonly store: RunStore;
+  readonly runnerRegistry: RunnerRegistry;
+  readonly run: RunSession;
+  readonly request: CreateToolLoadRequest;
+  readonly now: string;
+}): {
+  readonly catalog: LingToolNamespaceCatalog;
+  readonly materialization: ToolMaterializationSummary;
+  readonly tools: readonly LingToolDescriptor[];
+} {
+  const catalog = buildToolCatalog(input.store, input.runnerRegistry, input.now);
+  const selection = resolveToolLoadScope(catalog, input.request.scope);
+  const budget = buildMaterializationBudget(input.store, input.run, selection.namespace, selection.tools);
+  const idempotencyDigest = input.request.idempotencyKey ? hashIdempotencyKey(input.request.idempotencyKey) : undefined;
+  const existingMaterialization = idempotencyDigest
+    ? findExistingMaterialization(input.store, input.run.workUnitId, input.run.id, idempotencyDigest, budget)
+    : undefined;
+  if (!existingMaterialization) {
+    assertMaterializationWithinBudget(budget);
+  }
+  const materialization = existingMaterialization ??
+    buildMaterializationSummary(input.run.id, selection.namespace, selection.tools, budget, input.now);
+
+  if (!existingMaterialization) {
+    appendToolMaterializationRuntimeEvent(input.store, input.run.workUnitId, materialization, input.request, input.now, idempotencyDigest);
+  }
+
+  return {
+    catalog,
+    materialization,
+    tools: selection.tools,
+  };
+}
+
+function toRunnerHydratedToolDescriptor(tool: LingToolDescriptor): RunnerHydratedToolDescriptor {
+  return {
+    id: tool.id,
+    namespaceId: tool.namespaceId,
+    sourceKind: tool.sourceKind,
+    name: tool.name,
+    displayName: tool.displayName,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    sideEffectLevel: tool.sideEffectLevel,
+    defaultApproval: tool.defaultApproval,
+    executionApproval: tool.executionApproval,
+    enabled: tool.enabled,
+    disabledReasons: tool.disabledReasons,
+  };
+}
+
+function isRunnerHydrationRejectionCode(code: string): code is Exclude<RunnerToolHydrationResponse, { readonly ok: true }>["code"] {
+  return code === "tool_namespace_not_found" ||
+    code === "tool_not_found" ||
+    code === "invalid_hydration_request" ||
+    code === "hydration_not_supported" ||
+    code === "tool_materialization_denied" ||
+    code === "tool_materialization_over_budget";
 }
 
 function parseCreateToolLoadRequest(value: unknown): CreateToolLoadRequest {

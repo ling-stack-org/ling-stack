@@ -27,7 +27,13 @@ import {
   type WorkUnit,
   type WorkUnitAttempt,
 } from "@ling-stack/core";
-import type { PiRunnerEvent, PiRunnerMcpToolDefinition, PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import type {
+  PiRunnerEvent,
+  PiRunnerMcpToolDefinition,
+  PiRunnerProviderConfig,
+  PiRunnerRunOptions,
+  PiRunnerSandboxBinding,
+} from "@ling-stack/runner-pi";
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
@@ -35,6 +41,7 @@ import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
 import { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../runtime/supervisor.js";
+import { checkPlatformNativeSandboxBackend } from "../../runtime/sandbox/platform-native.js";
 import { ensureStartupReadyForRun } from "../../startup/run-gate.js";
 import { ensureWorkspaceStateWritableForRun } from "../../startup/workspace-state-gate.js";
 import type { StartupStateRegistry } from "../../startup/state.js";
@@ -73,6 +80,7 @@ import {
   createPiRunnerMcpToolDefinitions,
   resolveMcpToolAccessForRun,
 } from "./mcp.js";
+import { hydrateRunnerToolSurface } from "./tool-surfaces.js";
 import { createQueuedRunForConflict } from "./queue.js";
 import { resolveProviderForRun } from "./providers.js";
 import type { RunRequest } from "./schemas.js";
@@ -191,6 +199,7 @@ export async function executeRunRequest(
   let resolvedSecretValues: readonly (string | undefined)[] = [];
   let resolvedProvider: PiRunnerProviderConfig | undefined;
   let runnerResolution: RunnerResolution | undefined;
+  let sandboxBinding: PiRunnerSandboxBinding | undefined;
   let runtimeSettings: WorkspaceRuntimeSettings | undefined;
   let runtimeTools: readonly RunTool[] | undefined;
   let mcpTools: readonly PiRunnerMcpToolDefinition[] = [];
@@ -335,6 +344,13 @@ export async function executeRunRequest(
     if (existingWorkUnit) {
       throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${existingWorkUnit.id}`);
     }
+    sandboxBinding = await maybePreparePlatformNativeSandboxBinding({
+      runnerResolution,
+      runtimeSupervisor,
+      workspaceRoot: workspaceCwd,
+      runId,
+      now: createdAt,
+    });
     thread = ensureLingThreadForRun(store, runRequest, createdAt);
     turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     workUnit = store.createWorkUnit({
@@ -839,6 +855,9 @@ export async function executeRunRequest(
     }
     const result = await runnerResolution.runner.adapter.runTask({
       ...runnerRequest,
+      runId: run.id,
+      runnerAttemptId: attempt.id,
+      sandbox: sandboxBinding,
       onApprovalRequired: createRunApprovalHandler({
         store,
         run,
@@ -868,6 +887,15 @@ export async function executeRunRequest(
         runnerCapabilities: runnerResolution.runner.capabilities,
         mcpToolRefs: mcpTools.map((tool) => `${tool.serverId}:${tool.rawName}`),
       }),
+      onToolHydrationRequest: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" &&
+        runnerResolution.runner.toolHydration.conformance === "verified"
+        ? (request) => hydrateRunnerToolSurface({
+            store,
+            runnerRegistry,
+            run,
+            request,
+          })
+        : undefined,
       onEvent: (event: PiRunnerEvent) => {
         if (event.type === "tool_start") {
           toolStartArgsById.set(event.toolCallId, event.args);
@@ -1315,6 +1343,51 @@ function validateWorkflowStepOwner(store: RunStore, runRequest: RunRequest): voi
       `Run request task does not match workflow step: ${runRequest.workflowStepId}`,
     );
   }
+}
+
+async function maybePreparePlatformNativeSandboxBinding(input: {
+  readonly runnerResolution: RunnerResolution;
+  readonly runtimeSupervisor: RuntimeSupervisor;
+  readonly workspaceRoot: string;
+  readonly runId: string;
+  readonly now: string;
+}): Promise<PiRunnerSandboxBinding | undefined> {
+  if (!input.runnerResolution.runner.capabilities?.includes("runtime:platform-native-sandbox")) {
+    return undefined;
+  }
+  const check = await checkPlatformNativeSandboxBackend({
+    workspaceRoot: input.workspaceRoot,
+    config: input.runtimeSupervisor.getSandboxFeatures().platformNative,
+    env: {
+      LING_STACK_RUN_ID: input.runId,
+    },
+    now: input.now,
+  });
+  if (!check.ok) {
+    throw new HttpError(
+      409,
+      "sandbox_not_ready",
+      `Platform-native sandbox is not ready: ${check.readiness.blockingReasons.map((blocker) => blocker.code).join(", ")}`,
+    );
+  }
+  return {
+    profile: {
+      id: check.profile.id,
+      backendKind: check.profile.backendKind,
+      displayName: check.profile.displayName,
+    },
+    manifest: {
+      profileId: check.manifest.profileId,
+      workspaceRoot: check.manifest.workspaceRoot,
+      artifactImportRoots: check.manifest.artifactImportRoots,
+    },
+    sessionRef: {
+      profileId: check.sessionRef.profileId,
+      backendKind: check.sessionRef.backendKind,
+      opaqueSessionId: check.sessionRef.opaqueSessionId,
+    },
+    readiness: check.readiness,
+  };
 }
 
 function toRunnerResolutionSnapshot(resolution: RunnerResolution): {

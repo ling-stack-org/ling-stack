@@ -668,6 +668,10 @@ artifact importer
 - `local_unix` is acceptable for development diagnostics, but it is not isolation.
 - The default local/desktop direction should follow Codex's local sandbox model:
   platform-native OS enforcement plus approval gates, selected per host capability.
+- Current platform-native implementation has a macOS doctor/run-plan and feature-gated Pi
+  readiness binding. Embedded Pi execution is still in-process, so untrusted execution
+  requires a later OS-wrapped child-process/tool-execution slice before it is treated as
+  isolated.
 - Docker is an optional adapter, not the default Ling sandbox path. Hosted and external
   backends stay future adapter decisions after artifact import, network policy, and secret
   redaction conformance pass.

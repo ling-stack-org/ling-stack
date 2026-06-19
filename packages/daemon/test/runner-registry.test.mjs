@@ -158,6 +158,57 @@ test("default runner registry exposes unified exec capability when configured", 
   assert.equal(pi.capabilities.includes("runtime:unified-exec"), true);
 });
 
+test("pi runner exposes daemon-hydrated tools only after the feature and conformance gates pass", () => {
+  const halfEnabled = createDefaultRunnerRegistry(new RecordingRunner(), {
+    runners: {
+      pi: {
+        toolHydration: {
+          enabled: true,
+        },
+      },
+    },
+  }).list().find((runner) => runner.id === "pi");
+
+  assert.equal(halfEnabled.toolHydration.mode, "unsupported");
+  assert.equal(halfEnabled.toolHydration.conformance, "unverified");
+  assert.equal(halfEnabled.capabilities.includes("runtime:tool-hydration"), false);
+
+  const verified = createDefaultRunnerRegistry(new RecordingRunner(), {
+    runners: {
+      pi: {
+        toolHydration: {
+          enabled: true,
+          conformancePassed: true,
+          maxHydratedToolsPerRun: 12,
+        },
+      },
+    },
+  }).list().find((runner) => runner.id === "pi");
+
+  assert.equal(verified.toolHydration.mode, "daemon_hydrated");
+  assert.equal(verified.toolHydration.supportsNamespaceSearch, true);
+  assert.equal(verified.toolHydration.supportsToolHydration, true);
+  assert.equal(verified.toolHydration.conformance, "verified");
+  assert.equal(verified.toolHydration.maxHydratedToolsPerRun, 12);
+  assert.equal(verified.capabilities.includes("runtime:tool-hydration"), true);
+});
+
+test("pi runner exposes platform-native sandbox binding only behind an explicit feature gate", () => {
+  const defaultPi = createDefaultRunnerRegistry(new RecordingRunner()).list().find((runner) => runner.id === "pi");
+  assert.equal(defaultPi.capabilities.includes("runtime:platform-native-sandbox"), false);
+
+  const sandboxedPi = createDefaultRunnerRegistry(new RecordingRunner(), {
+    runners: {
+      pi: {
+        sandboxBinding: {
+          enabled: true,
+        },
+      },
+    },
+  }).list().find((runner) => runner.id === "pi");
+  assert.equal(sandboxedPi.capabilities.includes("runtime:platform-native-sandbox"), true);
+});
+
 test("future runner feature flags do not enable adapters without conformance", () => {
   const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
     runners: {

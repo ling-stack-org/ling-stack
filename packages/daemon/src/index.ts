@@ -205,11 +205,15 @@ export function createDefaultRunnerRegistry(
   config: (Pick<ResolvedDaemonConfig, "runners" | "runtimeTools"> | Pick<DaemonConfig, "runners" | "runtimeTools">) = {},
 ): RunnerRegistry {
   const extension = getPiRunnerExtension();
+  const piToolHydration = resolvePiRunnerToolHydrationCapability(config);
+  const piSandboxBindingEnabled = config.runners?.pi?.sandboxBinding?.enabled === true;
   const piCapabilities = [
     ...extension.manifest.capabilities,
     ...(config.runtimeTools?.requestPermissions ? ["runtime:request-permissions"] : []),
     ...(config.runtimeTools?.unifiedExec ? ["runtime:unified-exec"] : []),
     ...(config.runtimeTools?.shellSnapshot ? ["runtime:shell-snapshot"] : []),
+    ...(piToolHydration.mode === "daemon_hydrated" ? ["runtime:tool-hydration"] : []),
+    ...(piSandboxBindingEnabled ? ["runtime:platform-native-sandbox"] : []),
   ];
   return createRunnerRegistry([
     {
@@ -221,16 +225,37 @@ export function createDefaultRunnerRegistry(
       supportedProviderApis: extension.supportedProviderApis,
       supportedTools: extension.supportedTools,
       capabilities: piCapabilities,
-      toolHydration: {
-        mode: "unsupported",
-        supportsNamespaceSearch: false,
-        supportsToolHydration: false,
-        conformance: "unverified",
-        maxHydratedToolsPerRun: 0,
-      },
+      toolHydration: piToolHydration,
     },
     ...listExternalRunnerRegistrations(config),
   ], DEFAULT_RUNNER_ID);
+}
+
+function resolvePiRunnerToolHydrationCapability(
+  config: (Pick<ResolvedDaemonConfig, "runners"> | Pick<DaemonConfig, "runners">) = {},
+) {
+  const toolHydration = config.runners?.pi?.toolHydration;
+  const maxHydratedToolsPerRun = readPositiveInteger(toolHydration?.maxHydratedToolsPerRun) ?? 64;
+  if (toolHydration?.enabled === true && toolHydration.conformancePassed === true) {
+    return {
+      mode: "daemon_hydrated" as const,
+      supportsNamespaceSearch: true,
+      supportsToolHydration: true,
+      conformance: "verified" as const,
+      maxHydratedToolsPerRun,
+    };
+  }
+  return {
+    mode: "unsupported" as const,
+    supportsNamespaceSearch: false,
+    supportsToolHydration: false,
+    conformance: "unverified" as const,
+    maxHydratedToolsPerRun: 0,
+  };
+}
+
+function readPositiveInteger(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 export function createDefaultLingExtensionRegistry(): LingExtensionRegistry {

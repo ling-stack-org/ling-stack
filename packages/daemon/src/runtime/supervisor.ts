@@ -43,6 +43,10 @@ export class RuntimeSupervisor {
     return this.config.transports;
   }
 
+  getSandboxFeatures(): ResolvedDaemonConfig["sandbox"] {
+    return this.config.sandbox;
+  }
+
   getRuntime(cwd: string, store: RuntimeSupervisorRuntimeStore): RuntimeInstance {
     const existing = this.runtimesByCwd.get(cwd);
     if (existing) {

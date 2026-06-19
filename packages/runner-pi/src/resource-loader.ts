@@ -4,6 +4,7 @@ import { createLingStackBashToolExtension } from "./extensions/bash.js";
 import { createLingStackFileMutationToolExtension } from "./extensions/file-mutation.js";
 import { createLingStackMcpProxyExtension } from "./extensions/mcp-proxy.js";
 import { createLingStackPermissionRequestExtension } from "./extensions/permissions.js";
+import { createLingStackToolHydrationExtension } from "./extensions/tool-hydration.js";
 import type { PiRunnerRunOptions } from "./types.js";
 import { getLingStackSystemPrompt } from "./utils.js";
 
@@ -29,6 +30,7 @@ export async function createLingStackResourceLoader(
       createLingStackApprovalExtension(options),
       ...(options.runtimeToolFeatures?.requestPermissions ? [createLingStackPermissionRequestExtension(options)] : []),
       ...(options.mcpTools?.length ? [createLingStackMcpProxyExtension(options)] : []),
+      ...(options.onToolHydrationRequest ? [createLingStackToolHydrationExtension(options)] : []),
     ],
   });
   await resourceLoader.reload();
