@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import {
   ensureRuntimePaths,
   resolveRuntimePaths,
@@ -30,11 +30,6 @@ import {
 } from "../approval-policy.js";
 import {
   DEFAULT_WORKSPACE_ID,
-  LING_AGENT_ID,
-  LING_AGENT_SYSTEM_PROMPT,
-  createBuiltinAiTeammateId,
-  createLingAgentSystemTeammate,
-  lingAgentAllowedTools,
   type AiTeammate,
   type AiTeammateUpdateInput,
   type Channel,
@@ -141,9 +136,7 @@ import {
   type WorkflowPacketSourceRef,
   type WorkflowSelectorDecision,
 } from "../workspace-types.js";
-import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultTeammateTemplates } from "../builtin-skill-packs.js";
 import {
-  type AiTeammateTemplate,
   type CreateSkillImportDraftInput,
   type ListSkillRegistryOptions,
   type SkillImportDraft,
@@ -337,7 +330,6 @@ import {
   readNullableString,
   readNumber,
   readString,
-  stringifyJson,
 } from "./sqlite/helpers.js";
 import { SqliteAutomationStore } from "./sqlite/automation-store.js";
 import { SqliteProviderStore } from "./sqlite/provider-store.js";
@@ -365,7 +357,8 @@ import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
 import { SqliteTaskStore } from "./sqlite/task-store.js";
 import { SqliteTeammateDirectStore } from "./sqlite/teammate-direct-store.js";
 import { SqliteTeammateAssociationStore } from "./sqlite/teammate-association-store.js";
-import { SqliteTeammateCoreStore, applyLingAgentProtectedFields } from "./sqlite/teammate-core-store.js";
+import { SqliteTeammateCoreStore } from "./sqlite/teammate-core-store.js";
+import { SqliteTeammateBootstrapCoordinator } from "./sqlite/teammate-bootstrap-coordinator.js";
 import { SqliteTeammateCleanupStore } from "./sqlite/teammate-cleanup-store.js";
 import { SqliteMemoryConsolidationStore } from "./sqlite/memory-consolidation-store.js";
 import { SqliteMemoryObjectStore } from "./sqlite/memory-object-store.js";
@@ -423,6 +416,7 @@ export class SqliteRunStore implements RunStore {
   private readonly teammateDirect: SqliteTeammateDirectStore;
   private readonly teammateAssociations: SqliteTeammateAssociationStore;
   private readonly aiTeammates: SqliteTeammateCoreStore;
+  private readonly teammateBootstrap: SqliteTeammateBootstrapCoordinator;
   private readonly teammateCleanup: SqliteTeammateCleanupStore;
   private readonly memoryConsolidation: SqliteMemoryConsolidationStore;
   private readonly memoryObjects: SqliteMemoryObjectStore;
@@ -596,6 +590,21 @@ export class SqliteRunStore implements RunStore {
     this.teammateCleanup = new SqliteTeammateCleanupStore(
       { database: this.database },
       { getAiTeammate: (id) => this.getAiTeammate(id) },
+    );
+    this.teammateBootstrap = new SqliteTeammateBootstrapCoordinator(
+      { database: this.database },
+      {
+        hasTable: (tableName) => this.hasTable(tableName),
+        getAiTeammate: (id) => this.getAiTeammate(id),
+        createAiTeammate: (input, now) => this.createAiTeammate(input, now),
+        listTeammateSkillBindings: (teammateId) => this.listTeammateSkillBindings(teammateId),
+        replaceTeammateSkillBindings: (teammateId, bindings, now) =>
+          this.replaceTeammateSkillBindings(teammateId, bindings, now),
+        ensureDefaultTeammateMemoryScopes: (teammateId, now) =>
+          this.teammateAssociations.ensureDefaultTeammateMemoryScopes(teammateId, now),
+        ensureDefaultTeammateMemoryScopesForAll: (now) =>
+          this.teammateAssociations.ensureDefaultTeammateMemoryScopesForAll(now),
+      },
     );
     this.memoryConsolidation = new SqliteMemoryConsolidationStore({ database: this.database });
     this.memoryObjects = new SqliteMemoryObjectStore({ database: this.database });
@@ -2273,90 +2282,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   private ensureDefaultAiTeammates(): void {
-    if (!this.hasTable("ai_teammates")) {
-      return;
-    }
-    const now = new Date().toISOString();
-    this.ensureLingAgentSystemTeammate(now);
-    this.ensureLingAgentChannelMemberships(now);
-    for (const template of listDefaultTeammateTemplates(GSTACK_DEFAULT_SKILL_PACK_ID)) {
-      const teammateId = createBuiltinAiTeammateId(template.id);
-      if (this.hasRetentionTombstone("ai-teammate", teammateId)) {
-        continue;
-      }
-      const existing = this.getAiTeammate(teammateId);
-      if (existing) {
-        this.backfillTemplateSkillBindings(teammateId, template, now);
-        this.ensureDefaultTeammateMemoryScopes(teammateId, now);
-        this.database
-          .prepare("UPDATE channels SET default_teammate_id = ?, updated_at = ? WHERE default_teammate_id = ?")
-          .run(teammateId, now, template.id);
-        this.database
-          .prepare("UPDATE tasks SET assignee_teammate_id = ?, updated_at = ? WHERE assignee_teammate_id = ?")
-          .run(teammateId, now, template.id);
-        continue;
-      }
-
-      this.createAiTeammate(
-        {
-          id: teammateId,
-          templateId: template.id,
-          roleKey: template.roleKey,
-          displayName: template.name,
-          description: template.summary,
-          systemPrompt: template.systemPrompt,
-          allowedTools: template.allowedTools,
-          approvalProfile: template.approvalProfile,
-          status: "active",
-          pinned: template.id === "engineer" || template.id === "designer",
-          hidden: false,
-        },
-        now,
-      );
-      this.replaceTeammateSkillBindings(
-        teammateId,
-        template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
-        now,
-      );
-      this.ensureDefaultTeammateMemoryScopes(teammateId, now);
-      this.database
-        .prepare("UPDATE channels SET default_teammate_id = ?, updated_at = ? WHERE default_teammate_id = ?")
-        .run(teammateId, now, template.id);
-      this.database
-        .prepare("UPDATE tasks SET assignee_teammate_id = ?, updated_at = ? WHERE assignee_teammate_id = ?")
-        .run(teammateId, now, template.id);
-    }
-    this.ensureDefaultTeammateMemoryScopesForAll(now);
-  }
-
-  private backfillTemplateSkillBindings(teammateId: string, template: AiTeammateTemplate, now: string): boolean {
-    const existingSkillIds = new Set(this.listTeammateSkillBindings(teammateId).map((binding) => binding.skillId));
-    const missingSkillIds = template.defaultSkillIds.filter((skillId) => !existingSkillIds.has(skillId));
-    if (missingSkillIds.length === 0) {
-      return false;
-    }
-
-    const insert = this.database.prepare(`
-      INSERT INTO teammate_skill_bindings (
-        teammate_id,
-        skill_id,
-        source,
-        enabled,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, 'template', 1, ?, ?)
-    `);
-    this.database.exec("BEGIN");
-    try {
-      for (const skillId of missingSkillIds) {
-        insert.run(teammateId, skillId, now, now);
-      }
-      this.database.exec("COMMIT");
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
-    }
-    return true;
+    this.teammateBootstrap.ensureDefaultAiTeammates();
   }
 
   private hasMigration(version: number): boolean {
@@ -2375,17 +2301,6 @@ export class SqliteRunStore implements RunStore {
       this.database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
         .get(tableName),
-    );
-  }
-
-  private hasRetentionTombstone(entityType: string, entityId: string): boolean {
-    if (!this.hasTable("retention_tombstones")) {
-      return false;
-    }
-    return Boolean(
-      this.database
-        .prepare("SELECT id FROM retention_tombstones WHERE workspace_id = ? AND entity_type = ? AND entity_id = ? LIMIT 1")
-        .get(DEFAULT_WORKSPACE_ID, entityType, entityId),
     );
   }
 
@@ -2471,104 +2386,16 @@ export class SqliteRunStore implements RunStore {
     this.channelReferences.assertWorkflowCoordinationRefsInChannel(channelId, refs);
   }
 
-  private ensureLingAgentSystemTeammate(now: string): AiTeammate {
-    const existing = this.getAiTeammate(LING_AGENT_ID);
-    if (!existing) {
-      const profile = createLingAgentSystemTeammate(now);
-      return this.createAiTeammate({
-        id: profile.id,
-        templateId: profile.templateId,
-        roleKey: profile.roleKey,
-        displayName: profile.displayName,
-        description: profile.description,
-        avatarTone: profile.avatarTone,
-        avatarImageAttachmentId: profile.avatarImageAttachmentId,
-        providerPresetId: profile.providerPresetId,
-        runnerId: profile.runnerId,
-        systemPrompt: profile.systemPrompt,
-        appendSystemPrompt: profile.appendSystemPrompt,
-        allowedTools: profile.allowedTools,
-        approvalProfile: profile.approvalProfile,
-        status: profile.status,
-        pinned: profile.pinned,
-        hidden: profile.hidden,
-      }, now);
-    }
-
-    const next = applyLingAgentProtectedFields(existing);
-    this.database
-      .prepare(`
-        UPDATE ai_teammates
-        SET
-          template_id = ?,
-          role_key = ?,
-          display_name = ?,
-          description = ?,
-          avatar_tone = ?,
-          avatar_image_attachment_id = ?,
-          provider_preset_id = NULL,
-          runner_id = NULL,
-          system_prompt = ?,
-          append_system_prompt_json = ?,
-          allowed_tools_json = ?,
-          approval_profile_json = ?,
-          status = ?,
-          pinned = ?,
-          hidden = ?,
-          updated_at = ?
-        WHERE id = ?
-      `)
-      .run(
-        next.templateId ?? null,
-        next.roleKey,
-        next.displayName,
-        next.description,
-        next.avatarTone ?? null,
-        next.avatarImageAttachmentId ?? null,
-        next.systemPrompt ?? null,
-        stringifyJson(next.appendSystemPrompt),
-        stringifyJson(next.allowedTools),
-        stringifyJson(next.approvalProfile),
-        next.status,
-        next.pinned ? 1 : 0,
-        next.hidden ? 1 : 0,
-        now,
-        LING_AGENT_ID,
-      );
-    return this.getAiTeammate(LING_AGENT_ID) ?? next;
-  }
-
   private ensureLingAgentChannelMemberships(now: string, channelId?: string): void {
-    if (!this.hasTable("channels") || !this.hasTable("teammate_channel_memberships") || !this.getAiTeammate(LING_AGENT_ID)) {
-      return;
-    }
-    this.database
-      .prepare("UPDATE channels SET default_teammate_id = NULL, updated_at = ? WHERE default_teammate_id = ?")
-      .run(now, LING_AGENT_ID);
-    const channels = channelId
-      ? this.database.prepare("SELECT id FROM channels WHERE id = ?").all(channelId)
-      : this.database.prepare("SELECT id FROM channels").all();
-    const insert = this.database.prepare(`
-      INSERT OR IGNORE INTO teammate_channel_memberships (
-        teammate_id,
-        channel_id,
-        is_default,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, 0, ?, ?)
-    `);
-    for (const row of channels as Record<string, SQLOutputValue>[]) {
-      insert.run(LING_AGENT_ID, readString(row, "id"), now, now);
-    }
-    this.ensureDefaultTeammateMemoryScopes(LING_AGENT_ID, now);
+    this.teammateBootstrap.ensureLingAgentChannelMemberships(now, channelId);
   }
 
   private ensureDefaultTeammateMemoryScopesForAll(now: string): void {
-    this.teammateAssociations.ensureDefaultTeammateMemoryScopesForAll(now);
+    this.teammateBootstrap.ensureDefaultTeammateMemoryScopesForAll(now);
   }
 
   private ensureDefaultTeammateMemoryScopes(teammateId: string, now: string): void {
-    this.teammateAssociations.ensureDefaultTeammateMemoryScopes(teammateId, now);
+    this.teammateBootstrap.ensureDefaultTeammateMemoryScopes(teammateId, now);
   }
 
   private assertWorkflowSelectorTargetsInChannel(
