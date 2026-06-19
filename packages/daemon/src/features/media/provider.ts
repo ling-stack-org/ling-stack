@@ -2,8 +2,8 @@ import {
   normalizeProviderBaseUrlForAdapter,
   type CreateMediaJobInput,
   type ProviderPreset,
+  type ProviderStoreFacet,
   type ResolvedSecret,
-  type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
 import {
@@ -15,7 +15,7 @@ import {
 import { HttpError } from "../../errors.js";
 import { resolveProviderSecret } from "../providers/secrets.js";
 
-export function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInput, secretResolver?: SecretResolver): ProviderPreset {
+export function assertMediaJobProvider(store: ProviderStoreFacet, input: CreateMediaJobInput, secretResolver?: SecretResolver): ProviderPreset {
   void secretResolver;
   const preset = store.getProviderPreset(input.providerPresetId);
   if (!preset) {
@@ -33,7 +33,7 @@ export function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInp
   return preset;
 }
 
-export function createMediaAdapterForProvider(store: RunStore, provider: ProviderPreset, secretResolver: SecretResolver) {
+export function createMediaAdapterForProvider(store: ProviderStoreFacet, provider: ProviderPreset, secretResolver: SecretResolver) {
   const gate = resolveMediaVendorTransportGateConfig(provider.compat);
   if (!gate.ok) {
     throw new HttpError(400, gate.errorCode ?? "invalid_request", gate.errorMessage ?? "Invalid media vendor transport configuration.");
