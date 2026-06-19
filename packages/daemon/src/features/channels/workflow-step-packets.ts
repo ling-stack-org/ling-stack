@@ -1,14 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
+  type ChannelStoreFacet,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepContextPacket,
   type ChannelWorkflowStepOutputPacket,
   type RunArtifact,
+  type RunExecutionStoreFacet,
   type RunnerResolutionAudit,
   type RunSession,
-  type RunStore,
+  type RunStorePathsFacet,
+  type WorkspaceStoreFacet,
   type WorkflowPacketSourceRef,
   type WorkflowStepOutputRef,
 } from "@ling-stack/core";
@@ -17,8 +20,13 @@ import { isRecord } from "../../shared/validation.js";
 import type { WorkflowStepContextCompactionSummary } from "./context-compaction.js";
 import type { WorkflowStepRunRequest } from "./workflows.js";
 
+type WorkflowStepPacketArtifactStore = RunExecutionStoreFacet & RunStorePathsFacet;
+type WorkflowStepPacketDependencyStore = ChannelStoreFacet & RunExecutionStoreFacet;
+type WorkflowStepPacketSourceStore = ChannelStoreFacet & RunExecutionStoreFacet & WorkspaceStoreFacet;
+type WorkflowStepPacketStore = WorkflowStepPacketArtifactStore & WorkflowStepPacketSourceStore;
+
 export function createWorkflowStepContextArtifact(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
@@ -44,7 +52,7 @@ export function createWorkflowStepContextArtifact(input: {
 }
 
 export function createWorkflowStepOutputArtifact(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
@@ -67,7 +75,7 @@ export function createWorkflowStepOutputArtifact(input: {
 }
 
 export function buildWorkflowStepContextPacket(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketSourceStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
@@ -107,7 +115,7 @@ export function buildWorkflowStepContextPacket(input: {
 }
 
 export function buildWorkflowStepOutputPacket(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketSourceStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
@@ -139,7 +147,7 @@ export function buildWorkflowStepOutputPacket(input: {
 }
 
 export function buildWorkflowPacketSourceRefs(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketSourceStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run?: RunSession;
@@ -175,7 +183,7 @@ export function buildWorkflowPacketSourceRefs(input: {
 }
 
 export function readWorkflowStepContextPacketArtifact(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketArtifactStore;
   readonly artifactId: string;
 }): ChannelWorkflowStepContextPacket | undefined {
   const packet = readWorkflowStepPacketArtifact(input.store, input.artifactId);
@@ -186,7 +194,7 @@ export function readWorkflowStepContextPacketArtifact(input: {
 }
 
 export function readWorkflowStepOutputPacketArtifact(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketArtifactStore;
   readonly artifactId: string;
 }): ChannelWorkflowStepOutputPacket | undefined {
   const packet = readWorkflowStepPacketArtifact(input.store, input.artifactId);
@@ -206,7 +214,7 @@ export function extractWorkflowStepChangedPaths(input: {
 }
 
 function buildDependencyRefs(
-  store: RunStore,
+  store: WorkflowStepPacketDependencyStore,
   workflowId: string,
   step: ChannelWorkflowStep,
 ): WorkflowStepOutputRef[] {
@@ -219,7 +227,7 @@ function buildDependencyRefs(
     .map((dependency) => buildWorkflowStepOutputRef(store, dependency));
 }
 
-function buildWorkflowStepOutputRef(store: RunStore, step: ChannelWorkflowStep): WorkflowStepOutputRef {
+function buildWorkflowStepOutputRef(store: WorkflowStepPacketDependencyStore, step: ChannelWorkflowStep): WorkflowStepOutputRef {
   const runArtifacts = step.runId ? store.listArtifacts(step.runId).map((artifact) => artifact.id) : [];
   const metadataArtifactIds = [
     step.metadata?.outputArtifactId,
@@ -237,7 +245,7 @@ function buildWorkflowStepOutputRef(store: RunStore, step: ChannelWorkflowStep):
 }
 
 function writeWorkflowStepPacketArtifact(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketArtifactStore;
   readonly run: RunSession;
   readonly workflowId: string;
   readonly workflowStepId: string;
@@ -272,7 +280,7 @@ function writeWorkflowStepPacketArtifact(input: {
 }
 
 function createWorkflowStepCompactionArtifacts(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketArtifactStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
@@ -294,7 +302,7 @@ function createWorkflowStepCompactionArtifacts(input: {
 }
 
 function writeWorkflowStepCompactionArtifact(input: {
-  readonly store: RunStore;
+  readonly store: WorkflowStepPacketArtifactStore;
   readonly run: RunSession;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
@@ -379,7 +387,7 @@ function uniqueContextPackSourceRefs(
     : never;
 }
 
-function existingPacketArtifact(store: RunStore, artifactId: string): RunArtifact | undefined {
+function existingPacketArtifact(store: WorkflowStepPacketArtifactStore, artifactId: string): RunArtifact | undefined {
   const artifact = store.getArtifact(artifactId);
   if (!artifact) {
     return undefined;
@@ -387,7 +395,7 @@ function existingPacketArtifact(store: RunStore, artifactId: string): RunArtifac
   return artifactPathExists(store, artifact) ? artifact : undefined;
 }
 
-function readWorkflowStepPacketArtifact(store: RunStore, artifactId: string): unknown {
+function readWorkflowStepPacketArtifact(store: WorkflowStepPacketArtifactStore, artifactId: string): unknown {
   const artifact = existingPacketArtifact(store, artifactId);
   if (!artifact) {
     return undefined;
@@ -400,7 +408,7 @@ function readWorkflowStepPacketArtifact(store: RunStore, artifactId: string): un
   }
 }
 
-function artifactPathExists(store: RunStore, artifact: RunArtifact): boolean {
+function artifactPathExists(store: WorkflowStepPacketArtifactStore, artifact: RunArtifact): boolean {
   try {
     return existsSync(resolveArtifactContentPath(store, artifact));
   } catch {
@@ -408,7 +416,7 @@ function artifactPathExists(store: RunStore, artifact: RunArtifact): boolean {
   }
 }
 
-function resolveArtifactContentPath(store: RunStore, artifact: RunArtifact): string {
+function resolveArtifactContentPath(store: WorkflowStepPacketArtifactStore, artifact: RunArtifact): string {
   const artifactRoot = store.paths.artifactsDir;
   const absolutePath = isAbsolute(artifact.path) ? artifact.path : resolvePath(artifactRoot, artifact.path);
   const relativePath = relative(artifactRoot, absolutePath);
