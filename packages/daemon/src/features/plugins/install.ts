@@ -1,4 +1,10 @@
-import type { ManagedPluginDescriptor, ManagedPluginPackageRecord, RunStore } from "@ling-stack/core";
+import type {
+  ManagedPluginDescriptor,
+  ManagedPluginPackageRecord,
+  ManagedPluginStoreFacet,
+  McpStoreFacet,
+  RunStorePathsFacet,
+} from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { McpBroker } from "../../context.js";
 import type { SecretResolver } from "@ling-stack/core";
@@ -11,6 +17,11 @@ import {
 } from "./presets.js";
 import { createPluginHealthSnapshot, ensureManagedPluginRecord } from "./catalog.js";
 
+type ManagedPluginInstallStore =
+  ManagedPluginStoreFacet &
+  McpStoreFacet &
+  RunStorePathsFacet;
+
 export interface PluginInstallResult {
   readonly descriptor: ManagedPluginDescriptor;
   readonly packageRecord: ManagedPluginPackageRecord;
@@ -18,7 +29,7 @@ export interface PluginInstallResult {
 
 export async function installBundledPluginPackage(input: {
   readonly cwd: string;
-  readonly store: RunStore;
+  readonly store: ManagedPluginInstallStore;
   readonly pluginId: string;
   readonly options: Readonly<Record<string, unknown>>;
   readonly now: string;
@@ -86,7 +97,7 @@ export async function installBundledPluginPackage(input: {
 }
 
 export function uninstallManagedPluginPackage(input: {
-  readonly store: RunStore;
+  readonly store: ManagedPluginInstallStore;
   readonly descriptor: ManagedPluginDescriptor;
   readonly reason?: string;
   readonly now: string;
@@ -127,7 +138,7 @@ export function uninstallManagedPluginPackage(input: {
 
 export async function refreshManagedPluginPackage(input: {
   readonly cwd: string;
-  readonly store: RunStore;
+  readonly store: ManagedPluginInstallStore;
   readonly pluginId: string;
   readonly options: Readonly<Record<string, unknown>>;
   readonly now: string;
@@ -148,7 +159,7 @@ export async function refreshManagedPluginPackage(input: {
 
 export async function checkInstalledPluginRuntimeDependencies(input: {
   readonly descriptor: ManagedPluginDescriptor;
-  readonly store: RunStore;
+  readonly store: ManagedPluginInstallStore;
   readonly mcpBroker: McpBroker;
   readonly secretResolver: SecretResolver;
   readonly now: string;
@@ -167,7 +178,7 @@ export async function checkInstalledPluginRuntimeDependencies(input: {
 }
 
 function validateCuaInstallEnvironment(
-  store: RunStore,
+  store: ManagedPluginInstallStore,
   descriptor: ManagedPluginDescriptor,
   options: Readonly<Record<string, unknown>>,
   now: string,
@@ -198,7 +209,7 @@ function validateCuaInstallEnvironment(
 }
 
 function linkCuaMcpServer(input: {
-  readonly store: RunStore;
+  readonly store: ManagedPluginInstallStore;
   readonly descriptor: ManagedPluginDescriptor;
   readonly enabled: boolean;
   readonly options: Readonly<Record<string, unknown>>;

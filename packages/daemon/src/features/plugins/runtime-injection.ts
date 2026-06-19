@@ -8,13 +8,20 @@ import {
   type ManagedPluginPackageView,
   type ManagedPluginRuntimePreview,
   type ManagedPluginRuntimeSnapshot,
-  type RunStore,
+  type ManagedPluginStoreFacet,
+  type McpStoreFacet,
+  type RunStorePathsFacet,
 } from "@ling-stack/core";
 import { buildManagedPluginPolicyOverlays } from "./policy-overlay.js";
 
+type ManagedPluginRuntimeStore =
+  ManagedPluginStoreFacet &
+  McpStoreFacet &
+  RunStorePathsFacet;
+
 export function buildManagedPluginRuntimePreview(input: {
   readonly cwd: string;
-  readonly store: RunStore;
+  readonly store: ManagedPluginRuntimeStore;
   readonly descriptor: ManagedPluginDescriptor;
   readonly now: string;
 }): ManagedPluginRuntimePreview {
@@ -66,7 +73,7 @@ export function buildManagedPluginRuntimePreview(input: {
 export function createManagedPluginRuntimeSnapshot(input: {
   readonly cwd: string;
   readonly runId?: string;
-  readonly store: RunStore;
+  readonly store: ManagedPluginRuntimeStore;
   readonly descriptors: readonly ManagedPluginDescriptor[];
   readonly now: string;
 }): ManagedPluginRuntimeSnapshot {
@@ -109,7 +116,7 @@ function cacheRefExists(paths: LingStackRuntimePaths, cacheRef: string): boolean
   return existsSync(join(paths.pluginCacheDir, cacheRef));
 }
 
-function resolveLinkedResources(store: RunStore, descriptor: ManagedPluginDescriptor): ManagedPluginLinkedResource[] {
+function resolveLinkedResources(store: ManagedPluginRuntimeStore, descriptor: ManagedPluginDescriptor): ManagedPluginLinkedResource[] {
   const records = store.listManagedPluginContributions(descriptor.id);
   return records.map((record) => {
     if (record.contributionKind === "mcp-server" && record.linkedResourceId) {

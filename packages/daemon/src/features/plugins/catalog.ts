@@ -7,7 +7,9 @@ import type {
   ManagedPluginHealthSnapshot,
   ManagedPluginRecord,
   ManagedPluginView,
-  RunStore,
+  ManagedPluginStoreFacet,
+  McpStoreFacet,
+  RunStorePathsFacet,
 } from "@ling-stack/core";
 import { CUA_DRIVER_PLUGIN_ID, CUA_DRIVER_MCP_SERVER_ID, listTrustedLocalPresetDescriptors } from "./presets.js";
 import { listBundledPackageDescriptors } from "./source-index.js";
@@ -19,10 +21,15 @@ const sourceOrder = new Map([
   ["trusted-local-preset", 2],
 ]);
 
+type ManagedPluginCatalogStore =
+  ManagedPluginStoreFacet &
+  McpStoreFacet &
+  RunStorePathsFacet;
+
 export function listManagedPluginViews(input: {
   readonly cwd: string;
   readonly extensionRegistry: LingExtensionRegistry;
-  readonly store: RunStore;
+  readonly store: ManagedPluginCatalogStore;
   readonly now: string;
   readonly includeEvents?: boolean;
 }): readonly ManagedPluginView[] {
@@ -46,7 +53,7 @@ export function getManagedPluginView(input: {
   readonly pluginId: string;
   readonly cwd: string;
   readonly extensionRegistry: LingExtensionRegistry;
-  readonly store: RunStore;
+  readonly store: ManagedPluginCatalogStore;
   readonly now: string;
   readonly includeEvents?: boolean;
 }): ManagedPluginView | undefined {
@@ -55,14 +62,14 @@ export function getManagedPluginView(input: {
 
 export function getManagedPluginDescriptor(
   extensionRegistry: LingExtensionRegistry,
-  store: RunStore,
+  store: ManagedPluginStoreFacet,
   pluginId: string,
 ): ManagedPluginDescriptor | undefined {
   return buildDescriptorMap(extensionRegistry, store).get(pluginId);
 }
 
 export function ensureManagedPluginRecord(input: {
-  readonly store: RunStore;
+  readonly store: ManagedPluginStoreFacet;
   readonly descriptor: ManagedPluginDescriptor;
   readonly enabled: boolean;
   readonly disabledReason?: string;
@@ -101,7 +108,7 @@ export function createPluginHealthSnapshot(input: {
 
 function buildDescriptorMap(
   extensionRegistry: LingExtensionRegistry,
-  store: RunStore,
+  store: ManagedPluginStoreFacet,
 ): Map<string, ManagedPluginDescriptor> {
   const descriptors = new Map<string, ManagedPluginDescriptor>();
   for (const descriptor of listProductManagedBuiltInPluginDescriptors(extensionRegistry)) {
@@ -157,7 +164,7 @@ function createManagedPluginView(input: {
   readonly contributionRecords: readonly ManagedPluginContributionRecord[];
   readonly health?: ManagedPluginHealthSnapshot;
   readonly events?: readonly ManagedPluginEvent[];
-  readonly store: RunStore;
+  readonly store: ManagedPluginCatalogStore;
 }): ManagedPluginView {
   const blocked = getDescriptorBlocker(input.descriptor);
   const recordEnabled = input.record?.enabled;
@@ -253,7 +260,7 @@ function getDescriptorBlocker(descriptor: ManagedPluginDescriptor): string | und
 }
 
 function resolveLinkedResource(
-  store: RunStore,
+  store: McpStoreFacet,
   kind: ManagedPluginContributionKind,
   linkedResourceId: string,
 ): { readonly present: boolean; readonly enabled?: boolean; readonly displayName?: string } {
@@ -268,7 +275,7 @@ function resolveLinkedResource(
   return { present: true };
 }
 
-function isLinkedResourcePresent(store: RunStore, kind: ManagedPluginContributionKind, linkedResourceId: string): boolean {
+function isLinkedResourcePresent(store: McpStoreFacet, kind: ManagedPluginContributionKind, linkedResourceId: string): boolean {
   return resolveLinkedResource(store, kind, linkedResourceId).present;
 }
 
