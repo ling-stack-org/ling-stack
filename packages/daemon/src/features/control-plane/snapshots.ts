@@ -429,6 +429,7 @@ function readRunnersSnapshot(store: RunStore, context: DaemonContext): unknown {
       available: runner.status === "enabled",
       experimental: runner.id !== "pi",
       capabilities: runner.capabilities ?? [],
+      toolHydration: runner.toolHydration,
       blocker: runner.disabledReason,
       readiness: runner.readiness,
     })),

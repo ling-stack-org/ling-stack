@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { evaluateLingSandboxReadiness } from "@ling-stack/core";
-import type { PiRunnerProviderConfig, PiRunnerResult, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import type {
+  PiRunnerHydratedToolDescriptor,
+  PiRunnerProviderConfig,
+  PiRunnerResult,
+  PiRunnerRunOptions,
+  PiRunnerToolHydrationResponse,
+} from "@ling-stack/runner-pi";
 import type { RunnerAdapter } from "../context.js";
 
 export interface RunnerConformanceFakeOptions {
@@ -10,6 +16,8 @@ export interface RunnerConformanceFakeOptions {
   readonly workspaceBoundaryViolation?: boolean;
   readonly forceUnmaterializedWriteTool?: boolean;
   readonly sandboxReadinessFailure?: boolean;
+  readonly forceToolHydration?: boolean;
+  readonly hydrationDuplicateRetry?: boolean;
 }
 
 export interface ConformanceRunner extends RunnerAdapter {
@@ -202,10 +210,173 @@ export function runRunnerConformanceSuite(
     assert.equal(JSON.stringify(events).includes("sk-test-secret"), false);
     assert.equal(runner.cleanupCount, 1);
   });
+
+  test(`${name}: daemon-hydrated tool schema keeps ask approval intact`, async () => {
+    const runner = createRunner({ forceToolHydration: true });
+    const events: unknown[] = [];
+    const approvals: unknown[] = [];
+    const hydrationRequests: unknown[] = [];
+    const timeline: string[] = [];
+
+    await runner.runTask({
+      ...baseRunOptions(),
+      tools: ["write"],
+      onEvent: (event) => {
+        events.push(event);
+        timeline.push(readEventType(event) ?? "unknown");
+      },
+      onToolHydrationRequest: async (request) => {
+        hydrationRequests.push(request);
+        timeline.push("hydration_callback");
+        return hydratedWriteSurface({
+          executionApproval: "ask",
+          enabled: true,
+        });
+      },
+      onApprovalRequired: async (request) => {
+        approvals.push(request);
+        timeline.push("approval_request");
+        return { approved: true, approvalId: "approval_hydrated_write" };
+      },
+    });
+
+    assert.equal(hydrationRequests.length, 1);
+    assert.equal(approvals.length, 1);
+    assert.equal(readRecord(approvals[0]).toolName, "write");
+    assert.equal(timeline.indexOf("tool_hydration_request") < timeline.indexOf("hydration_callback"), true);
+    assert.equal(timeline.indexOf("tool_hydration_end") < timeline.indexOf("tool_start"), true);
+    assert.equal(timeline.indexOf("approval_request") < timeline.indexOf("tool_end"), true);
+    assert.equal(JSON.stringify(events).includes("inputSchema"), false);
+    assert.equal(runner.cleanupCount, 1);
+  });
+
+  test(`${name}: denied hydrated tools can be described but not executed`, async () => {
+    const runner = createRunner({ forceToolHydration: true });
+    const events: unknown[] = [];
+    const approvals: unknown[] = [];
+
+    await assert.rejects(
+      () => runner.runTask({
+        ...baseRunOptions(),
+        tools: ["write"],
+        onEvent: (event) => events.push(event),
+        onToolHydrationRequest: async () => hydratedWriteSurface({
+          executionApproval: "deny",
+          enabled: false,
+          disabledReasons: [{ code: "policy_deny", message: "Workspace policy denies write." }],
+        }),
+        onApprovalRequired: async (request) => {
+          approvals.push(request);
+          return { approved: true, approvalId: "approval_unexpected" };
+        },
+      }),
+      /hydrated tool execution denied/i,
+    );
+
+    assert.equal(approvals.length, 0);
+    assert.equal(events.some((event) => readEventType(event) === "tool_hydration_end" && readRecord(event).rejected === false), true);
+    assert.equal(events.some((event) => readEventType(event) === "tool_start" && readRecord(event).toolName === "write"), true);
+    assert.equal(events.some((event) => readEventType(event) === "tool_end" && readRecord(event).isError === true), true);
+    assert.equal(events.some((event) => readEventType(event) === "run_error"), true);
+    assert.equal(JSON.stringify(events).includes("approval_unexpected"), false);
+    assert.equal(runner.cleanupCount, 1);
+  });
+
+  test(`${name}: hydration policy rejection fails closed before approval`, async () => {
+    const runner = createRunner({ forceToolHydration: true });
+    const events: unknown[] = [];
+    const approvals: unknown[] = [];
+
+    await assert.rejects(
+      () => runner.runTask({
+        ...baseRunOptions(),
+        tools: ["write"],
+        onEvent: (event) => events.push(event),
+        onToolHydrationRequest: async () => ({
+          ok: false,
+          code: "tool_materialization_denied",
+          message: "Workspace policy denied tool hydration.",
+          retryable: false,
+          generatedAt: "2026-06-19T00:00:00.000Z",
+        }),
+        onApprovalRequired: async (request) => {
+          approvals.push(request);
+          return { approved: true, approvalId: "approval_unexpected" };
+        },
+      }),
+      /tool hydration rejected/i,
+    );
+
+    assert.equal(approvals.length, 0);
+    assert.equal(events.some((event) => readEventType(event) === "tool_hydration_end" && readRecord(event).code === "tool_materialization_denied"), true);
+    assert.equal(events.some((event) => readEventType(event) === "tool_start" && readRecord(event).toolName === "write"), false);
+    assert.equal(events.some((event) => readEventType(event) === "run_error"), true);
+    assert.equal(JSON.stringify(events).includes("approval_unexpected"), false);
+    assert.equal(runner.cleanupCount, 1);
+  });
+
+  test(`${name}: over-budget hydration rejection exposes no schema and triggers no materialization success`, async () => {
+    const runner = createRunner({ forceToolHydration: true });
+    const events: unknown[] = [];
+    const approvals: unknown[] = [];
+
+    await assert.rejects(
+      () => runner.runTask({
+        ...baseRunOptions(),
+        tools: ["write"],
+        onEvent: (event) => events.push(event),
+        onToolHydrationRequest: async () => ({
+          ok: false,
+          code: "tool_materialization_over_budget",
+          message: "Tool materialization exceeds the run context budget.",
+          retryable: false,
+          budget: baseHydrationBudget("over_budget"),
+          generatedAt: "2026-06-19T00:00:00.000Z",
+        }),
+        onApprovalRequired: async (request) => {
+          approvals.push(request);
+          return { approved: true, approvalId: "approval_unexpected" };
+        },
+      }),
+      /tool hydration rejected/i,
+    );
+
+    assert.equal(approvals.length, 0);
+    assert.equal(events.filter((event) => readEventType(event) === "tool_hydration_end" && readRecord(event).rejected === false).length, 0);
+    assert.equal(events.some((event) => readEventType(event) === "tool_hydration_end" && readRecord(event).code === "tool_materialization_over_budget"), true);
+    assert.equal(JSON.stringify(events).includes("inputSchema"), false);
+    assert.equal(JSON.stringify(events).includes("approval_unexpected"), false);
+    assert.equal(runner.cleanupCount, 1);
+  });
+
+  test(`${name}: idempotent hydration retry does not duplicate hydrated surface evidence`, async () => {
+    const runner = createRunner({ forceToolHydration: true, hydrationDuplicateRetry: true });
+    const events: unknown[] = [];
+    let requestCount = 0;
+
+    await runner.runTask({
+      ...baseRunOptions(),
+      onEvent: (event) => events.push(event),
+      onToolHydrationRequest: async () => {
+        requestCount += 1;
+        return hydratedWriteSurface({
+          executionApproval: "ask",
+          enabled: true,
+        });
+      },
+    });
+
+    assert.equal(requestCount, 2);
+    assert.equal(events.filter((event) => readEventType(event) === "tool_hydration_request").length, 2);
+    assert.equal(events.filter((event) => readEventType(event) === "tool_hydration_end" && readRecord(event).rejected === false).length, 1);
+    assert.equal(runner.cleanupCount, 1);
+  });
 }
 
 export function baseRunOptions(): PiRunnerRunOptions {
   return {
+    runId: "run_test",
+    runnerAttemptId: "attempt_test",
     cwd: "/tmp/ling-runner-conformance",
     task: {
       id: "task_test",
@@ -288,11 +459,12 @@ export class FakeConformantRunner implements ConformanceRunner {
         throw new Error("Provider failed.");
       }
       options.onEvent?.({ type: "assistant_text_delta", text: "Conformant output." });
+      const hydratedTools = await this.maybeHydrateTools(options);
       if (this.options.forceUnmaterializedWriteTool) {
         this.emitUnmaterializedWriteTool(options);
       }
       if (options.tools?.includes("write")) {
-        await this.emitWriteTool(options);
+        await this.emitWriteTool(options, findHydratedTool(hydratedTools, "write"));
       }
       if (this.options.artifactSummary) {
         options.onEvent?.({
@@ -316,9 +488,97 @@ export class FakeConformantRunner implements ConformanceRunner {
     }
   }
 
-  private async emitWriteTool(options: PiRunnerRunOptions): Promise<void> {
+  private async maybeHydrateTools(options: PiRunnerRunOptions): Promise<readonly PiRunnerHydratedToolDescriptor[]> {
+    if (!this.options.forceToolHydration) {
+      return [];
+    }
+    const first = await this.requestToolHydration(options);
+    if (!first.ok) {
+      return this.rejectHydration(options, first);
+    }
+    const hydratedTools = first.tools;
+    if (this.options.hydrationDuplicateRetry) {
+      const second = await this.requestToolHydration(options, true);
+      if (!second.ok) {
+        return this.rejectHydration(options, second);
+      }
+    }
+    return hydratedTools;
+  }
+
+  private async requestToolHydration(
+    options: PiRunnerRunOptions,
+    suppressAcceptedEvent = false,
+  ): Promise<PiRunnerToolHydrationResponse> {
+    const runId = options.runId ?? options.task.id;
+    const runnerAttemptId = options.runnerAttemptId ?? "attempt_conformance";
+    const request = {
+      runId,
+      runnerAttemptId,
+      scope: { kind: "namespace" as const, namespaceId: "core" },
+      reason: "Hydrate write tool schema for this active runner turn.",
+      idempotencyKey: `${runId}:${runnerAttemptId}:core`,
+      task: options.task,
+      cwd: options.cwd,
+    };
+    options.onEvent?.({
+      type: "tool_hydration_request",
+      runId,
+      runnerAttemptId,
+      scope: request.scope,
+      idempotencyKeyProvided: true,
+    });
+    const response = await options.onToolHydrationRequest?.(request);
+    if (!response) {
+      return {
+        ok: false,
+        code: "hydration_not_supported",
+        message: "Runner tool hydration callback is not configured.",
+        retryable: false,
+        generatedAt: new Date().toISOString(),
+      };
+    }
+    if (!response.ok) {
+      options.onEvent?.({
+        type: "tool_hydration_end",
+        runId,
+        runnerAttemptId,
+        rejected: true,
+        code: response.code,
+      });
+      return response;
+    }
+    if (!suppressAcceptedEvent) {
+      options.onEvent?.({
+        type: "tool_hydration_end",
+        runId,
+        runnerAttemptId,
+        materializationId: response.materialization.id,
+        toolIds: response.materialization.toolIds,
+        rejected: false,
+      });
+    }
+    return response;
+  }
+
+  private rejectHydration(options: PiRunnerRunOptions, response: Exclude<PiRunnerToolHydrationResponse, { readonly ok: true }>): never {
+    options.onEvent?.({ type: "assistant_text_delta", text: `Tool hydration rejected: ${response.code}.` });
+    options.onEvent?.({ type: "run_error", taskId: options.task.id, message: `Tool hydration rejected: ${response.code}.` });
+    throw new Error(`Tool hydration rejected: ${response.code}.`);
+  }
+
+  private async emitWriteTool(options: PiRunnerRunOptions, hydratedTool?: PiRunnerHydratedToolDescriptor): Promise<void> {
     const toolCallId = "tool_write_1";
     options.onEvent?.({ type: "tool_start", toolCallId, toolName: "write", args: { path: "README.md" } });
+    if (hydratedTool && (!hydratedTool.enabled || hydratedTool.executionApproval === "deny")) {
+      options.onEvent?.({ type: "tool_end", toolCallId, toolName: "write", result: { allowed: false }, isError: true });
+      options.onEvent?.({ type: "run_error", taskId: options.task.id, message: "Hydrated tool execution denied." });
+      throw new Error("Hydrated tool execution denied.");
+    }
+    if (hydratedTool?.executionApproval === "allow") {
+      options.onEvent?.({ type: "tool_end", toolCallId, toolName: "write", result: { approved: true }, isError: false });
+      return;
+    }
     const decision = await options.onApprovalRequired?.({
       toolCallId,
       toolName: "write",
@@ -364,4 +624,72 @@ function assertPairedToolEvents(events: readonly unknown[], toolCallId: string):
   assert.equal(starts.length, 1);
   assert.equal(ends.length, 1);
   assert.equal(indexOfEvent(events, "tool_start") < indexOfEvent(events, "tool_end"), true);
+}
+
+function findHydratedTool(
+  tools: readonly PiRunnerHydratedToolDescriptor[],
+  name: string,
+): PiRunnerHydratedToolDescriptor | undefined {
+  return tools.find((tool) => tool.name === name);
+}
+
+function hydratedWriteSurface(input: {
+  readonly executionApproval: "allow" | "ask" | "deny";
+  readonly enabled: boolean;
+  readonly disabledReasons?: readonly { readonly code: string; readonly message: string }[];
+}): PiRunnerToolHydrationResponse {
+  const generatedAt = "2026-06-19T00:00:00.000Z";
+  return {
+    ok: true,
+    materialization: {
+      id: "tool_materialization_hydrated_write",
+      runId: "run_test",
+      namespaceId: "core",
+      toolIds: ["core:write"],
+      materializedToolCount: 1,
+      disabledToolCount: input.enabled ? 0 : 1,
+      executionApprovalSummary: {
+        allow: input.executionApproval === "allow" ? 1 : 0,
+        ask: input.executionApproval === "ask" ? 1 : 0,
+        deny: input.executionApproval === "deny" ? 1 : 0,
+      },
+      budget: baseHydrationBudget("within_budget"),
+      generatedAt,
+    },
+    tools: [{
+      id: "core:write",
+      namespaceId: "core",
+      sourceKind: "core_tool",
+      name: "write",
+      displayName: "Write",
+      description: "Write a file in the workspace.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+        },
+        required: ["path"],
+      },
+      sideEffectLevel: "write",
+      defaultApproval: "ask",
+      executionApproval: input.executionApproval,
+      enabled: input.enabled,
+      disabledReasons: input.disabledReasons ?? [],
+    }],
+    generatedAt,
+  };
+}
+
+function baseHydrationBudget(decision: "within_budget" | "over_budget") {
+  return {
+    decision,
+    estimatedTokens: decision === "over_budget" ? 2000 : 24,
+    inputBudgetTokens: 1024,
+    remainingBudgetTokens: decision === "over_budget" ? 0 : 1000,
+    overBudgetByTokens: decision === "over_budget" ? 976 : 0,
+    requestedToolCount: 1,
+    maxMaterializedToolCount: 64,
+    mode: "model_estimated" as const,
+    tokenizer: "estimated" as const,
+  };
 }

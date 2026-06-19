@@ -136,6 +136,7 @@ export function runnerItemsFromControlPlaneSnapshot(snapshot: RunnersDomainSnaps
     displayName: runner.displayName,
     status: runner.enabled && runner.available ? "enabled" : "disabled",
     capabilities: runner.capabilities,
+    toolHydration: runner.toolHydration,
     disabledReason: runner.blocker,
   }));
 }

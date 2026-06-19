@@ -1,4 +1,5 @@
 import type { RunnerFallbackPolicy, RunnerFallbackReason, RunnerRequestSource } from "@ling-stack/core";
+import type { RunnerToolHydrationCapability } from "@ling-stack/contracts";
 import type { PiRunnerProviderApi } from "@ling-stack/runner-pi";
 import type { RunnerAdapter } from "../context.js";
 
@@ -14,6 +15,7 @@ export interface RegisteredRunner {
   readonly supportedProviderApis?: readonly string[];
   readonly supportedTools?: readonly string[];
   readonly capabilities?: readonly string[];
+  readonly toolHydration?: RunnerToolHydrationCapability;
   readonly featureFlag?: string;
   readonly disabledReason?: string;
 }

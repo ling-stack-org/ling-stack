@@ -110,3 +110,64 @@ export interface ToolLoadRequestResponse {
   readonly catalog: LingToolNamespaceCatalog;
   readonly materialization: ToolMaterializationSummary;
 }
+
+export type RunnerToolHydrationMode = "unsupported" | "daemon_hydrated";
+
+export interface RunnerToolHydrationCapability {
+  readonly mode: RunnerToolHydrationMode;
+  readonly supportsNamespaceSearch: boolean;
+  readonly supportsToolHydration: boolean;
+  readonly conformance: "unverified" | "verified";
+  readonly maxHydratedToolsPerRun: number;
+}
+
+export interface RunnerToolHydrationRequest {
+  readonly runId: string;
+  readonly runnerAttemptId: string;
+  readonly scope: ToolLoadRequestScope;
+  readonly reason: string;
+  readonly idempotencyKey: string;
+}
+
+export interface RunnerHydratedToolDescriptor {
+  readonly id: string;
+  readonly namespaceId: string;
+  readonly sourceKind: LingToolDescriptorSourceKind;
+  readonly name: string;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly inputSchema?: unknown;
+  readonly sideEffectLevel: ToolSurfaceSideEffectLevel;
+  readonly defaultApproval: ToolSurfaceDefaultApproval;
+  readonly executionApproval: ToolSurfaceDefaultApproval;
+  readonly enabled: boolean;
+  readonly disabledReasons: readonly LingToolDisabledReason[];
+}
+
+export interface RunnerHydratedToolSurface {
+  readonly ok: true;
+  readonly materialization: ToolMaterializationSummary;
+  readonly tools: readonly RunnerHydratedToolDescriptor[];
+  readonly generatedAt: string;
+  readonly expiresAt?: string;
+}
+
+export type RunnerToolHydrationRejectionCode =
+  | "hydration_not_supported"
+  | "tool_materialization_over_budget"
+  | "tool_materialization_denied"
+  | "tool_namespace_not_found"
+  | "tool_not_found"
+  | "invalid_hydration_request";
+
+export interface RunnerToolHydrationRejection {
+  readonly ok: false;
+  readonly code: RunnerToolHydrationRejectionCode;
+  readonly message: string;
+  readonly retryable: boolean;
+  readonly budget?: ToolMaterializationBudget;
+  readonly materialization?: ToolMaterializationSummary;
+  readonly generatedAt: string;
+}
+
+export type RunnerToolHydrationResponse = RunnerHydratedToolSurface | RunnerToolHydrationRejection;

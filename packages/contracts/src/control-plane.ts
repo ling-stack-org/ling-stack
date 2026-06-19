@@ -1,3 +1,5 @@
+import type { RunnerToolHydrationCapability } from "./tool-surfaces.js";
+
 export type ControlPlaneDomain =
   | "runs"
   | "work_units"
@@ -248,6 +250,7 @@ export interface RunnerSummary {
   readonly available: boolean;
   readonly experimental: boolean;
   readonly capabilities: readonly string[];
+  readonly toolHydration?: RunnerToolHydrationCapability;
   readonly blocker?: string;
   readonly readiness?: import("./runner-readiness.js").RunnerReadinessSummary;
 }
