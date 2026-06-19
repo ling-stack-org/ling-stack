@@ -1,10 +1,19 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AutomationDefinition, AutomationRun, RunArtifact, RunSession, RunStore } from "@ling-stack/core";
+import type {
+  AutomationDefinition,
+  AutomationRun,
+  RunArtifact,
+  RunExecutionStoreFacet,
+  RunSession,
+  RunStorePathsFacet,
+} from "@ling-stack/core";
 import type { AutomationContextBuildResult } from "./context.js";
 
+type AutomationArtifactStore = RunStorePathsFacet & RunExecutionStoreFacet;
+
 export function createAutomationContextArtifact(input: {
-  readonly store: RunStore;
+  readonly store: AutomationArtifactStore;
   readonly automation: AutomationDefinition;
   readonly automationRun: AutomationRun;
   readonly run: RunSession;

@@ -1,4 +1,10 @@
-import type { ChannelAttachment, RunStore, TeammateDirectMessage, TeammatePrivateAttachment } from "@ling-stack/core";
+import type {
+  ChannelAttachment,
+  RunStorePathsFacet,
+  TeammateDirectMessage,
+  TeammatePrivateAttachment,
+  TeammateStoreFacet,
+} from "@ling-stack/core";
 import { defaultLingMaterializationBudgets } from "../channels/materialization/budgets.js";
 import { imageVisionExtractorV1 } from "../channels/materialization/extractors/image.js";
 import { officeExtractorV1 } from "../channels/materialization/extractors/office.js";
@@ -16,8 +22,10 @@ export interface TeammateDirectAttachmentMaterialization {
   readonly truncated?: boolean;
 }
 
+type TeammateDirectMaterializationStore = RunStorePathsFacet & TeammateStoreFacet;
+
 export async function materializeInlineTeammateDirectInputs(input: {
-  readonly store: RunStore;
+  readonly store: TeammateDirectMaterializationStore;
   readonly teammateId: string;
   readonly threadId: string;
   readonly sourceMessage: TeammateDirectMessage;

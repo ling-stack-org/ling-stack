@@ -1,4 +1,4 @@
-import type { Channel, ChannelMessage, RunStore } from "@ling-stack/core";
+import type { Channel, ChannelMessage, ChannelStoreFacet } from "@ling-stack/core";
 
 export type ResolvedExecutableFileTarget =
   | {
@@ -17,7 +17,7 @@ export type ResolvedExecutableFileTarget =
     };
 
 export interface ResolveExecutableFileTargetInput {
-  readonly store: RunStore;
+  readonly store: ChannelStoreFacet;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly target?: string;
