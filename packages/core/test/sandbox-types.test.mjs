@@ -39,6 +39,44 @@ test("sandbox readiness accepts a verified profile with disabled network policy"
   assert.deepEqual(report.blockingReasons, []);
 });
 
+test("sandbox readiness accepts a verified platform-native profile", () => {
+  const profile = {
+    ...verifiedProfile(),
+    id: "platform-native-local",
+    displayName: "Platform native local sandbox",
+    backendKind: "platform_native",
+    capabilities: [
+      "process_isolation",
+      "filesystem_isolation",
+      "artifact_export",
+      "network_policy",
+      "secret_ref_injection",
+    ],
+  };
+  const report = evaluateLingSandboxReadiness({
+    profile,
+    manifest: {
+      schemaVersion: 1,
+      profileId: profile.id,
+      workspaceRoot: "/workspace/project",
+      artifactImportRoots: ["/workspace/project/.ling/artifacts/platform-native"],
+      networkPolicy: { mode: "disabled" },
+      secretEnvRefs: { OPENAI_API_KEY: "keychain:OPENAI_API_KEY" },
+    },
+    sessionRef: {
+      schemaVersion: 1,
+      profileId: profile.id,
+      backendKind: "platform_native",
+      opaqueSessionId: "platform_native_session_1",
+      createdAt: "2026-06-19T03:00:00.000Z",
+    },
+  });
+
+  assert.equal(report.status, "ready");
+  assert.equal(report.backendKind, "platform_native");
+  assert.deepEqual(report.blockingReasons, []);
+});
+
 test("sandbox readiness blocks unverified backend, artifacts, and network policy", () => {
   const profile = {
     ...verifiedProfile(),

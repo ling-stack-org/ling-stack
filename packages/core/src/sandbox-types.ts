@@ -1,6 +1,6 @@
 import { isSupportedSecretRef } from "./secrets.js";
 
-export type LingSandboxBackendKind = "local_unix" | "docker" | "hosted" | "external";
+export type LingSandboxBackendKind = "local_unix" | "platform_native" | "docker" | "hosted" | "external";
 
 export type LingSandboxCapability =
   | "process_isolation"

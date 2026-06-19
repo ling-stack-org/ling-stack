@@ -571,7 +571,7 @@ must not become the source of truth for Ling work.
 ### Ling Contract
 
 ```ts
-type LingSandboxBackend = "none" | "local_unix" | "docker" | "hosted" | "external";
+type LingSandboxBackend = "none" | "local_unix" | "platform_native" | "docker" | "hosted" | "external";
 
 interface LingSandboxProfile {
   readonly id: string;
@@ -665,10 +665,11 @@ artifact importer
 - Raw secrets must not be copied into manifests or snapshots.
 - Network access defaults to disabled or allowlisted.
 - Hosted sandbox providers require feature flags, doctor checks, and conformance tests.
-- `local_unix` is acceptable for development, but it is not isolation. Docker or hosted
-  backends are required before treating untrusted input as isolated.
-- P12 targets Docker as the first real sandbox backend. Hosted and external backends stay
-  future adapter decisions after Docker artifact import, network policy, and secret
+- `local_unix` is acceptable for development diagnostics, but it is not isolation.
+- The default local/desktop direction should follow Codex's local sandbox model:
+  platform-native OS enforcement plus approval gates, selected per host capability.
+- Docker is an optional adapter, not the default Ling sandbox path. Hosted and external
+  backends stay future adapter decisions after artifact import, network policy, and secret
   redaction conformance pass.
 
 ## Cross-Pattern Data Flow

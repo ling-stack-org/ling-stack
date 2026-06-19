@@ -485,9 +485,10 @@ Decision update:
   default product runner changes prompt assembly.
 - P11 will introduce a runner-only hydrated-schema DTO. P8/P9 public materialization
   responses stay summary-only so Web/API evidence does not grow raw schema payloads.
-- P12 will use Docker as the first real sandbox backend candidate. `local_unix` remains
-  development-only and not strong isolation; hosted/external backends remain later
-  adapter decisions.
+- P12 landed a Docker doctor/run-plan adapter, but Docker is no longer the default sandbox
+  direction. The product direction now follows Codex's local model: platform-native
+  filesystem/process/network enforcement with approvals, then optional Docker/hosted
+  adapters only when a workspace explicitly opts in.
 
 Work:
 
@@ -574,10 +575,21 @@ Non-goal:
 - no hosted OpenAI `ToolSearchTool` dependency;
 - no Docker, hosted, or external sandbox backend activation.
 
-## Slice P12: Docker Sandbox Backend Adapter
+## Slice P12: Optional Docker Sandbox Backend Adapter
 
-Purpose: add the first real sandbox backend candidate while keeping sandbox execution
+Purpose: add an optional sandbox backend experiment while keeping sandbox execution
 separate from runner selection and Ling state.
+
+Direction update:
+
+- Docker is not the default Ling sandbox path. It remains a disabled optional adapter and
+  should not receive runner binding by default.
+- The default path should mirror Codex's local sandbox model: platform-native enforcement
+  selected by OS capability, explicit approval gates for escaped operations, and bounded
+  artifact import back into Ling-owned roots.
+- Future work should implement `platform_native` profiles before any Docker runner-binding
+  work. Docker can stay useful for diagnostics or explicit isolated CI-style workspaces,
+  but it is not the main desktop/local app strategy.
 
 Implementation status:
 
@@ -597,7 +609,7 @@ Implementation status:
   - non-secret env values only, with secret refs carried as names rather than raw values.
 
 - P12 does not execute containers during normal daemon operation. It provides a verified
-  backend adapter and command plan that a later sandbox-backed runner binding can consume;
+  optional backend adapter and command plan for explicit opt-in use only;
 - allowlist networking is intentionally blocked in P12. Docker allowlists need a separate
   network/proxy implementation before they can be marked verified;
 - Docker artifacts still must import through Ling-owned artifact roots and pass redaction
@@ -624,10 +636,43 @@ Acceptance:
 
 Non-goal:
 
-- no runner automatically uses Docker yet;
+- no runner automatically uses Docker;
+- no default Docker runner binding in the platform-native sandbox roadmap;
 - no container execution endpoint;
 - no Docker network allowlist implementation;
 - no hosted or external sandbox provider.
+
+## Slice P13: Platform-Native Sandbox Direction
+
+Purpose: follow the Codex local sandbox direction rather than making Docker the default
+execution boundary for desktop/local Ling.
+
+Target behavior:
+
+- add a `platform_native` sandbox profile kind for OS-enforced local sandboxing;
+- select the concrete enforcement adapter by host platform:
+
+  - macOS: native app/container or sandbox-exec-equivalent constraints where available;
+  - Linux: namespace/seccomp-style process and filesystem boundaries where available;
+  - Windows/WSL: platform-native filesystem and process isolation options, with explicit
+    readiness blockers when unavailable.
+
+- keep network disabled by default and model any network escape as a separate approval or
+  allowlist gate;
+- keep workspace writes outside the sandbox boundary as imported artifacts, not direct
+  runtime truth;
+- preserve the existing Ling approval model: sandbox readiness never grants tool execution
+  authority.
+
+Acceptance:
+
+- `platform_native` profiles use the same fail-closed readiness blocker family as other
+  sandbox profiles;
+- missing OS enforcement blocks readiness instead of falling back silently to
+  `local_unix`;
+- runner binding stays disabled until platform-native artifact import, network policy,
+  and approval interception pass conformance;
+- Docker remains optional and cannot become the default just because its adapter exists.
 
 ## Migration Strategy
 
@@ -657,7 +702,8 @@ Recommended order:
 | P9 materialization budget enforcement | optional | required | no | over-budget namespace rejection |
 | P10 runner-native hydration design | no | optional | no | runner capability review |
 | P11 runner hydration conformance adapter | required | no | no | conformance fake runner |
-| P12 Docker sandbox backend adapter | required | no | no | Docker doctor/run-plan unit tests |
+| P12 optional Docker sandbox backend adapter | required | no | no | Docker doctor/run-plan unit tests |
+| P13 platform-native sandbox direction | required | optional | no | OS readiness diagnostics |
 
 ## Rollback
 
@@ -692,7 +738,7 @@ the start of each slice if code evidence contradicts them.
 | Runner-native tool hydration | Let only conformance-verified runners request daemon-hydrated schemas; never let runners self-load MCP/plugin schemas or treat hydration as approval. | Brokered capability / policy-preserving lazy loading | P10 start |
 | First hydration runner | Implement fake conformance coverage first, then wire embedded Pi behind a feature flag. | Characterization test / adapter conformance | P11 start |
 | Hydrated schema DTO | Add a runner-only DTO for sanitized schema payloads; keep P8/P9 Web/API responses as bounded summaries. | Interface segregation / least privilege | P11 start |
-| First sandbox backend | Target Docker first after contracts; keep `local_unix` for development diagnostics only. | Isolation-first adapter slice | P12 start |
+| First default sandbox backend | Target platform-native local sandboxing after contracts; keep `local_unix` for development diagnostics only and Docker as an explicit opt-in adapter. | Codex-like local sandbox / capability adapter | P13 start |
 
 Rationale:
 
@@ -715,8 +761,11 @@ Rationale:
 - Runner-only DTOs keep prompt payloads separate from evidence payloads. This preserves
   P8/P9's no-raw-schema evidence boundary while still letting verified runners receive
   schemas for the next model turn.
-- Docker is the first useful sandbox target because it gives a real filesystem/process
-  boundary without adding hosted-account, billing, or provider-specific API risk.
+- Platform-native sandboxing is the better default for Ling desktop/local usage because it
+  matches Codex's local model: OS-enforced filesystem/process/network boundaries plus
+  approval gates, without requiring Docker Desktop or changing the user's local workflow.
+  Docker remains useful as an optional adapter, but it should not define the default
+  product path.
 
 ## Remaining Implementation Gates After P9
 
@@ -734,13 +783,14 @@ Open gates:
    then embedded Pi behind a feature flag.
 2. None for P11 start. Hydrated schemas use a runner-only DTO and do not expand P8/P9
    public summary responses.
-3. None for P12 start. The first real sandbox backend candidate is Docker; `local_unix`
-   remains development-only and hosted/external backends stay future decisions.
+3. None for P13 start. The default sandbox direction is platform-native local enforcement;
+   `local_unix` remains development-only, Docker remains explicit opt-in, and
+   hosted/external backends stay future decisions.
 
 Current P10 answer: expose deferred loading to runner prompts only through a
 conformance-verified runner hydration capability. Do not inject P8/P9 materialization into
 the current runner prompt, and do not select a sandbox backend in the same slice.
 
-Current P11/P12 decision: implement P11 first with fake conformance coverage and embedded
-Pi as the first product runner, then implement P12 with Docker as the first real sandbox
-backend candidate.
+Current P11/P12/P13 decision: P11 uses fake conformance coverage before embedded Pi, P12
+keeps Docker as an optional disabled adapter, and P13 should implement Codex-like
+platform-native local sandboxing as the default direction.
