@@ -2,12 +2,19 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildExternalWorkActionView,
   type ChannelDecision,
+  type ApprovalStoreFacet,
+  type ChannelStoreFacet,
   ExternalWorkDetailResponse,
   ExternalWorkListResponse,
   ExternalWorkRecord,
   ExternalWorkRouteResponse,
+  type ExternalWorkStoreFacet,
   ExternalWorkView,
-  type RunStore,
+  type RunExecutionStoreFacet,
+  type RunStorePathsFacet,
+  type RuntimeSupervisorStoreFacet,
+  type TeammateStoreFacet,
+  type WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -19,6 +26,16 @@ import {
   readOptionalExternalWorkItemKindQuery,
   readOptionalExternalWorkSchedulerStatusQuery,
 } from "./schemas.js";
+
+type ExternalWorkRouteStore =
+  ExternalWorkStoreFacet &
+  WorkspaceStoreFacet &
+  ChannelStoreFacet &
+  TeammateStoreFacet &
+  RunExecutionStoreFacet &
+  ApprovalStoreFacet &
+  RuntimeSupervisorStoreFacet &
+  RunStorePathsFacet;
 
 export async function handleExternalWorkCollection(
   request: IncomingMessage,
@@ -161,7 +178,7 @@ export async function handleExternalWorkRoute(
   }
 }
 
-export function buildExternalWorkView(store: RunStore, externalWork: ExternalWorkRecord): ExternalWorkView {
+export function buildExternalWorkView(store: ExternalWorkRouteStore, externalWork: ExternalWorkRecord): ExternalWorkView {
   const workflow = store.getChannelWorkflow(externalWork.workflowId);
   const workflowStep = store.getChannelWorkflowStep(externalWork.workflowStepId);
   const schedulerState = store.getExternalWorkSchedulerState(externalWork.id);
@@ -175,7 +192,7 @@ export function buildExternalWorkView(store: RunStore, externalWork: ExternalWor
 }
 
 function createExternalWorkRouteDecision(
-  store: RunStore,
+  store: ExternalWorkRouteStore,
   input: {
     readonly externalWork: ExternalWorkRecord;
     readonly fromChannelId: string;
