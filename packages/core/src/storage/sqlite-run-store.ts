@@ -372,6 +372,7 @@ import { SqliteMemoryObjectStore } from "./sqlite/memory-object-store.js";
 import { SqliteMemoryReviewStore } from "./sqlite/memory-review-store.js";
 import { SqliteMemoryRetrievalStore } from "./sqlite/memory-retrieval-store.js";
 import { SqliteChannelMessageStore } from "./sqlite/channel-message-store.js";
+import { SqliteChannelReferenceValidator } from "./sqlite/channel-reference-validator.js";
 import { SqliteChannelRouteDecisionStore } from "./sqlite/channel-route-decision-store.js";
 import { SqliteChannelIntentDecisionStore } from "./sqlite/channel-intent-decision-store.js";
 import { SqliteChannelProposalStore } from "./sqlite/channel-proposal-store.js";
@@ -427,6 +428,7 @@ export class SqliteRunStore implements RunStore {
   private readonly memoryObjects: SqliteMemoryObjectStore;
   private readonly memoryReviews: SqliteMemoryReviewStore;
   private readonly memoryRetrieval: SqliteMemoryRetrievalStore;
+  private readonly channelReferences: SqliteChannelReferenceValidator;
   private readonly channelMessages: SqliteChannelMessageStore;
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
@@ -609,6 +611,24 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       { listMemoryObjects: (options) => this.listMemoryObjects(options) },
     );
+    this.channelReferences = new SqliteChannelReferenceValidator({
+      getChannel: (channelId) => this.getChannel(channelId),
+      getChannelMessage: (messageId) => this.getChannelMessage(messageId),
+      getChannelAttachment: (attachmentId) => this.getChannelAttachment(attachmentId),
+      getChannelLinkPreview: (linkPreviewId) => this.getChannelLinkPreview(linkPreviewId),
+      getTask: (taskId) => this.getTask(taskId),
+      getRun: (runId) => this.getRun(runId),
+      getChannelWorkflow: (workflowId) => this.getChannelWorkflow(workflowId),
+      getChannelWorkflowStep: (workflowStepId) => this.getChannelWorkflowStep(workflowStepId),
+      getChannelExecutionProposal: (proposalId) => this.getChannelExecutionProposal(proposalId),
+      getChannelDecision: (decisionId) => this.getChannelDecision(decisionId),
+      getChannelHandoff: (handoffId) => this.getChannelHandoff(handoffId),
+      getWorkflowHandoffIntent: (intentId) => this.getWorkflowHandoffIntent(intentId),
+      getWorkflowSelectorDecision: (decisionId) => this.getWorkflowSelectorDecision(decisionId),
+      getChannelContextSummary: (contextSummaryId) => this.getChannelContextSummary(contextSummaryId),
+      getAiTeammate: (teammateId) => this.getAiTeammate(teammateId),
+      getApprovalRequest: (approvalId) => this.getApprovalRequest(approvalId),
+    });
     this.channelMessages = new SqliteChannelMessageStore(
       { database: this.database },
       { hasChannel: (id) => Boolean(this.getChannel(id)) },
@@ -2376,154 +2396,66 @@ export class SqliteRunStore implements RunStore {
   }
 
   private assertChannelExists(channelId: string): void {
-    if (!this.getChannel(channelId)) {
-      throw new Error(`Channel not found: ${channelId}`);
-    }
+    this.channelReferences.assertChannelExists(channelId);
   }
 
   private assertMessageInChannel(channelId: string, messageId: string): void {
-    const message = this.getChannelMessage(messageId);
-    if (!message) {
-      throw new Error(`Channel message not found: ${messageId}`);
-    }
-    if (message.channelId !== channelId) {
-      throw new Error(`Message does not belong to channel: ${messageId}`);
-    }
+    this.channelReferences.assertMessageInChannel(channelId, messageId);
   }
 
   private assertAttachmentInChannel(channelId: string, attachmentId: string): void {
-    const attachment = this.getChannelAttachment(attachmentId);
-    if (!attachment) {
-      throw new Error(`Channel attachment not found: ${attachmentId}`);
-    }
-    if (attachment.channelId !== channelId) {
-      throw new Error(`Attachment does not belong to channel: ${attachmentId}`);
-    }
+    this.channelReferences.assertAttachmentInChannel(channelId, attachmentId);
   }
 
   private assertLinkPreviewInChannel(channelId: string, linkPreviewId: string): void {
-    const linkPreview = this.getChannelLinkPreview(linkPreviewId);
-    if (!linkPreview) {
-      throw new Error(`Channel link preview not found: ${linkPreviewId}`);
-    }
-    if (linkPreview.channelId !== channelId) {
-      throw new Error(`Link preview does not belong to channel: ${linkPreviewId}`);
-    }
+    this.channelReferences.assertLinkPreviewInChannel(channelId, linkPreviewId);
   }
 
   private assertTaskInChannel(channelId: string, taskId: string): void {
-    const task = this.getTask(taskId);
-    if (!task) {
-      throw new Error(`Task not found: ${taskId}`);
-    }
-    if (task.channelId !== channelId) {
-      throw new Error(`Task does not belong to channel: ${taskId}`);
-    }
+    this.channelReferences.assertTaskInChannel(channelId, taskId);
   }
 
   private assertRunInChannel(channelId: string, runId: string): void {
-    const run = this.getRun(runId);
-    if (!run) {
-      throw new Error(`Run session not found: ${runId}`);
-    }
-    if (run.channelId !== channelId) {
-      throw new Error(`Run does not belong to channel: ${runId}`);
-    }
+    this.channelReferences.assertRunInChannel(channelId, runId);
   }
 
   private assertWorkflowInChannel(channelId: string, workflowId: string): void {
-    const workflow = this.getChannelWorkflow(workflowId);
-    if (!workflow) {
-      throw new Error(`Channel workflow not found: ${workflowId}`);
-    }
-    if (workflow.channelId !== channelId) {
-      throw new Error(`Workflow does not belong to channel: ${workflowId}`);
-    }
+    this.channelReferences.assertWorkflowInChannel(channelId, workflowId);
   }
 
   private assertProposalInChannel(channelId: string, proposalId: string): void {
-    const proposal = this.getChannelExecutionProposal(proposalId);
-    if (!proposal) {
-      throw new Error(`Channel proposal not found: ${proposalId}`);
-    }
-    if (proposal.channelId !== channelId) {
-      throw new Error(`Proposal does not belong to channel: ${proposalId}`);
-    }
+    this.channelReferences.assertProposalInChannel(channelId, proposalId);
   }
 
   private assertWorkflowStepInChannel(channelId: string, workflowStepId: string): void {
-    const step = this.getChannelWorkflowStep(workflowStepId);
-    if (!step) {
-      throw new Error(`Channel workflow step not found: ${workflowStepId}`);
-    }
-    if (step.channelId !== channelId) {
-      throw new Error(`Workflow step does not belong to channel: ${workflowStepId}`);
-    }
+    this.channelReferences.assertWorkflowStepInChannel(channelId, workflowStepId);
   }
 
   private assertDecisionInChannel(channelId: string, decisionId: string): void {
-    const decision = this.getChannelDecision(decisionId);
-    if (!decision) {
-      throw new Error(`Channel decision not found: ${decisionId}`);
-    }
-    if (decision.channelId !== channelId) {
-      throw new Error(`Decision does not belong to channel: ${decisionId}`);
-    }
+    this.channelReferences.assertDecisionInChannel(channelId, decisionId);
   }
 
   private assertHandoffInChannel(channelId: string, handoffId: string): void {
-    const handoff = this.getChannelHandoff(handoffId);
-    if (!handoff) {
-      throw new Error(`Channel handoff not found: ${handoffId}`);
-    }
-    if (handoff.channelId !== channelId) {
-      throw new Error(`Handoff does not belong to channel: ${handoffId}`);
-    }
+    this.channelReferences.assertHandoffInChannel(channelId, handoffId);
   }
 
   private assertWorkflowHandoffIntentInChannel(channelId: string, intentId: string): void {
-    const intent = this.getWorkflowHandoffIntent(intentId);
-    if (!intent) {
-      throw new Error(`Workflow handoff intent not found: ${intentId}`);
-    }
-    if (intent.channelId !== channelId) {
-      throw new Error(`Workflow handoff intent does not belong to channel: ${intentId}`);
-    }
+    this.channelReferences.assertWorkflowHandoffIntentInChannel(channelId, intentId);
   }
 
   private assertWorkflowSelectorDecisionInChannel(channelId: string, decisionId: string): void {
-    const decision = this.getWorkflowSelectorDecision(decisionId);
-    if (!decision) {
-      throw new Error(`Workflow selector decision not found: ${decisionId}`);
-    }
-    if (decision.channelId !== channelId) {
-      throw new Error(`Workflow selector decision does not belong to channel: ${decisionId}`);
-    }
+    this.channelReferences.assertWorkflowSelectorDecisionInChannel(channelId, decisionId);
   }
 
   private assertContextSummaryInChannel(channelId: string, contextSummaryId: string): void {
-    const contextSummary = this.getChannelContextSummary(contextSummaryId);
-    if (!contextSummary) {
-      throw new Error(`Channel context summary not found: ${contextSummaryId}`);
-    }
-    if (contextSummary.channelId !== channelId) {
-      throw new Error(`Context summary does not belong to channel: ${contextSummaryId}`);
-    }
+    this.channelReferences.assertContextSummaryInChannel(channelId, contextSummaryId);
   }
 
   private assertSourceRefsInChannel(
     channelId: string,
     input: { readonly sourceMessageId?: string; readonly sourceTaskId?: string; readonly sourceRunId?: string },
   ): void {
-    if (input.sourceMessageId) {
-      this.assertMessageInChannel(channelId, input.sourceMessageId);
-    }
-    if (input.sourceTaskId) {
-      this.assertTaskInChannel(channelId, input.sourceTaskId);
-    }
-    if (input.sourceRunId) {
-      this.assertRunInChannel(channelId, input.sourceRunId);
-    }
+    this.channelReferences.assertSourceRefsInChannel(channelId, input);
   }
 
   private assertWorkflowCoordinationRefsInChannel(
@@ -2536,27 +2468,7 @@ export class SqliteRunStore implements RunStore {
       readonly handoffId?: string;
     },
   ): void {
-    if (refs.workflowId) {
-      this.assertWorkflowInChannel(channelId, refs.workflowId);
-    }
-    if (refs.workflowStepId) {
-      this.assertWorkflowStepInChannel(channelId, refs.workflowStepId);
-      if (refs.workflowId) {
-        const step = this.getChannelWorkflowStep(refs.workflowStepId);
-        if (step?.workflowId !== refs.workflowId) {
-          throw new Error(`Workflow step does not belong to workflow: ${refs.workflowStepId}`);
-        }
-      }
-    }
-    if (refs.runId) {
-      this.assertRunInChannel(channelId, refs.runId);
-    }
-    if (refs.messageId) {
-      this.assertMessageInChannel(channelId, refs.messageId);
-    }
-    if (refs.handoffId) {
-      this.assertHandoffInChannel(channelId, refs.handoffId);
-    }
+    this.channelReferences.assertWorkflowCoordinationRefsInChannel(channelId, refs);
   }
 
   private ensureLingAgentSystemTeammate(now: string): AiTeammate {
@@ -2663,103 +2575,15 @@ export class SqliteRunStore implements RunStore {
     channelId: string,
     input: Pick<CreateWorkflowSelectorDecisionInput, "workflowId" | "selectedWorkflowStepId" | "selectedTeammateId" | "selectedHandoffIntentId">,
   ): void {
-    if (input.selectedWorkflowStepId) {
-      this.assertWorkflowStepInChannel(channelId, input.selectedWorkflowStepId);
-      const step = this.getChannelWorkflowStep(input.selectedWorkflowStepId);
-      if (step?.workflowId !== input.workflowId) {
-        throw new Error(`Selected workflow step does not belong to workflow: ${input.selectedWorkflowStepId}`);
-      }
-    }
-    if (input.selectedTeammateId) {
-      const teammate = this.getAiTeammate(input.selectedTeammateId);
-      if (!teammate) {
-        throw new Error(`AI teammate not found: ${input.selectedTeammateId}`);
-      }
-      if (teammate.workspaceId !== DEFAULT_WORKSPACE_ID) {
-        throw new Error(`AI teammate does not belong to workspace: ${input.selectedTeammateId}`);
-      }
-    }
-    if (input.selectedHandoffIntentId) {
-      this.assertWorkflowHandoffIntentInChannel(channelId, input.selectedHandoffIntentId);
-    }
+    this.channelReferences.assertWorkflowSelectorTargetsInChannel(channelId, input);
   }
 
   private assertWorkflowPacketSourceRefsInChannel(channelId: string, sourceRefs: readonly WorkflowPacketSourceRef[]): void {
-    for (const sourceRef of sourceRefs) {
-      switch (sourceRef.type) {
-        case "channel_message":
-          this.assertMessageInChannel(channelId, sourceRef.id);
-          break;
-        case "channel_decision":
-          this.assertDecisionInChannel(channelId, sourceRef.id);
-          break;
-        case "context_summary":
-          this.assertContextSummaryInChannel(channelId, sourceRef.id);
-          break;
-        case "task":
-          this.assertTaskInChannel(channelId, sourceRef.id);
-          break;
-        case "run":
-          this.assertRunInChannel(channelId, sourceRef.id);
-          break;
-        case "workflow":
-          this.assertWorkflowInChannel(channelId, sourceRef.id);
-          break;
-        case "workflow_step":
-          this.assertWorkflowStepInChannel(channelId, sourceRef.id);
-          break;
-        case "workflow_handoff_intent":
-          this.assertWorkflowHandoffIntentInChannel(channelId, sourceRef.id);
-          break;
-        case "workflow_selector_decision":
-          this.assertWorkflowSelectorDecisionInChannel(channelId, sourceRef.id);
-          break;
-        case "approval": {
-          const approval = this.getApprovalRequest(sourceRef.id);
-          if (!approval) {
-            throw new Error(`Approval request not found: ${sourceRef.id}`);
-          }
-          if (approval.channelId !== channelId) {
-            throw new Error(`Approval request does not belong to channel: ${sourceRef.id}`);
-          }
-          break;
-        }
-        case "artifact":
-        case "channel_brief":
-        case "memory":
-          break;
-      }
-    }
+    this.channelReferences.assertWorkflowPacketSourceRefsInChannel(channelId, sourceRefs);
   }
 
   private assertChannelProtocolSourceRefsInChannel(channelId: string, sourceRefs: readonly ChannelProtocolSourceRef[]): void {
-    for (const sourceRef of sourceRefs) {
-      switch (sourceRef.type) {
-        case "message":
-          this.assertMessageInChannel(channelId, sourceRef.id);
-          break;
-        case "channel_decision":
-          this.assertDecisionInChannel(channelId, sourceRef.id);
-          break;
-        case "context_summary":
-          this.assertContextSummaryInChannel(channelId, sourceRef.id);
-          break;
-        case "task":
-          this.assertTaskInChannel(channelId, sourceRef.id);
-          break;
-        case "run":
-          this.assertRunInChannel(channelId, sourceRef.id);
-          break;
-        case "workflow":
-          this.assertWorkflowInChannel(channelId, sourceRef.id);
-          break;
-        case "workflow_step":
-          this.assertWorkflowStepInChannel(channelId, sourceRef.id);
-          break;
-        default:
-          throw new Error(`Unsupported channel protocol source ref type: ${String(sourceRef.type)}`);
-      }
-    }
+    this.channelReferences.assertChannelProtocolSourceRefsInChannel(channelId, sourceRefs);
   }
 
   private tryRebuildLingThreadMetadata(threadId: string | undefined, now: string): void {
