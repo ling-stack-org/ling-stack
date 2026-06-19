@@ -7,12 +7,14 @@ import {
   type ChannelAutoReplyMode,
   type ChannelCollaborationProtocolDraft,
   type ChannelCollaborationProtocolPatch,
+  type ChannelStoreFacet,
   type ChannelProtocolDraftCreatedBy,
   type ChannelProtocolDraftStatus,
   type ChannelProtocolSourceRef,
   type ChannelResponseLanguage,
   type ChannelWorkflowPreference,
   type RunStore,
+  type WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -88,8 +90,10 @@ type MutableProtocolPatch = {
   -readonly [K in keyof ChannelCollaborationProtocolPatch]: ChannelCollaborationProtocolPatch[K];
 };
 
+type EffectiveChannelProtocolStore = ChannelStoreFacet & WorkspaceStoreFacet;
+
 export function resolveEffectiveChannelCollaborationProtocol(input: {
-  readonly store: RunStore;
+  readonly store: EffectiveChannelProtocolStore;
   readonly channel: Channel;
 }): EffectiveChannelCollaborationProtocolResult {
   const workspaceSettings = input.store.getWorkspaceSettings();

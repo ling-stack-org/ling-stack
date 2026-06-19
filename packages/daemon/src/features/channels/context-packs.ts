@@ -5,10 +5,12 @@ import {
   type ChannelAutoReplyMode,
   type ChannelMessage,
   type ChannelResponseLanguage,
+  type ChannelStoreFacet,
   type ProviderModelCapabilityConfidence,
   type ProviderModelCapabilitySource,
   type ProviderPreset,
   type RunStore,
+  type WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { formatChannelDiscussionPrompt, type ChannelDiscussionPromptContext, type ChannelDiscussionPromptTeammate } from "./ai-prompts.js";
@@ -168,6 +170,8 @@ export interface ChannelAutoRouteCandidateContext {
 interface ChannelAutoRouteContextPackInput extends ChannelIntentSelectorContextPackInput {
   readonly candidates: readonly ChannelAutoRouteCandidateContext[];
 }
+
+type ChannelProtocolContextStore = ChannelStoreFacet & WorkspaceStoreFacet;
 
 export interface ChannelCompactedDiscussionSummary {
   readonly id: string;
@@ -745,7 +749,7 @@ export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput
 }
 
 export function buildChannelProtocolContextSection(input: {
-  readonly store: RunStore;
+  readonly store: ChannelProtocolContextStore;
   readonly channel: Channel;
 }): ContextSection {
   const protocol = resolveEffectiveChannelCollaborationProtocol({

@@ -1,4 +1,4 @@
-import type { Channel, ChannelContextSummary, ChannelMessage, ChannelWorkflowStep, RunArtifact, RunStore } from "@ling-stack/core";
+import type { Channel, ChannelContextSummary, ChannelMessage, ChannelWorkflowStep, RunArtifact, RunExecutionStoreFacet, RunStore } from "@ling-stack/core";
 import {
   buildWorkflowStepContextPack,
   type ContextPack,
@@ -203,7 +203,7 @@ function buildWorkflowStepCompactionSummary(input: WorkflowStepContextPackInput 
   };
 }
 
-function buildCompactionSourceRefs(store: RunStore, dependencies: readonly ChannelWorkflowStep[]): readonly ContextSourceRef[] {
+function buildCompactionSourceRefs(store: RunExecutionStoreFacet, dependencies: readonly ChannelWorkflowStep[]): readonly ContextSourceRef[] {
   const refs: ContextSourceRef[] = [];
   for (const dependency of dependencies) {
     refs.push({ type: "workflow_step", id: dependency.id, label: dependency.title });
@@ -237,7 +237,7 @@ function renderWorkflowStepCompactionSection(summary: WorkflowStepContextCompact
   ].filter((line): line is string => line !== undefined).join("\n");
 }
 
-function renderDependencySummary(store: RunStore, dependency: ChannelWorkflowStep): string {
+function renderDependencySummary(store: RunExecutionStoreFacet, dependency: ChannelWorkflowStep): string {
   const artifacts = dependencyArtifacts(store, dependency);
   const artifactIds = artifacts.map((artifact) => artifact.id).slice(0, 8);
   return [
@@ -251,7 +251,7 @@ function renderDependencySummary(store: RunStore, dependency: ChannelWorkflowSte
   ].filter((line): line is string => line !== undefined).join("\n");
 }
 
-function dependencyArtifacts(store: RunStore, dependency: ChannelWorkflowStep): readonly RunArtifact[] {
+function dependencyArtifacts(store: RunExecutionStoreFacet, dependency: ChannelWorkflowStep): readonly RunArtifact[] {
   const artifacts = new Map<string, RunArtifact>();
   for (const artifactId of [
     dependency.metadata?.outputArtifactId,

@@ -1,10 +1,25 @@
-import type { Channel, ChannelWorkflow, ChannelWorkflowStep, RunStore, SkillApprovalProfile } from "@ling-stack/core";
+import type {
+  Channel,
+  ChannelStoreFacet,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
+  ProviderStoreFacet,
+  RunExecutionStoreFacet,
+  SkillApprovalProfile,
+  WorkspaceStoreFacet,
+} from "@ling-stack/core";
 import { collectChannelStateSource, collectWorkflowEvidenceSources, collectWorkflowStepSource } from "./sources.js";
 import type { ChannelContextBudgetSnapshot, ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import { buildChannelContextView } from "./views.js";
 
+type WorkflowStepContextPackStore =
+  ChannelStoreFacet &
+  RunExecutionStoreFacet &
+  ProviderStoreFacet &
+  WorkspaceStoreFacet;
+
 export interface WorkflowStepContextPackInput {
-  readonly store: RunStore;
+  readonly store: WorkflowStepContextPackStore;
   readonly channel: Channel;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
