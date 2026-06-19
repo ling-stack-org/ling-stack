@@ -1,14 +1,14 @@
 import {
+  type ChannelStoreFacet,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
-  type RunStore,
   type WorkflowSelectorAlternative,
   type WorkflowSelectorDecision,
 } from "@ling-stack/core";
 import { isLingAgentExecutorId } from "./ling-agent-executor.js";
 
 export function ensureDeterministicWorkflowSelectorDecision(input: {
-  readonly store: RunStore;
+  readonly store: ChannelStoreFacet;
   readonly workflow: ChannelWorkflow;
   readonly selectedStep: ChannelWorkflowStep;
   readonly eligibleSteps: readonly ChannelWorkflowStep[];
@@ -74,7 +74,7 @@ export function ensureDeterministicWorkflowSelectorDecision(input: {
   return { decision, workflowStep };
 }
 
-function findExistingAcceptedStepDecision(store: RunStore, step: ChannelWorkflowStep): WorkflowSelectorDecision | undefined {
+function findExistingAcceptedStepDecision(store: ChannelStoreFacet, step: ChannelWorkflowStep): WorkflowSelectorDecision | undefined {
   for (const decisionId of step.metadata?.selectorDecisionIds ?? []) {
     const decision = store.getWorkflowSelectorDecision(decisionId);
     if (decision?.status === "accepted" && decision.selectedWorkflowStepId === step.id) {
