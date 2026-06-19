@@ -195,6 +195,16 @@ Non-goal:
 
 Purpose: reduce large tool surfaces while preserving approval policy.
 
+Implementation status:
+
+- `LingToolNamespaceCatalog` contracts and pure catalog builder live in
+  `packages/core/src/tool-surface-types.ts`;
+- the catalog compiles core tools, MCP tools, skill-required tool references, runner
+  support metadata, and approval policy decisions into one read model;
+- schema visibility never changes `executionApproval`, so deferred loading cannot upgrade
+  `ask` or `deny` into execution authority;
+- daemon catalog endpoints and tool-load request materialization remain follow-up work.
+
 Likely files:
 
 - `packages/core/src/tool-surface-types.ts`
@@ -227,10 +237,11 @@ Work:
 Acceptance:
 
 - loading a schema does not approve the tool call;
-- denied tools cannot be materialized;
+- denied tools are marked disabled in the catalog and cannot be treated as materialized
+  execution authority by this read model;
 - MCP server identity stays visible on MCP tools;
 - core tools remain governed by approval policy;
-- context budget limits are enforced before materialization.
+- context budget enforcement before materialization is a follow-up daemon concern.
 
 Non-goal:
 

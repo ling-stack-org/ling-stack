@@ -20,6 +20,7 @@ export * from "./runtime-supervisor-types.js";
 export * from "./runtime-trace-types.js";
 export * from "./runtime-trace-projection.js";
 export * from "./handoff-intents.js";
+export * from "./tool-surface-types.js";
 export * from "./skill-types.js";
 export * from "./workflow-graph-types.js";
 export * from "./builtin-skill-packs.js";
