@@ -16,6 +16,9 @@ import type {
   LingThreadResumeRequest,
   LingThreadResumeResponse,
   LingThreadTurnsResponse,
+  LingTraceDetailResponse,
+  LingTraceListResponse,
+  LingTraceSpansResponse,
   ExecutionActionListResponse,
   RunArtifactListResponse,
   RunCancelResponse,
@@ -65,6 +68,25 @@ export async function getLingThread(cwd: string, threadId: string): Promise<Ling
 
 export async function getLingThreadEvidence(cwd: string, threadId: string): Promise<LingThreadEvidenceResponse> {
   return daemonClient.getLingThreadEvidence(cwd, threadId);
+}
+
+export async function listLingTraces(
+  cwd: string,
+  options: {
+    readonly threadId?: string;
+    readonly runId?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<LingTraceListResponse> {
+  return daemonClient.listLingTraces(cwd, options);
+}
+
+export async function getLingTrace(cwd: string, traceId: string): Promise<LingTraceDetailResponse> {
+  return daemonClient.getLingTrace(cwd, traceId);
+}
+
+export async function listLingTraceSpans(cwd: string, traceId: string): Promise<LingTraceSpansResponse> {
+  return daemonClient.listLingTraceSpans(cwd, traceId);
 }
 
 export async function listLingThreadTurns(

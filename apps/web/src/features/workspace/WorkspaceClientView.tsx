@@ -50,7 +50,7 @@ import {
 } from "lucide-react";
 import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, getLingTrace, listLingThreads, listLingThreadTurns, listLingTraces, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
 import { createChannelWorktree, handoffChannelWorkspace, listChannelCollaborationCards, refreshChannelWorkspace } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
@@ -2228,11 +2228,20 @@ export function WorkspaceClientView({
       [cacheKey]: { status: "loading" },
     }));
 
-    void getLingThreadEvidence(cwd.trim(), threadId)
-      .then((evidence) => {
+    const workspaceCwd = cwd.trim();
+    const traceDetailPromise = listLingTraces(workspaceCwd, { threadId, limit: 1 })
+      .then((response) => response.traces[0] ? getLingTrace(workspaceCwd, response.traces[0].id) : undefined)
+      .catch(() => undefined);
+
+    void Promise.all([
+      getLingThreadEvidence(workspaceCwd, threadId),
+      traceDetailPromise,
+    ])
+      .then(([evidence, trace]) => {
         const details = buildConversationWorkCellDetailsFromThreadEvidence({
           threadId,
           evidence,
+          trace,
           runIds: workCell?.turnId ? workCell.runIds : undefined,
           t,
           artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),

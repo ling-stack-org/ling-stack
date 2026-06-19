@@ -18,6 +18,9 @@ import type {
   LingThreadResumeRequest,
   LingThreadResumeResponse,
   LingThreadTurnsResponse,
+  LingTraceDetailResponse,
+  LingTraceListResponse,
+  LingTraceSpansResponse,
   LingTurnMutationResponse,
   RunArtifactListResponse,
   RunCancelResponse,
@@ -92,6 +95,30 @@ export const runEndpoints = {
 
   async getLingThreadEvidence(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<LingThreadEvidenceResponse> {
       return this._get(`/threads/${encodeURIComponent(threadId)}/evidence`, { cwd });
+    },
+
+  async listLingTraces(this: LingDaemonEndpointContext,
+      cwd: string,
+      options: {
+        readonly threadId?: string;
+        readonly runId?: string;
+        readonly limit?: number;
+      } = {},
+    ): Promise<LingTraceListResponse> {
+      return this._get("/traces", {
+        cwd,
+        threadId: options.threadId,
+        runId: options.runId,
+        limit: options.limit,
+      });
+    },
+
+  async getLingTrace(this: LingDaemonEndpointContext, cwd: string, traceId: string): Promise<LingTraceDetailResponse> {
+      return this._get(`/traces/${encodeURIComponent(traceId)}`, { cwd });
+    },
+
+  async listLingTraceSpans(this: LingDaemonEndpointContext, cwd: string, traceId: string): Promise<LingTraceSpansResponse> {
+      return this._get(`/traces/${encodeURIComponent(traceId)}/spans`, { cwd });
     },
 
   async listLingThreadTurns(this: LingDaemonEndpointContext, cwd: string, threadId: string, options: { readonly limit?: number; readonly beforeUpdatedAt?: string } = {}): Promise<LingThreadTurnsResponse> {

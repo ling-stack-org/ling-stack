@@ -349,13 +349,24 @@ Acceptance:
 
 Purpose: expose the new contracts without turning the UI into a second runtime.
 
+Implementation status:
+
+- thread work-cell evidence now fetches the daemon trace read model opportunistically and
+  appends safe trace span summaries to the existing evidence group;
+- missing or failing trace reads degrade to the existing thread evidence view;
+- runtime runner settings render daemon-provided readiness status and blocking reasons,
+  including sandbox blocker codes, as read-only diagnostics;
+- approval checkpoint cards, handoff packet detail panels, and tool namespace
+  materialization remain follow-up UI work. This slice intentionally does not add
+  mutating runtime controls.
+
 Likely files:
 
-- `apps/web/src/shared/conversation/ConversationEvidenceBundlePanel.tsx`
+- `apps/web/src/lib/conversation-work-cell.ts`
 - `apps/web/src/features/workspace/WorkspaceClientView.tsx`
-- `apps/web/src/features/work-board`
-- `apps/web/src/features/approvals`
-- `apps/web/src/domains/runtime/use-runtime-domain.ts`
+- `apps/web/src/features/settings/SettingsPage.tsx`
+- `apps/web/e2e/channel.spec.ts`
+- `apps/web/e2e/support/mock-daemon.ts`
 
 Work:
 

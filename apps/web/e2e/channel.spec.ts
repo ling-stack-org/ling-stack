@@ -4778,9 +4778,17 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
     },
   ];
   const threadEvidenceRequests: string[] = [];
+  const traceListRequests: string[] = [];
+  const traceDetailRequests: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/threads/thread_inspect/evidence")) {
       threadEvidenceRequests.push(request.url());
+    }
+    if (request.url().includes("/traces?") && request.url().includes("threadId=thread_inspect")) {
+      traceListRequests.push(request.url());
+    }
+    if (request.url().includes("/traces/trace_thread_thread_inspect")) {
+      traceDetailRequests.push(request.url());
     }
   });
   await mockDaemon(page, state);
@@ -4810,6 +4818,8 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(workCell).not.toContainText("context.json");
   await expect(workCell).not.toContainText("output.json");
   expect(threadEvidenceRequests).toHaveLength(0);
+  expect(traceListRequests).toHaveLength(0);
+  expect(traceDetailRequests).toHaveLength(0);
 
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
@@ -4819,7 +4829,12 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(evidenceRegion).toContainText("WorkspaceClientView.tsx");
   await expect(evidenceRegion).toContainText("Render conversation work cell");
   await expect(evidenceRegion).toContainText("Run typecheck");
+  await expect(evidenceRegion).toContainText("Trace: Agent run");
+  await expect(evidenceRegion).toContainText("Trace: Tool call");
   await expect(evidenceRegion).not.toContainText("artifact_thread_diff");
+  await expect(evidenceRegion).not.toContainText("trace_thread_thread_inspect");
+  await expect(evidenceRegion).not.toContainText("span_trace_thread_thread_inspect");
+  await expect(evidenceRegion).not.toContainText("run_failed");
   const editActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Render conversation work cell" });
   await editActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
@@ -4845,11 +4860,15 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await lightbox.getByRole("button", { name: "Close preview" }).click();
   await expect(lightbox).toHaveCount(0);
   expect(threadEvidenceRequests).toHaveLength(1);
+  expect(traceListRequests).toHaveLength(1);
+  expect(traceDetailRequests).toHaveLength(1);
 
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
   expect(threadEvidenceRequests).toHaveLength(1);
+  expect(traceListRequests).toHaveLength(1);
+  expect(traceDetailRequests).toHaveLength(1);
 
   await expect(workCell.getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
 });

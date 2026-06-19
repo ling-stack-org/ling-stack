@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ChannelWorkflow, ExecutionAction, LingThreadEvidenceResponse, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
+import type { ApprovalRequest, ChannelWorkflow, ExecutionAction, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
@@ -460,6 +460,7 @@ export function groupRunsByThreadId(runs: readonly RunSession[]): ReadonlyMap<st
 export function buildConversationWorkCellDetailsFromThreadEvidence(input: {
   readonly threadId: string;
   readonly evidence: LingThreadEvidenceResponse;
+  readonly trace?: LingTraceDetailResponse;
   readonly runIds?: readonly string[];
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
@@ -479,10 +480,236 @@ export function buildConversationWorkCellDetailsFromThreadEvidence(input: {
     t: input.t,
     artifactHref: input.artifactHref,
   });
+  const traceRows = buildTraceEvidenceRows({
+    trace: input.trace,
+    runIds: input.runIds,
+    t: input.t,
+  });
+  const groups = mergeTraceEvidenceRows(cell?.groups ?? emptyWorkCellGroups(input.t), traceRows, input.t);
   return {
-    groups: cell?.groups ?? emptyWorkCellGroups(input.t),
+    groups,
     evidenceLinks: mainFeedEvidenceLinks(cell?.evidenceLinks ?? []),
   };
+}
+
+function buildTraceEvidenceRows(input: {
+  readonly trace?: LingTraceDetailResponse;
+  readonly runIds?: readonly string[];
+  readonly t: Translate;
+}): readonly ConversationWorkCellRow[] {
+  if (!input.trace) {
+    return [];
+  }
+  const runIdSet = input.runIds && input.runIds.length > 0 ? new Set(input.runIds) : undefined;
+  return input.trace.spans
+    .filter((span) => traceSpanMatchesRuns(span, runIdSet))
+    .filter((span) => isTraceSpanUsefulForEvidence(span))
+    .slice(0, 8)
+    .map((span): ConversationWorkCellRow => ({
+      id: `trace:${span.id}`,
+      kind: traceSpanOperationKind(span),
+      title: input.t("Trace: {kind}", { kind: traceSpanKindLabel(span.kind, input.t) }),
+      description: traceSpanDescription(span),
+      detailLines: traceSpanDetailLines(span, input.t),
+      meta: traceSpanStatusMeta(span.status, input.t),
+      tone: traceSpanStatusTone(span.status),
+    }))
+    .filter(isMainFeedSafeRow);
+}
+
+function mergeTraceEvidenceRows(
+  groups: readonly ConversationWorkCellGroup[],
+  traceRows: readonly ConversationWorkCellRow[],
+  t: Translate,
+): readonly ConversationWorkCellGroup[] {
+  if (traceRows.length === 0) {
+    return groups;
+  }
+  let mergedEvidence = false;
+  const merged = groups.map((group) => {
+    if (group.id !== "evidence") {
+      return group;
+    }
+    mergedEvidence = true;
+    const rows = [...group.rows, ...traceRows];
+    return {
+      ...group,
+      rows,
+      summary: mainFeedGroupSummary("evidence", rows.length, t),
+    };
+  });
+  if (mergedEvidence) {
+    return merged;
+  }
+  return [
+    ...groups,
+    {
+      id: "evidence",
+      label: t("Evidence"),
+      summary: mainFeedGroupSummary("evidence", traceRows.length, t),
+      rows: traceRows,
+    },
+  ];
+}
+
+function traceSpanMatchesRuns(span: LingTraceSpan, runIdSet: ReadonlySet<string> | undefined): boolean {
+  if (!runIdSet || runIdSet.size === 0) {
+    return true;
+  }
+  return span.refs.runId ? runIdSet.has(span.refs.runId) : true;
+}
+
+function isTraceSpanUsefulForEvidence(span: LingTraceSpan): boolean {
+  return span.kind === "agent_run" ||
+    span.kind === "tool_call" ||
+    span.kind === "approval" ||
+    span.kind === "handoff" ||
+    span.kind === "sandbox" ||
+    span.kind === "artifact" ||
+    span.kind === "external_action" ||
+    span.kind === "runtime_event" ||
+    span.kind === "error";
+}
+
+function traceSpanOperationKind(span: LingTraceSpan): ConversationOperationKind {
+  if (span.kind === "approval") {
+    return "approval";
+  }
+  if (span.kind === "handoff") {
+    return "handoff";
+  }
+  if (span.kind === "artifact") {
+    return "edit";
+  }
+  if (span.kind === "tool_call" || span.kind === "external_action") {
+    return "run_command";
+  }
+  if (span.kind === "sandbox" || span.kind === "runtime_event" || span.kind === "error") {
+    return "verify";
+  }
+  return "watch";
+}
+
+function traceSpanKindLabel(kind: LingTraceSpan["kind"], t: Translate): string {
+  if (kind === "agent_run") {
+    return t("Agent run");
+  }
+  if (kind === "tool_call") {
+    return t("Tool call");
+  }
+  if (kind === "approval") {
+    return t("Approval checkpoint");
+  }
+  if (kind === "handoff") {
+    return t("Handoff");
+  }
+  if (kind === "sandbox") {
+    return t("Sandbox check");
+  }
+  if (kind === "artifact") {
+    return t("Artifact");
+  }
+  if (kind === "external_action") {
+    return t("External action");
+  }
+  if (kind === "runtime_event") {
+    return t("Runtime event");
+  }
+  if (kind === "error") {
+    return t("Error");
+  }
+  if (kind === "model_generation") {
+    return t("Model generation");
+  }
+  if (kind === "workflow_step") {
+    return t("Workflow step");
+  }
+  return t("Trace span");
+}
+
+function traceSpanDescription(span: LingTraceSpan): string | undefined {
+  const summary = safeTraceText(span.summary);
+  if (summary) {
+    return summary;
+  }
+  return safeTraceText(span.title);
+}
+
+function traceSpanDetailLines(span: LingTraceSpan, t: Translate): readonly ConversationWorkCellRowDetailLine[] {
+  const lines: ConversationWorkCellRowDetailLine[] = [
+    { text: t("Kind: {kind}", { kind: traceSpanKindLabel(span.kind, t) }) },
+    { text: t("Status: {status}", { status: span.status }) },
+  ];
+  for (const text of traceSpanAttributeSummaries(span, t)) {
+    lines.push({ text });
+  }
+  return lines.filter((line) => isMainFeedSafeText(line.text)).slice(0, 5);
+}
+
+function traceSpanAttributeSummaries(span: LingTraceSpan, t: Translate): readonly string[] {
+  const attributes = span.redactedAttributes ?? {};
+  const rows: string[] = [];
+  const pushAttribute = (label: string, key: string): void => {
+    const value = traceAttributeText(attributes[key]);
+    if (value) {
+      rows.push(t("{label}: {value}", { label, value }));
+    }
+  };
+
+  if (span.kind === "tool_call" || span.kind === "approval" || span.kind === "external_action") {
+    pushAttribute(t("Action"), "actionType");
+    pushAttribute(t("Risk"), "risk");
+    pushAttribute(t("Outputs"), "resultArtifactCount");
+  } else if (span.kind === "artifact") {
+    pushAttribute(t("Artifact type"), "type");
+    pushAttribute(t("Content type"), "contentType");
+    pushAttribute(t("Size"), "sizeBytes");
+  } else if (span.kind === "sandbox") {
+    pushAttribute(t("Sandbox"), "status");
+    pushAttribute(t("Backend"), "backend");
+  }
+  return rows.filter((row) => isMainFeedSafeText(row));
+}
+
+function traceAttributeText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return safeTraceText(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
+function safeTraceText(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  if (!text || !isMainFeedSafeText(text)) {
+    return undefined;
+  }
+  return truncatePreview(text, 160);
+}
+
+function traceSpanStatusMeta(status: LingTraceSpan["status"], t: Translate): string {
+  if (status === "succeeded") {
+    return t("Recorded");
+  }
+  return operationStatusMeta(status, t) ?? status;
+}
+
+function traceSpanStatusTone(status: LingTraceSpan["status"]): ConversationWorkCellRowTone {
+  if (status === "succeeded") {
+    return "success";
+  }
+  if (status === "failed" || status === "cancelled") {
+    return "failed";
+  }
+  if (status === "waiting_for_approval") {
+    return "waiting";
+  }
+  if (status === "queued" || status === "running") {
+    return "running";
+  }
+  return "neutral";
 }
 
 function buildVisibleTurnContext(input: BuildConversationWorkCellInput): { readonly turn: LingTurn; readonly runs: readonly RunSession[] } | undefined {
