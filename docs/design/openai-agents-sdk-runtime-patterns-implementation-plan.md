@@ -305,6 +305,17 @@ Non-goal:
 
 Purpose: make future Agents-SDK-like adapters prove they can fit Ling.
 
+Implementation status:
+
+- the shared daemon conformance suite now asserts stronger tool-event pairing,
+  approval pause ordering, approval denial failure, cancellation failure, unmaterialized
+  side-effect tool rejection, sandbox readiness failure, artifact redaction, and workspace
+  boundary failure behavior;
+- the slice still uses fake runners only. It does not enable `codex-app-server`,
+  `openclaw-acp`, Docker, hosted sandbox, or external sandbox execution;
+- later real adapters must wire their own fake/fault injection harnesses into this suite
+  before becoming selectable.
+
 Likely files:
 
 - `packages/daemon/src/runtime/runner-conformance.ts`
