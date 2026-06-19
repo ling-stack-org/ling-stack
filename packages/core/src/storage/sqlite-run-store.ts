@@ -159,14 +159,10 @@ import {
   type CreateRunInput,
   type LinkRunToLingTurnInput,
   type LingThread,
-  type LingThreadSearchField,
-  type LingThreadSearchMatch,
   type LingThreadKind,
-  type LingThreadMetadata,
   type LingThreadStatus,
   type LingTurn,
   type LingTurnRun,
-  type LingTurnStatus,
   type ListControlPlaneEventsOptions,
   type ListLingThreadsOptions,
   type ListLingTurnsOptions,
@@ -356,6 +352,8 @@ import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteRunEventStore } from "./sqlite/run-event-store.js";
 import { SqliteRunInterventionStore } from "./sqlite/run-intervention-store.js";
 import { SqliteRunSessionStore } from "./sqlite/run-session-store.js";
+import { SqliteLingThreadMetadataCoordinator } from "./sqlite/ling-thread-metadata-coordinator.js";
+import { SqliteLingThreadSearchStore } from "./sqlite/ling-thread-search-store.js";
 import { SqliteLingThreadStore } from "./sqlite/ling-thread-store.js";
 import { SqliteLingTurnStore } from "./sqlite/ling-turn-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
@@ -388,7 +386,6 @@ import { SqliteExternalWorkActionStore } from "./sqlite/external-work-action-sto
 import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triage-store.js";
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
-import { runActivityAt } from "./sqlite/run-mappers.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -410,6 +407,8 @@ export class SqliteRunStore implements RunStore {
   private readonly runEvents: SqliteRunEventStore;
   private readonly runInterventions: SqliteRunInterventionStore;
   private readonly runSessions: SqliteRunSessionStore;
+  private readonly lingThreadMetadata: SqliteLingThreadMetadataCoordinator;
+  private readonly lingThreadSearch: SqliteLingThreadSearchStore;
   private readonly lingThreads: SqliteLingThreadStore;
   private readonly lingTurns: SqliteLingTurnStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
@@ -504,6 +503,24 @@ export class SqliteRunStore implements RunStore {
         rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now),
         rebuildLingThreadMetadataForTurn: (turnId, now) => this.tryRebuildLingThreadMetadataForTurn(turnId, now),
       },
+    );
+    this.lingThreadMetadata = new SqliteLingThreadMetadataCoordinator(
+      { database: this.database },
+      {
+        getLingThread: (threadId) => this.getLingThread(threadId),
+        getLingTurn: (turnId) => this.getLingTurn(turnId),
+        getRun: (runId) => this.getRun(runId),
+        listLingThreads: (options) => this.listLingThreads(options),
+        listLingTurns: (options) => this.listLingTurns(options),
+        listRuns: (options) => this.listRuns(options),
+        listApprovalRequests: (options) => this.listApprovalRequests(options),
+        listArtifacts: (runId) => this.listArtifacts(runId),
+        readLatestRunActionActivityAt: (runIds) => this.runEvents.readLatestRunActionActivityAt(runIds),
+      },
+    );
+    this.lingThreadSearch = new SqliteLingThreadSearchStore(
+      { database: this.database },
+      { listLingThreads: (options) => this.listLingThreads(options) },
     );
     this.runSessions = new SqliteRunSessionStore(
       { database: this.database },
@@ -735,87 +752,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   searchLingThreads(options: ListLingThreadsOptions & { readonly q: string }): SearchLingThreadsResult {
-    const query = normalizeLingThreadSearchQuery(options.q);
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    const candidates = this.listLingThreads({
-      ...options,
-      limit: 500,
-    });
-    if (candidates.length === 0) {
-      return { threads: [], matches: [] };
-    }
-    const matchesByThreadId = new Map<string, LingThreadSearchMatch[]>();
-    const threadIds = new Set(candidates.map((thread) => thread.id));
-
-    for (const thread of candidates) {
-      addLingThreadSearchMatch(matchesByThreadId, thread, "thread_title", thread.title, query);
-      addLingThreadSearchMatch(matchesByThreadId, thread, "thread_objective", thread.objective, query);
-      addLingThreadSearchMatch(matchesByThreadId, thread, "task_id", thread.taskId, query);
-      addLingThreadSearchMatch(matchesByThreadId, thread, "task_id", thread.workflowStepId, query);
-      addLingThreadSearchMatch(matchesByThreadId, thread, "task_id", thread.externalWorkId, query);
-      addLingThreadSearchMatch(matchesByThreadId, thread, "metadata_summary", thread.metadata?.summary, query);
-    }
-
-    const threadIdPlaceholders = [...threadIds].map(() => "?").join(", ");
-    const turnRows = this.database
-      .prepare(`
-        SELECT id, thread_id, title, user_instruction, task_id, source_turn_id
-        FROM ling_turns
-        WHERE thread_id IN (${threadIdPlaceholders})
-        ORDER BY updated_at DESC, id DESC
-        LIMIT 5000
-      `)
-      .all(...threadIds);
-    for (const row of turnRows) {
-      const threadId = readString(row, "thread_id");
-      if (!threadIds.has(threadId)) {
-        continue;
-      }
-      const turnId = readString(row, "id");
-      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "turn_title", readNullableString(row, "title"), query, { turnId });
-      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "turn_instruction", readNullableString(row, "user_instruction"), query, { turnId });
-      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_id", readNullableString(row, "task_id"), query, { turnId });
-      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_id", readNullableString(row, "source_turn_id"), query, { turnId });
-    }
-
-    const runRows = this.database
-      .prepare(`
-        SELECT id, thread_id, task_id, task_snapshot_json, summary_path
-        FROM run_sessions
-        WHERE thread_id IN (${threadIdPlaceholders})
-        ORDER BY updated_at DESC, id DESC
-        LIMIT 5000
-      `)
-      .all(...threadIds);
-    for (const row of runRows) {
-      const threadId = readNullableString(row, "thread_id");
-      if (!threadId || !threadIds.has(threadId)) {
-        continue;
-      }
-      const runId = readString(row, "id");
-      const taskSnapshot = parseNullableSearchJsonObject(readString(row, "task_snapshot_json"));
-      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_id", readNullableString(row, "task_id"), query, { runId });
-      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_title", readOptionalSearchString(taskSnapshot, "title"), query, { runId });
-      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_prompt", readOptionalSearchString(taskSnapshot, "prompt"), query, { runId });
-      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_title", basenameSearchValue(readNullableString(row, "summary_path")), query, { runId });
-    }
-
-    const matchedThreads = candidates
-      .filter((thread) => (matchesByThreadId.get(thread.id)?.length ?? 0) > 0)
-      .sort((left, right) =>
-        bestLingThreadSearchRank(left, matchesByThreadId.get(left.id) ?? [], query) -
-        bestLingThreadSearchRank(right, matchesByThreadId.get(right.id) ?? [], query) ||
-        right.updatedAt.localeCompare(left.updatedAt) ||
-        right.id.localeCompare(left.id)
-      )
-      .slice(0, limit);
-    const visibleThreadIds = new Set(matchedThreads.map((thread) => thread.id));
-    const matches = matchedThreads.flatMap((thread) =>
-      (matchesByThreadId.get(thread.id) ?? [])
-        .slice(0, 5)
-        .filter((match) => visibleThreadIds.has(match.threadId))
-    );
-    return { threads: matchedThreads, matches };
+    return this.lingThreadSearch.searchLingThreads(options);
   }
 
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
@@ -823,64 +760,11 @@ export class SqliteRunStore implements RunStore {
   }
 
   rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined {
-    const thread = this.getLingThread(threadId);
-    if (!thread) {
-      return undefined;
-    }
-    const runs = this.listRuns({ threadId, limit: 200 });
-    const turns = this.listLingTurns({ threadId, limit: 500 });
-    const approvalsById = new Map<string, ApprovalRequest>();
-    for (const run of runs) {
-      for (const approval of this.listApprovalRequests({ runId: run.id, limit: 500 })) {
-        approvalsById.set(approval.id, approval);
-      }
-    }
-    if (thread.workflowStepId) {
-      for (const approval of this.listApprovalRequests({ workflowStepId: thread.workflowStepId, limit: 500 })) {
-        approvalsById.set(approval.id, approval);
-      }
-    }
-    const approvals = [...approvalsById.values()];
-    const artifacts = runs.flatMap((run) => this.listArtifacts(run.id));
-    const latestTurn = [...turns].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0];
-    const latestFailedRun = runs
-      .filter((run) => run.status === "failed")
-      .sort((left, right) => compareIsoDesc(runActivityAt(left), runActivityAt(right)) || right.id.localeCompare(left.id))[0];
-    const latestArtifact = [...artifacts]
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))[0];
-    const activityTimestamps = [
-      thread.createdAt,
-      thread.updatedAt,
-      thread.archivedAt,
-      ...turns.flatMap((turn) => [turn.createdAt, turn.updatedAt, turn.completedAt]),
-      ...runs.flatMap((run) => [run.createdAt, run.startedAt, run.endedAt, run.updatedAt]),
-      ...approvals.flatMap((approval) => [approval.createdAt, approval.resolvedAt]),
-      ...artifacts.map((artifact) => artifact.createdAt),
-      this.readLatestRunActionActivityAt(runs.map((run) => run.id)),
-    ];
-    const metadata: LingThreadMetadata = omitUndefined({
-      schemaVersion: 1 as const,
-      summary: summarizeLingThreadForMetadata(thread, latestTurn),
-      pinnedAt: thread.pinnedAt,
-      lastTurnId: latestTurn?.id,
-      lastActivityAt: maxIsoTimestamp(activityTimestamps),
-      pendingApprovalCount: approvals.filter((approval) => approval.status === "pending").length,
-      blockedCount: (thread.status === "blocked" ? 1 : 0) + turns.filter((turn) => turn.status === "blocked").length,
-      failedAttemptCount: runs.filter((run) => run.status === "failed").length,
-      artifactCount: artifacts.length,
-      latestFailureRunId: latestFailedRun?.id,
-      latestEvidenceArtifactId: latestArtifact?.id,
-      rebuiltAt: now,
-    });
-    this.database
-      .prepare("UPDATE ling_threads SET metadata_json = ? WHERE id = ?")
-      .run(stringifyJson(metadata), threadId);
-    return this.getLingThread(threadId);
+    return this.lingThreadMetadata.rebuildLingThreadMetadata(threadId, now);
   }
 
   rebuildLingThreadMetadataForRun(runId: string, now: string): LingThread | undefined {
-    const run = this.getRun(runId);
-    return run?.threadId ? this.rebuildLingThreadMetadata(run.threadId, now) : undefined;
+    return this.lingThreadMetadata.rebuildLingThreadMetadataForRun(runId, now);
   }
 
   createLingTurn(input: CreateLingTurnInput, now: string): LingTurn {
@@ -2932,57 +2816,19 @@ export class SqliteRunStore implements RunStore {
   }
 
   private tryRebuildLingThreadMetadata(threadId: string | undefined, now: string): void {
-    if (!threadId) {
-      return;
-    }
-    try {
-      this.rebuildLingThreadMetadata(threadId, now);
-    } catch {
-      // Metadata is a rebuildable read cache; source mutations must remain authoritative.
-    }
+    this.lingThreadMetadata.tryRebuildLingThreadMetadata(threadId, now);
   }
 
   private tryRebuildLingThreadMetadataForRun(runId: string | undefined, now: string): void {
-    if (!runId) {
-      return;
-    }
-    try {
-      this.rebuildLingThreadMetadataForRun(runId, now);
-    } catch {
-      // Metadata is a rebuildable read cache; source mutations must remain authoritative.
-    }
+    this.lingThreadMetadata.tryRebuildLingThreadMetadataForRun(runId, now);
   }
 
   private tryRebuildLingThreadMetadataForTurn(turnId: string | undefined, now: string): void {
-    if (!turnId) {
-      return;
-    }
-    try {
-      const turn = this.getLingTurn(turnId);
-      this.tryRebuildLingThreadMetadata(turn?.threadId, now);
-    } catch {
-      // Metadata is a rebuildable read cache; source mutations must remain authoritative.
-    }
+    this.lingThreadMetadata.tryRebuildLingThreadMetadataForTurn(turnId, now);
   }
 
   private tryRebuildLingThreadMetadataForApproval(approval: ApprovalRequest | undefined, now: string): void {
-    if (!approval) {
-      return;
-    }
-    this.tryRebuildLingThreadMetadataForRun(approval.runId, now);
-    if (approval.workflowStepId) {
-      try {
-        for (const thread of this.listLingThreads({ workflowStepId: approval.workflowStepId, includeArchived: true, limit: 500 })) {
-          this.tryRebuildLingThreadMetadata(thread.id, now);
-        }
-      } catch {
-        // Metadata is a rebuildable read cache; source mutations must remain authoritative.
-      }
-    }
-  }
-
-  private readLatestRunActionActivityAt(runIds: readonly string[]): string | undefined {
-    return this.runEvents.readLatestRunActionActivityAt(runIds);
+    this.lingThreadMetadata.tryRebuildLingThreadMetadataForApproval(approval, now);
   }
 
 }
@@ -3004,122 +2850,4 @@ function labelForParticipant(participantId: string): string {
     return "Engineer";
   }
   return participantId;
-}
-
-function normalizeLingThreadSearchQuery(query: string): string {
-  const normalized = query.trim().replace(/\s+/g, " ").toLowerCase();
-  if (normalized.length < 2) {
-    throw new Error("search query must include at least two visible characters");
-  }
-  if (normalized.length > 128) {
-    throw new Error("search query must be at most 128 characters");
-  }
-  return normalized;
-}
-
-function addLingThreadSearchMatch(
-  matchesByThreadId: Map<string, LingThreadSearchMatch[]>,
-  thread: { readonly id: string },
-  field: LingThreadSearchField,
-  value: string | undefined | null,
-  query: string,
-  refs: { readonly turnId?: string; readonly runId?: string } = {},
-): void {
-  if (!value || !normalizedSearchText(value).includes(query)) {
-    return;
-  }
-  const existing = matchesByThreadId.get(thread.id) ?? [];
-  if (existing.some((match) => match.field === field && match.turnId === refs.turnId && match.runId === refs.runId)) {
-    return;
-  }
-  matchesByThreadId.set(thread.id, [
-    ...existing,
-    omitUndefined({
-      threadId: thread.id,
-      turnId: refs.turnId,
-      runId: refs.runId,
-      field,
-      snippet: buildSearchSnippet(value, query),
-    }),
-  ]);
-}
-
-function bestLingThreadSearchRank(thread: LingThread, matches: readonly LingThreadSearchMatch[], query: string): number {
-  const archivedPenalty = thread.archivedAt || thread.status === "archived" ? 100 : 0;
-  const pinnedBonus = thread.pinnedAt ? -5 : 0;
-  return Math.min(...matches.map((match) => archivedPenalty + pinnedBonus + lingThreadSearchFieldRank(thread, match, query)));
-}
-
-function lingThreadSearchFieldRank(thread: LingThread, match: LingThreadSearchMatch, query: string): number {
-  const title = normalizedSearchText(thread.title);
-  if (match.field === "thread_title" && title === query) {
-    return 0;
-  }
-  if (match.field === "thread_title" && title.startsWith(query)) {
-    return 10;
-  }
-  if (match.field === "thread_title" || match.field === "thread_objective") {
-    return 20;
-  }
-  if (match.field === "metadata_summary") {
-    return 30;
-  }
-  if (match.field === "task_id" || match.field === "task_title" || match.field === "task_prompt") {
-    return 40;
-  }
-  return 50;
-}
-
-function normalizedSearchText(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function buildSearchSnippet(value: string, query: string): string {
-  const redacted = String(redactSecrets(value));
-  const normalized = normalizedSearchText(redacted);
-  const index = normalized.indexOf(query);
-  const start = index > 30 ? index - 30 : 0;
-  const end = Math.min(redacted.length, Math.max(index + query.length + 80, 160));
-  const snippet = redacted.slice(start, end).trim();
-  const prefix = start > 0 ? "..." : "";
-  const suffix = end < redacted.length ? "..." : "";
-  return `${prefix}${snippet}${suffix}`;
-}
-
-function parseNullableSearchJsonObject(value: string): Record<string, unknown> | undefined {
-  const parsed = parseJson(value);
-  return isRecord(parsed) ? parsed : undefined;
-}
-
-function readOptionalSearchString(record: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = record?.[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function basenameSearchValue(value: string | undefined): string | undefined {
-  return value?.split(/[\\/]/).filter(Boolean).at(-1);
-}
-
-function readOptionalStringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function summarizeLingThreadForMetadata(thread: LingThread, latestTurn: LingTurn | undefined): string | undefined {
-  const source = latestTurn?.title || thread.title || thread.objective;
-  if (!source.trim()) {
-    return undefined;
-  }
-  const redacted = String(redactSecrets(source));
-  const compact = redacted.replace(/\s+/g, " ").trim();
-  return compact ? compact.slice(0, 160) : undefined;
-}
-
-function maxIsoTimestamp(values: readonly (string | undefined)[]): string | undefined {
-  return values
-    .filter((value): value is string => Boolean(value))
-    .sort((left, right) => right.localeCompare(left))[0];
-}
-
-function compareIsoDesc(left: string | undefined, right: string | undefined): number {
-  return (right ?? "").localeCompare(left ?? "");
 }
