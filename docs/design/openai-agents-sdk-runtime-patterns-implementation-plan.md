@@ -265,8 +265,8 @@ Implementation status:
   secrets;
 - network policy defaults to disabled and only accepts explicit allowlists when enabled;
 - sandbox session refs are opaque and runner-native resume tokens must remain secret refs;
-- all Docker, hosted, and external sandbox backends remain disabled until a future adapter
-  passes conformance.
+- P12 adds a Docker backend doctor/run-plan adapter, but no runner is granted sandbox
+  execution authority until a later runner-binding conformance slice passes.
 
 Likely files:
 
@@ -303,7 +303,7 @@ Acceptance:
 Non-goal:
 
 - no Docker, E2B, Modal, Runloop, Vercel, Cloudflare, or OpenAI sandbox integration in this
-  slice.
+  slice. Docker starts in P12.
 
 ## Slice P6: Runner Adapter Conformance Extensions
 
@@ -574,6 +574,61 @@ Non-goal:
 - no hosted OpenAI `ToolSearchTool` dependency;
 - no Docker, hosted, or external sandbox backend activation.
 
+## Slice P12: Docker Sandbox Backend Adapter
+
+Purpose: add the first real sandbox backend candidate while keeping sandbox execution
+separate from runner selection and Ling state.
+
+Implementation status:
+
+- daemon config now has a `sandbox.docker` shape with `enabled`, `dockerBinary`, `image`,
+  `artifactImportRoot`, `networkPolicy`, `cpus`, and `memoryMb`;
+- `packages/daemon/src/runtime/sandbox/docker.ts` implements a Docker backend doctor that
+  verifies the Docker daemon and configured image through the Docker CLI using an
+  injectable command runner;
+- the adapter builds a `docker` `LingSandboxProfile`, `LingSandboxManifest`, and
+  readiness report through the existing core sandbox readiness evaluator;
+- the adapter builds a `docker run` plan with:
+
+  - `--network none` for the only P12 verified network mode;
+  - a read-only workspace bind mount by default;
+  - a Ling artifact bind mount under `.ling/artifacts/sandbox/docker`;
+  - optional CPU and memory limits;
+  - non-secret env values only, with secret refs carried as names rather than raw values.
+
+- P12 does not execute containers during normal daemon operation. It provides a verified
+  backend adapter and command plan that a later sandbox-backed runner binding can consume;
+- allowlist networking is intentionally blocked in P12. Docker allowlists need a separate
+  network/proxy implementation before they can be marked verified;
+- Docker artifacts still must import through Ling-owned artifact roots and pass redaction
+  before they become Ling artifacts.
+
+Likely files:
+
+- `packages/daemon/src/config.ts`
+- `packages/daemon/src/runtime/sandbox/docker.ts`
+- `packages/daemon/test/docker-sandbox.test.mjs`
+- `docs/design/openai-agents-sdk-runtime-patterns-implementation-plan.md`
+- `docs/design/runner-adapters.md`
+
+Acceptance:
+
+- disabled Docker config or missing image keeps readiness blocked;
+- Docker daemon/image failures keep `sandbox_backend_unverified`;
+- non-disabled network policy keeps `sandbox_network_policy_unverified`;
+- artifact import roots outside Ling artifact roots keep
+  `sandbox_artifact_import_unverified`;
+- raw secret-looking env values are rejected by the shared sandbox manifest readiness
+  evaluator;
+- generated Docker run plans do not expose raw secret refs or raw secret values.
+
+Non-goal:
+
+- no runner automatically uses Docker yet;
+- no container execution endpoint;
+- no Docker network allowlist implementation;
+- no hosted or external sandbox provider.
+
 ## Migration Strategy
 
 No broad migration is needed initially.
@@ -602,6 +657,7 @@ Recommended order:
 | P9 materialization budget enforcement | optional | required | no | over-budget namespace rejection |
 | P10 runner-native hydration design | no | optional | no | runner capability review |
 | P11 runner hydration conformance adapter | required | no | no | conformance fake runner |
+| P12 Docker sandbox backend adapter | required | no | no | Docker doctor/run-plan unit tests |
 
 ## Rollback
 
