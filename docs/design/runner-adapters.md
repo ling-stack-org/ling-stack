@@ -182,7 +182,7 @@ Initial profile kinds:
 | Backend kind | Meaning | Status |
 | --- | --- | --- |
 | `local_unix` | A local process boundary with Ling-owned artifact import paths. | Development diagnostics only; not strong isolation |
-| `docker` | A container-backed execution boundary. | P12 first backend candidate; disabled until conformance |
+| `docker` | A container-backed execution boundary. | P12 backend doctor/run-plan adapter exists; runner binding disabled until conformance |
 | `hosted` | A hosted sandbox provider such as E2B, Modal, Runloop, Vercel, Cloudflare, or OpenAI. | Disabled until adapter decision and conformance |
 | `external` | A runner-owned sandbox exposed through an agent protocol. | Disabled until capability negotiation proves Ling gates |
 
@@ -194,6 +194,9 @@ Rules:
   as Ling artifacts;
 - injected secrets use `env:` or `keychain:` refs, never raw manifest values;
 - session refs are opaque diagnostics, not user-facing labels or execution authority.
+- Docker P12 verifies only disabled networking (`--network none`) and produces a run plan;
+  allowlist networking, container execution endpoints, and runner binding remain separate
+  follow-up slices.
 
 Required blocker codes for any future sandbox-backed runner:
 

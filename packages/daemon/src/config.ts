@@ -6,6 +6,7 @@ export interface DaemonConfig {
   readonly maxBodyBytes?: number;
   readonly defaultWorkspaceCwd?: string;
   readonly runners?: RunnerFeatureConfig;
+  readonly sandbox?: SandboxFeatureConfig;
   readonly runtimeTools?: RuntimeToolFeatureConfig;
   readonly transports?: TransportFeatureConfig;
   readonly channels?: ChannelFeatureConfig;
@@ -32,6 +33,24 @@ export interface RunnerFeatureConfig {
   readonly openclawAcp?: OpenClawAcpRunnerConfig;
 }
 
+export interface SandboxFeatureConfig {
+  readonly docker?: DockerSandboxFeatureConfig;
+}
+
+export type DockerSandboxNetworkPolicy =
+  | { readonly mode: "disabled" }
+  | { readonly mode: "allowlist"; readonly allowedHosts: readonly string[] };
+
+export interface DockerSandboxFeatureConfig {
+  readonly enabled?: boolean;
+  readonly dockerBinary?: string;
+  readonly image?: string;
+  readonly artifactImportRoot?: string;
+  readonly networkPolicy?: DockerSandboxNetworkPolicy;
+  readonly cpus?: number;
+  readonly memoryMb?: number;
+}
+
 export interface CodexAppServerRunnerConfig {
   readonly enabled?: boolean;
   readonly baseUrl?: string;
@@ -54,6 +73,7 @@ export interface ResolvedDaemonConfig {
   readonly maxBodyBytes: number;
   readonly defaultWorkspaceCwd: string;
   readonly runners: RunnerFeatureConfig;
+  readonly sandbox: SandboxFeatureConfig;
   readonly runtimeTools: RuntimeToolFeatureConfig;
   readonly transports: Required<TransportFeatureConfig>;
   readonly channels: ChannelFeatureConfig;
@@ -72,6 +92,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
     runners: config.runners ?? {},
+    sandbox: config.sandbox ?? {},
     runtimeTools: config.runtimeTools ?? {},
     transports: {
       providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
