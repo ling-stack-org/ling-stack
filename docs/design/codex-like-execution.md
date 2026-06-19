@@ -82,6 +82,9 @@ Follow-up hardening:
 - [Execution And Orchestration Hardening](execution-orchestration-hardening.md) defines
   the next Codex-like execution hardening slice: action preview/result artifacts, a
   thread-first page, resume context preview, and a stale completion audit event.
+- [OpenAI Agents SDK Runtime Patterns](openai-agents-sdk-runtime-patterns.md) defines the
+  borrowed trace/span, approval checkpoint, handoff, tool namespace, and sandbox contracts
+  that should shape future execution hardening without changing Ling's source of truth.
 
 ## Implementation Status: Future Hardening Slice
 

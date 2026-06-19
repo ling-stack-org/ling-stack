@@ -76,6 +76,9 @@ Adapter follow-up design:
 - [External Agent Runner Adapters Implementation Plan](external-agent-runner-adapters-implementation-plan.md)
   defines the modular implementation shape, readiness gates, fake ACP harness, bridge
   modules, and Codex/OpenClaw/Hermes PR-sized slices.
+- [OpenAI Agents SDK Runtime Patterns](openai-agents-sdk-runtime-patterns.md) defines the
+  shared trace, approval/resume, handoff, deferred tool, and sandbox contracts that future
+  Agents-SDK-like adapters must normalize into before they can be enabled.
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
   defines why runner-supported tools are metadata and approval-policy inputs, not
   Plugin Manager entries.

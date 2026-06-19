@@ -25,6 +25,7 @@ Related docs:
 - [Runner Registry](runner-registry.md)
 - [Runner Adapters](runner-adapters.md)
 - [Codex-Like Execution Experience](codex-like-execution.md)
+- [OpenAI Agents SDK Runtime Patterns](openai-agents-sdk-runtime-patterns.md)
 
 Upstream references used for this design:
 
