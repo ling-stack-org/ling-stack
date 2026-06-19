@@ -3,19 +3,23 @@ import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
   listDefaultSkills,
   type ReplaceTeammateSkillBindingInput,
-  type RunStore,
   type SkillDefinition,
   type SkillRegistryEntry,
+  type SkillRegistryStoreFacet,
+  type TeammateStoreFacet,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 
 let skillRegistryGeneration = 0;
 
+type EffectiveSkillRegistryStore = SkillRegistryStoreFacet;
+type TeammateSkillValidationStore = EffectiveSkillRegistryStore & TeammateStoreFacet;
+
 export function getSkillRegistryGeneration(): number {
   return skillRegistryGeneration;
 }
 
-export function listEffectiveSkillRegistryEntries(store: RunStore): SkillRegistryEntry[] {
+export function listEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryStore): SkillRegistryEntry[] {
   const builtInTimestamp = new Date(0).toISOString();
   const builtInEntries = listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID).map((definition): SkillRegistryEntry => ({
     id: definition.id,
@@ -43,7 +47,7 @@ export function listEffectiveSkillRegistryEntries(store: RunStore): SkillRegistr
   });
 }
 
-export function refreshEffectiveSkillRegistryEntries(store: RunStore): {
+export function refreshEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryStore): {
   readonly refreshedAt: string;
   readonly registryGeneration: number;
   readonly skills: readonly SkillRegistryEntry[];
@@ -56,14 +60,14 @@ export function refreshEffectiveSkillRegistryEntries(store: RunStore): {
   };
 }
 
-export function listExecutableSkillDefinitions(store: RunStore): readonly SkillDefinition[] {
+export function listExecutableSkillDefinitions(store: EffectiveSkillRegistryStore): readonly SkillDefinition[] {
   return listEffectiveSkillRegistryEntries(store)
     .filter((entry) => entry.reviewStatus === "builtin" || entry.reviewStatus === "published")
     .map((entry) => entry.definition);
 }
 
 export function validateTeammateSkillBindings(
-  store: RunStore,
+  store: TeammateSkillValidationStore,
   teammateId: string,
   bindings: readonly ReplaceTeammateSkillBindingInput[],
 ): void {
