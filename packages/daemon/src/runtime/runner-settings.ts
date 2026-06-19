@@ -4,7 +4,7 @@ import {
   DEFAULT_WORKSPACE_ID,
   resolveConfigPaths,
   type RunnerFallbackPolicy,
-  type RunStore,
+  type RunStorePathsFacet,
   type WorkspaceRuntimeSettings,
 } from "@ling-stack/core";
 import {
@@ -95,7 +95,7 @@ export interface RuntimeSettingsResolution {
 }
 
 export function loadWorkspaceRuntimeSettings(
-  store: RunStore,
+  store: RunStorePathsFacet,
   runnerRegistry: RunnerRegistry,
   options: LoadWorkspaceRuntimeSettingsOptions = {},
 ): WorkspaceRuntimeSettings {
@@ -103,7 +103,7 @@ export function loadWorkspaceRuntimeSettings(
 }
 
 export function loadWorkspaceRuntimeSettingsWithSources(
-  store: RunStore,
+  store: RunStorePathsFacet,
   runnerRegistry: RunnerRegistry,
   options: LoadWorkspaceRuntimeSettingsOptions = {},
 ): RuntimeSettingsResolution {
@@ -121,7 +121,7 @@ export function loadWorkspaceRuntimeSettingsWithSources(
 }
 
 export function patchWorkspaceRuntimeSettings(
-  store: RunStore,
+  store: RunStorePathsFacet,
   runnerRegistry: RunnerRegistry,
   input: WorkspaceRuntimeSettingsPatch,
   now: string = new Date().toISOString(),
@@ -235,7 +235,7 @@ function readFallbackPolicy(
   throw new Error(`${field} must be disabled or allow_to_default`);
 }
 
-function readStoredRuntimeSettings(store: RunStore): Partial<WorkspaceRuntimeSettings> | undefined {
+function readStoredRuntimeSettings(store: RunStorePathsFacet): Partial<WorkspaceRuntimeSettings> | undefined {
   const path = runtimeSettingsPath(store);
   if (!existsSync(path)) {
     return undefined;
@@ -387,7 +387,7 @@ function pushRuntimeSettingsDiagnostic(
   });
 }
 
-function runtimeSettingsPath(store: RunStore): string {
+function runtimeSettingsPath(store: RunStorePathsFacet): string {
   return join(store.paths.rootDir, RUNTIME_SETTINGS_FILE);
 }
 
