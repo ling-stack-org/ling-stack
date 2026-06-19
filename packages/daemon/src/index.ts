@@ -221,6 +221,13 @@ export function createDefaultRunnerRegistry(
       supportedProviderApis: extension.supportedProviderApis,
       supportedTools: extension.supportedTools,
       capabilities: piCapabilities,
+      toolHydration: {
+        mode: "unsupported",
+        supportsNamespaceSearch: false,
+        supportsToolHydration: false,
+        conformance: "unverified",
+        maxHydratedToolsPerRun: 0,
+      },
     },
     ...listExternalRunnerRegistrations(config),
   ], DEFAULT_RUNNER_ID);

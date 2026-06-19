@@ -7,6 +7,7 @@ import {
   type RunStorePathsFacet,
   type WorkspaceRuntimeSettings,
 } from "@ling-stack/core";
+import type { RunnerToolHydrationCapability } from "@ling-stack/contracts";
 import {
   DEFAULT_RUNNER_ID,
   normalizeRunnerId,
@@ -34,6 +35,7 @@ export interface RunnerListItem {
   readonly supportedProviderApis?: readonly string[];
   readonly supportedTools?: readonly string[];
   readonly capabilities?: readonly string[];
+  readonly toolHydration?: RunnerToolHydrationCapability;
   readonly featureFlag?: string;
   readonly disabledReason?: string;
   readonly readiness?: RunnerReadinessSummary;
@@ -51,6 +53,7 @@ export function listRunnerItems(
     supportedProviderApis: runner.supportedProviderApis,
     supportedTools: runner.supportedTools,
     capabilities: runner.capabilities,
+    toolHydration: runner.toolHydration,
     featureFlag: runner.featureFlag,
     disabledReason: runner.disabledReason,
     readiness: options.readinessByRunnerId?.get(runner.id),

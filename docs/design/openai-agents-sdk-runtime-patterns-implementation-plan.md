@@ -520,6 +520,60 @@ Acceptance:
   checkpoints;
 - sandbox execution backends remain fail-closed.
 
+## Slice P11: Runner Hydration Conformance Adapter
+
+Purpose: land the first executable runner-native hydration contract without changing the
+default Pi prompt path or granting any new tool execution authority.
+
+Implementation status:
+
+- `packages/contracts/src/tool-surfaces.ts` now defines runner-only hydration DTOs:
+  capability metadata, runner hydration requests, hydrated tool descriptors, success
+  payloads, and rejection payloads;
+- the P8/P9 public materialization response remains summary-only. Raw schemas are still
+  absent from Web/API evidence responses and durable runtime materialization events;
+- `packages/runner-pi/src/types.ts` now accepts optional `runId`, `runnerAttemptId`, and
+  an `onToolHydrationRequest` callback. The package keeps this structurally typed and does
+  not add a contracts dependency;
+- run event unions now include summary-only `tool_hydration_request` and
+  `tool_hydration_end` events so orchestrators can audit hydration attempts without
+  storing input schemas;
+- the default Pi runner registry entry explicitly reports hydration as `unsupported` and
+  `unverified`. This slice does not inject schemas into the embedded Pi runner;
+- the shared daemon conformance fake now proves:
+
+  - daemon-hydrated schemas do not change `ask` approval behavior;
+  - hydrated `deny` tools can be described but cannot execute or request approval;
+  - policy-denied hydration fails closed before approval;
+  - over-budget hydration fails closed and writes no successful materialization summary;
+  - idempotent hydration retries do not duplicate the active-turn hydrated surface
+    evidence.
+
+Likely files:
+
+- `packages/contracts/src/tool-surfaces.ts`
+- `packages/runner-pi/src/types.ts`
+- `packages/core/src/run-types.ts`
+- `packages/contracts/src/runtime.ts`
+- `packages/daemon/src/runtime/runners.ts`
+- `packages/daemon/src/runtime/runner-conformance.ts`
+- `packages/daemon/test/runner-conformance.test.mjs`
+
+Acceptance:
+
+- runner-only DTOs can carry sanitized schemas without expanding P8/P9 public responses;
+- hydration events are summary-only and contain no input schema payload;
+- hydration success never grants execution permission;
+- denied or disabled hydrated tools fail before approval interception;
+- current Pi remains unsupported until a later adapter slice wires prompt assembly behind
+  a verified feature flag.
+
+Non-goal:
+
+- no embedded Pi prompt hydration in this slice;
+- no hosted OpenAI `ToolSearchTool` dependency;
+- no Docker, hosted, or external sandbox backend activation.
+
 ## Migration Strategy
 
 No broad migration is needed initially.
@@ -547,6 +601,7 @@ Recommended order:
 | P8 tool materialization API | optional | required | optional | tool catalog endpoint |
 | P9 materialization budget enforcement | optional | required | no | over-budget namespace rejection |
 | P10 runner-native hydration design | no | optional | no | runner capability review |
+| P11 runner hydration conformance adapter | required | no | no | conformance fake runner |
 
 ## Rollback
 

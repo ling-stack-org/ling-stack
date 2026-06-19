@@ -119,6 +119,10 @@ test("default runner registry exposes disabled future adapters and fails closed"
   assert.equal(runners.some((runner) => runner.id === "pi" && runner.status === "enabled"), true);
   assert.equal(runners.some((runner) => runner.id === "codex-app-server" && runner.status === "disabled"), true);
   assert.equal(runners.some((runner) => runner.id === "openclaw-acp" && runner.status === "disabled"), true);
+  const pi = runners.find((runner) => runner.id === "pi");
+  assert.equal(pi.toolHydration.mode, "unsupported");
+  assert.equal(pi.toolHydration.supportsToolHydration, false);
+  assert.equal(pi.toolHydration.conformance, "unverified");
   const codex = runners.find((runner) => runner.id === "codex-app-server");
   assert.equal(codex.featureFlag, "runners.codexAppServer.enabled");
   assert.equal(codex.disabledReason, "Feature flag is disabled.");

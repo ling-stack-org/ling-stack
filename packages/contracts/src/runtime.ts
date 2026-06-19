@@ -1,6 +1,7 @@
 import type { RunStatus, RunTool } from "./shared.js";
 import type { ResourceLease } from "./workflows.js";
 import type { RunnerReadinessSummary } from "./runner-readiness.js";
+import type { RunnerToolHydrationCapability } from "./tool-surfaces.js";
 
 export type RuntimePermissionRequestKind =
   | "core_tool"
@@ -205,6 +206,7 @@ export interface RunnerListItem {
   readonly supportedProviderApis?: readonly string[];
   readonly supportedTools?: readonly string[];
   readonly capabilities?: readonly string[];
+  readonly toolHydration?: RunnerToolHydrationCapability;
   readonly featureFlag?: string;
   readonly disabledReason?: string;
   readonly readiness?: RunnerReadinessSummary;
@@ -393,6 +395,8 @@ export type RunEventType =
   | "turn_end"
   | "assistant_text_delta"
   | "assistant_thinking_delta"
+  | "tool_hydration_request"
+  | "tool_hydration_end"
   | "message_end"
   | "tool_start"
   | "tool_update"

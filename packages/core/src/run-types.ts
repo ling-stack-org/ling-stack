@@ -390,6 +390,8 @@ export type RunEventType =
   | "turn_end"
   | "assistant_text_delta"
   | "assistant_thinking_delta"
+  | "tool_hydration_request"
+  | "tool_hydration_end"
   | "message_end"
   | "tool_start"
   | "tool_update"

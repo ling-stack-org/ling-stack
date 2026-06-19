@@ -132,7 +132,92 @@ export interface PiRunnerRuntimePaths {
   readonly artifactsDir?: string;
 }
 
+export type PiRunnerToolHydrationScope =
+  | { readonly kind: "namespace"; readonly namespaceId: string }
+  | { readonly kind: "tool"; readonly toolId: string };
+
+export interface PiRunnerToolHydrationRequest {
+  readonly runId: string;
+  readonly runnerAttemptId: string;
+  readonly scope: PiRunnerToolHydrationScope;
+  readonly reason: string;
+  readonly idempotencyKey: string;
+  readonly task: PiRunnerTask;
+  readonly cwd: string;
+}
+
+export interface PiRunnerToolHydrationBudget {
+  readonly decision: "within_budget" | "over_budget";
+  readonly estimatedTokens: number;
+  readonly inputBudgetTokens: number;
+  readonly remainingBudgetTokens: number;
+  readonly overBudgetByTokens: number;
+  readonly requestedToolCount: number;
+  readonly maxMaterializedToolCount: number;
+  readonly mode: "model_known" | "model_estimated" | "model_unknown";
+  readonly tokenizer: "openai-compatible" | "anthropic-compatible" | "estimated";
+  readonly capabilitySource?: string;
+  readonly capabilityConfidence?: string;
+}
+
+export interface PiRunnerToolMaterializationSummary {
+  readonly id: string;
+  readonly runId: string;
+  readonly namespaceId: string;
+  readonly toolIds: readonly string[];
+  readonly materializedToolCount: number;
+  readonly disabledToolCount: number;
+  readonly executionApprovalSummary: Record<ToolDefaultApproval, number>;
+  readonly budget: PiRunnerToolHydrationBudget;
+  readonly generatedAt: string;
+}
+
+export interface PiRunnerHydratedToolDescriptor {
+  readonly id: string;
+  readonly namespaceId: string;
+  readonly sourceKind: "core_tool" | "mcp_tool";
+  readonly name: string;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly inputSchema?: unknown;
+  readonly sideEffectLevel: ToolSideEffectLevel;
+  readonly defaultApproval: ToolDefaultApproval;
+  readonly executionApproval: ToolDefaultApproval;
+  readonly enabled: boolean;
+  readonly disabledReasons: readonly { readonly code: string; readonly message: string }[];
+}
+
+export interface PiRunnerHydratedToolSurface {
+  readonly ok: true;
+  readonly materialization: PiRunnerToolMaterializationSummary;
+  readonly tools: readonly PiRunnerHydratedToolDescriptor[];
+  readonly generatedAt: string;
+  readonly expiresAt?: string;
+}
+
+export type PiRunnerToolHydrationRejectionCode =
+  | "hydration_not_supported"
+  | "tool_materialization_over_budget"
+  | "tool_materialization_denied"
+  | "tool_namespace_not_found"
+  | "tool_not_found"
+  | "invalid_hydration_request";
+
+export interface PiRunnerToolHydrationRejection {
+  readonly ok: false;
+  readonly code: PiRunnerToolHydrationRejectionCode;
+  readonly message: string;
+  readonly retryable: boolean;
+  readonly budget?: PiRunnerToolHydrationBudget;
+  readonly materialization?: PiRunnerToolMaterializationSummary;
+  readonly generatedAt: string;
+}
+
+export type PiRunnerToolHydrationResponse = PiRunnerHydratedToolSurface | PiRunnerToolHydrationRejection;
+
 export interface PiRunnerRunOptions {
+  readonly runId?: string;
+  readonly runnerAttemptId?: string;
   readonly cwd: string;
   readonly task: PiRunnerTask;
   readonly provider: PiRunnerProviderConfig;
@@ -152,6 +237,9 @@ export interface PiRunnerRunOptions {
   readonly onPermissionRequired?: (
     request: PiRunnerPermissionRequest,
   ) => PiRunnerPermissionDecision | Promise<PiRunnerPermissionDecision>;
+  readonly onToolHydrationRequest?: (
+    request: PiRunnerToolHydrationRequest,
+  ) => PiRunnerToolHydrationResponse | Promise<PiRunnerToolHydrationResponse>;
   readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
 }
 
@@ -194,6 +282,22 @@ export type PiRunnerEvent =
   | { readonly type: "turn_end" }
   | { readonly type: "assistant_text_delta"; readonly text: string }
   | { readonly type: "assistant_thinking_delta"; readonly text: string }
+  | {
+      readonly type: "tool_hydration_request";
+      readonly runId: string;
+      readonly runnerAttemptId: string;
+      readonly scope: PiRunnerToolHydrationScope;
+      readonly idempotencyKeyProvided: boolean;
+    }
+  | {
+      readonly type: "tool_hydration_end";
+      readonly runId: string;
+      readonly runnerAttemptId: string;
+      readonly materializationId?: string;
+      readonly toolIds?: readonly string[];
+      readonly rejected: boolean;
+      readonly code?: PiRunnerToolHydrationRejectionCode;
+    }
   | { readonly type: "tool_start"; readonly toolCallId: string; readonly toolName: string; readonly args: unknown }
   | { readonly type: "tool_update"; readonly toolCallId: string; readonly toolName: string; readonly partialResult: unknown }
   | { readonly type: "tool_end"; readonly toolCallId: string; readonly toolName: string; readonly result: unknown; readonly isError: boolean }
