@@ -1,4 +1,4 @@
-import type { Channel, ChannelMessage, RunStore } from "@ling-stack/core";
+import type { Channel, ChannelAttachment, ChannelMessage, ChannelStoreFacet, RunStorePathsFacet } from "@ling-stack/core";
 import { defaultLingMaterializationBudgets } from "./budgets.js";
 import {
   cloneChannelInputMaterializationResult,
@@ -22,7 +22,7 @@ import type {
 } from "./registry.js";
 
 export interface MaterializeInlineChannelInputsInput {
-  readonly store: RunStore;
+  readonly store: ChannelStoreFacet & RunStorePathsFacet;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly now: string;
@@ -131,7 +131,7 @@ export async function materializeInlineChannelInputs(input: MaterializeInlineCha
 }
 
 interface MaterializeAttachmentWithExtractorInput extends MaterializeInlineChannelInputsInput {
-  readonly attachment: NonNullable<ReturnType<RunStore["getChannelAttachment"]>>;
+  readonly attachment: ChannelAttachment;
   readonly extractor: LingInputExtractor;
   readonly maxBytes: number;
   readonly maxChars: number;
