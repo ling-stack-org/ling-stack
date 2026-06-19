@@ -477,7 +477,7 @@ run request
   -> materialize small prompt surface
   -> model requests namespace/tool load
   -> daemon checks policy and context budget
-  -> materialize schema or deny
+  -> materialize schema or reject over-budget
 ```
 
 ### Rules
@@ -490,6 +490,8 @@ run request
   whether a run can see or use its tools.
 - Deferred loading must be logged as a runtime event so evidence explains why a tool
   became available mid-run.
+- Context budget rejection happens before the materialization runtime event and does not
+  grant execution authority or inject a schema into the runner prompt.
 
 ## Pattern 5: Sandbox Manifest And Capabilities
 

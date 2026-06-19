@@ -5,10 +5,12 @@ import {
   type LingToolDescriptor,
   type LingToolNamespace,
   type LingToolNamespaceCatalog,
+  type RunSession,
   type RunStore,
 } from "@ling-stack/core";
 import type {
   CreateToolLoadRequest,
+  ToolMaterializationBudget,
   ToolLoadRequestResponse,
   ToolLoadRequestScope,
   ToolMaterializationSummary,
@@ -22,6 +24,9 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readString } from "../../shared/validation.js";
+import { estimateTextTokens, resolveProviderContextBudget } from "../channels/context-packs.js";
+
+const MAX_MATERIALIZED_TOOL_COUNT = 64;
 
 export function handleToolSurfacesCollection(
   request: IncomingMessage,
@@ -103,11 +108,15 @@ export async function handleToolLoadRequestsCollection(
     const now = new Date().toISOString();
     const catalog = buildToolCatalog(store, runnerRegistry, now);
     const selection = resolveToolLoadScope(catalog, input.scope);
+    const budget = buildMaterializationBudget(store, run, selection.namespace, selection.tools);
     const idempotencyDigest = input.idempotencyKey ? hashIdempotencyKey(input.idempotencyKey) : undefined;
     const existingMaterialization = idempotencyDigest
-      ? findExistingMaterialization(store, run.workUnitId, runId, idempotencyDigest)
+      ? findExistingMaterialization(store, run.workUnitId, runId, idempotencyDigest, budget)
       : undefined;
-    const materialization = existingMaterialization ?? buildMaterializationSummary(runId, selection.namespace, selection.tools, now);
+    if (!existingMaterialization) {
+      assertMaterializationWithinBudget(budget);
+    }
+    const materialization = existingMaterialization ?? buildMaterializationSummary(runId, selection.namespace, selection.tools, budget, now);
 
     if (!existingMaterialization) {
       appendToolMaterializationRuntimeEvent(store, run.workUnitId, materialization, input, now, idempotencyDigest);
@@ -121,6 +130,14 @@ export async function handleToolLoadRequestsCollection(
     };
     writeJson(response, 201, body);
   } catch (error) {
+    if (error instanceof ToolMaterializationBudgetError) {
+      writeJson(response, error.statusCode, {
+        error: error.code,
+        message: error.message,
+        budget: error.budget,
+      });
+      return;
+    }
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
@@ -193,6 +210,7 @@ function buildMaterializationSummary(
   runId: string,
   namespace: LingToolNamespace,
   tools: readonly LingToolDescriptor[],
+  budget: ToolMaterializationBudget,
   generatedAt: string,
 ): ToolMaterializationSummary {
   const executionApprovalSummary: Record<ToolSurfaceDefaultApproval, number> = { allow: 0, ask: 0, deny: 0 };
@@ -207,8 +225,90 @@ function buildMaterializationSummary(
     materializedToolCount: tools.length,
     disabledToolCount: tools.filter((tool) => !tool.enabled).length,
     executionApprovalSummary,
+    budget,
     generatedAt,
   };
+}
+
+function buildMaterializationBudget(
+  store: RunStore,
+  run: RunSession,
+  namespace: LingToolNamespace,
+  tools: readonly LingToolDescriptor[],
+): ToolMaterializationBudget {
+  const providerPreset = run.providerPresetId ? store.getProviderPreset(run.providerPresetId) : undefined;
+  const contextBudget = resolveProviderContextBudget(providerPreset, run.workflowStepId ? "workflow_step" : "channel_reply");
+  const estimatedTokens = estimateMaterializedToolTokens(namespace, tools);
+  const overBudgetByTokens = Math.max(0, estimatedTokens - contextBudget.inputBudgetTokens);
+  const overBudgetByCount = tools.length > MAX_MATERIALIZED_TOOL_COUNT;
+  return {
+    decision: overBudgetByTokens > 0 || overBudgetByCount ? "over_budget" : "within_budget",
+    estimatedTokens,
+    inputBudgetTokens: contextBudget.inputBudgetTokens,
+    remainingBudgetTokens: Math.max(0, contextBudget.inputBudgetTokens - estimatedTokens),
+    overBudgetByTokens,
+    requestedToolCount: tools.length,
+    maxMaterializedToolCount: MAX_MATERIALIZED_TOOL_COUNT,
+    mode: contextBudget.mode,
+    tokenizer: contextBudget.tokenizer,
+    capabilitySource: contextBudget.capabilitySource,
+    capabilityConfidence: contextBudget.capabilityConfidence,
+  };
+}
+
+function estimateMaterializedToolTokens(namespace: LingToolNamespace, tools: readonly LingToolDescriptor[]): number {
+  const payload = {
+    schemaVersion: 1,
+    namespace: {
+      id: namespace.id,
+      kind: namespace.kind,
+      displayName: namespace.displayName,
+      ownerId: namespace.ownerId,
+    },
+    tools: tools.map((tool) => ({
+      id: tool.id,
+      namespaceId: tool.namespaceId,
+      sourceKind: tool.sourceKind,
+      name: tool.name,
+      displayName: tool.displayName,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      sideEffectLevel: tool.sideEffectLevel,
+      defaultApproval: tool.defaultApproval,
+      executionApproval: tool.executionApproval,
+      schemaAvailable: tool.schemaAvailable,
+      enabled: tool.enabled,
+      disabledReasons: tool.disabledReasons,
+      requiredBySkillIds: tool.requiredBySkillIds,
+      supportedByRunnerIds: tool.supportedByRunnerIds,
+    })),
+  };
+  return estimateTextTokens(JSON.stringify(payload));
+}
+
+function assertMaterializationWithinBudget(budget: ToolMaterializationBudget): void {
+  if (budget.decision === "within_budget") {
+    return;
+  }
+  const countClause = budget.requestedToolCount > budget.maxMaterializedToolCount
+    ? ` and requested ${budget.requestedToolCount} tools exceeds the maximum ${budget.maxMaterializedToolCount}`
+    : "";
+  throw new ToolMaterializationBudgetError(
+    budget,
+    `Tool materialization is over the run context budget: estimated ${budget.estimatedTokens} tokens, input budget ${budget.inputBudgetTokens}${countClause}.`,
+  );
+}
+
+class ToolMaterializationBudgetError extends Error {
+  readonly statusCode = 413;
+  readonly code = "tool_materialization_over_budget";
+
+  constructor(
+    readonly budget: ToolMaterializationBudget,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 function appendToolMaterializationRuntimeEvent(
@@ -241,6 +341,7 @@ function appendToolMaterializationRuntimeEvent(
       materializedToolCount: materialization.materializedToolCount,
       disabledToolCount: materialization.disabledToolCount,
       executionApprovalSummary: materialization.executionApprovalSummary,
+      budget: materialization.budget,
       scopeKind: input.scope.kind,
       reasonProvided: Boolean(input.reason),
       idempotencyKeyProvided: Boolean(input.idempotencyKey),
@@ -254,6 +355,7 @@ function findExistingMaterialization(
   workUnitId: string | undefined,
   runId: string,
   idempotencyDigest: string,
+  fallbackBudget: ToolMaterializationBudget,
 ): ToolMaterializationSummary | undefined {
   if (!workUnitId) {
     return undefined;
@@ -265,7 +367,7 @@ function findExistingMaterialization(
     if (event.data.runId !== runId || event.data.idempotencyDigest !== idempotencyDigest) {
       continue;
     }
-    const materialization = materializationFromRuntimeEventData(event.data, runId, event.ts);
+    const materialization = materializationFromRuntimeEventData(event.data, runId, event.ts, fallbackBudget);
     if (materialization) {
       return materialization;
     }
@@ -277,6 +379,7 @@ function materializationFromRuntimeEventData(
   data: Record<string, unknown>,
   runId: string,
   generatedAt: string,
+  fallbackBudget: ToolMaterializationBudget,
 ): ToolMaterializationSummary | undefined {
   if (
     typeof data.materializationId !== "string" ||
@@ -292,6 +395,7 @@ function materializationFromRuntimeEventData(
   if (toolIds.length !== data.toolIds.length) {
     return undefined;
   }
+  const budget = readMaterializationBudget(data.budget) ?? fallbackBudget;
   return {
     id: data.materializationId,
     runId,
@@ -304,8 +408,57 @@ function materializationFromRuntimeEventData(
       ask: readApprovalCount(data.executionApprovalSummary, "ask"),
       deny: readApprovalCount(data.executionApprovalSummary, "deny"),
     },
+    budget,
     generatedAt,
   };
+}
+
+function readMaterializationBudget(value: unknown): ToolMaterializationBudget | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  if (value.decision !== "within_budget" && value.decision !== "over_budget") {
+    return undefined;
+  }
+  if (value.mode !== "model_known" && value.mode !== "model_estimated" && value.mode !== "model_unknown") {
+    return undefined;
+  }
+  if (value.tokenizer !== "openai-compatible" && value.tokenizer !== "anthropic-compatible" && value.tokenizer !== "estimated") {
+    return undefined;
+  }
+  const estimatedTokens = readFiniteNumber(value.estimatedTokens);
+  const inputBudgetTokens = readFiniteNumber(value.inputBudgetTokens);
+  const remainingBudgetTokens = readFiniteNumber(value.remainingBudgetTokens);
+  const overBudgetByTokens = readFiniteNumber(value.overBudgetByTokens);
+  const requestedToolCount = readFiniteNumber(value.requestedToolCount);
+  const maxMaterializedToolCount = readFiniteNumber(value.maxMaterializedToolCount);
+  if (
+    estimatedTokens === undefined ||
+    inputBudgetTokens === undefined ||
+    remainingBudgetTokens === undefined ||
+    overBudgetByTokens === undefined ||
+    requestedToolCount === undefined ||
+    maxMaterializedToolCount === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    decision: value.decision,
+    estimatedTokens,
+    inputBudgetTokens,
+    remainingBudgetTokens,
+    overBudgetByTokens,
+    requestedToolCount,
+    maxMaterializedToolCount,
+    mode: value.mode,
+    tokenizer: value.tokenizer,
+    ...(typeof value.capabilitySource === "string" ? { capabilitySource: value.capabilitySource } : {}),
+    ...(typeof value.capabilityConfidence === "string" ? { capabilityConfidence: value.capabilityConfidence } : {}),
+  };
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function readApprovalCount(summary: Record<string, unknown>, key: ToolSurfaceDefaultApproval): number {

@@ -85,6 +85,13 @@ test("tool load requests materialize catalog summary without changing execution 
     assert.equal(response.materialization.materializedToolCount, 2);
     assert.equal(response.materialization.disabledToolCount, 1);
     assert.deepEqual(response.materialization.executionApprovalSummary, { allow: 1, ask: 1, deny: 0 });
+    assert.equal(response.materialization.budget.decision, "within_budget");
+    assert.equal(response.materialization.budget.requestedToolCount, 2);
+    assert.equal(response.materialization.budget.maxMaterializedToolCount, 64);
+    assert.equal(response.materialization.budget.mode, "model_known");
+    assert.equal(typeof response.materialization.budget.estimatedTokens, "number");
+    assert.ok(response.materialization.budget.estimatedTokens > 0);
+    assert.ok(response.materialization.budget.remainingBudgetTokens > 0);
 
     const retry = await postJson(
       `${baseUrl}/runs/${encodeURIComponent(fixture.runId)}/tool-load-requests?cwd=${encodeURIComponent(cwd)}`,
@@ -95,6 +102,7 @@ test("tool load requests materialize catalog summary without changing execution 
       },
     );
     assert.equal(retry.materialization.id, response.materialization.id);
+    assert.deepEqual(retry.materialization.budget, response.materialization.budget);
 
     assert.equal(store.getApprovalPolicy().toolDecisions.write, "deny");
 
@@ -106,6 +114,7 @@ test("tool load requests materialize catalog summary without changing execution 
     assert.equal(events[0].data.reasonProvided, true);
     assert.equal(events[0].data.idempotencyKeyProvided, true);
     assert.equal(typeof events[0].data.idempotencyDigest, "string");
+    assert.deepEqual(events[0].data.budget, response.materialization.budget);
     const runtimeEventJson = JSON.stringify(events[0].data);
     assert.doesNotMatch(runtimeEventJson, /inputSchema|properties|reason-secret|load-mcp-files-once/);
   } finally {
@@ -114,8 +123,67 @@ test("tool load requests materialize catalog summary without changing execution 
   }
 });
 
+test("tool load requests reject over-budget namespace materialization before runtime evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-tool-load-budget-"));
+  const store = createSqliteRunStore(cwd);
+  const daemon = createDaemonServer({
+    host: "127.0.0.1",
+    port: 0,
+    defaultWorkspaceCwd: cwd,
+  }, {
+    runner: new NoopRunner(),
+    storeFactory: () => store,
+  });
+
+  try {
+    const fixture = seedToolSurfaceFixture(store, cwd);
+    seedManyToolServer(store, 65);
+    await daemon.start();
+    const baseUrl = serverBaseUrl(daemon);
+
+    const response = await postJsonResponse(
+      `${baseUrl}/runs/${encodeURIComponent(fixture.runId)}/tool-load-requests?cwd=${encodeURIComponent(cwd)}`,
+      {
+        scope: { kind: "namespace", namespaceId: "mcp:mcp_many" },
+        reason: "need schema for over-budget-secret",
+        idempotencyKey: "load-too-many-tools",
+      },
+    );
+
+    assert.equal(response.status, 413);
+    assert.equal(response.body.error, "tool_materialization_over_budget");
+    assert.equal(response.body.budget.decision, "over_budget");
+    assert.equal(response.body.budget.requestedToolCount, 65);
+    assert.equal(response.body.budget.maxMaterializedToolCount, 64);
+    assert.equal(response.body.budget.mode, "model_known");
+    assert.equal(response.body.budget.overBudgetByTokens, 0);
+    assert.equal(store.listRuntimeEvents(fixture.workUnitId, { limit: 10 }).length, 0);
+    const errorJson = JSON.stringify(response.body);
+    assert.doesNotMatch(errorJson, /inputSchema|over-budget-secret|load-too-many-tools|schema-secret-marker/);
+  } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function seedToolSurfaceFixture(store, cwd) {
   const now = "2026-06-19T04:00:00.000Z";
+  const provider = store.createProviderPreset(
+    {
+      kind: "openai-compatible",
+      displayName: "Tool Surface Provider",
+      providerId: "tool-surface",
+      model: "tool-surface-model",
+      api: "openai-responses",
+      capabilities: ["chat", "tool_call"],
+      input: ["text"],
+      contextWindow: 32768,
+      maxTokens: 1024,
+      authHeader: false,
+      enabled: true,
+    },
+    now,
+  );
   store.updateApprovalPolicy({ toolDecisions: { write: "deny" } }, now);
   store.createMcpServer(
     {
@@ -171,7 +239,7 @@ function seedToolSurfaceFixture(store, cwd) {
     ownerType: "task",
     ownerId: "task_tool_surface",
     taskId: "task_tool_surface",
-    providerPresetId: "provider_tool_surface",
+    providerPresetId: provider.id,
     idempotencyKey: "work-unit-tool-surface",
     createdByActor: "system",
     request: { prompt: "load tools" },
@@ -183,14 +251,14 @@ function seedToolSurfaceFixture(store, cwd) {
     attemptNumber: 1,
     runtimeInstanceId: "runtime_tool_surface",
     runnerId: "pi",
-    providerPresetId: "provider_tool_surface",
+    providerPresetId: provider.id,
     now: "2026-06-19T04:00:03.000Z",
   });
   store.createRun({
     id: "run_tool_surface",
     cwd,
     taskId: "task_tool_surface",
-    providerPresetId: "provider_tool_surface",
+    providerPresetId: provider.id,
     providerName: "test-provider",
     providerModel: "test-model",
     taskSnapshot: {},
@@ -203,7 +271,42 @@ function seedToolSurfaceFixture(store, cwd) {
     runId: "run_tool_surface",
     workUnitId: workUnit.id,
     attemptId: attempt.id,
+    providerId: provider.id,
   };
+}
+
+function seedManyToolServer(store, toolCount) {
+  store.createMcpServer(
+    {
+      id: "mcp_many",
+      displayName: "Many MCP",
+      transport: {
+        type: "stdio",
+        command: "many-mcp",
+        args: [],
+        env: {},
+        secretEnvRefs: {},
+      },
+      enabled: true,
+      required: false,
+    },
+    "2026-06-19T04:00:05.000Z",
+  );
+  store.replaceMcpServerTools(
+    "mcp_many",
+    Array.from({ length: toolCount }, (_, index) => ({
+      rawName: `many_tool_${index}`,
+      displayName: `Many tool ${index}`,
+      description: "Small schema marker should not leak into over-budget errors.",
+      inputSchema: { type: "object", properties: { value: { type: "string", description: "schema-secret-marker" } } },
+      callableNamespace: "mcp_many",
+      callableName: `many_tool_${index}`,
+      sideEffectLevel: "read",
+      defaultApproval: "allow",
+      enabled: true,
+    })),
+    "2026-06-19T04:00:06.000Z",
+  );
 }
 
 function serverBaseUrl(daemon) {
@@ -229,6 +332,14 @@ async function getJson(url) {
 }
 
 async function postJson(url, input) {
+  const response = await postJsonResponse(url, input);
+  if (response.status < 200 || response.status >= 300) {
+    assert.fail(JSON.stringify(response.body));
+  }
+  return response.body;
+}
+
+async function postJsonResponse(url, input) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -236,8 +347,5 @@ async function postJson(url, input) {
   });
   const text = await response.text();
   const body = text.trim() ? JSON.parse(text) : {};
-  if (!response.ok) {
-    assert.fail(JSON.stringify(body));
-  }
-  return body;
+  return { status: response.status, body };
 }

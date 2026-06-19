@@ -76,6 +76,22 @@ export interface CreateToolLoadRequest {
   readonly idempotencyKey?: string;
 }
 
+export type ToolMaterializationBudgetDecision = "within_budget" | "over_budget";
+
+export interface ToolMaterializationBudget {
+  readonly decision: ToolMaterializationBudgetDecision;
+  readonly estimatedTokens: number;
+  readonly inputBudgetTokens: number;
+  readonly remainingBudgetTokens: number;
+  readonly overBudgetByTokens: number;
+  readonly requestedToolCount: number;
+  readonly maxMaterializedToolCount: number;
+  readonly mode: "model_known" | "model_estimated" | "model_unknown";
+  readonly tokenizer: "openai-compatible" | "anthropic-compatible" | "estimated";
+  readonly capabilitySource?: string;
+  readonly capabilityConfidence?: string;
+}
+
 export interface ToolMaterializationSummary {
   readonly id: string;
   readonly runId: string;
@@ -84,6 +100,7 @@ export interface ToolMaterializationSummary {
   readonly materializedToolCount: number;
   readonly disabledToolCount: number;
   readonly executionApprovalSummary: Record<ToolSurfaceDefaultApproval, number>;
+  readonly budget: ToolMaterializationBudget;
   readonly generatedAt: string;
 }
 
