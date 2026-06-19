@@ -132,6 +132,36 @@ export interface PiRunnerRuntimePaths {
   readonly artifactsDir?: string;
 }
 
+export interface PiRunnerSandboxProfile {
+  readonly id: string;
+  readonly backendKind: string;
+  readonly displayName?: string;
+}
+
+export interface PiRunnerSandboxManifest {
+  readonly profileId: string;
+  readonly workspaceRoot: string;
+  readonly artifactImportRoots: readonly string[];
+}
+
+export interface PiRunnerSandboxSessionRef {
+  readonly profileId: string;
+  readonly backendKind: string;
+  readonly opaqueSessionId: string;
+}
+
+export interface PiRunnerSandboxReadiness {
+  readonly status: "ready" | "blocked";
+  readonly blockingReasons: readonly { readonly code: string; readonly message: string }[];
+}
+
+export interface PiRunnerSandboxBinding {
+  readonly profile: PiRunnerSandboxProfile;
+  readonly manifest: PiRunnerSandboxManifest;
+  readonly sessionRef: PiRunnerSandboxSessionRef;
+  readonly readiness: PiRunnerSandboxReadiness;
+}
+
 export type PiRunnerToolHydrationScope =
   | { readonly kind: "namespace"; readonly namespaceId: string }
   | { readonly kind: "tool"; readonly toolId: string };
@@ -229,6 +259,7 @@ export interface PiRunnerRunOptions {
   readonly agentDir?: string;
   readonly runtimePaths?: PiRunnerRuntimePaths;
   readonly runtimeToolFeatures?: PiRunnerRuntimeToolFeatures;
+  readonly sandbox?: PiRunnerSandboxBinding;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: PiRunnerEvent) => void;
   readonly onApprovalRequired?: (

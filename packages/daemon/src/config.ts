@@ -29,17 +29,29 @@ export interface TransportFeatureConfig {
 }
 
 export interface RunnerFeatureConfig {
+  readonly pi?: PiRunnerFeatureConfig;
   readonly codexAppServer?: CodexAppServerRunnerConfig;
   readonly openclawAcp?: OpenClawAcpRunnerConfig;
 }
 
 export interface SandboxFeatureConfig {
+  readonly platformNative?: PlatformNativeSandboxFeatureConfig;
   readonly docker?: DockerSandboxFeatureConfig;
 }
 
-export type DockerSandboxNetworkPolicy =
+export type SandboxNetworkPolicyConfig =
   | { readonly mode: "disabled" }
   | { readonly mode: "allowlist"; readonly allowedHosts: readonly string[] };
+
+export type DockerSandboxNetworkPolicy = SandboxNetworkPolicyConfig;
+export type PlatformNativeSandboxNetworkPolicy = SandboxNetworkPolicyConfig;
+
+export interface PlatformNativeSandboxFeatureConfig {
+  readonly enabled?: boolean;
+  readonly artifactImportRoot?: string;
+  readonly networkPolicy?: PlatformNativeSandboxNetworkPolicy;
+  readonly macosSandboxExecPath?: string;
+}
 
 export interface DockerSandboxFeatureConfig {
   readonly enabled?: boolean;
@@ -49,6 +61,21 @@ export interface DockerSandboxFeatureConfig {
   readonly networkPolicy?: DockerSandboxNetworkPolicy;
   readonly cpus?: number;
   readonly memoryMb?: number;
+}
+
+export interface PiRunnerToolHydrationFeatureConfig {
+  readonly enabled?: boolean;
+  readonly conformancePassed?: boolean;
+  readonly maxHydratedToolsPerRun?: number;
+}
+
+export interface PiRunnerSandboxBindingFeatureConfig {
+  readonly enabled?: boolean;
+}
+
+export interface PiRunnerFeatureConfig {
+  readonly toolHydration?: PiRunnerToolHydrationFeatureConfig;
+  readonly sandboxBinding?: PiRunnerSandboxBindingFeatureConfig;
 }
 
 export interface CodexAppServerRunnerConfig {

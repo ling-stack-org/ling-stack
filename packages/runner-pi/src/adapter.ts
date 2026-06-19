@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { AuthStorage, createAgentSession, ModelRegistry, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_TOOLS } from "./constants.js";
 import { translatePiEvent } from "./events.js";
+import { TOOL_HYDRATION_CALL_TOOL_NAME, TOOL_HYDRATION_LOAD_TOOL_NAME } from "./extensions/tool-hydration.js";
 import { createLingStackResourceLoader } from "./resource-loader.js";
 import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerResult, PiRunnerRunOptions } from "./types.js";
 import { formatTaskPrompt, throwIfAborted } from "./utils.js";
@@ -40,6 +41,7 @@ export class PiRunnerAdapter {
     const activeTools = [
       ...(options.tools ?? DEFAULT_TOOLS),
       ...(options.mcpTools?.map((tool) => tool.registeredName) ?? []),
+      ...(options.onToolHydrationRequest ? [TOOL_HYDRATION_LOAD_TOOL_NAME, TOOL_HYDRATION_CALL_TOOL_NAME] : []),
     ];
 
     const { session } = await createAgentSession({

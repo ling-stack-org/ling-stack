@@ -468,14 +468,17 @@ model-visible on-demand schemas without turning schema loading into execution ap
 
 Implementation status:
 
-- this slice is design-only and does not inject materialized schemas into the current Pi
-  runner prompt;
+- this slice is no longer design-only. Embedded Pi can expose a runner-native
+  `load_tools` / `hydrated_tool_call` surface behind explicit
+  `runners.pi.toolHydration.enabled` and `conformancePassed` gates;
 - the daemon remains the only hydration authority. Runners must call the daemon
   materialization path instead of reading MCP/plugin config directly;
 - runner-native hydration requires a verified runner capability before selection:
   unsupported or unverified runners keep using the P8/P9 daemon/API/Web-only surface;
 - hydrated schema payloads may be returned to the active runner turn, but durable runtime
   events and Web evidence continue storing only bounded summaries;
+- the HTTP `/runs/:id/tool-load-requests` response remains summary-only. The runner-only
+  daemon handler returns hydrated descriptors and schemas only to verified runners;
 - sandbox backend selection remains a separate future decision and is not part of P10.
 
 Decision update:
@@ -540,7 +543,8 @@ Implementation status:
   `tool_hydration_end` events so orchestrators can audit hydration attempts without
   storing input schemas;
 - the default Pi runner registry entry explicitly reports hydration as `unsupported` and
-  `unverified`. This slice does not inject schemas into the embedded Pi runner;
+  `unverified`. A later productization slice keeps that default but enables embedded Pi
+  hydration behind explicit config and conformance gates;
 - the shared daemon conformance fake now proves:
 
   - daemon-hydrated schemas do not change `ask` approval behavior;
@@ -566,12 +570,12 @@ Acceptance:
 - hydration events are summary-only and contain no input schema payload;
 - hydration success never grants execution permission;
 - denied or disabled hydrated tools fail before approval interception;
-- current Pi remains unsupported until a later adapter slice wires prompt assembly behind
-  a verified feature flag.
+- current Pi remains unsupported by default; `daemon_hydrated` activates only behind a
+  verified feature flag.
 
 Non-goal:
 
-- no embedded Pi prompt hydration in this slice;
+- no default embedded Pi prompt hydration;
 - no hosted OpenAI `ToolSearchTool` dependency;
 - no Docker, hosted, or external sandbox backend activation.
 
@@ -664,6 +668,28 @@ Target behavior:
 - preserve the existing Ling approval model: sandbox readiness never grants tool execution
   authority.
 
+Implementation status:
+
+- daemon config now has a `sandbox.platformNative` shape with `enabled`,
+  `artifactImportRoot`, `networkPolicy`, and a macOS `sandbox-exec` path override;
+- `packages/daemon/src/runtime/sandbox/platform-native.ts` implements a fail-closed
+  platform-native doctor and run-plan builder:
+
+  - macOS verifies `sandbox-exec` availability and builds a disabled-network Seatbelt
+    profile plan;
+  - Linux and Windows/WSL intentionally return unsupported-platform diagnostics until
+    their concrete OS adapters are implemented;
+  - artifact import roots must live under `.ling/artifacts/sandbox/platform-native`;
+  - allowlist networking remains blocked until an OS-specific network/proxy enforcement
+    design lands.
+
+- Pi runner sandbox binding is explicit via `runners.pi.sandboxBinding.enabled`. When
+  enabled, runs require platform-native readiness before the runner starts and receive a
+  sandbox profile/manifest/session DTO;
+- the binding does not yet move embedded Pi execution into a sandboxed child process.
+  That remains a separate execution-wrapper slice because the current Pi adapter runs
+  in-process inside the daemon.
+
 Acceptance:
 
 - `platform_native` profiles use the same fail-closed readiness blocker family as other
@@ -672,6 +698,8 @@ Acceptance:
   `local_unix`;
 - runner binding stays disabled until platform-native artifact import, network policy,
   and approval interception pass conformance;
+- current runner binding is readiness/DTO gated only; real OS-enforced runner execution
+  still requires a child-process/tool-execution wrapper;
 - Docker remains optional and cannot become the default just because its adapter exists.
 
 ## Migration Strategy
@@ -779,18 +807,24 @@ Resolved gates:
 
 Open gates:
 
-1. None for P11 start. The first hydration target is decided: fake conformance runner,
-   then embedded Pi behind a feature flag.
-2. None for P11 start. Hydrated schemas use a runner-only DTO and do not expand P8/P9
-   public summary responses.
-3. None for P13 start. The default sandbox direction is platform-native local enforcement;
-   `local_unix` remains development-only, Docker remains explicit opt-in, and
-   hosted/external backends stay future decisions.
+1. Embedded Pi hydration is implemented behind `runners.pi.toolHydration` gates. The
+   remaining gate is product rollout: decide which workspaces may enable the flag by
+   default.
+2. Hydrated schemas use a runner-only DTO and do not expand P8/P9 public summary
+   responses. The remaining gate is UI/product copy for exposing when a runner loaded
+   tools during a turn.
+3. Platform-native sandbox readiness is implemented for macOS `sandbox-exec` run plans and
+   Pi readiness DTO binding. The remaining gate is real OS-wrapped execution: the embedded
+   Pi process still runs in daemon process space until a child-process/tool-execution
+   wrapper lands.
+4. Linux/Windows platform-native adapters remain unsupported and fail closed.
 
 Current P10 answer: expose deferred loading to runner prompts only through a
-conformance-verified runner hydration capability. Do not inject P8/P9 materialization into
-the current runner prompt, and do not select a sandbox backend in the same slice.
+conformance-verified runner hydration capability. P8/P9 materialization stays summary-only
+for public API/Web responses; runner-only hydration may carry schemas to the active runner
+turn.
 
 Current P11/P12/P13 decision: P11 uses fake conformance coverage before embedded Pi, P12
-keeps Docker as an optional disabled adapter, and P13 should implement Codex-like
-platform-native local sandboxing as the default direction.
+keeps Docker as an optional disabled adapter, and P13 uses Codex-like platform-native
+local sandboxing as the default direction. Current P13 is readiness/run-plan/binding only;
+OS-wrapped execution is the next sandbox slice.

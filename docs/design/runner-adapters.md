@@ -182,7 +182,7 @@ Initial profile kinds:
 | Backend kind | Meaning | Status |
 | --- | --- | --- |
 | `local_unix` | A local process boundary with Ling-owned artifact import paths. | Development diagnostics only; not strong isolation |
-| `platform_native` | OS-enforced local sandboxing, selected per host platform. | Default direction after P12; runner binding disabled until conformance |
+| `platform_native` | OS-enforced local sandboxing, selected per host platform. | macOS doctor/run-plan exists; Pi readiness binding is feature-gated; in-process Pi is not OS-wrapped yet |
 | `docker` | A container-backed execution boundary. | Optional adapter exists; not the default Ling desktop/local path |
 | `hosted` | A hosted sandbox provider such as E2B, Modal, Runloop, Vercel, Cloudflare, or OpenAI. | Disabled until adapter decision and conformance |
 | `external` | A runner-owned sandbox exposed through an agent protocol. | Disabled until capability negotiation proves Ling gates |
@@ -197,7 +197,9 @@ Rules:
 - session refs are opaque diagnostics, not user-facing labels or execution authority.
 - Platform-native local sandboxing is the default direction, following Codex's local
   sandbox model: OS-enforced filesystem/process/network boundaries plus explicit approval
-  gates for escaped operations.
+  gates for escaped operations. Current Pi binding verifies readiness and passes a
+  sandbox DTO only; real OS-wrapped execution requires a child-process/tool-execution
+  wrapper before untrusted code is considered isolated.
 - Docker P12 verifies only disabled networking (`--network none`) and produces a run plan;
   allowlist networking, container execution endpoints, and runner binding remain separate
   follow-up slices. Docker is optional and should not become the default runner binding

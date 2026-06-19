@@ -8,6 +8,7 @@ import {
   createSqliteRunStore,
 } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { hydrateRunnerToolSurface } from "../dist/features/runs/tool-surfaces.js";
 
 test("tool surfaces api exposes policy and MCP-disabled catalog state", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-tool-surfaces-"));
@@ -119,6 +120,54 @@ test("tool load requests materialize catalog summary without changing execution 
     assert.doesNotMatch(runtimeEventJson, /inputSchema|properties|reason-secret|load-mcp-files-once/);
   } finally {
     await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runner tool hydration returns runner-only tool schemas and bounded runtime evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-tool-hydration-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const fixture = seedToolSurfaceFixture(store, cwd);
+    const run = store.getRun(fixture.runId);
+    const response = hydrateRunnerToolSurface({
+      store,
+      runnerRegistry: {
+        list: () => [{
+          id: "pi",
+          displayName: "Pi",
+          status: "enabled",
+          supportedTools: ["read", "grep", "find", "ls"],
+        }],
+      },
+      run,
+      request: {
+        runId: fixture.runId,
+        runnerAttemptId: fixture.attemptId,
+        scope: { kind: "namespace", namespaceId: "mcp:mcp_files" },
+        reason: "need schema for runner-only-secret",
+        idempotencyKey: "runner-load-mcp-files-once",
+      },
+      now: "2026-06-19T04:10:00.000Z",
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.materialization.namespaceId, "mcp:mcp_files");
+    assert.deepEqual(response.materialization.toolIds, ["mcp:mcp_files:read_file", "mcp:mcp_files:write_file"]);
+    const readFile = response.tools.find((tool) => tool.id === "mcp:mcp_files:read_file");
+    assert.deepEqual(readFile.inputSchema.properties.path, { type: "string" });
+    assert.equal(readFile.executionApproval, "allow");
+    const writeFile = response.tools.find((tool) => tool.id === "mcp:mcp_files:write_file");
+    assert.equal(writeFile.enabled, false);
+    assert.deepEqual(writeFile.disabledReasons.map((reason) => reason.code), ["server_disabled_tools_includes"]);
+
+    const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, "tool_namespace_materialized");
+    const runtimeEventJson = JSON.stringify(events[0].data);
+    assert.doesNotMatch(runtimeEventJson, /inputSchema|properties|runner-only-secret|runner-load-mcp-files-once/);
+  } finally {
+    store.close?.();
     await rm(cwd, { recursive: true, force: true });
   }
 });
