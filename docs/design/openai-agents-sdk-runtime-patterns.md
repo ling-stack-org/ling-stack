@@ -480,6 +480,58 @@ run request
   -> materialize schema or reject over-budget
 ```
 
+### Runner-Native Hydration Flow
+
+P8 and P9 intentionally keep materialization as daemon/API/Web state. A runner does not
+receive newly materialized schemas until it advertises a verified hydration capability.
+
+```ts
+interface LingRunnerToolHydrationCapability {
+  readonly mode: "unsupported" | "daemon_hydrated";
+  readonly supportsNamespaceSearch: boolean;
+  readonly supportsToolHydration: boolean;
+  readonly conformance: "unverified" | "verified";
+  readonly maxHydratedToolsPerRun: number;
+}
+
+interface LingRunnerToolHydrationRequest {
+  readonly runId: string;
+  readonly runnerAttemptId: string;
+  readonly scope:
+    | { readonly kind: "namespace"; readonly namespaceId: string }
+    | { readonly kind: "tool"; readonly toolId: string };
+  readonly reason: string;
+  readonly idempotencyKey: string;
+}
+
+interface LingRunnerHydratedToolSurface {
+  readonly materializationId: string;
+  readonly namespaceId: string;
+  readonly toolIds: readonly string[];
+  readonly budget: {
+    readonly estimatedTokens: number;
+    readonly inputBudgetTokens: number;
+    readonly remainingBudgetTokens: number;
+  };
+}
+```
+
+The runner-facing flow is:
+
+```text
+runner prompt gets small catalog/search surface
+  -> model asks runner to load a namespace/tool
+  -> runner sends a hydration request to daemon
+  -> daemon resolves policy + context budget + idempotency
+  -> daemon records materialization evidence
+  -> daemon returns sanitized schema payload to runner
+  -> runner may include that schema in the next model turn
+```
+
+Hydration is a transport mechanism, not an authority change. If a tool is `ask` or
+`deny`, the hydrated schema can be visible to the model, but execution still goes through
+the normal approval policy and side-effect gates.
+
 ### Rules
 
 - Loading a tool schema does not authorize execution.
@@ -492,6 +544,12 @@ run request
   became available mid-run.
 - Context budget rejection happens before the materialization runtime event and does not
   grant execution authority or inject a schema into the runner prompt.
+- Runner-native hydration requires conformance before it can be selected; unverified
+  runners continue using the daemon/API/Web-only materialization surface.
+- The daemon must be the only schema hydration authority. Runners cannot self-materialize
+  hidden MCP/plugin schemas from local config.
+- Hydration responses may include schema payloads for the active runner turn, but runtime
+  events and Web evidence must continue storing bounded summaries rather than raw schemas.
 
 ## Pattern 5: Sandbox Manifest And Capabilities
 
@@ -673,6 +731,7 @@ Any future adapter that claims Agents-SDK-like capabilities must prove:
 - resume after approval is idempotent;
 - handoff proposals become Ling handoff intents, not hidden runner starts;
 - deferred tool loading cannot bypass policy;
+- runner-native schema hydration cannot bypass policy or context budget;
 - sandbox artifacts import into Ling artifact roots;
 - cancellation prevents late success from mutating terminal state;
 - secrets are redacted from traces, manifests, snapshots, and artifacts.
