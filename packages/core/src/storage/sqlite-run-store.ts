@@ -198,7 +198,6 @@ import {
   type WorkUnitStatus,
 } from "../runtime-supervisor-types.js";
 import {
-  createExternalWorkId,
   type CreateExternalWorkActionInput,
   type CreateExternalWorkCiTriageInput,
   type CreateExternalWorkWorkflowInput,
@@ -385,6 +384,7 @@ import { SqliteExternalWorkStore } from "./sqlite/external-work-store.js";
 import { SqliteExternalWorkActionStore } from "./sqlite/external-work-action-store.js";
 import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triage-store.js";
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
+import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 
 export interface SqliteRunStoreOptions {
@@ -440,6 +440,7 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkActions: SqliteExternalWorkActionStore;
   private readonly externalWorkCiTriage: SqliteExternalWorkCiTriageStore;
   private readonly externalWorkScheduler: SqliteExternalWorkSchedulerStore;
+  private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
 
   constructor(options: SqliteRunStoreOptions) {
@@ -704,6 +705,17 @@ export class SqliteRunStore implements RunStore {
         hasExternalWorkRecord: (id) => Boolean(this.getExternalWorkRecord(id)),
       },
     );
+    this.externalWorkWorkflows = new SqliteExternalWorkWorkflowCoordinator({
+      assertChannelExists: (channelId) => this.assertChannelExists(channelId),
+      getChannel: (channelId) => this.getChannel(channelId),
+      getExternalWorkRecordByIdempotency: (sourceKind, idempotencyKey) =>
+        this.getExternalWorkRecordByIdempotency(sourceKind, idempotencyKey),
+      createExternalWorkRecord: (record) => this.externalWork.createExternalWorkRecord(record),
+      getChannelWorkflow: (workflowId) => this.getChannelWorkflow(workflowId),
+      createChannelWorkflow: (input, now) => this.createChannelWorkflow(input, now),
+      getChannelWorkflowStep: (workflowStepId) => this.getChannelWorkflowStep(workflowStepId),
+      createChannelWorkflowStep: (input, now) => this.createChannelWorkflowStep(input, now),
+    });
     this.workItems = new SqliteWorkItemStore(
       { database: this.database },
       {
@@ -1765,72 +1777,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   createOrReuseExternalWorkWorkflow(input: CreateExternalWorkWorkflowInput, now: string): ExternalWorkWorkflowResult {
-    this.assertChannelExists(input.channelId);
-    const existing = this.getExternalWorkRecordByIdempotency(input.externalWorkItem.sourceKind, input.externalWorkItem.idempotencyKey);
-    if (existing) {
-      const workflow = this.getChannelWorkflow(existing.workflowId);
-      const workflowStep = this.getChannelWorkflowStep(existing.workflowStepId);
-      if (!workflow || !workflowStep) {
-        throw new Error(`External work mapping points to missing workflow state: ${existing.id}`);
-      }
-      return {
-        externalWork: existing,
-        workflow,
-        workflowStep,
-        duplicate: true,
-      };
-    }
-
-    const channel = this.getChannel(input.channelId);
-    if (!channel) {
-      throw new Error(`Channel not found: ${input.channelId}`);
-    }
-    const participantId = input.toParticipantId ?? channel.defaultTeammateId ?? input.workflowDefinition.config.agent.teammateId ?? "engineer";
-    const participantLabel = input.toParticipantLabel ?? labelForParticipant(participantId);
-    const workflow = this.createChannelWorkflow(
-      {
-        channelId: input.channelId,
-        title: `External work: ${input.externalWorkItem.identifier}`,
-        objective: `Handle ${input.externalWorkItem.kind} ${input.externalWorkItem.identifier}: ${input.externalWorkItem.title}`,
-        status: "ready",
-        createdBy: `${input.externalWorkItem.sourceKind}:external-work`,
-      },
-      now,
-    );
-    const workflowStep = this.createChannelWorkflowStep(
-      {
-        workflowId: workflow.id,
-        title: `Review ${input.externalWorkItem.identifier}`,
-        prompt: input.renderedPrompt,
-        toParticipantId: participantId,
-        toParticipantLabel: participantLabel,
-      },
-      now,
-    );
-    const record: ExternalWorkRecord = {
-      id: createExternalWorkId(),
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      channelId: input.channelId,
-      sourceKind: input.externalWorkItem.sourceKind,
-      workItemKind: input.externalWorkItem.kind,
-      externalId: input.externalWorkItem.id,
-      identifier: input.externalWorkItem.identifier,
-      idempotencyKey: input.externalWorkItem.idempotencyKey,
-      workflowId: workflow.id,
-      workflowStepId: workflowStep.id,
-      artifactIds: [],
-      item: input.externalWorkItem,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const created = this.externalWork.createExternalWorkRecord(record);
-    return {
-      externalWork: created,
-      workflow,
-      workflowStep,
-      duplicate: false,
-    };
+    return this.externalWorkWorkflows.createOrReuseExternalWorkWorkflow(input, now);
   }
 
   getExternalWorkRecord(id: string): ExternalWorkRecord | undefined {
@@ -2843,11 +2790,4 @@ function normalizeOptionalOwnerId(value: string | undefined): string | undefined
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function labelForParticipant(participantId: string): string {
-  if (participantId === "engineer" || participantId === "teammate_builtin_engineer") {
-    return "Engineer";
-  }
-  return participantId;
 }
