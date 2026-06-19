@@ -15,7 +15,21 @@ import type {
   ExternalWorkItem,
   ExternalWorkRecord,
 } from "./external-work-types.js";
-import type { RunArtifact, RunStore } from "./run-types.js";
+import type {
+  ApprovalStoreFacet,
+  ExternalWorkStoreFacet,
+  RunArtifact,
+  RunExecutionStoreFacet,
+  RunStorePathsFacet,
+  RuntimeSupervisorStoreFacet,
+} from "./run-types.js";
+
+type ExternalWorkActionStore =
+  ExternalWorkStoreFacet &
+  ApprovalStoreFacet &
+  RuntimeSupervisorStoreFacet &
+  RunExecutionStoreFacet &
+  RunStorePathsFacet;
 
 type FetchLike = (input: string, init?: {
   readonly method?: string;
@@ -161,7 +175,7 @@ export function createGitHubExternalActionAdapter(options: GitHubExternalActionA
 }
 
 export function proposeExternalWorkAction(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkActionStore;
   readonly request: ExternalWorkActionProposeRequest;
   readonly now: string;
 }): ExternalWorkActionProposalResult {
@@ -228,7 +242,7 @@ export function proposeExternalWorkAction(input: {
 }
 
 export async function executeExternalWorkAction(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkActionStore;
   readonly actionId: string;
   readonly githubToken?: string;
   readonly fetch?: FetchLike;
@@ -366,7 +380,7 @@ export async function executeExternalWorkAction(input: {
 }
 
 export function cancelExternalWorkAction(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkActionStore;
   readonly actionId: string;
   readonly request?: ExternalWorkActionCancelRequest;
   readonly now: string;
@@ -400,7 +414,7 @@ export function cancelExternalWorkAction(input: {
   };
 }
 
-export function buildExternalWorkActionView(store: RunStore, action: ExternalWorkAction): ExternalWorkActionView {
+export function buildExternalWorkActionView(store: ExternalWorkActionStore, action: ExternalWorkAction): ExternalWorkActionView {
   const externalWork = store.getExternalWorkRecord(action.externalWorkId);
   const approval = action.approvalId ? store.getApprovalRequest(action.approvalId) : undefined;
   return {
@@ -411,7 +425,7 @@ export function buildExternalWorkActionView(store: RunStore, action: ExternalWor
   };
 }
 
-export function syncExternalWorkActionForApproval(store: RunStore, approval: ApprovalRequest, now: string): ExternalWorkAction | undefined {
+export function syncExternalWorkActionForApproval(store: ExternalWorkActionStore, approval: ApprovalRequest, now: string): ExternalWorkAction | undefined {
   if (!approval.externalWorkActionId) {
     return undefined;
   }
@@ -431,7 +445,7 @@ export function syncExternalWorkActionForApproval(store: RunStore, approval: App
   return action;
 }
 
-function requireExternalWork(store: RunStore, externalWorkId: string): ExternalWorkRecord {
+function requireExternalWork(store: ExternalWorkActionStore, externalWorkId: string): ExternalWorkRecord {
   const externalWork = store.getExternalWorkRecord(externalWorkId);
   if (!externalWork) {
     throw new Error(`External work item not found: ${externalWorkId}`);
@@ -445,7 +459,7 @@ function requireExternalWork(store: RunStore, externalWorkId: string): ExternalW
   return externalWork;
 }
 
-function requireExecutableApproval(store: RunStore, action: ExternalWorkAction, now: string): ApprovalRequest | undefined {
+function requireExecutableApproval(store: ExternalWorkActionStore, action: ExternalWorkAction, now: string): ApprovalRequest | undefined {
   if (!action.approvalId) {
     return undefined;
   }
@@ -593,7 +607,7 @@ function createExternalWorkActionIdempotencyKey(
 }
 
 function createProposedActionArtifacts(
-  store: RunStore,
+  store: ExternalWorkActionStore,
   externalWork: ExternalWorkRecord,
   action: ExternalWorkAction,
   createdAt: string,
@@ -640,7 +654,7 @@ function createProposedActionArtifacts(
   ];
 }
 
-function createActionCancelArtifact(store: RunStore, action: ExternalWorkAction, reason: string | undefined, createdAt: string): RunArtifact {
+function createActionCancelArtifact(store: ExternalWorkActionStore, action: ExternalWorkAction, reason: string | undefined, createdAt: string): RunArtifact {
   const artifactDir = resolvePath(store.paths.artifactsDir, "external-work", action.externalWorkId, "actions", action.id);
   mkdirSync(artifactDir, { recursive: true });
   const content = `${JSON.stringify({ actionId: action.id, previousStatus: action.status, reason: reason ?? null, cancelledAt: createdAt }, null, 2)}\n`;
@@ -658,7 +672,7 @@ function createActionCancelArtifact(store: RunStore, action: ExternalWorkAction,
 }
 
 function createActionStaleArtifact(
-  store: RunStore,
+  store: ExternalWorkActionStore,
   action: ExternalWorkAction,
   current: ExternalWorkItem | undefined,
   reason: string,
@@ -676,7 +690,7 @@ function createActionStaleArtifact(
 }
 
 function createActionNoopArtifact(
-  store: RunStore,
+  store: ExternalWorkActionStore,
   action: ExternalWorkAction,
   current: ExternalWorkItem,
   createdAt: string,
@@ -693,7 +707,7 @@ function createActionNoopArtifact(
 }
 
 function createActionExecutionArtifact(
-  store: RunStore,
+  store: ExternalWorkActionStore,
   action: ExternalWorkAction,
   result: GitHubActionResult,
   token: string | undefined,
@@ -709,7 +723,7 @@ function createActionExecutionArtifact(
 }
 
 function createActionFailureArtifact(
-  store: RunStore,
+  store: ExternalWorkActionStore,
   action: ExternalWorkAction,
   error: unknown,
   token: string | undefined,
@@ -735,7 +749,7 @@ function createActionFailureArtifact(
 }
 
 function createActionJsonArtifact(
-  store: RunStore,
+  store: ExternalWorkActionStore,
   action: ExternalWorkAction,
   fileName: string,
   title: string,
@@ -758,7 +772,7 @@ function createActionJsonArtifact(
   });
 }
 
-function artifactsForAction(store: RunStore, action: ExternalWorkAction): RunArtifact[] {
+function artifactsForAction(store: ExternalWorkActionStore, action: ExternalWorkAction): RunArtifact[] {
   return action.artifactIds
     .map((artifactId) => store.getArtifact(artifactId))
     .filter((artifact): artifact is RunArtifact => artifact !== undefined);

@@ -14,8 +14,22 @@ import type {
   GitHubCiFailure,
   GitHubCiFailureConclusion,
 } from "./external-work-types.js";
-import type { RunArtifact, RunStore } from "./run-types.js";
+import type {
+  ExternalWorkStoreFacet,
+  RunArtifact,
+  RunExecutionStoreFacet,
+  RunStorePathsFacet,
+  RuntimeSupervisorStoreFacet,
+  WorkspaceStoreFacet,
+} from "./run-types.js";
 import { DEFAULT_WORKSPACE_ID, type Task } from "./workspace-types.js";
+
+type ExternalWorkCiTriageStore =
+  ExternalWorkStoreFacet &
+  WorkspaceStoreFacet &
+  RunExecutionStoreFacet &
+  RuntimeSupervisorStoreFacet &
+  RunStorePathsFacet;
 
 type FetchLike = (input: string, init?: { readonly method?: string; readonly headers?: Record<string, string> }) => Promise<{
   readonly ok: boolean;
@@ -31,7 +45,7 @@ export interface GitHubCiTriageAdapterOptions {
 }
 
 export interface GitHubCiTriageInput {
-  readonly store: RunStore;
+  readonly store: ExternalWorkCiTriageStore;
   readonly cwd: string;
   readonly externalWorkId: string;
   readonly workflowDefinition: ExternalWorkflowDefinition;
@@ -226,7 +240,7 @@ export async function triageGitHubExternalWorkCi(input: GitHubCiTriageInput): Pr
   }
 }
 
-export function buildExternalWorkCiTriageView(store: RunStore, triage: ExternalWorkCiTriageRecord): ExternalWorkCiTriageView {
+export function buildExternalWorkCiTriageView(store: ExternalWorkCiTriageStore, triage: ExternalWorkCiTriageRecord): ExternalWorkCiTriageView {
   const externalWork = store.getExternalWorkRecord(triage.externalWorkId);
   const task = triage.taskId ? store.getTask(triage.taskId) : undefined;
   const run = triage.runId ? store.getRun(triage.runId) : undefined;
@@ -242,7 +256,7 @@ export function buildExternalWorkCiTriageView(store: RunStore, triage: ExternalW
 }
 
 function ensureTaskForExistingTriage(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkCiTriageStore;
   readonly externalWork: ExternalWorkRecord;
   readonly record: ExternalWorkCiTriageRecord;
   readonly createTask: boolean;
@@ -281,7 +295,7 @@ function ensureTaskForExistingTriage(input: {
 }
 
 function createTriageRecordForFailure(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkCiTriageStore;
   readonly externalWork: ExternalWorkRecord;
   readonly failure: GitHubCiFailureCandidate;
   readonly token?: string;
@@ -345,7 +359,7 @@ function createTriageRecordForFailure(input: {
 }
 
 function createOrReuseStaleRecord(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkCiTriageStore;
   readonly externalWork: ExternalWorkRecord;
   readonly repository: string;
   readonly subjectNumber: number;
@@ -408,7 +422,7 @@ function createOrReuseStaleRecord(input: {
 }
 
 function createCiFailureArtifacts(
-  store: RunStore,
+  store: ExternalWorkCiTriageStore,
   externalWork: ExternalWorkRecord,
   failure: GitHubCiFailureCandidate,
   token: string | undefined,
@@ -455,7 +469,7 @@ function createCiFailureArtifacts(
 }
 
 function createTextArtifact(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkCiTriageStore;
   readonly externalWorkId: string;
   readonly directoryParts: readonly string[];
   readonly fileName: string;
@@ -535,7 +549,7 @@ function buildCiTriageSummary(failure: GitHubCiFailureCandidate, artifacts: read
 }
 
 function responseForRecords(
-  store: RunStore,
+  store: ExternalWorkCiTriageStore,
   cwd: string,
   input: {
     readonly triaged?: number;
@@ -682,7 +696,7 @@ function buildCheckRunFailure(input: {
   };
 }
 
-function requirePullRequestExternalWork(store: RunStore, externalWorkId: string): ExternalWorkRecord {
+function requirePullRequestExternalWork(store: ExternalWorkCiTriageStore, externalWorkId: string): ExternalWorkRecord {
   const externalWork = store.getExternalWorkRecord(externalWorkId);
   if (!externalWork) {
     throw new Error(`External work item not found: ${externalWorkId}`);

@@ -4,7 +4,15 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import { DEFAULT_WORKSPACE_ID, type Channel } from "./workspace-types.js";
 import { redactSecrets } from "./redaction.js";
-import type { RunArtifact, RunStore } from "./run-types.js";
+import type {
+  ChannelStoreFacet,
+  ExternalWorkStoreFacet,
+  RunArtifact,
+  RunExecutionStoreFacet,
+  RunStorePathsFacet,
+  RuntimeSupervisorStoreFacet,
+  WorkspaceStoreFacet,
+} from "./run-types.js";
 import {
   normalizeGitHubExternalWorkItem,
   normalizeLinearExternalWorkItem,
@@ -25,6 +33,14 @@ import type {
   ExternalWorkspaceMode,
 } from "./external-work-types.js";
 
+type ExternalWorkSchedulerStore =
+  ExternalWorkStoreFacet &
+  WorkspaceStoreFacet &
+  ChannelStoreFacet &
+  RunExecutionStoreFacet &
+  RuntimeSupervisorStoreFacet &
+  RunStorePathsFacet;
+
 type FetchLike = (input: string, init?: { readonly method?: string; readonly headers?: Record<string, string>; readonly body?: string }) => Promise<{
   readonly ok: boolean;
   readonly status: number;
@@ -44,7 +60,7 @@ export interface LinearExternalWorkAdapterOptions {
 }
 
 export interface ExternalWorkPollGitHubInput {
-  readonly store: RunStore;
+  readonly store: ExternalWorkSchedulerStore;
   readonly cwd: string;
   readonly channelId: string;
   readonly workflowDefinition: ExternalWorkflowDefinition;
@@ -57,7 +73,7 @@ export interface ExternalWorkPollGitHubInput {
 }
 
 export interface ExternalWorkPollLinearInput {
-  readonly store: RunStore;
+  readonly store: ExternalWorkSchedulerStore;
   readonly cwd: string;
   readonly channelId: string;
   readonly workflowDefinition: ExternalWorkflowDefinition;
@@ -70,7 +86,7 @@ export interface ExternalWorkPollLinearInput {
 }
 
 export interface ExternalWorkReconcileInput {
-  readonly store: RunStore;
+  readonly store: ExternalWorkSchedulerStore;
   readonly channelId?: string;
   readonly workflowDefinition?: ExternalWorkflowDefinition;
   readonly githubToken?: string;
@@ -401,7 +417,7 @@ export async function reconcileExternalWork(input: ExternalWorkReconcileInput): 
 }
 
 async function processCandidate(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkSchedulerStore;
   readonly cwd: string;
   readonly channel: Channel;
   readonly channelId: string;
@@ -606,7 +622,7 @@ async function processCandidate(input: {
 }
 
 function createExternalWorkEvidenceArtifacts(
-  store: RunStore,
+  store: ExternalWorkSchedulerStore,
   externalWorkId: string,
   externalWorkItem: ExternalWorkItem,
   renderedPrompt: string,
@@ -643,7 +659,7 @@ function createExternalWorkEvidenceArtifacts(
 }
 
 async function runWorkspaceHooks(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkSchedulerStore;
   readonly externalWorkId: string;
   readonly channel: Channel;
   readonly workspacePath: string;
@@ -700,7 +716,7 @@ async function runWorkspaceHooks(input: {
 }
 
 async function runWorkspaceHookCommand(input: {
-  readonly store: RunStore;
+  readonly store: ExternalWorkSchedulerStore;
   readonly externalWorkId: string;
   readonly workspacePath: string;
   readonly hooks: ExternalWorkflowDefinition["config"]["hooks"];
@@ -983,7 +999,7 @@ function readGitHubNumber(value: unknown): number {
   return value.number;
 }
 
-function requireChannel(store: RunStore, channelId: string): Channel {
+function requireChannel(store: ExternalWorkSchedulerStore, channelId: string): Channel {
   const channel = store.getChannel(channelId);
   if (!channel) {
     throw new Error(`Channel not found: ${channelId}`);
