@@ -220,13 +220,19 @@ Expected stores:
 - `ProviderStoreFacet`;
 - `ApprovalStoreFacet`;
 - `RunExecutionStoreFacet` for linked run artifacts and events;
-- `RunStorePathsFacet` for filesystem paths.
+- `RuntimeSupervisorStoreFacet` where media execution owns durable media runtime work
+  units, runtime events, and semaphore slots;
+- `RunStorePathsFacet` for filesystem paths;
+- `ExternalWorkStoreFacet` only through approval expiration synchronization, not as
+  media-owned behavior.
 
 Ownership rule:
 
 - Media job state machines remain media-owned.
 - Approval policy remains approval-owned; media code should request or observe approval,
   not duplicate approval policy evaluation.
+- Approval expiration remains approval-owned. Media hooks may accept the approval
+  expiration store surface when expiring pending media approvals.
 
 ### Composition Roots And Store Locators
 
@@ -250,8 +256,8 @@ Future code slices should follow this order:
 
 1. Narrow focused thread/session view helpers that already have clear
    `LingThreadStoreFacet` and `ChannelStoreFacet` boundaries.
-2. Narrow media execution helpers around `MediaStoreFacet`, `ProviderStoreFacet`, and
-   `ApprovalStoreFacet`.
+2. Narrow media execution helpers around `MediaStoreFacet`, `ProviderStoreFacet`,
+   `ApprovalStoreFacet`, and runtime work-unit seams.
 3. Narrow channel workflow helper seams without changing workflow behavior.
 4. Narrow runtime supervisor helper seams only after stale recovery and run-control
    ownership are explicit in the touched module.
