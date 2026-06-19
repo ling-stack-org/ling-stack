@@ -461,6 +461,54 @@ Acceptance:
 - budget errors expose only budget metadata, not schemas, reason text, or idempotency
   values.
 
+## Slice P10: Runner-Native Deferred Tool Hydration
+
+Purpose: design the safe runner-facing bridge from P8/P9 daemon materialization to
+model-visible on-demand schemas without turning schema loading into execution approval.
+
+Implementation status:
+
+- this slice is design-only and does not inject materialized schemas into the current Pi
+  runner prompt;
+- the daemon remains the only hydration authority. Runners must call the daemon
+  materialization path instead of reading MCP/plugin config directly;
+- runner-native hydration requires a verified runner capability before selection:
+  unsupported or unverified runners keep using the P8/P9 daemon/API/Web-only surface;
+- hydrated schema payloads may be returned to the active runner turn, but durable runtime
+  events and Web evidence continue storing only bounded summaries;
+- sandbox backend selection remains a separate future decision and is not part of P10.
+
+Work:
+
+1. Add runner capability metadata for `daemon_hydrated` tool search/hydration support.
+2. Define the runner-to-daemon hydration request shape with run id, attempt id, scope,
+   reason, and idempotency key.
+3. Reuse `POST /runs/:id/tool-load-requests` for policy, context budget, and idempotency;
+   extend only if the runner needs a sanitized schema payload separate from Web/API
+   summaries.
+4. Add runtime trace attributes that distinguish catalog search, hydration accepted,
+   hydration rejected by policy, hydration rejected by budget, and execution approval.
+5. Extend runner conformance with:
+
+   - unmaterialized side-effect execution rejection;
+   - hydration does not change `allow`/`ask`/`deny`;
+   - denied tools can be described but not executed;
+   - over-budget hydration returns a model-visible denial and writes no materialization
+     event;
+   - idempotent hydration retries do not duplicate runtime evidence.
+
+6. Keep the first implementation behind a runner feature flag. Pi behavior remains
+   unchanged until the adapter passes conformance.
+
+Acceptance:
+
+- current runner prompts do not receive hidden schema injection from P10 docs alone;
+- a runner cannot hydrate schemas unless readiness reports verified hydration support;
+- hydration success and failure are auditable through runtime events/trace summaries;
+- tool execution authority still comes only from workspace approval policy and approval
+  checkpoints;
+- sandbox execution backends remain fail-closed.
+
 ## Migration Strategy
 
 No broad migration is needed initially.
@@ -487,6 +535,7 @@ Recommended order:
 | P7 Web surfaces | optional | no | required | run evidence review |
 | P8 tool materialization API | optional | required | optional | tool catalog endpoint |
 | P9 materialization budget enforcement | optional | required | no | over-budget namespace rejection |
+| P10 runner-native hydration design | no | optional | no | runner capability review |
 
 ## Rollback
 
@@ -503,6 +552,8 @@ Each slice should be separately reversible:
   execution paths continue using approval policy directly.
 - P9 can remove the budget gate and budget DTO field while keeping P8 catalog/materialization
   endpoints intact.
+- P10 can keep runner hydration unsupported; P8/P9 daemon/API/Web materialization still
+  works as a non-runner control surface.
 
 ## Recommended Decisions
 
@@ -516,6 +567,7 @@ the start of each slice if code evidence contradicts them.
 | Handoff storage | Normalize `ChannelHandoff` and workflow handoff intent records at API/read-model boundaries first; defer table migration. | Strangler fig / anti-corruption layer | P3 start |
 | Tool namespace exposure | Build an internal daemon/Web catalog first; do not expose deferred tool loading to the model prompt until a runner supports it cleanly. | Capability catalog / lazy loading | P4 start |
 | Sandbox backend | Land only contracts, readiness blockers, and conformance expectations first; keep all concrete sandbox backends fail-closed. | Capability-based security / fail closed | P5 start |
+| Runner-native tool hydration | Let only conformance-verified runners request daemon-hydrated schemas; never let runners self-load MCP/plugin schemas or treat hydration as approval. | Brokered capability / policy-preserving lazy loading | P10 start |
 
 Rationale:
 
@@ -531,19 +583,28 @@ Rationale:
 - P5 is the riskiest boundary. A sandbox is an execution environment, not Ling state. No
   backend should be enabled until artifact import, network policy, and secret redaction
   pass conformance.
+- P10 is the first point where deferred loading may become model-visible. That boundary
+  belongs in the runner adapter contract, not in Web or ad hoc prompt assembly.
 
-## Open Decisions Before Implementation
+## Remaining Implementation Gates After P9
 
-These are the same decision points expressed as implementation gates:
+Resolved gates:
 
-1. Whether trace projection should live entirely in `packages/core` or have daemon-specific
-   enrichers for artifact paths and Web URLs.
-2. Whether existing `ChannelHandoff` and workflow handoff intent records should be migrated
-   into one storage table or normalized only at API boundaries.
-3. Whether tool namespace materialization is exposed to the model through the current runner
-   prompt or only used internally by the daemon until a runner supports tool search.
-4. Which sandbox backend, if any, is worth implementing first after the contract lands.
+- trace projection ownership: pure core projection plus daemon enrichers landed in P1;
+- handoff storage: normalize existing channel/workflow records at read-model boundaries,
+  defer unified-table migration;
+- P8/P9 materialization: keep daemon/API/Web-only until a runner advertises verified
+  hydration support.
 
-Current P8 answer: keep materialization internal to daemon/API clients only. Do not expose
-deferred tool loading to the current runner prompt until a runner supports tool search and
-approval-preserving schema hydration cleanly.
+Open gates:
+
+1. Which runner adapter should be the first to implement `daemon_hydrated` tool search.
+   Default: keep embedded Pi unchanged until an adapter can produce structured hydration
+   events and pass conformance.
+2. Whether hydrated schema payloads need a new runner-only response DTO or can reuse the
+   existing materialization response plus a sanitized schema envelope.
+3. Which sandbox backend, if any, is worth implementing first after the contract lands.
+
+Current P10 answer: expose deferred loading to runner prompts only through a
+conformance-verified runner hydration capability. Do not inject P8/P9 materialization into
+the current runner prompt, and do not select a sandbox backend in the same slice.
