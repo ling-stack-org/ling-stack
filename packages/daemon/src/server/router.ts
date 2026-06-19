@@ -162,6 +162,7 @@ import {
   handleRun,
 } from "../features/runs/routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
+import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
@@ -243,6 +244,7 @@ import {
   parseTeammateDirectInterventionRoute,
   parseTeammateDirectReplyRoute,
   parseTeammateRoute,
+  parseTraceRoute,
   parseWorkItemRoute,
   parseWorkUnitRoute,
 } from "./routes.js";
@@ -728,6 +730,25 @@ export async function routeRequest(
 
   if (url.pathname === "/threads") {
     await handleLingThreadsCollection(request, response, url, storeRegistry, config.maxBodyBytes);
+    return;
+  }
+
+  if (url.pathname === "/traces") {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /traces` });
+      return;
+    }
+    handleTracesCollection(response, url, storeRegistry);
+    return;
+  }
+
+  const traceRoute = parseTraceRoute(url.pathname);
+  if (traceRoute) {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for trace routes` });
+      return;
+    }
+    handleTraceItem(response, url, storeRegistry, traceRoute);
     return;
   }
 

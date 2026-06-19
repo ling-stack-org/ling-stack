@@ -16,6 +16,8 @@ export * from "./provider-adapters.js";
 export * from "./state-machines.js";
 export * from "./channel-runtime-types.js";
 export * from "./runtime-supervisor-types.js";
+export * from "./runtime-trace-types.js";
+export * from "./runtime-trace-projection.js";
 export * from "./skill-types.js";
 export * from "./workflow-graph-types.js";
 export * from "./builtin-skill-packs.js";

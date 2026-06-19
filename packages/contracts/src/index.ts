@@ -4,6 +4,7 @@ export type * from "./artifacts.js";
 export type * from "./runtime.js";
 export type * from "./runner-readiness.js";
 export type * from "./threads.js";
+export type * from "./traces.js";
 export type * from "./turns.js";
 export type * from "./automations.js";
 export type * from "./execution-actions.js";

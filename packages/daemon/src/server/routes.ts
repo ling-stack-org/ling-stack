@@ -82,6 +82,17 @@ export function parseRunInterventionRoute(
   return undefined;
 }
 
+export function parseTraceRoute(pathname: string): { readonly kind: "detail"; readonly traceId: string } | { readonly kind: "spans"; readonly traceId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "traces") {
+    return { kind: "detail", traceId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "traces" && segments[2] === "spans") {
+    return { kind: "spans", traceId: segments[1] };
+  }
+  return undefined;
+}
+
 export function parseTeammateDirectInterventionRoute(
   pathname: string,
 ): { readonly kind: "cancel" | "promote"; readonly interventionId: string } | undefined {

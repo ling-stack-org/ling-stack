@@ -55,6 +55,15 @@ Acceptance:
 
 Purpose: give Ling one end-to-end diagnostic shape without creating a new state source.
 
+Implementation status:
+
+- core trace DTOs and pure projection live in `packages/core/src/runtime-trace-types.ts`
+  and `packages/core/src/runtime-trace-projection.ts`;
+- read-only daemon routes expose `GET /traces`, `GET /traces/:id`, and
+  `GET /traces/:id/spans`;
+- the first PR intentionally leaves the Web evidence panel for a follow-up slice so the
+  read model can land independently of presentation work.
+
 Likely files:
 
 - `packages/core/src/runtime-trace-types.ts`
