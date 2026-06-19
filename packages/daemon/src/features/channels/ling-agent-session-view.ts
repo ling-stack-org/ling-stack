@@ -1,13 +1,17 @@
 import type {
   ApprovalRequest,
+  ApprovalStoreFacet,
   ChannelExecutionProposal,
+  ChannelStoreFacet,
   ChannelWorkflow,
   ChannelWorkflowStep,
   RunArtifact,
+  RunExecutionStoreFacet,
   RunIntervention,
   RunSession,
-  RunStore,
 } from "@ling-stack/core";
+
+type LingAgentSessionViewStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet;
 
 export type LingAgentSessionViewStatus =
   | "open"
@@ -111,7 +115,7 @@ interface LingAgentSessionViewSource {
 }
 
 export function buildLingAgentSessionViewForChannel(input: {
-  readonly store: RunStore;
+  readonly store: LingAgentSessionViewStore;
   readonly channelId: string;
 }): LingAgentSessionView {
   const workflows = input.store.listChannelWorkflows({ channelId: input.channelId, limit: 100 });
