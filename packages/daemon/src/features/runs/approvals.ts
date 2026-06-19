@@ -4,17 +4,22 @@ import {
   defaultApprovalToolDecisions,
   riskyRunTools,
   syncExternalWorkActionForApproval,
+  type ApprovalStoreFacet,
   type ApprovalPayload,
   type ApprovalPolicy,
   type ApprovalRequest,
   type ApprovalRisk,
   type ApprovalToolDecision,
   type CreateApprovalRequestInput,
+  type ExternalWorkStoreFacet,
   type RunEventEnvelope,
   type RunEventType,
+  type RunExecutionStoreFacet,
   type RunSession,
+  type RunStorePathsFacet,
   type RunStore,
   type RunTool,
+  type RuntimeSupervisorStoreFacet,
   type SkillApprovalProfile,
 } from "@ling-stack/core";
 import type { PiRunnerApprovalRequest, PiRunnerRunOptions } from "@ling-stack/runner-pi";
@@ -45,7 +50,18 @@ const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
 const APPROVAL_PREVIEW_LIMIT = 1_200;
 
-export function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest): void {
+type ApprovalDecisionEventStore = RunExecutionStoreFacet;
+type ApprovalExpirationStore =
+  ApprovalStoreFacet &
+  RunExecutionStoreFacet &
+  ExternalWorkStoreFacet &
+  RuntimeSupervisorStoreFacet &
+  RunStorePathsFacet;
+
+export function appendApprovalDecisionEvent(
+  store: ApprovalDecisionEventStore,
+  approval: ApprovalRequest,
+): void {
   if (!approval.runId) {
     return;
   }
@@ -62,7 +78,7 @@ export function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalR
 }
 
 export function expireStalePendingApprovals(
-  store: RunStore,
+  store: ApprovalExpirationStore,
   options: {
     readonly runId?: string;
     readonly mediaJobId?: string;
@@ -98,7 +114,7 @@ export function expireStalePendingApprovals(
 }
 
 export function expireStaleApproval(
-  store: RunStore,
+  store: ApprovalExpirationStore,
   approvalId: string,
   controlPlaneEvents?: ControlPlaneEventHub,
   cwd = store.paths.cwd,
@@ -548,7 +564,7 @@ export function appendApprovalResolvedControlPlaneEvent(
 }
 
 export function appendApprovalExpiredControlPlaneEvent(
-  store: RunStore,
+  store: RunExecutionStoreFacet,
   hub: ControlPlaneEventHub | undefined,
   cwd: string,
   approval: ApprovalRequest,
@@ -575,7 +591,7 @@ export function appendApprovalExpiredControlPlaneEvent(
 }
 
 function expireApproval(
-  store: RunStore,
+  store: ApprovalExpirationStore,
   approval: ApprovalRequest,
   now: string,
   controlPlaneEvents?: ControlPlaneEventHub,

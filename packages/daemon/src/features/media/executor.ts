@@ -6,13 +6,19 @@ import {
   DEFAULT_WORKSPACE_ID,
   redactSecrets,
   type ApprovalRequest,
+  type ApprovalStoreFacet,
   type ArtifactType,
   type CreateApprovalRequestInput,
+  type ExternalWorkStoreFacet,
   type MediaJob,
   type MediaJobStatus,
+  type MediaStoreFacet,
   type ProviderPreset,
+  type ProviderStoreFacet,
   type RunArtifact,
-  type RunStore,
+  type RunExecutionStoreFacet,
+  type RunStorePathsFacet,
+  type RuntimeSupervisorStoreFacet,
   type SecretResolver,
   type WorkUnit,
   type WorkUnitAttempt,
@@ -35,8 +41,31 @@ const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_PREVIEW_LIMIT = 1_200;
 const MEDIA_RUNTIME_SEMAPHORE_TTL_MS = 6 * 60 * 60 * 1000;
 
+type MediaApprovalExpirationStore =
+  ApprovalStoreFacet &
+  ExternalWorkStoreFacet &
+  RunExecutionStoreFacet &
+  RunStorePathsFacet &
+  RuntimeSupervisorStoreFacet;
+type MediaExecutionStore =
+  MediaStoreFacet &
+  ProviderStoreFacet &
+  ApprovalStoreFacet &
+  RunExecutionStoreFacet &
+  RuntimeSupervisorStoreFacet &
+  RunStorePathsFacet &
+  ExternalWorkStoreFacet;
+type MediaRuntimeStartStore =
+  RuntimeSupervisorStoreFacet &
+  RunStorePathsFacet &
+  RunExecutionStoreFacet;
+type MediaRuntimeTerminalStore = RuntimeSupervisorStoreFacet;
+type MediaApprovalDecisionStore = MediaStoreFacet & ProviderStoreFacet;
+type MediaReadinessStore = ProviderStoreFacet;
+type MediaArtifactStore = RunStorePathsFacet & RunExecutionStoreFacet;
+
 export interface MediaRuntimeStartRequest {
-  readonly store: RunStore;
+  readonly store: MediaRuntimeStartStore;
   readonly kind: "media_job";
   readonly ownerType: "media_job";
   readonly ownerId: string;
@@ -56,7 +85,7 @@ export interface MediaRuntimeHandle {
 }
 
 export interface MediaRuntimeTerminalTransitionRequest {
-  readonly store: RunStore;
+  readonly store: MediaRuntimeTerminalStore;
   readonly workUnitId: string;
   readonly attemptId: string;
   readonly event: "runner_succeeded" | "runner_failed";
@@ -69,7 +98,10 @@ export interface MediaRuntimeTerminalTransitionRequest {
 }
 
 export interface RunMediaJobHooks {
-  readonly expirePendingMediaApprovals: (store: RunStore, mediaJobId: string) => void;
+  readonly expirePendingMediaApprovals: (
+    store: MediaApprovalExpirationStore,
+    mediaJobId: string,
+  ) => void;
   readonly startRuntimeWorkUnit: (input: MediaRuntimeStartRequest) => MediaRuntimeHandle;
   readonly transitionRuntimeWorkUnitTerminal: (input: MediaRuntimeTerminalTransitionRequest) => void;
 }
@@ -116,7 +148,7 @@ export async function runMediaJobExecution(input: {
   readonly mediaJobId: string;
   readonly hooks: RunMediaJobHooks;
 }): Promise<MediaJobExecutionResult> {
-  let store: RunStore | undefined;
+  let store: MediaExecutionStore | undefined;
   let job: MediaJob | undefined;
   let supervised: MediaRuntimeHandle | undefined;
   let startedExecution = false;
@@ -355,7 +387,7 @@ export async function runMediaJobExecution(input: {
 
 export function syncMediaJobForApprovalDecision(input: {
   readonly cwd: string;
-  readonly store: RunStore;
+  readonly store: MediaApprovalDecisionStore;
   readonly storeRegistry: RunStoreRegistry;
   readonly secretResolver: SecretResolver;
   readonly approval: ApprovalRequest;
@@ -403,7 +435,7 @@ export function syncMediaJobForApprovalDecision(input: {
 }
 
 function resolveLiveMediaExecutionReadiness(
-  store: RunStore,
+  store: MediaReadinessStore,
   provider: ProviderPreset,
   operation: MediaJob["operation"],
   secretResolver: SecretResolver,
@@ -457,7 +489,7 @@ function mediaExecutionHasRequiredArtifact(
 }
 
 function applyMediaCostApprovalGate(
-  store: RunStore,
+  store: MediaExecutionStore,
   job: MediaJob,
   provider: ProviderPreset,
   hooks: RunMediaJobHooks,
@@ -518,7 +550,7 @@ function createMediaCostApprovalInput(job: MediaJob, provider: ProviderPreset): 
   };
 }
 
-function markMediaJobWaitingForApproval(store: RunStore, job: MediaJob): MediaJob {
+function markMediaJobWaitingForApproval(store: MediaStoreFacet, job: MediaJob): MediaJob {
   if (job.status === "waiting_for_approval" && !job.errorMessage) {
     return job;
   }
@@ -532,7 +564,7 @@ function markMediaJobWaitingForApproval(store: RunStore, job: MediaJob): MediaJo
   ) ?? job;
 }
 
-function failMediaJobForApprovalDecision(store: RunStore, job: MediaJob, approval: ApprovalRequest): MediaJob {
+function failMediaJobForApprovalDecision(store: MediaStoreFacet, job: MediaJob, approval: ApprovalRequest): MediaJob {
   return store.updateMediaJobStatus(
     job.id,
     {
@@ -544,7 +576,7 @@ function failMediaJobForApprovalDecision(store: RunStore, job: MediaJob, approva
 }
 
 function createMediaJobArtifacts(
-  store: RunStore,
+  store: MediaArtifactStore,
   job: MediaJob,
   candidates: readonly MediaExecutionArtifact[],
   createdAt: string,
@@ -556,7 +588,7 @@ function createMediaJobArtifacts(
 }
 
 function createMediaJobArtifact(
-  store: RunStore,
+  store: MediaArtifactStore,
   job: MediaJob,
   candidate: MediaExecutionArtifact,
   index: number,
