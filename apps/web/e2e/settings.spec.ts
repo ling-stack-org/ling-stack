@@ -390,6 +390,13 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(panel).toContainText("channel-canvas-protocol-skill");
   await candidatePanel.getByRole("button", { name: "Reject candidate" }).click();
   await expect(candidatePanel).toContainText("No open skill candidates");
+
+  const clusterPanel = panel.getByRole("region", { name: "Candidate Clusters" });
+  await expect(clusterPanel).toContainText("1 review · 1 blocked · 2 total");
+  await expect(clusterPanel).toContainText("Channel canvas handoff protocol");
+  await expect(clusterPanel).toContainText("Create channel protocol candidate");
+  await expect(clusterPanel).toContainText("Generated skill missing gates");
+  await expect(clusterPanel).toContainText("Append evidence");
 });
 
 test("settings external work status shows setup and explicit controls", async ({ page }) => {

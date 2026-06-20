@@ -210,14 +210,25 @@ Implemented in this slice:
 - run lifecycle, candidate draft creation, import draft publication, and manual
   correction events feed Skill Health findings for never-used generated skills, high
   failure rates, and repeated corrections.
+- `ProcedureObservationCluster` read model in core storage and RunStore, with shared
+  contracts/API client helpers plus daemon `GET /procedure-observation-clusters` and
+  `GET /procedure-observation-clusters/:id`;
+- `playbook` route kind for channel-scoped workflow output procedures that should stay
+  local to a channel/project before any skill promotion review;
+- read-only Channel Protocol Canvas API at `GET /channels/:id/protocol/canvas`, returning
+  the effective protocol, protocol draft candidates, channel-scoped protocol/playbook
+  clusters, and compact section summaries;
+- Settings > Skill Library shows candidate clusters as a read-only governance queue.
 
 Still not implemented:
 
 - automatic post-run observation hooks;
 - native Desktop candidate review UI;
 - direct candidate-to-registry publish without the import draft review step;
-- transcript-derived or post-run routing into channel protocol candidates;
+- transcript-derived or post-run automatic candidate creation for channel protocol or
+  playbook destinations;
 - explicit Web channel protocol candidate queue beyond the existing protocol draft surface;
+- destination-specific playbook draft table/UI;
 - automatic correction-to-update-candidate generation;
 - superseded active generated skill automation beyond the reserved `superseded` event kind.
 
@@ -724,18 +735,26 @@ Exit criteria:
 
 ## Phase SG.8: Channel Protocol Canvas
 
-Status: Implemented as a governance API alias over existing channel protocol drafts.
-Observation routing and an explicit pending-candidate channel UI remain deferred.
+Status: Implemented as a governance API alias over existing channel protocol drafts plus
+a read-only Channel Protocol Canvas read model. Automatic observation-to-protocol-draft
+creation and an explicit pending-candidate channel UI remain deferred.
 
-Type: channel governance API alias over the existing channel protocol model.
+Type: channel governance API alias and read-only canvas over existing protocol, draft,
+and observation-cluster models.
 
 Files:
 
 ```text
+packages/contracts/src/skills.ts
 packages/contracts/src/channels.ts
+packages/core/src/procedure-observation-types.ts
+packages/core/src/storage/sqlite/procedure-observation-store.ts
 packages/api-client/src/endpoints/channels.ts
+packages/api-client/src/endpoints/skills.ts
 packages/daemon/src/features/channels/collaboration-protocol.ts
+packages/daemon/src/features/skills/routes.ts
 packages/daemon/src/server/routes.ts
+apps/web/src/features/settings/SkillLibrarySettingsPanel.tsx
 packages/daemon/test/channel-workspace.test.mjs
 ```
 
@@ -744,11 +763,14 @@ Existing storage:
 ```text
 channel_collaboration_protocols
 channel_collaboration_protocol_drafts
+procedure_observations
 ```
 
 Do not add a second `channel_protocol_candidates` table in this slice.
 `ChannelCollaborationProtocolDraft` is already the channel protocol candidate model:
 it has source refs, status, base version, proposed patch, and apply/cancel review state.
+Do not add a separate cluster table. `ProcedureObservationCluster` is a read model over
+existing `procedure_observations` rows.
 
 Routes:
 
@@ -757,6 +779,9 @@ GET /channels/:id/protocol-candidates?cwd=/path/to/workspace
 POST /channels/:id/protocol-candidates?cwd=/path/to/workspace
 POST /channels/:id/protocol-candidates/:candidateId/review?cwd=/path/to/workspace
 GET /channels/:id/protocol?cwd=/path/to/workspace
+GET /channels/:id/protocol/canvas?cwd=/path/to/workspace&limit=50
+GET /procedure-observation-clusters?cwd=/path/to/workspace&channelId=channel_...&routeKind=playbook&status=ready_for_review
+GET /procedure-observation-clusters/:id?cwd=/path/to/workspace
 ```
 
 Behavior:
@@ -764,6 +789,12 @@ Behavior:
 - `GET/POST /protocol-candidates` map to existing protocol draft list/create behavior.
 - review `approve` applies the protocol draft.
 - review `reject` marks the draft `cancelled`.
+- `GET /protocol/canvas` returns effective protocol state, protocol draft candidates,
+  channel-scoped protocol/playbook clusters, and compact canvas sections.
+- `ProcedureObservationCluster` groups observations by deterministic `clusterId` and
+  recommends review actions such as `create_channel_protocol_candidate`,
+  `create_playbook_candidate`, or `append_evidence`.
+- `playbook` is channel/project-local procedure evidence, not a global skill.
 - Protocol candidates cover role division, handoff rules, review rules, default workflow,
   communication norms, and artifact policy.
 - Active protocols render into channel context.
@@ -780,6 +811,8 @@ Tests:
 - create/list protocol candidate through the alias route;
 - reject candidate without changing the active protocol;
 - approve candidate and render as active protocol override;
+- create a channel-scoped workflow-step observation and list its playbook cluster;
+- canvas response includes protocol/playbook clusters and section summaries;
 - source refs visible in API response;
 - existing Context protocol panel continues to show active protocol state.
 
@@ -791,8 +824,8 @@ Exit criteria:
 
 Status: Implemented for structured manual observations, conservative routing,
 `POST /skill-candidates/observe`, and explicit/idempotent `POST
-/procedure-observations/jobs`. Automatic post-run hooks and transcript-derived generation
-remain deferred.
+/procedure-observations/jobs`, including channel-scoped `playbook` routing. Automatic
+post-run hooks and transcript-derived generation remain deferred.
 
 Type: conservative semi-automation.
 
@@ -803,9 +836,8 @@ packages/contracts/src/skills.ts
 packages/core/src/procedure-observation-types.ts
 packages/core/src/candidate-router.ts
 packages/core/src/storage/sqlite/procedure-observation-store.ts
-packages/daemon/src/features/skill-governance/observation-jobs.ts
-packages/daemon/src/features/skill-governance/candidate-router.ts
-packages/daemon/src/features/skill-governance/routes.ts
+packages/daemon/src/features/skills/routes.ts
+packages/daemon/src/features/skills/schemas.ts
 packages/daemon/src/features/runs/orchestrator.ts
 packages/daemon/src/features/channels/workflow-fanin.ts
 packages/daemon/test/channel-workspace.test.mjs
@@ -970,6 +1002,7 @@ Candidate gates:
 | --- | --- | --- |
 | Explicit "save this as a skill" | create | pending skill candidate if duplicate decision is `no_overlap` |
 | Explicit "save this as channel protocol" | create | channel protocol draft/candidate |
+| Workflow step output with channel-local procedure steps | create | playbook cluster; draft creation requires later review action |
 | User-approved recording | create | pending skill candidate if validation and negative triggers exist |
 | Single successful run without explicit save | optional when feature flag is on | evidence-only |
 | Two or more successful runs in same cluster | append evidence | pending candidate only after stable validation evidence |
@@ -994,6 +1027,8 @@ Behavior:
 - Skill routing requires positive triggers, negative triggers, procedure steps,
   validation steps, stable required tools, and no permission expansion.
 - Channel protocol routing is the default for multi-agent coordination rules.
+- Playbook routing is the default for `workflow_step_output` observations that have a
+  `channelId` and concrete procedure steps.
 - Desktop/PC renderers call daemon APIs only and must not parse transcripts or write
   SQLite-backed governance tables directly.
 

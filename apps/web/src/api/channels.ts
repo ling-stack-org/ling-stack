@@ -29,6 +29,7 @@ import type {
   ChannelProtocolCandidateListResponse,
   ChannelProtocolCandidateMutationResponse,
   ChannelProtocolCandidateReviewRequest,
+  ChannelProtocolCanvasResponse,
   ChannelProtocolDraftStatus,
   ChannelWorkflowCancelResponse,
   ChannelWorkflowListResponse,
@@ -165,6 +166,14 @@ export async function listChannelProtocolCandidates(
   options: { readonly status?: ChannelProtocolDraftStatus; readonly limit?: number } = {},
 ): Promise<ChannelProtocolCandidateListResponse> {
   return daemonClient.listChannelProtocolCandidates(cwd, channelId, options);
+}
+
+export async function getChannelProtocolCanvas(
+  cwd: string,
+  channelId: string,
+  options: { readonly limit?: number } = {},
+): Promise<ChannelProtocolCanvasResponse> {
+  return daemonClient.getChannelProtocolCanvas(cwd, channelId, options);
 }
 
 export async function createChannelProtocolCandidate(

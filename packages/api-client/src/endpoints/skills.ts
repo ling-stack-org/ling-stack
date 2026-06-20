@@ -1,5 +1,8 @@
 import type {
   CreateSkillCandidateRequest,
+  ProcedureObservationClusterListResponse,
+  ProcedureObservationClusterResponse,
+  ProcedureObservationClusterStatus,
   ProcedureObservationListResponse,
   ProcedureObservationJobRequest,
   ProcedureObservationJobResponse,
@@ -84,6 +87,7 @@ export const skillEndpoints = {
     cwd: string,
     options: {
       readonly clusterId?: string;
+      readonly channelId?: string;
       readonly routeKind?: CandidateRouteKind;
       readonly limit?: number;
     } = {},
@@ -91,9 +95,37 @@ export const skillEndpoints = {
     return this._get("/procedure-observations", {
       cwd,
       clusterId: options.clusterId,
+      channelId: options.channelId,
       routeKind: options.routeKind,
       limit: options.limit,
     });
+  },
+
+  async listProcedureObservationClusters(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    options: {
+      readonly channelId?: string;
+      readonly routeKind?: CandidateRouteKind;
+      readonly status?: ProcedureObservationClusterStatus;
+      readonly limit?: number;
+    } = {},
+  ): Promise<ProcedureObservationClusterListResponse> {
+    return this._get("/procedure-observation-clusters", {
+      cwd,
+      channelId: options.channelId,
+      routeKind: options.routeKind,
+      status: options.status,
+      limit: options.limit,
+    });
+  },
+
+  async getProcedureObservationCluster(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    clusterId: string,
+  ): Promise<ProcedureObservationClusterResponse> {
+    return this._get(`/procedure-observation-clusters/${encodeURIComponent(clusterId)}`, { cwd });
   },
 
   async createProcedureObservation(

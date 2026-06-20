@@ -42,6 +42,7 @@ export interface MockState {
   skillImportDrafts: unknown[];
   skillCandidates: unknown[];
   skillCandidateReviewRecords: unknown[];
+  procedureObservationClusters: unknown[];
   teammateChannelMemberships: unknown[];
   teammateSkillBindings: unknown[];
   teammateMemoryScopes: unknown[];
@@ -886,6 +887,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     skillImportDrafts: [],
     skillCandidates: createMockSkillCandidates(),
     skillCandidateReviewRecords: [],
+    procedureObservationClusters: createMockProcedureObservationClusters(),
     teammateChannelMemberships: [],
     teammateSkillBindings: [],
     teammateMemoryScopes: [],
@@ -1901,6 +1903,52 @@ export function createMockSkillCandidates(): unknown[] {
       reviewNotes: ["Keep publication separate from candidate approval."],
       createdAt: timestamp,
       updatedAt: timestamp,
+    },
+  ];
+}
+
+export function createMockProcedureObservationClusters(): unknown[] {
+  return [
+    {
+      id: "procedure_cluster_channel_canvas",
+      workspaceId: "workspace_default",
+      channelId: "channel-1",
+      routeKind: "channel_protocol",
+      routeReasonCode: "multi_agent_handoff_protocol",
+      status: "ready_for_review",
+      recommendedAction: "create_channel_protocol_candidate",
+      title: "Channel canvas handoff protocol",
+      summary: "Repeated channel handoffs should become a reviewable protocol candidate, not a global skill.",
+      normalizedGoal: "channel handoff protocol canvas",
+      observationCount: 3,
+      confidence: "high",
+      reusableScore: 78,
+      positiveTriggers: ["Channel repeatedly coordinates agents through the same handoff"],
+      negativeTriggers: ["A one-off handoff does not need a protocol"],
+      routeBlockers: [],
+      sourceRefs: [{ type: "message", id: "message_canvas_cluster", label: "channel canvas discussion" }],
+      firstObservedAt: "2026-06-20T00:00:00.000Z",
+      lastObservedAt: "2026-06-20T00:20:00.000Z",
+    },
+    {
+      id: "procedure_cluster_skill_gate",
+      workspaceId: "workspace_default",
+      routeKind: "skill",
+      routeReasonCode: "repeatable_procedure_missing_gates",
+      status: "blocked",
+      recommendedAction: "append_evidence",
+      title: "Generated skill missing gates",
+      summary: "A repeatable procedure exists, but it needs validation and negative triggers before review.",
+      normalizedGoal: "generated skill gate review",
+      observationCount: 1,
+      confidence: "medium",
+      reusableScore: 55,
+      positiveTriggers: ["The user asks to save a repeated workflow"],
+      negativeTriggers: [],
+      routeBlockers: ["missing_validation", "missing_negative_trigger"],
+      sourceRefs: [{ type: "observation-job", id: "observation_job_mock_skill_gate", label: "Observation job" }],
+      firstObservedAt: "2026-06-20T00:10:00.000Z",
+      lastObservedAt: "2026-06-20T00:10:00.000Z",
     },
   ];
 }
@@ -3510,6 +3558,47 @@ function buildMockChannelCollaborationProtocolResponse(channelId: string, channe
   };
 }
 
+function buildMockChannelProtocolCanvasResponse(state: MockState, channelId: string, channel: Record<string, unknown>): Record<string, unknown> {
+  const candidateClusters = state.procedureObservationClusters.filter((item) =>
+    isRecord(item) &&
+    item.channelId === channelId &&
+    (item.routeKind === "channel_protocol" || item.routeKind === "playbook")
+  );
+  const draftCandidates = state.channelProtocolDrafts.filter((item) =>
+    isRecord(item) &&
+    item.channelId === channelId &&
+    item.status === "draft"
+  );
+  return {
+    ...buildMockChannelCollaborationProtocolResponse(channelId, channel),
+    candidateClusters,
+    draftCandidates,
+    sections: [
+      {
+        kind: "current_protocol",
+        title: "Current protocol",
+        summary: "Effective channel coordination settings are available.",
+        itemCount: 1,
+        status: "healthy",
+      },
+      {
+        kind: "candidate_clusters",
+        title: "Candidate clusters",
+        summary: candidateClusters.length > 0 ? "Observed channel candidates need review." : "No channel candidates need review.",
+        itemCount: candidateClusters.length,
+        status: candidateClusters.length > 0 ? "needs_review" : "empty",
+      },
+      {
+        kind: "draft_backlog",
+        title: "Draft backlog",
+        summary: draftCandidates.length > 0 ? "Draft candidates are waiting." : "No draft candidates are waiting.",
+        itemCount: draftCandidates.length,
+        status: draftCandidates.length > 0 ? "needs_review" : "empty",
+      },
+    ],
+  };
+}
+
 function createMockChannelProtocolDraft(state: MockState, channelId: string, body: Record<string, unknown>): Record<string, unknown> {
   const proposedPatch = isRecord(body.proposedPatch) ? body.proposedPatch : {};
   return {
@@ -4586,6 +4675,34 @@ export async function handleDaemonRoute(
       )
       .slice(0, limit);
     await route.fulfill({ json: { cwd, candidates } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/procedure-observation-clusters") {
+    const routeKind = url.searchParams.get("routeKind");
+    const status = url.searchParams.get("status");
+    const channelId = url.searchParams.get("channelId");
+    const rawLimit = Number(url.searchParams.get("limit") ?? 100);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 500)) : 100;
+    const clusters = state.procedureObservationClusters
+      .filter((item) =>
+        isRecord(item) &&
+        (!routeKind || item.routeKind === routeKind) &&
+        (!status || item.status === status) &&
+        (!channelId || item.channelId === channelId)
+      )
+      .slice(0, limit);
+    await route.fulfill({ json: { cwd, clusters } });
+    return;
+  }
+  const procedureObservationClusterMatch = /^\/procedure-observation-clusters\/([^/]+)$/.exec(path);
+  if (request.method() === "GET" && procedureObservationClusterMatch) {
+    const clusterId = decodeURIComponent(procedureObservationClusterMatch[1]);
+    const cluster = state.procedureObservationClusters.find((item) => isRecord(item) && item.id === clusterId);
+    if (!isRecord(cluster)) {
+      await route.fulfill({ status: 404, json: { error: "procedure_observation_cluster_not_found", message: `Procedure observation cluster not found: ${clusterId}` } });
+      return;
+    }
+    await route.fulfill({ json: { cwd, cluster, observations: [] } });
     return;
   }
   const skillCandidateMatch = /^\/skill-candidates\/([^/]+)(?:\/([^/]+))?$/.exec(path);
@@ -6188,6 +6305,10 @@ export async function handleDaemonRoute(
     const channel = state.channels[channelIndex] as Record<string, unknown>;
     if (request.method() === "GET" && !action) {
       await route.fulfill({ json: buildMockChannelCollaborationProtocolResponse(channelId, channel) });
+      return;
+    }
+    if (request.method() === "GET" && action === "canvas") {
+      await route.fulfill({ json: buildMockChannelProtocolCanvasResponse(state, channelId, channel) });
       return;
     }
     if (request.method() === "PATCH" && !action) {

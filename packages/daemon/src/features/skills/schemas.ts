@@ -12,6 +12,7 @@ import {
   type CreateSkillImportDraftInput,
   type CreateSkillUsageEventInput,
   type ListProcedureObservationsOptions,
+  type ListProcedureObservationClustersOptions,
   type ListSkillUsageEventsOptions,
   type RunTool,
   type SkillCandidateOrigin,
@@ -160,6 +161,20 @@ export function readOptionalCandidateRouteKindQuery(url: URL, key: string): List
     throw new Error(`${key} must be one of: ${candidateRouteKinds.join(", ")}`);
   }
   return value as CandidateRouteKind;
+}
+
+export function readOptionalProcedureObservationClusterStatusQuery(
+  url: URL,
+  key: string,
+): ListProcedureObservationClustersOptions["status"] {
+  const value = url.searchParams.get(key);
+  if (value === null || value === "") {
+    return undefined;
+  }
+  if (!procedureObservationClusterStatuses.includes(value as NonNullable<ListProcedureObservationClustersOptions["status"]>)) {
+    throw new Error(`${key} must be one of: ${procedureObservationClusterStatuses.join(", ")}`);
+  }
+  return value as NonNullable<ListProcedureObservationClustersOptions["status"]>;
 }
 
 export function readOptionalSkillUsageEventKindQuery(url: URL, key: string): ListSkillUsageEventsOptions["kind"] {
@@ -517,8 +532,9 @@ const procedureObservationSources = ["explicit_user_request", "user_correction",
 const procedureObservationSignals = ["save_as_skill", "next_time_instruction", "correction_phrase", "long_successful_sequence", "same_sequence_repeated", "handoff_stabilized", "user_approved_recording"] as const;
 const procedureObservationConfidences = ["low", "medium", "high"] as const;
 const procedureObservationJobTerminalStatuses = ["succeeded", "failed", "cancelled"] as const;
-const procedureObservationDestinationHints = ["skill", "channel_protocol", "automation", "memory"] as const;
-const candidateRouteKinds = ["memory", "channel_protocol", "automation", "skill", "approval_policy_review", "reject"] as const;
+const procedureObservationDestinationHints = ["skill", "channel_protocol", "playbook", "automation", "memory"] as const;
+const candidateRouteKinds = ["memory", "channel_protocol", "playbook", "automation", "skill", "approval_policy_review", "reject"] as const;
+const procedureObservationClusterStatuses = ["collecting", "ready_for_review", "blocked", "routed_elsewhere"] as const;
 const skillDuplicateDecisions = ["no_overlap", "append_evidence", "update_existing", "conflict_review", "reject_duplicate"] as const;
 const skillHealthFindingKinds = [
   "duplicate_clusters",

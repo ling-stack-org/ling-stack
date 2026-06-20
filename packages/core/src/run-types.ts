@@ -221,8 +221,10 @@ import type {
 } from "./skill-candidate-types.js";
 import type {
   CreateProcedureObservationInput,
+  ListProcedureObservationClustersOptions,
   ListProcedureObservationsOptions,
   ProcedureObservation,
+  ProcedureObservationCluster,
 } from "./procedure-observation-types.js";
 import type {
   CreateSkillUsageEventInput,
@@ -1364,6 +1366,8 @@ export interface RunStore {
   ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord };
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation;
   listProcedureObservations(options?: ListProcedureObservationsOptions): ProcedureObservation[];
+  listProcedureObservationClusters(options?: ListProcedureObservationClustersOptions): ProcedureObservationCluster[];
+  getProcedureObservationCluster(id: string, workspaceId?: string): ProcedureObservationCluster | undefined;
   appendSkillUsageEvent(input: CreateSkillUsageEventInput, now: string): SkillUsageEvent;
   listSkillUsageEvents(options?: ListSkillUsageEventsOptions): SkillUsageEvent[];
   listSkillUsageStats(options?: ListSkillUsageStatsOptions): SkillUsageStats[];

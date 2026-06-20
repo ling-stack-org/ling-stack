@@ -16,6 +16,7 @@ import {
   type RunStore,
   type WorkspaceStoreFacet,
 } from "@ling-stack/core";
+import type { ChannelProtocolCanvasSection } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
@@ -167,7 +168,7 @@ export async function handleChannelCollaborationProtocol(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
-  action?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate",
+  action?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "canvas",
   draftId?: string,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -187,6 +188,27 @@ export async function handleChannelCollaborationProtocol(
 
     if (!action && request.method === "GET") {
       writeJson(response, 200, { cwd, ...resolveEffectiveChannelCollaborationProtocol({ store, channel }) });
+      return;
+    }
+
+    if (action === "canvas" && request.method === "GET") {
+      const resolved = resolveEffectiveChannelCollaborationProtocol({ store, channel });
+      const limit = readLimit(url.searchParams.get("limit")) ?? 50;
+      const candidateClusters = store.listProcedureObservationClusters({ channelId, limit: 100 })
+        .filter((cluster) => cluster.routeKind === "channel_protocol" || cluster.routeKind === "playbook")
+        .slice(0, limit);
+      const draftCandidates = store.listChannelCollaborationProtocolDrafts({
+        channelId,
+        status: "draft",
+        limit: 50,
+      });
+      writeJson(response, 200, {
+        cwd,
+        ...resolved,
+        candidateClusters,
+        draftCandidates,
+        sections: buildChannelProtocolCanvasSections(resolved, candidateClusters, draftCandidates),
+      });
       return;
     }
 
@@ -339,6 +361,62 @@ export async function handleChannelCollaborationProtocol(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function buildChannelProtocolCanvasSections(
+  resolved: EffectiveChannelCollaborationProtocolResult,
+  candidateClusters: readonly { readonly status: string; readonly routeBlockers: readonly string[] }[],
+  draftCandidates: readonly ChannelCollaborationProtocolDraft[],
+): readonly ChannelProtocolCanvasSection[] {
+  const blockedClusters = candidateClusters.filter((cluster) => cluster.status === "blocked" || cluster.routeBlockers.length > 0);
+  const readyClusters = candidateClusters.filter((cluster) => cluster.status === "ready_for_review");
+  return [
+    {
+      kind: "current_protocol",
+      title: "Current protocol",
+      summary: "Effective channel coordination settings are available for Web and desktop clients.",
+      itemCount: 1,
+      status: "healthy",
+    },
+    {
+      kind: "candidate_clusters",
+      title: "Candidate clusters",
+      summary: blockedClusters.length > 0
+        ? "Some observed protocol or playbook candidates are blocked before review."
+        : readyClusters.length > 0
+          ? "Observed channel candidates are ready for human review."
+          : "No channel protocol or playbook candidate clusters need review.",
+      itemCount: candidateClusters.length,
+      status: blockedClusters.length > 0 ? "blocked" : readyClusters.length > 0 ? "needs_review" : candidateClusters.length > 0 ? "healthy" : "empty",
+    },
+    {
+      kind: "draft_backlog",
+      title: "Draft backlog",
+      summary: draftCandidates.length > 0
+        ? "Protocol draft candidates are waiting for approve or reject."
+        : "No protocol draft candidates are waiting.",
+      itemCount: draftCandidates.length,
+      status: draftCandidates.length > 0 ? "needs_review" : "empty",
+    },
+    {
+      kind: "review_rules",
+      title: "Review rules",
+      summary: resolved.protocol.reviewRules.length > 0
+        ? "Channel review rules are active."
+        : "No channel-specific review rules are set.",
+      itemCount: resolved.protocol.reviewRules.length,
+      status: resolved.protocol.reviewRules.length > 0 ? "healthy" : "empty",
+    },
+    {
+      kind: "privacy_rules",
+      title: "Privacy rules",
+      summary: resolved.protocol.privacyRules.length > 0
+        ? "Channel privacy rules are active."
+        : "No channel-specific privacy rules are set.",
+      itemCount: resolved.protocol.privacyRules.length,
+      status: resolved.protocol.privacyRules.length > 0 ? "healthy" : "empty",
+    },
+  ];
 }
 
 function applyProtocolDraft(

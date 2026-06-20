@@ -5,8 +5,12 @@ import {
   type CandidateRouteBlocker,
   type CandidateRouteKind,
   type CreateProcedureObservationInput,
+  type ListProcedureObservationClustersOptions,
   type ListProcedureObservationsOptions,
   type ProcedureObservation,
+  type ProcedureObservationCluster,
+  type ProcedureObservationClusterRecommendedAction,
+  type ProcedureObservationClusterStatus,
   type ProcedureObservationConfidence,
   type ProcedureObservationSignal,
   type ProcedureObservationSource,
@@ -155,6 +159,10 @@ export class SqliteProcedureObservationStore {
       conditions.push("cluster_id = ?");
       params.push(options.clusterId);
     }
+    if (options.channelId) {
+      conditions.push("channel_id = ?");
+      params.push(options.channelId);
+    }
     if (options.routeKind) {
       conditions.push("route_kind = ?");
       params.push(options.routeKind);
@@ -165,6 +173,143 @@ export class SqliteProcedureObservationStore {
       .all(...params)
       .map((row) => mapProcedureObservation(row as Record<string, SQLOutputValue>));
   }
+
+  listProcedureObservationClusters(options: ListProcedureObservationClustersOptions = {}): ProcedureObservationCluster[] {
+    const observations = this.listProcedureObservations({
+      workspaceId: options.workspaceId,
+      channelId: options.channelId,
+      routeKind: options.routeKind,
+      limit: 500,
+    });
+    const groups = new Map<string, ProcedureObservation[]>();
+    for (const observation of observations) {
+      groups.set(observation.clusterId, [...(groups.get(observation.clusterId) ?? []), observation]);
+    }
+    const clusters = [...groups.values()]
+      .map(toProcedureObservationCluster)
+      .filter((cluster) => !options.status || cluster.status === options.status)
+      .sort((left, right) => right.lastObservedAt.localeCompare(left.lastObservedAt) || right.id.localeCompare(left.id));
+    return clusters.slice(0, Math.min(Math.max(options.limit ?? 100, 1), 500));
+  }
+
+  getProcedureObservationCluster(id: string, workspaceId = DEFAULT_WORKSPACE_ID): ProcedureObservationCluster | undefined {
+    return this.listProcedureObservationClusters({ workspaceId, limit: 500 }).find((cluster) => cluster.id === id);
+  }
+}
+
+function toProcedureObservationCluster(observations: readonly ProcedureObservation[]): ProcedureObservationCluster {
+  if (observations.length === 0) {
+    throw new Error("Cannot build a procedure observation cluster without observations");
+  }
+  const sorted = [...observations].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const first = sorted[0];
+  const latest = sorted[sorted.length - 1];
+  const routeKind = latest.routeKind ?? first.routeKind ?? "reject";
+  const routeBlockers = uniqueStrings(sorted.flatMap((observation) => observation.routeBlockers)) as CandidateRouteBlocker[];
+  const confidence = maxConfidence(sorted.map((observation) => observation.confidence));
+  const reusableScore = Math.max(...sorted.map((observation) => observation.reusableScore));
+  const recommendedAction = recommendedClusterAction(routeKind, routeBlockers);
+  const status = clusterStatus(recommendedAction, routeBlockers);
+  return {
+    id: first.clusterId,
+    workspaceId: first.workspaceId,
+    channelId: latest.channelId ?? first.channelId,
+    routeKind,
+    routeReasonCode: latest.routeReasonCode ?? first.routeReasonCode,
+    status,
+    recommendedAction,
+    title: latest.title,
+    summary: summarizeCluster(sorted),
+    normalizedGoal: latest.normalizedGoal,
+    observationCount: sorted.length,
+    confidence,
+    reusableScore,
+    positiveTriggers: uniqueStrings(sorted.flatMap((observation) => observation.positiveTriggers)),
+    negativeTriggers: uniqueStrings(sorted.flatMap((observation) => observation.negativeTriggers)),
+    routeBlockers,
+    sourceRefs: uniqueSourceRefs(sorted.flatMap((observation) => observation.sourceRefs)),
+    firstObservedAt: first.createdAt,
+    lastObservedAt: latest.createdAt,
+  };
+}
+
+function recommendedClusterAction(
+  routeKind: CandidateRouteKind,
+  routeBlockers: readonly CandidateRouteBlocker[],
+): ProcedureObservationClusterRecommendedAction {
+  if (routeBlockers.includes("permission_expansion")) {
+    return "policy_review";
+  }
+  if (routeKind === "skill") {
+    return routeBlockers.length === 0 ? "create_skill_candidate" : "append_evidence";
+  }
+  if (routeKind === "channel_protocol") {
+    return "create_channel_protocol_candidate";
+  }
+  if (routeKind === "playbook") {
+    return "create_playbook_candidate";
+  }
+  if (routeKind === "memory") {
+    return "create_memory_candidate";
+  }
+  if (routeKind === "automation") {
+    return "create_automation_candidate";
+  }
+  if (routeKind === "approval_policy_review") {
+    return "policy_review";
+  }
+  return "dismiss";
+}
+
+function clusterStatus(
+  recommendedAction: ProcedureObservationClusterRecommendedAction,
+  routeBlockers: readonly CandidateRouteBlocker[],
+): ProcedureObservationClusterStatus {
+  if (routeBlockers.length > 0 || recommendedAction === "policy_review") {
+    return "blocked";
+  }
+  if (recommendedAction === "append_evidence") {
+    return "collecting";
+  }
+  if (recommendedAction === "dismiss" || recommendedAction === "create_memory_candidate" || recommendedAction === "create_automation_candidate") {
+    return "routed_elsewhere";
+  }
+  return "ready_for_review";
+}
+
+function summarizeCluster(observations: readonly ProcedureObservation[]): string {
+  const latest = observations[observations.length - 1];
+  if (observations.length === 1) {
+    return latest.summary;
+  }
+  return `${latest.summary} Evidence has been seen ${observations.length} times.`;
+}
+
+function maxConfidence(values: readonly ProcedureObservationConfidence[]): ProcedureObservationConfidence {
+  if (values.includes("high")) {
+    return "high";
+  }
+  if (values.includes("medium")) {
+    return "medium";
+  }
+  return "low";
+}
+
+function uniqueSourceRefs(values: readonly SkillCandidateSourceRef[]): readonly SkillCandidateSourceRef[] {
+  const seen = new Set<string>();
+  const unique: SkillCandidateSourceRef[] = [];
+  for (const value of values) {
+    const key = `${value.type}:${value.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(value);
+    }
+  }
+  return unique;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort();
 }
 
 function mapProcedureObservation(row: Record<string, SQLOutputValue>): ProcedureObservation {

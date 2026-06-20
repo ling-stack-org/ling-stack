@@ -29,6 +29,7 @@ import type {
   ChannelProtocolCandidateListResponse,
   ChannelProtocolCandidateMutationResponse,
   ChannelProtocolCandidateReviewRequest,
+  ChannelProtocolCanvasResponse,
   ChannelProtocolDraftStatus,
   ChannelIntentDecisionListResponse,
   ChannelMessageRouteDecisionListResponse,
@@ -165,7 +166,15 @@ export const channelEndpoints = {
       channelId: string,
       options: { readonly status?: ChannelProtocolDraftStatus; readonly limit?: number } = {},
     ): Promise<ChannelProtocolCandidateListResponse> {
-      return this._get(`/channels/${encodeURIComponent(channelId)}/protocol-candidates`, { cwd, status: options.status, limit: options.limit });
+    return this._get(`/channels/${encodeURIComponent(channelId)}/protocol-candidates`, { cwd, status: options.status, limit: options.limit });
+  },
+
+  async getChannelProtocolCanvas(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      options: { readonly limit?: number } = {},
+    ): Promise<ChannelProtocolCanvasResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/protocol/canvas`, { cwd, limit: options.limit });
     },
 
   async createChannelProtocolCandidate(this: LingDaemonEndpointContext,

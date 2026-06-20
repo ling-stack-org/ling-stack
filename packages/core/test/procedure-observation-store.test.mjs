@@ -15,6 +15,10 @@ const now = "2026-06-20T00:00:00.000Z";
 function observationInput(overrides = {}) {
   return {
     id: overrides.id ?? "procedure_observation_test",
+    channelId: overrides.channelId,
+    teammateId: overrides.teammateId,
+    taskId: overrides.taskId,
+    runId: overrides.runId,
     source: overrides.source ?? "explicit_user_request",
     signals: overrides.signals ?? ["save_as_skill"],
     title: overrides.title ?? "Reusable UI verification flow",
@@ -82,6 +86,66 @@ test("procedure observation router blocks authority expansion before skill candi
 
     assert.equal(observation.routeKind, "approval_policy_review");
     assert.deepEqual(observation.routeBlockers, ["permission_expansion"]);
+  });
+});
+
+test("procedure observation clusters aggregate channel playbooks and blocked skill gates", async () => {
+  await withStore("ling-stack-procedure-observation-clusters-", async (store) => {
+    const playbookBase = observationInput({
+      id: "procedure_observation_playbook_one",
+      source: "workflow_step_output",
+      signals: ["long_successful_sequence"],
+      channelId: "channel_playbook",
+      title: "Channel release verification playbook",
+      summary: "Channel workflow produced a repeatable release verification playbook.",
+      normalizedGoal: "channel release verification",
+      positiveTriggers: ["channel release workflow"],
+      negativeTriggers: [],
+      procedureSteps: [
+        { title: "Collect release evidence", instruction: "Summarize test and review evidence.", requiredTools: ["read"] },
+      ],
+      validationSteps: [],
+      reusableScore: 70,
+    });
+    const first = store.createProcedureObservation(playbookBase, "2026-06-20T00:00:00.000Z");
+    const second = store.createProcedureObservation({
+      ...playbookBase,
+      id: "procedure_observation_playbook_two",
+      summary: "Second channel workflow produced the same repeatable release verification playbook.",
+      reusableScore: 82,
+      sourceRefs: [{ type: "run", id: "run_playbook_two", label: "Second playbook run" }],
+    }, "2026-06-20T00:10:00.000Z");
+
+    assert.equal(first.routeKind, "playbook");
+    assert.equal(first.routeReasonCode, "channel_scoped_repeatable_playbook");
+    assert.equal(second.clusterId, first.clusterId);
+
+    const [playbookCluster] = store.listProcedureObservationClusters({
+      channelId: "channel_playbook",
+      routeKind: "playbook",
+      status: "ready_for_review",
+      limit: 10,
+    });
+    assert.equal(playbookCluster.id, first.clusterId);
+    assert.equal(playbookCluster.observationCount, 2);
+    assert.equal(playbookCluster.recommendedAction, "create_playbook_candidate");
+    assert.equal(playbookCluster.reusableScore, 82);
+    assert.equal(playbookCluster.channelId, "channel_playbook");
+
+    const blockedSkill = store.createProcedureObservation(observationInput({
+      id: "procedure_observation_missing_gates",
+      title: "Reusable task checklist without gates",
+      summary: "A repeatable checklist was observed but gates are not complete.",
+      normalizedGoal: "task checklist without gates",
+      positiveTriggers: ["task checklist"],
+      negativeTriggers: [],
+      validationSteps: [],
+    }), "2026-06-20T00:20:00.000Z");
+    const blockedCluster = store.getProcedureObservationCluster(blockedSkill.clusterId);
+    assert.equal(blockedSkill.routeKind, "skill");
+    assert.deepEqual(blockedSkill.routeBlockers, ["missing_validation", "missing_negative_trigger"]);
+    assert.equal(blockedCluster.status, "blocked");
+    assert.equal(blockedCluster.recommendedAction, "append_evidence");
   });
 });
 

@@ -1,6 +1,8 @@
 # Skill Candidates And Protocol Governance
 
-Status: Design direction; Skill Health, manual SkillCandidate review, and candidate-to-draft slice implemented
+Status: Design direction; Skill Health, manual SkillCandidate review, candidate-to-draft,
+ProcedureObservation jobs, usage telemetry, observation clusters, playbook routing, and
+Channel Protocol Canvas read model implemented
 Date: 2026-06-20
 Scope: Ling-native reusable workflow candidate generation, duplicate/conflict governance,
 channel protocol candidates, and skill health diagnostics.
@@ -21,6 +23,7 @@ run / message / workflow output
   -> candidate router
   -> memory candidate
   -> channel protocol candidate
+  -> channel/project playbook candidate
   -> automation candidate
   -> skill candidate
   -> review and health governance
@@ -108,6 +111,16 @@ Already implemented in Ling:
 - Skill Health consumes usage stats and now flags never-used generated skills, high
   failure rates, and repeated user corrections. These findings are review prompts only,
   not automatic archive/disable/delete behavior.
+- `ProcedureObservationCluster` read model over existing observations, with shared
+  contracts/API client helpers and daemon `GET /procedure-observation-clusters` plus
+  `GET /procedure-observation-clusters/:id`. Clusters are the review queue and duplicate
+  pressure valve; they are not a second candidate table.
+- `playbook` candidate route for channel-scoped workflow output that has reusable steps
+  but should stay as a channel/project-local operating procedure instead of becoming a
+  global skill.
+- Read-only Channel Protocol Canvas API at `GET /channels/:id/protocol/canvas`, combining
+  the effective protocol, draft protocol candidates, and channel-scoped protocol/playbook
+  observation clusters for Web, Desktop, CLI, and future TUI clients.
 
 Current gaps:
 
@@ -116,7 +129,9 @@ Current gaps:
   transcript snippets. The implemented job path is explicit/idempotent only.
 - No automatic correction-to-update-candidate job yet; correction telemetry is recorded
   and surfaced through health, then a reviewer can create an update candidate.
-- No automatic observation route into channel protocol candidates yet.
+- No automatic observation-to-protocol-draft or observation-to-playbook-draft creation
+  yet. Channel/protocol/playbook clusters are surfaced for review, but the reviewer still
+  chooses whether to create a destination draft/candidate.
 
 ## Product Rule
 
@@ -252,6 +267,9 @@ interface ProcedureObservation {
   readonly sourceRefs: readonly SkillCandidateSourceRef[];
   readonly confidence: "low" | "medium" | "high";
   readonly reusableScore: number;
+  readonly routeKind?: CandidateRouteKind;
+  readonly routeReasonCode?: string;
+  readonly routeBlockers: readonly CandidateRouteBlocker[];
   readonly createdAt: string;
 }
 
@@ -331,6 +349,44 @@ candidate. A new candidate is allowed only when the cluster has a clear destinat
 passes safety checks, and does not overlap an active or pending record above the duplicate
 threshold.
 
+The implemented Phase 2 surface exposes clusters as a read model over existing
+`ProcedureObservation` rows:
+
+```ts
+type ProcedureObservationClusterStatus =
+  | "collecting"
+  | "ready_for_review"
+  | "blocked"
+  | "routed_elsewhere";
+
+type ProcedureObservationClusterRecommendedAction =
+  | "append_evidence"
+  | "create_skill_candidate"
+  | "create_channel_protocol_candidate"
+  | "create_playbook_candidate"
+  | "create_memory_candidate"
+  | "create_automation_candidate"
+  | "policy_review"
+  | "dismiss";
+
+interface ProcedureObservationCluster {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId?: string;
+  readonly routeKind: CandidateRouteKind;
+  readonly status: ProcedureObservationClusterStatus;
+  readonly recommendedAction: ProcedureObservationClusterRecommendedAction;
+  readonly observationCount: number;
+  readonly reusableScore: number;
+  readonly routeBlockers: readonly CandidateRouteBlocker[];
+  readonly firstObservedAt: string;
+  readonly lastObservedAt: string;
+}
+```
+
+Clusters deliberately do not mutate destination records. A `ready_for_review` playbook or
+protocol cluster means "show this to a reviewer"; it does not mean "create a draft now."
+
 ## Candidate Router
 
 The router decides where an observation belongs.
@@ -341,6 +397,9 @@ facts / preferences / historical lessons
 
 channel collaboration rules / role division / default handoff protocol
   -> channel protocol candidate
+
+channel/project-local repeatable workflow output
+  -> playbook candidate
 
 scheduled, monitored, or manually repeatable trigger
   -> automation candidate
@@ -358,6 +417,7 @@ Candidate routing should produce a reason code:
 type CandidateRoute =
   | { readonly kind: "memory"; readonly reasonCode: string; readonly confidence: "low" | "medium" | "high" }
   | { readonly kind: "channel_protocol"; readonly reasonCode: string; readonly confidence: "low" | "medium" | "high" }
+  | { readonly kind: "playbook"; readonly reasonCode: string; readonly confidence: "low" | "medium" | "high" }
   | { readonly kind: "automation"; readonly reasonCode: string; readonly confidence: "low" | "medium" | "high" }
   | { readonly kind: "skill"; readonly reasonCode: string; readonly confidence: "low" | "medium" | "high" }
   | { readonly kind: "approval_policy_review"; readonly reasonCode: string; readonly confidence: "low" | "medium" | "high" }
@@ -387,6 +447,7 @@ Default routing rules:
 | --- | --- | --- |
 | Memory | fact, preference, project convention, durable lesson | it contains ordered execution steps or tool authority |
 | Channel protocol | role division, handoff rule, review rule, channel default | it needs scheduled execution or tool calls |
+| Playbook | channel-scoped workflow output with reusable steps and existing authority envelope | it should be globally reusable or scheduled |
 | Automation | trigger/cadence plus expected output | it requires new approval/tool/provider authority |
 | Skill | repeatable procedure with triggers, non-triggers, steps, validation, stable tools | it is only a fact, channel norm, or permission request |
 | Approval policy review | request changes execution authority | it is phrased as a workflow but actually relaxes safety |
@@ -402,6 +463,7 @@ Examples:
 | --- | --- | --- |
 | "This repo keeps `WORKFLOW.md` local and publishes `WORKFLOW.example.md`." | Memory | durable repo fact and policy reminder |
 | "In this channel, Architect reviews before Engineer implements." | Channel protocol | multi-agent operating protocol |
+| "After a channel workflow finishes, collect test and rollout evidence in this order." | Playbook | channel-local repeatable procedure |
 | "Every Friday produce a project health report." | Automation | trigger and output cadence |
 | "Use bash without asking next time." | Approval policy review or reject | permission change, not skill |
 | "When fixing web UI, run typecheck and Playwright screenshot checks." | Skill candidate | reusable workflow with validation |
@@ -493,6 +555,23 @@ describes:
 Do not route to `channel_protocol` when the observation asks for tool access, provider
 changes, secret access, deploy behavior, or external mutation. Those belong to explicit
 policy/runtime review.
+
+### Playbook Routing
+
+`playbook` is the channel/project-local home for procedures that are useful but should not
+be promoted into a workspace-wide skill. Route to `playbook` when an observation is a
+`workflow_step_output`, has a `channelId`, and contains concrete `procedureSteps`.
+
+The key distinction:
+
+```text
+channel protocol = coordination rule or operating norm
+playbook = local procedure/checklist produced by a channel workflow
+skill = reusable execution template that may be selected by future runs after review
+```
+
+Playbooks can later become a skill candidate only through explicit review and duplicate
+checks. They do not grant tools, change approvals, or bind teammates.
 
 ### PC/Desktop Compatibility
 
@@ -645,6 +724,16 @@ interface ChannelProtocolCandidate {
 
 Channel protocols should be rendered as channel context and coordination guidance. They
 should not directly grant tools, approvals, provider access, or external-send rights.
+
+The Channel Protocol Canvas read model combines:
+
+- effective protocol settings and sources;
+- draft protocol candidates waiting for approve/reject;
+- channel-scoped `channel_protocol` and `playbook` observation clusters;
+- section health summaries for clients that need a compact canvas view.
+
+The canvas endpoint is read-only. It gives Web/Desktop a stable channel canvas without
+letting the renderer inspect SQLite or interpret raw transcripts.
 
 ## Generated Skill Boundaries
 
@@ -1049,6 +1138,10 @@ automated observation exists.
 
 ### Slice 3: Observation Jobs
 
+- Status: implemented for explicit/idempotent observation APIs, manual observation jobs,
+  conservative routing, skill-only candidate creation gates, and usage telemetry. Hidden
+  post-run hooks and transcript-derived generation remain deferred.
+
 - Add post-run observation jobs for explicit save phrases, corrections, successful tool
   chains, repeated patterns, and multi-agent handoff stabilization.
 - Persist observations first, merge by observation cluster, then route into candidates.
@@ -1059,11 +1152,14 @@ automated observation exists.
 ### Slice 4: Channel Protocol Canvas
 
 Status: implemented as `/channels/:id/protocol-candidates` over existing
-`ChannelCollaborationProtocolDraft` records. A dedicated pending-candidate channel UI and
-automatic observation route are still deferred.
+`ChannelCollaborationProtocolDraft` records, plus read-only observation clusters,
+`playbook` route kind, and `GET /channels/:id/protocol/canvas`. A destination-specific
+playbook draft table/UI and automatic observation-to-draft creation are still deferred.
 
 - Reuse existing channel protocol and draft tables.
 - Add channel protocol candidate API aliases for list/create/review.
+- Add channel-scoped cluster read model for protocol/playbook observations.
+- Add Channel Protocol Canvas read model for shared Web/Desktop/API clients.
 - Render active protocols into channel context without granting authority.
 
 ### Slice 5: Publish And Supersede Flow

@@ -1,5 +1,8 @@
 import type {
   CandidateRouteKind,
+  ProcedureObservationClusterListResponse,
+  ProcedureObservationClusterResponse,
+  ProcedureObservationClusterStatus,
   ProcedureObservationListResponse,
   ProcedureObservationJobRequest,
   ProcedureObservationJobResponse,
@@ -63,11 +66,28 @@ export async function listProcedureObservations(
   cwd: string,
   options: {
     readonly clusterId?: string;
+    readonly channelId?: string;
     readonly routeKind?: CandidateRouteKind;
     readonly limit?: number;
   } = {},
 ): Promise<ProcedureObservationListResponse> {
   return daemonClient.listProcedureObservations(cwd, options);
+}
+
+export async function listProcedureObservationClusters(
+  cwd: string,
+  options: {
+    readonly channelId?: string;
+    readonly routeKind?: CandidateRouteKind;
+    readonly status?: ProcedureObservationClusterStatus;
+    readonly limit?: number;
+  } = {},
+): Promise<ProcedureObservationClusterListResponse> {
+  return daemonClient.listProcedureObservationClusters(cwd, options);
+}
+
+export async function getProcedureObservationCluster(cwd: string, clusterId: string): Promise<ProcedureObservationClusterResponse> {
+  return daemonClient.getProcedureObservationCluster(cwd, clusterId);
 }
 
 export async function createProcedureObservation(cwd: string, input: ProcedureObservationRequest): Promise<ProcedureObservationResponse> {

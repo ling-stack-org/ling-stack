@@ -6880,6 +6880,7 @@ test("procedure observation API routes structured observations before candidate 
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-procedure-observation-api-"));
   const daemon = await startDaemonForTest();
   try {
+    const channel = await createChannel(daemon.url, cwd);
     const observationPayload = {
       id: "procedure_observation_api_manual",
       source: "explicit_user_request",
@@ -6903,6 +6904,40 @@ test("procedure observation API routes structured observations before candidate 
 
     const listedObservations = await getJson(`${daemon.url}/procedure-observations?cwd=${encodeURIComponent(cwd)}&routeKind=skill&limit=10`);
     assert.deepEqual(listedObservations.observations.map((item) => item.id), [observationPayload.id]);
+
+    const playbookObservation = await postJson(`${daemon.url}/procedure-observations?cwd=${encodeURIComponent(cwd)}`, {
+      id: "procedure_observation_api_playbook",
+      channelId: channel.id,
+      source: "workflow_step_output",
+      signals: ["long_successful_sequence"],
+      title: "Channel workflow release playbook",
+      summary: "A channel workflow produced a repeatable release playbook.",
+      normalizedGoal: "channel release playbook",
+      positiveTriggers: ["channel release workflow"],
+      procedureSteps: [{ title: "Summarize release evidence", instruction: "Collect test, review, and rollout evidence.", requiredTools: ["read"] }],
+      sourceRefs: [{ type: "run", id: "run_playbook_api", label: "Playbook run" }],
+      confidence: "high",
+      reusableScore: 79,
+    });
+    assert.equal(playbookObservation.route.kind, "playbook");
+    assert.equal(playbookObservation.route.reasonCode, "channel_scoped_repeatable_playbook");
+
+    const channelObservations = await getJson(`${daemon.url}/procedure-observations?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.id)}&routeKind=playbook&limit=10`);
+    assert.deepEqual(channelObservations.observations.map((item) => item.id), ["procedure_observation_api_playbook"]);
+
+    const playbookClusters = await getJson(`${daemon.url}/procedure-observation-clusters?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.id)}&routeKind=playbook&status=ready_for_review&limit=10`);
+    assert.equal(playbookClusters.clusters.length, 1);
+    assert.equal(playbookClusters.clusters[0].recommendedAction, "create_playbook_candidate");
+    assert.equal(playbookClusters.clusters[0].channelId, channel.id);
+
+    const clusterDetail = await getJson(`${daemon.url}/procedure-observation-clusters/${encodeURIComponent(playbookClusters.clusters[0].id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(clusterDetail.cluster.id, playbookClusters.clusters[0].id);
+    assert.deepEqual(clusterDetail.observations.map((item) => item.id), ["procedure_observation_api_playbook"]);
+
+    const canvas = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol/canvas?cwd=${encodeURIComponent(cwd)}&limit=10`);
+    assert.equal(canvas.protocol.channelId, channel.id);
+    assert.equal(canvas.candidateClusters.some((cluster) => cluster.id === playbookClusters.clusters[0].id), true);
+    assert.equal(canvas.sections.some((section) => section.kind === "candidate_clusters" && section.status === "needs_review"), true);
 
     const observedCandidate = await postJson(`${daemon.url}/skill-candidates/observe?cwd=${encodeURIComponent(cwd)}`, {
       ...observationPayload,
