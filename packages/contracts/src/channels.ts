@@ -232,6 +232,12 @@ export interface CreateChannelCollaborationProtocolDraftRequest {
   readonly expiresAt?: string;
 }
 
+export interface CreateChannelProtocolCandidateFromClusterRequest {
+  readonly proposedPatch?: ChannelCollaborationProtocolPatch;
+  readonly reason?: string;
+  readonly expiresAt?: string;
+}
+
 export interface ChannelCollaborationProtocolDraftMutationResponse extends ChannelCollaborationProtocolResponse {
   readonly draft: ChannelCollaborationProtocolDraft;
 }

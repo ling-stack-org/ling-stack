@@ -121,6 +121,10 @@ Already implemented in Ling:
 - Read-only Channel Protocol Canvas API at `GET /channels/:id/protocol/canvas`, combining
   the effective protocol, draft protocol candidates, and channel-scoped protocol/playbook
   observation clusters for Web, Desktop, CLI, and future TUI clients.
+- Manual cluster-to-protocol candidate API at
+  `POST /channels/:id/protocol-candidates/from-cluster/:clusterId`. It only accepts
+  same-channel `ready_for_review` clusters with `routeKind: channel_protocol`; `playbook`
+  and other cluster routes remain separate review surfaces.
 
 Current gaps:
 
@@ -130,8 +134,9 @@ Current gaps:
 - No automatic correction-to-update-candidate job yet; correction telemetry is recorded
   and surfaced through health, then a reviewer can create an update candidate.
 - No automatic observation-to-protocol-draft or observation-to-playbook-draft creation
-  yet. Channel/protocol/playbook clusters are surfaced for review, but the reviewer still
-  chooses whether to create a destination draft/candidate.
+  yet. Channel/protocol/playbook clusters are surfaced for review; a reviewer can now
+  manually convert a ready `channel_protocol` cluster into a protocol candidate, while
+  playbook draft creation remains deferred.
 
 ## Product Rule
 
@@ -1153,8 +1158,10 @@ automated observation exists.
 
 Status: implemented as `/channels/:id/protocol-candidates` over existing
 `ChannelCollaborationProtocolDraft` records, plus read-only observation clusters,
-`playbook` route kind, and `GET /channels/:id/protocol/canvas`. A destination-specific
-playbook draft table/UI and automatic observation-to-draft creation are still deferred.
+`playbook` route kind, `GET /channels/:id/protocol/canvas`, and manual
+`POST /channels/:id/protocol-candidates/from-cluster/:clusterId` conversion for ready
+`channel_protocol` clusters. A destination-specific playbook draft table/UI and
+automatic observation-to-draft creation are still deferred.
 
 - Reuse existing channel protocol and draft tables.
 - Add channel protocol candidate API aliases for list/create/review.

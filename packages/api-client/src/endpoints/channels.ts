@@ -55,6 +55,7 @@ import type {
   CreateChannelAttachmentRequest,
   CreateChannelBranchRequest,
   CreateChannelCollaborationProtocolDraftRequest,
+  CreateChannelProtocolCandidateFromClusterRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelExecutionProposalRequest,
@@ -183,6 +184,15 @@ export const channelEndpoints = {
       input: CreateChannelCollaborationProtocolDraftRequest,
     ): Promise<ChannelProtocolCandidateMutationResponse> {
       return this._post(`/channels/${encodeURIComponent(channelId)}/protocol-candidates`, { cwd }, input);
+    },
+
+  async createChannelProtocolCandidateFromCluster(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      clusterId: string,
+      input: CreateChannelProtocolCandidateFromClusterRequest = {},
+    ): Promise<ChannelProtocolCandidateMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/protocol-candidates/from-cluster/${encodeURIComponent(clusterId)}`, { cwd }, input);
     },
 
   async reviewChannelProtocolCandidate(this: LingDaemonEndpointContext,

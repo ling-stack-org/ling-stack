@@ -13,13 +13,15 @@ import {
   type ChannelProtocolSourceRef,
   type ChannelResponseLanguage,
   type ChannelWorkflowPreference,
+  type ProcedureObservationCluster,
   type RunStore,
+  type SkillCandidateSourceRef,
   type WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import type { ChannelProtocolCanvasSection } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { readJsonBody } from "../../shared/request.js";
+import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { isRecord } from "../../shared/validation.js";
 import { writeJson } from "../../shared/response.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
@@ -85,6 +87,12 @@ type ProtocolPatchInput = {
   readonly responseLanguage?: ChannelResponseLanguage | null;
   readonly autoReplyMode?: ChannelAutoReplyMode | null;
   readonly defaultTeammateId?: string | null;
+};
+
+type ProtocolCandidateFromClusterInput = {
+  readonly proposedPatch?: ChannelCollaborationProtocolPatch;
+  readonly reason?: string;
+  readonly expiresAt?: string;
 };
 
 type MutableProtocolPatch = {
@@ -168,8 +176,9 @@ export async function handleChannelCollaborationProtocol(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
-  action?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "canvas",
+  action?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas",
   draftId?: string,
+  clusterId?: string,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -246,6 +255,50 @@ export async function handleChannelCollaborationProtocol(
           createdBy: draftInput.createdBy ?? "ai-draft",
           sourceRefs: draftInput.sourceRefs,
           expiresAt: draftInput.expiresAt,
+        },
+        new Date().toISOString(),
+      );
+      writeJson(response, 201, {
+        cwd,
+        draft,
+        ...resolveEffectiveChannelCollaborationProtocol({ store, channel }),
+      });
+      return;
+    }
+
+    if (action === "candidate-from-cluster" && request.method === "POST") {
+      if (!clusterId) {
+        writeJson(response, 400, { error: "bad_request", message: "Procedure observation cluster id is required." });
+        return;
+      }
+      const cluster = store.getProcedureObservationCluster(clusterId);
+      if (!cluster) {
+        writeJson(response, 404, { error: "procedure_observation_cluster_not_found", message: `Procedure observation cluster not found: ${clusterId}` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseProtocolCandidateFromClusterInput(body);
+      const built = protocolDraftInputFromCluster(cluster, channelId, input);
+      if ("error" in built) {
+        writeJson(response, built.statusCode, built.error);
+        return;
+      }
+      const validationError = validateProtocolPatch(store, built.proposedPatch, config);
+      if (validationError) {
+        writeJson(response, validationError.statusCode, {
+          error: validationError.code,
+          message: validationError.message,
+        });
+        return;
+      }
+      const draft = store.createChannelCollaborationProtocolDraft(
+        {
+          channelId,
+          proposedPatch: built.proposedPatch,
+          reason: built.reason,
+          createdBy: "ai-draft",
+          sourceRefs: built.sourceRefs,
+          expiresAt: built.expiresAt,
         },
         new Date().toISOString(),
       );
@@ -417,6 +470,78 @@ function buildChannelProtocolCanvasSections(
       status: resolved.protocol.privacyRules.length > 0 ? "healthy" : "empty",
     },
   ];
+}
+
+function protocolDraftInputFromCluster(
+  cluster: ProcedureObservationCluster,
+  channelId: string,
+  input: ProtocolCandidateFromClusterInput,
+):
+  | {
+    readonly proposedPatch: ChannelCollaborationProtocolPatch;
+    readonly reason: string;
+    readonly sourceRefs: readonly ChannelProtocolSourceRef[];
+    readonly expiresAt?: string;
+  }
+  | { readonly statusCode: number; readonly error: Record<string, unknown> } {
+  if (cluster.channelId !== channelId) {
+    return {
+      statusCode: 400,
+      error: {
+        error: "procedure_observation_cluster_channel_mismatch",
+        message: `Procedure observation cluster ${cluster.id} does not belong to channel ${channelId}.`,
+      },
+    };
+  }
+  if (cluster.routeKind !== "channel_protocol") {
+    return {
+      statusCode: 400,
+      error: {
+        error: "unsupported_procedure_observation_cluster_route",
+        message: `Only channel_protocol clusters can create channel protocol candidates. Cluster route is ${cluster.routeKind}.`,
+      },
+    };
+  }
+  if (cluster.status !== "ready_for_review" || cluster.routeBlockers.length > 0) {
+    return {
+      statusCode: 400,
+      error: {
+        error: "procedure_observation_cluster_not_ready",
+        message: `Procedure observation cluster ${cluster.id} is ${cluster.status}.`,
+        blockers: cluster.routeBlockers,
+      },
+    };
+  }
+  return {
+    proposedPatch: input.proposedPatch ?? { reviewRules: [defaultReviewRuleFromCluster(cluster)] },
+    reason: input.reason ?? `Created from procedure observation cluster ${cluster.id}: ${cluster.title}`,
+    sourceRefs: protocolSourceRefsFromSkillRefs(cluster.sourceRefs),
+    expiresAt: input.expiresAt,
+  };
+}
+
+function defaultReviewRuleFromCluster(cluster: ProcedureObservationCluster): string {
+  const triggerText = cluster.positiveTriggers.length > 0
+    ? ` Trigger: ${cluster.positiveTriggers.slice(0, 3).join("; ")}.`
+    : "";
+  return `${cluster.title}: ${cluster.summary}${triggerText}`.trim();
+}
+
+function protocolSourceRefsFromSkillRefs(sourceRefs: readonly SkillCandidateSourceRef[]): readonly ChannelProtocolSourceRef[] {
+  return sourceRefs.flatMap((sourceRef) => {
+    const type = protocolSourceRefTypeFromSkillRef(sourceRef.type);
+    return type ? [{ type, id: sourceRef.id, label: sourceRef.label }] : [];
+  });
+}
+
+function protocolSourceRefTypeFromSkillRef(type: SkillCandidateSourceRef["type"]): ChannelProtocolSourceRef["type"] | undefined {
+  if (type === "message" || type === "run") {
+    return type;
+  }
+  if (type === "decision") {
+    return "channel_decision";
+  }
+  return undefined;
 }
 
 function applyProtocolDraft(
@@ -672,6 +797,24 @@ function parseCreateProtocolDraftInput(value: unknown): {
     reason,
     createdBy: readOptionalDraftCreatedBy(value.createdBy),
     sourceRefs: readOptionalProtocolSourceRefs(value.sourceRefs),
+    expiresAt: readOptionalString(value.expiresAt, "expiresAt"),
+  };
+}
+
+function parseProtocolCandidateFromClusterInput(value: unknown): ProtocolCandidateFromClusterInput {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Channel protocol candidate cluster request must be a JSON object");
+  }
+  const unknownFields = Object.keys(value).filter((key) => key !== "proposedPatch" && key !== "reason" && key !== "expiresAt");
+  if (unknownFields.length > 0) {
+    throw new Error(`Unsupported channel protocol candidate cluster field: ${unknownFields.join(", ")}`);
+  }
+  return {
+    proposedPatch: value.proposedPatch === undefined ? undefined : readProtocolDraftPatch(value.proposedPatch),
+    reason: readOptionalString(value.reason, "reason"),
     expiresAt: readOptionalString(value.expiresAt, "expiresAt"),
   };
 }

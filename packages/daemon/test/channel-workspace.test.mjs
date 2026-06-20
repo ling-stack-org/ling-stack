@@ -6939,6 +6939,73 @@ test("procedure observation API routes structured observations before candidate 
     assert.equal(canvas.candidateClusters.some((cluster) => cluster.id === playbookClusters.clusters[0].id), true);
     assert.equal(canvas.sections.some((section) => section.kind === "candidate_clusters" && section.status === "needs_review"), true);
 
+    const protocolSourceMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "This channel needs reviewer signoff before implementation handoff.",
+    });
+    const protocolSourceDecision = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/decisions?cwd=${encodeURIComponent(cwd)}`, {
+      sourceMessageId: protocolSourceMessage.message.id,
+      title: "Handoff review",
+      decision: "Reviewer signoff is required before implementation handoff.",
+      createdBy: "local-user",
+    });
+    const protocolObservation = await postJson(`${daemon.url}/procedure-observations?cwd=${encodeURIComponent(cwd)}`, {
+      id: "procedure_observation_api_protocol",
+      channelId: channel.id,
+      source: "multi_agent_handoff",
+      signals: ["handoff_stabilized"],
+      title: "Stable handoff review protocol",
+      summary: "The channel repeatedly hands work from planner to engineer with reviewer signoff.",
+      normalizedGoal: "review multi agent handoffs",
+      positiveTriggers: ["planner to engineer handoff", "reviewer signoff"],
+      negativeTriggers: ["single-agent task"],
+      procedureSteps: [{ title: "Require review before implementation handoff", instruction: "Reviewer confirms the next agent has enough context.", requiredTools: ["read"] }],
+      validationSteps: [{ title: "Confirm handoff context", commandOrCheck: "Review handoff packet source refs.", expectedResult: "The next agent receives a scoped packet." }],
+      sourceRefs: [
+        { type: "message", id: protocolSourceMessage.message.id, label: "Protocol source message" },
+        { type: "decision", id: protocolSourceDecision.decision.id, label: "Protocol decision" },
+      ],
+      confidence: "high",
+      reusableScore: 88,
+    });
+    assert.equal(protocolObservation.route.kind, "channel_protocol");
+    assert.equal(protocolObservation.route.reasonCode, "multi_agent_handoff_protocol");
+
+    const protocolClusters = await getJson(`${daemon.url}/procedure-observation-clusters?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.id)}&routeKind=channel_protocol&status=ready_for_review&limit=10`);
+    assert.equal(protocolClusters.clusters.length, 1);
+    assert.equal(protocolClusters.clusters[0].recommendedAction, "create_channel_protocol_candidate");
+
+    const protocolDraftResponse = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol-candidates/from-cluster/${encodeURIComponent(protocolClusters.clusters[0].id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+    });
+    const protocolDraftText = await protocolDraftResponse.text();
+    assert.equal(protocolDraftResponse.status, 201, protocolDraftText);
+    const protocolDraft = JSON.parse(protocolDraftText);
+    assert.equal(protocolDraft.draft.status, "draft");
+    assert.equal(protocolDraft.draft.channelId, channel.id);
+    assert.equal(protocolDraft.draft.proposedPatch.reviewRules.length, 1);
+    assert.match(protocolDraft.draft.proposedPatch.reviewRules[0], /Stable handoff review protocol/);
+    assert.match(protocolDraft.draft.reason, /procedure observation cluster/);
+    assert.deepEqual(protocolDraft.draft.sourceRefs.map((ref) => ref.type), ["message", "channel_decision"]);
+
+    const manualProtocolDraft = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol-candidates/from-cluster/${encodeURIComponent(protocolClusters.clusters[0].id)}?cwd=${encodeURIComponent(cwd)}`, {
+      proposedPatch: { reviewRules: ["Keep multi-agent handoffs reviewed before implementation."] },
+      reason: "Reviewer promoted the ready cluster.",
+    });
+    assert.deepEqual(manualProtocolDraft.draft.proposedPatch.reviewRules, ["Keep multi-agent handoffs reviewed before implementation."]);
+    assert.equal(manualProtocolDraft.draft.reason, "Reviewer promoted the ready cluster.");
+
+    const canvasAfterDraft = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol/canvas?cwd=${encodeURIComponent(cwd)}&limit=10`);
+    assert.equal(canvasAfterDraft.draftCandidates.some((draft) => draft.id === protocolDraft.draft.id), true);
+    assert.equal(canvasAfterDraft.candidateClusters.some((cluster) => cluster.id === protocolClusters.clusters[0].id), true);
+
+    const playbookToProtocol = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol-candidates/from-cluster/${encodeURIComponent(playbookClusters.clusters[0].id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(playbookToProtocol.status, 400);
+    assert.equal((await playbookToProtocol.json()).error, "unsupported_procedure_observation_cluster_route");
+
     const observedCandidate = await postJson(`${daemon.url}/skill-candidates/observe?cwd=${encodeURIComponent(cwd)}`, {
       ...observationPayload,
       id: "procedure_observation_api_candidate",

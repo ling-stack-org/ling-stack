@@ -269,8 +269,9 @@ export function parseChannelRoute(
   readonly channelId: string;
   readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "workspace" | "protocol" | "branches";
   readonly branchId?: string;
-  readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "canvas";
+  readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
+  readonly protocolClusterId?: string;
   readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
@@ -306,6 +307,9 @@ export function parseChannelRoute(
   }
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "protocol-candidates") {
     return { channelId: segments[1], action: "protocol", protocolAction: "candidates" };
+  }
+  if (segments.length === 5 && segments[0] === "channels" && segments[2] === "protocol-candidates" && segments[3] === "from-cluster") {
+    return { channelId: segments[1], action: "protocol", protocolAction: "candidate-from-cluster", protocolClusterId: segments[4] };
   }
   if (segments.length === 5 && segments[0] === "channels" && segments[2] === "protocol-candidates" && segments[4] === "review") {
     return { channelId: segments[1], action: "protocol", protocolAction: "review-candidate", protocolDraftId: segments[3] };

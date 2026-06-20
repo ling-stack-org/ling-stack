@@ -1416,7 +1416,16 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "protocol") {
-      await handleChannelCollaborationProtocol(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.protocolAction, channelRoute.protocolDraftId);
+      await handleChannelCollaborationProtocol(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
+        channelRoute.protocolAction,
+        channelRoute.protocolDraftId,
+        channelRoute.protocolClusterId,
+      );
       return;
     }
     if (channelRoute.action === "brief") {
