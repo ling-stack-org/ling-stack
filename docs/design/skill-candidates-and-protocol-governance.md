@@ -128,6 +128,11 @@ Already implemented in Ling:
 - Settings > Skill Library renders candidate clusters and exposes a manual
   "Create protocol candidate" action only for ready same-channel `channel_protocol`
   clusters.
+- Channel-local playbook candidates have a dedicated SQLite table, shared contracts/API
+  client helpers, daemon list/from-cluster/review routes under
+  `/channels/:id/playbook-candidates`, and a Settings > Skill Library manual "Create
+  playbook candidate" action for ready same-channel `playbook` clusters. Approving marks
+  the candidate `active`; it does not create a global Skill or Memory object.
 
 Current gaps:
 
@@ -138,8 +143,8 @@ Current gaps:
   and surfaced through health, then a reviewer can create an update candidate.
 - No automatic observation-to-protocol-draft or observation-to-playbook-draft creation
   yet. Channel/protocol/playbook clusters are surfaced for review; a reviewer can now
-  manually convert a ready `channel_protocol` cluster into a protocol candidate, while
-  playbook draft creation remains deferred.
+  manually convert a ready `channel_protocol` cluster into a protocol candidate and a
+  ready `playbook` cluster into a channel-local playbook candidate.
 
 ## Product Rule
 
@@ -1091,6 +1096,14 @@ POST /channels/:id/protocol-candidates/:candidateId/review?cwd=/path/to/project
 GET /channels/:id/protocol?cwd=/path/to/project
 ```
 
+Channel-local playbook candidates:
+
+```http
+GET /channels/:id/playbook-candidates?cwd=/path/to/project
+POST /channels/:id/playbook-candidates/from-cluster/:clusterId?cwd=/path/to/project
+POST /channels/:id/playbook-candidates/:candidateId/review?cwd=/path/to/project
+```
+
 The API should return source refs, duplicate analysis, and safety findings in the list
 view so the UI can explain why a candidate is blocked.
 
@@ -1163,13 +1176,16 @@ Status: implemented as `/channels/:id/protocol-candidates` over existing
 `ChannelCollaborationProtocolDraft` records, plus read-only observation clusters,
 `playbook` route kind, `GET /channels/:id/protocol/canvas`, and manual
 `POST /channels/:id/protocol-candidates/from-cluster/:clusterId` conversion for ready
-`channel_protocol` clusters. A destination-specific playbook draft table/UI and
-automatic observation-to-draft creation are still deferred.
+`channel_protocol` clusters. Channel-local playbook candidates are implemented through
+the destination-specific `channel_playbook_candidates` table and
+`/channels/:id/playbook-candidates` routes. Automatic observation-to-draft creation and a
+dedicated full playbook review UI beyond Settings remain deferred.
 
 - Reuse existing channel protocol and draft tables.
 - Add channel protocol candidate API aliases for list/create/review.
 - Add channel-scoped cluster read model for protocol/playbook observations.
 - Add Channel Protocol Canvas read model for shared Web/Desktop/API clients.
+- Add channel-local playbook candidate API for ready `playbook` clusters.
 - Render active protocols into channel context without granting authority.
 
 ### Slice 5: Publish And Supersede Flow

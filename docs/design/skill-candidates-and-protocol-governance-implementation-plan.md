@@ -223,6 +223,10 @@ Implemented in this slice:
   ready `channel_protocol` clusters only;
 - Settings > Skill Library shows candidate clusters and exposes manual protocol-candidate
   creation only for ready same-channel `channel_protocol` clusters.
+- channel-local playbook candidate table, RunStore facet, shared contracts/API client
+  helpers, daemon list/from-cluster/review routes under
+  `/channels/:id/playbook-candidates`, and Settings > Skill Library manual playbook
+  candidate creation for ready same-channel `playbook` clusters.
 
 Still not implemented:
 
@@ -231,10 +235,9 @@ Still not implemented:
 - direct candidate-to-registry publish without the import draft review step;
 - transcript-derived or post-run automatic candidate creation for channel protocol or
   playbook destinations;
-- playbook destination draft creation from clusters;
 - dedicated Web channel protocol candidate queue beyond the existing protocol draft
   surface and Settings cluster action;
-- destination-specific playbook draft table/UI;
+- destination-specific full playbook review UI beyond the Settings cluster action;
 - automatic correction-to-update-candidate generation;
 - superseded active generated skill automation beyond the reserved `superseded` event kind.
 
@@ -787,6 +790,9 @@ POST /channels/:id/protocol-candidates/from-cluster/:clusterId?cwd=/path/to/work
 POST /channels/:id/protocol-candidates/:candidateId/review?cwd=/path/to/workspace
 GET /channels/:id/protocol?cwd=/path/to/workspace
 GET /channels/:id/protocol/canvas?cwd=/path/to/workspace&limit=50
+GET /channels/:id/playbook-candidates?cwd=/path/to/workspace&status=draft&limit=50
+POST /channels/:id/playbook-candidates/from-cluster/:clusterId?cwd=/path/to/workspace
+POST /channels/:id/playbook-candidates/:candidateId/review?cwd=/path/to/workspace
 GET /procedure-observation-clusters?cwd=/path/to/workspace&channelId=channel_...&routeKind=playbook&status=ready_for_review
 GET /procedure-observation-clusters/:id?cwd=/path/to/workspace
 ```
@@ -801,6 +807,13 @@ Behavior:
 - review `reject` marks the draft `cancelled`.
 - `GET /protocol/canvas` returns effective protocol state, protocol draft candidates,
   channel-scoped protocol/playbook clusters, and compact canvas sections.
+- `GET /playbook-candidates` lists channel-local playbook candidates by status.
+- `POST /playbook-candidates/from-cluster/:clusterId` creates a channel-local playbook
+  candidate from a same-channel `ready_for_review` `playbook` cluster; non-playbook,
+  blocked, and cross-channel clusters are rejected.
+- playbook candidate review `approve` marks the candidate `active`; review `reject`
+  marks it `cancelled`. Approval does not publish a Skill, write Memory, or grant
+  authority.
 - `ProcedureObservationCluster` groups observations by deterministic `clusterId` and
   recommends review actions such as `create_channel_protocol_candidate`,
   `create_playbook_candidate`, or `append_evidence`.

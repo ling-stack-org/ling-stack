@@ -152,6 +152,8 @@ const PROCEDURE_OBSERVATIONS_MIGRATION_VERSION = 70;
 const PROCEDURE_OBSERVATIONS_MIGRATION_NAME = "create_procedure_observations";
 const SKILL_USAGE_EVENTS_MIGRATION_VERSION = 71;
 const SKILL_USAGE_EVENTS_MIGRATION_NAME = "create_skill_usage_events";
+const CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_VERSION = 72;
+const CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_NAME = "create_channel_playbook_candidates";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3612,6 +3614,43 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasSkillUsageEventsMigration) {
         context.recordMigration(SKILL_USAGE_EVENTS_MIGRATION_VERSION, SKILL_USAGE_EVENTS_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelPlaybookCandidatesMigration = context.hasMigration(CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_VERSION);
+    if (
+      !hasChannelPlaybookCandidatesMigration ||
+      !context.hasTable("channel_playbook_candidates")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_playbook_candidates (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          normalized_goal TEXT NOT NULL,
+          procedure_steps_json TEXT NOT NULL,
+          validation_steps_json TEXT NOT NULL,
+          positive_triggers_json TEXT NOT NULL,
+          negative_triggers_json TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          status TEXT NOT NULL,
+          activated_at TEXT,
+          expires_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_playbook_candidates_channel
+        ON channel_playbook_candidates(workspace_id, channel_id, status, updated_at);
+      `);
+      if (!hasChannelPlaybookCandidatesMigration) {
+        context.recordMigration(CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_VERSION, CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_NAME);
       }
     }
 }

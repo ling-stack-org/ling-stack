@@ -24,6 +24,32 @@ export function runInterventionSelectSql(whereClause: string): string {
   `;
 }
 
+export function channelPlaybookCandidateSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      title,
+      summary,
+      normalized_goal,
+      procedure_steps_json,
+      validation_steps_json,
+      positive_triggers_json,
+      negative_triggers_json,
+      source_refs_json,
+      reason,
+      created_by,
+      status,
+      activated_at,
+      expires_at,
+      created_at,
+      updated_at
+    FROM channel_playbook_candidates
+    ${whereClause}
+  `;
+}
+
 export function runSessionSelectSql(whereClause: string): string {
   return `
     SELECT

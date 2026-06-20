@@ -392,7 +392,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(candidatePanel).toContainText("No open skill candidates");
 
   const clusterPanel = panel.getByRole("region", { name: "Candidate Clusters" });
-  await expect(clusterPanel).toContainText("1 review · 1 blocked · 2 total");
+  await expect(clusterPanel).toContainText("2 review · 1 blocked · 3 total");
   await expect(clusterPanel).toContainText("Channel canvas handoff protocol");
   await expect(clusterPanel).toContainText("Create channel protocol candidate");
   await clusterPanel.getByRole("button", { name: "Create protocol candidate" }).click();
@@ -404,6 +404,15 @@ test("settings skill library shows read-only skill health findings", async ({ pa
       : "";
   }).toContain("Channel canvas handoff protocol");
   await expect(panel).toContainText("Protocol candidate created");
+  await expect(clusterPanel).toContainText("Release verification playbook");
+  await expect(clusterPanel).toContainText("Create playbook candidate");
+  await clusterPanel.getByRole("button", { name: "Create playbook candidate" }).click();
+  await expect.poll(() => state.channelPlaybookCandidates.length).toBe(1);
+  await expect.poll(() => {
+    const candidate = state.channelPlaybookCandidates[0];
+    return isRecord(candidate) && typeof candidate.title === "string" ? candidate.title : "";
+  }).toContain("Release verification playbook");
+  await expect(panel).toContainText("Playbook candidate created");
   await expect(clusterPanel).toContainText("Generated skill missing gates");
   await expect(clusterPanel).toContainText("Append evidence");
 });

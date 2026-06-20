@@ -1221,6 +1221,9 @@ GET /channels/:id/protocol-candidates?cwd=/path/to/project&status=draft&limit=50
 POST /channels/:id/protocol-candidates?cwd=/path/to/project
 POST /channels/:id/protocol-candidates/from-cluster/:clusterId?cwd=/path/to/project
 POST /channels/:id/protocol-candidates/:candidateId/review?cwd=/path/to/project
+GET /channels/:id/playbook-candidates?cwd=/path/to/project&status=draft&limit=50
+POST /channels/:id/playbook-candidates/from-cluster/:clusterId?cwd=/path/to/project
+POST /channels/:id/playbook-candidates/:candidateId/review?cwd=/path/to/project
 ```
 
 Brief `GET` returns an empty Brief-shaped record when no Brief has been saved yet.
@@ -1273,6 +1276,21 @@ the cluster title, summary, and positive triggers. `playbook`, `skill`, `memory`
 `automation`, blocked, and cross-channel clusters return displayable `400` errors and do
 not create protocol candidates. This route is manual and does not enable automatic
 post-run or transcript-derived candidate creation.
+
+`/channels/:id/playbook-candidates` is a channel-local governance queue for operating
+procedures observed from channel workflow output. `POST
+/channels/:id/playbook-candidates/from-cluster/:clusterId` manually converts a
+same-channel `ready_for_review` cluster with `routeKind: "playbook"` into a playbook
+candidate. The daemon reads procedure and validation steps from the underlying
+observations in that cluster; the cluster itself remains a compact review summary.
+If the channel already has a `draft` or `active` playbook candidate with the same
+`normalizedGoal` or overlapping source refs, the daemon returns that candidate instead of
+creating a duplicate.
+Reviewing with `{"action":"approve"}` marks the candidate `active`; reviewing with
+`{"action":"reject"}` marks it `cancelled`. This does not create a global Skill, does
+not write Memory, does not grant tools or approvals, and does not enable automatic
+runtime invocation. `channel_protocol`, `skill`, `memory`, blocked, and cross-channel
+clusters return displayable `400` errors.
 
 ## Channel Handoff Workflows
 

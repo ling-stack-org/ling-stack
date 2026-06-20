@@ -1,6 +1,11 @@
 import type { RunTool, ToolName } from "./shared.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
-import type { ProcedureObservationCluster } from "./skills.js";
+import type {
+  ProcedureObservationCluster,
+  ProcedureObservationStep,
+  ProcedureObservationValidationStep,
+  SkillCandidateSourceRef,
+} from "./skills.js";
 import type { ChannelWorkflow, ChannelWorkflowOrchestrationResponse, ChannelWorkflowStep } from "./workflows.js";
 
 export type ChannelStatus = "active" | "paused" | "archived";
@@ -260,6 +265,62 @@ export interface ChannelProtocolCandidateReviewRequest {
 export type ChannelProtocolCandidateListResponse = ChannelCollaborationProtocolDraftListResponse;
 
 export type ChannelProtocolCandidateMutationResponse = ChannelCollaborationProtocolDraftMutationResponse;
+
+export type ChannelPlaybookCandidateStatus = "draft" | "active" | "cancelled" | "stale";
+
+export type ChannelPlaybookCandidateCreatedBy = "local-user" | "ai-draft";
+
+export interface ChannelPlaybookCandidate {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly procedureSteps: readonly ProcedureObservationStep[];
+  readonly validationSteps: readonly ProcedureObservationValidationStep[];
+  readonly positiveTriggers: readonly string[];
+  readonly negativeTriggers: readonly string[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+  readonly reason: string;
+  readonly createdBy: ChannelPlaybookCandidateCreatedBy;
+  readonly status: ChannelPlaybookCandidateStatus;
+  readonly activatedAt?: string;
+  readonly expiresAt?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelPlaybookCandidateFromClusterRequest {
+  readonly title?: string;
+  readonly summary?: string;
+  readonly normalizedGoal?: string;
+  readonly procedureSteps?: readonly ProcedureObservationStep[];
+  readonly validationSteps?: readonly ProcedureObservationValidationStep[];
+  readonly positiveTriggers?: readonly string[];
+  readonly negativeTriggers?: readonly string[];
+  readonly reason?: string;
+  readonly expiresAt?: string;
+}
+
+export type ChannelPlaybookCandidateReviewAction = "approve" | "reject";
+
+export interface ChannelPlaybookCandidateReviewRequest {
+  readonly action: ChannelPlaybookCandidateReviewAction;
+  readonly reason?: string;
+}
+
+export interface ChannelPlaybookCandidateListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly candidates: readonly ChannelPlaybookCandidate[];
+}
+
+export interface ChannelPlaybookCandidateMutationResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly candidate: ChannelPlaybookCandidate;
+}
 
 export type ChannelProtocolCanvasSectionKind =
   | "current_protocol"

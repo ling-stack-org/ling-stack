@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
+import type { ProcedureObservationStep, ProcedureObservationValidationStep } from "./procedure-observation-types.js";
 import type { RunnerFallbackReason, RunnerRequestSource } from "./runtime-supervisor-types.js";
+import type { SkillCandidateSourceRef } from "./skill-candidate-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
 import type { WorkflowTerminationPolicy } from "./workflow-graph-types.js";
 
@@ -137,6 +139,55 @@ export interface UpsertChannelCollaborationProtocolOverrideInput {
   readonly reviewRules?: readonly string[];
   readonly sourceRefs?: readonly ChannelProtocolSourceRef[];
   readonly updatedBy: ChannelProtocolDraftCreatedBy;
+}
+
+export type ChannelPlaybookCandidateStatus = "draft" | "active" | "cancelled" | "stale";
+
+export const channelPlaybookCandidateStatuses: readonly ChannelPlaybookCandidateStatus[] = ["draft", "active", "cancelled", "stale"];
+
+export type ChannelPlaybookCandidateCreatedBy = "local-user" | "ai-draft";
+
+export const channelPlaybookCandidateCreatedByValues: readonly ChannelPlaybookCandidateCreatedBy[] = ["local-user", "ai-draft"];
+
+export interface ChannelPlaybookCandidate {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly procedureSteps: readonly ProcedureObservationStep[];
+  readonly validationSteps: readonly ProcedureObservationValidationStep[];
+  readonly positiveTriggers: readonly string[];
+  readonly negativeTriggers: readonly string[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+  readonly reason: string;
+  readonly createdBy: ChannelPlaybookCandidateCreatedBy;
+  readonly status: ChannelPlaybookCandidateStatus;
+  readonly activatedAt?: string;
+  readonly expiresAt?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelPlaybookCandidateInput {
+  readonly channelId: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly procedureSteps: readonly ProcedureObservationStep[];
+  readonly validationSteps?: readonly ProcedureObservationValidationStep[];
+  readonly positiveTriggers?: readonly string[];
+  readonly negativeTriggers?: readonly string[];
+  readonly sourceRefs?: readonly SkillCandidateSourceRef[];
+  readonly reason: string;
+  readonly createdBy: ChannelPlaybookCandidateCreatedBy;
+  readonly expiresAt?: string;
+}
+
+export interface UpdateChannelPlaybookCandidateInput {
+  readonly status?: ChannelPlaybookCandidateStatus;
+  readonly activatedAt?: string | null;
 }
 
 export type ChannelExecutionMode = "serial" | "parallel";
@@ -2199,6 +2250,10 @@ export function createChannelCollaborationProtocolOverrideId(): string {
 
 export function createChannelCollaborationProtocolDraftId(): string {
   return `channel_protocol_draft_${randomUUID()}`;
+}
+
+export function createChannelPlaybookCandidateId(): string {
+  return `channel_playbook_candidate_${randomUUID()}`;
 }
 
 export function createChannelWorkflowId(): string {

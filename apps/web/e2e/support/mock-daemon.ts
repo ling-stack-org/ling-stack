@@ -37,6 +37,7 @@ export interface MockState {
   channelWorkflows: unknown[];
   channelWorkflowSteps: unknown[];
   channelProtocolDrafts: unknown[];
+  channelPlaybookCandidates: unknown[];
   aiTeammates: unknown[];
   skillRegistryEntries: unknown[];
   skillImportDrafts: unknown[];
@@ -882,6 +883,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelWorkflows: [],
     channelWorkflowSteps: [],
     channelProtocolDrafts: [],
+    channelPlaybookCandidates: [],
     aiTeammates: [],
     skillRegistryEntries: buildMockSkillRegistryEntries(),
     skillImportDrafts: [],
@@ -1949,6 +1951,29 @@ export function createMockProcedureObservationClusters(): unknown[] {
       sourceRefs: [{ type: "observation-job", id: "observation_job_mock_skill_gate", label: "Observation job" }],
       firstObservedAt: "2026-06-20T00:10:00.000Z",
       lastObservedAt: "2026-06-20T00:10:00.000Z",
+    },
+    {
+      id: "procedure_cluster_release_playbook",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      routeKind: "playbook",
+      routeReasonCode: "channel_scoped_repeatable_playbook",
+      status: "ready_for_review",
+      recommendedAction: "create_playbook_candidate",
+      title: "Release verification playbook",
+      summary: "Repeated release checks should become a channel-local playbook, not a global skill.",
+      normalizedGoal: "release verification playbook",
+      observationCount: 2,
+      confidence: "high",
+      reusableScore: 74,
+      positiveTriggers: ["Channel repeats the same release verification steps"],
+      negativeTriggers: ["A docs-only change does not need release verification"],
+      routeBlockers: [],
+      procedureSteps: [{ title: "Collect release evidence", instruction: "Summarize test, review, and rollout evidence.", requiredTools: ["read"] }],
+      validationSteps: [{ title: "Confirm evidence is linked", commandOrCheck: "Review test and PR references.", expectedResult: "Release evidence is attached." }],
+      sourceRefs: [{ type: "run", id: "run_release_playbook", label: "Release verification run" }],
+      firstObservedAt: "2026-06-20T00:05:00.000Z",
+      lastObservedAt: "2026-06-20T00:25:00.000Z",
     },
   ];
 }
@@ -3617,6 +3642,41 @@ function createMockChannelProtocolDraft(state: MockState, channelId: string, bod
     expiresAt: typeof body.expiresAt === "string" ? body.expiresAt : undefined,
     createdAt: "2026-06-20T00:30:00.000Z",
     updatedAt: "2026-06-20T00:30:00.000Z",
+  };
+}
+
+function createMockChannelPlaybookCandidate(state: MockState, channelId: string, cluster: Record<string, unknown>, body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: `channel_playbook_candidate_${state.channelPlaybookCandidates.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId,
+    title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : String(cluster.title ?? "Channel playbook"),
+    summary: typeof body.summary === "string" && body.summary.trim() ? body.summary.trim() : String(cluster.summary ?? ""),
+    normalizedGoal: typeof body.normalizedGoal === "string" && body.normalizedGoal.trim()
+      ? body.normalizedGoal.trim()
+      : String(cluster.normalizedGoal ?? ""),
+    procedureSteps: Array.isArray(body.procedureSteps)
+      ? body.procedureSteps.filter(isRecord)
+      : Array.isArray(cluster.procedureSteps)
+        ? cluster.procedureSteps.filter(isRecord)
+        : [],
+    validationSteps: Array.isArray(body.validationSteps)
+      ? body.validationSteps.filter(isRecord)
+      : Array.isArray(cluster.validationSteps)
+        ? cluster.validationSteps.filter(isRecord)
+        : [],
+    positiveTriggers: Array.isArray(body.positiveTriggers) ? body.positiveTriggers.filter((item) => typeof item === "string") : cluster.positiveTriggers,
+    negativeTriggers: Array.isArray(body.negativeTriggers) ? body.negativeTriggers.filter((item) => typeof item === "string") : cluster.negativeTriggers,
+    sourceRefs: Array.isArray(cluster.sourceRefs) ? cluster.sourceRefs.filter(isRecord) : [],
+    reason: typeof body.reason === "string" && body.reason.trim()
+      ? body.reason
+      : `Created from procedure observation cluster ${String(cluster.id ?? "")}: ${String(cluster.title ?? "")}`,
+    createdBy: "ai-draft",
+    status: "draft",
+    activatedAt: undefined,
+    expiresAt: typeof body.expiresAt === "string" ? body.expiresAt : undefined,
+    createdAt: "2026-06-20T00:35:00.000Z",
+    updatedAt: "2026-06-20T00:35:00.000Z",
   };
 }
 
@@ -6378,6 +6438,80 @@ export async function handleDaemonRoute(
     state.channelProtocolDrafts.unshift(draft);
     await route.fulfill({ status: 201, json: { ...buildMockChannelCollaborationProtocolResponse(channelId, channel), draft } });
     return;
+  }
+  const channelPlaybookCandidateFromClusterMatch = /^\/channels\/([^/]+)\/playbook-candidates\/from-cluster\/([^/]+)$/.exec(path);
+  if (channelPlaybookCandidateFromClusterMatch) {
+    const channelId = decodeURIComponent(channelPlaybookCandidateFromClusterMatch[1]);
+    const clusterId = decodeURIComponent(channelPlaybookCandidateFromClusterMatch[2]);
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const cluster = state.procedureObservationClusters.find((item) => isRecord(item) && item.id === clusterId);
+    if (!isRecord(cluster)) {
+      await route.fulfill({ status: 404, json: { error: "procedure_observation_cluster_not_found", message: `Procedure observation cluster not found: ${clusterId}` } });
+      return;
+    }
+    if (cluster.channelId !== channelId) {
+      await route.fulfill({ status: 400, json: { error: "procedure_observation_cluster_channel_mismatch" } });
+      return;
+    }
+    if (cluster.routeKind !== "playbook") {
+      await route.fulfill({ status: 400, json: { error: "unsupported_procedure_observation_cluster_route" } });
+      return;
+    }
+    const routeBlockers = Array.isArray(cluster.routeBlockers) ? cluster.routeBlockers : [];
+    if (cluster.status !== "ready_for_review" || routeBlockers.length > 0) {
+      await route.fulfill({ status: 400, json: { error: "procedure_observation_cluster_not_ready", blockers: routeBlockers } });
+      return;
+    }
+    const body = request.postData() ? await request.postDataJSON() as Record<string, unknown> : {};
+    const candidate = createMockChannelPlaybookCandidate(state, channelId, cluster, body);
+    state.channelPlaybookCandidates.unshift(candidate);
+    await route.fulfill({ status: 201, json: { cwd, channelId, candidate } });
+    return;
+  }
+  const channelPlaybookCandidateMatch = /^\/channels\/([^/]+)\/playbook-candidates(?:\/([^/]+)\/review)?$/.exec(path);
+  if (channelPlaybookCandidateMatch) {
+    const channelId = decodeURIComponent(channelPlaybookCandidateMatch[1]);
+    const candidateId = channelPlaybookCandidateMatch[2] ? decodeURIComponent(channelPlaybookCandidateMatch[2]) : "";
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    if (!candidateId && request.method() === "GET") {
+      const status = url.searchParams.get("status");
+      const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 50), 200));
+      const candidates = state.channelPlaybookCandidates
+        .filter((item) => isRecord(item) && item.channelId === channelId && (!status || item.status === status))
+        .slice(0, limit);
+      await route.fulfill({ json: { cwd, channelId, candidates } });
+      return;
+    }
+    const candidateIndex = state.channelPlaybookCandidates.findIndex((item) => isRecord(item) && item.id === candidateId && item.channelId === channelId);
+    if (candidateIndex === -1 || !isRecord(state.channelPlaybookCandidates[candidateIndex])) {
+      await route.fulfill({ status: 404, json: { error: "playbook_candidate_not_found" } });
+      return;
+    }
+    if (request.method() === "POST") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const candidate = state.channelPlaybookCandidates[candidateIndex] as Record<string, unknown>;
+      if (candidate.status !== "draft") {
+        await route.fulfill({ status: 409, json: { error: "playbook_candidate_not_reviewable", candidate } });
+        return;
+      }
+      const updated = {
+        ...candidate,
+        status: body.action === "approve" ? "active" : "cancelled",
+        activatedAt: body.action === "approve" ? "2026-06-20T00:40:00.000Z" : undefined,
+        updatedAt: "2026-06-20T00:40:00.000Z",
+      };
+      state.channelPlaybookCandidates[candidateIndex] = updated;
+      await route.fulfill({ json: { cwd, channelId, candidate: updated } });
+      return;
+    }
   }
   const channelProtocolCandidateMatch = /^\/channels\/([^/]+)\/protocol-candidates(?:\/([^/]+)\/review)?$/.exec(path);
   if (channelProtocolDraftMatch || channelProtocolCandidateMatch) {

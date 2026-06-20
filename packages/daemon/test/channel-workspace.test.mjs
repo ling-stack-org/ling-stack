@@ -6934,6 +6934,33 @@ test("procedure observation API routes structured observations before candidate 
     assert.equal(clusterDetail.cluster.id, playbookClusters.clusters[0].id);
     assert.deepEqual(clusterDetail.observations.map((item) => item.id), ["procedure_observation_api_playbook"]);
 
+    const playbookCandidateResponse = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/playbook-candidates/from-cluster/${encodeURIComponent(playbookClusters.clusters[0].id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+    });
+    const playbookCandidateText = await playbookCandidateResponse.text();
+    assert.equal(playbookCandidateResponse.status, 201, playbookCandidateText);
+    const playbookCandidate = JSON.parse(playbookCandidateText);
+    assert.equal(playbookCandidate.candidate.status, "draft");
+    assert.equal(playbookCandidate.candidate.channelId, channel.id);
+    assert.equal(playbookCandidate.candidate.title, "Channel workflow release playbook");
+    assert.equal(playbookCandidate.candidate.procedureSteps.length, 1);
+    assert.match(playbookCandidate.candidate.reason, /procedure observation cluster/);
+    assert.deepEqual(playbookCandidate.candidate.sourceRefs.map((ref) => ref.type), ["run"]);
+
+    const listedPlaybookCandidates = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/playbook-candidates?cwd=${encodeURIComponent(cwd)}&status=draft&limit=10`);
+    assert.equal(listedPlaybookCandidates.candidates.some((candidate) => candidate.id === playbookCandidate.candidate.id), true);
+
+    const approvedPlaybookCandidate = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/playbook-candidates/${encodeURIComponent(playbookCandidate.candidate.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      action: "approve",
+      reason: "Promote to channel playbook.",
+    });
+    assert.equal(approvedPlaybookCandidate.candidate.status, "active");
+    assert.ok(approvedPlaybookCandidate.candidate.activatedAt);
+
+    const duplicatePlaybookCandidate = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/playbook-candidates/from-cluster/${encodeURIComponent(playbookClusters.clusters[0].id)}?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(duplicatePlaybookCandidate.candidate.id, playbookCandidate.candidate.id);
+    assert.equal(duplicatePlaybookCandidate.candidate.status, "active");
+
     const canvas = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/protocol/canvas?cwd=${encodeURIComponent(cwd)}&limit=10`);
     assert.equal(canvas.protocol.channelId, channel.id);
     assert.equal(canvas.candidateClusters.some((cluster) => cluster.id === playbookClusters.clusters[0].id), true);
@@ -7005,6 +7032,14 @@ test("procedure observation API routes structured observations before candidate 
     });
     assert.equal(playbookToProtocol.status, 400);
     assert.equal((await playbookToProtocol.json()).error, "unsupported_procedure_observation_cluster_route");
+
+    const protocolToPlaybook = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/playbook-candidates/from-cluster/${encodeURIComponent(protocolClusters.clusters[0].id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(protocolToPlaybook.status, 400);
+    assert.equal((await protocolToPlaybook.json()).error, "unsupported_procedure_observation_cluster_route");
 
     const observedCandidate = await postJson(`${daemon.url}/skill-candidates/observe?cwd=${encodeURIComponent(cwd)}`, {
       ...observationPayload,
