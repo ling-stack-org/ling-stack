@@ -93,6 +93,7 @@ textarea {
 
 .primary-nav {
   display: grid;
+  flex: 0 0 auto;
   gap: 3px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
@@ -141,6 +142,7 @@ textarea {
 
 .sidebar-section {
   display: grid;
+  flex: 0 0 auto;
   gap: 4px;
   margin-top: 12px;
 }
@@ -350,6 +352,7 @@ textarea {
 
 .sidebar-config {
   display: grid;
+  flex: 0 0 auto;
   gap: 8px;
   margin-top: auto;
   padding-top: 12px;

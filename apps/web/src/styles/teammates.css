@@ -2798,6 +2798,27 @@
   padding: 0 20px 20px;
 }
 
+.teammate-create-dialog {
+  width: min(820px, calc(100vw - 48px));
+  align-content: start;
+}
+
+.teammate-create-dialog .teammate-create-body {
+  padding: 0;
+  overflow: visible;
+}
+
+.teammate-create-dialog .teammate-create-section,
+.teammate-create-dialog .teammate-create-advanced {
+  min-width: 0;
+}
+
+.teammate-create-dialog .teammate-create-body > .teammate-create-section:first-child,
+.teammate-create-dialog .teammate-create-advanced,
+.teammate-create-dialog .teammate-create-actions {
+  grid-column: 1 / -1;
+}
+
 .teammate-create-section,
 .teammate-advanced-detail,
 .teammate-workflow-panel {
@@ -4166,5 +4187,438 @@
   .teammate-settings-summary-panel {
     border-left: 0;
     border-top: 1px solid #e5e5e5;
+  }
+}
+
+.workspace.workspace-teammates-surface {
+  padding: 0;
+  background: #ffffff;
+}
+
+.teammates-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.teammates-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 96px;
+  padding: 24px 32px 22px;
+  border-bottom: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.teammates-page-header h1 {
+  margin: 0;
+  color: #111111;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 34px;
+  letter-spacing: 0;
+}
+
+.teammates-page-header p {
+  margin: 6px 0 0;
+  color: #707070;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.teammate-page-create-button {
+  min-height: 40px;
+  border-radius: 7px;
+  padding-inline: 18px;
+}
+
+.teammates-page > .teammate-management-grid {
+  grid-template-columns: minmax(560px, 1fr) minmax(280px, 0.34fr);
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.teammates-page .teammate-add-panel,
+.teammates-page .teammate-template-panel {
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  padding: 42px 48px;
+}
+
+.teammates-page .teammate-add-panel {
+  border-right: 1px solid #e5e5e5;
+}
+
+.teammates-page .teammate-template-panel {
+  padding-inline: 44px;
+}
+
+.teammates-page .teammate-add-panel > .panel-title,
+.teammates-page .teammate-template-panel > .panel-title {
+  min-height: 36px;
+  margin-bottom: 26px;
+}
+
+.teammates-page .teammate-panel-heading h2,
+.teammates-page .teammate-template-panel h2 {
+  color: #111111;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 22px;
+}
+
+.teammates-page .teammate-panel-meta {
+  display: none;
+}
+
+.teammates-page .teammate-draft-list,
+.teammates-page .teammate-template-list {
+  gap: 14px;
+  overflow-y: auto;
+  padding: 0 2px 0 0;
+}
+
+.teammates-page .teammate-draft-row {
+  grid-template-columns: 48px minmax(132px, 1fr) 124px 112px 74px 150px;
+  gap: 14px;
+  min-height: 82px;
+  padding: 16px 18px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.teammates-page .teammate-draft-row:hover {
+  background: #fafafa;
+}
+
+.teammates-page .teammate-draft-row .teammate-avatar-image.compact,
+.teammates-page .teammate-draft-row .avatar-initial {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+}
+
+.teammates-page .teammate-draft-copy strong {
+  color: #171717;
+  font-size: 16px;
+  font-weight: 680;
+  line-height: 22px;
+}
+
+.teammates-page .teammate-draft-copy small {
+  color: #707070;
+  font-size: 13px;
+  line-height: 18px;
+  -webkit-line-clamp: 1;
+}
+
+.teammate-model-pill,
+.teammate-channel-pill,
+.teammate-updated-time {
+  min-width: 0;
+  overflow: hidden;
+  color: #707070;
+  font-size: 14px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-model-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: stretch;
+  min-height: 26px;
+  width: 100%;
+  max-width: none;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: #f1f1f1;
+  color: #5e5e5e;
+}
+
+.teammate-model-pill.warning {
+  background: #fff1ef;
+  color: #b42318;
+}
+
+.teammates-page .teammate-row-actions {
+  display: grid;
+  grid-template-columns: 108px 32px;
+  justify-self: end;
+  width: 150px;
+  gap: 10px;
+}
+
+.teammates-page .teammate-row-status {
+  display: none;
+}
+
+.teammates-page .teammate-row-primary-action {
+  width: 108px;
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #111111;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.teammates-page .teammate-channel-pill,
+.teammates-page .teammate-updated-time {
+  width: 100%;
+  min-width: 0;
+}
+
+.teammates-page .teammate-row-primary-action:hover {
+  background: #f5f5f5;
+}
+
+.teammates-page .teammate-template-list {
+  gap: 24px;
+}
+
+.teammates-page > .teammate-management-grid .teammate-template-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.teammates-page > .teammate-management-grid .teammate-template-row .teammate-role-icon,
+.teammates-page > .teammate-management-grid .teammate-template-row .template-skill-count {
+  display: none;
+}
+
+.teammates-page > .teammate-management-grid .teammate-template-row:hover,
+.teammates-page > .teammate-management-grid .teammate-template-row.selected {
+  background: transparent;
+}
+
+.teammates-page > .teammate-management-grid .teammate-template-copy strong {
+  color: #171717;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+.teammates-page > .teammate-management-grid .teammate-template-copy small {
+  color: #707070;
+  font-size: 13px;
+  line-height: 18px;
+  -webkit-line-clamp: 2;
+}
+
+.teammates-page > .teammate-management-grid .teammate-template-row::after {
+  content: "View";
+  color: #111111;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.teammate-create-dialog {
+  width: min(960px, calc(100vw - 48px));
+  max-height: min(860px, calc(100vh - 48px));
+  overflow: hidden;
+}
+
+.teammate-create-dialog .channel-create-head {
+  min-height: 118px;
+  align-items: flex-start;
+  padding: 30px 40px 26px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.teammate-create-title-block {
+  display: grid;
+  gap: 6px;
+}
+
+.teammate-create-title-block strong {
+  color: #111111;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+.teammate-create-title-block p {
+  margin: 0;
+  color: #707070;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.teammate-create-dialog .teammate-create-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 28px;
+  min-height: 0;
+  max-height: calc(100vh - 250px);
+  overflow-y: auto;
+  padding: 30px 40px 0;
+}
+
+.teammate-create-steps {
+  display: flex;
+  align-items: center;
+  gap: 34px;
+  color: #777777;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.teammate-create-steps span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.teammate-create-steps strong {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #d9d9d9;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #777777;
+  font-size: 13px;
+}
+
+.teammate-create-steps .active {
+  color: #111111;
+}
+
+.teammate-create-steps .active strong {
+  border-color: #111111;
+  background: #111111;
+  color: #ffffff;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-height: none;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
+  grid-template-columns: 28px minmax(0, 1fr);
+  min-height: 112px;
+  padding: 20px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row::after {
+  content: none;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .teammate-role-icon {
+  display: inline-grid;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .template-skill-count {
+  display: inline-flex;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row.selected {
+  border-color: #111111;
+  box-shadow: inset 0 0 0 1px #111111;
+}
+
+.teammate-create-dialog .teammate-create-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 24px;
+}
+
+.teammate-create-dialog .teammate-create-fields label:has(textarea) {
+  grid-column: 1 / -1;
+}
+
+.teammate-create-dialog .teammate-create-fields input,
+.teammate-create-dialog .teammate-create-fields select,
+.teammate-create-dialog .teammate-create-fields textarea {
+  min-height: 46px;
+  border-radius: 7px;
+}
+
+.teammate-create-dialog .teammate-create-fields textarea {
+  min-height: 74px;
+}
+
+.teammate-model-choice-list {
+  margin-top: 12px;
+}
+
+.teammate-create-dialog .teammate-create-advanced {
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 0;
+}
+
+.teammate-create-dialog .teammate-create-advanced summary {
+  min-height: 58px;
+  padding: 0 18px;
+}
+
+.teammate-create-dialog .teammate-create-actions {
+  position: sticky;
+  bottom: 0;
+  margin: 0 -40px;
+  padding: 22px 40px 26px;
+  border-top: 1px solid #e5e5e5;
+}
+
+@media (max-width: 900px) {
+  .teammates-page > .teammate-management-grid,
+  .teammate-create-dialog .teammate-create-list.role-grid,
+  .teammate-create-dialog .teammate-create-fields,
+  .teammates-page .teammate-draft-row {
+    grid-template-columns: 1fr;
+  }
+
+  .teammates-page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .teammates-page .teammate-row-actions {
+    justify-self: stretch;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+
+  .teammates-page .teammate-row-primary-action {
+    width: 100%;
+  }
+
+  .teammates-page .teammate-add-panel,
+  .teammates-page .teammate-template-panel,
+  .teammates-page-header,
+  .teammate-create-dialog .channel-create-head,
+  .teammate-create-dialog .teammate-create-body {
+    padding-inline: 20px;
+  }
+
+  .teammates-page .teammate-add-panel {
+    border-right: 0;
+    border-bottom: 1px solid #e5e5e5;
+  }
+
+  .teammate-create-steps {
+    flex-wrap: wrap;
+    gap: 12px;
   }
 }

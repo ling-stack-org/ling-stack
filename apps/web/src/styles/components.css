@@ -9340,6 +9340,21 @@ textarea:disabled {
     overflow: auto;
   }
 
+  .channel-left-drawer .sidebar-section,
+  .channel-left-drawer .sidebar-section:first-of-type,
+  .channel-left-drawer .sidebar-section:last-of-type {
+    flex: 0 0 auto;
+    max-height: none;
+    grid-template-rows: auto auto;
+    overflow: visible;
+  }
+
+  .channel-left-drawer .sidebar-section-list,
+  .channel-left-drawer .sidebar-section:first-of-type .sidebar-section-list,
+  .channel-left-drawer .sidebar-section:last-of-type .sidebar-section-list {
+    overflow: visible;
+  }
+
   .workspace,
   .right-panel {
     min-width: 0;

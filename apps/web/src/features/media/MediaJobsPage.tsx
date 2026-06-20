@@ -1,7 +1,7 @@
-import { useRef } from "react";
+import { useState } from "react";
 import {
-  CheckCircle2,
   CircleAlert,
+  Copy,
   Database,
   Image as ImageIcon,
   Loader2,
@@ -9,6 +9,7 @@ import {
   PlugZap,
   Plus,
   RefreshCw,
+  X,
 } from "lucide-react";
 import { artifactContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
@@ -63,7 +64,8 @@ export function MediaJobsPage({
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const [isCreateOpen, setCreateOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "succeeded" | "failed" | "queued">("all");
   const generationProviders = providers.filter(providerHasGenerationCapability);
   const enabledGenerationProviders = generationProviders.filter((provider) => provider.enabled);
   const generationProvidersForOperation = generationProviders.filter((provider) => providerSupportsGenerationOperation(provider, form.operation));
@@ -72,54 +74,103 @@ export function MediaJobsPage({
   const providerSupportsOperation = Boolean(selectedProvider?.capabilities.includes(form.operation));
   const selectedProviderCanRun = Boolean(selectedProvider && canUseGenerationProviderForOperation(selectedProvider, form.operation));
   const canCreate = Boolean(selectedProviderCanRun && form.prompt.trim());
+  const queuedCount = jobs.filter((job) => job.status === "queued" || job.status === "running" || job.status === "waiting_for_approval").length;
+  const filteredJobs = jobs.filter((job) => {
+    if (statusFilter === "all") {
+      return true;
+    }
+    if (statusFilter === "queued") {
+      return job.status === "queued" || job.status === "running" || job.status === "waiting_for_approval";
+    }
+    return job.status === statusFilter;
+  });
+  const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0];
+  const selectedProviderForJob = selectedJob ? providers.find((provider) => provider.id === selectedJob.providerPresetId) : undefined;
+  const selectedJobArtifacts = selectedJob ? artifactsByJob[selectedJob.id] ?? [] : [];
+  const selectedMediaArtifacts = selectedJobArtifacts.filter((artifact) => artifact.type === "image" || artifact.type === "video");
+
+  function createGenerationTask(): void {
+    if (!canCreate) {
+      return;
+    }
+    onCreate();
+    setCreateOpen(false);
+  }
 
   return (
-    <div className="media-jobs-layout">
-      <section className="panel media-job-list-panel" aria-labelledby="media-jobs-title">
-        <div className="panel-title split">
-          <span>
-            <Database size={18} />
-            <h2 id="media-jobs-title">{t("Generation tasks")}</h2>
-          </span>
-          <span className="media-job-title-actions">
-            <button
-              className="primary-button compact-button"
-              type="button"
-              aria-label={t("Jump to generation form")}
-              onClick={() => promptRef.current?.focus()}
-            >
-              <Plus size={14} />
-              {t("Create generation task")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
-              {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-              {t("Refresh")}
-            </button>
-          </span>
+    <div className="media-jobs-page">
+      <header className="media-jobs-page-header">
+        <div>
+          <h1 id="media-jobs-title">{t("Generation tasks")}</h1>
+          <p>
+            {t("{modelCount} available generation models · {taskCount} history tasks · {queuedCount} queued", {
+              modelCount: runnableProvidersForOperation.length,
+              taskCount: jobs.length,
+              queuedCount,
+            })}
+          </p>
         </div>
+        <div className="media-job-title-actions">
+          <button className="secondary-button compact-button media-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")}>
+            {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+          </button>
+          <button
+            className="primary-button media-create-button"
+            type="button"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus size={16} />
+            {t("Create generation task")}
+          </button>
+        </div>
+      </header>
 
-        {errorMessage ? (
-          <div className="inline-error">
-            <CircleAlert size={17} />
-            {errorMessage}
+      {errorMessage ? (
+        <div className="inline-error media-page-error">
+          <CircleAlert size={17} />
+          {errorMessage}
+        </div>
+      ) : null}
+
+      {runnableProvidersForOperation.length === 0 ? (
+        <div className="provider-next-action media-model-alert">
+          <CircleAlert size={16} />
+          <span>{t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}</span>
+          <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+            <PlugZap size={14} />
+            {t("Open generation model settings")}
+          </button>
+        </div>
+      ) : null}
+
+      <div className="media-jobs-layout">
+        <section className="media-job-list-panel" aria-labelledby="media-jobs-title">
+          <div className="media-job-filter-bar" aria-label={t("Generation task status")}>
+            {([
+              ["all", t("All")],
+              ["succeeded", t("Succeeded")],
+              ["failed", t("Failed")],
+              ["queued", t("Queued")],
+            ] as const).map(([filter, label]) => (
+              <button
+                key={filter}
+                className={statusFilter === filter ? "active" : ""}
+                type="button"
+                onClick={() => setStatusFilter(filter)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-        ) : null}
 
-        <div className="media-job-page-meta" aria-label={t("Generation task status")}>
-          <span>{t("Generation models")} {generationProviders.length}</span>
-          <span>{t("Enabled")} {enabledGenerationProviders.length}</span>
-          <span>{t("Ready to generate")} {runnableProvidersForOperation.length}</span>
-          <span>{t("Queued tasks")} {jobs.filter((job) => job.status === "queued").length}</span>
-        </div>
-
-        <div className="media-job-list">
-          {jobs.length === 0 ? (
+          <div className="media-job-list">
+            {filteredJobs.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <Database />}
               <span>{isLoading ? t("Loading generation tasks...") : t("No generation tasks recorded for this workspace")}</span>
             </div>
           ) : (
-            jobs.map((job) => {
+            filteredJobs.map((job) => {
               const provider = providers.find((item) => item.id === job.providerPresetId);
               const jobArtifacts = artifactsByJob[job.id] ?? [];
               const mediaArtifacts = jobArtifacts.filter((artifact) => artifact.type === "image" || artifact.type === "video");
@@ -176,163 +227,272 @@ export function MediaJobsPage({
                         <span>{t("{count} generated results", { count: mediaArtifacts.length })}</span>
                         <time>{formatDateTime(job.updatedAt)}</time>
                       </div>
-                      <details className="media-job-prompt-disclosure">
-                        <summary>{t("View prompt")}</summary>
-                        <p>{job.prompt}</p>
-                      </details>
                     </div>
                   </div>
-                  {job.status === "waiting_for_approval" ? <small className="media-job-approval">{t("Approval required before live execution")}</small> : null}
-                  {needsRecovery ? (
-                    <div className="media-job-recovery">
-                      <CircleAlert size={15} />
-                      <span>
-                        <strong>{hasMissingResult ? t("Result is missing") : t("Generation needs attention")}</strong>
-                        <small>{job.errorMessage ? formatMediaJobError(job.errorMessage, t) : t("No usable result was returned. Try another run or choose a different model.")}</small>
-                      </span>
-                      <div>
-                        <button
-                          className="secondary-button compact-button"
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onSelectJob(job.id);
-                            onRun(job.id);
-                          }}
-                          disabled={isLoading || isRunningJob || !isRunnable}
-                        >
-                          {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                          {t("Run again")}
-                        </button>
-                        <button
-                          className="secondary-button compact-button"
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onOpenProviders();
-                          }}
-                        >
-                          <PlugZap size={14} />
-                          {t("Change model")}
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  {mediaArtifacts.length > 0 ? (
-                    <div className="media-job-artifacts artifact-list" aria-label={`Artifacts for ${job.id}`}>
-                      {mediaArtifacts.map((artifact) => (
-                        <ArtifactRow artifact={artifact} cwd={cwd} key={artifact.id} />
-                      ))}
-                    </div>
-                  ) : null}
                 </article>
               );
             })
           )}
-        </div>
-      </section>
-
-      <section className="panel media-job-form-panel" aria-labelledby="media-job-form-title">
-        <div className="panel-title split">
-          <span>
-            <Plus size={18} />
-            <h2 id="media-job-form-title">{t("Create generation task")}</h2>
-          </span>
-          <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
-            <PlugZap size={14} />
-            {t("Model Workbench")}
-          </button>
-        </div>
-
-        <div className={runnableProvidersForOperation.length > 0 ? "provider-next-action ok" : "provider-next-action"}>
-          {runnableProvidersForOperation.length > 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
-          <span>
-            {runnableProvidersForOperation.length > 0
-              ? t("Ready generation models can produce real results. Coding runs still require chat-capable models.")
-              : t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}
-          </span>
-          {runnableProvidersForOperation.length === 0 ? (
-            <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
-              <PlugZap size={14} />
-              {t("Open generation model settings")}
-            </button>
-          ) : null}
-        </div>
-
-        <div className="media-job-form-toolbar" aria-label={t("Generation task controls")}>
-          <label className="field wide">
-            <span>{t("Generation model")}</span>
-            <select
-              value={selectedProvider && providerSupportsOperation ? form.providerPresetId : ""}
-              onChange={(event) => onFormChange({ ...form, providerPresetId: event.target.value })}
-              disabled={generationProvidersForOperation.length === 0}
-            >
-              <option value="">{t("Select generation model")}</option>
-              {generationProvidersForOperation.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.displayName} / {provider.model}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field wide">
-            <span>{t("Operation")}</span>
-            <select
-              value={form.operation}
-              onChange={(event) => {
-                const operation = event.target.value as MediaOperation;
-                const nextProvider = generationProviders.find((provider) => canUseGenerationProviderForOperation(provider, operation)) ??
-                  generationProviders.find((provider) => providerSupportsGenerationOperation(provider, operation));
-                onFormChange({ ...form, operation, providerPresetId: nextProvider?.id ?? "" });
-              }}
-            >
-              <option value="image_generate">{t("Image generate")}</option>
-              <option value="image_edit">{t("Image edit")}</option>
-              <option value="video_generate">{t("Video generate")}</option>
-            </select>
-          </label>
-        </div>
-
-        {selectedProvider && !providerSupportsOperation ? (
-          <div className="provider-run-notice">
-            <CircleAlert size={16} />
-            <span>{t("{providerName} does not support {operation}.", { providerName: selectedProvider.displayName, operation: t(mediaOperationLabel(form.operation)) })}</span>
           </div>
-        ) : null}
+        </section>
 
-        {selectedProvider && providerSupportsOperation && !selectedProviderCanRun ? (
-          <div className="provider-run-notice">
-            <CircleAlert size={16} />
-            <span>{t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}</span>
-          </div>
-        ) : null}
+        <aside className="media-job-detail-panel" aria-label={t("Generation task details")}>
+          {selectedJob ? (
+            <MediaJobDetail
+              cwd={cwd}
+              job={selectedJob}
+              providerName={selectedProviderForJob?.displayName ?? t("Unknown provider")}
+              artifacts={selectedMediaArtifacts}
+              isLoading={isLoading}
+              isRunning={runningJobId === selectedJob.id}
+              onCopy={() => void navigator.clipboard?.writeText(selectedJob.prompt)}
+              onOpenProviders={onOpenProviders}
+              onRun={() => onRun(selectedJob.id)}
+            />
+          ) : (
+            <div className="media-job-detail-empty">
+              <ImageIcon size={20} />
+              <strong>{t("No generation task selected")}</strong>
+              <span>{t("Create or select a task to inspect its prompt and artifacts.")}</span>
+            </div>
+          )}
+        </aside>
+      </div>
 
-        <label className="field wide media-job-prompt-composer">
-          <span>{t("Prompt")}</span>
-          <textarea
-            ref={promptRef}
-            value={form.prompt}
-            rows={8}
-            placeholder={t("Describe the scene, style, ratio, and intended use...")}
-            onChange={(event) => onFormChange({ ...form, prompt: event.target.value })}
-          />
-        </label>
+      {isCreateOpen ? (
+        <div className="media-create-overlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            setCreateOpen(false);
+          }
+        }}>
+          <section className="media-create-dialog" role="dialog" aria-modal="true" aria-label={t("Create generation task")}>
+            <header className="media-create-header">
+              <div>
+                <h2>{t("Create generation task")}</h2>
+                <p>{t("Choose a model, write a prompt, then submit a generation task")}</p>
+              </div>
+              <button className="ghost-icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label={t("Cancel")} title={t("Cancel")}>
+                <X size={18} />
+              </button>
+            </header>
 
-        <details className="advanced-settings">
-          <summary>{t("Advanced input")}</summary>
-          <label className="field wide">
-            <span>{t("Input JSON")}</span>
-            <textarea value={form.inputText} rows={6} onChange={(event) => onFormChange({ ...form, inputText: event.target.value })} />
-          </label>
-        </details>
+            <div className="media-create-body">
+              {runnableProvidersForOperation.length === 0 ? (
+                <div className="provider-next-action compact">
+                  <CircleAlert size={16} />
+                  <span>{t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}</span>
+                  <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+                    <PlugZap size={14} />
+                    {t("Open generation model settings")}
+                  </button>
+                </div>
+              ) : null}
 
-        <button className="primary-button" type="button" onClick={onCreate} disabled={isLoading || !canCreate}>
-          {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-          {t("Create generation task")}
-        </button>
-      </section>
+              <div className="media-job-form-toolbar" aria-label={t("Generation task controls")}>
+                <label className="field wide">
+                  <span>{t("Generation model")}</span>
+                  <select
+                    value={selectedProvider && providerSupportsOperation ? form.providerPresetId : ""}
+                    onChange={(event) => onFormChange({ ...form, providerPresetId: event.target.value })}
+                    disabled={generationProvidersForOperation.length === 0}
+                  >
+                    <option value="">{t("Select generation model")}</option>
+                    {generationProvidersForOperation.map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.displayName} / {provider.model}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field wide">
+                  <span>{t("Operation")}</span>
+                  <select
+                    value={form.operation}
+                    onChange={(event) => {
+                      const operation = event.target.value as MediaOperation;
+                      const nextProvider = generationProviders.find((provider) => canUseGenerationProviderForOperation(provider, operation)) ??
+                        generationProviders.find((provider) => providerSupportsGenerationOperation(provider, operation));
+                      onFormChange({ ...form, operation, providerPresetId: nextProvider?.id ?? "" });
+                    }}
+                  >
+                    <option value="image_generate">{t("Image generate")}</option>
+                    <option value="image_edit">{t("Image edit")}</option>
+                    <option value="video_generate">{t("Video generate")}</option>
+                  </select>
+                </label>
+              </div>
+
+              {selectedProvider && !providerSupportsOperation ? (
+                <div className="provider-run-notice">
+                  <CircleAlert size={16} />
+                  <span>{t("{providerName} does not support {operation}.", { providerName: selectedProvider.displayName, operation: t(mediaOperationLabel(form.operation)) })}</span>
+                </div>
+              ) : null}
+
+              {selectedProvider && providerSupportsOperation && !selectedProviderCanRun ? (
+                <div className="provider-run-notice">
+                  <CircleAlert size={16} />
+                  <span>{t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}</span>
+                </div>
+              ) : null}
+
+              <label className="field wide media-job-prompt-composer">
+                <span>{t("Prompt")}</span>
+                <textarea
+                  value={form.prompt}
+                  rows={8}
+                  maxLength={2000}
+                  placeholder={t("Describe the scene, style, ratio, and intended use...")}
+                  onChange={(event) => onFormChange({ ...form, prompt: event.target.value })}
+                />
+                <small>{form.prompt.length} / 2000</small>
+              </label>
+
+              <details className="advanced-settings media-create-advanced">
+                <summary>
+                  <span>{t("Advanced settings")}</span>
+                  <small>{t("Seed: random, negative prompt: none")}</small>
+                </summary>
+                <label className="field wide">
+                  <span>{t("Input JSON")}</span>
+                  <textarea value={form.inputText} rows={6} onChange={(event) => onFormChange({ ...form, inputText: event.target.value })} />
+                </label>
+              </details>
+            </div>
+
+            <footer className="media-create-footer">
+              <span>
+                <CircleAlert size={15} />
+                {t("This will create a queued task")}
+              </span>
+              <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>
+                {t("Cancel")}
+              </button>
+              <button className="primary-button" type="button" onClick={createGenerationTask} disabled={isLoading || !canCreate}>
+                {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+                {t("Create generation task")}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function MediaJobDetail({
+  cwd,
+  job,
+  providerName,
+  artifacts,
+  isLoading,
+  isRunning,
+  onCopy,
+  onOpenProviders,
+  onRun,
+}: {
+  readonly cwd: string;
+  readonly job: MediaJob;
+  readonly providerName: string;
+  readonly artifacts: readonly RunArtifact[];
+  readonly isLoading: boolean;
+  readonly isRunning: boolean;
+  readonly onCopy: () => void;
+  readonly onOpenProviders: () => void;
+  readonly onRun: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const primaryArtifact = artifacts[0];
+  const canRun = job.status === "queued" || job.status === "waiting_for_approval" || job.status === "failed" || job.status === "cancelled" || (job.artifactIds.length > 0 && artifacts.length === 0);
+  const hasMissingResult = job.artifactIds.length > 0 && artifacts.length === 0;
+  const needsRecovery = Boolean(job.errorMessage || hasMissingResult);
+  return (
+    <div className="media-job-detail-content">
+      <div className="media-job-detail-head">
+        <span className="media-job-detail-kicker">TASK · {job.id.slice(0, 8).toUpperCase()}</span>
+        <span className="media-job-detail-tools">
+          <button className="ghost-icon-button" type="button" onClick={onCopy} aria-label={t("Copy prompt")} title={t("Copy prompt")}>
+            <Copy size={16} />
+          </button>
+          <button className="ghost-icon-button" type="button" onClick={onOpenProviders} aria-label={t("Model Workbench")} title={t("Model Workbench")}>
+            <PlugZap size={16} />
+          </button>
+        </span>
+      </div>
+      <h2>{t(mediaOperationLabel(job.operation))}</h2>
+      <p className="media-job-detail-summary">
+        {job.status === "succeeded"
+          ? t("Successfully generated {count} artifact based on the provided prompt.", { count: artifacts.length })
+          : needsRecovery
+            ? (job.errorMessage ? formatMediaJobError(job.errorMessage, t) : t("No usable result was returned. Try another run or choose a different model."))
+            : t("This task is ready to run when approvals and model settings are satisfied.")}
+      </p>
+
+      {primaryArtifact ? (
+        <MediaJobResultHero artifact={primaryArtifact} cwd={cwd} />
+      ) : (
+        <span className={`media-job-detail-preview empty ${job.status}`}>
+          {needsRecovery ? <CircleAlert size={22} /> : <ImageIcon size={22} />}
+          <strong>{needsRecovery ? t("Needs recovery") : t("No result yet")}</strong>
+        </span>
+      )}
+
+      <div className="media-job-detail-actions">
+        <button className={needsRecovery ? "primary-button" : "secondary-button"} type="button" onClick={onRun} disabled={isLoading || isRunning || !canRun}>
+          {isRunning ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+          {isRunning ? t("Running") : needsRecovery ? t("Run again") : t("Run")}
+        </button>
+        <button className="secondary-button" type="button" onClick={onCopy}>
+          <Copy size={16} />
+          {t("Copy details")}
+        </button>
+      </div>
+
+      <details className="media-job-detail-disclosure" open>
+        <summary>{t("View full prompt")}</summary>
+        <p>{job.prompt}</p>
+      </details>
+
+      <div className="media-job-detail-meta">
+        <span>{t("Provider")}<strong>{providerName}</strong></span>
+        <span>{t("Status")}<strong>{t(mediaJobStatusLabel(job.status))}</strong></span>
+        <span>{t("Created")}<strong>{formatDateTime(job.createdAt)}</strong></span>
+        <span>{t("Updated")}<strong>{formatDateTime(job.updatedAt)}</strong></span>
+      </div>
+
+      {artifacts.length > 0 ? (
+        <div className="media-job-detail-artifacts artifact-list" aria-label={t("Artifacts")}>
+          {artifacts.map((artifact) => (
+            <ArtifactRow artifact={artifact} cwd={cwd} key={artifact.id} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MediaJobResultHero({
+  artifact,
+  cwd,
+}: {
+  readonly artifact: RunArtifact;
+  readonly cwd: string;
+}): JSX.Element {
+  const { t } = useI18n();
+  const title = artifact.title || artifactDownloadName(artifact);
+  if (isImageArtifact(artifact)) {
+    return (
+      <a className="media-job-detail-preview image" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer">
+        <img src={artifactContentUrl(artifact.id, cwd)} alt={title} />
+      </a>
+    );
+  }
+  return (
+    <a className="media-job-detail-preview file" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer">
+      <ImageIcon size={22} />
+      <strong>{t("Open generated result")}</strong>
+    </a>
   );
 }
 
