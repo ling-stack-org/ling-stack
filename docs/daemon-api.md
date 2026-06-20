@@ -1219,6 +1219,7 @@ POST /channels/:id/protocol/drafts?cwd=/path/to/project
 POST /channels/:id/protocol/drafts/:draftId/apply?cwd=/path/to/project
 GET /channels/:id/protocol-candidates?cwd=/path/to/project&status=draft&limit=50
 POST /channels/:id/protocol-candidates?cwd=/path/to/project
+POST /channels/:id/protocol-candidates/from-cluster/:clusterId?cwd=/path/to/project
 POST /channels/:id/protocol-candidates/:candidateId/review?cwd=/path/to/project
 ```
 
@@ -1263,6 +1264,15 @@ Skill Candidate and channel canvas module. Creating a candidate is equivalent to
 a protocol draft. Reviewing with `{"action":"approve"}` applies the draft; reviewing with
 `{"action":"reject"}` cancels it. Protocol candidates never grant tools, approvals,
 provider access, secrets, external-send authority, or workflow execution.
+
+`POST /channels/:id/protocol-candidates/from-cluster/:clusterId` manually converts a
+`ready_for_review` `ProcedureObservationCluster` into a draft protocol candidate. The
+cluster must belong to the channel, have `routeKind: "channel_protocol"`, and have no
+route blockers. If `proposedPatch` is omitted, the daemon creates one review rule from
+the cluster title, summary, and positive triggers. `playbook`, `skill`, `memory`,
+`automation`, blocked, and cross-channel clusters return displayable `400` errors and do
+not create protocol candidates. This route is manual and does not enable automatic
+post-run or transcript-derived candidate creation.
 
 ## Channel Handoff Workflows
 

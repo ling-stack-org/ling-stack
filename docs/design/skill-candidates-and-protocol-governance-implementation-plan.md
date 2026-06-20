@@ -218,6 +218,9 @@ Implemented in this slice:
 - read-only Channel Protocol Canvas API at `GET /channels/:id/protocol/canvas`, returning
   the effective protocol, protocol draft candidates, channel-scoped protocol/playbook
   clusters, and compact section summaries;
+- manual cluster-to-protocol candidate API at
+  `POST /channels/:id/protocol-candidates/from-cluster/:clusterId` for same-channel
+  ready `channel_protocol` clusters only;
 - Settings > Skill Library shows candidate clusters as a read-only governance queue.
 
 Still not implemented:
@@ -227,6 +230,7 @@ Still not implemented:
 - direct candidate-to-registry publish without the import draft review step;
 - transcript-derived or post-run automatic candidate creation for channel protocol or
   playbook destinations;
+- playbook destination draft creation from clusters;
 - explicit Web channel protocol candidate queue beyond the existing protocol draft surface;
 - destination-specific playbook draft table/UI;
 - automatic correction-to-update-candidate generation;
@@ -777,6 +781,7 @@ Routes:
 ```http
 GET /channels/:id/protocol-candidates?cwd=/path/to/workspace
 POST /channels/:id/protocol-candidates?cwd=/path/to/workspace
+POST /channels/:id/protocol-candidates/from-cluster/:clusterId?cwd=/path/to/workspace
 POST /channels/:id/protocol-candidates/:candidateId/review?cwd=/path/to/workspace
 GET /channels/:id/protocol?cwd=/path/to/workspace
 GET /channels/:id/protocol/canvas?cwd=/path/to/workspace&limit=50
@@ -787,6 +792,9 @@ GET /procedure-observation-clusters/:id?cwd=/path/to/workspace
 Behavior:
 
 - `GET/POST /protocol-candidates` map to existing protocol draft list/create behavior.
+- `POST /protocol-candidates/from-cluster/:clusterId` manually creates a protocol draft
+  from a same-channel `ready_for_review` `channel_protocol` cluster; non-protocol,
+  blocked, and cross-channel clusters are rejected.
 - review `approve` applies the protocol draft.
 - review `reject` marks the draft `cancelled`.
 - `GET /protocol/canvas` returns effective protocol state, protocol draft candidates,
@@ -812,6 +820,8 @@ Tests:
 - reject candidate without changing the active protocol;
 - approve candidate and render as active protocol override;
 - create a channel-scoped workflow-step observation and list its playbook cluster;
+- create a channel protocol observation cluster, manually convert it into a protocol
+  candidate, and reject playbook cluster conversion through the protocol endpoint;
 - canvas response includes protocol/playbook clusters and section summaries;
 - source refs visible in API response;
 - existing Context protocol panel continues to show active protocol state.

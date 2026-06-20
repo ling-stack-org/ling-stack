@@ -49,6 +49,7 @@ import type {
   WorkflowCollaborationCardResponse,
   CreateChannelBranchRequest,
   CreateChannelCollaborationProtocolDraftRequest,
+  CreateChannelProtocolCandidateFromClusterRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelExecutionProposalRequest,
@@ -150,6 +151,15 @@ export async function createChannelCollaborationProtocolDraft(
   input: CreateChannelCollaborationProtocolDraftRequest,
 ): Promise<ChannelCollaborationProtocolDraftMutationResponse> {
   return daemonClient.createChannelCollaborationProtocolDraft(cwd, channelId, input);
+}
+
+export async function createChannelProtocolCandidateFromCluster(
+  cwd: string,
+  channelId: string,
+  clusterId: string,
+  input: CreateChannelProtocolCandidateFromClusterRequest = {},
+): Promise<ChannelProtocolCandidateMutationResponse> {
+  return daemonClient.createChannelProtocolCandidateFromCluster(cwd, channelId, clusterId, input);
 }
 
 export async function applyChannelCollaborationProtocolDraft(
