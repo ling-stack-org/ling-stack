@@ -19,18 +19,24 @@ import {
   createSkillCandidateDraft,
   createSkillImportDraft,
   getSkillHealth,
+  listChannelPlaybookCandidates,
+  listChannels,
   listAiTeammates,
   listProcedureObservationClusters,
   listSkillCandidates,
   listSkills,
   listTeammateSkills,
   publishSkillImportDraft,
+  reviewChannelPlaybookCandidate,
   reviewSkillCandidate,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type {
   AiTeammate,
+  Channel,
+  ChannelPlaybookCandidate,
+  ChannelPlaybookCandidateReviewAction,
   SkillCandidate,
   SkillCandidateReviewAction,
   ProcedureObservationCluster,
@@ -72,6 +78,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
   const [skillHealth, setSkillHealth] = useState<SkillHealthReport | undefined>();
   const [skillCandidates, setSkillCandidates] = useState<readonly SkillCandidate[]>([]);
+  const [playbookCandidates, setPlaybookCandidates] = useState<readonly ChannelPlaybookCandidate[]>([]);
+  const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [observationClusters, setObservationClusters] = useState<readonly ProcedureObservationCluster[]>([]);
   const [bindingSummaries, setBindingSummaries] = useState<readonly TeammateSkillBindingSummary[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState("");
@@ -158,24 +166,30 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setLoading(true);
     try {
       setError("");
-      const [skillsResponse, skillHealthResponse, clustersResponse, candidatesResponse, teammatesResponse] = await Promise.all([
+      const [skillsResponse, skillHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
         listSkills(workspaceCwd),
         getSkillHealth(workspaceCwd, { limit: 6 }),
         listProcedureObservationClusters(workspaceCwd, { limit: 8 }),
         listSkillCandidates(workspaceCwd, { limit: 8 }),
+        listChannels(workspaceCwd),
         listAiTeammates(workspaceCwd),
       ]);
       const visibleTeammates = teammatesResponse.teammates.filter((teammate) => teammate.status !== "disabled" && !teammate.hidden);
-      const teammateSkillResponses = await Promise.all(
-        visibleTeammates.map(async (teammate) => ({
-          teammate,
-          bindings: (await listTeammateSkills(workspaceCwd, teammate.id)).bindings,
-        })),
-      );
+      const [teammateSkillResponses, playbookCandidateResponses] = await Promise.all([
+        Promise.all(
+          visibleTeammates.map(async (teammate) => ({
+            teammate,
+            bindings: (await listTeammateSkills(workspaceCwd, teammate.id)).bindings,
+          })),
+        ),
+        Promise.all(channelsResponse.channels.map((channel) => listChannelPlaybookCandidates(workspaceCwd, channel.id, { limit: 8 }))),
+      ]);
       setSkills(skillsResponse.skills);
       setSkillHealth(skillHealthResponse.report);
       setObservationClusters(clustersResponse.clusters);
       setSkillCandidates(candidatesResponse.candidates);
+      setPlaybookCandidates(playbookCandidateResponses.flatMap((response) => response.candidates));
+      setChannels(channelsResponse.channels);
       setBindingSummaries(teammateSkillResponses);
       setMessage(t("Skill library refreshed"));
     } catch (loadError) {
@@ -330,6 +344,32 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
+  async function reviewPlaybookCandidate(candidate: ChannelPlaybookCandidate, action: ChannelPlaybookCandidateReviewAction): Promise<void> {
+    if (saving) {
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      const response = await reviewChannelPlaybookCandidate(workspaceCwd, candidate.channelId, candidate.id, {
+        action,
+        reason: playbookCandidateReviewReason(action, t),
+      });
+      setPlaybookCandidates((current) => current.map((item) => item.id === candidate.id ? response.candidate : item));
+      await refresh();
+      setMessage(playbookCandidateReviewMessage(action, t));
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : String(reviewError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function archiveRegistrySkill(skillId: string): Promise<void> {
     if (saving) {
       return;
@@ -403,6 +443,15 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         saving={saving}
         onCreateProtocolCandidate={(cluster) => void createProtocolCandidateFromCluster(cluster)}
         onCreatePlaybookCandidate={(cluster) => void createPlaybookCandidateFromCluster(cluster)}
+        t={t}
+      />
+
+      <PlaybookCandidateReviewPanel
+        candidates={playbookCandidates}
+        channels={channels}
+        loading={loading}
+        saving={saving}
+        onReview={(candidate, action) => void reviewPlaybookCandidate(candidate, action)}
         t={t}
       />
 
@@ -773,6 +822,111 @@ function ProcedureObservationClusterPanel({
   );
 }
 
+function PlaybookCandidateReviewPanel({
+  candidates,
+  channels,
+  loading,
+  saving,
+  onReview,
+  t,
+}: {
+  readonly candidates: readonly ChannelPlaybookCandidate[];
+  readonly channels: readonly Channel[];
+  readonly loading: boolean;
+  readonly saving: boolean;
+  readonly onReview: (candidate: ChannelPlaybookCandidate, action: ChannelPlaybookCandidateReviewAction) => void;
+  readonly t: SettingsTranslator;
+}): JSX.Element {
+  const channelNames = useMemo(() => new Map(channels.map((channel) => [channel.id, channel.name])), [channels]);
+  const draftCount = candidates.filter((candidate) => candidate.status === "draft").length;
+  const activeCount = candidates.filter((candidate) => candidate.status === "active").length;
+  const rows = useMemo(() => {
+    const statusRank: Record<ChannelPlaybookCandidate["status"], number> = {
+      draft: 0,
+      active: 1,
+      stale: 2,
+      cancelled: 3,
+    };
+    return [...candidates].sort((left, right) => {
+      const rank = statusRank[left.status] - statusRank[right.status];
+      return rank !== 0 ? rank : right.updatedAt.localeCompare(left.updatedAt);
+    });
+  }, [candidates]);
+
+  return (
+    <section className="settings-skill-candidate-review settings-playbook-candidate-review" aria-label={t("Playbook Candidate Review")}>
+      <header className="settings-skill-candidate-head">
+        <span>
+          <BookOpen size={15} />
+          <strong>{t("Playbook Candidate Review")}</strong>
+        </span>
+        <small>{t("{draft} draft · {active} active · {total} total", { draft: draftCount, active: activeCount, total: candidates.length })}</small>
+      </header>
+      {rows.length === 0 ? (
+        <div className="compact-empty">{loading ? t("Loading playbook candidates...") : t("No playbook candidates")}</div>
+      ) : (
+        <div className="settings-skill-candidate-list">
+          {rows.slice(0, 8).map((candidate) => {
+            const canReview = candidate.status === "draft";
+            const channelName = channelNames.get(candidate.channelId) ?? candidate.channelId;
+            return (
+              <article key={candidate.id} className="settings-skill-candidate-card">
+                <div className="settings-skill-candidate-main">
+                  <div className="settings-skill-candidate-title">
+                    <span>
+                      <strong>{candidate.title}</strong>
+                      <small>{channelName} · {candidate.id}</small>
+                    </span>
+                    <span className={`settings-skill-candidate-status ${candidate.status}`}>{playbookCandidateStatusLabel(candidate.status, t)}</span>
+                  </div>
+                  <p>{candidate.summary}</p>
+                  <div className="settings-skill-candidate-meta">
+                    <span>{t("Goal")}: {candidate.normalizedGoal}</span>
+                    <span>{t("Reason")}: {candidate.reason}</span>
+                    <span>{t("Updated {time}", { time: formatDateTime(candidate.updatedAt) })}</span>
+                  </div>
+                  <div className="settings-skill-candidate-gates">
+                    <span>
+                      <small>{t("Steps")}</small>
+                      <SkillTokenList values={candidate.procedureSteps.map((step) => step.title)} emptyLabel={t("No procedure steps")} />
+                    </span>
+                    <span>
+                      <small>{t("Validation")}</small>
+                      <SkillTokenList values={candidate.validationSteps.map((step) => step.title)} emptyLabel={t("No validation steps")} />
+                    </span>
+                    <span>
+                      <small>{t("Triggers")}</small>
+                      <SkillTokenList values={candidate.positiveTriggers} emptyLabel={t("No positive triggers")} />
+                    </span>
+                    <span>
+                      <small>{t("Avoid triggers")}</small>
+                      <SkillTokenList values={candidate.negativeTriggers} emptyLabel={t("No avoid triggers")} />
+                    </span>
+                    <span>
+                      <small>{t("Source refs")}</small>
+                      <SkillTokenList values={candidate.sourceRefs.map((ref) => `${ref.label ?? ref.type}:${ref.id}`)} emptyLabel={t("No source refs")} />
+                    </span>
+                  </div>
+                </div>
+                <div className="settings-skill-candidate-actions">
+                  <button className="primary-button compact-button" type="button" onClick={() => onReview(candidate, "approve")} disabled={saving || !canReview}>
+                    <CheckCircle2 size={14} />
+                    {t("Approve playbook")}
+                  </button>
+                  <button className="secondary-button danger compact-button" type="button" onClick={() => onReview(candidate, "reject")} disabled={saving || !canReview}>
+                    <Archive size={14} />
+                    {t("Reject playbook")}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SkillCandidateReviewPanel({
   candidates,
   loading,
@@ -1062,6 +1216,19 @@ function skillCandidateStatusLabel(status: SkillCandidate["status"], t: (key: st
   }
 }
 
+function playbookCandidateStatusLabel(status: ChannelPlaybookCandidate["status"], t: (key: string) => string): string {
+  switch (status) {
+    case "draft":
+      return t("Draft");
+    case "active":
+      return t("Active");
+    case "cancelled":
+      return t("Cancelled");
+    case "stale":
+      return t("Stale");
+  }
+}
+
 function procedureObservationClusterStatusLabel(status: ProcedureObservationCluster["status"], t: (key: string) => string): string {
   switch (status) {
     case "collecting":
@@ -1188,6 +1355,16 @@ function skillCandidateReviewMessage(action: SkillCandidateReviewAction, t: (key
     return t("Candidate marked needs edit");
   }
   return t("Candidate reviewed");
+}
+
+function playbookCandidateReviewReason(action: ChannelPlaybookCandidateReviewAction, t: (key: string) => string): string {
+  return action === "approve"
+    ? t("Approved from Playbook Candidate Review panel.")
+    : t("Rejected from Playbook Candidate Review panel.");
+}
+
+function playbookCandidateReviewMessage(action: ChannelPlaybookCandidateReviewAction, t: (key: string) => string): string {
+  return action === "approve" ? t("Playbook activated") : t("Playbook candidate rejected");
 }
 
 function boundTeammateNames(skillId: string, summaries: readonly TeammateSkillBindingSummary[]): readonly string[] {

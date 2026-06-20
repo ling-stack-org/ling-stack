@@ -113,17 +113,18 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await page.getByLabel("队友模板").getByRole("button", { name: "添加队友", exact: true }).click();
   const createDialog = page.getByRole("dialog", { name: "创建 AI 队友" });
   await expect(createDialog).toBeVisible();
-  await expect(createDialog.getByText("选择角色", { exact: true })).toBeVisible();
-  await expect(createDialog.getByText("选择模型", { exact: true })).toBeVisible();
-  await expect(createDialog.getByText("基础信息", { exact: true })).toBeVisible();
+  await expect(createDialog).toContainText("选择初始角色");
+  await expect(createDialog.getByLabel("基础模型")).toBeVisible();
+  await expect(createDialog).toContainText("基础信息");
+  await expect(createDialog).toContainText("没有模型预设");
   await expect(createDialog.getByLabel("队友设置步骤")).toHaveCount(0);
   await expect(createDialog.getByLabel("队友预览")).toHaveCount(0);
   await expect(createDialog.getByText("系统提示词")).toHaveCount(0);
   await createDialog.getByText("高级设置").click();
   await expect(page.getByText("Project files")).toHaveCount(0);
   await expect(page.getByText("Skill pack")).toHaveCount(0);
-  await expect(createDialog.getByText("加入频道")).toBeVisible();
-  await expect(createDialog.getByText("记忆", { exact: true })).toBeVisible();
+  await expect(createDialog.getByRole("heading", { name: "加入频道" })).toBeVisible();
+  await expect(createDialog.getByRole("heading", { name: "记忆" })).toBeVisible();
 });
 
 test("theme switcher supports system, light, and dark preferences", async ({ page }) => {
@@ -362,6 +363,24 @@ test("settings skill library shows read-only skill health findings", async ({ pa
       updatedAt: "2026-06-20T00:00:00.000Z",
     });
   }
+  state.channelPlaybookCandidates.push({
+    id: "channel_playbook_candidate_rollback",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    title: "Deployment rollback playbook",
+    summary: "Rollback steps should stay as a channel-local operating procedure.",
+    normalizedGoal: "deployment rollback",
+    procedureSteps: [{ title: "Collect rollback evidence", instruction: "Summarize failed rollout evidence.", requiredTools: ["read"] }],
+    validationSteps: [{ title: "Confirm rollback state", commandOrCheck: "Review deployment status.", expectedResult: "Deployment is stable." }],
+    positiveTriggers: ["release rollback"],
+    negativeTriggers: ["docs-only change"],
+    sourceRefs: [{ type: "run", id: "run_rollback_playbook", label: "Rollback run" }],
+    reason: "Seeded playbook candidate for review.",
+    createdBy: "ai-draft",
+    status: "draft",
+    createdAt: "2026-06-20T00:32:00.000Z",
+    updatedAt: "2026-06-20T00:32:00.000Z",
+  });
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -391,6 +410,17 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await candidatePanel.getByRole("button", { name: "Reject candidate" }).click();
   await expect(candidatePanel).toContainText("No open skill candidates");
 
+  const playbookPanel = panel.getByRole("region", { name: "Playbook Candidate Review" });
+  await expect(playbookPanel).toContainText("Deployment rollback playbook");
+  await expect(playbookPanel).toContainText("docs-only change");
+  const seededPlaybook = playbookPanel.locator(".settings-skill-candidate-card").filter({ hasText: "Deployment rollback playbook" });
+  await seededPlaybook.getByRole("button", { name: "Reject playbook" }).click();
+  await expect.poll(() => {
+    const candidate = state.channelPlaybookCandidates.find((item) => isRecord(item) && item.id === "channel_playbook_candidate_rollback");
+    return isRecord(candidate) ? candidate.status : "";
+  }).toBe("cancelled");
+  await expect(panel).toContainText("Playbook candidate rejected");
+
   const clusterPanel = panel.getByRole("region", { name: "Candidate Clusters" });
   await expect(clusterPanel).toContainText("2 review · 1 blocked · 3 total");
   await expect(clusterPanel).toContainText("Channel canvas handoff protocol");
@@ -407,12 +437,20 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(clusterPanel).toContainText("Release verification playbook");
   await expect(clusterPanel).toContainText("Create playbook candidate");
   await clusterPanel.getByRole("button", { name: "Create playbook candidate" }).click();
-  await expect.poll(() => state.channelPlaybookCandidates.length).toBe(1);
+  await expect.poll(() => state.channelPlaybookCandidates.length).toBe(2);
   await expect.poll(() => {
     const candidate = state.channelPlaybookCandidates[0];
     return isRecord(candidate) && typeof candidate.title === "string" ? candidate.title : "";
   }).toContain("Release verification playbook");
   await expect(panel).toContainText("Playbook candidate created");
+  await expect(playbookPanel).toContainText("Release verification playbook");
+  const releasePlaybook = playbookPanel.locator(".settings-skill-candidate-card").filter({ hasText: "Release verification playbook" });
+  await releasePlaybook.getByRole("button", { name: "Approve playbook" }).click();
+  await expect.poll(() => {
+    const candidate = state.channelPlaybookCandidates.find((item) => isRecord(item) && typeof item.title === "string" && item.title.includes("Release verification playbook"));
+    return isRecord(candidate) ? candidate.status : "";
+  }).toBe("active");
+  await expect(panel).toContainText("Playbook activated");
   await expect(clusterPanel).toContainText("Generated skill missing gates");
   await expect(clusterPanel).toContainText("Append evidence");
 });

@@ -133,6 +133,10 @@ Already implemented in Ling:
   `/channels/:id/playbook-candidates`, and a Settings > Skill Library manual "Create
   playbook candidate" action for ready same-channel `playbook` clusters. Approving marks
   the candidate `active`; it does not create a global Skill or Memory object.
+- Settings > Skill Library also lists channel-local playbook candidates across channels,
+  shows their steps, validation checks, positive/negative triggers, source refs, and review
+  reason, and lets the reviewer approve or reject draft playbook candidates without
+  leaving the governance surface.
 
 Current gaps:
 
@@ -1179,13 +1183,14 @@ Status: implemented as `/channels/:id/protocol-candidates` over existing
 `channel_protocol` clusters. Channel-local playbook candidates are implemented through
 the destination-specific `channel_playbook_candidates` table and
 `/channels/:id/playbook-candidates` routes. Automatic observation-to-draft creation and a
-dedicated full playbook review UI beyond Settings remain deferred.
+native Desktop playbook review UI remain deferred.
 
 - Reuse existing channel protocol and draft tables.
 - Add channel protocol candidate API aliases for list/create/review.
 - Add channel-scoped cluster read model for protocol/playbook observations.
 - Add Channel Protocol Canvas read model for shared Web/Desktop/API clients.
 - Add channel-local playbook candidate API for ready `playbook` clusters.
+- Add Settings playbook candidate review panel for approve/reject and source evidence.
 - Render active protocols into channel context without granting authority.
 
 ### Slice 5: Publish And Supersede Flow
