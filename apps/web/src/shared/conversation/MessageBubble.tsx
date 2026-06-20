@@ -49,12 +49,14 @@ export function MessageBubble({
   const sideClass = inlineAuthor ? side === "end" ? "message-bubble-own" : "message-bubble-peer" : "";
   const ownMessage = inlineAuthor && side === "end";
   const peerMessage = inlineAuthor && side === "start";
+  const showOwnIdentity = ownMessage && showOwnAuthor;
   const showTime = !inlineAuthor && time.length > 0;
   const rootClassName = [
     "message-bubble",
     `message-bubble-${tone}`,
     inlineAuthor ? "message-bubble-inline" : "",
     sideClass,
+    showOwnIdentity ? "message-bubble-own-with-author" : "",
     pending ? "message-bubble-pending" : "",
     className,
   ].filter(Boolean).join(" ");
@@ -65,12 +67,7 @@ export function MessageBubble({
       {!inlineAuthor || peerMessage ? avatar : null}
       <div className={metaAction ? "message-content has-floating-action" : "message-content"}>
         {ownMessage ? (
-          showOwnAuthor ? (
-            <div className={metaAction ? "message-meta has-meta-action" : "message-meta"}>
-              <strong>{author}</strong>
-              {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
-            </div>
-          ) : metaAction ? <span className="message-meta-action">{metaAction}</span> : null
+          metaAction ? <span className="message-meta-action">{metaAction}</span> : null
         ) : (
           <div className={metaAction ? "message-meta has-meta-action" : "message-meta"}>
             <strong>{author}</strong>
@@ -90,7 +87,12 @@ export function MessageBubble({
         {errorNode}
         {action ? <div className="message-action">{action}</div> : null}
       </div>
-      {ownMessage ? avatar : null}
+      {showOwnIdentity ? (
+        <div className="message-own-identity">
+          <strong>{author}</strong>
+          {avatar}
+        </div>
+      ) : ownMessage ? avatar : null}
     </article>
   );
 }
