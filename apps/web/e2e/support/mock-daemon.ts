@@ -3,7 +3,7 @@ import { expect, type Locator, type Page, type Request, type Route } from "@play
 import { buildEffectiveTeammateSkills, buildMemoryMarkdownExport, parseMemoryMarkdownImport } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, WorkflowHandoffIntent, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, UserProfile, WorkflowHandoffIntent, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -103,6 +103,7 @@ export interface MockState {
   turnRunLinks: MockLingTurnRun[];
   failThreadTurnsForThreadIds: string[];
   executionActions: MockExecutionAction[];
+  userProfile: UserProfile;
   workspaceSettings: Record<string, unknown>;
 }
 
@@ -1015,6 +1016,13 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     turnRunLinks: [],
     failThreadTurnsForThreadIds: [],
     executionActions: [],
+    userProfile: {
+      schemaVersion: 1,
+      displayName: "Ling User",
+      handle: "ling-local",
+      createdAt: "2026-05-22T00:00:00.000Z",
+      updatedAt: "2026-05-22T00:00:00.000Z",
+    },
     workspaceSettings: {
       schemaVersion: 1,
       workspaceCwd: cwd,
@@ -3850,6 +3858,35 @@ export async function handleDaemonRoute(
       updatedAt: "2026-05-25T00:18:00.000Z",
     };
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/profile") {
+    await route.fulfill({ json: { cwd, profile: state.userProfile } });
+    return;
+  }
+  if (request.method() === "PATCH" && path === "/profile") {
+    const body = await request.postDataJSON() as {
+      readonly displayName?: unknown;
+      readonly handle?: unknown;
+      readonly avatarDataUrl?: unknown;
+    };
+    const nextProfile: UserProfile = {
+      ...state.userProfile,
+      displayName: typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : state.userProfile.displayName,
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    };
+    if (body.handle === null) {
+      delete nextProfile.handle;
+    } else if (typeof body.handle === "string" && body.handle.trim()) {
+      nextProfile.handle = body.handle.trim().replace(/^@+/, "");
+    }
+    if (body.avatarDataUrl === null) {
+      delete nextProfile.avatarDataUrl;
+    } else if (typeof body.avatarDataUrl === "string") {
+      nextProfile.avatarDataUrl = body.avatarDataUrl;
+    }
+    state.userProfile = nextProfile;
+    await route.fulfill({ json: { cwd, profile: state.userProfile } });
     return;
   }
   if (request.method() === "GET" && path === "/config/effective") {

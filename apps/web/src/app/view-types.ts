@@ -1,4 +1,4 @@
-export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "automations" | "providers" | "media" | "approvals" | "work_board" | "settings";
+export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "automations" | "providers" | "media" | "approvals" | "work_board" | "profile" | "settings";
 export type SidebarViewTarget = ViewId | "tasks";
 export type SidebarConversationKind = "teammate" | "direct";
 export type SidebarTarget = SidebarViewTarget | `channel:${string}` | `${SidebarConversationKind}:${string}`;
@@ -59,6 +59,9 @@ export function viewTitle(view: ViewId): string {
   if (view === "media") {
     return "Generation tasks";
   }
+  if (view === "profile") {
+    return "Profile";
+  }
   if (view === "settings") {
     return "Settings";
   }
@@ -89,6 +92,9 @@ export function viewDescription(view: ViewId): string {
   }
   if (view === "media") {
     return "创建和查看媒体 job 元数据；当前切片只验证模型与适配器边界，不调用真实媒体生成 API。";
+  }
+  if (view === "profile") {
+    return "查看个人资料、Token 活动、连续使用天数和技能调用统计。";
   }
   if (view === "settings") {
     return "配置 workspace 级 approval policy，控制工具自动允许、询问或拒绝，以及写入路径边界。";

@@ -1,0 +1,511 @@
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { Bot, Camera, Check, Pencil, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { getUserProfile, updateUserProfile } from "../../api/profile.js";
+import { listRuns } from "../../api/runs.js";
+import { listSkills } from "../../api/skills.js";
+import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
+
+type ActivityMode = "day" | "week" | "total";
+
+interface ProfileMetrics {
+  readonly totalEstimatedTokens: number;
+  readonly peakEstimatedTokens: number;
+  readonly longestDurationMs: number;
+  readonly currentStreakDays: number;
+  readonly longestStreakDays: number;
+  readonly sessionCount: number;
+  readonly successRate: number;
+  readonly topModel: string;
+  readonly exploredSkillCount: number;
+  readonly totalSkillCount: number;
+  readonly activeDayCount: number;
+  readonly last30EstimatedTokens: number;
+  readonly peakActivityDayTokens: number;
+  readonly topSkills: readonly { readonly id: string; readonly label: string; readonly count: number }[];
+  readonly activityDays: ReadonlyMap<string, number>;
+}
+
+export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [profile, setProfile] = useState<UserProfile | undefined>();
+  const [runs, setRuns] = useState<readonly RunSession[]>([]);
+  const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
+  const [displayName, setDisplayName] = useState("");
+  const [handle, setHandle] = useState("");
+  const [avatarDataUrl, setAvatarDataUrl] = useState<string | undefined>();
+  const [activityMode, setActivityMode] = useState<ActivityMode>("day");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const metrics = useMemo(() => buildProfileMetrics(runs, skills), [runs, skills]);
+  const activity = useMemo(() => buildActivityCalendar(metrics.activityDays, activityMode), [activityMode, metrics.activityDays]);
+  const hasProfileChanges =
+    profile !== undefined &&
+    (displayName.trim() !== profile.displayName ||
+      normalizeHandle(handle) !== (profile.handle ?? "") ||
+      avatarDataUrl !== profile.avatarDataUrl);
+
+  useEffect(() => {
+    void refresh();
+  }, [cwd]);
+
+  async function refresh(): Promise<void> {
+    if (!cwd.trim()) {
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    try {
+      const [profileResponse, runsResponse, skillsResponse] = await Promise.all([
+        getUserProfile(cwd),
+        listRuns(cwd, { limit: 200 }),
+        listSkills(cwd),
+      ]);
+      setProfile(profileResponse.profile);
+      setDisplayName(profileResponse.profile.displayName);
+      setHandle(profileResponse.profile.handle ?? "");
+      setAvatarDataUrl(profileResponse.profile.avatarDataUrl);
+      setRuns(runsResponse.runs);
+      setSkills(skillsResponse.skills);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveProfile(event?: FormEvent<HTMLFormElement>): Promise<void> {
+    event?.preventDefault();
+    if (!cwd.trim() || saving) {
+      return;
+    }
+    setSaving(true);
+    setMessage("");
+    try {
+      const response = await updateUserProfile(cwd, {
+        displayName,
+        handle: normalizeHandle(handle) || null,
+        avatarDataUrl: avatarDataUrl ?? null,
+      });
+      setProfile(response.profile);
+      setDisplayName(response.profile.displayName);
+      setHandle(response.profile.handle ?? "");
+      setAvatarDataUrl(response.profile.avatarDataUrl);
+      setMessage("个人资料已保存");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAvatarChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setMessage("请选择图片文件");
+      return;
+    }
+    setAvatarDataUrl(await fileToDataUrl(file));
+    setMessage("头像已选择，保存后生效");
+    event.target.value = "";
+  }
+
+  const initials = initialsFromName(displayName || profile?.displayName || "Ling User");
+  const visibleHandle = normalizeHandle(handle) || profile?.handle || "local-user";
+
+  return (
+    <div className="profile-page">
+      <header className="profile-topbar">
+        <div>
+          <p className="profile-kicker">个人资料</p>
+          <h1>{profile?.displayName ?? (displayName || "Ling User")}</h1>
+        </div>
+        <div className="profile-actions">
+          <button className="secondary-button compact-button" type="button" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw size={14} />
+            <span>{loading ? "刷新中" : "刷新"}</span>
+          </button>
+          <button className="primary-button compact-button" type="button" onClick={() => void saveProfile()} disabled={!hasProfileChanges || saving}>
+            {saving ? <RefreshCw size={14} /> : <Check size={14} />}
+            <span>{saving ? "保存中" : "保存资料"}</span>
+          </button>
+        </div>
+      </header>
+
+      <section className="profile-hero" aria-label="个人资料概览">
+        <button className="profile-avatar-button" type="button" onClick={() => fileInputRef.current?.click()} aria-label="更换头像" title="更换头像">
+          {avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : <span>{initials}</span>}
+          <span className="profile-avatar-edit"><Camera size={15} /></span>
+        </button>
+        <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={(event) => void handleAvatarChange(event)} />
+        <form className="profile-identity-form" onSubmit={(event) => void saveProfile(event)}>
+          <label>
+            <span>昵称</span>
+            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} />
+          </label>
+          <label>
+            <span>用户名</span>
+            <input value={handle} onChange={(event) => setHandle(event.target.value)} maxLength={48} placeholder="local-user" />
+          </label>
+          <p>@{visibleHandle} · 本地个人资料</p>
+        </form>
+      </section>
+
+      <section className="profile-stat-strip" aria-label="Token 和连续使用统计">
+        <ProfileStat value={formatCompactNumber(metrics.totalEstimatedTokens)} label="累计估算 Token" />
+        <ProfileStat value={formatCompactNumber(metrics.peakEstimatedTokens)} label="峰值估算 Token" />
+        <ProfileStat value={formatDuration(metrics.longestDurationMs)} label="最长任务时长" />
+        <ProfileStat value={`${metrics.currentStreakDays} 天`} label="当前连续天数" />
+        <ProfileStat value={`${metrics.longestStreakDays} 天`} label="最长连续天数" />
+      </section>
+
+      <section className="profile-activity-section" aria-label="Token 活动">
+        <div className="profile-section-head">
+          <h2>Token 活动</h2>
+          <div className="profile-segmented" role="tablist" aria-label="Token 活动粒度">
+            {([
+              ["day", "每日"],
+              ["week", "每周"],
+              ["total", "累计"],
+            ] as const).map(([mode, label]) => (
+              <button key={mode} type="button" className={activityMode === mode ? "active" : ""} onClick={() => setActivityMode(mode)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="profile-activity-body">
+          <div className="profile-heatmap" role="img" aria-label="过去一年 Token 活动热力图">
+            <div className="profile-heatmap-grid">
+              {activity.cells.map((cell) => (
+                <span key={cell.date} className={`profile-heatmap-cell level-${cell.level}`} title={`${cell.date}: ${formatCompactNumber(cell.value)} 估算 Token`} />
+              ))}
+            </div>
+            <div className="profile-heatmap-months" aria-hidden="true">
+              {activity.monthLabels.map((label) => <span key={`${label.month}-${label.column}`} style={{ gridColumn: label.column }}>{label.month}</span>)}
+            </div>
+          </div>
+          <aside className="profile-activity-summary" aria-label="Token 活动摘要">
+            <span>本期摘要</span>
+            <strong>{metrics.activeDayCount} 天活跃</strong>
+            <div>
+              <small>近 30 天</small>
+              <b>{formatCompactNumber(metrics.last30EstimatedTokens)}</b>
+            </div>
+            <div>
+              <small>最高单日</small>
+              <b>{formatCompactNumber(metrics.peakActivityDayTokens)}</b>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <div className="profile-detail-grid">
+        <section className="profile-insights" aria-label="活动洞察">
+          <h2>活动洞察</h2>
+          <ProfileInsight icon={<ShieldCheck size={16} />} label="任务成功率" value={`${metrics.successRate}%`} />
+          <ProfileInsight icon={<Bot size={16} />} label="最常用的模型" value={metrics.topModel} />
+          <ProfileInsight icon={<Sparkles size={16} />} label="已探索的技能" value={String(metrics.exploredSkillCount)} />
+          <ProfileInsight icon={<Pencil size={16} />} label="使用的技能总数" value={String(metrics.totalSkillCount)} />
+          <ProfileInsight icon={<Check size={16} />} label="会话总数" value={String(metrics.sessionCount)} />
+        </section>
+
+        <section className="profile-top-skills" aria-label="最常用的技能">
+          <h2>最常用的技能</h2>
+          {metrics.topSkills.length > 0 ? (
+            <div className="profile-skill-list">
+              {metrics.topSkills.map((skill) => (
+                <div key={skill.id} className="profile-skill-row">
+                  <span className="profile-skill-icon"><Sparkles size={14} /></span>
+                  <strong>{skill.label}</strong>
+                  <span>{skill.count} 次运行</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="profile-empty">还没有带技能的运行记录。</p>
+          )}
+        </section>
+      </div>
+
+      {message ? <div className={message.includes("已") ? "profile-message ok" : "profile-message"}>{message}</div> : null}
+    </div>
+  );
+}
+
+function ProfileStat({ value, label }: { readonly value: string; readonly label: string }): JSX.Element {
+  return <div className="profile-stat"><strong>{value}</strong><span>{label}</span></div>;
+}
+
+function ProfileInsight({ icon, label, value }: { readonly icon: JSX.Element; readonly label: string; readonly value: string }): JSX.Element {
+  return <div className="profile-insight-row"><span className="profile-insight-icon">{icon}</span><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function buildProfileMetrics(runs: readonly RunSession[], skills: readonly SkillRegistryEntry[]): ProfileMetrics {
+  const skillLabels = new Map(skills.map((entry) => [entry.id, entry.definition.name || entry.id]));
+  const skillCounts = new Map<string, number>();
+  const modelCounts = new Map<string, number>();
+  const activityDays = new Map<string, number>();
+  let totalEstimatedTokens = 0;
+  let peakEstimatedTokens = 0;
+  let longestDurationMs = 0;
+  let succeeded = 0;
+
+  for (const run of runs) {
+    const estimatedTokens = estimateRunTokens(run);
+    totalEstimatedTokens += estimatedTokens;
+    peakEstimatedTokens = Math.max(peakEstimatedTokens, estimatedTokens);
+    activityDays.set(localDateKey(new Date(run.createdAt)), (activityDays.get(localDateKey(new Date(run.createdAt))) ?? 0) + estimatedTokens);
+    if (run.selectedSkillId) {
+      skillCounts.set(run.selectedSkillId, (skillCounts.get(run.selectedSkillId) ?? 0) + 1);
+    }
+    if (run.status === "succeeded") {
+      succeeded += 1;
+    }
+    longestDurationMs = Math.max(longestDurationMs, runDurationMs(run));
+    const model = readRunModel(run);
+    if (model) {
+      modelCounts.set(model, (modelCounts.get(model) ?? 0) + 1);
+    }
+  }
+
+  const activeDays = new Set(activityDays.keys());
+  const todayKey = localDateKey(new Date());
+  const topSkills = [...skillCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 5)
+    .map(([id, count]) => ({ id, label: skillLabels.get(id) ?? id, count }));
+  const topModel = [...modelCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? "未记录";
+
+  return {
+    totalEstimatedTokens,
+    peakEstimatedTokens,
+    longestDurationMs,
+    currentStreakDays: currentStreak(activeDays),
+    longestStreakDays: longestStreak(activeDays),
+    sessionCount: runs.length,
+    successRate: runs.length === 0 ? 0 : Math.round((succeeded / runs.length) * 100),
+    topModel,
+    exploredSkillCount: skillCounts.size,
+    totalSkillCount: skills.length,
+    activeDayCount: activeDays.size,
+    last30EstimatedTokens: sumRecentDays(activityDays, todayKey, 30),
+    peakActivityDayTokens: Math.max(...activityDays.values(), 0),
+    topSkills,
+    activityDays,
+  };
+}
+
+function buildActivityCalendar(activityDays: ReadonlyMap<string, number>, mode: ActivityMode): {
+  readonly cells: readonly { readonly date: string; readonly value: number; readonly level: number }[];
+  readonly monthLabels: readonly { readonly month: string; readonly column: number }[];
+} {
+  const today = startOfLocalDay(new Date());
+  const start = addDays(today, -364);
+  const alignedStart = addDays(start, -start.getDay());
+  const dates = Array.from({ length: 53 * 7 }, (_, index) => addDays(alignedStart, index));
+  const values = dates.map((date) => {
+    const key = localDateKey(date);
+    if (mode === "day") {
+      return activityDays.get(key) ?? 0;
+    }
+    if (mode === "week") {
+      return sumWeek(activityDays, date);
+    }
+    return sumUntil(activityDays, key);
+  });
+  const max = Math.max(...values, 1);
+  const cells = dates.map((date, index) => {
+    const value = values[index] ?? 0;
+    return { date: localDateKey(date), value, level: value === 0 ? 0 : Math.max(1, Math.min(4, Math.ceil((value / max) * 4))) };
+  });
+  const monthLabels: { month: string; column: number }[] = [];
+  let previousMonth = -1;
+  dates.forEach((date, index) => {
+    const month = date.getMonth();
+    if (month !== previousMonth && index % 7 === 0) {
+      monthLabels.push({ month: `${month + 1}月`, column: Math.floor(index / 7) + 1 });
+      previousMonth = month;
+    }
+  });
+  return { cells, monthLabels };
+}
+
+function estimateRunTokens(run: RunSession): number {
+  const text = collectStrings([run.taskSnapshot, run.requestSnapshot]).join("\n");
+  const fallback = text || JSON.stringify([run.taskSnapshot, run.requestSnapshot]);
+  return Math.max(1, Math.ceil(fallback.length / 4));
+}
+
+function collectStrings(values: readonly unknown[]): string[] {
+  const result: string[] = [];
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") {
+      if (value.trim()) {
+        result.push(value);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value === "object" && value !== null) {
+      for (const [key, nested] of Object.entries(value)) {
+        if (/^(prompt|title|objective|instruction|message|text|summary|systemPrompt|appendSystemPrompt)$/i.test(key)) {
+          visit(nested);
+        }
+      }
+    }
+  };
+  values.forEach(visit);
+  return result;
+}
+
+function readRunModel(run: RunSession): string {
+  if (run.providerModel.trim()) {
+    return run.providerModel.trim();
+  }
+  const snapshotModel = readModelFromRecord(run.requestSnapshot) || readModelFromRecord(run.providerSnapshot);
+  return snapshotModel || run.providerName.trim();
+}
+
+function readModelFromRecord(value: unknown): string {
+  if (typeof value !== "object" || value === null) {
+    return "";
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of ["model", "modelId", "providerModel"]) {
+    const entry = record[key];
+    if (typeof entry === "string" && entry.trim()) {
+      return entry.trim();
+    }
+  }
+  const request = record.request;
+  return readModelFromRecord(request);
+}
+
+function runDurationMs(run: RunSession): number {
+  const start = Date.parse(run.startedAt ?? run.createdAt);
+  const end = Date.parse(run.endedAt ?? run.updatedAt);
+  return Number.isFinite(start) && Number.isFinite(end) && end > start ? end - start : 0;
+}
+
+function currentStreak(activeDays: ReadonlySet<string>): number {
+  let count = 0;
+  let cursor = startOfLocalDay(new Date());
+  while (activeDays.has(localDateKey(cursor))) {
+    count += 1;
+    cursor = addDays(cursor, -1);
+  }
+  return count;
+}
+
+function longestStreak(activeDays: ReadonlySet<string>): number {
+  let longest = 0;
+  let current = 0;
+  let previous: Date | undefined;
+  for (const key of [...activeDays].sort()) {
+    const date = new Date(`${key}T00:00:00`);
+    current = previous && differenceInDays(date, previous) === 1 ? current + 1 : 1;
+    longest = Math.max(longest, current);
+    previous = date;
+  }
+  return longest;
+}
+
+function sumWeek(activityDays: ReadonlyMap<string, number>, date: Date): number {
+  const start = addDays(date, -date.getDay());
+  return Array.from({ length: 7 }, (_, index) => activityDays.get(localDateKey(addDays(start, index))) ?? 0).reduce((sum, value) => sum + value, 0);
+}
+
+function sumUntil(activityDays: ReadonlyMap<string, number>, key: string): number {
+  let sum = 0;
+  for (const [day, value] of activityDays.entries()) {
+    if (day <= key) {
+      sum += value;
+    }
+  }
+  return sum;
+}
+
+function sumRecentDays(activityDays: ReadonlyMap<string, number>, todayKey: string, days: number): number {
+  const today = new Date(`${todayKey}T00:00:00`);
+  const startKey = localDateKey(addDays(today, -(days - 1)));
+  let sum = 0;
+  for (const [day, value] of activityDays.entries()) {
+    if (day >= startKey && day <= todayKey) {
+      sum += value;
+    }
+  }
+  return sum;
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function differenceInDays(left: Date, right: Date): number {
+  return Math.round((startOfLocalDay(left).getTime() - startOfLocalDay(right).getTime()) / 86_400_000);
+}
+
+function localDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatCompactNumber(value: number): string {
+  if (value >= 100_000_000) {
+    return `${trimNumber(value / 100_000_000)}亿`;
+  }
+  if (value >= 10_000) {
+    return `${trimNumber(value / 10_000)}万`;
+  }
+  return String(value);
+}
+
+function trimNumber(value: number): string {
+  return value >= 10 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+function formatDuration(value: number): string {
+  if (value <= 0) {
+    return "0 分";
+  }
+  const minutes = Math.round(value / 60_000);
+  if (minutes < 60) {
+    return `${minutes} 分`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+}
+
+function initialsFromName(value: string): string {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  const initials = parts.length >= 2 ? `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}` : value.trim().slice(0, 2);
+  return initials.toUpperCase() || "LU";
+}
+
+function normalizeHandle(value: string): string {
+  return value.trim().replace(/^@+/, "");
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read avatar")));
+    reader.readAsDataURL(file);
+  });
+}

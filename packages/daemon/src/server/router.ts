@@ -133,6 +133,7 @@ import {
   handleProvidersCollection,
   handleSecretStatus,
 } from "../features/providers/routes.js";
+import { handleUserProfile } from "../features/profile/routes.js";
 import { expireStalePendingApprovals } from "../features/runs/approvals.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { handleExecutionActionsCollection } from "../features/runs/execution-actions.js";
@@ -357,6 +358,11 @@ export async function routeRequest(
 
   if (url.pathname === "/workspace-settings") {
     await handleWorkspaceSettings(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/profile") {
+    await handleUserProfile(request, response, config, storeRegistry);
     return;
   }
 

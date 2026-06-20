@@ -144,6 +144,8 @@ const TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_VERSION = 66;
 const TEAMMATE_DIRECT_WORKSPACE_AND_PAYLOAD_MIGRATION_NAME = "add_teammate_direct_workspace_and_payload";
 const APPROVAL_CHECKPOINTS_MIGRATION_VERSION = 67;
 const APPROVAL_CHECKPOINTS_MIGRATION_NAME = "create_approval_checkpoints";
+const USER_PROFILE_MIGRATION_VERSION = 68;
+const USER_PROFILE_MIGRATION_NAME = "create_user_profile";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3458,6 +3460,23 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasApprovalCheckpointsMigration) {
         context.recordMigration(APPROVAL_CHECKPOINTS_MIGRATION_VERSION, APPROVAL_CHECKPOINTS_MIGRATION_NAME);
+      }
+    }
+
+    const hasUserProfileMigration = context.hasMigration(USER_PROFILE_MIGRATION_VERSION);
+    if (!hasUserProfileMigration || !context.hasTable("user_profile")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS user_profile (
+          id TEXT PRIMARY KEY,
+          display_name TEXT NOT NULL,
+          handle TEXT,
+          avatar_data_url TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      if (!hasUserProfileMigration) {
+        context.recordMigration(USER_PROFILE_MIGRATION_VERSION, USER_PROFILE_MIGRATION_NAME);
       }
     }
 }

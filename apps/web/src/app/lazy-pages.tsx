@@ -30,6 +30,12 @@ export const LazySettingsPage = lazy(() =>
   })),
 );
 
+export const LazyProfilePage = lazy(() =>
+  import("../features/profile/ProfilePage.js").then((module) => ({
+    default: module.ProfilePage,
+  })),
+);
+
 export const LazyAiTeammatesPage = lazy(() =>
   import("../features/teammates/AiTeammatesPage.js").then((module) => ({
     default: module.AiTeammatesPage,
