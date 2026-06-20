@@ -124,7 +124,9 @@ import type {
   UpdateChannelDecisionInput,
   UpdateChannelExecutionProposalInput,
   UpdateChannelMessageRouteDecisionInput,
+  UpdateUserProfileInput,
   UpdateWorkspaceSettingsInput,
+  UserProfile,
   WorkspaceSettings,
   UpdateWorkflowHandoffIntentInput,
   UpdateWorkflowSelectorDecisionInput,
@@ -996,6 +998,8 @@ export interface RunStore {
   expireResourceLeases(now: string): number;
   listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
+  getUserProfile(now: string): UserProfile;
+  updateUserProfile(input: UpdateUserProfileInput, now: string): UserProfile;
   getWorkspaceSettings(): WorkspaceSettings;
   updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings;
   createChannel(input: CreateChannelInput, now: string): Channel;
@@ -1416,6 +1420,8 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
 >;
 
 export type WorkspaceStoreFacet = RunStoreFacet<
+  | "getUserProfile"
+  | "updateUserProfile"
   | "getWorkspaceSettings"
   | "updateWorkspaceSettings"
   | "createChannel"

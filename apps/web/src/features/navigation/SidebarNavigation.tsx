@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldCheck,
   Timer,
+  UserRound,
   Users,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
@@ -269,6 +270,11 @@ export function SidebarNavigation({
             <span>{t("{count} pending approvals", { count: pendingApprovalCount })}</span>
           </button>
         ) : null}
+
+        <button className={activeSidebarTarget === "profile" ? "config-button active" : "config-button"} type="button" onClick={() => onOpenView("profile")} aria-label={t("Profile")} title={t("Profile")}>
+          <UserRound size={15} />
+          <span className="config-button-label">{t("Profile")}</span>
+        </button>
 
         <button className={activeSidebarTarget === "settings" ? "config-button active" : "config-button"} type="button" onClick={() => onOpenView("settings")} aria-label={t("Settings")} title={t("Settings")}>
           <Settings size={15} />

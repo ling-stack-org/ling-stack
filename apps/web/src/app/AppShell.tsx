@@ -46,6 +46,7 @@ import {
   LazyGlobalWorkBoardPage as GlobalWorkBoardPage,
   LazyMediaJobsPage as MediaJobsPage,
   LazyPageErrorBoundary,
+  LazyProfilePage as ProfilePage,
   LazyProviderSettings as ProviderSettings,
   LazyRunHistory as RunHistory,
   LazySettingsPage as SettingsPage,
@@ -1437,7 +1438,7 @@ export function AppShell(): JSX.Element {
     openRunDiagnosticsView();
   }
 
-  const showInspector = !["workspace", "providers", "teammates", "runs", "threads", "automations", "approvals", "work_board", "media", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "teammates", "runs", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -1660,7 +1661,7 @@ export function AppShell(): JSX.Element {
               />
             ) : (
               <>
-                {activeView === "providers" || activeView === "automations" || (activeView === "teammates" && selectedAiTeammate) ? null : (
+                {activeView === "providers" || activeView === "automations" || activeView === "profile" || (activeView === "teammates" && selectedAiTeammate) ? null : (
                   <div className="workspace-head">
                     <div>
                       <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
@@ -1884,6 +1885,8 @@ export function AppShell(): JSX.Element {
                 onRun={(jobId) => void executeMediaJob(jobId)}
                 onOpenProviders={() => openPlainView("providers")}
                   />
+                ) : activeView === "profile" ? (
+                  <ProfilePage cwd={form.cwd} />
                 ) : activeView === "settings" ? (
                   <SettingsPage
                     cwd={form.cwd}

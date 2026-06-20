@@ -5,9 +5,11 @@ import type {
   ControlPlaneSnapshotResponse,
   DaemonHealthResponse,
   EffectiveConfigResponse,
+  UpdateUserProfileRequest,
   UpdateWorkspaceSettingsRequest,
   StartupRefreshResponse,
   StartupStatusResponse,
+  UserProfileResponse,
   WorkspaceSettingsResponse,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "../errors.js";
@@ -42,6 +44,14 @@ export const systemEndpoints = {
 
   async updateWorkspaceSettings(this: LingDaemonEndpointContext, cwd: string, input: UpdateWorkspaceSettingsRequest): Promise<WorkspaceSettingsResponse> {
       return this._patch("/workspace-settings", { cwd }, input);
+    },
+
+  async getUserProfile(this: LingDaemonEndpointContext, cwd: string): Promise<UserProfileResponse> {
+      return this._get("/profile", { cwd });
+    },
+
+  async updateUserProfile(this: LingDaemonEndpointContext, cwd: string, input: UpdateUserProfileRequest): Promise<UserProfileResponse> {
+      return this._patch("/profile", { cwd }, input);
     },
 
   async getEffectiveConfig(this: LingDaemonEndpointContext, cwd: string): Promise<EffectiveConfigResponse> {

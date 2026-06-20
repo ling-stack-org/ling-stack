@@ -133,9 +133,11 @@ import {
   type UpdateTeammateDirectReplyInterventionStatusInput,
   type UpdateChannelWorkflowInput,
   type UpdateChannelWorkflowStepInput,
+  type UpdateUserProfileInput,
   type UpdateWorkflowHandoffIntentInput,
   type UpdateWorkflowSelectorDecisionInput,
   type UpdateWorkspaceSettingsInput,
+  type UserProfile,
   type UpsertChannelCollaborationProtocolOverrideInput,
   type WorkspaceSettings,
   type WorkflowHandoffIntent,
@@ -359,6 +361,7 @@ import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
 import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
 import { SqliteRuntimeRecoveryCoordinator } from "./sqlite/runtime-recovery-coordinator.js";
 import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js";
+import { SqliteUserProfileStore } from "./sqlite/user-profile-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
 import { SqliteTaskStore } from "./sqlite/task-store.js";
@@ -418,6 +421,7 @@ export class SqliteRunStore implements RunStore {
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
   private readonly runtimeRecovery: SqliteRuntimeRecoveryCoordinator;
   private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore;
+  private readonly userProfile: SqliteUserProfileStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
   private readonly skillRegistry: SqliteSkillRegistryStore;
   private readonly tasks: SqliteTaskStore;
@@ -579,6 +583,7 @@ export class SqliteRunStore implements RunStore {
       getChannelWorkflow: (workflowId) => this.getChannelWorkflow(workflowId),
       transitionChannelWorkflowStatus: (input) => this.transitionChannelWorkflowStatus(input),
     });
+    this.userProfile = new SqliteUserProfileStore({ database: this.database });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
     this.tasks = new SqliteTaskStore({ database: this.database });
@@ -1177,6 +1182,14 @@ export class SqliteRunStore implements RunStore {
 
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined {
     return this.resourceLeases.getBlockingResourceLease(resourceType, resourceKey);
+  }
+
+  getUserProfile(now: string): UserProfile {
+    return this.userProfile.getUserProfile(now);
+  }
+
+  updateUserProfile(input: UpdateUserProfileInput, now: string): UserProfile {
+    return this.userProfile.updateUserProfile(input, now);
   }
 
   getWorkspaceSettings(): WorkspaceSettings {

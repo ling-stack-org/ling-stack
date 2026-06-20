@@ -26,3 +26,4 @@ export type * from "./skills.js";
 export type * from "./teammates.js";
 export type * from "./settings.js";
 export type * from "./startup.js";
+export type * from "./profile.js";
