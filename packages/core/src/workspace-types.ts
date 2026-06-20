@@ -1290,10 +1290,13 @@ export type ChannelExecutionProposalStatus = "draft" | "accepted" | "cancelled" 
 
 export type ChannelExecutionProposalStepAction = "coordinated" | "consulted" | "reviewed" | "flagged_risk";
 
+export type ChannelExecutionProposalStepSource = EffectiveChannelSpecialistSource;
+
 export interface ChannelExecutionProposalStep {
   readonly teammateId: string;
   readonly action: ChannelExecutionProposalStepAction;
   readonly summary: string;
+  readonly sources?: readonly ChannelExecutionProposalStepSource[];
 }
 
 export type ChannelRequirementShapingStatus =

@@ -260,6 +260,19 @@ test("builds AI council endpoint URLs", async () => {
   assert.equal(mock.calls[6].url, "http://daemon.test/channels/channel%201/effective-council?cwd=%2Frepo+path");
 });
 
+test("builds managed workspace cleanup endpoint URLs", async () => {
+  const mock = createFetchMock({ cwd: "/repo" });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  await client.cleanupChannelWorkspace("/repo path", "channel 1");
+  await client.cleanupTeammateDirectWorkspace("/repo path", "teammate 1");
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/workspace/cleanup?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/teammates/teammate%201/direct-workspace/cleanup?cwd=%2Frepo+path");
+});
+
 test("parses daemon health transport feature flags", async () => {
   const mock = createFetchMock({
     ok: true,

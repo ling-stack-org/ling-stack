@@ -1,6 +1,7 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
   type ChannelExecutionProposal,
+  type ChannelExecutionProposalStepSource,
   type ChannelExecutionProposalStatus,
   type ChannelProtocolSourceRef,
   type ChannelProtocolSourceRefType,
@@ -59,12 +60,47 @@ function parseChannelExecutionProposalSteps(value: string): ChannelExecutionProp
     ) {
       throw new Error("Expected channel execution proposal step action from SQLite");
     }
+    const sources = parseChannelExecutionProposalStepSources(item.sources);
     return {
       teammateId: item.teammateId,
       action: item.action,
       summary: item.summary,
+      ...(sources ? { sources } : {}),
     };
   });
+}
+
+function parseChannelExecutionProposalStepSources(value: unknown): readonly ChannelExecutionProposalStepSource[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const sources: ChannelExecutionProposalStepSource[] = [];
+  for (const item of value) {
+    if (!isJsonRecord(item)) {
+      continue;
+    }
+    const kind = item.kind;
+    if (kind !== "direct" && kind !== "council") {
+      continue;
+    }
+    const councilId = readOptionalJsonString(item.councilId);
+    const councilDisplayName = readOptionalJsonString(item.councilDisplayName);
+    const slotKey = readOptionalJsonString(item.slotKey);
+    const label = readOptionalJsonString(item.label);
+    const source: ChannelExecutionProposalStepSource = {
+      kind,
+      ...(councilId ? { councilId } : {}),
+      ...(councilDisplayName ? { councilDisplayName } : {}),
+      ...(slotKey ? { slotKey } : {}),
+      ...(label ? { label } : {}),
+      ...(typeof item.isDefault === "boolean" ? { isDefault: item.isDefault } : {}),
+    };
+    sources.push(source);
+  }
+  return sources.length > 0 ? sources : undefined;
 }
 
 function parseOptionalResponseLanguage(value: unknown): ResponseLanguage | undefined {
@@ -137,6 +173,10 @@ function normalizeChannelProtocolSourceRefs(value: readonly unknown[]): ChannelP
 
 function readOptionalStringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function readOptionalJsonString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function readOptionalStringListValue(value: unknown): readonly string[] | undefined {

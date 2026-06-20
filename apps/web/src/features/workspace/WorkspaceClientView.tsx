@@ -240,6 +240,7 @@ type ChannelProposalStepDraft = {
   readonly teammateId: string;
   readonly action: ChannelExecutionProposal["collaborationSteps"][number]["action"];
   readonly summary: string;
+  readonly sources?: ChannelExecutionProposal["collaborationSteps"][number]["sources"];
 };
 type ChannelProposalEditDraft = {
   readonly title: string;
@@ -8448,7 +8449,13 @@ function ChannelExecutionProposalCard({
     setDraft((current) => ({
       ...current,
       collaborationSteps: current.collaborationSteps.map((step, stepIndex) =>
-        stepIndex === index ? { ...step, ...patch } : step
+        stepIndex === index
+          ? {
+              ...step,
+              ...patch,
+              ...(patch.teammateId && patch.teammateId !== step.teammateId ? { sources: undefined } : {}),
+            }
+          : step
       ),
     }));
   }
@@ -8635,13 +8642,21 @@ function ChannelExecutionProposalCard({
             </span>
           </summary>
           <ol>
-            {proposal.collaborationSteps.map((step, index) => (
-              <li key={`${step.teammateId}-${step.action}-${index}`}>
-                <strong>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</strong>
-                <small>{t(proposalStepActionLabel(step.action))}</small>
-                <span>{step.summary}</span>
-              </li>
-            ))}
+            {proposal.collaborationSteps.map((step, index) => {
+              const sourceLabel = proposalStepSourceLabel(step, t);
+              return (
+                <li key={`${step.teammateId}-${step.action}-${index}`}>
+                  <strong>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</strong>
+                  <span className="channel-proposal-step-meta">
+                    <small>{t(proposalStepActionLabel(step.action))}</small>
+                    {sourceLabel ? (
+                      <small className="channel-proposal-step-source">{sourceLabel}</small>
+                    ) : null}
+                  </span>
+                  <span className="channel-proposal-step-summary">{step.summary}</span>
+                </li>
+              );
+            })}
           </ol>
         </details>
       ) : null}
@@ -10319,6 +10334,7 @@ function proposalDraftToUpdateInput(proposal: ChannelExecutionProposal, draft: C
       teammateId: step.teammateId.trim(),
       action: step.action,
       summary: step.summary.trim(),
+      ...(step.sources && step.sources.length > 0 ? { sources: step.sources } : {}),
     })),
     shaping: proposalShapingFromEditDraft(proposal, draft),
   };
@@ -10576,6 +10592,21 @@ function proposalStepActionLabel(action: ChannelExecutionProposal["collaboration
     return "Reviewed";
   }
   return "Flagged risk";
+}
+
+function proposalStepSourceLabel(
+  step: ChannelExecutionProposal["collaborationSteps"][number],
+  t: Translate,
+): string {
+  const councilSource = step.sources?.find((source) => source.kind === "council");
+  if (councilSource) {
+    return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
+  }
+  const directSource = step.sources?.find((source) => source.kind === "direct");
+  if (directSource?.isDefault) {
+    return t("Default channel teammate");
+  }
+  return directSource ? t("Direct channel teammate") : "";
 }
 
 function proposalCollaborationSummary(

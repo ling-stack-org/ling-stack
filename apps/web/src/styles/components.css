@@ -5957,8 +5957,8 @@ code,
 }
 
 .channel-proposal-collaboration li {
-  grid-template-columns: auto auto minmax(0, 1fr);
-  align-items: baseline;
+  grid-template-columns: auto minmax(140px, auto) minmax(0, 1fr);
+  align-items: center;
   gap: 6px 8px;
   color: var(--text-muted);
   font-size: 12px;
@@ -5976,9 +5976,33 @@ code,
   font-weight: 700;
 }
 
+.channel-proposal-step-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.channel-proposal-step-source {
+  max-width: 180px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 7%, #fff);
+  color: var(--text-muted) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .channel-proposal-collaboration li span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.channel-proposal-step-summary {
+  color: var(--text-muted);
 }
 
 .channel-proposal-edit-form {

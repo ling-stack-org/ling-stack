@@ -19,6 +19,7 @@ import {
   type ChannelContextSummaryTargetType,
   type ChannelDecisionStatus,
   type ChannelExecutionProposalStep,
+  type ChannelExecutionProposalStepSource,
   type ChannelExecutionProposalStatus,
   type ChannelRequirementShaping,
   type ChannelMessageFileRef,
@@ -777,12 +778,45 @@ function readOptionalChannelExecutionProposalSteps(
     if (action !== "coordinated" && action !== "consulted" && action !== "reviewed" && action !== "flagged_risk") {
       throw new Error(`${key}[${index}].action must be one of: coordinated, consulted, reviewed, flagged_risk`);
     }
+    const sources = readOptionalChannelExecutionProposalStepSources(item, "sources");
     return {
       teammateId: readString(item, "teammateId"),
       action,
       summary: readString(item, "summary"),
+      ...(sources ? { sources } : {}),
     };
   });
+}
+
+function readOptionalChannelExecutionProposalStepSources(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelExecutionProposalStepSource[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  const sources = value.map((item, index): ChannelExecutionProposalStepSource => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    const kind = readString(item, "kind");
+    if (kind !== "direct" && kind !== "council") {
+      throw new Error(`${key}[${index}].kind must be one of: direct, council`);
+    }
+    return {
+      kind,
+      ...(typeof item.councilId === "string" && item.councilId.trim() ? { councilId: item.councilId } : {}),
+      ...(typeof item.councilDisplayName === "string" && item.councilDisplayName.trim() ? { councilDisplayName: item.councilDisplayName } : {}),
+      ...(typeof item.slotKey === "string" && item.slotKey.trim() ? { slotKey: item.slotKey } : {}),
+      ...(typeof item.label === "string" && item.label.trim() ? { label: item.label } : {}),
+      ...(typeof item.isDefault === "boolean" ? { isDefault: item.isDefault } : {}),
+    };
+  });
+  return sources.length > 0 ? sources : undefined;
 }
 
 function readOptionalChannelRequirementShaping(

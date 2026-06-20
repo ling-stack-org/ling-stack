@@ -4,6 +4,7 @@ import type {
   ChannelIntentDecision,
   ChannelExecutionProposal,
   ChannelExecutionProposalStep,
+  ChannelExecutionProposalStepSource,
   ChannelRequirementShaping,
   ChannelMessage,
   ResponseLanguage,
@@ -16,6 +17,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { listEffectiveChannelAiTeammateEntries, listEffectiveChannelAiTeammates, teammateCanWorkInEffectiveChannel } from "./channel-teammate-availability.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
@@ -103,6 +105,7 @@ interface RoleMatch {
 type ProposalParticipantSelection = {
   readonly teammate: AiTeammate;
   readonly role: RoleMatch;
+  readonly sources?: readonly ChannelExecutionProposalStepSource[];
   readonly fallbackSpecialistRoleKey?: AiTeammate["roleKey"];
 };
 
@@ -572,6 +575,7 @@ function createWorkflowProposal(
         teammateId: participant.teammate.id,
         action: participant.role.action,
         summary: roleSummary(participant.role, responseLanguage),
+        ...(participant.sources && participant.sources.length > 0 ? { sources: participant.sources } : {}),
       })),
       requiredTools: deriveRequiredTools(participants),
       riskSummary,
@@ -643,6 +647,7 @@ function createSingleStepExecutableProposal(
         teammateId: participant.teammate.id,
         action: participant.role.action,
         summary: executableIntent.actionSummary,
+        ...(participant.sources && participant.sources.length > 0 ? { sources: participant.sources } : {}),
       }],
       requiredTools: executableIntent.requiredTools,
       riskSummary,
@@ -1309,10 +1314,13 @@ function looksWorkShapedButUnderspecified(text: string): boolean {
 
 function selectProposalParticipants(input: ChannelIntentSelectorInput, reasonCode: IntentReasonCode):
   readonly ProposalParticipantSelection[] {
-  const channelSpecialists = input.store
-    .listAiTeammates({ status: "active", includeHidden: false, limit: 100 })
-    .filter((teammate) => !isLingAgentExecutorId(teammate.id) && teammateCanReplyInChannel(input.store, input.channel, teammate.id));
-  const byRole = new Map(channelSpecialists.map((teammate) => [teammate.roleKey, teammate]));
+  const channelSpecialists = listEffectiveChannelAiTeammateEntries(input.store, input.channel);
+  const byRole = new Map<AiTeammate["roleKey"], (typeof channelSpecialists)[number]>();
+  for (const entry of channelSpecialists) {
+    if (!byRole.has(entry.teammate.roleKey)) {
+      byRole.set(entry.teammate.roleKey, entry);
+    }
+  }
   const text = input.sourceMessage.body.toLowerCase();
   const selectedRoles = reasonCode === "all_teammates_request"
     ? roleMatches.filter((role) => byRole.has(role.roleKey)).slice(0, 5)
@@ -1323,8 +1331,8 @@ function selectProposalParticipants(input: ChannelIntentSelectorInput, reasonCod
     : selectedRoles;
 
   const participants = orderedRoles.flatMap((role) => {
-    const teammate = byRole.get(role.roleKey);
-    return teammate ? [{ teammate, role }] : [];
+    const entry = byRole.get(role.roleKey);
+    return entry ? [{ teammate: entry.teammate, role, sources: entry.sources }] : [];
   });
   if (participants.length > 0) {
     return participants;
@@ -1345,7 +1353,7 @@ function selectVisibleMultiReplyTeammates(input: ChannelIntentSelectorInput): re
     channel: input.channel,
   });
   const activeTeammates = input.store.listAiTeammates({ status: "active", includeHidden: false, limit: 100 });
-  const channelTeammates = activeTeammates.filter((teammate) => teammateCanReplyInChannel(input.store, input.channel, teammate.id));
+  const channelTeammates = listEffectiveChannelAiTeammates(input.store, input.channel);
   const byId = new Map(channelTeammates.map((teammate) => [teammate.id, teammate]));
   const text = input.sourceMessage.body.toLowerCase();
   const mentionedRoleKeys = roleMatches
@@ -1407,26 +1415,27 @@ function selectSingleStepExecutableParticipant(
   input: ChannelIntentSelectorInput,
   executableIntent: SingleStepExecutableIntent,
 ): ProposalParticipantSelection | undefined {
-  const activeTeammates = input.store
-    .listAiTeammates({ status: "active", includeHidden: false, limit: 100 })
-    .filter((teammate) => !isLingAgentExecutorId(teammate.id));
+  const channelEntries = listEffectiveChannelAiTeammateEntries(input.store, input.channel);
+  const channelTeammates = channelEntries.map((entry) => entry.teammate);
+  const sourcesByTeammateId = new Map(channelEntries.map((entry) => [entry.teammate.id, entry.sources]));
   const rolePreferenceSet = new Set(executableIntent.rolePreferences);
-  const rolePreferred = activeTeammates.filter((teammate) => rolePreferenceSet.has(teammate.roleKey));
-  const inChannel = activeTeammates.filter((teammate) => teammateCanReplyInChannel(input.store, input.channel, teammate.id));
+  const rolePreferred = channelTeammates.filter((teammate) => rolePreferenceSet.has(teammate.roleKey));
   const supportsTools = (teammate: AiTeammate): boolean =>
     executableIntent.requiredTools.every((tool) => teammate.allowedTools.includes(tool));
-  const preferredSupporting = rolePreferred.find((teammate) => supportsTools(teammate) && teammateCanReplyInChannel(input.store, input.channel, teammate.id));
+  const preferredSupporting = rolePreferred.find(supportsTools);
   if (preferredSupporting) {
     return {
       teammate: preferredSupporting,
       role: roleMatchForTeammate(preferredSupporting, executableIntent.rolePreferences[0]),
+      sources: sourcesByTeammateId.get(preferredSupporting.id),
     };
   }
-  const channelSupporting = inChannel.find(supportsTools);
+  const channelSupporting = channelTeammates.find(supportsTools);
   if (channelSupporting) {
     return {
       teammate: channelSupporting,
       role: roleMatchForTeammate(channelSupporting, executableIntent.rolePreferences[0]),
+      sources: sourcesByTeammateId.get(channelSupporting.id),
     };
   }
 
@@ -1471,7 +1480,7 @@ function singleStepExecutableBlocker(
 ): SingleStepExecutableBlocker | undefined {
   const userMessages: string[] = [];
   const technicalReasons: string[] = [];
-  if (!teammateCanReplyInChannel(input.store, input.channel, teammate.id)) {
+  if (!teammateCanWorkInEffectiveChannel(input.store, input.channel, teammate.id)) {
     userMessages.push(responseLanguage === "zh-CN"
       ? `${teammate.displayName} 当前不在这个频道可执行名单里；请把该队友加入频道或编辑 proposal 的执行人。`
       : `${teammate.displayName} is not available in this channel; add the teammate to the channel or edit the proposal assignee.`);
@@ -1538,21 +1547,6 @@ function buildSingleStepExecutablePrompt(
 
 function chooseClarifyingTeammate(input: ChannelIntentSelectorInput): AiTeammate | undefined {
   return input.store.getAiTeammate(LING_AGENT_EXECUTOR_ID) ?? createLingAgentExecutor(new Date().toISOString());
-}
-
-function teammateCanReplyInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
-  if (isLingAgentExecutorId(teammateId)) {
-    return true;
-  }
-  const protocol = resolveEffectiveChannelCollaborationProtocol({ store, channel });
-  if (protocol.protocol.defaultTeammateId === teammateId) {
-    return true;
-  }
-  const defaultTeammate = protocol.protocol.defaultTeammateId ? resolveAiTeammateReference(store, protocol.protocol.defaultTeammateId) : undefined;
-  if (defaultTeammate?.id === teammateId) {
-    return true;
-  }
-  return store.listTeammateChannelMemberships(teammateId).some((membership) => membership.channelId === channel.id);
 }
 
 function lingAgentFallbackRecommendation(roleKey: AiTeammate["roleKey"], responseLanguage: ResponseLanguage): string {

@@ -2339,6 +2339,79 @@ test("channel intent selector does not assign specialists outside current channe
   }
 });
 
+test("channel intent selector uses attached AI council specialists without copying memberships", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-council-specialists-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  const developmentCouncilId = "council_builtin_development";
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Council-backed Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    for (const teammateId of ["teammate_builtin_designer", "teammate_builtin_qa"]) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+    }
+    await putJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/council-policy?cwd=${encodeURIComponent(cwd)}`, {
+      attachedCouncilIds: [developmentCouncilId],
+      preferredCouncilId: developmentCouncilId,
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Designer 先 review 交互，QA 验证这个频道设置改动",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 0);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.deepEqual(
+      [...proposals.proposals[0].collaborationSteps.map((step) => step.teammateId)].sort(),
+      ["teammate_builtin_designer", "teammate_builtin_qa"].sort(),
+    );
+    assert.equal(proposals.proposals[0].collaborationSteps.some((step) => step.teammateId === "ling_agent"), false);
+    const designerStep = proposals.proposals[0].collaborationSteps.find((step) => step.teammateId === "teammate_builtin_designer");
+    assert.ok(designerStep);
+    assert.ok(designerStep.sources?.some((source) => source.kind === "council" && source.councilDisplayName === "Development Council"));
+
+    const effective = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/effective-council?cwd=${encodeURIComponent(cwd)}`);
+    const designerSpecialist = effective.effectiveCouncil.specialists.find((specialist) => specialist.teammateId === "teammate_builtin_designer");
+    assert.ok(designerSpecialist);
+    assert.ok(designerSpecialist.sources.some((source) => source.kind === "council" && source.councilId === developmentCouncilId));
+
+    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(confirmed.proposal.status, "accepted");
+    assert.deepEqual(
+      [...confirmed.workflowSteps.map((step) => step.toParticipantId)].sort(),
+      ["teammate_builtin_designer", "teammate_builtin_qa"].sort(),
+    );
+
+    const designerChannels = await getJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_designer")}/channels?cwd=${encodeURIComponent(cwd)}`);
+    const qaChannels = await getJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_qa")}/channels?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(designerChannels.memberships.some((membership) => membership.channelId === channel.id), false);
+    assert.equal(qaChannels.memberships.some((membership) => membership.channelId === channel.id), false);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
+    assert.equal(decisions.decisions[0].action, "workflow_proposal");
+    assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel intent selector asks one clarify question for underspecified work requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-clarify-"));
   const runner = new RecordingRunner();
