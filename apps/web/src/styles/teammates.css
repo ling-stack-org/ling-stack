@@ -1863,7 +1863,8 @@
 }
 
 .teammate-message-row .avatar-initial,
-.teammate-message-row .teammate-avatar-image.compact {
+.teammate-message-row .teammate-avatar-image.compact,
+.teammate-message-row .user-profile-avatar {
   width: 30px;
   height: 30px;
   font-size: 12px;
@@ -3757,7 +3758,8 @@
 }
 
 .teammate-workspace.chat-mode .teammate-message-row .avatar-initial,
-.teammate-workspace.chat-mode .teammate-message-row .teammate-avatar-image.compact {
+.teammate-workspace.chat-mode .teammate-message-row .teammate-avatar-image.compact,
+.teammate-workspace.chat-mode .teammate-message-row .user-profile-avatar {
   width: 30px;
   height: 30px;
   font-size: 12px;

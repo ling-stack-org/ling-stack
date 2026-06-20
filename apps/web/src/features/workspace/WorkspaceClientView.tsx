@@ -140,6 +140,7 @@ import {
   RunRepairHintBanner,
   StatusBadge,
   UsedMemorySummary,
+  UserProfileAvatar,
   composerWorkspaceFileParts,
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
@@ -212,6 +213,7 @@ import type {
   WorkUnit,
   WorkspaceSettings,
   UpdateWorkspaceSettingsRequest,
+  UserProfile,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
@@ -473,6 +475,7 @@ export function WorkspaceClientView({
   daemonHealthy,
   channelAutoRouteEnabled,
   providerLabel,
+  userProfile,
   channels,
   selectedChannelId,
   channelForm,
@@ -618,6 +621,7 @@ export function WorkspaceClientView({
   readonly daemonHealthy: boolean | undefined;
   readonly channelAutoRouteEnabled: boolean;
   readonly providerLabel: string;
+  readonly userProfile?: UserProfile;
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
   readonly channelForm: ChannelCreateFormState;
@@ -3438,6 +3442,7 @@ export function WorkspaceClientView({
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0 || composerFileRefs.length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
   const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0;
+  const localUserDisplayName = userProfile?.displayName.trim() || t("You");
 
   function renderChannelMessageAvatar(message: ChannelMessage): ReactNode {
     if (message.authorType === "ai-teammate") {
@@ -3451,7 +3456,7 @@ export function WorkspaceClientView({
     if (message.authorType === "system") {
       return <AvatarInitial label="S" tone="violet" />;
     }
-    return <AvatarInitial label="T" />;
+    return <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />;
   }
 
   function renderConversationAgentAvatar(span: ConversationAgentActivitySpan): ReactNode {
@@ -3493,7 +3498,7 @@ export function WorkspaceClientView({
 
     const anchorMessage = turn.blocks.find((block) => block.kind === "coordinator_text")?.message;
     const authorName = anchorMessage
-      ? messageAuthorLabel(anchorMessage, teammateOptions, t("Deleted teammate"), t("You"), allLocalTeammateById)
+      ? messageAuthorLabel(anchorMessage, teammateOptions, t("Deleted teammate"), localUserDisplayName, allLocalTeammateById)
       : t("Ling Agent");
     const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
     const copyText = conversationTurnAssistantCopyText(turn);
@@ -3624,7 +3629,7 @@ export function WorkspaceClientView({
               className={message.status === "blocked" ? "channel-message-row blocked" : "channel-message-row"}
               authorType={message.authorType}
               avatar={renderChannelMessageAvatar(message)}
-              authorName={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), t("You"), allLocalTeammateById)}
+              authorName={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), localUserDisplayName, allLocalTeammateById)}
               createdAtLabel={formatDateTime(message.createdAt)}
               statusNode={message.kind === "ai_reply" ? <small className="conversation-message-tag">AI</small> : null}
               bodyNode={(
@@ -3698,7 +3703,7 @@ export function WorkspaceClientView({
             tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
             side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
             avatar={renderChannelMessageAvatar(message)}
-            author={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), t("You"), allLocalTeammateById)}
+            author={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), localUserDisplayName, allLocalTeammateById)}
             tag={message.kind === "task_link" ? "Task" : undefined}
             time={formatDateTime(message.createdAt)}
             body={pendingAiReplyBody}
@@ -4076,8 +4081,8 @@ export function WorkspaceClientView({
         <MessageRow
           className="channel-message-row pending-send"
           authorType="local-user"
-          avatar={<AvatarInitial label="T" />}
-          authorName={t("You")}
+          avatar={<UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />}
+          authorName={localUserDisplayName}
           createdAtLabel={formatDateTime(preview.createdAt)}
           bodyNode={(
             <div className="message-body-shell">
@@ -9838,7 +9843,7 @@ function messageAuthorLabel(
     }
     return teammateLabel(message.authorId, teammates, deletedTeammateLabel, teammateById);
   }
-  return message.authorId ?? localUserLabel;
+  return localUserLabel;
 }
 
 const LING_AGENT_AUTHOR_ID = "ling_agent";

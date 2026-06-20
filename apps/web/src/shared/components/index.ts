@@ -9,4 +9,5 @@ export { createAttachmentPreviewUrl, createLocalComposerAssetId, pendingAssetLab
 export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
 export { StatusBadge } from "./StatusBadge.js";
 export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
+export { UserProfileAvatar } from "./UserProfileAvatar.js";
 export { composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer-input-parts.js";

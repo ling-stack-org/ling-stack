@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState } from "./support/mock-state";
+import { createBaseState, createMockTeammate } from "./support/mock-state";
+
+const avatarDataUrl = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="32" fill="#0e7a63"/></svg>').toString("base64")}`;
 
 test("profile avatar crop exports a transparent circular image", async ({ page }) => {
   await page.addInitScript(() => {
@@ -55,4 +57,82 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
 
   await page.getByRole("button", { name: "保存资料" }).click();
   await expect.poll(() => state.userProfile.avatarDataUrl ?? "").toMatch(/^data:image\/(?:webp|png);base64,/);
+});
+
+test("workspace messages use the saved user profile identity", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.userProfile = {
+    ...state.userProfile,
+    displayName: "Tian Xiao",
+    avatarDataUrl,
+  };
+  state.channelMessages = [
+    {
+      id: "msg_profile_identity",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      authorType: "local-user",
+      authorId: "local-user",
+      kind: "message",
+      intent: "discuss",
+      body: "Profile identity should render in this message.",
+      status: "sent",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const message = page.locator(".channel-message-row.local-user").filter({ hasText: "Profile identity should render in this message." });
+  await expect(message).toContainText("Tian Xiao");
+  await expect(message).not.toContainText("local-user");
+  await expect(message.locator(".user-profile-avatar")).toHaveAttribute("src", avatarDataUrl);
+  await expect(message.locator(".avatar-initial")).toHaveCount(0);
+});
+
+test("private teammate chat messages use the saved user profile identity", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_profile_sync";
+  state.userProfile = {
+    ...state.userProfile,
+    displayName: "Tian Xiao",
+    avatarDataUrl,
+  };
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer" })];
+  state.teammateDirectMessages = [
+    {
+      id: "tdmsg_profile_identity",
+      workspaceId: "workspace_default",
+      threadId: `tdthread_${teammateId}`,
+      teammateId,
+      authorType: "local-user",
+      authorId: "local-user",
+      body: "Private chat should render profile identity.",
+      attachmentIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  const message = page.getByLabel("Private chat", { exact: true }).locator(".teammate-message-row.local-user").filter({ hasText: "Private chat should render profile identity." });
+  await expect(message).toContainText("Tian Xiao");
+  await expect(message).not.toContainText("You");
+  await expect(message.locator(".user-profile-avatar")).toHaveAttribute("src", avatarDataUrl);
+  await expect(message.locator(".avatar-initial")).toHaveCount(0);
 });
