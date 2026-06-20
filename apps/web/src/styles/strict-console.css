@@ -908,3 +908,262 @@
 .workspace-provider-surface .provider-sheet-backdrop {
   background: color-mix(in srgb, var(--app-bg) 68%, transparent);
 }
+
+.workspace-generation-surface .media-job-row.selected,
+.workspace-generation-surface .media-job-row.selected:hover {
+  border-color: #e5e5e5;
+  background: #f7f7f7;
+  color: #171717;
+  box-shadow: inset 3px 0 0 #111111;
+}
+
+.workspace-generation-surface .primary-button,
+.media-create-overlay .primary-button,
+.workspace-teammates-surface .primary-button,
+.teammate-create-overlay .primary-button {
+  border-color: #111111;
+  background: #111111;
+  color: #ffffff;
+}
+
+.workspace-generation-surface .primary-button:hover:not(:disabled),
+.media-create-overlay .primary-button:hover:not(:disabled),
+.workspace-teammates-surface .primary-button:hover:not(:disabled),
+.teammate-create-overlay .primary-button:hover:not(:disabled) {
+  border-color: #262626;
+  background: #262626;
+  color: #ffffff;
+}
+
+.workspace-generation-surface .primary-button:disabled,
+.media-create-overlay .primary-button:disabled,
+.workspace-teammates-surface .primary-button:disabled,
+.teammate-create-overlay .primary-button:disabled {
+  border-color: #d7d7d7;
+  background: #f1f1f1;
+  color: #8a8a8a;
+}
+
+.workspace-teammates-surface .teammates-page .teammate-add-panel,
+.workspace-teammates-surface .teammates-page .teammate-template-panel,
+.workspace-teammates-surface .teammates-page .teammate-draft-row {
+  border-color: #e5e5e5;
+  background: #ffffff;
+}
+
+.workspace-teammates-surface .teammates-page .teammate-draft-row:hover {
+  background: #fafafa;
+}
+
+.workspace-teammates-surface .teammates-page .teammate-row-primary-action {
+  border-color: #dcdcdc;
+  background: #ffffff;
+  color: #111111;
+}
+
+.workspace-teammates-surface .teammates-page .teammate-row-primary-action:hover {
+  background: #f5f5f5;
+}
+
+/* Approved density pass: keep create dialogs close to the Stitch white-console mocks. */
+.teammate-create-overlay .teammate-create-dialog {
+  width: min(960px, calc(100vw - 40px));
+}
+
+.teammate-create-overlay .teammate-create-dialog .channel-create-head {
+  min-height: 104px;
+  padding: 26px 40px 22px;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-create-body {
+  gap: 20px;
+  max-height: calc(100dvh - 220px);
+  padding: 26px 40px 0;
+}
+
+.teammate-create-overlay .teammate-create-steps {
+  gap: 30px;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid {
+  gap: 10px;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
+  min-height: 86px;
+  padding: 14px 16px;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-template-copy small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-create-section {
+  gap: 14px;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-create-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-create-fields input,
+.teammate-create-overlay .teammate-create-dialog .teammate-create-fields select {
+  min-height: 46px;
+  border-radius: 7px;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-create-advanced summary {
+  min-height: 56px;
+}
+
+.teammate-create-overlay .teammate-create-dialog .teammate-create-actions {
+  margin: 2px -40px 0;
+  padding: 18px 40px 22px;
+}
+
+.workspace-automations-surface .automation-modal > .panel-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 108px;
+  margin: 0;
+  padding: 28px 32px 24px;
+}
+
+.workspace-automations-surface .automation-modal > .panel-title > span:first-child {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 10px;
+}
+
+.workspace-automations-surface .automation-modal-title-copy h2 {
+  margin: 0;
+  color: #111111;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 30px;
+  white-space: nowrap;
+}
+
+.workspace-automations-surface .automation-modal-title-copy p {
+  margin: 4px 0 0;
+  color: #707070;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.workspace-automations-surface .automation-modal-header-actions {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.workspace-automations-surface .automation-modal-header-actions .secondary-button,
+.workspace-automations-surface .automation-modal-header-actions .ghost-icon-button {
+  white-space: nowrap;
+}
+
+.workspace-automations-surface .automation-modal-header-actions .secondary-button {
+  min-width: 0;
+  min-height: 36px;
+  padding-inline: 12px;
+}
+
+@media (max-height: 760px) and (min-width: 701px) {
+  .teammate-create-overlay .teammate-create-dialog .channel-create-head {
+    min-height: 88px;
+    padding-block: 22px 18px;
+  }
+
+  .teammate-create-overlay .teammate-create-dialog .teammate-create-body {
+    gap: 16px;
+    max-height: calc(100dvh - 186px);
+    padding-top: 20px;
+  }
+
+  .teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
+    min-height: 74px;
+    padding-block: 12px;
+  }
+
+  .teammate-create-overlay .teammate-create-dialog .teammate-role-icon,
+  .teammate-create-overlay .teammate-create-dialog .template-skill-count {
+    display: none;
+  }
+
+  .teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .teammate-create-overlay .teammate-create-dialog .teammate-create-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .workspace-automations-surface .automation-modal-backdrop {
+    align-items: start;
+    padding: 12px;
+  }
+
+  .workspace-automations-surface .automation-modal {
+    width: 100%;
+    min-height: 0;
+    max-height: calc(100dvh - 24px);
+  }
+
+  .workspace-automations-surface .automation-modal > .panel-title {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 0;
+    padding: 22px 24px 18px;
+  }
+
+  .workspace-automations-surface .automation-modal > .panel-title > span:first-child {
+    gap: 8px;
+  }
+
+  .workspace-automations-surface .automation-modal-title-copy h2 {
+    font-size: 21px;
+    line-height: 26px;
+  }
+
+  .workspace-automations-surface .automation-modal-title-copy p {
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  .workspace-automations-surface .automation-modal-header-actions {
+    align-items: start;
+    gap: 6px;
+  }
+
+  .workspace-automations-surface .automation-modal-header-actions > svg {
+    display: none;
+  }
+
+  .workspace-automations-surface .automation-modal-header-actions .secondary-button {
+    min-height: 34px;
+    padding-inline: 8px;
+  }
+
+  .workspace-automations-surface .automation-modal-body {
+    padding: 24px;
+  }
+
+  .workspace-automations-surface .automation-composer-toolbar {
+    align-items: flex-start;
+  }
+
+  .workspace-automations-surface .automation-composer-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

@@ -19,6 +19,7 @@ import {
   MessageSquare,
   Pause,
   Play,
+  Plus,
   RefreshCw,
   Sparkles,
   Timer,
@@ -233,18 +234,19 @@ export function AutomationsPage({
       <header className="automations-inbox-header">
         <div>
           <h1>{t("Automations")}</h1>
-          <p>{scheduler?.nextRunAt ? `${t("Next")} ${formatDateTime(scheduler.nextRunAt)}` : t("Daemon will restore scheduled automations automatically")}</p>
-          <div className="automation-header-meta" aria-label={t("Automation action summary")}>
-            <span>{t("Current")} {activeAutomations.length}</span>
-            <span>{t("Running or queued")} {runningRunCount}</span>
-            <span>{t("Paused")} {pausedAutomations.length}</span>
-            <span className={readyDraftCount > 0 ? "attention" : ""}>{t("Awaiting confirmation")} {readyDraftCount}</span>
-            <span className={recentFailedRunCount > 0 ? "danger" : ""}>{t("Recent failures")} {recentFailedRunCount}</span>
-          </div>
+          <p>
+            {t("{count} automations · {running} running · {attention} need attention", {
+              count: activeAutomations.length + pausedAutomations.length,
+              running: runningRunCount,
+              attention: readyDraftCount + recentFailedRunCount,
+            })}
+            {" · "}
+            {scheduler?.nextRunAt ? `${t("Next")} ${formatDateTime(scheduler.nextRunAt)}` : t("Daemon will restore scheduled automations automatically")}
+          </p>
         </div>
         <div className="automation-create-dropdown">
           <button className="automation-create-trigger" type="button" onClick={() => openCreateDialog(createMode)} disabled={isLoading}>
-            {createMode === "chat" ? <MessageSquare size={15} /> : createMode === "templates" ? <Layers size={15} /> : <CalendarClock size={15} />}
+            <Plus size={15} />
             {createMode === "chat" ? t("Create through chat") : createMode === "templates" ? t("Use template") : t("Manual create")}
           </button>
           <button
@@ -279,6 +281,13 @@ export function AutomationsPage({
       </header>
 
       <main className="automations-inbox-main" aria-labelledby="automations-title">
+        {readyDraftCount + recentFailedRunCount > 0 ? (
+          <div className="automation-attention-banner">
+            <Info size={17} />
+            <strong>{t("{count} automation needs attention", { count: readyDraftCount + recentFailedRunCount })}</strong>
+            <span>{readyDraftCount > 0 ? t("Review drafts before enabling.") : t("Check recent failed runs.")}</span>
+          </div>
+        ) : null}
         <section className="automation-current-pane" aria-labelledby="automations-title">
           <h2 id="automations-title">{t("Current")}</h2>
           <AutomationInboxSection
@@ -954,7 +963,15 @@ function AutomationManualSetupModal({
   const canCreate = Boolean(title.trim() && prompt.trim() && (automationMode === "cron" || threadId));
 
   return (
-    <AutomationModal title="" ariaLabel={t("Manual create")} icon={<CalendarClock size={18} />} actionLabel={t("Use template")} onAction={onUseTemplate} onClose={onClose}>
+    <AutomationModal
+      title={t("New automation")}
+      subtitle={t("Define trigger conditions, choose an action, then save")}
+      ariaLabel={t("Manual create")}
+      icon={<CalendarClock size={18} />}
+      actionLabel={t("Use template")}
+      onAction={onUseTemplate}
+      onClose={onClose}
+    >
       <form
         className="automation-composer-form"
         onSubmit={(event) => {
@@ -986,20 +1003,34 @@ function AutomationManualSetupModal({
           });
         }}
       >
-        <input
-          className="automation-composer-title"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder={t("Automation title placeholder")}
-          aria-label={t("Automation title")}
-        />
-        <textarea
-          className="automation-composer-prompt"
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          placeholder={t("Automation prompt placeholder")}
-          aria-label={t("Prompt")}
-        />
+        <label className="automation-composer-field full">
+          <span>{t("Automation name")}</span>
+          <input
+            className="automation-composer-title"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder={t("Automation title placeholder")}
+            aria-label={t("Automation title")}
+          />
+        </label>
+        <section className="automation-trigger-section" aria-label={t("Trigger method")}>
+          <span>{t("Trigger method")}</span>
+          <div className="automation-trigger-segmented">
+            <button className={scheduleMode !== "custom" ? "active" : ""} type="button" onClick={() => setScheduleMode("daily")}>{t("Schedule")}</button>
+            <button type="button" disabled>{t("Event")}</button>
+            <button className={scheduleMode === "custom" ? "active" : ""} type="button" onClick={() => setScheduleMode("custom")}>{t("Custom RRULE")}</button>
+          </div>
+        </section>
+        <label className="automation-composer-field full">
+          <span>{t("Execution action")}</span>
+          <textarea
+            className="automation-composer-prompt"
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder={t("Automation prompt placeholder")}
+            aria-label={t("Prompt")}
+          />
+        </label>
         <div className="automation-composer-toolbar">
           <AutomationPopoverButton
             icon={runtime === "thread" ? <MessageCircle size={15} /> : runtime === "worktree" ? <GitBranch size={15} /> : <Laptop size={15} />}
@@ -1210,6 +1241,7 @@ function AutomationPopoverButton({
 
 function AutomationModal({
   title,
+  subtitle,
   ariaLabel,
   icon,
   actionLabel,
@@ -1218,6 +1250,7 @@ function AutomationModal({
   onClose,
 }: {
   readonly title: string;
+  readonly subtitle?: string;
   readonly ariaLabel?: string;
   readonly icon: JSX.Element;
   readonly actionLabel?: string;
@@ -1232,7 +1265,12 @@ function AutomationModal({
         <div className="panel-title split">
           <span>
             {title ? icon : null}
-            {title ? <h2>{title}</h2> : null}
+            {title ? (
+              <span className="automation-modal-title-copy">
+                <h2>{title}</h2>
+                {subtitle ? <p>{subtitle}</p> : null}
+              </span>
+            ) : null}
           </span>
           <span className="automation-modal-header-actions">
             <Info size={15} />

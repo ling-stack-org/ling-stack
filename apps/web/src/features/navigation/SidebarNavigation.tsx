@@ -45,6 +45,7 @@ export function SidebarNavigation({
   teammateNotifications = {},
   onOpenView,
   onCreateChannel,
+  onCreateTeammate,
   onCreateChannelBranch,
   onArchiveChannel,
   onArchiveChannelBranch,
@@ -66,6 +67,7 @@ export function SidebarNavigation({
   readonly teammateNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly onOpenView: (view: ViewId) => void;
   readonly onCreateChannel: () => void;
+  readonly onCreateTeammate?: () => void;
   readonly onCreateChannelBranch?: (channelId: string, name: string) => void | Promise<void>;
   readonly onArchiveChannel?: (channelId: string) => void | Promise<void>;
   readonly onArchiveChannelBranch?: (channelId: string, branchId: string) => void | Promise<void>;
@@ -241,9 +243,9 @@ export function SidebarNavigation({
         )}
       </SidebarSection>
 
-      <SidebarSection title={t("AI Teammates")}>
+      <SidebarSection title={t("AI Teammates")} actionLabel={t("New teammate")} onAction={onCreateTeammate}>
         {visibleTeammates.length === 0 ? (
-          <button className="sidebar-row muted-row" type="button" onClick={() => onOpenView("teammates")}>
+          <button className="sidebar-row muted-row" type="button" onClick={onCreateTeammate ?? (() => onOpenView("teammates"))}>
             <Bot size={14} />
             <span>{t("No teammate yet")}</span>
           </button>

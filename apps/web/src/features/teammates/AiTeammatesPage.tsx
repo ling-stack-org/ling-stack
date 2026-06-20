@@ -31,34 +31,21 @@ import type {
 } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
 import { isMediaProvider, providerPreflightReady } from "../../lib/providers.js";
-import { AvatarInitial, MetaRow } from "../../shared/components/index.js";
+import { MetaRow } from "../../shared/components/index.js";
 import type {
   Channel,
   ProviderPreset,
 } from "../../types.js";
 import {
   approvalProfileText,
-  roleAvatarTone,
   roleLabel,
-  teammateTemplateMatchesFilter,
   workflowPhaseLabel,
 } from "./helpers.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
-  TeammateTemplateFilter,
 } from "./types.js";
-
-const teammateTemplateFilters: readonly { readonly id: TeammateTemplateFilter; readonly label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "product", label: "Product" },
-  { id: "engineering", label: "Engineering" },
-  { id: "design", label: "Design" },
-  { id: "qa", label: "QA" },
-  { id: "security", label: "Security" },
-  { id: "docs", label: "Docs" },
-];
 
 const defaultMemoryScopeLabels: readonly string[] = [
   "private-chat-summary",
@@ -73,10 +60,13 @@ export function AiTeammatesPage({
   providers,
   channels,
   localTeammates,
+  createRequestId = 0,
+  onCreateRequestHandled,
   onCreateTeammate,
   onRemoveTeammate,
   onToggleTeammatePinned,
   onToggleTeammateHidden,
+  onOpenTeammate,
   onOpenProviders,
 }: {
   readonly cwd: string;
@@ -84,10 +74,13 @@ export function AiTeammatesPage({
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
   readonly localTeammates: readonly LocalTeammateDraft[];
+  readonly createRequestId?: number;
+  readonly onCreateRequestHandled?: () => void;
   readonly onCreateTeammate: (teammate: LocalTeammateCreateInput) => void;
   readonly onRemoveTeammate: (teammateId: string) => void;
   readonly onToggleTeammatePinned: (teammateId: string) => void;
   readonly onToggleTeammateHidden: (teammateId: string) => void;
+  readonly onOpenTeammate?: (teammateId: string) => void;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -111,7 +104,6 @@ export function AiTeammatesPage({
   const noChannelTeammateCount = activeLocalTeammates.filter((teammate) => teammate.channelIds.length === 0).length;
   const hiddenTeammateCount = localTeammates.filter((teammate) => teammate.hidden && !teammate.disabled).length;
   const [selectedTemplateId, setSelectedTemplateId] = useState(() => templates[0]?.id ?? "");
-  const [templateFilter, setTemplateFilter] = useState<TeammateTemplateFilter>("all");
   const [draftName, setDraftName] = useState(() => templates[0] ? t(templates[0].name) : t("Custom teammate"));
   const [draftDescription, setDraftDescription] = useState(() => templates[0] ? t(templates[0].summary) : "");
   const [selectedProviderId, setSelectedProviderId] = useState(() => providerOptions.find(providerPreflightReady)?.id ?? providerOptions[0]?.id ?? "");
@@ -125,9 +117,10 @@ export function AiTeammatesPage({
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
   const previewName = draftName.trim() || selectedTemplate?.name || t("Custom teammate");
   const previewDescription = draftDescription.trim() || selectedTemplate?.summary || t("Describe this teammate with a short working brief.");
-  const filteredTemplates = templates.filter((template) => teammateTemplateMatchesFilter(template, templateFilter));
   const selectedProviderReady = selectedProvider ? providerPreflightReady(selectedProvider) : false;
   const canCreateTeammate = Boolean(previewName.trim()) && Boolean(selectedProvider) && selectedProviderReady;
+  const connectedChannelCount = new Set(activeLocalTeammates.flatMap((teammate) => teammate.channelIds)).size;
+  const visibleCreateTemplates = templates.slice(0, 5);
 
   useEffect(() => {
     if (!selectedProviderId || !providerOptions.some((provider) => provider.id === selectedProviderId)) {
@@ -140,6 +133,13 @@ export function AiTeammatesPage({
       setSelectedChannelIds([channels[0].id]);
     }
   }, [channels, selectedChannelIds.length]);
+
+  useEffect(() => {
+    if (createRequestId > 0) {
+      setCreateOpen(true);
+      onCreateRequestHandled?.();
+    }
+  }, [createRequestId, onCreateRequestHandled]);
 
   function selectTemplate(template: AiTeammateTemplate): void {
     setSelectedTemplateId(template.id);
@@ -199,39 +199,53 @@ export function AiTeammatesPage({
 
   return (
     <div className="teammates-page">
-      {isCreateOpen ? (
-        <div className="teammate-sheet-backdrop" role="presentation">
-          <section className="teammate-create-sheet" aria-label={t("Create AI teammate")} ref={wizardRef} role="dialog" aria-modal="true">
-            <header className="teammate-create-header">
-              <div>
-                <h2>{t("Add teammate")}</h2>
-                <p>{t("Choose role, model, and channel scope.")}</p>
-              </div>
-              <button className="icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label={t("Close teammate creator")}>
-                <X size={16} />
-              </button>
-            </header>
+      <header className="teammates-page-header">
+        <div>
+          <h1>{t("AI Teammates")}</h1>
+          <p>
+            {t("{count} teammates · {needsModel} need configuration · {channels} connected channels", {
+              count: activeLocalTeammates.length,
+              needsModel: needsModelTeammateCount,
+              channels: connectedChannelCount,
+            })}
+          </p>
+        </div>
+        <button className="primary-button teammate-page-create-button" type="button" onClick={focusCreateFlow}>
+          <Plus size={16} />
+          {t("Add teammate")}
+        </button>
+      </header>
 
-            <div className="teammate-create-body">
+      {isCreateOpen ? (
+        <div className="channel-create-overlay teammate-create-overlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            setCreateOpen(false);
+          }
+        }}>
+          <section className="channel-create-dialog teammate-create-dialog" aria-label={t("Create AI teammate")} ref={wizardRef} role="dialog" aria-modal="true">
+            <div className="channel-create-head">
+              <div className="teammate-create-title-block">
+                <strong>{t("New teammate")}</strong>
+                <p>{t("Choose a role first, then model. Extra configuration can be completed later.")}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label={t("Cancel")} title={t("Cancel")}>
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="channel-options-grid channel-create-grid teammate-create-body">
+              <div className="teammate-create-steps" aria-hidden="true">
+                <span className="active"><strong>1</strong>{t("Role")}</span>
+                <span><strong>2</strong>{t("Model")}</span>
+                <span><strong>3</strong>{t("Confirm")}</span>
+              </div>
+
               <section className="teammate-create-section">
                 <div className="teammate-create-section-title">
-                  <span>{t("Choose a role")}</span>
-                  <small>{t("Start from a default role or blank teammate.")}</small>
-                </div>
-                <div className="teammate-filter-tabs" role="tablist" aria-label={t("Role filters")}>
-                  {teammateTemplateFilters.map((filter) => (
-                    <button
-                      key={filter.id}
-                      className={filter.id === templateFilter ? "active" : ""}
-                      type="button"
-                      onClick={() => setTemplateFilter(filter.id)}
-                    >
-                      {t(filter.label)}
-                    </button>
-                  ))}
+                  <span>{t("Choose initial role")}</span>
                 </div>
                 <div className="teammate-create-list role-grid" aria-label={t("Teammate template chooser")}>
-                  {filteredTemplates.map((template) => (
+                  {visibleCreateTemplates.map((template) => (
                     <button
                       key={template.id}
                       className={template.id === selectedTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
@@ -265,42 +279,7 @@ export function AiTeammatesPage({
 
               <section className="teammate-create-section">
                 <div className="teammate-create-section-title">
-                  <span>{t("Choose a model")}</span>
-                  <small>{t("Bind a provider preset for this teammate.")}</small>
-                </div>
-                {providerOptions.length === 0 ? (
-                  <div className="client-empty-state teammate-empty">
-                    <PlugZap size={20} />
-                    <span>{t("No model presets")}</span>
-                    <button className="secondary-button" type="button" onClick={onOpenProviders}>{t("Open Model Workbench")}</button>
-                  </div>
-                ) : (
-                  <div className="teammate-create-list compact" aria-label={t("Model choices")}>
-                    {providerOptions.map((provider) => (
-                      <button
-                        key={provider.id}
-                        className={provider.id === selectedProviderId ? "teammate-provider-row selected" : "teammate-provider-row"}
-                        type="button"
-                        aria-pressed={provider.id === selectedProviderId}
-                        onClick={() => setSelectedProviderId(provider.id)}
-                      >
-                        <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
-                          {providerPreflightReady(provider) ? t("ready") : t("needs check")}
-                        </span>
-                        <span>
-                          <strong>{provider.displayName}</strong>
-                          <small>{provider.model}</small>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              <section className="teammate-create-section">
-                <div className="teammate-create-section-title">
                   <span>{t("Basic information")}</span>
-                  <small>{t("Name and a short working brief.")}</small>
                 </div>
                 <div className="teammate-create-fields">
                   <label className="field">
@@ -308,16 +287,45 @@ export function AiTeammatesPage({
                     <input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
                   </label>
                   <label className="field">
-                    <span>{t("Description")}</span>
-                    <textarea value={draftDescription} onChange={(event) => setDraftDescription(event.target.value)} />
+                    <span>{t("Join channels")}</span>
+                    <select
+                      value={selectedChannelIds[0] ?? ""}
+                      onChange={(event) => setSelectedChannelIds(event.target.value ? [event.target.value] : [])}
+                      disabled={channels.length === 0}
+                    >
+                      <option value="">{channels.length === 0 ? t("No channels yet") : t("No channels available")}</option>
+                      {channels.map((channel) => (
+                        <option key={channel.id} value={channel.id}>
+                          {channel.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>{t("Base model")}</span>
+                    <select value={selectedProviderId} onChange={(event) => setSelectedProviderId(event.target.value)} disabled={providerOptions.length === 0}>
+                      <option value="">{t("Select model")}</option>
+                      {providerOptions.map((provider) => (
+                        <option key={provider.id} value={provider.id}>
+                          {provider.displayName} / {provider.model}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
+                {providerOptions.length === 0 ? (
+                  <div className="client-empty-state teammate-empty">
+                    <PlugZap size={20} />
+                    <span>{t("No model presets")}</span>
+                    <button className="secondary-button" type="button" onClick={onOpenProviders}>{t("Open Model Workbench")}</button>
+                  </div>
+                ) : null}
               </section>
 
               <details className="teammate-create-section teammate-create-advanced">
                 <summary>
                   <span>{t("Advanced settings")}</span>
-                  <small>{t("Channels and memory")}</small>
+                  <small>{t("Memory, skills, MCP, permissions and prompt")}</small>
                 </summary>
                 <div className="teammate-create-advanced-body">
                   <section>
@@ -360,18 +368,20 @@ export function AiTeammatesPage({
                   </section>
                 </div>
               </details>
-            </div>
 
-            <footer className="teammate-create-actions">
-              {!selectedProviderReady ? (
-                <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
-              ) : null}
-              <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>{t("Cancel")}</button>
-              <button className="primary-button" type="button" onClick={createTeammateDraft} disabled={!canCreateTeammate}>
-                <Plus size={15} />
-                {t("Create teammate")}
-              </button>
-            </footer>
+              <div className="channel-option-actions teammate-create-actions">
+                {!selectedProviderReady ? (
+                  <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
+                ) : null}
+                <button className="secondary-button compact-button" type="button" onClick={() => setCreateOpen(false)}>
+                  {t("Cancel")}
+                </button>
+                <button className="primary-button compact-button" type="button" onClick={createTeammateDraft} disabled={!canCreateTeammate}>
+                  <Plus size={14} />
+                  {t("Create teammate")}
+                </button>
+              </div>
+            </div>
           </section>
         </div>
       ) : null}
@@ -406,17 +416,25 @@ export function AiTeammatesPage({
                 const ready = provider ? providerPreflightReady(provider) : false;
                 const modelLabel = draft.modelLabel === "No model selected" ? t("No model selected") : draft.modelLabel;
                 const channelLabel = draftChannels.length ? draftChannels.join(", ") : t("No channel");
+                const roleSummary = template ? t(template.name) : roleLabel(draft.roleKey ?? "custom", t);
                 const readinessLabel = !provider ? t("Needs model") : ready ? t("Ready teammate") : t("Model needs check");
                 return (
                   <article key={draft.id} className={draft.hidden ? "teammate-draft-row hidden-row" : "teammate-draft-row"}>
                     <TeammateAvatarView teammate={draft} cwd={cwd} compact />
                     <span className="teammate-draft-copy">
                       <strong>{draft.displayName}</strong>
-                      <small>{modelLabel} · {channelLabel}</small>
+                      <small>{roleSummary}</small>
                     </span>
+                    <span className={ready ? "teammate-model-pill ready" : "teammate-model-pill warning"}>{modelLabel}</span>
+                    <span className="teammate-channel-pill">{channelLabel}</span>
+                    <time className="teammate-updated-time">{draft.updatedAt ? formatRelativeDraftTime(draft.updatedAt, t) : t("Just now")}</time>
                     <span className="teammate-row-actions">
                       <span className={ready ? "teammate-row-status ready" : "teammate-row-status warning"}>{readinessLabel}</span>
-                      {!ready ? (
+                      {ready && onOpenTeammate ? (
+                        <button className="teammate-row-primary-action" type="button" onClick={() => onOpenTeammate(draft.id)}>
+                          {t("Open")}
+                        </button>
+                      ) : !ready ? (
                         <button className="teammate-row-primary-action" type="button" onClick={onOpenProviders}>
                           <PlugZap size={13} />
                           {t("Configure model")}
@@ -543,6 +561,25 @@ function templateRoleIcon(template: AiTeammateTemplate): JSX.Element {
     return <FileText size={15} />;
   }
   return <Sparkles size={15} />;
+}
+
+function formatRelativeDraftTime(value: string, t: (key: string, values?: Record<string, string | number>) => string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return t("Just now");
+  }
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
+  if (minutes < 1) {
+    return t("Just now");
+  }
+  if (minutes < 60) {
+    return t("{count}m ago", { count: minutes });
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return t("{count}h ago", { count: hours });
+  }
+  return t("{count}d ago", { count: Math.round(hours / 24) });
 }
 
 function TemplateDetailSheet({
