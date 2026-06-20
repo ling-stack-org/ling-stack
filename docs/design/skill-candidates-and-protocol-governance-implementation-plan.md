@@ -227,6 +227,9 @@ Implemented in this slice:
   helpers, daemon list/from-cluster/review routes under
   `/channels/:id/playbook-candidates`, and Settings > Skill Library manual playbook
   candidate creation for ready same-channel `playbook` clusters.
+- Settings > Skill Library playbook candidate review panel lists channel-local candidates,
+  shows steps, validation checks, positive/negative triggers, source refs, and review
+  reason, and supports approve/reject for draft playbook candidates.
 
 Still not implemented:
 
@@ -237,7 +240,6 @@ Still not implemented:
   playbook destinations;
 - dedicated Web channel protocol candidate queue beyond the existing protocol draft
   surface and Settings cluster action;
-- destination-specific full playbook review UI beyond the Settings cluster action;
 - automatic correction-to-update-candidate generation;
 - superseded active generated skill automation beyond the reserved `superseded` event kind.
 
@@ -814,6 +816,8 @@ Behavior:
 - playbook candidate review `approve` marks the candidate `active`; review `reject`
   marks it `cancelled`. Approval does not publish a Skill, write Memory, or grant
   authority.
+- Settings > Skill Library can review playbook candidates after they are created by the
+  cluster action or any other manual caller of the same API.
 - `ProcedureObservationCluster` groups observations by deterministic `clusterId` and
   recommends review actions such as `create_channel_protocol_candidate`,
   `create_playbook_candidate`, or `append_evidence`.
