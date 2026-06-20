@@ -309,6 +309,15 @@ textarea {
   font-weight: 800;
 }
 
+.user-profile-avatar {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: transparent;
+  object-fit: cover;
+}
+
 .avatar-initial.orange {
   background: var(--surface-subtle);
   color: var(--text-strong);
@@ -556,7 +565,8 @@ textarea {
   font-size: 12px;
 }
 
-.message-bubble .teammate-avatar-image.compact {
+.message-bubble .teammate-avatar-image.compact,
+.message-bubble .user-profile-avatar {
   width: 30px;
   height: 30px;
 }

@@ -24,6 +24,7 @@ import type {
   SessionPermissionMode,
   StartupStatusResponse,
   TaskRunActionState,
+  UserProfile,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -69,6 +70,7 @@ import { deriveChannelRuns } from "../lib/channel-artifacts.js";
 import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammates.js";
 import { readDataString } from "../lib/data.js";
 import { getStartupStatus, refreshStartupStatus } from "../api/startup.js";
+import { getUserProfile } from "../api/profile.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
 import {
   readRunWorkspaceCwd,
@@ -165,6 +167,7 @@ export function AppShell(): JSX.Element {
   const [startupStatusLoading, setStartupStatusLoading] = useState(false);
   const [startupStatusAction, setStartupStatusAction] = useState<"refresh" | undefined>();
   const [startupStatusError, setStartupStatusError] = useState("");
+  const [userProfile, setUserProfile] = useState<UserProfile | undefined>();
   const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -724,6 +727,29 @@ export function AppShell(): JSX.Element {
     }
     void loadStartupStatus(workspaceCwd);
   }, [daemonHealthy, form.cwd]);
+
+  useEffect(() => {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setUserProfile(undefined);
+      return;
+    }
+    let cancelled = false;
+    void getUserProfile(workspaceCwd)
+      .then((response) => {
+        if (!cancelled) {
+          setUserProfile(response.profile);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUserProfile(undefined);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.cwd]);
 
   function markChannelRead(channelId: string): void {
     setChannelUnreadById((current) => current[channelId] ? removeRecordKey(current, channelId) : current);
@@ -1506,6 +1532,7 @@ export function AppShell(): JSX.Element {
             daemonHealthy={daemonHealthy}
             channelAutoRouteEnabled={daemonFeatures.channels.autoRoute}
             providerLabel={`${form.provider}/${form.model}`}
+            userProfile={userProfile}
             channels={channels}
             selectedChannelId={selectedChannelId}
             channelForm={channelForm}
@@ -1678,6 +1705,7 @@ export function AppShell(): JSX.Element {
                   <TeammateWorkspace
                 cwd={form.cwd}
                 teammate={selectedAiTeammate}
+                userProfile={userProfile}
                 providers={providers}
                 channels={channels}
                 skillPack={builtinSkillPack}
@@ -1886,7 +1914,7 @@ export function AppShell(): JSX.Element {
                 onOpenProviders={() => openPlainView("providers")}
                   />
                 ) : activeView === "profile" ? (
-                  <ProfilePage cwd={form.cwd} />
+                  <ProfilePage cwd={form.cwd} onProfileChange={setUserProfile} />
                 ) : activeView === "settings" ? (
                   <SettingsPage
                     cwd={form.cwd}

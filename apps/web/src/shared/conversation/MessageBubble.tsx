@@ -16,6 +16,7 @@ export interface MessageBubbleProps {
   readonly bodyCwd?: string;
   readonly bodyCompact?: boolean;
   readonly bodyNode?: ReactNode;
+  readonly showOwnAuthor?: boolean;
   readonly pending?: boolean;
   readonly metaAction?: ReactNode;
   readonly action?: ReactNode;
@@ -36,6 +37,7 @@ export function MessageBubble({
   bodyCwd,
   bodyCompact = true,
   bodyNode,
+  showOwnAuthor = false,
   pending = false,
   metaAction,
   action,
@@ -63,7 +65,12 @@ export function MessageBubble({
       {!inlineAuthor || peerMessage ? avatar : null}
       <div className={metaAction ? "message-content has-floating-action" : "message-content"}>
         {ownMessage ? (
-          metaAction ? <span className="message-meta-action">{metaAction}</span> : null
+          showOwnAuthor ? (
+            <div className={metaAction ? "message-meta has-meta-action" : "message-meta"}>
+              <strong>{author}</strong>
+              {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
+            </div>
+          ) : metaAction ? <span className="message-meta-action">{metaAction}</span> : null
         ) : (
           <div className={metaAction ? "message-meta has-meta-action" : "message-meta"}>
             <strong>{author}</strong>

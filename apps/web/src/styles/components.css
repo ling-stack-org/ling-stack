@@ -1132,7 +1132,8 @@ button.artifact-action-link {
   justify-content: end;
 }
 
-.channel-message-row.local-user > .avatar-initial {
+.channel-message-row.local-user > .avatar-initial,
+.channel-message-row.local-user > .user-profile-avatar {
   grid-column: 2;
 }
 
@@ -1153,7 +1154,8 @@ button.artifact-action-link {
   font-size: 12px;
 }
 
-.channel-message-row > .teammate-avatar-image.compact {
+.channel-message-row > .teammate-avatar-image.compact,
+.channel-message-row > .user-profile-avatar {
   width: 30px;
   height: 30px;
 }

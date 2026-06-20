@@ -89,6 +89,7 @@ import {
   MetaRow,
   StatusBadge,
   UsedMemorySummary,
+  UserProfileAvatar,
   composerWorkspaceFileParts,
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
@@ -143,6 +144,7 @@ import type {
   TeammateSkillBinding,
   UpdateAiTeammateRequest,
   UsedMemoryEvent,
+  UserProfile,
 } from "../../types.js";
 import { approvalProfileText, workflowPhaseLabel } from "./helpers.js";
 
@@ -199,6 +201,7 @@ type MaybePromise<T> = T | Promise<T>;
 export function TeammateWorkspace({
   cwd,
   teammate,
+  userProfile,
   providers,
   channels,
   skillPack,
@@ -213,6 +216,7 @@ export function TeammateWorkspace({
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
+  readonly userProfile?: UserProfile;
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
   readonly skillPack: SkillPack | undefined;
@@ -1876,6 +1880,8 @@ export function TeammateWorkspace({
     return memberships.find((membership) => membership.isDefault)?.channelId ?? memberships[0]?.channelId ?? channels[0]?.id ?? "";
   }
 
+  const localUserDisplayName = userProfile?.displayName.trim() || t("You");
+
   return (
     <div className={`teammate-workspace ${workspaceView === "settings" ? "settings-mode" : "chat-mode"}`}>
       {workspaceView === "chat" ? (
@@ -2017,7 +2023,7 @@ export function TeammateWorkspace({
                 const blockedMessage = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
                 const recoveredHistoricalProviderFailure = providerRecovered && isHistoricalProviderPreflightMessage(message);
                 const systemMessage = message.authorType === "system";
-                const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : t("You");
+                const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : localUserDisplayName;
                 const messageBody = pendingAiReply && !message.body.trim()
                   ? t("AI teammate is replying...")
                   : message.status === "cancelled" && !message.body.trim()
@@ -2033,13 +2039,16 @@ export function TeammateWorkspace({
                     avatar={
                       message.authorType === "ai-teammate"
                         ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-                        : <AvatarInitial label={message.authorType === "system" ? "S" : "U"} tone={message.authorType === "system" ? "violet" : "gray"} />
+                        : message.authorType === "system"
+                          ? <AvatarInitial label="S" tone="violet" />
+                          : <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />
                     }
                     author={authorName}
                     time={formatDateTime(message.createdAt)}
                     body={messageBody}
                     bodyCwd={cwd}
                     bodyCompact
+                    showOwnAuthor={message.authorType === "local-user"}
                     pending={pendingAiReply}
                     attachmentsNode={message.attachmentIds.length > 0 ? (
                       <ConversationAttachmentStrip

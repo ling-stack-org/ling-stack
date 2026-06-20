@@ -23,7 +23,7 @@ interface ProfileMetrics {
   readonly activityDays: ReadonlyMap<string, number>;
 }
 
-export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
+export function ProfilePage({ cwd, onProfileChange }: { readonly cwd: string; readonly onProfileChange?: (profile: UserProfile) => void }): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [profile, setProfile] = useState<UserProfile | undefined>();
   const [runs, setRuns] = useState<readonly RunSession[]>([]);
@@ -62,6 +62,7 @@ export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
         listSkills(cwd),
       ]);
       setProfile(profileResponse.profile);
+      onProfileChange?.(profileResponse.profile);
       setDisplayName(profileResponse.profile.displayName);
       setHandle(profileResponse.profile.handle ?? "");
       setAvatarDataUrl(profileResponse.profile.avatarDataUrl);
@@ -88,6 +89,7 @@ export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
         avatarDataUrl: avatarDataUrl ?? null,
       });
       setProfile(response.profile);
+      onProfileChange?.(response.profile);
       setDisplayName(response.profile.displayName);
       setHandle(response.profile.handle ?? "");
       setAvatarDataUrl(response.profile.avatarDataUrl);
