@@ -233,11 +233,13 @@ Implemented in this slice:
 
 Still not implemented:
 
-- automatic post-run observation hooks;
+- automatic post-run observation hooks; this document now defines the next implementation
+  slice, but no code has landed for it yet;
 - native Desktop candidate review UI;
 - direct candidate-to-registry publish without the import draft review step;
 - transcript-derived or post-run automatic candidate creation for channel protocol or
-  playbook destinations;
+  playbook destinations; next-slice generation must go through bounded observations,
+  cluster dedupe, and review candidates only;
 - dedicated Web channel protocol candidate queue beyond the existing protocol draft
   surface and Settings cluster action;
 - automatic correction-to-update-candidate generation;
@@ -1237,6 +1239,192 @@ Exit criteria:
 
 - Operators can see whether generated skills are useful or harmful over time.
 
+## Phase SG.12: Automatic Observation Hook And Candidate Generation
+
+Type: bounded evidence-to-review automation.
+
+This is the next implementation phase for automatic generation. It should automate
+candidate creation only after the current explicit observation and cluster pipeline has
+enough bounded evidence. It must not crawl raw transcripts or create executable skills.
+
+Files:
+
+```text
+packages/contracts/src/skills.ts
+packages/api-client/src/endpoints/skills.ts
+packages/core/src/procedure-observations.ts
+packages/core/src/skill-candidate-generation.ts
+packages/core/src/storage/sqlite/procedure-observation-store.ts
+packages/daemon/src/features/skill-governance/observation-jobs.ts
+packages/daemon/src/features/runs/orchestrator.ts
+packages/daemon/src/features/channels/workflow-fanin.ts
+packages/daemon/test/channel-workspace.test.mjs
+```
+
+Add a generation decision DTO:
+
+```ts
+interface CandidateGenerationDecision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly observationId: string;
+  readonly clusterId: string;
+  readonly source:
+    | "explicit_user_save"
+    | "approved_recording"
+    | "post_run_terminal"
+    | "selected_transcript_snippet"
+    | "workflow_fanin"
+    | "correction_health";
+  readonly route: CandidateRoute;
+  readonly decision:
+    | "append_evidence"
+    | "create_skill_candidate"
+    | "create_channel_protocol_candidate"
+    | "create_playbook_candidate"
+    | "create_memory_candidate"
+    | "create_automation_candidate"
+    | "policy_review"
+    | "reject";
+  readonly blockers: readonly CandidateRouteBlocker[];
+  readonly duplicateDecision: SkillDuplicateDecision;
+  readonly reason: string;
+  readonly createdCandidateId?: string;
+  readonly createdAt: string;
+}
+```
+
+Store generation decisions for audit and replay:
+
+```sql
+CREATE TABLE IF NOT EXISTS candidate_generation_decisions (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  observation_id TEXT NOT NULL,
+  cluster_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  route_json TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  blockers_json TEXT NOT NULL,
+  duplicate_decision TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_candidate_id TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidate_generation_decisions_cluster
+  ON candidate_generation_decisions(workspace_id, cluster_id, created_at);
+```
+
+Accepted source events:
+
+| Source | Input allowed | Candidate behavior |
+| --- | --- | --- |
+| `explicit_user_save` | message id, run id, bounded structured summary, user confirmation | create pending destination candidate only if gates pass |
+| `approved_recording` | recording id, source refs, steps, triggers, validation labels | create pending skill candidate when duplicate decision allows |
+| `post_run_terminal` | run id, terminal status, selected skill id, tool labels, validation labels, artifact refs | append evidence; create only after repeated stable cluster |
+| `selected_transcript_snippet` | snippet ref and user confirmation, never full transcript body | create observation; candidate only after user confirms extraction |
+| `workflow_fanin` | channel id, participant roles, workflow step refs, bounded summary | route to channel protocol or playbook by default |
+| `correction_health` | health finding id, skill id, correction count, summary | create update candidate only after reviewer action |
+
+Generation gates:
+
+- Observation is persisted first.
+- Cluster key is computed before destination choice.
+- Duplicate/conflict analysis runs before any candidate write.
+- Positive triggers, negative triggers, procedure steps, validation steps, and stable
+  required tools are mandatory for skill candidate creation.
+- Single post-run success without explicit user save remains evidence-only.
+- Repeated post-run success can create a candidate only when the same cluster has at
+  least two successful observations and stable validation evidence.
+- Similarity `>= 0.65` against active or pending skill blocks new candidate creation and
+  produces `append_evidence`, `policy_review`, or an update/supersede review path.
+- Permission, provider, secret, deploy, external-send, or approval expansion text never
+  creates a skill/protocol/playbook candidate.
+
+Runtime behavior:
+
+- No active run prompt is changed by SG.12.
+- No `requestedSkillId` is injected into a run by SG.12.
+- No candidate is published, bound, archived, or superseded automatically.
+- Built-in and external/imported skills receive patch/wrapper suggestions only.
+- All created destination records stay in their existing review queues.
+
+Tests:
+
+- post-run terminal event without explicit save appends evidence only;
+- two successful terminal events in the same cluster can create one pending candidate;
+- repeated job key returns the same observation and does not duplicate decisions;
+- exact procedure signature appends evidence to existing candidate instead of creating a
+  second candidate;
+- similarity `>= 0.65` blocks new skill candidate creation;
+- workflow fan-in routes to channel protocol or playbook rather than global skill;
+- selected transcript snippet requires user confirmation before candidate creation;
+- permission expansion routes to policy review or reject;
+- created decision records include route, duplicate decision, blockers, and source refs.
+
+Exit criteria:
+
+- Ling can create pending review candidates from bounded evidence without changing active
+  runtime behavior.
+
+## Phase SG.13: Runtime Suggestion Boundary
+
+Type: read-only suggestion and feedback loop, not automatic invocation.
+
+SG.13 should make generated and reviewed skills easier to choose without letting the
+generation system run them silently.
+
+Files:
+
+```text
+packages/contracts/src/skills.ts
+packages/core/src/effective-skills.ts
+packages/core/src/skill-health.ts
+packages/daemon/src/features/runs/skill-suggestions.ts
+packages/daemon/src/features/runs/orchestrator.ts
+apps/web/src/features/teammates/*
+apps/web/e2e/settings.spec.ts
+```
+
+Add a suggestion DTO:
+
+```ts
+interface SkillInvocationSuggestion {
+  readonly skillId: string;
+  readonly reason: string;
+  readonly confidence: "low" | "medium" | "high";
+  readonly blockers: readonly CandidateRouteBlocker[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+}
+```
+
+Rules:
+
+- Suggestions are derived from published registry skills, active channel/playbook context,
+  and health state.
+- Suggestions do not mutate `requestedSkillId`.
+- Suggestions never bypass teammate binding, channel allowed tools, provider capability,
+  approval profile, or Effective Skill checks.
+- A stale, high-failure, high-correction, duplicate, or conflicting generated skill can be
+  suggested only with visible blockers.
+- User selection records normal `selected` usage events.
+- Failed or corrected suggested-skill runs feed Skill Health; they do not disable or
+  rewrite skills automatically.
+
+Tests:
+
+- suggestion excludes unbound or non-executable skills;
+- suggestion includes blockers for stale or conflicting generated skills;
+- selecting a suggestion goes through the existing run request validation path;
+- run without user skill selection is unchanged;
+- failure and correction events appear in usage stats and health findings.
+
+Exit criteria:
+
+- Users can see why a reviewed skill might apply, while runtime execution remains
+  user-visible and policy-gated.
+
 ## Test Matrix
 
 Core:
@@ -1252,7 +1440,10 @@ Required coverage:
 - skill health report;
 - candidate store;
 - protocol store;
-- usage stats.
+- usage stats;
+- candidate generation decisions;
+- post-run observation idempotency;
+- runtime suggestions without automatic invocation.
 
 Daemon:
 
@@ -1324,6 +1515,8 @@ Lane C: SG.5 after SG.4
 Lane D: SG.6 -> SG.7 after SG.3
 Lane E: SG.8 after SG.6
 Lane F: SG.9 -> SG.10 -> SG.11 after SG.7
+Lane G: SG.12 after SG.9 and SG.11
+Lane H: SG.13 after SG.10 and SG.11
 ```
 
 Dependency table:
@@ -1341,6 +1534,8 @@ Dependency table:
 | SG.9 | `packages/daemon` run/channel jobs | SG.7 |
 | SG.10 | `packages/daemon`, Skill Registry store | SG.7 |
 | SG.11 | `packages/core/storage`, run terminal events | SG.10 |
+| SG.12 | `packages/core/storage`, `packages/daemon` observation jobs | SG.9, SG.11 |
+| SG.13 | `packages/contracts`, `packages/core`, `packages/daemon`, `apps/web` | SG.10, SG.11 |
 
 Do not parallelize SG.6 and SG.8 in separate worktrees if both edit SQLite migrations.
 Keep schema-bearing phases sequential unless each phase has already landed on main.
@@ -1355,6 +1550,7 @@ Keep schema-bearing phases sequential unless each phase has already landed on ma
 - No CLI/TUI surface unless the shared API stabilizes early and a small read-only command
   is worth adding later.
 - No background transcript crawler.
+- No automatic runtime invocation or hidden `requestedSkillId` injection.
 - No policy or approval editor hidden inside candidate review.
 
 ## Open Decisions Before Implementation

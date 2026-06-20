@@ -140,13 +140,14 @@ Already implemented in Ling:
 
 Current gaps:
 
-- No automatic post-run hook or transcript-derived candidate generation.
-- No automatic candidate routing from run completion, workflow fan-in, or selected
-  transcript snippets. The implemented job path is explicit/idempotent only.
-- No automatic correction-to-update-candidate job yet; correction telemetry is recorded
-  and surfaced through health, then a reviewer can create an update candidate.
-- No automatic observation-to-protocol-draft or observation-to-playbook-draft creation
-  yet. Channel/protocol/playbook clusters are surfaced for review; a reviewer can now
+- No implemented automatic post-run hook or transcript-derived candidate generation. The
+  next-slice design below defines the gates, but the code path remains explicit/manual.
+- No implemented automatic candidate routing from run completion, workflow fan-in, or
+  selected transcript snippets. The implemented job path is explicit/idempotent only.
+- No implemented automatic correction-to-update-candidate job yet. Correction telemetry
+  is recorded and surfaced through health; a reviewer can create an update candidate.
+- No implemented automatic observation-to-protocol-draft or observation-to-playbook-draft
+  creation yet. Channel/protocol/playbook clusters are surfaced for review; a reviewer can
   manually convert a ready `channel_protocol` cluster into a protocol candidate and a
   ready `playbook` cluster into a channel-local playbook candidate.
 
@@ -557,6 +558,130 @@ The first automated slice should use these gates:
 Weak evidence can make the review queue better, but it cannot manufacture active
 behavior. Even pending candidates should be avoided when the signal is weak, duplicate,
 or authority-adjacent.
+
+### Automatic Candidate Generation Next Slice
+
+Automatic generation should mean "turn bounded evidence into a review candidate," not
+"turn transcripts into executable behavior."
+
+The next implementation slice should introduce a small generation orchestrator over the
+existing `ProcedureObservation` and cluster model:
+
+```text
+source event
+  -> bounded observation input
+  -> idempotent observation job
+  -> cluster update
+  -> candidate generation decision
+  -> append evidence OR create pending candidate OR route elsewhere
+```
+
+It should not introduce a background transcript crawler. Every source event must be one
+of these bounded inputs:
+
+- explicit user save or user-approved recording;
+- run terminal event with structured tool labels, validation labels, artifact refs, and
+  terminal status;
+- selected transcript snippet after the user explicitly chooses the snippet;
+- workflow fan-in summary that already has channel, participant, and role metadata;
+- usage/correction health finding that already summarizes repeated failures.
+
+Generation writes a decision record before any destination candidate is created:
+
+```ts
+interface CandidateGenerationDecision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly observationId: string;
+  readonly clusterId: string;
+  readonly source:
+    | "explicit_user_save"
+    | "approved_recording"
+    | "post_run_terminal"
+    | "selected_transcript_snippet"
+    | "workflow_fanin"
+    | "correction_health";
+  readonly route: CandidateRoute;
+  readonly decision:
+    | "append_evidence"
+    | "create_skill_candidate"
+    | "create_channel_protocol_candidate"
+    | "create_playbook_candidate"
+    | "create_memory_candidate"
+    | "create_automation_candidate"
+    | "policy_review"
+    | "reject";
+  readonly blockers: readonly CandidateRouteBlocker[];
+  readonly duplicateDecision: SkillDuplicateDecision;
+  readonly reason: string;
+  readonly createdCandidateId?: string;
+  readonly createdAt: string;
+}
+```
+
+The decision record is for auditability and replay. It is not user-facing authority.
+
+Generation rules:
+
+| Source | Required before candidate creation | Default if not met |
+| --- | --- | --- |
+| Explicit user save | structured steps, validation or explicit user-provided reason, duplicate decision `no_overlap` or `update_existing` | append evidence or show duplicate/update review |
+| Approved recording | positive trigger, negative trigger, steps, validation, no permission expansion | append evidence |
+| Post-run terminal event | at least 2 successful observations in the same cluster, stable validation evidence, no active duplicate | evidence-only |
+| Selected transcript snippet | user confirmation plus bounded extraction summary | evidence-only until confirmed |
+| Workflow fan-in | one channel owner and stable participant roles | route to channel protocol/playbook, not global skill |
+| Correction health | repeated correction health finding and reviewer-selected action | create update candidate only after review |
+
+Duplicate and conflict behavior stays stricter than generation:
+
+- exact `procedureSignature` match appends evidence to the existing cluster or candidate;
+- similarity `>= 0.65` against an active or pending skill blocks new skill candidate
+  creation and creates a conflict/update review path instead;
+- built-in skills receive patch suggestions or wrapper candidates only;
+- external/imported skills receive wrapper or overlay candidates only;
+- Ling-generated skills can receive update/supersede candidates after review;
+- no candidate can expand tools, approvals, providers, secrets, channels, deploy, or
+  external-send authority.
+
+### Runtime Invocation Boundary
+
+Automatic generation and runtime skill invocation are separate phases.
+
+After a generated skill is reviewed and published, it still enters the normal Skill
+Registry and Effective Skill path. Runtime selection remains subject to:
+
+- teammate skill binding;
+- channel allowed tools;
+- provider capability checks;
+- approval profile checks;
+- existing run request validation;
+- Skill Health findings that may mark the skill stale, conflicting, or risky.
+
+The next runtime-facing improvement should be a suggestion, not automatic invocation:
+
+```ts
+interface SkillInvocationSuggestion {
+  readonly skillId: string;
+  readonly reason: string;
+  readonly confidence: "low" | "medium" | "high";
+  readonly blockers: readonly CandidateRouteBlocker[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+}
+```
+
+Suggestions may prefill a review surface or explain why a skill looks relevant. They must
+not inject `requestedSkillId` into an active run without the same user-visible selection
+path used today.
+
+Usage, expiry, and correction policy:
+
+- generated active skills become stale health findings after 90 days without use unless
+  pinned;
+- repeated failures or user corrections become health findings, not automatic archives;
+- corrections can propose update candidates only after a reviewer chooses that route;
+- invocation statistics should be windowed for dashboards but rebuilt from source events;
+- stale or failing generated skills stay visible until reviewed, superseded, archived, or
+  pinned.
 
 ### Channel Protocol Routing
 
