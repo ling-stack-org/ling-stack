@@ -1912,7 +1912,7 @@ export function createMockProcedureObservationClusters(): unknown[] {
     {
       id: "procedure_cluster_channel_canvas",
       workspaceId: "workspace_default",
-      channelId: "channel-1",
+      channelId: "channel_engineering",
       routeKind: "channel_protocol",
       routeReasonCode: "multi_agent_handoff_protocol",
       status: "ready_for_review",
@@ -6332,6 +6332,53 @@ export async function handleDaemonRoute(
     }
   }
   const channelProtocolDraftMatch = /^\/channels\/([^/]+)\/protocol\/drafts(?:\/([^/]+)\/apply)?$/.exec(path);
+  const channelProtocolCandidateFromClusterMatch = /^\/channels\/([^/]+)\/protocol-candidates\/from-cluster\/([^/]+)$/.exec(path);
+  if (channelProtocolCandidateFromClusterMatch) {
+    const channelId = decodeURIComponent(channelProtocolCandidateFromClusterMatch[1]);
+    const clusterId = decodeURIComponent(channelProtocolCandidateFromClusterMatch[2]);
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const cluster = state.procedureObservationClusters.find((item) => isRecord(item) && item.id === clusterId);
+    if (!isRecord(cluster)) {
+      await route.fulfill({ status: 404, json: { error: "procedure_observation_cluster_not_found", message: `Procedure observation cluster not found: ${clusterId}` } });
+      return;
+    }
+    if (cluster.channelId !== channelId) {
+      await route.fulfill({ status: 400, json: { error: "procedure_observation_cluster_channel_mismatch" } });
+      return;
+    }
+    if (cluster.routeKind !== "channel_protocol") {
+      await route.fulfill({ status: 400, json: { error: "unsupported_procedure_observation_cluster_route" } });
+      return;
+    }
+    const routeBlockers = Array.isArray(cluster.routeBlockers) ? cluster.routeBlockers : [];
+    if (cluster.status !== "ready_for_review" || routeBlockers.length > 0) {
+      await route.fulfill({ status: 400, json: { error: "procedure_observation_cluster_not_ready", blockers: routeBlockers } });
+      return;
+    }
+    const body = request.postData() ? await request.postDataJSON() as Record<string, unknown> : {};
+    const sourceRefs = Array.isArray(cluster.sourceRefs)
+      ? cluster.sourceRefs.filter(isRecord).map((ref) => ({
+        ...ref,
+        type: ref.type === "decision" ? "channel_decision" : ref.type,
+      }))
+      : [];
+    const defaultReviewRule = `${String(cluster.title ?? "Channel protocol")}: ${String(cluster.summary ?? "")}`.trim();
+    const draft = createMockChannelProtocolDraft(state, channelId, {
+      proposedPatch: isRecord(body.proposedPatch) ? body.proposedPatch : { reviewRules: [defaultReviewRule] },
+      reason: typeof body.reason === "string" && body.reason.trim()
+        ? body.reason
+        : `Created from procedure observation cluster ${clusterId}: ${String(cluster.title ?? "")}`,
+      expiresAt: body.expiresAt,
+      sourceRefs,
+    });
+    state.channelProtocolDrafts.unshift(draft);
+    await route.fulfill({ status: 201, json: { ...buildMockChannelCollaborationProtocolResponse(channelId, channel), draft } });
+    return;
+  }
   const channelProtocolCandidateMatch = /^\/channels\/([^/]+)\/protocol-candidates(?:\/([^/]+)\/review)?$/.exec(path);
   if (channelProtocolDraftMatch || channelProtocolCandidateMatch) {
     const match = channelProtocolDraftMatch ?? channelProtocolCandidateMatch;
