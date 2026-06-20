@@ -46,6 +46,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Web E2E Acceptance Matrix](docs/design/web-e2e-acceptance-matrix.md)
 - [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
 - [AI councils](docs/design/ai-councils.md)
+- [GStack skill source sync](docs/design/gstack-skill-source-sync.md)
 - [Skill candidates and protocol governance](docs/design/skill-candidates-and-protocol-governance.md)
 - [Skill candidates and protocol governance implementation plan](docs/design/skill-candidates-and-protocol-governance-implementation-plan.md)
 - [AI teammate private workspace](docs/design/ai-teammate-private-workspace.md)
