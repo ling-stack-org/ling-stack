@@ -90,6 +90,33 @@ If launchd labels are missing, P0 does not silently start an unmanaged Web UI
 process. It returns a clear error and points users to lower-level commands. This
 avoids creating competing daemon/Web processes on the same ports.
 
+## Canonical Worktree Binding
+
+LaunchAgent-managed development services should bind to the canonical local source
+checkout, not to a temporary Git worktree. On this machine the canonical checkout is:
+
+```text
+/Users/tianxiao/ling-stack
+```
+
+Temporary worktrees may be useful for parallel branches, but they should not become the
+default daemon/Web service root. If a temporary worktree is used during a merge or smoke
+test, the service manager must be restored to the canonical checkout once that checkout is
+clean and synced to `origin/main`.
+
+Operational rules:
+
+- LaunchAgent `WorkingDirectory`, stdout path, and stderr path should point at the same
+  canonical checkout.
+- The Web UI should bind `127.0.0.1:5173` with strict-port behavior so a stale process
+  fails clearly instead of drifting to `5174`.
+- Before switching the LaunchAgent root, preserve unrelated dirty work with a branch,
+  stash, or patch file. Do not reset a user's in-progress work to make the service root
+  clean.
+- A stale service from another worktree is a service-manager problem, not an application
+  readiness success. `ling status` should surface the actual launchd working directory in
+  diagnostics.
+
 ## Status Semantics
 
 `ling status` reports:

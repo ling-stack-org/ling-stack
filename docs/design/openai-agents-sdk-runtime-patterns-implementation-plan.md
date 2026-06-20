@@ -828,3 +828,139 @@ Current P11/P12/P13 decision: P11 uses fake conformance coverage before embedded
 keeps Docker as an optional disabled adapter, and P13 uses Codex-like platform-native
 local sandboxing as the default direction. Current P13 is readiness/run-plan/binding only;
 OS-wrapped execution is the next sandbox slice.
+
+## Post-P13 Follow-Up Plan
+
+The next work should not reopen the Docker decision or start a Desktop shell. The product
+direction is:
+
+1. keep the canonical local service checkout stable;
+2. harden platform-native sandbox policy and evidence;
+3. make runner-native hydration observable before defaulting it;
+4. keep Desktop compatibility as an API/control-surface constraint until Web product
+   surfaces settle.
+
+### P14: Platform-Native Sandbox Policy And Evidence
+
+Purpose: turn P13's platform-native doctor/run-plan foundation into a product-ready local
+sandbox posture without claiming isolation that the runner does not yet enforce.
+
+Codex design borrowed:
+
+- separate agent freedom from host-enforced boundaries;
+- represent the selected boundary as a policy profile, not as ad hoc prompt text;
+- fail closed when the host cannot prove the policy;
+- keep approvals as the escape hatch for operations outside the sandbox posture.
+
+Work:
+
+1. Add first-class platform-native policy profile ids:
+
+   - `read_only`;
+   - `workspace_write`;
+   - `trusted_local`;
+   - `danger_full_access`.
+
+2. Extend sandbox readiness diagnostics with policy-level blockers:
+
+   - `sandbox_policy_unverified`;
+   - `sandbox_os_unsupported`;
+   - `sandbox_execution_wrapper_missing`.
+
+3. Record conformance evidence for each backend/profile pair:
+
+   - allowed read succeeds;
+   - blocked write fails;
+   - blocked network fails when network policy is disabled;
+   - artifact import lands under the Ling artifact root;
+   - raw secret-looking values are rejected or converted to refs;
+   - evidence stores only bounded summaries and opaque refs.
+
+4. Keep Linux and Windows platform-native adapters fail-closed until they have real host
+   enforcement and conformance evidence. Their UX should be explicit: unsupported host,
+   no sandbox claim, and no runner binding.
+
+5. Keep embedded Pi sandbox binding disabled by default until execution moves through a
+   child-process/tool-execution wrapper. Passing a sandbox DTO into an in-process runner is
+   readiness information, not isolation.
+
+Acceptance:
+
+- doctor output names the selected policy profile and every blocking reason;
+- Web/API readiness surfaces can show policy and evidence summaries without raw manifests;
+- macOS platform-native keeps producing run plans and conformance evidence;
+- Linux/Windows return explicit unsupported blockers;
+- no sandbox readiness result grants tool execution permission.
+
+Non-goal:
+
+- no Docker default path;
+- no hosted sandbox provider;
+- no Desktop shell implementation;
+- no claim that embedded Pi is OS-isolated until the process wrapper lands.
+
+### P15: Runner Hydration Defaulting And Observability
+
+Purpose: make runner-native hydration usable by default for verified runners without
+turning schema hydration into hidden prompt injection or tool execution authority.
+
+Feature meaning:
+
+- the runner starts with a compact tool catalog, not every schema;
+- when the model asks to use a tool family, the runner sends a hydration request to the
+  daemon;
+- the daemon applies policy, budget, idempotency, and conformance checks;
+- only a verified runner receives sanitized runner-only schema payloads for the active
+  turn;
+- durable Web/API evidence stores summaries, not raw schemas.
+
+Rollout:
+
+1. Keep `runners.pi.toolHydration.enabled` disabled by default for general workspaces.
+2. Enable by default only when all are true:
+
+   - runner capability is `daemon_hydrated`;
+   - conformance is passed for the installed runner version;
+   - the workspace approval policy can be projected into hydration decisions;
+   - hydration evidence appears in run diagnostics;
+   - failure fallback is model-visible and fail-closed.
+
+3. Add Web observability before broad defaulting:
+
+   - `load_tools` request count;
+   - accepted/rejected status;
+   - policy rejection reason;
+   - budget rejection reason;
+   - hydrated namespace/tool count;
+   - schema hash or descriptor id, never raw schema;
+   - whether a later tool call used a hydrated descriptor;
+   - approval state for the actual execution.
+
+4. Define fallback behavior:
+
+   - policy denied: return a model-visible denial and no schema;
+   - over budget: return a model-visible budget denial and no schema;
+   - unsupported runner: omit hydration tools and keep the existing prompt path;
+   - daemon hydration failure: continue the run without hydrated schemas when possible;
+   - execution request for an unhydrated or denied tool: reject before approval.
+
+Acceptance:
+
+- hydration defaulting cannot bypass `allow`/`ask`/`deny`;
+- Web can explain why a tool was loaded, rejected, or unavailable;
+- successful hydration is idempotent and evidence-bounded;
+- runner prompt size improves for large tool catalogs;
+- disabling hydration returns to the existing non-hydrated runner behavior.
+
+### Desktop Compatibility Boundary
+
+Desktop is needed eventually, but it should not be implemented before Web product surfaces
+settle. Current work should only preserve compatibility:
+
+- daemon APIs use structured DTOs instead of browser-only assumptions;
+- local service status exposes manager type, PID, URL, log path, and working directory;
+- approval, sandbox, and hydration evidence are available through daemon APIs that a
+  Desktop shell can render later;
+- LaunchAgent/service repair stays a local-service-manager concern, not Web-only logic;
+- Desktop-specific permission UI is deferred until the Web approval/sandbox surfaces are
+  stable enough to reuse.

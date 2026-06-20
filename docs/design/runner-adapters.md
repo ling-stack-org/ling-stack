@@ -205,6 +205,21 @@ Rules:
   follow-up slices. Docker is optional and should not become the default runner binding
   path just because the adapter exists.
 
+Platform-native policy profiles should stay product-level and enforceable. The initial
+set should mirror the local execution choices users already understand:
+
+| Policy profile | Filesystem posture | Network posture | Default use |
+| --- | --- | --- | --- |
+| `read_only` | Workspace read-only plus imported artifacts. | Disabled unless explicitly approved. | Inspection, planning, code review |
+| `workspace_write` | Writes only through approved workspace paths or artifact import. | Disabled unless explicitly approved. | Narrow coding tasks |
+| `trusted_local` | Broader local writes, still audited and approval-gated. | Explicit allowlist only. | Maintainer-controlled local repair |
+| `danger_full_access` | No sandbox claim; relies on explicit user approval. | Host network. | Emergency/manual override only |
+
+These profiles are user-facing policy names, not backend names. A backend may implement a
+profile only when doctor checks and conformance evidence prove that the claimed file,
+process, network, artifact-import, and secret-redaction behavior is enforceable on the
+host platform.
+
 Required blocker codes for any future sandbox-backed runner:
 
 ```text
@@ -212,6 +227,9 @@ sandbox_profile_missing
 sandbox_backend_unverified
 sandbox_artifact_import_unverified
 sandbox_network_policy_unverified
+sandbox_policy_unverified
+sandbox_os_unsupported
+sandbox_execution_wrapper_missing
 ```
 
 ## Adapter A: Codex App-Server
