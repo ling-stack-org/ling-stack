@@ -142,7 +142,13 @@ export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
       </header>
 
       <section className="profile-hero" aria-label="个人资料概览">
-        <button className="profile-avatar-button" type="button" onClick={() => fileInputRef.current?.click()} aria-label="更换头像" title="更换头像">
+        <button
+          className={avatarDataUrl ? "profile-avatar-button has-avatar" : "profile-avatar-button"}
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="更换头像"
+          title="更换头像"
+        >
           {avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : <span>{initials}</span>}
           <span className="profile-avatar-edit"><Camera size={15} /></span>
         </button>
