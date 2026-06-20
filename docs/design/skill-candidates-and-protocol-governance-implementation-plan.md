@@ -1252,14 +1252,38 @@ Files:
 ```text
 packages/contracts/src/skills.ts
 packages/api-client/src/endpoints/skills.ts
+apps/web/src/api/skills.ts
 packages/core/src/procedure-observations.ts
-packages/core/src/skill-candidate-generation.ts
+packages/core/src/procedure-observation-job.ts
+packages/core/src/skill-candidate-types.ts
 packages/core/src/storage/sqlite/procedure-observation-store.ts
-packages/daemon/src/features/skill-governance/observation-jobs.ts
+packages/daemon/src/features/skills/routes.ts
+packages/daemon/src/features/skills/schemas.ts
+packages/daemon/src/server/router.ts
 packages/daemon/src/features/runs/orchestrator.ts
 packages/daemon/src/features/channels/workflow-fanin.ts
+packages/api-client/test/client.test.mjs
+packages/core/test/procedure-observation-store.test.mjs
 packages/daemon/test/channel-workspace.test.mjs
 ```
+
+Current implementation status:
+
+- `POST /procedure-observations/jobs` persists a generation decision for every new
+  observation job outcome, including evidence-only decisions.
+- `GET /candidate-generation-decisions` lists audit decisions by observation, cluster,
+  decision, and limit.
+- Post-run terminal jobs with `terminalStatus: "succeeded"` can create a pending
+  `ling-generated` skill candidate only after two successful observations in the same
+  cluster share stable validation evidence and duplicate analysis returns `no_overlap`.
+- Failed, cancelled, non-skill, blocked-route, single-observation, and unstable-validation
+  post-run jobs remain evidence-only.
+- Selected skill ids and terminal status are stored as source refs for audit only; they
+  do not inject `requestedSkillId`, alter an active prompt, bind a skill, or publish a
+  candidate.
+- Selected transcript snippets, workflow fan-in, and correction-health automatic
+  candidate creation remain explicit follow-up wiring points unless they enter through
+  the existing structured observation/review APIs.
 
 Add a generation decision DTO:
 
@@ -1385,8 +1409,12 @@ Files:
 packages/contracts/src/skills.ts
 packages/core/src/effective-skills.ts
 packages/core/src/skill-health.ts
-packages/daemon/src/features/runs/skill-suggestions.ts
-packages/daemon/src/features/runs/orchestrator.ts
+packages/core/src/skill-suggestions.ts
+packages/daemon/src/features/skills/routes.ts
+packages/daemon/src/features/skills/schemas.ts
+packages/daemon/src/server/router.ts
+packages/api-client/src/endpoints/skills.ts
+apps/web/src/api/skills.ts
 apps/web/src/features/teammates/*
 apps/web/e2e/settings.spec.ts
 ```
@@ -1398,10 +1426,31 @@ interface SkillInvocationSuggestion {
   readonly skillId: string;
   readonly reason: string;
   readonly confidence: "low" | "medium" | "high";
-  readonly blockers: readonly CandidateRouteBlocker[];
+  readonly blockers: readonly (
+    | "disabled_binding"
+    | "missing_tools"
+    | "missing_provider_capability"
+    | "channel_policy"
+    | "approval_mismatch"
+    | SkillHealthFindingKind
+  )[];
   readonly sourceRefs: readonly SkillCandidateSourceRef[];
 }
 ```
+
+Current implementation status:
+
+- `POST /skills/suggestions` returns visible recommendations for a teammate/channel/task
+  context.
+- Suggestions are computed from executable effective skills only, using teammate
+  bindings, channel tool policy, provider capabilities, approval profile, and skill
+  health findings.
+- Existing `requestedSkillId` is excluded from suggestions so an explicit user choice is
+  not echoed back as an automated recommendation.
+- Skill health findings appear as visible blockers on the suggestion; they do not mutate
+  the skill, disable it, or change execution policy.
+- Suggestions are read-only: the runtime continues to invoke a skill only when the run
+  request explicitly carries an approved/configured `requestedSkillId`.
 
 Rules:
 

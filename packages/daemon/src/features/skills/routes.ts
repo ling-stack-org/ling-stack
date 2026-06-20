@@ -1,14 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   analyzeSkillDuplicate,
+  buildEffectiveTeammateSkills,
   buildSkillHealthReport,
   createProcedureObservationInputFromJob,
   DEFAULT_WORKSPACE_ID,
   isExplicitObservationJob,
+  procedureObservationHasTerminalStatus,
   procedureObservationHasJobKey,
   providerCapabilities,
   readOnlyRunTools,
   riskyRunTools,
+  suggestSkillInvocations,
   type CreateSkillCandidateInput,
   type CreateSkillImportDraftInput,
   type CandidateGenerationDecision,
@@ -34,14 +37,16 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { SkillRoute } from "../../server/routes.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-import { listEffectiveSkillRegistryEntries, refreshEffectiveSkillRegistryEntries } from "./registry.js";
+import { listEffectiveSkillRegistryEntries, listExecutableSkillDefinitions, refreshEffectiveSkillRegistryEntries } from "./registry.js";
 import {
   parseCreateSkillCandidateRequest,
+  parseSkillInvocationSuggestionRequest,
   parseProcedureObservationJobRequest,
   parseProcedureObservationRequest,
   parseSkillCorrectionRequest,
   parseSkillCandidateReviewRequest,
   parseSkillImportDraftRequest,
+  readOptionalCandidateGenerationDecisionActionQuery,
   readOptionalCandidateRouteKindQuery,
   readOptionalProcedureObservationClusterStatusQuery,
   readOptionalSkillCandidateOriginQuery,
@@ -49,6 +54,7 @@ import {
   readOptionalSkillUsageEventKindQuery,
   type ParsedCreateSkillCandidateRequest,
 } from "./schemas.js";
+import { resolveAiTeammateReference } from "../teammates/identity.js";
 
 export async function handleSkillRoute(
   request: IncomingMessage,
@@ -118,6 +124,56 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (url.pathname === "/skills/suggestions") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/suggestions` });
+        return;
+      }
+      const now = new Date().toISOString();
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillInvocationSuggestionRequest(body);
+      const teammate = resolveAiTeammateReference(store, input.teammateId);
+      if (!teammate) {
+        writeJson(response, 404, { error: "teammate_not_found", message: `AI teammate not found: ${input.teammateId}` });
+        return;
+      }
+      const channel = input.channelId ? store.getChannel(input.channelId) : undefined;
+      if (input.channelId && !channel) {
+        writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+        return;
+      }
+      const providerPreset = input.providerPresetId ? store.getProviderPreset(input.providerPresetId) : undefined;
+      if (input.providerPresetId && !providerPreset) {
+        writeJson(response, 404, { error: "provider_preset_not_found", message: `Provider preset not found: ${input.providerPresetId}` });
+        return;
+      }
+      const effectiveSkills = buildEffectiveTeammateSkills({
+        teammate,
+        bindings: store.listTeammateSkillBindings(teammate.id),
+        skills: listExecutableSkillDefinitions(store),
+        channelAllowedTools: channel?.allowedTools,
+        providerCapabilities: providerPreset?.capabilities,
+      });
+      const healthReport = buildSkillHealthReport({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        skills: listEffectiveSkillRegistryEntries(store),
+        candidates: store.listSkillCandidates({ limit: 500 }).map(skillCandidateHealthInputFromCandidate),
+        usageStats: store.listSkillUsageStats(),
+        generatedAt: now,
+        limit: 100,
+      });
+      writeJson(response, 200, {
+        cwd,
+        suggestions: suggestSkillInvocations({
+          context: input,
+          effectiveSkills,
+          healthFindings: healthReport.findings,
+          limit: input.limit,
+        }),
+      });
+      return;
+    }
+
     if (url.pathname === "/skill-candidates") {
       if (request.method === "GET") {
         writeJson(response, 200, {
@@ -140,6 +196,23 @@ export async function handleSkillRoute(
         return;
       }
       writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skill-candidates` });
+      return;
+    }
+
+    if (url.pathname === "/candidate-generation-decisions") {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /candidate-generation-decisions` });
+        return;
+      }
+      writeJson(response, 200, {
+        cwd,
+        decisions: store.listCandidateGenerationDecisions({
+          observationId: url.searchParams.get("observationId") || undefined,
+          clusterId: url.searchParams.get("clusterId") || undefined,
+          decision: readOptionalCandidateGenerationDecisionActionQuery(url, "decision"),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
       return;
     }
 
@@ -280,12 +353,63 @@ export async function handleSkillRoute(
         return;
       }
       if (!isExplicitObservationJob(job)) {
+        const postRunGate = postRunCandidateGenerationGate(store, observation, job, route);
+        if (postRunGate.ready) {
+          const input = skillCandidateInputFromObservation(observation);
+          const withAnalysis = withDuplicateAnalysis(input, store);
+          if (withAnalysis.duplicateAnalysis.decision !== "no_overlap") {
+            const generationDecision = persistGenerationDecision(store, {
+              observation,
+              route,
+              source: "post_run_terminal",
+              decision: "append_evidence",
+              duplicateAnalysis: withAnalysis.duplicateAnalysis,
+              reason: `Post-run evidence met generation gates, but duplicate analysis returned ${withAnalysis.duplicateAnalysis.decision}.`,
+              now,
+            });
+            writeJson(response, 202, {
+              cwd,
+              jobKey: built.jobKey,
+              reusedObservation: false,
+              observation,
+              route,
+              action: "evidence_recorded",
+              duplicateAnalysis: withAnalysis.duplicateAnalysis,
+              generationDecision,
+            });
+            return;
+          }
+          const candidate = store.createSkillCandidate(withAnalysis, now);
+          const generationDecision = persistGenerationDecision(store, {
+            observation,
+            route,
+            source: "post_run_terminal",
+            decision: "create_skill_candidate",
+            duplicateAnalysis: candidate.duplicateAnalysis,
+            createdCandidateId: candidate.id,
+            reason: postRunGate.reason,
+            now,
+          });
+          appendSkillCandidateChangedEvent(store, controlPlaneEvents, cwd, "post_run_observation_create", candidate.id, candidate.status);
+          writeJson(response, 201, {
+            cwd,
+            jobKey: built.jobKey,
+            reusedObservation: false,
+            observation,
+            route,
+            action: "candidate_created",
+            candidate,
+            duplicateAnalysis: candidate.duplicateAnalysis,
+            generationDecision,
+          });
+          return;
+        }
         const generationDecision = persistGenerationDecision(store, {
           observation,
           route,
           source: generationSourceFromJob(job),
           decision: "append_evidence",
-          reason: "Observation job was not explicitly confirmed as a save-as-skill request, so it stays evidence-only.",
+          reason: postRunGate.reason,
           now,
         });
         writeJson(response, 202, {
@@ -649,6 +773,57 @@ function generationDecisionForExistingObservation(
   });
 }
 
+function postRunCandidateGenerationGate(
+  store: SkillRouteStore,
+  observation: ProcedureObservation,
+  job: ReturnType<typeof parseProcedureObservationJobRequest>,
+  route: CandidateRoute,
+): { readonly ready: boolean; readonly reason: string } {
+  if (generationSourceFromJob(job) !== "post_run_terminal") {
+    return {
+      ready: false,
+      reason: "Observation job was not explicitly confirmed as a save-as-skill request, so it stays evidence-only.",
+    };
+  }
+  if (job.terminalStatus !== "succeeded") {
+    return {
+      ready: false,
+      reason: `Post-run observation is evidence-only because terminal status is ${job.terminalStatus ?? "missing"}.`,
+    };
+  }
+  if (route.kind !== "skill" || route.blockers.length > 0) {
+    return {
+      ready: false,
+      reason: "Post-run observation did not pass skill routing gates, so it stays evidence-only.",
+    };
+  }
+  const clusterObservations = store.listProcedureObservations({
+    clusterId: observation.clusterId,
+    routeKind: "skill",
+    limit: 500,
+  });
+  const successfulObservations = clusterObservations.filter((item) =>
+    procedureObservationHasTerminalStatus(item, "succeeded")
+  );
+  if (successfulObservations.length < 2) {
+    return {
+      ready: false,
+      reason: "Post-run observation is evidence-only until at least two successful observations exist in the same cluster.",
+    };
+  }
+  const validationSignatures = uniqueStrings(successfulObservations.map(validationSignature));
+  if (validationSignatures.length !== 1) {
+    return {
+      ready: false,
+      reason: "Post-run observation is evidence-only until validation evidence is stable across the cluster.",
+    };
+  }
+  return {
+    ready: true,
+    reason: `Post-run terminal evidence passed generation gates with ${successfulObservations.length} successful observations and stable validation.`,
+  };
+}
+
 function persistGenerationDecision(
   store: SkillRouteStore,
   input: {
@@ -674,6 +849,13 @@ function persistGenerationDecision(
     reason: input.reason,
     createdCandidateId: input.createdCandidateId,
   }, input.now);
+}
+
+function validationSignature(observation: ProcedureObservation): string {
+  return observation.validationSteps
+    .map((step) => [step.title, step.commandOrCheck ?? "", step.expectedResult ?? ""].join("|").trim().toLowerCase())
+    .sort()
+    .join(";");
 }
 
 function generationSourceFromJob(job: ReturnType<typeof parseProcedureObservationJobRequest>): CandidateGenerationDecisionSource {

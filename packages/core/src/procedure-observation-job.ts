@@ -99,6 +99,12 @@ export function procedureObservationHasJobKey(input: {
   return input.sourceRefs.some((ref) => ref.type === "observation-job" && ref.id === jobKey);
 }
 
+export function procedureObservationHasTerminalStatus(input: {
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+}, terminalStatus: ProcedureObservationJobTerminalStatus): boolean {
+  return input.sourceRefs.some((ref) => ref.type === "decision" && ref.id === terminalStatusSourceRefId(terminalStatus));
+}
+
 export function isExplicitObservationJob(input: ProcedureObservationJobInput): boolean {
   return input.userConfirmed && (
     input.source === "manual_recording" ||
@@ -151,10 +157,20 @@ function sourceRefsFromJob(input: ProcedureObservationJobInput, jobKey: string):
   if (input.reviewActionId) {
     refs.push({ type: "decision", id: input.reviewActionId, label: "Review action" });
   }
+  if (input.selectedSkillId) {
+    refs.push({ type: "skill", id: input.selectedSkillId, label: "Selected skill" });
+  }
+  if (input.terminalStatus) {
+    refs.push({ type: "decision", id: terminalStatusSourceRefId(input.terminalStatus), label: `Terminal status: ${input.terminalStatus}` });
+  }
   for (const artifactRef of uniqueStrings(input.artifactRefs ?? [])) {
     refs.push({ type: "artifact", id: artifactRef, label: "Validation artifact" });
   }
   return refs;
+}
+
+function terminalStatusSourceRefId(status: ProcedureObservationJobTerminalStatus): string {
+  return `terminal_status:${status}`;
 }
 
 function reusableScore(input: ProcedureObservationJobInput, validationSteps: readonly ProcedureObservationValidationStep[]): number {

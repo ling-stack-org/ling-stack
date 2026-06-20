@@ -3,6 +3,7 @@ import { basename, extname } from "node:path";
 import {
   providerCapabilities,
   readOnlyRunTools,
+  type CandidateGenerationDecisionAction,
   type ApplySkillCandidateReviewActionInput,
   type CreateSkillCandidateInput,
   type CreateProcedureObservationInput,
@@ -35,6 +36,17 @@ import { isRecord, readOptionalString, readOptionalStringArray, readString } fro
 export type ParsedCreateSkillCandidateRequest = Omit<CreateSkillCandidateInput, "duplicateAnalysis"> & {
   readonly duplicateAnalysis?: SkillDuplicateAnalysis;
 };
+
+export interface ParsedSkillInvocationSuggestionRequest {
+  readonly teammateId: string;
+  readonly channelId?: string;
+  readonly providerPresetId?: string;
+  readonly taskId?: string;
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly requestedSkillId?: string;
+  readonly limit?: number;
+}
 
 export function parseCreateSkillCandidateRequest(value: unknown): ParsedCreateSkillCandidateRequest {
   if (!isRecord(value)) {
@@ -177,6 +189,20 @@ export function readOptionalProcedureObservationClusterStatusQuery(
   return value as NonNullable<ListProcedureObservationClustersOptions["status"]>;
 }
 
+export function readOptionalCandidateGenerationDecisionActionQuery(
+  url: URL,
+  key: string,
+): CandidateGenerationDecisionAction | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null || value === "") {
+    return undefined;
+  }
+  if (!candidateGenerationDecisionActions.includes(value as CandidateGenerationDecisionAction)) {
+    throw new Error(`${key} must be one of: ${candidateGenerationDecisionActions.join(", ")}`);
+  }
+  return value as CandidateGenerationDecisionAction;
+}
+
 export function readOptionalSkillUsageEventKindQuery(url: URL, key: string): ListSkillUsageEventsOptions["kind"] {
   const value = url.searchParams.get(key);
   if (value === null || value === "") {
@@ -186,6 +212,22 @@ export function readOptionalSkillUsageEventKindQuery(url: URL, key: string): Lis
     throw new Error(`${key} must be one of: ${skillUsageEventKinds.join(", ")}`);
   }
   return value as SkillUsageEventKind;
+}
+
+export function parseSkillInvocationSuggestionRequest(value: unknown): ParsedSkillInvocationSuggestionRequest {
+  if (!isRecord(value)) {
+    throw new Error("Skill invocation suggestion request must be a JSON object");
+  }
+  return {
+    teammateId: readString(value, "teammateId"),
+    channelId: readOptionalString(value, "channelId"),
+    providerPresetId: readOptionalString(value, "providerPresetId"),
+    taskId: readOptionalString(value, "taskId"),
+    title: readOptionalString(value, "title"),
+    prompt: readOptionalString(value, "prompt"),
+    requestedSkillId: readOptionalString(value, "requestedSkillId"),
+    limit: readOptionalNumber(value, "limit"),
+  };
 }
 
 export function parseSkillCorrectionRequest(value: unknown): Omit<CreateSkillUsageEventInput, "skillId" | "kind"> {
@@ -527,7 +569,7 @@ const skillCandidateOrigins = ["ling-generated", "recording", "manual-draft", "i
 const skillCandidateStatuses = ["pending", "needs_edit", "approved_for_draft", "published", "rejected", "quarantined", "superseded", "expired"] as const;
 const skillCandidateProposedActions = ["create", "update_existing", "wrap_external", "supersede"] as const;
 const skillCandidateReviewActions = ["keep_pending", "request_changes", "approve_for_draft", "reject", "quarantine", "supersede"] as const;
-const skillCandidateSourceRefTypes = ["manual", "message", "decision", "run", "run-event", "artifact", "import", "observation-job"] as const;
+const skillCandidateSourceRefTypes = ["skill", "manual", "message", "decision", "run", "run-event", "artifact", "import", "observation-job"] as const;
 const procedureObservationSources = ["explicit_user_request", "user_correction", "successful_tool_chain", "repeated_pattern", "workflow_step_output", "multi_agent_handoff", "manual_recording"] as const;
 const procedureObservationSignals = ["save_as_skill", "next_time_instruction", "correction_phrase", "long_successful_sequence", "same_sequence_repeated", "handoff_stabilized", "user_approved_recording"] as const;
 const procedureObservationConfidences = ["low", "medium", "high"] as const;
@@ -535,6 +577,16 @@ const procedureObservationJobTerminalStatuses = ["succeeded", "failed", "cancell
 const procedureObservationDestinationHints = ["skill", "channel_protocol", "playbook", "automation", "memory"] as const;
 const candidateRouteKinds = ["memory", "channel_protocol", "playbook", "automation", "skill", "approval_policy_review", "reject"] as const;
 const procedureObservationClusterStatuses = ["collecting", "ready_for_review", "blocked", "routed_elsewhere"] as const;
+const candidateGenerationDecisionActions = [
+  "append_evidence",
+  "create_skill_candidate",
+  "create_channel_protocol_candidate",
+  "create_playbook_candidate",
+  "create_memory_candidate",
+  "create_automation_candidate",
+  "policy_review",
+  "reject",
+] as const;
 const skillDuplicateDecisions = ["no_overlap", "append_evidence", "update_existing", "conflict_review", "reject_duplicate"] as const;
 const skillHealthFindingKinds = [
   "duplicate_clusters",

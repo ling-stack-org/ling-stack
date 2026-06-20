@@ -26,6 +26,7 @@ export * from "./skill-types.js";
 export * from "./skill-health.js";
 export * from "./skill-candidate-types.js";
 export * from "./skill-usage-types.js";
+export * from "./skill-suggestions.js";
 export * from "./procedure-observation-types.js";
 export * from "./procedure-observation-job.js";
 export * from "./candidate-router.js";

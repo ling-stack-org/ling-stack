@@ -29,6 +29,7 @@ export type SkillCandidateReviewAction =
 export type SkillCandidateReviewActor = "user" | "system";
 
 export type SkillCandidateSourceRefType =
+  | "skill"
   | "manual"
   | "message"
   | "decision"

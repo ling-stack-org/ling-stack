@@ -819,8 +819,10 @@ export async function routeRequest(
     url.pathname === "/skills" ||
     url.pathname === "/skills/refresh" ||
     url.pathname === "/skills/import-draft" ||
+    url.pathname === "/skills/suggestions" ||
     url.pathname === "/skills/usage-events" ||
     url.pathname === "/skills/usage-stats" ||
+    url.pathname === "/candidate-generation-decisions" ||
     url.pathname === "/skill-candidates" ||
     url.pathname === "/skill-candidates/observe" ||
     url.pathname === "/procedure-observation-clusters" ||

@@ -1,4 +1,6 @@
 import type {
+  CandidateGenerationDecisionAction,
+  CandidateGenerationDecisionListResponse,
   CreateSkillCandidateRequest,
   ProcedureObservationClusterListResponse,
   ProcedureObservationClusterResponse,
@@ -17,6 +19,8 @@ import type {
   SkillCandidateReviewResponse,
   SkillCandidateStatus,
   CandidateRouteKind,
+  SkillInvocationSuggestionRequest,
+  SkillInvocationSuggestionResponse,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
   SkillImportPublishResponse,
@@ -70,6 +74,33 @@ export const skillEndpoints = {
     return this._get("/skills/usage-stats", {
       cwd,
       skillId: options.skillId,
+    });
+  },
+
+  async suggestSkillInvocations(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    input: SkillInvocationSuggestionRequest,
+  ): Promise<SkillInvocationSuggestionResponse> {
+    return this._post("/skills/suggestions", { cwd }, input);
+  },
+
+  async listCandidateGenerationDecisions(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    options: {
+      readonly observationId?: string;
+      readonly clusterId?: string;
+      readonly decision?: CandidateGenerationDecisionAction;
+      readonly limit?: number;
+    } = {},
+  ): Promise<CandidateGenerationDecisionListResponse> {
+    return this._get("/candidate-generation-decisions", {
+      cwd,
+      observationId: options.observationId,
+      clusterId: options.clusterId,
+      decision: options.decision,
+      limit: options.limit,
     });
   },
 

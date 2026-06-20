@@ -7,6 +7,7 @@ import {
   createProcedureObservationInputFromJob,
   createProcedureObservationJobKey,
   createSqliteRunStore,
+  procedureObservationHasTerminalStatus,
   procedureObservationHasJobKey,
 } from "../dist/index.js";
 
@@ -266,6 +267,8 @@ test("procedure observation job helper creates stable bounded observation input"
     signals: ["save_as_skill", "user_approved_recording"],
     runId: "run_job_helper",
     channelId: "channel_job_helper",
+    selectedSkillId: "implement",
+    terminalStatus: "succeeded",
     userConfirmed: true,
     destinationHint: "skill",
     title: "Recorded UI verification flow",
@@ -286,5 +289,7 @@ test("procedure observation job helper creates stable bounded observation input"
   assert.equal(built.observationInput.procedureSteps[0].requiredTools[0], "bash");
   assert.equal(built.observationInput.validationSteps[0].title, "web typecheck passed");
   assert.equal(procedureObservationHasJobKey({ sourceRefs: built.observationInput.sourceRefs }, jobKey), true);
+  assert.equal(procedureObservationHasTerminalStatus({ sourceRefs: built.observationInput.sourceRefs }, "succeeded"), true);
   assert.equal(built.observationInput.sourceRefs.some((ref) => ref.type === "observation-job"), true);
+  assert.equal(built.observationInput.sourceRefs.some((ref) => ref.type === "skill" && ref.id === "implement"), true);
 });
