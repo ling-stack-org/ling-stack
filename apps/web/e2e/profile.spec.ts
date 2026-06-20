@@ -26,6 +26,30 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
 
   const avatarImage = page.locator(".profile-avatar-button img");
   await expect(avatarImage).toBeVisible();
+  const avatarChrome = await page.locator(".profile-avatar-button").evaluate((element) => {
+    const buttonRect = element.getBoundingClientRect();
+    const editElement = element.querySelector(".profile-avatar-edit");
+    if (!(editElement instanceof HTMLElement)) {
+      throw new Error("profile avatar edit badge did not render");
+    }
+    const editRect = editElement.getBoundingClientRect();
+    const buttonStyle = getComputedStyle(element);
+    return {
+      width: buttonRect.width,
+      height: buttonRect.height,
+      paddingTop: buttonStyle.paddingTop,
+      paddingRight: buttonStyle.paddingRight,
+      paddingBottom: buttonStyle.paddingBottom,
+      paddingLeft: buttonStyle.paddingLeft,
+      editRightOverhang: editRect.right - buttonRect.right,
+    };
+  });
+  expect(Math.abs(avatarChrome.width - avatarChrome.height)).toBeLessThanOrEqual(0.5);
+  expect(avatarChrome.paddingTop).toBe("0px");
+  expect(avatarChrome.paddingRight).toBe("0px");
+  expect(avatarChrome.paddingBottom).toBe("0px");
+  expect(avatarChrome.paddingLeft).toBe("0px");
+  expect(avatarChrome.editRightOverhang).toBeGreaterThan(0);
   const avatarDataUrl = await avatarImage.getAttribute("src");
   if (!avatarDataUrl) {
     throw new Error("profile avatar image did not render a data URL");
