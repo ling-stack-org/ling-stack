@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { X } from "lucide-react";
 
 const CROP_SIZE = 280;
-const OUTPUT_SIZES = [512, 448, 384] as const;
-const OUTPUT_QUALITIES = [0.9, 0.82, 0.74, 0.66] as const;
+const OUTPUT_SIZES = [512, 448, 384, 320, 256, 192] as const;
+const OUTPUT_QUALITIES = [0.92, 0.84, 0.76, 0.68] as const;
 const TARGET_DATA_URL_LENGTH = 240 * 1024;
 
 interface AvatarCropDialogProps {
@@ -239,10 +239,13 @@ function renderCroppedAvatar(image: HTMLImageElement, imageSize: ImageSize, zoom
     if (!context) {
       throw new Error("当前浏览器无法处理头像裁剪。");
     }
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, outputSize, outputSize);
+    context.clearRect(0, 0, outputSize, outputSize);
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
+    context.save();
+    context.beginPath();
+    context.arc(outputSize / 2, outputSize / 2, outputSize / 2, 0, Math.PI * 2);
+    context.clip();
     context.drawImage(
       image,
       clamp(sourceX, 0, Math.max(0, imageSize.width - safeSourceSize)),
@@ -254,9 +257,10 @@ function renderCroppedAvatar(image: HTMLImageElement, imageSize: ImageSize, zoom
       outputSize,
       outputSize,
     );
+    context.restore();
 
     for (const quality of OUTPUT_QUALITIES) {
-      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      const dataUrl = canvas.toDataURL("image/webp", quality);
       fallback = dataUrl;
       if (dataUrl.length <= TARGET_DATA_URL_LENGTH) {
         return dataUrl;
