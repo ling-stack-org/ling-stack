@@ -113,17 +113,18 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await page.getByLabel("队友模板").getByRole("button", { name: "添加队友", exact: true }).click();
   const createDialog = page.getByRole("dialog", { name: "创建 AI 队友" });
   await expect(createDialog).toBeVisible();
-  await expect(createDialog.getByText("选择角色", { exact: true })).toBeVisible();
-  await expect(createDialog.getByText("选择模型", { exact: true })).toBeVisible();
-  await expect(createDialog.getByText("基础信息", { exact: true })).toBeVisible();
+  await expect(createDialog).toContainText("选择初始角色");
+  await expect(createDialog.getByLabel("基础模型")).toBeVisible();
+  await expect(createDialog).toContainText("基础信息");
+  await expect(createDialog).toContainText("没有模型预设");
   await expect(createDialog.getByLabel("队友设置步骤")).toHaveCount(0);
   await expect(createDialog.getByLabel("队友预览")).toHaveCount(0);
   await expect(createDialog.getByText("系统提示词")).toHaveCount(0);
   await createDialog.getByText("高级设置").click();
   await expect(page.getByText("Project files")).toHaveCount(0);
   await expect(page.getByText("Skill pack")).toHaveCount(0);
-  await expect(createDialog.getByText("加入频道")).toBeVisible();
-  await expect(createDialog.getByText("记忆", { exact: true })).toBeVisible();
+  await expect(createDialog.getByRole("heading", { name: "加入频道" })).toBeVisible();
+  await expect(createDialog.getByRole("heading", { name: "记忆" })).toBeVisible();
 });
 
 test("theme switcher supports system, light, and dark preferences", async ({ page }) => {
