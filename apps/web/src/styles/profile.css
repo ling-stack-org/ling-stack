@@ -212,30 +212,29 @@
 }
 
 .profile-activity-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 176px;
-  gap: 20px;
-  align-items: start;
+  min-width: 0;
 }
 
 .profile-heatmap {
   display: grid;
   gap: 10px;
   min-width: 0;
+  width: 100%;
 }
 
 .profile-heatmap-grid {
   display: grid;
   grid-auto-flow: column;
   grid-template-rows: repeat(7, 12px);
-  grid-auto-columns: 12px;
+  grid-auto-columns: minmax(12px, 1fr);
   gap: 4px;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
 }
 
 .profile-heatmap-cell {
-  width: 12px;
+  width: 100%;
   height: 12px;
   border-radius: 3px;
   background: var(--surface-subtle);
@@ -259,50 +258,11 @@
 
 .profile-heatmap-months {
   display: grid;
-  grid-template-columns: repeat(53, 12px);
+  grid-template-columns: repeat(53, minmax(12px, 1fr));
   gap: 4px;
+  width: 100%;
   color: var(--text-soft);
   font-size: 12px;
-}
-
-.profile-activity-summary {
-  display: grid;
-  gap: 11px;
-  min-height: 118px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-panel);
-}
-
-.profile-activity-summary span {
-  color: var(--text-soft);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.profile-activity-summary strong {
-  color: var(--text-strong);
-  font-size: 17px;
-  line-height: 1.15;
-}
-
-.profile-activity-summary div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.profile-activity-summary small {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.profile-activity-summary b {
-  color: var(--text-strong);
-  font-size: 13px;
 }
 
 .profile-detail-grid {
@@ -392,6 +352,134 @@
   color: var(--success);
 }
 
+.profile-crop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, #071411 48%, transparent);
+}
+
+.profile-crop-dialog {
+  display: grid;
+  gap: 18px;
+  width: min(420px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+  box-shadow: 0 18px 54px rgba(10, 25, 20, 0.22);
+}
+
+.profile-crop-head,
+.profile-crop-actions,
+.profile-crop-control {
+  display: flex;
+  align-items: center;
+}
+
+.profile-crop-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.profile-crop-head h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.profile-crop-stage {
+  display: grid;
+  justify-items: center;
+}
+
+.profile-crop-frame {
+  position: relative;
+  width: min(280px, 100%);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 999px;
+  background:
+    linear-gradient(45deg, rgba(20, 40, 34, 0.06) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(20, 40, 34, 0.06) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(20, 40, 34, 0.06) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(20, 40, 34, 0.06) 75%);
+  background-color: var(--surface-panel-strong);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.profile-crop-frame.dragging {
+  cursor: grabbing;
+}
+
+.profile-crop-frame::after {
+  position: absolute;
+  inset: 0;
+  border: 2px solid color-mix(in srgb, var(--surface-panel) 84%, var(--accent, #0e7a63));
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #0e7a63 42%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.profile-crop-image {
+  position: absolute;
+  max-width: none;
+  max-height: none;
+  transform: translate(-50%, -50%);
+  user-select: none;
+}
+
+.profile-crop-loading {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.profile-crop-control {
+  gap: 12px;
+}
+
+.profile-crop-control span {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.profile-crop-control input {
+  flex: 1;
+  min-width: 0;
+  accent-color: #0e7a63;
+}
+
+.profile-crop-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.profile-crop-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 :root[data-theme="dark"] .profile-heatmap-cell.level-1 {
   background: #1d3f35;
 }
@@ -436,7 +524,6 @@
     border-bottom: 0;
   }
 
-  .profile-activity-body,
   .profile-detail-grid,
   .profile-identity-form {
     grid-template-columns: 1fr;

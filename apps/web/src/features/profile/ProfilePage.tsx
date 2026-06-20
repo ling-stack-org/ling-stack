@@ -4,6 +4,7 @@ import { getUserProfile, updateUserProfile } from "../../api/profile.js";
 import { listRuns } from "../../api/runs.js";
 import { listSkills } from "../../api/skills.js";
 import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
+import { AvatarCropDialog } from "./AvatarCropDialog.js";
 
 type ActivityMode = "day" | "week" | "total";
 
@@ -18,9 +19,6 @@ interface ProfileMetrics {
   readonly topModel: string;
   readonly exploredSkillCount: number;
   readonly totalSkillCount: number;
-  readonly activeDayCount: number;
-  readonly last30EstimatedTokens: number;
-  readonly peakActivityDayTokens: number;
   readonly topSkills: readonly { readonly id: string; readonly label: string; readonly count: number }[];
   readonly activityDays: ReadonlyMap<string, number>;
 }
@@ -33,6 +31,7 @@ export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
   const [displayName, setDisplayName] = useState("");
   const [handle, setHandle] = useState("");
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | undefined>();
+  const [avatarCropSource, setAvatarCropSource] = useState<string | undefined>();
   const [activityMode, setActivityMode] = useState<ActivityMode>("day");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -107,11 +106,17 @@ export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
     }
     if (!file.type.startsWith("image/")) {
       setMessage("请选择图片文件");
+      event.target.value = "";
       return;
     }
-    setAvatarDataUrl(await fileToDataUrl(file));
-    setMessage("头像已选择，保存后生效");
-    event.target.value = "";
+    try {
+      setAvatarCropSource(await fileToDataUrl(file));
+      setMessage("");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      event.target.value = "";
+    }
   }
 
   const initials = initialsFromName(displayName || profile?.displayName || "Ling User");
@@ -189,18 +194,6 @@ export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
               {activity.monthLabels.map((label) => <span key={`${label.month}-${label.column}`} style={{ gridColumn: label.column }}>{label.month}</span>)}
             </div>
           </div>
-          <aside className="profile-activity-summary" aria-label="Token 活动摘要">
-            <span>本期摘要</span>
-            <strong>{metrics.activeDayCount} 天活跃</strong>
-            <div>
-              <small>近 30 天</small>
-              <b>{formatCompactNumber(metrics.last30EstimatedTokens)}</b>
-            </div>
-            <div>
-              <small>最高单日</small>
-              <b>{formatCompactNumber(metrics.peakActivityDayTokens)}</b>
-            </div>
-          </aside>
         </div>
       </section>
 
@@ -233,6 +226,17 @@ export function ProfilePage({ cwd }: { readonly cwd: string }): JSX.Element {
       </div>
 
       {message ? <div className={message.includes("已") ? "profile-message ok" : "profile-message"}>{message}</div> : null}
+      {avatarCropSource ? (
+        <AvatarCropDialog
+          sourceDataUrl={avatarCropSource}
+          onCancel={() => setAvatarCropSource(undefined)}
+          onConfirm={(croppedAvatarDataUrl) => {
+            setAvatarDataUrl(croppedAvatarDataUrl);
+            setAvatarCropSource(undefined);
+            setMessage("头像已调整，保存后生效");
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -274,7 +278,6 @@ function buildProfileMetrics(runs: readonly RunSession[], skills: readonly Skill
   }
 
   const activeDays = new Set(activityDays.keys());
-  const todayKey = localDateKey(new Date());
   const topSkills = [...skillCounts.entries()]
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .slice(0, 5)
@@ -293,9 +296,6 @@ function buildProfileMetrics(runs: readonly RunSession[], skills: readonly Skill
     topModel,
     exploredSkillCount: skillCounts.size,
     totalSkillCount: skills.length,
-    activeDayCount: activeDays.size,
-    last30EstimatedTokens: sumRecentDays(activityDays, todayKey, 30),
-    peakActivityDayTokens: Math.max(...activityDays.values(), 0),
     topSkills,
     activityDays,
   };
@@ -428,18 +428,6 @@ function sumUntil(activityDays: ReadonlyMap<string, number>, key: string): numbe
   let sum = 0;
   for (const [day, value] of activityDays.entries()) {
     if (day <= key) {
-      sum += value;
-    }
-  }
-  return sum;
-}
-
-function sumRecentDays(activityDays: ReadonlyMap<string, number>, todayKey: string, days: number): number {
-  const today = new Date(`${todayKey}T00:00:00`);
-  const startKey = localDateKey(addDays(today, -(days - 1)));
-  let sum = 0;
-  for (const [day, value] of activityDays.entries()) {
-    if (day >= startKey && day <= todayKey) {
       sum += value;
     }
   }
