@@ -249,6 +249,9 @@ export function AppShell(): JSX.Element {
     channelStateTransitions,
     channelActivityTransitionsLoading,
     channelActivityTransitionError,
+    channelGovernanceNotifications,
+    channelGovernanceNotificationsLoading,
+    channelGovernanceNotificationActionId,
   } = workspaceDomain.state;
   const {
     setChannels,
@@ -284,6 +287,9 @@ export function AppShell(): JSX.Element {
     refreshChannelRunArtifacts,
     refreshChannelExecutionActions,
     refreshChannelActivityTransitions,
+    refreshChannelGovernanceNotifications,
+    markChannelGovernanceNotificationSeen,
+    dismissChannelGovernanceNotification,
     refreshChannelMessageRouteDecisions,
     refreshChannelIntentDecisions,
     refreshChannelProtocol,
@@ -1201,6 +1207,7 @@ export function AppShell(): JSX.Element {
       void refreshChannelExecutionProposals(selectedChannelId);
       void refreshChannelFiles(selectedChannelId);
       void refreshChannelProtocol(selectedChannelId);
+      void refreshChannelGovernanceNotifications(selectedChannelId);
       void refreshExternalWorkCiTriage(form.cwd.trim(), selectedChannelId);
       void refreshWorkItems(form.cwd.trim());
       if (activeView === "settings") {
@@ -1396,6 +1403,7 @@ export function AppShell(): JSX.Element {
       refreshChannelFiles(channelId),
       refreshChannelRunArtifacts(form.cwd.trim(), channelId, channelRunsForArtifacts),
       refreshChannelProtocol(channelId),
+      refreshChannelGovernanceNotifications(channelId),
       refreshRuns(),
       refreshApprovals(),
       refreshExternalWorkCiTriage(form.cwd.trim(), channelId),
@@ -1570,6 +1578,9 @@ export function AppShell(): JSX.Element {
             channelStateTransitions={channelStateTransitions}
             channelActivityTransitionsLoading={channelActivityTransitionsLoading}
             channelActivityTransitionError={channelActivityTransitionError}
+            channelGovernanceNotifications={channelGovernanceNotifications}
+            channelGovernanceNotificationsLoading={channelGovernanceNotificationsLoading}
+            channelGovernanceNotificationActionId={channelGovernanceNotificationActionId}
             externalWorkCiTriage={externalWorkCiTriage}
             externalWorkCiTriageLoading={externalWorkCiTriageLoading}
             durableWorkItems={durableWorkItems}
@@ -1662,6 +1673,7 @@ export function AppShell(): JSX.Element {
               refreshChannelMessageRouteDecisions(),
               refreshChannelIntentDecisions(),
               refreshChannelExecutionProposals(),
+              refreshChannelGovernanceNotifications(),
               refreshUsedMemoryAudit(form.cwd.trim()),
             ])}
             onRefreshChannelActivity={() => void refreshChannelActivity()}
@@ -1669,6 +1681,9 @@ export function AppShell(): JSX.Element {
             onRefreshWorkItems={() => void refreshWorkItems()}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
             onRefreshChannelFiles={() => void Promise.all([refreshChannelFiles(), refreshChannelRunArtifacts()])}
+            onRefreshChannelGovernanceNotifications={() => void refreshChannelGovernanceNotifications()}
+            onMarkChannelGovernanceNotificationSeen={(notificationId) => void markChannelGovernanceNotificationSeen(notificationId)}
+            onDismissChannelGovernanceNotification={(notificationId) => void dismissChannelGovernanceNotification(notificationId)}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
             onRefreshTasks={() => void refreshTasks()}
             onSelectTask={setSelectedTaskId}

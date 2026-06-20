@@ -19,6 +19,48 @@ import {
   readScrollState,
 } from "./support/test-helpers";
 
+test("channel governance notifications stay in the header review queue", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.governanceNotifications = [
+    {
+      id: "gov_memory_candidate_1",
+      workspaceId: "workspace_default",
+      surface: { kind: "channel", channelId: "channel_engineering" },
+      kind: "memory_candidate",
+      severity: "action_required",
+      title: "Memory candidate ready",
+      summary: "A candidate from this channel is waiting for review.",
+      sourceRefs: [{ type: "memory", id: "memory_candidate_1", label: "Memory candidate" }],
+      targetRoute: { page: "memory_promotion_inbox", memoryId: "memory_candidate_1", channelId: "channel_engineering" },
+      status: "unread",
+      deliveryStatus: "pending",
+      dedupeKey: "memory:memory_candidate_1:channel:channel_engineering",
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:01:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.locator(".channel-governance-button")).toContainText("Review");
+  await expect(page.locator(".channel-governance-button")).toContainText("1");
+  await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
+
+  await page.locator(".channel-governance-button").click();
+  const reviewQueue = page.getByRole("dialog", { name: "Governance notifications" });
+  await expect(reviewQueue).toBeVisible();
+  await expect(reviewQueue).toContainText("Memory candidate ready");
+  await expect(reviewQueue).toContainText("A candidate from this channel is waiting for review.");
+
+  await reviewQueue.getByRole("button", { name: "Seen" }).click();
+  await expect(reviewQueue.getByRole("button", { name: "Seen" })).toHaveCount(0);
+  expect(isRecord(state.governanceNotifications[0]) ? state.governanceNotifications[0].status : undefined).toBe("seen");
+
+  await reviewQueue.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.locator(".channel-governance-button")).toHaveCount(0);
+  expect(isRecord(state.governanceNotifications[0]) ? state.governanceNotifications[0].status : undefined).toBe("dismissed");
+});
+
 test("channel drawers match the accepted HTML layout", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];

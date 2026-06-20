@@ -10,6 +10,7 @@ export * from "./memory-markdown-export.js";
 export * from "./memory-markdown-import.js";
 export * from "./memory-review-policy.js";
 export * from "./memory-consolidation-types.js";
+export * from "./governance-notification-types.js";
 export * from "./provider-types.js";
 export * from "./provider-templates.js";
 export * from "./provider-model-capabilities.js";

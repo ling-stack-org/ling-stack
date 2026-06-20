@@ -10,6 +10,7 @@ export * from "./api/providers.js";
 export * from "./api/channels.js";
 export * from "./api/teammates.js";
 export * from "./api/memory.js";
+export * from "./api/governance-notifications.js";
 export * from "./api/attachments.js";
 export * from "./api/runtime.js";
 export * from "./api/secrets.js";

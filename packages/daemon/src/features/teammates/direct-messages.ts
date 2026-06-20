@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { AiTeammate, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
+import { isLingAgentTeammateId, type AiTeammate, type RunStore, type TeammateDirectMessage, type TeammateDirectThread } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -8,6 +8,10 @@ import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 import { assertDirectFileRefsWithinWorkspace, type DirectWorkspaceReady } from "./direct-workspace.js";
 import { parseTeammateDirectMessageRequest } from "./schemas.js";
+import {
+  flushLingAgentGovernanceNotificationDigests,
+  flushTeammateDirectGovernanceNotifications,
+} from "../governance-notifications/private-delivery.js";
 
 export type CreateTeammateDirectAiReply = (input: {
   readonly store: RunStore;
@@ -54,6 +58,17 @@ export async function handleTeammateDirectThread(
 
     if (request.method === "GET") {
       const thread = store.getOrCreateTeammateDirectThread(teammateId, new Date().toISOString());
+      flushTeammateDirectGovernanceNotifications(store, {
+        teammateId,
+        threadId: thread.id,
+        ignoreDeliverAfter: true,
+      });
+      if (isLingAgentTeammateId(teammateId)) {
+        flushLingAgentGovernanceNotificationDigests(store, {
+          teammateId,
+          ignoreDeliverAfter: true,
+        });
+      }
       writeJson(response, 200, { cwd, teammateId, thread });
       return;
     }
@@ -92,6 +107,17 @@ export async function handleTeammateDirectMessagesCollection(
 
     const thread = store.getOrCreateTeammateDirectThread(teammateId, new Date().toISOString());
     if (request.method === "GET") {
+      flushTeammateDirectGovernanceNotifications(store, {
+        teammateId,
+        threadId: thread.id,
+        ignoreDeliverAfter: true,
+      });
+      if (isLingAgentTeammateId(teammateId)) {
+        flushLingAgentGovernanceNotificationDigests(store, {
+          teammateId,
+          ignoreDeliverAfter: true,
+        });
+      }
       const page = store.listTeammateDirectMessagesPage({
         teammateId,
         threadId: thread.id,

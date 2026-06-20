@@ -44,6 +44,7 @@ export interface MockState {
   skillCandidates: unknown[];
   skillCandidateReviewRecords: unknown[];
   procedureObservationClusters: unknown[];
+  governanceNotifications: unknown[];
   teammateChannelMemberships: unknown[];
   teammateSkillBindings: unknown[];
   teammateMemoryScopes: unknown[];
@@ -890,6 +891,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     skillCandidates: createMockSkillCandidates(),
     skillCandidateReviewRecords: [],
     procedureObservationClusters: createMockProcedureObservationClusters(),
+    governanceNotifications: [],
     teammateChannelMemberships: [],
     teammateSkillBindings: [],
     teammateMemoryScopes: [],
@@ -4448,6 +4450,43 @@ export async function handleDaemonRoute(
     }
     state.userProfile = nextProfile;
     await route.fulfill({ json: { cwd, profile: state.userProfile } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/governance-notifications") {
+    const notifications = state.governanceNotifications
+      .filter(isGovernanceNotification)
+      .filter((notification) => governanceNotificationMatchesQuery(notification, url.searchParams))
+      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(b.createdAt).localeCompare(String(a.createdAt)));
+    const limit = Number(url.searchParams.get("limit") ?? "0");
+    await route.fulfill({
+      json: {
+        cwd,
+        notifications: limit > 0 ? notifications.slice(0, limit) : notifications,
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/governance-notifications/summary") {
+    await route.fulfill({ json: { cwd, summary: buildGovernanceNotificationSummary(state.governanceNotifications) } });
+    return;
+  }
+  const governanceNotificationMutationMatch = /^\/governance-notifications\/([^/]+)\/(seen|dismiss)$/.exec(path);
+  if (governanceNotificationMutationMatch && request.method() === "POST") {
+    const notificationId = decodeURIComponent(governanceNotificationMutationMatch[1]);
+    const action = governanceNotificationMutationMatch[2];
+    const index = state.governanceNotifications.findIndex((item) => isRecord(item) && item.id === notificationId);
+    if (index === -1 || !isRecord(state.governanceNotifications[index])) {
+      await route.fulfill({ status: 404, json: { error: "governance_notification_not_found" } });
+      return;
+    }
+    const existing = state.governanceNotifications[index] as Record<string, unknown>;
+    const updated = {
+      ...existing,
+      status: action === "dismiss" ? "dismissed" : existing.status === "unread" ? "seen" : existing.status,
+      updatedAt: "2026-05-25T00:30:00.000Z",
+    };
+    state.governanceNotifications[index] = updated;
+    await route.fulfill({ json: { cwd, notification: updated } });
     return;
   }
   if (request.method() === "GET" && path === "/config/effective") {
@@ -9903,6 +9942,106 @@ function isMemoryObject(value: unknown): value is MemoryObject {
     typeof value.verifyBeforeUse === "boolean" &&
     typeof value.createdAt === "string" &&
     typeof value.updatedAt === "string";
+}
+
+function isGovernanceNotification(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.workspaceId === "string" &&
+    isRecord(value.surface) &&
+    typeof value.kind === "string" &&
+    typeof value.severity === "string" &&
+    typeof value.status === "string" &&
+    typeof value.title === "string" &&
+    typeof value.summary === "string";
+}
+
+function governanceNotificationMatchesQuery(notification: Record<string, unknown>, params: URLSearchParams): boolean {
+  const surface = isRecord(notification.surface) ? notification.surface : {};
+  const requestedSurface = params.get("surface");
+  const requestedChannelId = params.get("channelId");
+  const requestedTeammateId = params.get("teammateId");
+  const requestedThreadId = params.get("threadId");
+  const requestedKind = params.get("kind");
+  const requestedStatus = params.get("status");
+  const includeResolved = params.get("includeResolved") === "true";
+  const includeDismissed = params.get("includeDismissed") === "true";
+
+  if (requestedSurface && surface.kind !== requestedSurface) {
+    return false;
+  }
+  if (requestedChannelId && surface.channelId !== requestedChannelId) {
+    return false;
+  }
+  if (requestedTeammateId && surface.teammateId !== requestedTeammateId) {
+    return false;
+  }
+  if (requestedThreadId && surface.threadId !== requestedThreadId) {
+    return false;
+  }
+  if (requestedKind && notification.kind !== requestedKind) {
+    return false;
+  }
+  if (requestedStatus && notification.status !== requestedStatus) {
+    return false;
+  }
+  if (!includeResolved && notification.status === "resolved") {
+    return false;
+  }
+  if (!includeDismissed && notification.status === "dismissed") {
+    return false;
+  }
+  return true;
+}
+
+function buildGovernanceNotificationSummary(values: readonly unknown[]): Record<string, unknown> {
+  const notifications = values.filter(isGovernanceNotification);
+  const buckets = new Map<string, Record<string, unknown>>();
+  for (const notification of notifications) {
+    const surface = isRecord(notification.surface) ? notification.surface : { kind: "workspace" };
+    const surfaceKey = JSON.stringify(surface);
+    const existing = buckets.get(surfaceKey) ?? {
+      surface,
+      total: 0,
+      unread: 0,
+      seen: 0,
+      dismissed: 0,
+      resolved: 0,
+      pendingDelivery: 0,
+      bySeverity: {},
+      byKind: {},
+      latestUpdatedAt: undefined,
+    };
+    existing.total = Number(existing.total) + 1;
+    existing.unread = Number(existing.unread) + (notification.status === "unread" ? 1 : 0);
+    existing.seen = Number(existing.seen) + (notification.status === "seen" ? 1 : 0);
+    existing.dismissed = Number(existing.dismissed) + (notification.status === "dismissed" ? 1 : 0);
+    existing.resolved = Number(existing.resolved) + (notification.status === "resolved" ? 1 : 0);
+    existing.pendingDelivery = Number(existing.pendingDelivery) + (notification.deliveryStatus === "pending" ? 1 : 0);
+    incrementCountMap(existing.bySeverity, String(notification.severity));
+    incrementCountMap(existing.byKind, String(notification.kind));
+    if (typeof notification.updatedAt === "string" && (!existing.latestUpdatedAt || notification.updatedAt > String(existing.latestUpdatedAt))) {
+      existing.latestUpdatedAt = notification.updatedAt;
+    }
+    buckets.set(surfaceKey, existing);
+  }
+
+  return {
+    workspaceId: "workspace_default",
+    generatedAt: "2026-05-25T00:30:00.000Z",
+    total: notifications.length,
+    actionable: notifications.filter((notification) => notification.status !== "dismissed" && notification.status !== "resolved").length,
+    unread: notifications.filter((notification) => notification.status === "unread").length,
+    pendingDelivery: notifications.filter((notification) => notification.deliveryStatus === "pending").length,
+    bySurface: [...buckets.values()],
+  };
+}
+
+function incrementCountMap(value: unknown, key: string): void {
+  if (!isRecord(value)) {
+    return;
+  }
+  value[key] = Number(value[key] ?? 0) + 1;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

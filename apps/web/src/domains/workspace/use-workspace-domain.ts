@@ -15,11 +15,14 @@ import {
   listChannelWorkflows,
   listExecutionActions,
   listChannels,
+  listGovernanceNotifications,
   listMemoryObjects,
   listRunArtifacts,
   listStateTransitions,
   listTasks,
   listUsedMemoryEvents,
+  markGovernanceNotificationSeen,
+  dismissGovernanceNotification,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
@@ -47,6 +50,7 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   ExecutionAction,
+  GovernanceNotification,
   MemoryObject,
   RunArtifact,
   RunSession,
@@ -116,6 +120,9 @@ export interface WorkspaceState {
   readonly channelStateTransitions: readonly StateTransitionEvent[];
   readonly channelActivityTransitionsLoading: boolean;
   readonly channelActivityTransitionError: string;
+  readonly channelGovernanceNotifications: readonly GovernanceNotification[];
+  readonly channelGovernanceNotificationsLoading: boolean;
+  readonly channelGovernanceNotificationActionId: string;
 }
 
 export interface WorkspaceActions {
@@ -154,6 +161,9 @@ export interface WorkspaceActions {
   readonly refreshChannelRunArtifacts: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelExecutionActions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelActivityTransitions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
+  readonly refreshChannelGovernanceNotifications: (channelId?: string) => Promise<void>;
+  readonly markChannelGovernanceNotificationSeen: (notificationId: string) => Promise<void>;
+  readonly dismissChannelGovernanceNotification: (notificationId: string) => Promise<void>;
   readonly refreshChannelMessageRouteDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelIntentDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelProtocol: (channelId?: string) => Promise<void>;
@@ -219,6 +229,9 @@ export function useWorkspaceDomain(input: {
   const [channelStateTransitions, setChannelStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
   const [channelActivityTransitionsLoading, setChannelActivityTransitionsLoading] = useState(false);
   const [channelActivityTransitionError, setChannelActivityTransitionError] = useState("");
+  const [channelGovernanceNotifications, setChannelGovernanceNotifications] = useState<readonly GovernanceNotification[]>([]);
+  const [channelGovernanceNotificationsLoading, setChannelGovernanceNotificationsLoading] = useState(false);
+  const [channelGovernanceNotificationActionId, setChannelGovernanceNotificationActionId] = useState("");
   const [error, setError] = useState<DomainError | undefined>();
   const loadGuard = useLatestKeyedRequestGuard();
 
@@ -571,6 +584,80 @@ export function useWorkspaceDomain(input: {
     setChannelActivityTransitionsLoading(false);
   }
 
+  async function refreshChannelGovernanceNotifications(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId) {
+      setChannelGovernanceNotifications([]);
+      setChannelGovernanceNotificationsLoading(false);
+      return;
+    }
+
+    const token = loadGuard.next(`governanceNotifications:${cwd}:${channelId}`);
+    setChannelGovernanceNotificationsLoading(true);
+    try {
+      const response = await listGovernanceNotifications(cwd, {
+        surface: "channel",
+        channelId,
+        limit: 50,
+      });
+      if (!loadGuard.isCurrent(`governanceNotifications:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelGovernanceNotifications(response.notifications);
+    } catch {
+      if (!loadGuard.isCurrent(`governanceNotifications:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelGovernanceNotifications([]);
+    } finally {
+      if (loadGuard.isCurrent(`governanceNotifications:${cwd}:${channelId}`, token)) {
+        setChannelGovernanceNotificationsLoading(false);
+      }
+    }
+  }
+
+  async function markChannelGovernanceNotificationSeen(notificationId: string): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !notificationId || channelGovernanceNotificationActionId) {
+      return;
+    }
+
+    setChannelGovernanceNotificationActionId(notificationId);
+    try {
+      input.setErrorMessage("");
+      const response = await markGovernanceNotificationSeen(cwd, notificationId);
+      setChannelGovernanceNotifications((current) =>
+        current.map((notification) => notification.id === notificationId ? response.notification : notification),
+      );
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "mutation", message });
+      input.setErrorMessage(message);
+    } finally {
+      setChannelGovernanceNotificationActionId("");
+    }
+  }
+
+  async function dismissChannelGovernanceNotification(notificationId: string): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !notificationId || channelGovernanceNotificationActionId) {
+      return;
+    }
+
+    setChannelGovernanceNotificationActionId(notificationId);
+    try {
+      input.setErrorMessage("");
+      await dismissGovernanceNotification(cwd, notificationId);
+      setChannelGovernanceNotifications((current) => current.filter((notification) => notification.id !== notificationId));
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "mutation", message });
+      input.setErrorMessage(message);
+    } finally {
+      setChannelGovernanceNotificationActionId("");
+    }
+  }
+
   async function refreshChannelMessageRouteDecisions(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
     if (!cwd || !channelId) {
@@ -726,6 +813,9 @@ export function useWorkspaceDomain(input: {
     setChannelStateTransitions([]);
     setChannelActivityTransitionError("");
     setChannelActivityTransitionsLoading(false);
+    setChannelGovernanceNotifications([]);
+    setChannelGovernanceNotificationsLoading(false);
+    setChannelGovernanceNotificationActionId("");
     resetChannelProtocol();
   }
 
@@ -770,6 +860,9 @@ export function useWorkspaceDomain(input: {
     setChannelStateTransitions([]);
     setChannelActivityTransitionsLoading(false);
     setChannelActivityTransitionError("");
+    setChannelGovernanceNotifications([]);
+    setChannelGovernanceNotificationsLoading(false);
+    setChannelGovernanceNotificationActionId("");
     resetChannelProtocol();
     setError(undefined);
   }
@@ -817,6 +910,9 @@ export function useWorkspaceDomain(input: {
       channelStateTransitions,
       channelActivityTransitionsLoading,
       channelActivityTransitionError,
+      channelGovernanceNotifications,
+      channelGovernanceNotificationsLoading,
+      channelGovernanceNotificationActionId,
     },
     actions: {
       setChannels,
@@ -854,6 +950,9 @@ export function useWorkspaceDomain(input: {
       refreshChannelRunArtifacts,
       refreshChannelExecutionActions,
       refreshChannelActivityTransitions,
+      refreshChannelGovernanceNotifications,
+      markChannelGovernanceNotificationSeen,
+      dismissChannelGovernanceNotification,
       refreshChannelMessageRouteDecisions,
       refreshChannelIntentDecisions,
       refreshChannelProtocol,

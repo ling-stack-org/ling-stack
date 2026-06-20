@@ -354,6 +354,14 @@ import {
   type UsedMemoryEvent,
   type UpsertMemorySelfImprovingMetadataInput,
 } from "../memory-types.js";
+import {
+  type CreateGovernanceNotificationInput,
+  type GovernanceNotification,
+  type GovernanceNotificationSummary,
+  type ListGovernanceNotificationsOptions,
+  type UpdateGovernanceNotificationDeliveryInput,
+  type UpsertGovernanceNotificationResult,
+} from "../governance-notification-types.js";
 import { redactSecrets } from "../redaction.js";
 import { applySqliteRunStoreMigrations, configureSqliteRunStoreDatabase } from "./sqlite/migrations.js";
 import {
@@ -406,6 +414,7 @@ import { SqliteMemoryConsolidationStore } from "./sqlite/memory-consolidation-st
 import { SqliteMemoryObjectStore } from "./sqlite/memory-object-store.js";
 import { SqliteMemoryReviewStore } from "./sqlite/memory-review-store.js";
 import { SqliteMemoryRetrievalStore } from "./sqlite/memory-retrieval-store.js";
+import { SqliteGovernanceNotificationStore } from "./sqlite/governance-notification-store.js";
 import { SqliteChannelMessageStore } from "./sqlite/channel-message-store.js";
 import { SqliteChannelReferenceValidator } from "./sqlite/channel-reference-validator.js";
 import { SqliteChannelRouteDecisionStore } from "./sqlite/channel-route-decision-store.js";
@@ -470,6 +479,7 @@ export class SqliteRunStore implements RunStore {
   private readonly memoryObjects: SqliteMemoryObjectStore;
   private readonly memoryReviews: SqliteMemoryReviewStore;
   private readonly memoryRetrieval: SqliteMemoryRetrievalStore;
+  private readonly governanceNotifications: SqliteGovernanceNotificationStore;
   private readonly channelReferences: SqliteChannelReferenceValidator;
   private readonly channelMessages: SqliteChannelMessageStore;
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
@@ -680,6 +690,7 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       { listMemoryObjects: (options) => this.listMemoryObjects(options) },
     );
+    this.governanceNotifications = new SqliteGovernanceNotificationStore({ database: this.database });
     this.channelReferences = new SqliteChannelReferenceValidator({
       getChannel: (channelId) => this.getChannel(channelId),
       getChannelMessage: (messageId) => this.getChannelMessage(messageId),
@@ -1559,6 +1570,38 @@ export class SqliteRunStore implements RunStore {
 
   listUsedMemoryEvents(options: ListUsedMemoryEventsOptions = {}): UsedMemoryEvent[] {
     return this.memoryRetrieval.listUsedMemoryEvents(options);
+  }
+
+  upsertGovernanceNotification(input: CreateGovernanceNotificationInput, now: string): UpsertGovernanceNotificationResult {
+    return this.governanceNotifications.upsertGovernanceNotification(input, now);
+  }
+
+  getGovernanceNotification(id: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.getGovernanceNotification(id);
+  }
+
+  listGovernanceNotifications(options: ListGovernanceNotificationsOptions = {}): GovernanceNotification[] {
+    return this.governanceNotifications.listGovernanceNotifications(options);
+  }
+
+  updateGovernanceNotificationDelivery(id: string, input: UpdateGovernanceNotificationDeliveryInput, now: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.updateGovernanceNotificationDelivery(id, input, now);
+  }
+
+  markGovernanceNotificationSeen(id: string, now: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.markGovernanceNotificationSeen(id, now);
+  }
+
+  dismissGovernanceNotification(id: string, now: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.dismissGovernanceNotification(id, now);
+  }
+
+  resolveGovernanceNotificationByDedupeKey(workspaceId: string, dedupeKey: string, now: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.resolveGovernanceNotificationByDedupeKey(workspaceId, dedupeKey, now);
+  }
+
+  getGovernanceNotificationSummary(workspaceId = DEFAULT_WORKSPACE_ID, generatedAt?: string): GovernanceNotificationSummary {
+    return this.governanceNotifications.getGovernanceNotificationSummary(workspaceId, generatedAt);
   }
 
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread {

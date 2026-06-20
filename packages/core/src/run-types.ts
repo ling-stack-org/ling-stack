@@ -282,6 +282,14 @@ import type {
   UpdateMemoryConsolidationJobInput,
 } from "./memory-consolidation-types.js";
 import type {
+  CreateGovernanceNotificationInput,
+  GovernanceNotification,
+  GovernanceNotificationSummary,
+  ListGovernanceNotificationsOptions,
+  UpdateGovernanceNotificationDeliveryInput,
+  UpsertGovernanceNotificationResult,
+} from "./governance-notification-types.js";
+import type {
   CreateManagedPluginEventInput,
   CreateManagedPluginRuntimeSnapshotInput,
   ListManagedPluginEventsOptions,
@@ -1089,6 +1097,14 @@ export interface RunStore {
   recallMemory(input: MemoryRecallRequest): MemoryRecallResult;
   recordUsedMemoryEvent(input: CreateUsedMemoryEventInput, now: string): UsedMemoryEvent;
   listUsedMemoryEvents(options?: ListUsedMemoryEventsOptions): UsedMemoryEvent[];
+  upsertGovernanceNotification(input: CreateGovernanceNotificationInput, now: string): UpsertGovernanceNotificationResult;
+  getGovernanceNotification(id: string): GovernanceNotification | undefined;
+  listGovernanceNotifications(options?: ListGovernanceNotificationsOptions): GovernanceNotification[];
+  updateGovernanceNotificationDelivery(id: string, input: UpdateGovernanceNotificationDeliveryInput, now: string): GovernanceNotification | undefined;
+  markGovernanceNotificationSeen(id: string, now: string): GovernanceNotification | undefined;
+  dismissGovernanceNotification(id: string, now: string): GovernanceNotification | undefined;
+  resolveGovernanceNotificationByDedupeKey(workspaceId: string, dedupeKey: string, now: string): GovernanceNotification | undefined;
+  getGovernanceNotificationSummary(workspaceId?: string, generatedAt?: string): GovernanceNotificationSummary;
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread;
   updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined;
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[];
@@ -1787,6 +1803,17 @@ export type SkillUsageStoreFacet = RunStoreFacet<
   | "appendSkillUsageEvent"
   | "listSkillUsageEvents"
   | "listSkillUsageStats"
+>;
+
+export type GovernanceNotificationStoreFacet = RunStoreFacet<
+  | "upsertGovernanceNotification"
+  | "getGovernanceNotification"
+  | "listGovernanceNotifications"
+  | "updateGovernanceNotificationDelivery"
+  | "markGovernanceNotificationSeen"
+  | "dismissGovernanceNotification"
+  | "resolveGovernanceNotificationByDedupeKey"
+  | "getGovernanceNotificationSummary"
 >;
 
 export function createRunId(): string {

@@ -962,6 +962,53 @@ For `edit_and_approve`, pass changed memory fields under `editedMemory`:
 }
 ```
 
+### Governance Notifications
+
+```http
+GET /governance-notifications?cwd=/path/to/project
+GET /governance-notifications/summary?cwd=/path/to/project
+POST /governance-notifications/:id/seen?cwd=/path/to/project
+POST /governance-notifications/:id/dismiss?cwd=/path/to/project
+```
+
+Governance notifications are durable projections over authoritative review queues.
+They do not replace memory, skill, protocol, playbook, approval, or workflow source
+records. Dismissal hides the reminder only; source review state stays in its own API.
+
+Optional list filters:
+
+```text
+surface=channel|teammate_direct|ling_agent|workspace
+channelId=channel_...
+teammateId=teammate_...
+threadId=thread_...
+kind=memory_candidate|memory_health_finding|skill_candidate|procedure_cluster|channel_protocol_candidate|channel_playbook_candidate|workflow_fanin
+status=unread|seen|dismissed|resolved
+includeResolved=true|false
+includeDismissed=true|false
+limit=1..500
+```
+
+Surface semantics:
+
+- `channel` is a channel-header notification projection. It never writes rows into
+  `channel_messages`.
+- `teammate_direct` is a single teammate private-thread projection. Delivery is quiet
+  window gated and writes a short direct `system` message only after the thread is idle.
+- `ling_agent` is for workspace or cross-owner review pressure with no safer local
+  owner. Delivery writes one bounded Ling Agent private `system` digest per flush, not
+  one chat row per source record.
+- `workspace` is reserved for a future workspace notification center; first clients
+  should read the daemon list/summary APIs rather than SQLite directly.
+
+The first implementation slice creates memory candidate notifications when candidate
+memory is created through `POST /memory`, `POST /memory/import`, or
+`POST /memory/consolidation-jobs`, and marks those notifications resolved after terminal
+memory review actions. Notification summaries deliberately omit memory bodies and raw
+transcript text. Channel-scoped memory candidates use the channel surface, teammate
+memory candidates use the teammate direct surface, and workspace-scoped memory candidates
+use the Ling Agent digest surface.
+
 ### Private Thread And Messages
 
 ```http

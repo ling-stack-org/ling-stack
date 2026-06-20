@@ -16,8 +16,7 @@ import {
   parseAutomationRoute,
   parseAutomationDraftRoute,
   parseAutomationRunRoute,
-} from "../features/automations/routes.js";
-import {
+} from "../features/automations/routes.js";import {
   handleChannelAttachmentItem,
   handleChannelAttachmentsCollection,
 } from "../features/channels/attachments.js";
@@ -116,6 +115,10 @@ import {
   handleMemoryReviewAction,
   handleMemoryReviewPolicy,
 } from "../features/memory/routes.js";
+import {
+  handleGovernanceNotificationRoute,
+  parseGovernanceNotificationRoute,
+} from "../features/governance-notifications/routes.js";
 import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
@@ -356,6 +359,7 @@ export async function routeRequest(
     await handleChannelsCollection(request, response, config, storeRegistry);
     return;
   }
+
 
   if (url.pathname === "/workspace-settings") {
     await handleWorkspaceSettings(request, response, config, storeRegistry);
@@ -832,6 +836,16 @@ export async function routeRequest(
     skillRoute
   ) {
     await handleSkillRoute(request, response, config, storeRegistry, controlPlaneEvents, skillRoute);
+    return;
+  }
+
+  const governanceNotificationRoute = parseGovernanceNotificationRoute(url.pathname);
+  if (
+    url.pathname === "/governance-notifications" ||
+    url.pathname === "/governance-notifications/summary" ||
+    governanceNotificationRoute
+  ) {
+    await handleGovernanceNotificationRoute(request, response, config, storeRegistry, governanceNotificationRoute);
     return;
   }
 

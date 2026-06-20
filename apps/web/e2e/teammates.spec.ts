@@ -117,6 +117,58 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByLabel("Workspace teammates")).toContainText("No workspace teammates");
 });
 
+test("Ling Agent private chat renders workspace governance digest without source body", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [
+    createMockTeammate({
+      id: "ling_agent",
+      templateId: "ling_agent",
+      kind: "system_teammate",
+      systemRole: "ling_agent",
+      protectedProfile: true,
+      displayName: "Ling Agent",
+      roleKey: "custom",
+    }),
+  ];
+  state.teammateDirectMessages = [
+    {
+      id: "tdmsg_ling_digest",
+      workspaceId: "workspace_default",
+      threadId: "tdthread_ling_agent",
+      teammateId: "ling_agent",
+      authorType: "system",
+      authorId: "system",
+      body: [
+        "Workspace review digest: 2 items need attention.",
+        "- Warning: Memory candidate needs review: Workspace review memory (Memory Review)",
+        "Open the relevant review surface before approving, rejecting, or publishing anything.",
+      ].join("\n"),
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-06-21T00:10:00.000Z",
+      updatedAt: "2026-06-21T00:10:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Agent" }).click();
+  await expect(page.getByRole("heading", { name: "Ling Agent", level: 1 })).toBeVisible();
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  await expect(privateFeed).toBeVisible();
+  const digestRow = page.locator(".teammate-message-row.system").filter({ hasText: "Workspace review digest" });
+  await expect(digestRow).toBeVisible();
+  await expect(digestRow).toHaveClass(/message-bubble-system/);
+  await expect(digestRow).toContainText("Memory Review");
+  await expect(digestRow).not.toContainText("Workspace governance body must not be copied");
+});
+
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

@@ -185,6 +185,7 @@ import type {
   ChannelWorkspaceBinding,
   ChannelWorkspaceMode,
   ExecutionAction,
+  GovernanceNotification,
   WorkflowContextInspectSummary,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
@@ -505,6 +506,9 @@ export function WorkspaceClientView({
   channelStateTransitions,
   channelActivityTransitionsLoading,
   channelActivityTransitionError,
+  channelGovernanceNotifications,
+  channelGovernanceNotificationsLoading,
+  channelGovernanceNotificationActionId,
   externalWorkCiTriage,
   externalWorkCiTriageLoading,
   durableWorkItems,
@@ -592,6 +596,9 @@ export function WorkspaceClientView({
   onRefreshWorkItems,
   onRefreshChannelProtocol,
   onRefreshChannelFiles,
+  onRefreshChannelGovernanceNotifications,
+  onMarkChannelGovernanceNotificationSeen,
+  onDismissChannelGovernanceNotification,
   attachmentContentUrl,
   onRefreshTasks,
   onSelectTask,
@@ -651,6 +658,9 @@ export function WorkspaceClientView({
   readonly channelStateTransitions: readonly StateTransitionEvent[];
   readonly channelActivityTransitionsLoading: boolean;
   readonly channelActivityTransitionError: string;
+  readonly channelGovernanceNotifications: readonly GovernanceNotification[];
+  readonly channelGovernanceNotificationsLoading: boolean;
+  readonly channelGovernanceNotificationActionId: string;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
   readonly externalWorkCiTriageLoading: boolean;
   readonly durableWorkItems: readonly WorkItemView[];
@@ -749,6 +759,9 @@ export function WorkspaceClientView({
   readonly onRefreshWorkItems: () => void;
   readonly onRefreshChannelProtocol: () => void;
   readonly onRefreshChannelFiles: () => void;
+  readonly onRefreshChannelGovernanceNotifications: () => void;
+  readonly onMarkChannelGovernanceNotificationSeen: (notificationId: string) => void;
+  readonly onDismissChannelGovernanceNotification: (notificationId: string) => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onRefreshTasks: () => void;
   readonly onSelectTask: (taskId: string) => void;
@@ -787,6 +800,7 @@ export function WorkspaceClientView({
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
+  const [governanceNotificationsOpen, setGovernanceNotificationsOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
   const [activityToolsOpen, setActivityToolsOpen] = useState(false);
@@ -860,6 +874,7 @@ export function WorkspaceClientView({
   const messageFeedOlderLoadArmedRef = useRef(true);
   const messageFeedOlderLoadSnapshotRef = useRef<{ readonly anchorId: string; readonly anchorOffset: number } | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
+  const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
   const teammateManagerPanelRef = useRef<HTMLElement | null>(null);
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
@@ -1422,6 +1437,34 @@ export function WorkspaceClientView({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [channelMoreOpen]);
+
+  useEffect(() => {
+    setGovernanceNotificationsOpen(false);
+  }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (!governanceNotificationsOpen) {
+      return undefined;
+    }
+    function handlePointerDown(event: MouseEvent): void {
+      const target = event.target;
+      if (target instanceof Node && governanceNotificationsRef.current?.contains(target)) {
+        return;
+      }
+      setGovernanceNotificationsOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setGovernanceNotificationsOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [governanceNotificationsOpen]);
 
   useEffect(() => {
     if (!teammateManagerOpen) {
@@ -2848,7 +2891,6 @@ export function WorkspaceClientView({
     () => activeLocalTeammates.filter((teammate) => teammate.id !== LING_AGENT_AUTHOR_ID && !teammate.hidden),
     [activeLocalTeammates],
   );
-
   function updateMentionPicker(value: string, caret: number): void {
     const activeMention = findActiveMention(value, caret);
     setMentionPicker(activeMention);
@@ -4485,6 +4527,19 @@ export function WorkspaceClientView({
     } : undefined,
   ];
   const attentionProgressRows: readonly AttentionProgressRow[] = attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined);
+  const actionableGovernanceNotifications = useMemo(
+    () => channelGovernanceNotifications
+      .filter((notification) => notification.status !== "dismissed" && notification.status !== "resolved")
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt)),
+    [channelGovernanceNotifications],
+  );
+  const unreadGovernanceNotificationCount = actionableGovernanceNotifications.filter((notification) => notification.status === "unread").length;
+  const governanceNotificationCount = actionableGovernanceNotifications.length;
+  useEffect(() => {
+    if (governanceNotificationCount === 0) {
+      setGovernanceNotificationsOpen(false);
+    }
+  }, [governanceNotificationCount]);
   const activeProgressSourceSummary = useMemo(
     () => buildActiveProgressSourceSummary({
       contextSummaries: channelContextSummaries,
@@ -4814,8 +4869,49 @@ export function WorkspaceClientView({
 	              ) : null}
 	            </div>
 	          </div>
-	        </div>
+        </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
+          {governanceNotificationCount > 0 || channelGovernanceNotificationsLoading ? (
+            <div className="channel-governance-wrap" ref={governanceNotificationsRef}>
+              <button
+                className={governanceNotificationsOpen ? "channel-governance-button active" : "channel-governance-button"}
+                type="button"
+                aria-expanded={governanceNotificationsOpen}
+                title={t("Review queue")}
+                onClick={() => {
+                  if (governanceNotificationCount === 0 && !channelGovernanceNotificationsLoading) {
+                    return;
+                  }
+                  const nextOpen = !governanceNotificationsOpen;
+                  setGovernanceNotificationsOpen(nextOpen);
+                  if (nextOpen) {
+                    setProgressPopoverOpen(false);
+                    setChannelMoreOpen(false);
+                    setActivityToolsOpen(false);
+                    setTeammateManagerOpen(false);
+                    setSidePanelOpen(false);
+                    onChannelCreateOpenChange(false);
+                  }
+                }}
+                disabled={governanceNotificationCount === 0 && channelGovernanceNotificationsLoading}
+              >
+                {channelGovernanceNotificationsLoading ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />}
+                <span>{t("Review")}</span>
+                <strong>{governanceNotificationCount}</strong>
+                {unreadGovernanceNotificationCount > 0 ? <small>{unreadGovernanceNotificationCount}</small> : null}
+              </button>
+              {governanceNotificationsOpen ? (
+                <ChannelGovernanceNotificationsPopover
+                  notifications={actionableGovernanceNotifications}
+                  loading={channelGovernanceNotificationsLoading}
+                  actionId={channelGovernanceNotificationActionId}
+                  onRefresh={onRefreshChannelGovernanceNotifications}
+                  onMarkSeen={onMarkChannelGovernanceNotificationSeen}
+                  onDismiss={onDismissChannelGovernanceNotification}
+                />
+              ) : null}
+            </div>
+          ) : null}
           <button
             ref={teammateManagerButtonRef}
             className={teammateManagerOpen ? "icon-button active task-toolbar-teammates" : "icon-button task-toolbar-teammates"}
@@ -5369,6 +5465,136 @@ export function WorkspaceClientView({
       </div>
     </div>
   );
+}
+
+function ChannelGovernanceNotificationsPopover({
+  notifications,
+  loading,
+  actionId,
+  onRefresh,
+  onMarkSeen,
+  onDismiss,
+}: {
+  readonly notifications: readonly GovernanceNotification[];
+  readonly loading: boolean;
+  readonly actionId: string;
+  readonly onRefresh: () => void;
+  readonly onMarkSeen: (notificationId: string) => void;
+  readonly onDismiss: (notificationId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+
+  return (
+    <section className="channel-governance-popover" role="dialog" aria-label={t("Governance notifications")}>
+      <div className="channel-governance-head">
+        <span>
+          <ShieldCheck size={15} />
+          <strong>{t("Review queue")}</strong>
+        </span>
+        <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} aria-label={t("Refresh")} title={t("Refresh")}>
+          {loading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+        </button>
+      </div>
+      {notifications.length === 0 ? (
+        <div className="client-empty-state compact-empty channel-governance-empty">
+          {loading ? <Loader2 className="spin" /> : <ShieldCheck />}
+          <span>{loading ? t("Loading review queue...") : t("No review items")}</span>
+        </div>
+      ) : (
+        <div className="channel-governance-list">
+          {notifications.map((notification) => {
+            const busy = actionId === notification.id;
+            return (
+              <article
+                key={notification.id}
+                className={`channel-governance-item ${notification.severity} ${notification.status}`}
+              >
+                <div className="channel-governance-item-head">
+                  <span className={`channel-governance-icon ${notification.severity}`}>
+                    {governanceNotificationIcon(notification)}
+                  </span>
+                  <div>
+                    <strong>{notification.title}</strong>
+                    <small>
+                      {t(governanceNotificationKindLabel(notification.kind))}
+                      {" · "}
+                      {t(governanceNotificationRouteLabel(notification.targetRoute.page))}
+                      {" · "}
+                      {formatDateTime(notification.updatedAt)}
+                    </small>
+                  </div>
+                </div>
+                <p>{notification.summary}</p>
+                <div className="channel-governance-actions">
+                  {notification.status === "unread" ? (
+                    <button className="secondary-button compact-button" type="button" onClick={() => onMarkSeen(notification.id)} disabled={busy}>
+                      {busy ? <Loader2 className="spin" size={13} /> : <Check size={13} />}
+                      {t("Seen")}
+                    </button>
+                  ) : null}
+                  <button className="secondary-button compact-button" type="button" onClick={() => onDismiss(notification.id)} disabled={busy}>
+                    {busy ? <Loader2 className="spin" size={13} /> : <X size={13} />}
+                    {t("Dismiss")}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function governanceNotificationIcon(notification: GovernanceNotification): JSX.Element {
+  if (notification.severity === "critical" || notification.severity === "action_required") {
+    return <CircleAlert size={15} />;
+  }
+  if (notification.severity === "warning") {
+    return <Info size={15} />;
+  }
+  return <ShieldCheck size={15} />;
+}
+
+function governanceNotificationKindLabel(kind: GovernanceNotification["kind"]): string {
+  if (kind === "memory_candidate") {
+    return "Memory review";
+  }
+  if (kind === "memory_health_finding") {
+    return "Memory health";
+  }
+  if (kind === "skill_candidate") {
+    return "Skill review";
+  }
+  if (kind === "procedure_cluster") {
+    return "Procedure review";
+  }
+  if (kind === "channel_protocol_candidate") {
+    return "Protocol review";
+  }
+  if (kind === "channel_playbook_candidate") {
+    return "Playbook review";
+  }
+  return "Workflow review";
+}
+
+function governanceNotificationRouteLabel(page: GovernanceNotification["targetRoute"]["page"]): string {
+  if (page === "memory_promotion_inbox") {
+    return "Memory inbox";
+  }
+  if (page === "memory_health") {
+    return "Memory health";
+  }
+  if (page === "skill_candidate") {
+    return "Skill candidate";
+  }
+  if (page === "procedure_cluster") {
+    return "Procedure cluster";
+  }
+  if (page === "channel_protocol_candidate") {
+    return "Channel protocol";
+  }
+  return "Channel playbook";
 }
 
 type ChannelInspectorMode = "protocol" | "brief" | "routing" | "decisions" | "handoffs" | "runtime";
