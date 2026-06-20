@@ -266,6 +266,10 @@ export const channelEndpoints = {
       return this._post(`/channels/${encodeURIComponent(channelId)}/workspace/refresh`, { cwd });
     },
 
+  async cleanupChannelWorkspace(this: LingDaemonEndpointContext, cwd: string, channelId: string): Promise<ChannelWorkspaceMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/workspace/cleanup`, { cwd });
+    },
+
   async listChannelMessages(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
