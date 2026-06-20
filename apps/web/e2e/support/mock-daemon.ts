@@ -4333,6 +4333,7 @@ function mockAutoStartExecutionProposalWorkflow(state: MockState, proposal: Reco
       metadata: {
         sourceProposalId: proposal.id,
         sourceMessageId: proposal.sourceMessageId,
+        ...(Array.isArray(step.sources) ? { proposalStepSources: step.sources.filter(isRecord) } : {}),
         dependsOnStepIds: index === 0 ? undefined : [`workflow_step_${state.channelWorkflowSteps.length + index}`],
         autoStart: true,
       },
@@ -7493,6 +7494,7 @@ export async function handleDaemonRoute(
         metadata: {
           sourceProposalId: proposal.id,
           sourceMessageId: proposal.sourceMessageId,
+          ...(Array.isArray(step.sources) ? { proposalStepSources: step.sources.filter(isRecord) } : {}),
           dependsOnStepIds: index === 0 ? undefined : [`workflow_step_${state.channelWorkflowSteps.length + index}`],
           autoStart: true,
         },

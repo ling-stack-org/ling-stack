@@ -1,7 +1,7 @@
 import type { ApprovalRequest, LingApprovalCheckpoint, SkillApprovalProfile } from "./approvals.js";
 import type { ExecutionAction } from "./execution-actions.js";
 import type { RunArtifact } from "./artifacts.js";
-import type { ChannelExecutionProposal, ChannelHandoff } from "./channels.js";
+import type { ChannelExecutionProposal, ChannelExecutionProposalStepSource, ChannelHandoff } from "./channels.js";
 import type { MemoryObject } from "./memory.js";
 import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./runtime.js";
 import type { ResponseLanguage } from "./settings.js";
@@ -314,6 +314,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly handoffIntentIds?: readonly string[];
   readonly sourceProposalId?: string;
   readonly sourceMessageId?: string;
+  readonly proposalStepSources?: readonly ChannelExecutionProposalStepSource[];
   readonly fanInSummaryArtifactId?: string;
   readonly memoryCandidateIds?: readonly string[];
 }
@@ -363,6 +364,7 @@ export interface WorkflowGraphNode {
   readonly gates?: readonly WorkflowStepGate[];
   readonly requiredTools?: readonly RunTool[];
   readonly autoStart?: boolean;
+  readonly proposalStepSources?: readonly ChannelExecutionProposalStepSource[];
 }
 
 export interface WorkflowGraph {

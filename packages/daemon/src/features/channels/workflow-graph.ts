@@ -79,6 +79,7 @@ export function compileWorkflowGraph(
       templateStepId: node.id,
       graphId: graph.id,
       graphNodeId: node.id,
+      proposalStepSources: node.proposalStepSources,
       teammateTemplateId: node.teammateTemplateId,
       skillId: node.skillId,
       requestedRunnerId: node.requestedRunnerId ?? input.runnerId,

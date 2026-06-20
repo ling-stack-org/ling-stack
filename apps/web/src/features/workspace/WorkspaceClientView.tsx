@@ -7065,6 +7065,7 @@ function WorkflowStepCard({
     metadata?.outputArtifactId,
     ...additionalOutputArtifactIds,
   ].filter((artifactId): artifactId is string => Boolean(artifactId)));
+  const workflowSourceLabel = metadata ? workflowStepSourceLabel(metadata, t) : "";
   const gates = metadata?.gates ?? [];
   return (
     <article className="workflow-step-card compact">
@@ -7092,6 +7093,7 @@ function WorkflowStepCard({
           {metadata.skillId ? <span>{t("Skill")}: {metadata.skillId}</span> : null}
           {metadata.requestedRunnerId ? <span>{t("Runner")}: {metadata.requestedRunnerId}</span> : null}
           {metadata.providerPresetId ? <span>{t("Provider")}: {metadata.providerPresetId}</span> : null}
+          {workflowSourceLabel ? <span>{t("Source")}: {workflowSourceLabel}</span> : null}
           {metadata.dependsOnStepIds?.length ? <span>{t("Depends")}: {metadata.dependsOnStepIds.length}</span> : null}
           {metadata.preStepApprovalId ? <span>{t("Pre-step approval")}: {metadata.preStepApprovalId}</span> : null}
         </div>
@@ -10603,6 +10605,21 @@ function proposalStepSourceLabel(
     return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
   }
   const directSource = step.sources?.find((source) => source.kind === "direct");
+  if (directSource?.isDefault) {
+    return t("Default channel teammate");
+  }
+  return directSource ? t("Direct channel teammate") : "";
+}
+
+function workflowStepSourceLabel(
+  metadata: NonNullable<ChannelWorkflowStep["metadata"]>,
+  t: Translate,
+): string {
+  const councilSource = metadata.proposalStepSources?.find((source) => source.kind === "council");
+  if (councilSource) {
+    return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
+  }
+  const directSource = metadata.proposalStepSources?.find((source) => source.kind === "direct");
   if (directSource?.isDefault) {
     return t("Default channel teammate");
   }

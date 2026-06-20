@@ -2108,6 +2108,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly handoffIntentIds?: readonly string[];
   readonly sourceProposalId?: string;
   readonly sourceMessageId?: string;
+  readonly proposalStepSources?: readonly ChannelExecutionProposalStepSource[];
   readonly fanInSummaryArtifactId?: string;
   readonly memoryCandidateIds?: readonly string[];
 }

@@ -232,6 +232,7 @@ function buildProposalWorkflowGraph(
     ...(participant.providerPresetId ? { providerPresetId: participant.providerPresetId } : {}),
     ...(participant.teammate.runnerId ? { requestedRunnerId: participant.teammate.runnerId } : {}),
     ...(boundedRequiredTools.length > 0 ? { requiredTools: boundedRequiredTools } : {}),
+    ...(participant.step.sources?.length ? { proposalStepSources: participant.step.sources } : {}),
     autoStart: true,
   }));
   return {

@@ -2395,6 +2395,13 @@ test("channel intent selector uses attached AI council specialists without copyi
       [...confirmed.workflowSteps.map((step) => step.toParticipantId)].sort(),
       ["teammate_builtin_designer", "teammate_builtin_qa"].sort(),
     );
+    const designerWorkflowStep = confirmed.workflowSteps.find((step) => step.toParticipantId === "teammate_builtin_designer");
+    assert.ok(designerWorkflowStep);
+    assert.ok(designerWorkflowStep.metadata?.proposalStepSources?.some((source) =>
+      source.kind === "council" &&
+      source.councilId === developmentCouncilId &&
+      source.councilDisplayName === "Development Council"
+    ));
 
     const designerChannels = await getJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_designer")}/channels?cwd=${encodeURIComponent(cwd)}`);
     const qaChannels = await getJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_qa")}/channels?cwd=${encodeURIComponent(cwd)}`);

@@ -519,7 +519,17 @@ test("progress popover shows active context source groups and opens source detai
       toParticipantId: "engineer",
       toParticipantLabel: "Engineer",
       status: "running",
-      metadata: {},
+      metadata: {
+        proposalStepSources: [
+          {
+            kind: "council",
+            councilId: "council_builtin_development",
+            councilDisplayName: "Development Council",
+            slotKey: "engineer",
+            label: "Implementation",
+          },
+        ],
+      },
       createdAt: "2026-05-25T01:04:00.000Z",
       updatedAt: "2026-05-25T01:05:00.000Z",
     },
@@ -527,6 +537,11 @@ test("progress popover shows active context source groups and opens source detai
 
   await mockDaemon(page, state);
   await page.goto("/");
+
+  const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Engineer" });
+  await expect(workCell).toBeVisible();
+  await workCell.locator(".conversation-work-cell-agent-span-head").click();
+  await expect(workCell.locator(".conversation-work-cell-agent-span-detail")).toContainText("From Development Council");
 
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
 
@@ -2045,6 +2060,12 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
       ? secondStep.metadata.dependsOnStepIds.join(",")
       : "";
   }).toBe("workflow_step_1");
+  await expect.poll(() => {
+    const secondStep = state.channelWorkflowSteps.find((item) => isRecord(item) && item.workflowId === "workflow_1" && item.position === 2);
+    return isRecord(secondStep) && isRecord(secondStep.metadata) && Array.isArray(secondStep.metadata.proposalStepSources)
+      ? `sources:${secondStep.metadata.proposalStepSources.length}`
+      : "sources:none";
+  }).toBe("sources:none");
   await expect.poll(() => {
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_1");
     return isRecord(updated) ? [updated.status, updated.linkedWorkflowId].join("|") : "";
