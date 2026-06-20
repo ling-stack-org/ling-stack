@@ -39,6 +39,9 @@ export interface MockState {
   channelProtocolDrafts: unknown[];
   channelPlaybookCandidates: unknown[];
   aiTeammates: unknown[];
+  aiCouncils: unknown[];
+  aiCouncilMembers: unknown[];
+  channelCouncilPolicies: unknown[];
   skillRegistryEntries: unknown[];
   skillImportDrafts: unknown[];
   skillCandidates: unknown[];
@@ -886,6 +889,9 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelProtocolDrafts: [],
     channelPlaybookCandidates: [],
     aiTeammates: [],
+    aiCouncils: [createMockAiCouncil()],
+    aiCouncilMembers: createMockAiCouncilMembers(),
+    channelCouncilPolicies: [],
     skillRegistryEntries: buildMockSkillRegistryEntries(),
     skillImportDrafts: [],
     skillCandidates: createMockSkillCandidates(),
@@ -3775,6 +3781,69 @@ export function createMockTeammate(overrides: Record<string, unknown> = {}): Rec
   };
 }
 
+function createMockAiCouncil(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "council_builtin_development",
+    workspaceId: "workspace_default",
+    source: "builtin",
+    templateId: "development",
+    displayName: "Development Council",
+    description: "Engineering, design, and QA specialists for product development channels.",
+    routingPolicy: {
+      defaultMode: "parallel_review",
+      maxActiveMembers: 4,
+      notes: ["Attach by reference; do not copy members into channel memberships."],
+    },
+    governanceProfile: {
+      permissionBoundary: "restrict_only",
+      approvalBoundary: "cannot_bypass",
+      toolGrantBoundary: "cannot_grant",
+      credentialBoundary: "cannot_grant",
+      notes: ["Council policy can restrict authority only."],
+    },
+    status: "active",
+    pinned: true,
+    createdAt: "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createMockAiCouncilMembers(councilId = "council_builtin_development"): Record<string, unknown>[] {
+  return [
+    {
+      councilId,
+      teammateId: "teammate_builtin_engineer",
+      slotKey: "implementation",
+      label: "Implementation",
+      position: 0,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+    {
+      councilId,
+      teammateId: "teammate_builtin_designer",
+      slotKey: "product_design",
+      label: "Product design",
+      position: 1,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+    {
+      councilId,
+      teammateId: "teammate_builtin_qa",
+      slotKey: "verification",
+      label: "Verification",
+      position: 2,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+}
+
 function createMockLingAgentTeammate(): Record<string, unknown> {
   return {
     id: "ling_agent",
@@ -3810,6 +3879,125 @@ function mockTeammateCanRunInChannel(state: MockState, channelId: string, teamma
   return state.teammateChannelMemberships.some((item) =>
     isRecord(item) && item.channelId === channelId && item.teammateId === teammateId
   );
+}
+
+function readMockChannelCouncilPolicy(state: MockState, channelId: string): Record<string, unknown> {
+  const existing = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === channelId);
+  if (isRecord(existing)) {
+    return existing;
+  }
+  return {
+    workspaceId: "workspace_default",
+    channelId,
+    attachedCouncilIds: [],
+    preferredCouncilId: undefined,
+    createdAt: "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:00:00.000Z",
+  };
+}
+
+function writeMockChannelCouncilPolicy(state: MockState, channelId: string, patch: Record<string, unknown>): Record<string, unknown> {
+  const existing = readMockChannelCouncilPolicy(state, channelId);
+  const attachedCouncilIds = Array.isArray(patch.attachedCouncilIds)
+    ? patch.attachedCouncilIds.filter((id): id is string => typeof id === "string")
+    : Array.isArray(existing.attachedCouncilIds) ? existing.attachedCouncilIds.filter((id): id is string => typeof id === "string") : [];
+  const preferredCouncilId = patch.preferredCouncilId === null
+    ? undefined
+    : typeof patch.preferredCouncilId === "string"
+      ? patch.preferredCouncilId
+      : typeof existing.preferredCouncilId === "string" ? existing.preferredCouncilId : undefined;
+  const next = {
+    workspaceId: "workspace_default",
+    channelId,
+    attachedCouncilIds,
+    preferredCouncilId: preferredCouncilId && attachedCouncilIds.includes(preferredCouncilId) ? preferredCouncilId : attachedCouncilIds[0],
+    createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:01:00.000Z",
+  };
+  state.channelCouncilPolicies = [
+    ...state.channelCouncilPolicies.filter((item) => !isRecord(item) || item.channelId !== channelId),
+    next,
+  ];
+  return next;
+}
+
+function buildMockEffectiveChannelCouncil(state: MockState, channelId: string): Record<string, unknown> {
+  const policy = readMockChannelCouncilPolicy(state, channelId);
+  const attachedCouncilIds = Array.isArray(policy.attachedCouncilIds) ? policy.attachedCouncilIds.filter((id): id is string => typeof id === "string") : [];
+  const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+  const specialistById = new Map<string, Record<string, unknown>>();
+
+  function teammateForId(teammateId: string): Record<string, unknown> | undefined {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return isRecord(teammate) ? teammate : undefined;
+  }
+
+  function addSpecialist(teammateId: string, source: Record<string, unknown>, isDefault = false): void {
+    const teammate = teammateForId(teammateId);
+    if (!teammate || teammate.status === "disabled" || teammate.hidden === true) {
+      return;
+    }
+    const existing = specialistById.get(teammateId);
+    if (existing) {
+      existing.sources = [...(Array.isArray(existing.sources) ? existing.sources : []), source];
+      existing.isDefault = existing.isDefault === true || isDefault;
+      return;
+    }
+    specialistById.set(teammateId, {
+      teammateId,
+      teammate,
+      sources: [source],
+      isDefault,
+    });
+  }
+
+  for (const membership of state.teammateChannelMemberships) {
+    if (!isRecord(membership) || membership.channelId !== channelId || typeof membership.teammateId !== "string") {
+      continue;
+    }
+    addSpecialist(membership.teammateId, { kind: "direct", isDefault: membership.isDefault === true }, membership.isDefault === true);
+  }
+  if (isRecord(channel) && typeof channel.defaultTeammateId === "string") {
+    addSpecialist(channel.defaultTeammateId, { kind: "direct", isDefault: true }, true);
+  }
+
+  const councils = attachedCouncilIds
+    .map((councilId) => state.aiCouncils.find((item) => isRecord(item) && item.id === councilId && item.status === "active"))
+    .filter((council): council is Record<string, unknown> => isRecord(council))
+    .map((council) => {
+      const councilId = String(council.id);
+      const members = state.aiCouncilMembers
+        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0))
+        .map((member) => {
+          const teammateId = typeof member.teammateId === "string" ? member.teammateId : "";
+          const teammate = teammateForId(teammateId);
+          const enabled = member.enabled !== false && Boolean(teammate) && teammate?.status !== "disabled" && teammate?.hidden !== true;
+          if (enabled && teammateId) {
+            addSpecialist(teammateId, {
+              kind: "council",
+              councilId,
+              councilDisplayName: council.displayName,
+              slotKey: member.slotKey,
+              label: member.label,
+            });
+          }
+          return {
+            member,
+            teammate,
+            enabled,
+            blockedReason: enabled ? undefined : "teammate_unavailable",
+          };
+        });
+      return { council, members };
+    });
+
+  return {
+    channelId,
+    policy,
+    councils,
+    specialists: [...specialistById.values()],
+  };
 }
 
 function maybeCreateMockWorkflowProposal(
@@ -5283,6 +5471,60 @@ export async function handleDaemonRoute(
       return;
     }
   }
+  if (request.method() === "GET" && path === "/ai-councils") {
+    const includeArchived = url.searchParams.get("includeArchived") === "true";
+    const councils = state.aiCouncils.filter((item) =>
+      isRecord(item) && (includeArchived || item.status !== "archived")
+    );
+    await route.fulfill({ json: { cwd, councils } });
+    return;
+  }
+  const aiCouncilMatch = /^\/ai-councils\/([^/]+)(?:\/members)?$/.exec(path);
+  if (aiCouncilMatch) {
+    const councilId = decodeURIComponent(aiCouncilMatch[1]);
+    const council = state.aiCouncils.find((item) => isRecord(item) && item.id === councilId);
+    const isMembersRoute = path.endsWith("/members");
+    if (!isRecord(council)) {
+      await route.fulfill({ status: 404, json: { error: "ai_council_not_found" } });
+      return;
+    }
+    if (!isMembersRoute && request.method() === "GET") {
+      await route.fulfill({ json: { cwd, council } });
+      return;
+    }
+    if (isMembersRoute && request.method() === "GET") {
+      const members = state.aiCouncilMembers
+        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
+      await route.fulfill({ json: { cwd, councilId, members } });
+      return;
+    }
+    if (isMembersRoute && request.method() === "PUT") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const inputMembers = Array.isArray(body.members) ? body.members : [];
+      state.aiCouncilMembers = state.aiCouncilMembers.filter((item) => !isRecord(item) || item.councilId !== councilId);
+      inputMembers.forEach((member, index) => {
+        if (!isRecord(member) || typeof member.teammateId !== "string" || member.teammateId === "ling_agent") {
+          return;
+        }
+        state.aiCouncilMembers.push({
+          councilId,
+          teammateId: member.teammateId,
+          slotKey: typeof member.slotKey === "string" ? member.slotKey : undefined,
+          label: typeof member.label === "string" ? member.label : undefined,
+          position: typeof member.position === "number" ? member.position : index,
+          enabled: member.enabled !== false,
+          createdAt: "2026-06-20T00:02:00.000Z",
+          updatedAt: "2026-06-20T00:02:00.000Z",
+        });
+      });
+      const members = state.aiCouncilMembers
+        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
+      await route.fulfill({ json: { cwd, councilId, members } });
+      return;
+    }
+  }
   if (request.method() === "GET" && path === "/teammates") {
     const includeHidden = url.searchParams.get("includeHidden") === "true";
     const includeDisabled = url.searchParams.get("includeDisabled") === "true";
@@ -5363,6 +5605,7 @@ export async function handleDaemonRoute(
         usedMemoryEvents: state.usedMemoryEvents.filter((item) => isRecord(item) && item.teammateId === teammateId).length,
       };
       state.aiTeammates = state.aiTeammates.filter((item) => !isRecord(item) || item.id !== teammateId);
+      state.aiCouncilMembers = state.aiCouncilMembers.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       state.teammateChannelMemberships = state.teammateChannelMemberships.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       state.teammateSkillBindings = state.teammateSkillBindings.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       state.teammateMemoryScopes = state.teammateMemoryScopes.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
@@ -6390,6 +6633,42 @@ export async function handleDaemonRoute(
     };
     state.channels.unshift(channel);
     await route.fulfill({ status: 201, json: { channel } });
+    return;
+  }
+  const channelCouncilPolicyMatch = /^\/channels\/([^/]+)\/council-policy$/.exec(path);
+  if (channelCouncilPolicyMatch) {
+    const channelId = decodeURIComponent(channelCouncilPolicyMatch[1]);
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found" } });
+      return;
+    }
+    if (request.method() === "GET") {
+      await route.fulfill({ json: { cwd, channelId, policy: readMockChannelCouncilPolicy(state, channelId) } });
+      return;
+    }
+    if (request.method() === "PUT") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const policy = writeMockChannelCouncilPolicy(state, channelId, body);
+      await route.fulfill({ json: { cwd, channelId, policy } });
+      return;
+    }
+  }
+  const channelEffectiveCouncilMatch = /^\/channels\/([^/]+)\/effective-council$/.exec(path);
+  if (channelEffectiveCouncilMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelEffectiveCouncilMatch[1]);
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        effectiveCouncil: buildMockEffectiveChannelCouncil(state, channelId),
+      },
+    });
     return;
   }
   const channelProtocolMatch = /^\/channels\/([^/]+)\/protocol(?:\/([^/]+))?$/.exec(path);
@@ -7764,6 +8043,7 @@ export async function handleDaemonRoute(
     }
     state.channels = state.channels.filter((item) => !isRecord(item) || item.id !== channelId);
     state.channelBranches = state.channelBranches.filter((item) => !isRecord(item) || item.channelId !== channelId);
+    state.channelCouncilPolicies = state.channelCouncilPolicies.filter((item) => !isRecord(item) || item.channelId !== channelId);
     await route.fulfill({ status: 204, body: "" });
     return;
   }

@@ -8,6 +8,7 @@ import {
   buildEffectiveTeammateSkills,
   createBuiltinAiTeammateId,
   createSqliteRunStore,
+  DEVELOPMENT_COUNCIL_ID,
   GSTACK_DEFAULT_SKILL_PACK_ID,
   LING_AGENT_ID,
   LING_AGENT_SYSTEM_PROMPT,
@@ -137,6 +138,79 @@ test("sqlite seeds Ling Agent as a protected system teammate and channel member"
     assert.throws(() => store.replaceTeammateSkillBindings(LING_AGENT_ID, [], updatedAt), /skill bindings are protected/);
     assert.throws(() => store.replaceTeammateMemoryScopes(LING_AGENT_ID, [], updatedAt), /memory scopes are protected/);
     assert.throws(() => store.replaceTeammateMcpBindings(LING_AGENT_ID, [], updatedAt), /MCP bindings are protected/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite seeds Development Council and projects channel council members without copying memberships", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-development-council-"));
+  const now = "2026-06-20T00:00:00.000Z";
+  const updatedAt = "2026-06-20T00:01:00.000Z";
+  const engineerId = createBuiltinAiTeammateId("engineer");
+  const store = createSqliteRunStore(cwd);
+  try {
+    const council = store.getAiCouncil(DEVELOPMENT_COUNCIL_ID);
+    assert.ok(council);
+    assert.equal(council.source, "builtin");
+    assert.equal(council.templateId, "development");
+    assert.equal(council.displayName, "Development Council");
+    assert.equal(council.status, "active");
+    assert.equal(council.governanceProfile.permissionBoundary, "restrict_only");
+    assert.equal(council.governanceProfile.approvalBoundary, "cannot_bypass");
+
+    const members = store.listAiCouncilMembers(DEVELOPMENT_COUNCIL_ID);
+    assert.ok(members.length >= 8);
+    assert.ok(members.some((member) => member.teammateId === engineerId));
+    assert.equal(members.some((member) => member.teammateId === LING_AGENT_ID), false);
+
+    const channel = store.createChannel({ name: "Council Channel", boundPath: cwd }, now);
+    const defaultPolicy = store.getChannelCouncilPolicy(channel.id);
+    assert.ok(defaultPolicy);
+    assert.deepEqual(defaultPolicy.attachedCouncilIds, []);
+    assert.equal(defaultPolicy.preferredCouncilId, undefined);
+
+    const policy = store.upsertChannelCouncilPolicy(
+      channel.id,
+      {
+        attachedCouncilIds: [DEVELOPMENT_COUNCIL_ID],
+        preferredCouncilId: DEVELOPMENT_COUNCIL_ID,
+      },
+      updatedAt,
+    );
+    assert.deepEqual(policy.attachedCouncilIds, [DEVELOPMENT_COUNCIL_ID]);
+    assert.equal(policy.preferredCouncilId, DEVELOPMENT_COUNCIL_ID);
+
+    const effective = store.getEffectiveChannelCouncil(channel.id);
+    assert.ok(effective);
+    assert.deepEqual(effective.policy.attachedCouncilIds, [DEVELOPMENT_COUNCIL_ID]);
+    assert.ok(effective.councils.some((item) => item.council.id === DEVELOPMENT_COUNCIL_ID));
+    const engineerSpecialist = effective.specialists.find((specialist) => specialist.teammateId === engineerId);
+    assert.ok(engineerSpecialist);
+    assert.ok(engineerSpecialist.sources.some((source) => source.kind === "council" && source.councilId === DEVELOPMENT_COUNCIL_ID));
+    assert.equal(
+      store.listTeammateChannelMemberships(engineerId).some((membership) => membership.channelId === channel.id),
+      false,
+    );
+
+    const disabledMembers = members.map((member) => ({
+      teammateId: member.teammateId,
+      slotKey: member.slotKey,
+      label: member.label,
+      position: member.position,
+      enabled: member.teammateId === engineerId ? false : member.enabled,
+    }));
+    store.replaceAiCouncilMembers(DEVELOPMENT_COUNCIL_ID, disabledMembers, updatedAt);
+    const effectiveAfterDisable = store.getEffectiveChannelCouncil(channel.id);
+    assert.ok(effectiveAfterDisable);
+    assert.equal(effectiveAfterDisable.specialists.some((specialist) => specialist.teammateId === engineerId), false);
+    const disabledEngineer = effectiveAfterDisable.councils
+      .find((item) => item.council.id === DEVELOPMENT_COUNCIL_ID)
+      .members.find((member) => member.member.teammateId === engineerId);
+    assert.ok(disabledEngineer);
+    assert.equal(disabledEngineer.enabled, false);
+    assert.equal(disabledEngineer.blockedReason, "member_disabled");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

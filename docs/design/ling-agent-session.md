@@ -461,6 +461,10 @@ Rules:
 - Ling Agent has protected always-on coordinator memory and a dedicated Memory panel. Users
   can review or manage memory content, but cannot disable recall or grant new memory
   authority to Ling Agent.
+- Ling Agent coordinates AI Councils but is not a normal council member. A council can
+  provide routing evidence, member rosters, workflow defaults, and governance ceilings,
+  but Ling Agent remains the visible coordinator and council membership never grants
+  tools, provider access, MCP access, credentials, deploy authority, or approval bypass.
 - Ling Agent is the default visible responder for ordinary root channel messages unless
   the user explicitly mentions a specialist or asks for a visible multi-participant reply.
 - `Channel.defaultTeammateId` must not point at Ling Agent for default-speaker semantics.

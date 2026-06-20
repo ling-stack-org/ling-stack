@@ -37,6 +37,8 @@ import type {
   ListChannelInputMaterializationsOptions,
 } from "./input-materialization-types.js";
 import type {
+  AiCouncil,
+  AiCouncilMember,
   AiTeammate,
   AiTeammateUpdateInput,
   Channel,
@@ -60,6 +62,7 @@ import type {
   ChannelMessage,
   ChannelMessageRouteDecision,
   ChannelMessageListPage,
+  ChannelCouncilPolicy,
   ChannelUpdateInput,
   CreateChannelAttachmentInput,
   CreateChannelBranchInput,
@@ -85,8 +88,10 @@ import type {
   CreateTeammatePrivateAttachmentInput,
   CreateTaskInput,
   DirectWorkspaceBinding,
+  EffectiveChannelCouncilProjection,
   HardDeleteAiTeammateInput,
   HardDeleteAiTeammateResult,
+  ListAiCouncilsOptions,
   ListAiTeammatesOptions,
   ListChannelAttachmentsOptions,
   ListChannelBranchesOptions,
@@ -108,6 +113,7 @@ import type {
   ListTeammateDirectReplyInterventionsOptions,
   ListTeammateDirectMessagesOptions,
   ListTasksOptions,
+  ReplaceAiCouncilMemberInput,
   ReplaceTeammateChannelMembershipInput,
   ReplaceTeammateMemoryScopeInput,
   ReplaceTeammateSkillBindingInput,
@@ -137,6 +143,7 @@ import type {
   UpdateChannelWorkflowInput,
   UpdateChannelWorkflowStepInput,
   UpdateChannelHandoffInput,
+  UpsertChannelCouncilPolicyInput,
   UpsertChannelCollaborationProtocolOverrideInput,
   WorkflowHandoffIntent,
   WorkflowSelectorDecision,
@@ -1059,6 +1066,17 @@ export interface RunStore {
   updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined;
   disableAiTeammate(id: string, now: string): AiTeammate | undefined;
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined;
+  getAiCouncil(id: string): AiCouncil | undefined;
+  listAiCouncils(options?: ListAiCouncilsOptions): AiCouncil[];
+  listAiCouncilMembers(councilId: string): AiCouncilMember[];
+  replaceAiCouncilMembers(
+    councilId: string,
+    members: readonly ReplaceAiCouncilMemberInput[],
+    now: string,
+  ): AiCouncilMember[];
+  getChannelCouncilPolicy(channelId: string): ChannelCouncilPolicy | undefined;
+  upsertChannelCouncilPolicy(channelId: string, input: UpsertChannelCouncilPolicyInput, now: string): ChannelCouncilPolicy;
+  getEffectiveChannelCouncil(channelId: string): EffectiveChannelCouncilProjection | undefined;
   listTeammateChannelMemberships(teammateId: string): TeammateChannelMembership[];
   replaceTeammateChannelMemberships(
     teammateId: string,
@@ -1549,6 +1567,16 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "deleteTeammatePrivateAttachment"
   | "replaceTeammateMcpBindings"
   | "listTeammateMcpBindings"
+>;
+
+export type AiCouncilStoreFacet = RunStoreFacet<
+  | "getAiCouncil"
+  | "listAiCouncils"
+  | "listAiCouncilMembers"
+  | "replaceAiCouncilMembers"
+  | "getChannelCouncilPolicy"
+  | "upsertChannelCouncilPolicy"
+  | "getEffectiveChannelCouncil"
 >;
 
 export type MemoryStoreFacet = RunStoreFacet<

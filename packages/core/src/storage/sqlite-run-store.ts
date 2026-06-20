@@ -36,6 +36,8 @@ import {
 } from "../approval-policy.js";
 import {
   DEFAULT_WORKSPACE_ID,
+  type AiCouncil,
+  type AiCouncilMember,
   type AiTeammate,
   type AiTeammateUpdateInput,
   type Channel,
@@ -58,6 +60,7 @@ import {
   type ChannelMessage,
   type ChannelMessageListPage,
   type ChannelMessageRouteDecision,
+  type ChannelCouncilPolicy,
   type ChannelUpdateInput,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
@@ -87,8 +90,10 @@ import {
   type CreateTeammatePrivateAttachmentInput,
   type CreateTaskInput,
   type DirectWorkspaceBinding,
+  type EffectiveChannelCouncilProjection,
   type HardDeleteAiTeammateInput,
   type HardDeleteAiTeammateResult,
+  type ListAiCouncilsOptions,
   type ListAiTeammatesOptions,
   type ListChannelAttachmentsOptions,
   type ListChannelBranchesOptions,
@@ -110,6 +115,7 @@ import {
   type ListTeammateDirectReplyInterventionsOptions,
   type ListTeammatePrivateAttachmentsOptions,
   type ListTasksOptions,
+  type ReplaceAiCouncilMemberInput,
   type ReplaceTeammateChannelMembershipInput,
   type ReplaceTeammateMemoryScopeInput,
   type ReplaceTeammateSkillBindingInput,
@@ -141,6 +147,7 @@ import {
   type UpdateWorkflowHandoffIntentInput,
   type UpdateWorkflowSelectorDecisionInput,
   type UpdateWorkspaceSettingsInput,
+  type UpsertChannelCouncilPolicyInput,
   type UserProfile,
   type UpsertChannelCollaborationProtocolOverrideInput,
   type WorkspaceSettings,
@@ -410,6 +417,7 @@ import { SqliteTeammateAssociationStore } from "./sqlite/teammate-association-st
 import { SqliteTeammateCoreStore } from "./sqlite/teammate-core-store.js";
 import { SqliteTeammateBootstrapCoordinator } from "./sqlite/teammate-bootstrap-coordinator.js";
 import { SqliteTeammateCleanupStore } from "./sqlite/teammate-cleanup-store.js";
+import { SqliteAiCouncilStore } from "./sqlite/ai-council-store.js";
 import { SqliteMemoryConsolidationStore } from "./sqlite/memory-consolidation-store.js";
 import { SqliteMemoryObjectStore } from "./sqlite/memory-object-store.js";
 import { SqliteMemoryReviewStore } from "./sqlite/memory-review-store.js";
@@ -475,6 +483,7 @@ export class SqliteRunStore implements RunStore {
   private readonly aiTeammates: SqliteTeammateCoreStore;
   private readonly teammateBootstrap: SqliteTeammateBootstrapCoordinator;
   private readonly teammateCleanup: SqliteTeammateCleanupStore;
+  private readonly aiCouncils: SqliteAiCouncilStore;
   private readonly memoryConsolidation: SqliteMemoryConsolidationStore;
   private readonly memoryObjects: SqliteMemoryObjectStore;
   private readonly memoryReviews: SqliteMemoryReviewStore;
@@ -660,6 +669,14 @@ export class SqliteRunStore implements RunStore {
     this.teammateCleanup = new SqliteTeammateCleanupStore(
       { database: this.database },
       { getAiTeammate: (id) => this.getAiTeammate(id) },
+    );
+    this.aiCouncils = new SqliteAiCouncilStore(
+      { database: this.database },
+      {
+        getAiTeammate: (id) => this.getAiTeammate(id),
+        getChannel: (id) => this.getChannel(id),
+        hasTable: (tableName) => this.hasTable(tableName),
+      },
     );
     this.teammateBootstrap = new SqliteTeammateBootstrapCoordinator(
       { database: this.database },
@@ -1352,6 +1369,42 @@ export class SqliteRunStore implements RunStore {
 
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined {
     return this.teammateCleanup.hardDeleteAiTeammate(id, input, now);
+  }
+
+  getAiCouncil(id: string): AiCouncil | undefined {
+    return this.aiCouncils.getAiCouncil(id);
+  }
+
+  listAiCouncils(options: ListAiCouncilsOptions = {}): AiCouncil[] {
+    return this.aiCouncils.listAiCouncils(options);
+  }
+
+  listAiCouncilMembers(councilId: string): AiCouncilMember[] {
+    return this.aiCouncils.listAiCouncilMembers(councilId);
+  }
+
+  replaceAiCouncilMembers(
+    councilId: string,
+    members: readonly ReplaceAiCouncilMemberInput[],
+    now: string,
+  ): AiCouncilMember[] {
+    return this.aiCouncils.replaceAiCouncilMembers(councilId, members, now);
+  }
+
+  getChannelCouncilPolicy(channelId: string): ChannelCouncilPolicy | undefined {
+    return this.aiCouncils.getChannelCouncilPolicy(channelId);
+  }
+
+  upsertChannelCouncilPolicy(
+    channelId: string,
+    input: UpsertChannelCouncilPolicyInput,
+    now: string,
+  ): ChannelCouncilPolicy {
+    return this.aiCouncils.upsertChannelCouncilPolicy(channelId, input, now);
+  }
+
+  getEffectiveChannelCouncil(channelId: string): EffectiveChannelCouncilProjection | undefined {
+    return this.aiCouncils.getEffectiveChannelCouncil(channelId);
   }
 
   listTeammateChannelMemberships(teammateId: string): TeammateChannelMembership[] {
@@ -2539,6 +2592,7 @@ export class SqliteRunStore implements RunStore {
 
   private ensureDefaultAiTeammates(): void {
     this.teammateBootstrap.ensureDefaultAiTeammates();
+    this.aiCouncils.ensureBuiltinDevelopmentCouncil(new Date().toISOString());
   }
 
   private hasMigration(version: number): boolean {

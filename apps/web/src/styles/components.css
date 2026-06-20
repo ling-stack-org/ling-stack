@@ -3205,6 +3205,8 @@ code,
 :root[data-theme="dark"] .channel-tabs,
 :root[data-theme="dark"] .channel-utility-tab,
 :root[data-theme="dark"] .channel-notification-option,
+:root[data-theme="dark"] .channel-council-card,
+:root[data-theme="dark"] .channel-council-icon,
 :root[data-theme="dark"] .activity-view-select,
 :root[data-theme="dark"] .activity-search-field,
 :root[data-theme="dark"] .activity-filter-toggle,
@@ -3225,6 +3227,7 @@ code,
 :root[data-theme="dark"] .channel-tab.active,
 :root[data-theme="dark"] .channel-utility-tab.active,
 :root[data-theme="dark"] .channel-notification-option.active,
+:root[data-theme="dark"] .channel-council-card.preferred,
 :root[data-theme="dark"] .segmented-control button.active,
 :root[data-theme="dark"] .activity-filter-toggle.active,
 :root[data-theme="dark"] .activity-filter-toggle:hover,
@@ -4582,6 +4585,120 @@ code,
 .channel-teammate-empty {
   min-height: 76px;
 }
+
+.channel-council-list,
+.channel-council-specialist-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-council-card,
+.channel-council-specialist {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel-strong);
+}
+
+.channel-council-card {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.channel-council-card.preferred {
+  border-color: var(--accent-border);
+  background: var(--surface-selected);
+}
+
+.channel-council-card-main {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.channel-council-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+}
+
+.channel-council-card-main > span:not(.channel-council-icon),
+.channel-council-specialist > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.channel-council-card strong,
+.channel-council-card small,
+.channel-council-specialist strong,
+.channel-council-specialist small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-council-card strong,
+.channel-council-specialist strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.channel-council-card small,
+.channel-council-specialist small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.channel-council-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.compact-icon-button {
+  width: 30px;
+  height: 30px;
+}
+
+.channel-council-projection {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.channel-council-projection > strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.channel-council-specialist .avatar-initial,
+.channel-council-specialist .teammate-avatar-image.compact {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
 
 .channel-notification-options {
   display: grid;
@@ -9713,6 +9830,11 @@ textarea:disabled {
   .channel-teammate-row,
   .channel-notification-options {
     grid-template-columns: 1fr;
+  }
+
+  .channel-council-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .channel-teammate-add-row,

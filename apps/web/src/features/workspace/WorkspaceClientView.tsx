@@ -45,6 +45,7 @@ import {
   SquareTerminal,
   Trash2,
   UserPlus,
+  UsersRound,
   Workflow,
   X,
 } from "lucide-react";
@@ -160,11 +161,13 @@ import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, Conversat
 import type {
   ApprovalRequest,
   ApprovalPolicy,
+  AiCouncil,
   Channel,
   ChannelAttachment,
   ChannelBrief,
   ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
+  ChannelCouncilPolicy,
   ChannelCreateFormState,
   ChannelDecision,
   ChannelFormState,
@@ -206,8 +209,10 @@ import type {
   TaskFormState,
   TaskRunActionState,
   TeammateChannelMembership,
+  EffectiveChannelCouncilProjection,
   UpdateChannelCollaborationProtocolRequest,
   UpdateChannelBriefRequest,
+  UpdateChannelCouncilPolicyRequest,
   UsedMemoryEvent,
   WorkflowEvidenceDiagnostic,
   WorkItemView,
@@ -509,6 +514,12 @@ export function WorkspaceClientView({
   channelGovernanceNotifications,
   channelGovernanceNotificationsLoading,
   channelGovernanceNotificationActionId,
+  aiCouncils,
+  aiCouncilsLoading,
+  channelCouncilPolicy,
+  channelEffectiveCouncil,
+  channelCouncilLoading,
+  channelCouncilSaving,
   externalWorkCiTriage,
   externalWorkCiTriageLoading,
   durableWorkItems,
@@ -599,6 +610,9 @@ export function WorkspaceClientView({
   onRefreshChannelGovernanceNotifications,
   onMarkChannelGovernanceNotificationSeen,
   onDismissChannelGovernanceNotification,
+  onRefreshAiCouncils,
+  onRefreshChannelCouncil,
+  onUpdateChannelCouncilPolicy,
   attachmentContentUrl,
   onRefreshTasks,
   onSelectTask,
@@ -661,6 +675,12 @@ export function WorkspaceClientView({
   readonly channelGovernanceNotifications: readonly GovernanceNotification[];
   readonly channelGovernanceNotificationsLoading: boolean;
   readonly channelGovernanceNotificationActionId: string;
+  readonly aiCouncils: readonly AiCouncil[];
+  readonly aiCouncilsLoading: boolean;
+  readonly channelCouncilPolicy: ChannelCouncilPolicy | undefined;
+  readonly channelEffectiveCouncil: EffectiveChannelCouncilProjection | undefined;
+  readonly channelCouncilLoading: boolean;
+  readonly channelCouncilSaving: boolean;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
   readonly externalWorkCiTriageLoading: boolean;
   readonly durableWorkItems: readonly WorkItemView[];
@@ -762,6 +782,9 @@ export function WorkspaceClientView({
   readonly onRefreshChannelGovernanceNotifications: () => void;
   readonly onMarkChannelGovernanceNotificationSeen: (notificationId: string) => void;
   readonly onDismissChannelGovernanceNotification: (notificationId: string) => void;
+  readonly onRefreshAiCouncils: () => void;
+  readonly onRefreshChannelCouncil: () => void;
+  readonly onUpdateChannelCouncilPolicy: (input: UpdateChannelCouncilPolicyRequest) => Promise<void>;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onRefreshTasks: () => void;
   readonly onSelectTask: (taskId: string) => void;
@@ -854,6 +877,7 @@ export function WorkspaceClientView({
   const [threadReplyPending, setThreadReplyPending] = useState(false);
   const [threadReplyError, setThreadReplyError] = useState("");
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
+  const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
   const [channelWorkspaceBusyAction, setChannelWorkspaceBusyAction] = useState("");
   const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
@@ -2583,6 +2607,42 @@ export function WorkspaceClientView({
     void onAddChannelTeammate(teammateId);
   }
 
+  function addSelectedChannelCouncil(): void {
+    if (!pendingChannelCouncilId || channelCouncilSaving) {
+      return;
+    }
+    const councilId = pendingChannelCouncilId;
+    const currentIds = channelCouncilPolicy?.attachedCouncilIds ?? [];
+    const nextIds = currentIds.includes(councilId) ? currentIds : [...currentIds, councilId];
+    setPendingChannelCouncilId("");
+    void onUpdateChannelCouncilPolicy({
+      attachedCouncilIds: nextIds,
+      preferredCouncilId: channelCouncilPolicy?.preferredCouncilId ?? councilId,
+    });
+  }
+
+  function removeChannelCouncil(councilId: string): void {
+    if (channelCouncilSaving) {
+      return;
+    }
+    const nextIds = (channelCouncilPolicy?.attachedCouncilIds ?? []).filter((id) => id !== councilId);
+    void onUpdateChannelCouncilPolicy({
+      attachedCouncilIds: nextIds,
+      preferredCouncilId: channelCouncilPolicy?.preferredCouncilId === councilId ? (nextIds[0] ?? null) : (channelCouncilPolicy?.preferredCouncilId ?? null),
+    });
+  }
+
+  function setPreferredChannelCouncil(councilId: string): void {
+    if (channelCouncilSaving) {
+      return;
+    }
+    const currentIds = channelCouncilPolicy?.attachedCouncilIds ?? [];
+    void onUpdateChannelCouncilPolicy({
+      attachedCouncilIds: currentIds.includes(councilId) ? currentIds : [...currentIds, councilId],
+      preferredCouncilId: councilId,
+    });
+  }
+
   function toggleCreateChannelTeammate(teammateId: string): void {
     const selected = new Set(channelForm.selectedTeammateIds);
     if (selected.has(teammateId)) {
@@ -2815,6 +2875,8 @@ export function WorkspaceClientView({
     }
     if (sidePanelView === "settings") {
       onRefreshChannels();
+      onRefreshAiCouncils();
+      onRefreshChannelCouncil();
       return;
     }
     onRefreshRunApprovals();
@@ -2891,6 +2953,36 @@ export function WorkspaceClientView({
     () => activeLocalTeammates.filter((teammate) => teammate.id !== LING_AGENT_AUTHOR_ID && !teammate.hidden),
     [activeLocalTeammates],
   );
+  const activeAiCouncils = useMemo(
+    () => aiCouncils.filter((council) => council.status === "active"),
+    [aiCouncils],
+  );
+  const attachedCouncilIds = channelCouncilPolicy?.attachedCouncilIds ?? [];
+  const attachedCouncilIdSet = useMemo(
+    () => new Set(attachedCouncilIds),
+    [attachedCouncilIds],
+  );
+  const aiCouncilById = useMemo(
+    () => new Map(aiCouncils.map((council) => [council.id, council])),
+    [aiCouncils],
+  );
+  const attachedAiCouncils = useMemo(
+    () => attachedCouncilIds
+      .map((councilId) => aiCouncilById.get(councilId))
+      .filter((council): council is AiCouncil => council !== undefined),
+    [aiCouncilById, attachedCouncilIds],
+  );
+  const availableAiCouncils = useMemo(
+    () => activeAiCouncils.filter((council) => !attachedCouncilIdSet.has(council.id)),
+    [activeAiCouncils, attachedCouncilIdSet],
+  );
+  const projectedCouncilSpecialists = useMemo(
+    () => (channelEffectiveCouncil?.specialists ?? []).filter((specialist) =>
+      specialist.sources.some((source) => source.kind === "council") && !isLingAgentTeammate(specialist.teammate),
+    ),
+    [channelEffectiveCouncil],
+  );
+
   function updateMentionPicker(value: string, caret: number): void {
     const activeMention = findActiveMention(value, caret);
     setMentionPicker(activeMention);
@@ -4460,6 +4552,104 @@ export function WorkspaceClientView({
     </section>
   );
 
+  const channelCouncilPanel = (
+    <section className="channel-settings-card channel-council-panel" aria-label={t("Channel AI councils")}>
+      <div className="channel-settings-section-head">
+        <span>
+          <UsersRound size={15} />
+          <strong>{t("AI Councils")}</strong>
+        </span>
+        <small>
+          {channelCouncilLoading || aiCouncilsLoading
+            ? t("Loading councils...")
+            : t("{count} council(s) attached", { count: attachedAiCouncils.length })}
+        </small>
+      </div>
+      {attachedAiCouncils.length === 0 ? (
+        <div className="client-empty-state channel-teammate-empty channel-council-empty">
+          <UsersRound size={18} />
+          <span>{aiCouncils.length === 0 ? t("No AI councils available") : t("No AI councils attached")}</span>
+        </div>
+      ) : (
+        <div className="channel-council-list" role="list">
+          {attachedAiCouncils.map((council) => {
+            const preferred = channelCouncilPolicy?.preferredCouncilId === council.id;
+            const memberCount = channelEffectiveCouncil?.councils
+              .find((item) => item.council.id === council.id)
+              ?.members.filter((item) => item.enabled && item.teammate && !isLingAgentTeammate(item.teammate)).length ?? 0;
+            return (
+              <article key={council.id} className={preferred ? "channel-council-card preferred" : "channel-council-card"} role="listitem">
+                <div className="channel-council-card-main">
+                  <span className="channel-council-icon" aria-hidden="true">
+                    <UsersRound size={16} />
+                  </span>
+                  <span>
+                    <strong>{council.displayName}</strong>
+                    <small>{t("{count} projected specialist(s)", { count: memberCount })}</small>
+                  </span>
+                </div>
+                <div className="channel-council-actions">
+                  <button className="secondary-button compact-button" type="button" onClick={() => setPreferredChannelCouncil(council.id)} disabled={preferred || channelCouncilSaving}>
+                    {preferred ? <Check size={13} /> : <Pin size={13} />}
+                    {preferred ? t("Preferred") : t("Prefer")}
+                  </button>
+                  <button className="icon-button compact-icon-button" type="button" aria-label={t("Detach council")} title={t("Detach council")} onClick={() => removeChannelCouncil(council.id)} disabled={channelCouncilSaving}>
+                    {channelCouncilSaving ? <Loader2 className="spin" size={13} /> : <X size={13} />}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+      <div className="channel-teammate-add-row channel-council-add-row">
+        <label className="channel-teammate-select">
+          <select
+            aria-label={t("Attach AI council")}
+            value={pendingChannelCouncilId}
+            disabled={!selectedChannelId || availableAiCouncils.length === 0 || channelCouncilSaving}
+            onChange={(event) => setPendingChannelCouncilId(event.target.value)}
+          >
+            <option value="">{availableAiCouncils.length > 0 ? t("Select AI council") : t("No councils available")}</option>
+            {availableAiCouncils.map((council) => (
+              <option key={council.id} value={council.id}>{council.displayName}</option>
+            ))}
+          </select>
+        </label>
+        <button className="primary-button compact-button" type="button" onClick={addSelectedChannelCouncil} disabled={!pendingChannelCouncilId || channelCouncilSaving}>
+          {channelCouncilSaving ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+          {t("Attach")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => {
+          onRefreshAiCouncils();
+          onRefreshChannelCouncil();
+        }} disabled={aiCouncilsLoading || channelCouncilLoading}>
+          {aiCouncilsLoading || channelCouncilLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {t("Refresh")}
+        </button>
+      </div>
+      {projectedCouncilSpecialists.length > 0 ? (
+        <div className="channel-council-projection" aria-label={t("Projected council specialists")}>
+          <strong>{t("Projected specialists")}</strong>
+          <div className="channel-council-specialist-list" role="list">
+            {projectedCouncilSpecialists.map((specialist) => {
+              const councilSource = specialist.sources.find((source) => source.kind === "council");
+              return (
+                <article key={specialist.teammateId} className="channel-council-specialist" role="listitem">
+                  <TeammateAvatarView teammate={specialist.teammate} cwd={cwd} compact />
+                  <span>
+                    <strong>{specialist.teammate.displayName}</strong>
+                    <small>{councilSource?.councilDisplayName ?? t("AI council")}</small>
+                  </span>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+
   const channelNotificationPanel = (
     <section className="channel-settings-card channel-notification-panel" aria-label={t("Channel notifications")}>
       <div className="channel-settings-section-head">
@@ -4570,6 +4760,8 @@ export function WorkspaceClientView({
       onRefreshChannelProtocol();
     } else if (view === "settings") {
       onRefreshChannels();
+      onRefreshAiCouncils();
+      onRefreshChannelCouncil();
     } else if (view === "sources") {
       return;
     } else {
@@ -4788,6 +4980,7 @@ export function WorkspaceClientView({
   ) : sidePanelView === "settings" ? (
     <div className="channel-settings-stack">
       {channelNotificationPanel}
+      {channelCouncilPanel}
       {channelTeammateManager}
       {channelManagementPanel}
     </div>
@@ -10859,6 +11052,10 @@ function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPick
   return candidates
     .filter((candidate): candidate is ActiveMentionPicker => Boolean(candidate))
     .sort((left, right) => (right.end - right.start) - (left.end - left.start))[0];
+}
+
+function isLingAgentTeammate(teammate: { readonly id: string; readonly systemRole?: string }): boolean {
+  return teammate.id === LING_AGENT_AUTHOR_ID || teammate.systemRole === "ling_agent";
 }
 
 function formatBytes(value: number): string {

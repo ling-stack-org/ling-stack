@@ -16,7 +16,15 @@ import {
   parseAutomationRoute,
   parseAutomationDraftRoute,
   parseAutomationRunRoute,
-} from "../features/automations/routes.js";import {
+} from "../features/automations/routes.js";
+import {
+  handleAiCouncilItem,
+  handleAiCouncilMembers,
+  handleAiCouncilsCollection,
+  handleChannelCouncilPolicy,
+  handleChannelEffectiveCouncil,
+} from "../features/ai-councils/routes.js";
+import {
   handleChannelAttachmentItem,
   handleChannelAttachmentsCollection,
 } from "../features/channels/attachments.js";
@@ -222,6 +230,7 @@ import {
   parseMemoryRoute,
   parseApprovalRoute,
   parseArtifactRoute,
+  parseAiCouncilRoute,
   parseChannelAttachmentRoute,
   parseChannelContextSummaryRoute,
   parseChannelDecisionRoute,
@@ -360,6 +369,10 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/ai-councils") {
+    await handleAiCouncilsCollection(request, response, config, storeRegistry);
+    return;
+  }
 
   if (url.pathname === "/workspace-settings") {
     await handleWorkspaceSettings(request, response, config, storeRegistry);
@@ -1556,7 +1569,25 @@ export async function routeRequest(
       await handleChannelCollaborationCardsCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
+    if (channelRoute.action === "council-policy") {
+      await handleChannelCouncilPolicy(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "effective-council") {
+      await handleChannelEffectiveCouncil(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
     await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);
+    return;
+  }
+
+  const aiCouncilRoute = parseAiCouncilRoute(url.pathname);
+  if (aiCouncilRoute) {
+    if (aiCouncilRoute.action === "members") {
+      await handleAiCouncilMembers(request, response, config, storeRegistry, aiCouncilRoute.councilId);
+      return;
+    }
+    await handleAiCouncilItem(request, response, config, storeRegistry, aiCouncilRoute.councilId);
     return;
   }
 

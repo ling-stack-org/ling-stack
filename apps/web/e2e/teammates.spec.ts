@@ -169,6 +169,80 @@ test("Ling Agent private chat renders workspace governance digest without source
   await expect(digestRow).not.toContainText("Workspace governance body must not be copied");
 });
 
+test("AI teammates page manages council members by reference", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer", roleKey: "engineer" }),
+    createMockTeammate({ id: "teammate_builtin_designer", displayName: "Ling Designer", roleKey: "designer" }),
+    createMockTeammate({ id: "teammate_builtin_qa", displayName: "Ling QA", roleKey: "qa" }),
+    createMockTeammate({
+      id: "ling_agent",
+      templateId: "ling_agent",
+      kind: "system_teammate",
+      systemRole: "ling_agent",
+      protectedProfile: true,
+      displayName: "Ling Agent",
+      roleKey: "custom",
+    }),
+  ];
+  state.aiCouncilMembers = [
+    {
+      councilId: "council_builtin_development",
+      teammateId: "teammate_builtin_engineer",
+      slotKey: "implementation",
+      label: "Implementation",
+      position: 0,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+  const originalChannelMembershipCount = state.teammateChannelMemberships.length;
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  const councils = page.locator(".teammate-council-panel");
+  await expect(councils).toBeVisible();
+  await expect(councils.getByLabel("Select AI council")).toHaveValue("council_builtin_development");
+  await expect(councils.locator(".teammate-council-member-row")).toHaveCount(1);
+  await expect(councils.locator(".teammate-council-member-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
+  await expect(councils.getByLabel("Add teammate to council").locator("option", { hasText: "Ling Agent" })).toHaveCount(0);
+
+  await councils.getByLabel("Add teammate to council").selectOption("teammate_builtin_designer");
+  await councils.getByRole("button", { name: "Add member" }).click();
+  const designerRow = councils.locator(".teammate-council-member-row").filter({ hasText: "Ling Designer" });
+  await expect(designerRow).toBeVisible();
+  await expect.poll(() => state.aiCouncilMembers.filter((item) => isRecord(item) && item.councilId === "council_builtin_development").length).toBe(2);
+  expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
+
+  await designerRow.getByRole("button", { name: "Disable" }).click();
+  await expect(designerRow.locator(".teammate-council-status.disabled")).toContainText("Disabled");
+  await expect.poll(() => {
+    const member = state.aiCouncilMembers.find((item) => isRecord(item) && item.teammateId === "teammate_builtin_designer");
+    return isRecord(member) ? String(member.enabled) : "missing";
+  }).toBe("false");
+  expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
+
+  await designerRow.getByRole("button", { name: "Move council member up" }).click();
+  await expect.poll(() => {
+    const members = state.aiCouncilMembers
+      .filter((item) => isRecord(item) && item.councilId === "council_builtin_development")
+      .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
+    return isRecord(members[0]) ? members[0].teammateId : "missing";
+  }).toBe("teammate_builtin_designer");
+
+  await designerRow.getByLabel("Remove council member").click();
+  await expect(designerRow).toHaveCount(0);
+  await expect.poll(() => state.aiCouncilMembers.some((item) => isRecord(item) && item.teammateId === "teammate_builtin_designer")).toBe(false);
+  expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
+});
+
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

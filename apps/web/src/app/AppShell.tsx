@@ -252,6 +252,12 @@ export function AppShell(): JSX.Element {
     channelGovernanceNotifications,
     channelGovernanceNotificationsLoading,
     channelGovernanceNotificationActionId,
+    aiCouncils,
+    aiCouncilsLoading,
+    channelCouncilPolicy,
+    channelEffectiveCouncil,
+    channelCouncilLoading,
+    channelCouncilSaving,
   } = workspaceDomain.state;
   const {
     setChannels,
@@ -290,6 +296,9 @@ export function AppShell(): JSX.Element {
     refreshChannelGovernanceNotifications,
     markChannelGovernanceNotificationSeen,
     dismissChannelGovernanceNotification,
+    refreshAiCouncils,
+    refreshSelectedChannelCouncil,
+    updateSelectedChannelCouncilPolicy,
     refreshChannelMessageRouteDecisions,
     refreshChannelIntentDecisions,
     refreshChannelProtocol,
@@ -1177,6 +1186,7 @@ export function AppShell(): JSX.Element {
     }
     if (activeView === "teammates") {
       void refreshAiTeammates();
+      void refreshAiCouncils();
       void refreshChannels();
       void refreshProviders();
       void refreshMcp();
@@ -1208,6 +1218,7 @@ export function AppShell(): JSX.Element {
       void refreshChannelFiles(selectedChannelId);
       void refreshChannelProtocol(selectedChannelId);
       void refreshChannelGovernanceNotifications(selectedChannelId);
+      void refreshSelectedChannelCouncil(selectedChannelId);
       void refreshExternalWorkCiTriage(form.cwd.trim(), selectedChannelId);
       void refreshWorkItems(form.cwd.trim());
       if (activeView === "settings") {
@@ -1219,6 +1230,14 @@ export function AppShell(): JSX.Element {
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      return;
+    }
+    void refreshAiCouncils(workspaceCwd);
+  }, [form.cwd]);
 
   useEffect(() => {
     if (!selectedChannelBranchId) {
@@ -1334,6 +1353,7 @@ export function AppShell(): JSX.Element {
           refreshProviders(defaultWorkspaceCwd),
           refreshChannels(defaultWorkspaceCwd),
           refreshAiTeammates(defaultWorkspaceCwd),
+          refreshAiCouncils(defaultWorkspaceCwd),
           refreshMcp(defaultWorkspaceCwd),
           refreshRuns(defaultWorkspaceCwd),
           refreshApprovals(defaultWorkspaceCwd),
@@ -1404,6 +1424,7 @@ export function AppShell(): JSX.Element {
       refreshChannelRunArtifacts(form.cwd.trim(), channelId, channelRunsForArtifacts),
       refreshChannelProtocol(channelId),
       refreshChannelGovernanceNotifications(channelId),
+      refreshSelectedChannelCouncil(channelId),
       refreshRuns(),
       refreshApprovals(),
       refreshExternalWorkCiTriage(form.cwd.trim(), channelId),
@@ -1581,6 +1602,12 @@ export function AppShell(): JSX.Element {
             channelGovernanceNotifications={channelGovernanceNotifications}
             channelGovernanceNotificationsLoading={channelGovernanceNotificationsLoading}
             channelGovernanceNotificationActionId={channelGovernanceNotificationActionId}
+            aiCouncils={aiCouncils}
+            aiCouncilsLoading={aiCouncilsLoading}
+            channelCouncilPolicy={channelCouncilPolicy}
+            channelEffectiveCouncil={channelEffectiveCouncil}
+            channelCouncilLoading={channelCouncilLoading}
+            channelCouncilSaving={channelCouncilSaving}
             externalWorkCiTriage={externalWorkCiTriage}
             externalWorkCiTriageLoading={externalWorkCiTriageLoading}
             durableWorkItems={durableWorkItems}
@@ -1684,6 +1711,9 @@ export function AppShell(): JSX.Element {
             onRefreshChannelGovernanceNotifications={() => void refreshChannelGovernanceNotifications()}
             onMarkChannelGovernanceNotificationSeen={(notificationId) => void markChannelGovernanceNotificationSeen(notificationId)}
             onDismissChannelGovernanceNotification={(notificationId) => void dismissChannelGovernanceNotification(notificationId)}
+            onRefreshAiCouncils={() => void refreshAiCouncils()}
+            onRefreshChannelCouncil={() => void refreshSelectedChannelCouncil()}
+            onUpdateChannelCouncilPolicy={(input) => updateSelectedChannelCouncilPolicy(input)}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
             onRefreshTasks={() => void refreshTasks()}
             onSelectTask={setSelectedTaskId}
@@ -1741,19 +1771,22 @@ export function AppShell(): JSX.Element {
                   />
                 ) : activeView === "teammates" ? (
                   <AiTeammatesPage
-                cwd={form.cwd}
-                skillPack={builtinSkillPack}
-                providers={providers}
-                channels={channels}
-                localTeammates={localTeammates}
-                createRequestId={teammateCreateRequestId}
-                onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
-                onCreateTeammate={(input) => void addAiTeammate(input)}
-                onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
-                onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
-                onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
-                onOpenTeammate={selectAiTeammate}
-                onOpenProviders={() => openPlainView("providers")}
+                    cwd={form.cwd}
+                    skillPack={builtinSkillPack}
+                    providers={providers}
+                    channels={channels}
+                    localTeammates={localTeammates}
+                    aiCouncils={aiCouncils}
+                    aiCouncilsLoading={aiCouncilsLoading}
+                    createRequestId={teammateCreateRequestId}
+                    onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
+                    onCreateTeammate={(input) => void addAiTeammate(input)}
+                    onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
+                    onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
+                    onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
+                    onRefreshAiCouncils={() => void refreshAiCouncils()}
+                    onOpenTeammate={selectAiTeammate}
+                    onOpenProviders={() => openPlainView("providers")}
                   />
                 ) : activeView === "runs" ? (
                   <RunHistory

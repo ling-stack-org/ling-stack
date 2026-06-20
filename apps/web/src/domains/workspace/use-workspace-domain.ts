@@ -2,6 +2,8 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 import {
   getChannelCollaborationProtocol,
   getChannelBrief,
+  getChannelCouncilPolicy,
+  getChannelEffectiveCouncil,
   listChannelAttachments,
   listChannelContextSummaries,
   listChannelDecisions,
@@ -14,6 +16,7 @@ import {
   listChannelWorkflowSteps,
   listChannelWorkflows,
   listExecutionActions,
+  listAiCouncils,
   listChannels,
   listGovernanceNotifications,
   listMemoryObjects,
@@ -23,6 +26,7 @@ import {
   listUsedMemoryEvents,
   markGovernanceNotificationSeen,
   dismissGovernanceNotification,
+  updateChannelCouncilPolicy,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
@@ -33,11 +37,13 @@ import {
 import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
 import type {
   Channel,
+  AiCouncil,
   ChannelBranch,
   ChannelAttachment,
   ChannelBrief,
   ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
+  ChannelCouncilPolicy,
   ChannelCreateFormState,
   ChannelDecision,
   ChannelExecutionProposal,
@@ -59,6 +65,8 @@ import type {
   Task,
   TaskEditFormState,
   TaskFormState,
+  EffectiveChannelCouncilProjection,
+  UpdateChannelCouncilPolicyRequest,
   UsedMemoryEvent,
 } from "../../types.js";
 
@@ -123,6 +131,12 @@ export interface WorkspaceState {
   readonly channelGovernanceNotifications: readonly GovernanceNotification[];
   readonly channelGovernanceNotificationsLoading: boolean;
   readonly channelGovernanceNotificationActionId: string;
+  readonly aiCouncils: readonly AiCouncil[];
+  readonly aiCouncilsLoading: boolean;
+  readonly channelCouncilPolicy: ChannelCouncilPolicy | undefined;
+  readonly channelEffectiveCouncil: EffectiveChannelCouncilProjection | undefined;
+  readonly channelCouncilLoading: boolean;
+  readonly channelCouncilSaving: boolean;
 }
 
 export interface WorkspaceActions {
@@ -164,6 +178,9 @@ export interface WorkspaceActions {
   readonly refreshChannelGovernanceNotifications: (channelId?: string) => Promise<void>;
   readonly markChannelGovernanceNotificationSeen: (notificationId: string) => Promise<void>;
   readonly dismissChannelGovernanceNotification: (notificationId: string) => Promise<void>;
+  readonly refreshAiCouncils: (cwd?: string) => Promise<void>;
+  readonly refreshSelectedChannelCouncil: (channelId?: string) => Promise<void>;
+  readonly updateSelectedChannelCouncilPolicy: (input: UpdateChannelCouncilPolicyRequest, channelId?: string) => Promise<void>;
   readonly refreshChannelMessageRouteDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelIntentDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelProtocol: (channelId?: string) => Promise<void>;
@@ -232,6 +249,12 @@ export function useWorkspaceDomain(input: {
   const [channelGovernanceNotifications, setChannelGovernanceNotifications] = useState<readonly GovernanceNotification[]>([]);
   const [channelGovernanceNotificationsLoading, setChannelGovernanceNotificationsLoading] = useState(false);
   const [channelGovernanceNotificationActionId, setChannelGovernanceNotificationActionId] = useState("");
+  const [aiCouncils, setAiCouncils] = useState<readonly AiCouncil[]>([]);
+  const [aiCouncilsLoading, setAiCouncilsLoading] = useState(false);
+  const [channelCouncilPolicy, setChannelCouncilPolicy] = useState<ChannelCouncilPolicy | undefined>();
+  const [channelEffectiveCouncil, setChannelEffectiveCouncil] = useState<EffectiveChannelCouncilProjection | undefined>();
+  const [channelCouncilLoading, setChannelCouncilLoading] = useState(false);
+  const [channelCouncilSaving, setChannelCouncilSaving] = useState(false);
   const [error, setError] = useState<DomainError | undefined>();
   const loadGuard = useLatestKeyedRequestGuard();
 
@@ -302,6 +325,94 @@ export function useWorkspaceDomain(input: {
       if (loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) {
         setTasksLoading(false);
       }
+    }
+  }
+
+  async function refreshAiCouncils(cwd = input.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setAiCouncils([]);
+      setAiCouncilsLoading(false);
+      return;
+    }
+
+    const token = loadGuard.next(`aiCouncils:${cwd}`);
+    setAiCouncilsLoading(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const response = await listAiCouncils(cwd, { limit: 100 });
+      if (!loadGuard.isCurrent(`aiCouncils:${cwd}`, token)) {
+        return;
+      }
+      setAiCouncils(response.councils);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    } finally {
+      if (loadGuard.isCurrent(`aiCouncils:${cwd}`, token)) {
+        setAiCouncilsLoading(false);
+      }
+    }
+  }
+
+  async function refreshSelectedChannelCouncil(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId) {
+      setChannelCouncilPolicy(undefined);
+      setChannelEffectiveCouncil(undefined);
+      setChannelCouncilLoading(false);
+      return;
+    }
+
+    const token = loadGuard.next(`channelCouncil:${cwd}:${channelId}`);
+    setChannelCouncilLoading(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const [policyResponse, effectiveResponse] = await Promise.all([
+        getChannelCouncilPolicy(cwd, channelId),
+        getChannelEffectiveCouncil(cwd, channelId),
+      ]);
+      if (!loadGuard.isCurrent(`channelCouncil:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelCouncilPolicy(policyResponse.policy);
+      setChannelEffectiveCouncil(effectiveResponse.effectiveCouncil);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    } finally {
+      if (loadGuard.isCurrent(`channelCouncil:${cwd}:${channelId}`, token)) {
+        setChannelCouncilLoading(false);
+      }
+    }
+  }
+
+  async function updateSelectedChannelCouncilPolicy(
+    policyInput: UpdateChannelCouncilPolicyRequest,
+    channelId = selectedChannelId,
+  ): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId || channelCouncilSaving) {
+      return;
+    }
+
+    setChannelCouncilSaving(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const policyResponse = await updateChannelCouncilPolicy(cwd, channelId, policyInput);
+      const effectiveResponse = await getChannelEffectiveCouncil(cwd, channelId);
+      setChannelCouncilPolicy(policyResponse.policy);
+      setChannelEffectiveCouncil(effectiveResponse.effectiveCouncil);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "mutation", message });
+      input.setErrorMessage(message);
+    } finally {
+      setChannelCouncilSaving(false);
     }
   }
 
@@ -816,6 +927,10 @@ export function useWorkspaceDomain(input: {
     setChannelGovernanceNotifications([]);
     setChannelGovernanceNotificationsLoading(false);
     setChannelGovernanceNotificationActionId("");
+    setChannelCouncilPolicy(undefined);
+    setChannelEffectiveCouncil(undefined);
+    setChannelCouncilLoading(false);
+    setChannelCouncilSaving(false);
     resetChannelProtocol();
   }
 
@@ -863,6 +978,12 @@ export function useWorkspaceDomain(input: {
     setChannelGovernanceNotifications([]);
     setChannelGovernanceNotificationsLoading(false);
     setChannelGovernanceNotificationActionId("");
+    setAiCouncils([]);
+    setAiCouncilsLoading(false);
+    setChannelCouncilPolicy(undefined);
+    setChannelEffectiveCouncil(undefined);
+    setChannelCouncilLoading(false);
+    setChannelCouncilSaving(false);
     resetChannelProtocol();
     setError(undefined);
   }
@@ -913,6 +1034,12 @@ export function useWorkspaceDomain(input: {
       channelGovernanceNotifications,
       channelGovernanceNotificationsLoading,
       channelGovernanceNotificationActionId,
+      aiCouncils,
+      aiCouncilsLoading,
+      channelCouncilPolicy,
+      channelEffectiveCouncil,
+      channelCouncilLoading,
+      channelCouncilSaving,
     },
     actions: {
       setChannels,
@@ -953,6 +1080,9 @@ export function useWorkspaceDomain(input: {
       refreshChannelGovernanceNotifications,
       markChannelGovernanceNotificationSeen,
       dismissChannelGovernanceNotification,
+      refreshAiCouncils,
+      refreshSelectedChannelCouncil,
+      updateSelectedChannelCouncilPolicy,
       refreshChannelMessageRouteDecisions,
       refreshChannelIntentDecisions,
       refreshChannelProtocol,
@@ -961,7 +1091,7 @@ export function useWorkspaceDomain(input: {
       resetForCwd,
     },
     refresh: refreshChannels,
-    isLoading: channelsLoading || tasksLoading || channelMessagesLoading || channelFilesLoading || channelProtocolLoading,
+    isLoading: channelsLoading || tasksLoading || channelMessagesLoading || channelFilesLoading || channelProtocolLoading || aiCouncilsLoading || channelCouncilLoading,
     error,
     clearError: () => setError(undefined),
   };

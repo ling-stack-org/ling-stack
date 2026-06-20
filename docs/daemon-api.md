@@ -839,6 +839,72 @@ daemon also updates the matching channel's `defaultTeammateId`.
 }
 ```
 
+## AI Councils
+
+AI councils are durable management collections of multiple AI teammates. They are not
+super-agents and do not grant tools, MCP access, provider credentials, deployment rights,
+external-send rights, or approval bypass. Ling Agent remains the protected system
+coordinator and is excluded from normal council membership.
+
+The daemon seeds a built-in `Development Council` with id
+`council_builtin_development`. It is available by default but is not attached to every
+channel automatically.
+
+```http
+GET /ai-councils?cwd=/path/to/project&includeArchived=false&limit=100
+GET /ai-councils/:id?cwd=/path/to/project
+GET /ai-councils/:id/members?cwd=/path/to/project
+PUT /ai-councils/:id/members?cwd=/path/to/project
+```
+
+`PUT /members` replaces the council member projection. Members reference durable
+teammate ids and may be disabled without deleting the teammate.
+
+```json
+{
+  "members": [
+    {
+      "teammateId": "teammate_builtin_engineer",
+      "slotKey": "engineer",
+      "label": "Engineer",
+      "position": 2,
+      "enabled": true
+    }
+  ]
+}
+```
+
+Channels attach councils by reference through a channel council policy. This does not
+copy council members into `teammate_channel_memberships`.
+
+```http
+GET /channels/:id/council-policy?cwd=/path/to/project
+PUT /channels/:id/council-policy?cwd=/path/to/project
+GET /channels/:id/effective-council?cwd=/path/to/project
+```
+
+Default channel policy has no attached councils:
+
+```json
+{
+  "attachedCouncilIds": [],
+  "preferredCouncilId": null
+}
+```
+
+Attach the built-in development council:
+
+```json
+{
+  "attachedCouncilIds": ["council_builtin_development"],
+  "preferredCouncilId": "council_builtin_development"
+}
+```
+
+`GET /channels/:id/effective-council` returns a stable projection for Web and desktop
+clients: the channel policy, attached active councils, effective member health, and the
+merged specialist roster from direct teammate memberships plus attached councils.
+
 ### Skill Bindings
 
 ```http

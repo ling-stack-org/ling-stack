@@ -225,6 +225,41 @@ test("builds governance notification endpoint URLs", async () => {
   assert.equal(mock.calls[4].method, "POST");
 });
 
+test("builds AI council endpoint URLs", async () => {
+  const mock = createFetchMock({ cwd: "/repo" });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  await client.listAiCouncils("/repo path", { includeArchived: true, limit: 9 });
+  await client.getAiCouncil("/repo path", "council 1");
+  await client.listAiCouncilMembers("/repo path", "council 1");
+  await client.replaceAiCouncilMembers("/repo path", "council 1", {
+    members: [{ teammateId: "teammate 1", slotKey: "engineer", enabled: false }],
+  });
+  await client.getChannelCouncilPolicy("/repo path", "channel 1");
+  await client.updateChannelCouncilPolicy("/repo path", "channel 1", {
+    attachedCouncilIds: ["council 1"],
+    preferredCouncilId: "council 1",
+  });
+  await client.getChannelEffectiveCouncil("/repo path", "channel 1");
+
+  assert.equal(mock.calls[0].url, "http://daemon.test/ai-councils?cwd=%2Frepo+path&includeArchived=true&limit=9");
+  assert.equal(mock.calls[1].url, "http://daemon.test/ai-councils/council%201?cwd=%2Frepo+path");
+  assert.equal(mock.calls[2].url, "http://daemon.test/ai-councils/council%201/members?cwd=%2Frepo+path");
+  assert.equal(mock.calls[3].method, "PUT");
+  assert.equal(mock.calls[3].url, "http://daemon.test/ai-councils/council%201/members?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), {
+    members: [{ teammateId: "teammate 1", slotKey: "engineer", enabled: false }],
+  });
+  assert.equal(mock.calls[4].url, "http://daemon.test/channels/channel%201/council-policy?cwd=%2Frepo+path");
+  assert.equal(mock.calls[5].method, "PUT");
+  assert.equal(mock.calls[5].url, "http://daemon.test/channels/channel%201/council-policy?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[5].body), {
+    attachedCouncilIds: ["council 1"],
+    preferredCouncilId: "council 1",
+  });
+  assert.equal(mock.calls[6].url, "http://daemon.test/channels/channel%201/effective-council?cwd=%2Frepo+path");
+});
+
 test("parses daemon health transport feature flags", async () => {
   const mock = createFetchMock({
     ok: true,

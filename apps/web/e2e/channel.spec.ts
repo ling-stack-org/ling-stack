@@ -123,7 +123,8 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const sidePanelActions = document.querySelector(".channel-side-panel-actions");
     const sidebarBottom = document.querySelector(".channel-left-drawer .sidebar-bottom");
     const approvals = document.querySelector(".channel-left-drawer .sidebar-inbox-alert");
-    const settings = document.querySelector(".channel-left-drawer .config-button");
+    const settings = Array.from(document.querySelectorAll(".channel-left-drawer .config-button"))
+      .find((button) => button.textContent?.trim() === "Settings");
     const chatPanelRect = chatPanel?.getBoundingClientRect();
     const chatRect = chat?.getBoundingClientRect();
     const composerRect = composer?.getBoundingClientRect();
@@ -1238,6 +1239,106 @@ test("channel settings can add and remove teammates without preferred specialist
     return isRecord(channelNotifications) ? channelNotifications.channel_engineering : undefined;
   }).toBe("muted");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBeNull();
+});
+
+test("channel settings attaches an AI council by reference", async ({ page }) => {
+  const consoleMessages: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") {
+      consoleMessages.push(`${message.type()}: ${message.text()}`);
+    }
+  });
+  page.on("pageerror", (error) => {
+    consoleMessages.push(`pageerror: ${error.message}`);
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, defaultTeammateId: undefined }
+      : channel,
+  );
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({
+      id: "teammate_builtin_designer",
+      templateId: "designer",
+      roleKey: "designer",
+      displayName: "Ling Designer",
+      description: "Owns channel design review.",
+    }),
+    createMockTeammate({
+      id: "teammate_builtin_qa",
+      templateId: "qa",
+      roleKey: "qa",
+      displayName: "Ling QA",
+      description: "Owns verification.",
+    }),
+    createMockTeammate({
+      id: "ling_agent",
+      templateId: "ling_agent",
+      kind: "system_teammate",
+      systemRole: "ling_agent",
+      displayName: "Ling Agent",
+      roleKey: "custom",
+    }),
+  ];
+  state.aiCouncilMembers = [
+    ...state.aiCouncilMembers,
+    {
+      councilId: "council_builtin_development",
+      teammateId: "ling_agent",
+      slotKey: "coordination",
+      label: "Coordination",
+      position: 99,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+  state.teammateChannelMemberships = [
+    {
+      teammateId: "teammate_builtin_engineer",
+      channelId: "channel_engineering",
+      isDefault: false,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  const councils = page.getByLabel("Channel AI councils");
+  await expect(councils).toContainText("No AI councils attached");
+  await councils.getByLabel("Attach AI council").selectOption("council_builtin_development");
+  await councils.getByRole("button", { name: "Attach" }).click();
+
+  await expect.poll(() => {
+    const policy = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === "channel_engineering");
+    return isRecord(policy) && Array.isArray(policy.attachedCouncilIds) ? policy.attachedCouncilIds.join(",") : "";
+  }).toBe("council_builtin_development");
+  await expect(councils).toContainText("Development Council");
+  await expect(councils.getByLabel("Projected council specialists")).toContainText("Ling Designer");
+  await expect(councils.getByLabel("Projected council specialists")).toContainText("Ling QA");
+  await expect(councils.getByLabel("Projected council specialists")).not.toContainText("Ling Agent");
+
+  const directTeammates = page.getByLabel("Channel teammates");
+  await expect(directTeammates.locator(".channel-teammate-chip")).toHaveCount(1);
+  await expect(directTeammates).toContainText("Ling Engineer");
+  await expect(directTeammates.locator(".channel-teammate-chip").filter({ hasText: "Ling Designer" })).toHaveCount(0);
+  expect(state.teammateChannelMemberships.filter((item) => isRecord(item) && item.channelId === "channel_engineering")).toHaveLength(1);
+
+  await councils.getByRole("button", { name: "Detach council" }).click();
+  await expect.poll(() => {
+    const policy = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === "channel_engineering");
+    return isRecord(policy) && Array.isArray(policy.attachedCouncilIds) ? policy.attachedCouncilIds.length : -1;
+  }).toBe(0);
+  await expect(councils).toContainText("No AI councils attached");
+  expect(state.teammateChannelMemberships.filter((item) => isRecord(item) && item.channelId === "channel_engineering")).toHaveLength(1);
+  expect(consoleMessages.filter((message) => !message.includes("Failed to load resource"))).toEqual([]);
 });
 
 test("channel message feed renders AI teammate avatar images", async ({ page }) => {

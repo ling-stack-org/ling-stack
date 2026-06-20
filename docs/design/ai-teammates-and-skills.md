@@ -15,8 +15,10 @@ Tools are atomic capabilities such as `read`, `grep`, `bash`, `edit`, and `write
 This design sits under the broader [Ling Framework](ling-framework.md). Memory-specific
 behavior for teammates is covered by [Ling Memory v1](ling-memory-v1.md).
 The concrete import, persona draft, Effective Skill UI, and skill-aware run implementation
-slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md). Automatic
-multi-teammate execution is covered by [Multi-Agent Orchestrator](multi-agent-orchestrator.md).
+slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md). The workspace-level
+grouping model for built-in and user-defined specialist rosters is covered by
+[AI Councils](ai-councils.md). Automatic multi-teammate execution is covered by
+[Multi-Agent Orchestrator](multi-agent-orchestrator.md).
 The broader daemon and registry evolution is covered by
 [Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md).
 

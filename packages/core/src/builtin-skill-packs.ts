@@ -11,6 +11,19 @@ import type {
 } from "./skill-types.js";
 
 export const GSTACK_DEFAULT_SKILL_PACK_ID = "gstack-default";
+export const DEVELOPMENT_COUNCIL_ID = "council_builtin_development";
+export const DEVELOPMENT_COUNCIL_TEMPLATE_ID = "development";
+
+export const DEVELOPMENT_COUNCIL_MEMBER_TEMPLATE_IDS = [
+  "product-strategist",
+  "architect",
+  "engineer",
+  "designer",
+  "qa",
+  "security",
+  "release",
+  "docs",
+] as const;
 
 const chatReasoningCapabilities = ["chat", "reasoning"] as const satisfies readonly ProviderCapability[];
 const toolCallingCapabilities = ["chat", "tool_call"] as const satisfies readonly ProviderCapability[];

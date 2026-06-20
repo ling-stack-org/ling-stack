@@ -9,6 +9,7 @@ export * from "./api/run-request-builders.js";
 export * from "./api/providers.js";
 export * from "./api/channels.js";
 export * from "./api/teammates.js";
+export * from "./api/ai-councils.js";
 export * from "./api/memory.js";
 export * from "./api/governance-notifications.js";
 export * from "./api/attachments.js";
