@@ -7,6 +7,7 @@ import {
   createProcedureObservationInputFromJob,
   createProcedureObservationJobKey,
   createSqliteRunStore,
+  procedureObservationHasTerminalStatus,
   procedureObservationHasJobKey,
 } from "../dist/index.js";
 
@@ -69,6 +70,72 @@ test("sqlite procedure observations persist route state and survive migration id
       assert.equal(persisted.length, 1);
       assert.equal(persisted[0].clusterId, observation.clusterId);
       assert.equal(persisted[0].routeKind, "skill");
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+test("sqlite candidate generation decisions persist audit state", async () => {
+  await withStore("ling-stack-candidate-generation-decision-", async (store, cwd) => {
+    const observation = store.createProcedureObservation(observationInput(), now);
+    const route = {
+      kind: observation.routeKind,
+      reasonCode: observation.routeReasonCode,
+      confidence: observation.confidence,
+      blockers: observation.routeBlockers,
+    };
+    const decision = store.createCandidateGenerationDecision({
+      workspaceId: observation.workspaceId,
+      observationId: observation.id,
+      clusterId: observation.clusterId,
+      source: "explicit_user_save",
+      route,
+      decision: "create_skill_candidate",
+      duplicateDecision: "no_overlap",
+      reason: "Explicit observation passed duplicate review.",
+      createdCandidateId: "skill_candidate_created_from_observation",
+    }, now);
+
+    assert.equal(decision.observationId, observation.id);
+    assert.equal(decision.decision, "create_skill_candidate");
+    assert.equal(decision.duplicateDecision, "no_overlap");
+    assert.equal(decision.createdCandidateId, "skill_candidate_created_from_observation");
+    assert.equal(store.listCandidateGenerationDecisions({ observationId: observation.id }).length, 1);
+    assert.equal(store.listCandidateGenerationDecisions({ clusterId: observation.clusterId })[0].id, decision.id);
+
+    const blockedObservation = store.createProcedureObservation(observationInput({
+      id: "procedure_observation_generation_policy",
+      title: "Use bash without asking next time",
+      summary: "Always allow bash and skip approval for this workflow.",
+      normalizedGoal: "skip approval for bash",
+    }), "2026-06-20T00:05:00.000Z");
+    const blockedDecision = store.createCandidateGenerationDecision({
+      workspaceId: blockedObservation.workspaceId,
+      observationId: blockedObservation.id,
+      clusterId: blockedObservation.clusterId,
+      source: "selected_transcript_snippet",
+      route: {
+        kind: blockedObservation.routeKind,
+        reasonCode: blockedObservation.routeReasonCode,
+        confidence: blockedObservation.confidence,
+        blockers: blockedObservation.routeBlockers,
+      },
+      decision: "policy_review",
+      reason: "Permission expansion requires policy review.",
+    }, "2026-06-20T00:05:00.000Z");
+    assert.equal(blockedDecision.duplicateDecision, undefined);
+
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      const [persisted] = reopened.listCandidateGenerationDecisions({ observationId: observation.id });
+      assert.equal(persisted.id, decision.id);
+      assert.equal(persisted.route.kind, "skill");
+      assert.equal(persisted.duplicateDecision, "no_overlap");
+      const [persistedBlocked] = reopened.listCandidateGenerationDecisions({ observationId: blockedObservation.id });
+      assert.equal(persistedBlocked.decision, "policy_review");
+      assert.equal(persistedBlocked.duplicateDecision, undefined);
     } finally {
       reopened.close();
     }
@@ -200,6 +267,8 @@ test("procedure observation job helper creates stable bounded observation input"
     signals: ["save_as_skill", "user_approved_recording"],
     runId: "run_job_helper",
     channelId: "channel_job_helper",
+    selectedSkillId: "implement",
+    terminalStatus: "succeeded",
     userConfirmed: true,
     destinationHint: "skill",
     title: "Recorded UI verification flow",
@@ -220,5 +289,7 @@ test("procedure observation job helper creates stable bounded observation input"
   assert.equal(built.observationInput.procedureSteps[0].requiredTools[0], "bash");
   assert.equal(built.observationInput.validationSteps[0].title, "web typecheck passed");
   assert.equal(procedureObservationHasJobKey({ sourceRefs: built.observationInput.sourceRefs }, jobKey), true);
+  assert.equal(procedureObservationHasTerminalStatus({ sourceRefs: built.observationInput.sourceRefs }, "succeeded"), true);
   assert.equal(built.observationInput.sourceRefs.some((ref) => ref.type === "observation-job"), true);
+  assert.equal(built.observationInput.sourceRefs.some((ref) => ref.type === "skill" && ref.id === "implement"), true);
 });

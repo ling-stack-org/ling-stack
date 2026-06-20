@@ -155,6 +155,7 @@ export type SkillCandidateReviewAction =
 export type SkillCandidateReviewActor = "user" | "system";
 
 export type SkillCandidateSourceRefType =
+  | "skill"
   | "manual"
   | "message"
   | "decision"
@@ -294,6 +295,39 @@ export interface ProcedureObservationCluster {
   readonly lastObservedAt: string;
 }
 
+export type CandidateGenerationDecisionSource =
+  | "explicit_user_save"
+  | "approved_recording"
+  | "post_run_terminal"
+  | "selected_transcript_snippet"
+  | "workflow_fanin"
+  | "correction_health";
+
+export type CandidateGenerationDecisionAction =
+  | "append_evidence"
+  | "create_skill_candidate"
+  | "create_channel_protocol_candidate"
+  | "create_playbook_candidate"
+  | "create_memory_candidate"
+  | "create_automation_candidate"
+  | "policy_review"
+  | "reject";
+
+export interface CandidateGenerationDecision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly observationId: string;
+  readonly clusterId: string;
+  readonly source: CandidateGenerationDecisionSource;
+  readonly route: CandidateRoute;
+  readonly decision: CandidateGenerationDecisionAction;
+  readonly blockers: readonly CandidateRouteBlocker[];
+  readonly duplicateDecision?: SkillDuplicateDecision;
+  readonly reason: string;
+  readonly createdCandidateId?: string;
+  readonly createdAt: string;
+}
+
 export interface ProcedureObservationRequest {
   readonly id?: string;
   readonly clusterId?: string;
@@ -362,6 +396,11 @@ export interface ProcedureObservationClusterResponse {
   readonly observations: readonly ProcedureObservation[];
 }
 
+export interface CandidateGenerationDecisionListResponse {
+  readonly cwd: string;
+  readonly decisions: readonly CandidateGenerationDecision[];
+}
+
 export interface ProcedureObservationResponse {
   readonly cwd: string;
   readonly observation: ProcedureObservation;
@@ -381,11 +420,44 @@ export interface SkillCandidateObserveResponse {
   readonly action: SkillCandidateObserveAction;
   readonly candidate?: SkillCandidate;
   readonly duplicateAnalysis?: SkillDuplicateAnalysis;
+  readonly generationDecision?: CandidateGenerationDecision;
 }
 
 export interface ProcedureObservationJobResponse extends SkillCandidateObserveResponse {
   readonly jobKey: string;
   readonly reusedObservation: boolean;
+}
+
+export type SkillInvocationSuggestionBlocker =
+  | "disabled_binding"
+  | "missing_tools"
+  | "missing_provider_capability"
+  | "channel_policy"
+  | "approval_mismatch"
+  | SkillHealthFindingKind;
+
+export interface SkillInvocationSuggestion {
+  readonly skillId: string;
+  readonly reason: string;
+  readonly confidence: ProcedureObservationConfidence;
+  readonly blockers: readonly SkillInvocationSuggestionBlocker[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+}
+
+export interface SkillInvocationSuggestionRequest {
+  readonly teammateId: string;
+  readonly channelId?: string;
+  readonly providerPresetId?: string;
+  readonly taskId?: string;
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly requestedSkillId?: string;
+  readonly limit?: number;
+}
+
+export interface SkillInvocationSuggestionResponse {
+  readonly cwd: string;
+  readonly suggestions: readonly SkillInvocationSuggestion[];
 }
 
 export interface SkillCandidateProcedureStep {

@@ -6665,6 +6665,66 @@ test("task run validates requestedSkillId and records the selected skill", async
   }
 });
 
+test("skill suggestions are visible recommendations and do not mutate run selection", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-suggestions-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_engineer",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+      runtimePolicy: {
+        maxConcurrentRuns: 1,
+        executionMode: "serial",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "reasoning", "tool_call"] })).provider;
+    const suggestions = await postJson(`${daemon.url}/skills/suggestions?cwd=${encodeURIComponent(cwd)}`, {
+      teammateId: "teammate_builtin_engineer",
+      channelId: channel.id,
+      providerPresetId: provider.id,
+      title: "Review this pull request",
+      prompt: "Find behavioral bugs, missing tests, and risky assumptions.",
+      limit: 5,
+    });
+    assert.equal(suggestions.suggestions[0].skillId, "review");
+    assert.equal(suggestions.suggestions[0].sourceRefs[0].type, "skill");
+
+    const afterExplicitSelection = await postJson(`${daemon.url}/skills/suggestions?cwd=${encodeURIComponent(cwd)}`, {
+      teammateId: "teammate_builtin_engineer",
+      channelId: channel.id,
+      providerPresetId: provider.id,
+      title: "Review this pull request",
+      prompt: "Find behavioral bugs, missing tests, and risky assumptions.",
+      requestedSkillId: "review",
+    });
+    assert.equal(afterExplicitSelection.suggestions.some((suggestion) => suggestion.skillId === "review"), false);
+
+    const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      title: "Review pull request without explicit skill",
+      prompt: "Find behavioral bugs and missing tests, but do not preselect a skill.",
+      assigneeTeammateId: "teammate_builtin_engineer",
+    })).task;
+    const runId = await postTaskRunAndReadReadyRunId(daemon.url, cwd, task.id, {
+      providerPresetId: provider.id,
+      skipProviderPreflight: true,
+    });
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.selectedSkillId ?? undefined, undefined);
+    assert.equal((runner.runs[0].appendSystemPrompt ?? []).some((line) => /Find concrete issues first/.test(line)), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("teammate persona draft import returns warnings without mutating durable teammate", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-persona-draft-"));
   const daemon = await startDaemonForTest();
@@ -7134,6 +7194,51 @@ test("procedure observation job API records explicit jobs idempotently before ca
     assert.equal(evidenceOnly.action, "evidence_recorded");
     assert.equal(evidenceOnly.reusedObservation, false);
     assert.equal(evidenceOnly.candidate, undefined);
+
+    const firstPostRun = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
+      source: "successful_tool_chain",
+      signals: ["long_successful_sequence"],
+      runId: "run_observation_job_post_run_one",
+      terminalStatus: "succeeded",
+      selectedSkillId: "implement",
+      userConfirmed: false,
+      title: "Successful regression verification chain",
+      summary: "Record a successful regression verification chain.",
+      normalizedGoal: "verify regression change",
+      positiveTriggers: ["regression verification"],
+      negativeTriggers: ["docs-only change"],
+      toolLabels: ["bash"],
+      validationLabels: ["regression typecheck passed"],
+    });
+    assert.equal(firstPostRun.action, "evidence_recorded");
+    assert.equal(firstPostRun.generationDecision.source, "post_run_terminal");
+    assert.equal(firstPostRun.generationDecision.decision, "append_evidence");
+    assert.equal(firstPostRun.observation.sourceRefs.some((ref) => ref.type === "skill" && ref.id === "implement"), true);
+
+    const secondPostRun = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
+      source: "successful_tool_chain",
+      signals: ["long_successful_sequence"],
+      runId: "run_observation_job_post_run_two",
+      terminalStatus: "succeeded",
+      selectedSkillId: "implement",
+      userConfirmed: false,
+      title: "Successful regression verification chain",
+      summary: "Record another successful regression verification chain.",
+      normalizedGoal: "verify regression change",
+      positiveTriggers: ["regression verification"],
+      negativeTriggers: ["docs-only change"],
+      toolLabels: ["bash"],
+      validationLabels: ["regression typecheck passed"],
+    });
+    assert.equal(secondPostRun.action, "candidate_created");
+    assert.equal(secondPostRun.candidate.origin, "ling-generated");
+    assert.equal(secondPostRun.generationDecision.source, "post_run_terminal");
+    assert.equal(secondPostRun.generationDecision.decision, "create_skill_candidate");
+    assert.equal(secondPostRun.generationDecision.createdCandidateId, secondPostRun.candidate.id);
+
+    const generationDecisions = await getJson(`${daemon.url}/candidate-generation-decisions?cwd=${encodeURIComponent(cwd)}&clusterId=${encodeURIComponent(secondPostRun.observation.clusterId)}&limit=10`);
+    assert.equal(generationDecisions.decisions.length, 2);
+    assert.deepEqual(generationDecisions.decisions.map((decision) => decision.decision).sort(), ["append_evidence", "create_skill_candidate"]);
 
     const blocked = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
       source: "manual_recording",

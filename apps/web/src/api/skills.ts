@@ -1,4 +1,6 @@
 import type {
+  CandidateGenerationDecisionAction,
+  CandidateGenerationDecisionListResponse,
   CandidateRouteKind,
   ProcedureObservationClusterListResponse,
   ProcedureObservationClusterResponse,
@@ -18,6 +20,8 @@ import type {
   SkillCandidateStatus,
   SkillCorrectionRequest,
   SkillCorrectionResponse,
+  SkillInvocationSuggestionRequest,
+  SkillInvocationSuggestionResponse,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
   SkillImportPublishResponse,
@@ -56,6 +60,22 @@ export async function listSkillUsageStats(
   options: { readonly skillId?: string } = {},
 ): Promise<SkillUsageStatsListResponse> {
   return daemonClient.listSkillUsageStats(cwd, options);
+}
+
+export async function suggestSkillInvocations(cwd: string, input: SkillInvocationSuggestionRequest): Promise<SkillInvocationSuggestionResponse> {
+  return daemonClient.suggestSkillInvocations(cwd, input);
+}
+
+export async function listCandidateGenerationDecisions(
+  cwd: string,
+  options: {
+    readonly observationId?: string;
+    readonly clusterId?: string;
+    readonly decision?: CandidateGenerationDecisionAction;
+    readonly limit?: number;
+  } = {},
+): Promise<CandidateGenerationDecisionListResponse> {
+  return daemonClient.listCandidateGenerationDecisions(cwd, options);
 }
 
 export async function recordSkillCorrection(cwd: string, skillId: string, input: SkillCorrectionRequest): Promise<SkillCorrectionResponse> {

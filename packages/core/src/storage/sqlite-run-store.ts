@@ -162,7 +162,10 @@ import {
   type SkillCandidateReviewRecord,
 } from "../skill-candidate-types.js";
 import type {
+  CandidateGenerationDecision,
+  CreateCandidateGenerationDecisionInput,
   CreateProcedureObservationInput,
+  ListCandidateGenerationDecisionsOptions,
   ListProcedureObservationClustersOptions,
   ListProcedureObservationsOptions,
   ProcedureObservation,
@@ -1425,6 +1428,14 @@ export class SqliteRunStore implements RunStore {
 
   getProcedureObservationCluster(id: string, workspaceId?: string): ProcedureObservationCluster | undefined {
     return this.procedureObservations.getProcedureObservationCluster(id, workspaceId);
+  }
+
+  createCandidateGenerationDecision(input: CreateCandidateGenerationDecisionInput, now: string): CandidateGenerationDecision {
+    return this.procedureObservations.createCandidateGenerationDecision(input, now);
+  }
+
+  listCandidateGenerationDecisions(options: ListCandidateGenerationDecisionsOptions = {}): CandidateGenerationDecision[] {
+    return this.procedureObservations.listCandidateGenerationDecisions(options);
   }
 
   appendSkillUsageEvent(input: CreateSkillUsageEventInput, now: string): SkillUsageEvent {

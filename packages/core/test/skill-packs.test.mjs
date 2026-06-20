@@ -10,6 +10,7 @@ import {
   providerCapabilities,
   readOnlyRunTools,
   riskyRunTools,
+  suggestSkillInvocations,
 } from "../dist/index.js";
 
 const validTools = new Set([...readOnlyRunTools, ...riskyRunTools]);
@@ -120,6 +121,81 @@ test("gstack default teammate templates can execute their default skills", () =>
       `${teammate.id} default skills should not be blocked by its own profile`,
     );
   }
+});
+
+test("skill invocation suggestions are read-only and respect effective skill gates", () => {
+  const pack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
+  assert.ok(pack);
+  const engineer = pack.teammateTemplates.find((teammate) => teammate.id === "engineer");
+  assert.ok(engineer);
+  const effectiveSkills = buildEffectiveTeammateSkills({
+    teammate: {
+      id: engineer.id,
+      allowedTools: engineer.allowedTools,
+      approvalProfile: engineer.approvalProfile,
+    },
+    bindings: engineer.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
+    skills: pack.skills,
+    channelAllowedTools: [...validTools],
+    providerCapabilities: [...validProviderCapabilities],
+  });
+
+  const suggestions = suggestSkillInvocations({
+    context: {
+      title: "Review this pull request",
+      prompt: "Find behavioral bugs, missing tests, and risky assumptions.",
+    },
+    effectiveSkills,
+  });
+
+  assert.equal(suggestions[0].skillId, "review");
+  assert.equal(suggestions[0].sourceRefs[0].type, "skill");
+  assert.equal(suggestions.length > 0, true);
+
+  const afterExplicitSelection = suggestSkillInvocations({
+    context: {
+      title: "Review this pull request",
+      prompt: "Find behavioral bugs, missing tests, and risky assumptions.",
+      requestedSkillId: "review",
+    },
+    effectiveSkills,
+  });
+  assert.equal(afterExplicitSelection.some((suggestion) => suggestion.skillId === "review"), false);
+
+  const blockedEffectiveSkills = buildEffectiveTeammateSkills({
+    teammate: {
+      id: engineer.id,
+      allowedTools: engineer.allowedTools,
+      approvalProfile: engineer.approvalProfile,
+    },
+    bindings: engineer.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
+    skills: pack.skills,
+    channelAllowedTools: ["read"],
+    providerCapabilities: ["chat"],
+  });
+  const blockedSuggestions = suggestSkillInvocations({
+    context: { title: "Implement a code fix", prompt: "Build and test the approved slice." },
+    effectiveSkills: blockedEffectiveSkills,
+  });
+  assert.equal(blockedSuggestions.some((suggestion) => suggestion.skillId === "implement"), false);
+
+  const healthBlocked = suggestSkillInvocations({
+    context: { title: "Review this pull request", prompt: "Find behavioral bugs and missing tests." },
+    effectiveSkills,
+    healthFindings: [{
+      id: "finding_review_failure",
+      kind: "high_failure_rate_skill",
+      severity: "warning",
+      skillIds: ["review"],
+      candidateIds: [],
+      title: "Review failures",
+      message: "Review has a high recent failure rate.",
+      recommendation: "Review before relying on this skill.",
+      recommendedAction: "review",
+    }],
+  });
+  assert.equal(healthBlocked[0].skillId, "review");
+  assert.deepEqual(healthBlocked[0].blockers, ["high_failure_rate_skill"]);
 });
 
 test("gstack default workflows reference existing teammates, skills, and steps", () => {
