@@ -38,6 +38,7 @@ export function MessageRow({
   errorNode,
   actionsNode,
 }: MessageRowProps): JSX.Element {
+  const ownMessage = authorType === "local-user";
   const legacySideClass = authorType === "local-user" ? "message-bubble-own" : "message-bubble-peer";
   const legacyToneClass = authorType === "system" ? "message-bubble-system" : "message-bubble-chat";
   const rootClassName = [
@@ -52,13 +53,22 @@ export function MessageRow({
 
   return (
     <article id={id} className={rootClassName}>
-      {avatar}
-      <div className="message-content">
-        <header>
+      {ownMessage ? (
+        <header className="message-row-own-identity">
           <strong>{authorName}</strong>
           {createdAtLabel ? <time>{createdAtLabel}</time> : null}
           {statusNode}
+          {avatar}
         </header>
+      ) : avatar}
+      <div className="message-content">
+        {ownMessage ? null : (
+          <header>
+            <strong>{authorName}</strong>
+            {createdAtLabel ? <time>{createdAtLabel}</time> : null}
+            {statusNode}
+          </header>
+        )}
         {bodyNode ?? (body ? <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} /> : null)}
         {attachmentsNode}
         {evidenceNode}
