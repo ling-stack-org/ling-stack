@@ -26,6 +26,9 @@ import type {
   ChannelMessageRouteDecisionListResponse,
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  ChannelProtocolCandidateListResponse,
+  ChannelProtocolCandidateMutationResponse,
+  ChannelProtocolCandidateReviewRequest,
   ChannelProtocolDraftStatus,
   ChannelWorkflowCancelResponse,
   ChannelWorkflowListResponse,
@@ -154,6 +157,31 @@ export async function applyChannelCollaborationProtocolDraft(
   draftId: string,
 ): Promise<ChannelCollaborationProtocolDraftMutationResponse> {
   return daemonClient.applyChannelCollaborationProtocolDraft(cwd, channelId, draftId);
+}
+
+export async function listChannelProtocolCandidates(
+  cwd: string,
+  channelId: string,
+  options: { readonly status?: ChannelProtocolDraftStatus; readonly limit?: number } = {},
+): Promise<ChannelProtocolCandidateListResponse> {
+  return daemonClient.listChannelProtocolCandidates(cwd, channelId, options);
+}
+
+export async function createChannelProtocolCandidate(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelCollaborationProtocolDraftRequest,
+): Promise<ChannelProtocolCandidateMutationResponse> {
+  return daemonClient.createChannelProtocolCandidate(cwd, channelId, input);
+}
+
+export async function reviewChannelProtocolCandidate(
+  cwd: string,
+  channelId: string,
+  candidateId: string,
+  input: ChannelProtocolCandidateReviewRequest,
+): Promise<ChannelProtocolCandidateMutationResponse> {
+  return daemonClient.reviewChannelProtocolCandidate(cwd, channelId, candidateId, input);
 }
 
 export async function revertChannelCollaborationProtocol(cwd: string, channelId: string): Promise<ChannelCollaborationProtocolMutationResponse> {

@@ -495,6 +495,19 @@ decide whether a skill can run.
 
 ```http
 GET /skills?cwd=/path/to/project
+GET /skills/health?cwd=/path/to/project
+GET /skills/usage-events?cwd=/path/to/project
+GET /skills/usage-stats?cwd=/path/to/project
+POST /skills/:id/corrections?cwd=/path/to/project
+GET /procedure-observations?cwd=/path/to/project
+POST /procedure-observations?cwd=/path/to/project
+POST /procedure-observations/jobs?cwd=/path/to/project
+GET /skill-candidates?cwd=/path/to/project
+GET /skill-candidates/:id?cwd=/path/to/project
+POST /skill-candidates?cwd=/path/to/project
+POST /skill-candidates/observe?cwd=/path/to/project
+POST /skill-candidates/:id/review?cwd=/path/to/project
+POST /skill-candidates/:id/draft?cwd=/path/to/project
 POST /skills/refresh?cwd=/path/to/project
 POST /skills/import-draft?cwd=/path/to/project
 GET /skills/import-drafts/:id?cwd=/path/to/project
@@ -504,6 +517,193 @@ DELETE /skills/:id?cwd=/path/to/project
 
 `GET /skills` returns built-in definitions projected from `gstack-default` plus published
 workspace registry definitions. Built-in definitions are not duplicated into SQLite.
+
+`GET /skills/health` returns a read-only governance report over the effective skill
+registry, durable skill candidates, and local skill usage telemetry. It uses the same
+registry projection as `GET /skills`, accepts an optional `limit` query parameter, and
+does not create candidates, publish drafts, archive skills, or mutate review state.
+
+```http
+GET /skills/health?cwd=/path/to/project&limit=50
+```
+
+Health response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "report": {
+    "workspaceId": "workspace_default",
+    "generatedAt": "2026-06-20T00:00:00.000Z",
+    "staleCandidateDays": 30,
+    "summary": {
+      "totalSkills": 18,
+      "activeSkills": 18,
+      "generatedSkills": 0,
+      "pendingCandidates": 0,
+      "duplicateClusters": 0,
+      "conflictCount": 0,
+      "staleCandidates": 0,
+      "highFailureRateSkills": 0,
+      "findings": { "critical": 0, "warning": 0, "info": 0 }
+    },
+    "findings": []
+  }
+}
+```
+
+`GET /skills/usage-events` returns local event records used to rebuild skill governance
+statistics. Optional `skillId`, `candidateId`, `runId`, `kind`, and `limit` query
+parameters are supported. `GET /skills/usage-stats` returns aggregated stats and
+optionally accepts `skillId`.
+
+```http
+GET /skills/usage-events?cwd=/path/to/project&skillId=reusable-release-checklist&kind=failed&limit=50
+GET /skills/usage-stats?cwd=/path/to/project&skillId=reusable-release-checklist
+```
+
+Usage events are product telemetry, not authority. They do not mutate active skill
+definitions and do not disable, archive, supersede, bind, publish, or delete skills.
+Dashboards may window stats by time, but source events remain the rebuildable record
+until the workspace retention policy says otherwise.
+
+`POST /skills/:id/corrections` records a structured `user_corrected` event for an
+effective skill. This is the manual path for correction telemetry. It can include
+optional `candidateId`, `runId`, `teammateId`, and `channelId` references, but it does
+not create or update a `SkillCandidate`.
+
+```json
+{
+  "reason": "The checklist skipped release evidence collection.",
+  "candidateId": "skill_candidate_release_checklist",
+  "runId": "run_..."
+}
+```
+
+`GET /procedure-observations` lists bounded structured observations. Optional
+`clusterId`, `routeKind`, and `limit` query parameters are supported. `POST
+/procedure-observations` persists a structured observation, computes the conservative
+candidate route, and returns the observation plus route. The route can be `memory`,
+`channel_protocol`, `automation`, `skill`, `approval_policy_review`, or `reject`.
+
+Observation requests are intentionally structured and bounded. They do not accept raw
+transcripts, full prompts, secret values, or artifact bodies.
+
+```json
+{
+  "source": "explicit_user_request",
+  "signals": ["save_as_skill"],
+  "title": "Reusable UI verification flow",
+  "summary": "Capture the repeated UI verification flow.",
+  "normalizedGoal": "verify web ui change",
+  "positiveTriggers": ["web ui verification"],
+  "negativeTriggers": ["docs-only change"],
+  "procedureSteps": [
+    { "title": "Run Web typecheck", "instruction": "Run the Web typecheck.", "requiredTools": ["bash"] }
+  ],
+  "validationSteps": [
+    { "title": "Run Playwright smoke", "commandOrCheck": "corepack pnpm --filter @ling-stack/web exec playwright test" }
+  ],
+  "sourceRefs": [{ "type": "manual", "id": "manual_ui_observation" }],
+  "confidence": "high",
+  "reusableScore": 85
+}
+```
+
+`POST /procedure-observations/jobs` is the daemon-owned explicit observation job entry.
+It accepts bounded metadata for a user-confirmed recording, explicit save action, or
+structured evidence job. The daemon computes an idempotent `jobKey`, writes a
+`ProcedureObservation` first, and only creates a pending skill candidate when the job is
+explicitly confirmed, routes to `skill`, has no blockers, and duplicate analysis returns
+`no_overlap`. Non-confirmed successful tool chains are evidence-only. The route does not
+read raw transcripts or create active skills.
+
+```json
+{
+  "source": "manual_recording",
+  "signals": ["save_as_skill", "user_approved_recording"],
+  "runId": "run_...",
+  "userConfirmed": true,
+  "destinationHint": "skill",
+  "title": "Recorded release verification flow",
+  "summary": "Capture a user-approved release verification flow.",
+  "normalizedGoal": "verify release change",
+  "positiveTriggers": ["release verification"],
+  "negativeTriggers": ["docs-only release note"],
+  "toolLabels": ["bash"],
+  "validationLabels": ["release validation passed"]
+}
+```
+
+`POST /skill-candidates/observe` is the skill-governance compatibility route. It persists
+the same `ProcedureObservation`, then creates a pending `SkillCandidate` only when the
+router chooses `skill`, no route blockers are present, and duplicate analysis returns
+`no_overlap`. Duplicate or conflicting observations record evidence and return
+`evidence_recorded`; permission-expanding or unsafe observations return `blocked`.
+This route does not publish drafts, bind teammates, or mutate active skills.
+
+`GET /skill-candidates` lists durable candidate records. Optional `status`, `origin`, and
+`limit` query parameters are supported. `GET /skill-candidates/:id` returns the candidate
+plus review records.
+
+`POST /skill-candidates` creates an explicit manual candidate. The route does not accept
+raw transcripts and does not infer candidates from runs. If `duplicateAnalysis` is absent,
+the daemon computes duplicate overlap against effective skills before persisting the
+candidate.
+
+```json
+{
+  "title": "Reusable release checklist",
+  "summary": "Capture the repeated release checklist as a reviewed candidate skill.",
+  "definition": {
+    "workflowPhase": "ship",
+    "positiveTriggers": ["repeated release checklist"],
+    "negativeTriggers": ["one-off release note"],
+    "procedureSteps": [
+      { "title": "Collect release evidence", "instruction": "Read linked run and approval evidence." }
+    ],
+    "validationSteps": [
+      { "title": "Run skill health", "commandOrCheck": "GET /skills/health" }
+    ],
+    "requiredTools": ["read"],
+    "requiredProviderCapabilities": ["chat"]
+  },
+  "sourceRefs": [{ "type": "manual", "id": "manual_release_note" }]
+}
+```
+
+`POST /skill-candidates/:id/review` applies an auditable review action. Public HTTP review
+routes force `actor: "user"` even if the request body contains another actor. Review does
+not publish into the Skill Registry. `approve_for_draft` is blocked unless the candidate
+has negative triggers, validation steps, and no critical safety finding.
+
+```json
+{
+  "action": "approve_for_draft",
+  "reason": "Validated manually."
+}
+```
+
+`POST /skill-candidates/:id/draft` turns an `approved_for_draft` candidate into a normal
+`SkillImportDraft`. It does not publish the draft, bind teammates, or mutate the active
+registry. Duplicate decisions that require merge/update/conflict review
+(`update_existing`, `conflict_review`, `reject_duplicate`) block draft creation until a
+reviewer resolves the overlap.
+
+Draft-from-candidate response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "candidate": { "id": "skill_candidate_...", "status": "approved_for_draft" },
+  "draft": {
+    "id": "skill_draft_...",
+    "source": "custom",
+    "sourcePath": "skill-candidates/skill_candidate_...",
+    "definitions": []
+  }
+}
+```
 
 `POST /skills/refresh` recomputes the effective registry and returns a process-local
 `registryGeneration` plus `refreshedAt`. In the current slice this is a lightweight
@@ -962,6 +1162,16 @@ PATCH /handoffs/:id?cwd=/path/to/project
 GET /channels/:id/context-summaries?cwd=/path/to/project&targetType=task&targetId=task_...&limit=100
 POST /channels/:id/context-summaries?cwd=/path/to/project
 PATCH /context-summaries/:id?cwd=/path/to/project
+
+GET /channels/:id/protocol?cwd=/path/to/project
+PATCH /channels/:id/protocol?cwd=/path/to/project
+POST /channels/:id/protocol/revert?cwd=/path/to/project
+GET /channels/:id/protocol/drafts?cwd=/path/to/project&status=draft&limit=50
+POST /channels/:id/protocol/drafts?cwd=/path/to/project
+POST /channels/:id/protocol/drafts/:draftId/apply?cwd=/path/to/project
+GET /channels/:id/protocol-candidates?cwd=/path/to/project&status=draft&limit=50
+POST /channels/:id/protocol-candidates?cwd=/path/to/project
+POST /channels/:id/protocol-candidates/:candidateId/review?cwd=/path/to/project
 ```
 
 Brief `GET` returns an empty Brief-shaped record when no Brief has been saved yet.
@@ -983,6 +1193,23 @@ message thread id in the same channel.
 
 All source ids are channel-scoped. Unknown or cross-channel source references return a
 displayable `400` error. Missing channels return `404 channel_not_found`.
+
+`GET /channels/:id/protocol` returns the effective channel collaboration protocol:
+channel settings, workspace defaults, and protocol-only overrides resolved into one
+read model. `PATCH /channels/:id/protocol` edits channel-backed fields only:
+`responseLanguage`, `autoReplyMode`, and `defaultTeammateId`.
+
+Protocol-only fields use draft review before activation: `defaultWorkflowPreference`,
+`visibleMultiReplyMaxParticipants`, `privacyRules`, and `reviewRules`.
+`POST /channels/:id/protocol/drafts` creates a draft with `sourceRefs` and does not
+change the active protocol. Applying a draft validates base version and channel-scoped
+source refs, then writes the protocol override.
+
+`/channels/:id/protocol-candidates` is a governance alias over protocol drafts for the
+Skill Candidate and channel canvas module. Creating a candidate is equivalent to creating
+a protocol draft. Reviewing with `{"action":"approve"}` applies the draft; reviewing with
+`{"action":"reject"}` cancels it. Protocol candidates never grant tools, approvals,
+provider access, secrets, external-send authority, or workflow execution.
 
 ## Channel Handoff Workflows
 

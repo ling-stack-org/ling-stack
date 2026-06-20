@@ -167,7 +167,7 @@ export async function handleChannelCollaborationProtocol(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
-  action?: "revert" | "drafts" | "apply-draft",
+  action?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate",
   draftId?: string,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -190,7 +190,7 @@ export async function handleChannelCollaborationProtocol(
       return;
     }
 
-    if (action === "drafts" && request.method === "GET") {
+    if ((action === "drafts" || action === "candidates") && request.method === "GET") {
       const status = readDraftStatusFilter(url.searchParams.get("status"));
       writeJson(response, 200, {
         cwd,
@@ -204,7 +204,7 @@ export async function handleChannelCollaborationProtocol(
       return;
     }
 
-    if (action === "drafts" && request.method === "POST") {
+    if ((action === "drafts" || action === "candidates") && request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const draftInput = parseCreateProtocolDraftInput(body);
       const validationError = validateProtocolPatch(store, draftInput.proposedPatch, config);
@@ -230,6 +230,39 @@ export async function handleChannelCollaborationProtocol(
       writeJson(response, 201, {
         cwd,
         draft,
+        ...resolveEffectiveChannelCollaborationProtocol({ store, channel }),
+      });
+      return;
+    }
+
+    if (action === "review-candidate" && request.method === "POST") {
+      if (!draftId) {
+        writeJson(response, 400, { error: "bad_request", message: "Protocol candidate id is required." });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const reviewAction = readProtocolCandidateReviewAction(body);
+      if (reviewAction === "approve") {
+        const applied = applyProtocolDraft(store, channel, draftId, config);
+        if ("error" in applied) {
+          writeJson(response, applied.statusCode, applied.error);
+          return;
+        }
+        writeJson(response, 200, {
+          cwd,
+          draft: applied.draft,
+          ...resolveEffectiveChannelCollaborationProtocol({ store, channel: applied.channel }),
+        });
+        return;
+      }
+      const cancelled = cancelProtocolDraftCandidate(store, channel, draftId);
+      if ("error" in cancelled) {
+        writeJson(response, cancelled.statusCode, cancelled.error);
+        return;
+      }
+      writeJson(response, 200, {
+        cwd,
+        draft: cancelled.draft,
         ...resolveEffectiveChannelCollaborationProtocol({ store, channel }),
       });
       return;
@@ -388,6 +421,30 @@ function applyProtocolDraft(
   return { channel: nextChannel, draft: appliedDraft };
 }
 
+function cancelProtocolDraftCandidate(
+  store: RunStore,
+  channel: Channel,
+  draftId: string,
+):
+  | { readonly draft: ChannelCollaborationProtocolDraft }
+  | { readonly statusCode: number; readonly error: Record<string, unknown> } {
+  const draft = store.getChannelCollaborationProtocolDraft(draftId);
+  if (!draft || draft.channelId !== channel.id) {
+    return {
+      statusCode: 404,
+      error: { error: "protocol_candidate_not_found", message: `Channel protocol candidate not found: ${draftId}` },
+    };
+  }
+  if (draft.status !== "draft") {
+    return {
+      statusCode: 409,
+      error: { error: "protocol_candidate_not_reviewable", message: `Channel protocol candidate is ${draft.status}.`, draft },
+    };
+  }
+  const cancelled = store.updateChannelCollaborationProtocolDraft(draft.id, { status: "cancelled" }, new Date().toISOString()) ?? draft;
+  return { draft: cancelled };
+}
+
 function hasChannelFieldPatch(patch: ChannelCollaborationProtocolPatch): boolean {
   return patch.responseLanguage !== undefined || patch.autoReplyMode !== undefined || patch.defaultTeammateId !== undefined;
 }
@@ -539,6 +596,16 @@ function parseCreateProtocolDraftInput(value: unknown): {
     sourceRefs: readOptionalProtocolSourceRefs(value.sourceRefs),
     expiresAt: readOptionalString(value.expiresAt, "expiresAt"),
   };
+}
+
+function readProtocolCandidateReviewAction(value: unknown): "approve" | "reject" {
+  if (!isRecord(value)) {
+    throw new Error("Channel protocol candidate review request must be a JSON object");
+  }
+  if (value.action === "approve" || value.action === "reject") {
+    return value.action;
+  }
+  throw new Error("Channel protocol candidate review action must be approve or reject");
 }
 
 function readProtocolDraftPatch(value: unknown): ChannelCollaborationProtocolPatch {

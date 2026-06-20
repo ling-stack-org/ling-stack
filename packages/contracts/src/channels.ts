@@ -241,6 +241,19 @@ export interface ChannelCollaborationProtocolDraftListResponse {
   readonly drafts: readonly ChannelCollaborationProtocolDraft[];
 }
 
+export type ChannelProtocolCandidate = ChannelCollaborationProtocolDraft;
+
+export type ChannelProtocolCandidateReviewAction = "approve" | "reject";
+
+export interface ChannelProtocolCandidateReviewRequest {
+  readonly action: ChannelProtocolCandidateReviewAction;
+  readonly reason?: string;
+}
+
+export type ChannelProtocolCandidateListResponse = ChannelCollaborationProtocolDraftListResponse;
+
+export type ChannelProtocolCandidateMutationResponse = ChannelCollaborationProtocolDraftMutationResponse;
+
 export interface ChannelCollaborationProtocolMutationResponse extends ChannelCollaborationProtocolResponse {
   readonly revertedFields?: readonly string[];
 }

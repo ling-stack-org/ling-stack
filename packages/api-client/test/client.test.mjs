@@ -71,6 +71,47 @@ test("builds URL query parameters for list endpoints", async () => {
   await client.getEffectiveConfig("/repo path");
   await client.getStartupStatus("/repo path");
   await client.refreshStartupStatus("/repo path");
+  await client.getSkillHealth("/repo path", { limit: 13 });
+  await client.listSkillUsageEvents("/repo path", { skillId: "skill 1", candidateId: "candidate 1", runId: "run 1", kind: "failed", limit: 15 });
+  await client.listSkillUsageStats("/repo path", { skillId: "skill 1" });
+  await client.recordSkillCorrection("/repo path", "skill 1", { reason: "Wrong behavior.", runId: "run 1" });
+  await client.listSkillCandidates("/repo path", { status: "pending", origin: "manual-draft", limit: 14 });
+  await client.getSkillCandidate("/repo path", "candidate 1");
+  await client.createSkillCandidate("/repo path", { title: "Candidate", summary: "Candidate summary", definition: {}, sourceRefs: [] });
+  await client.reviewSkillCandidate("/repo path", "candidate 1", { action: "reject", reason: "Duplicate." });
+  await client.createSkillCandidateDraft("/repo path", "candidate 1");
+  await client.listChannelProtocolCandidates("/repo path", "channel 1", { status: "draft", limit: 6 });
+  await client.createChannelProtocolCandidate("/repo path", "channel 1", {
+    proposedPatch: { reviewRules: ["Require QA evidence."] },
+    reason: "Repeated review rule.",
+  });
+  await client.reviewChannelProtocolCandidate("/repo path", "channel 1", "candidate 1", { action: "reject", reason: "Not reusable." });
+  await client.listProcedureObservations("/repo path", { clusterId: "cluster 1", routeKind: "skill", limit: 8 });
+  await client.createProcedureObservation("/repo path", {
+    source: "explicit_user_request",
+    signals: ["save_as_skill"],
+    title: "Manual observation",
+    summary: "Manual observation summary",
+    normalizedGoal: "manual observation",
+    sourceRefs: [{ type: "manual", id: "manual 0" }],
+  });
+  await client.createProcedureObservationJob("/repo path", {
+    source: "manual_recording",
+    signals: ["save_as_skill", "user_approved_recording"],
+    runId: "run 1",
+    userConfirmed: true,
+    title: "Recorded observation",
+    summary: "Recorded observation summary",
+    normalizedGoal: "recorded observation",
+  });
+  await client.observeSkillCandidate("/repo path", {
+    source: "explicit_user_request",
+    signals: ["save_as_skill"],
+    title: "Candidate from observation",
+    summary: "Observation summary",
+    normalizedGoal: "candidate from observation",
+    sourceRefs: [{ type: "manual", id: "manual 1" }],
+  });
 
   assert.equal(mock.calls[0].url, "http://daemon.test/runs?cwd=%2Frepo+path&limit=25");
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/messages?cwd=%2Frepo&limit=15");
@@ -93,6 +134,31 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[18].url, "http://daemon.test/startup/status?cwd=%2Frepo+path");
   assert.equal(mock.calls[19].url, "http://daemon.test/startup/refresh?cwd=%2Frepo+path");
   assert.equal(mock.calls[19].method, "POST");
+  assert.equal(mock.calls[20].url, "http://daemon.test/skills/health?cwd=%2Frepo+path&limit=13");
+  assert.equal(mock.calls[21].url, "http://daemon.test/skills/usage-events?cwd=%2Frepo+path&skillId=skill+1&candidateId=candidate+1&runId=run+1&kind=failed&limit=15");
+  assert.equal(mock.calls[22].url, "http://daemon.test/skills/usage-stats?cwd=%2Frepo+path&skillId=skill+1");
+  assert.equal(mock.calls[23].url, "http://daemon.test/skills/skill%201/corrections?cwd=%2Frepo+path");
+  assert.equal(mock.calls[23].method, "POST");
+  assert.equal(mock.calls[24].url, "http://daemon.test/skill-candidates?cwd=%2Frepo+path&status=pending&origin=manual-draft&limit=14");
+  assert.equal(mock.calls[25].url, "http://daemon.test/skill-candidates/candidate%201?cwd=%2Frepo+path");
+  assert.equal(mock.calls[26].url, "http://daemon.test/skill-candidates?cwd=%2Frepo+path");
+  assert.equal(mock.calls[26].method, "POST");
+  assert.equal(mock.calls[27].url, "http://daemon.test/skill-candidates/candidate%201/review?cwd=%2Frepo+path");
+  assert.equal(mock.calls[27].method, "POST");
+  assert.equal(mock.calls[28].url, "http://daemon.test/skill-candidates/candidate%201/draft?cwd=%2Frepo+path");
+  assert.equal(mock.calls[28].method, "POST");
+  assert.equal(mock.calls[29].url, "http://daemon.test/channels/channel%201/protocol-candidates?cwd=%2Frepo+path&status=draft&limit=6");
+  assert.equal(mock.calls[30].url, "http://daemon.test/channels/channel%201/protocol-candidates?cwd=%2Frepo+path");
+  assert.equal(mock.calls[30].method, "POST");
+  assert.equal(mock.calls[31].url, "http://daemon.test/channels/channel%201/protocol-candidates/candidate%201/review?cwd=%2Frepo+path");
+  assert.equal(mock.calls[31].method, "POST");
+  assert.equal(mock.calls[32].url, "http://daemon.test/procedure-observations?cwd=%2Frepo+path&clusterId=cluster+1&routeKind=skill&limit=8");
+  assert.equal(mock.calls[33].url, "http://daemon.test/procedure-observations?cwd=%2Frepo+path");
+  assert.equal(mock.calls[33].method, "POST");
+  assert.equal(mock.calls[34].url, "http://daemon.test/procedure-observations/jobs?cwd=%2Frepo+path");
+  assert.equal(mock.calls[34].method, "POST");
+  assert.equal(mock.calls[35].url, "http://daemon.test/skill-candidates/observe?cwd=%2Frepo+path");
+  assert.equal(mock.calls[35].method, "POST");
 });
 
 test("parses daemon health transport feature flags", async () => {

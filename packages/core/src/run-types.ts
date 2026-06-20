@@ -213,6 +213,25 @@ import type {
   SkillRegistryEntry,
 } from "./skill-types.js";
 import type {
+  ApplySkillCandidateReviewActionInput,
+  CreateSkillCandidateInput,
+  ListSkillCandidatesOptions,
+  SkillCandidate,
+  SkillCandidateReviewRecord,
+} from "./skill-candidate-types.js";
+import type {
+  CreateProcedureObservationInput,
+  ListProcedureObservationsOptions,
+  ProcedureObservation,
+} from "./procedure-observation-types.js";
+import type {
+  CreateSkillUsageEventInput,
+  ListSkillUsageEventsOptions,
+  ListSkillUsageStatsOptions,
+  SkillUsageEvent,
+  SkillUsageStats,
+} from "./skill-usage-types.js";
+import type {
   CreateMcpServerInput,
   ListMcpServersOptions,
   ListMcpToolsOptions,
@@ -1335,6 +1354,19 @@ export interface RunStore {
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined;
+  createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate;
+  getSkillCandidate(id: string): SkillCandidate | undefined;
+  listSkillCandidates(options?: ListSkillCandidatesOptions): SkillCandidate[];
+  listSkillCandidateReviewRecords(candidateId: string): SkillCandidateReviewRecord[];
+  applySkillCandidateReviewAction(
+    input: ApplySkillCandidateReviewActionInput,
+    now: string,
+  ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord };
+  createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation;
+  listProcedureObservations(options?: ListProcedureObservationsOptions): ProcedureObservation[];
+  appendSkillUsageEvent(input: CreateSkillUsageEventInput, now: string): SkillUsageEvent;
+  listSkillUsageEvents(options?: ListSkillUsageEventsOptions): SkillUsageEvent[];
+  listSkillUsageStats(options?: ListSkillUsageStatsOptions): SkillUsageStats[];
   close(): void;
 }
 
@@ -1709,6 +1741,25 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillImportDraft"
   | "publishSkillImportDraft"
   | "archiveSkillRegistryEntry"
+>;
+
+export type SkillCandidateStoreFacet = RunStoreFacet<
+  | "createSkillCandidate"
+  | "getSkillCandidate"
+  | "listSkillCandidates"
+  | "listSkillCandidateReviewRecords"
+  | "applySkillCandidateReviewAction"
+>;
+
+export type ProcedureObservationStoreFacet = RunStoreFacet<
+  | "createProcedureObservation"
+  | "listProcedureObservations"
+>;
+
+export type SkillUsageStoreFacet = RunStoreFacet<
+  | "appendSkillUsageEvent"
+  | "listSkillUsageEvents"
+  | "listSkillUsageStats"
 >;
 
 export function createRunId(): string {

@@ -756,6 +756,278 @@
   line-height: 22px;
 }
 
+.settings-skill-health {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.settings-skill-candidate-review {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.settings-skill-health-head,
+.settings-skill-health-head span,
+.settings-skill-candidate-head,
+.settings-skill-candidate-head span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-skill-health-head,
+.settings-skill-candidate-head {
+  justify-content: space-between;
+}
+
+.settings-skill-health-head strong,
+.settings-skill-candidate-head strong {
+  color: #111111;
+  font-size: 13px;
+}
+
+.settings-skill-health-head small,
+.settings-skill-health-finding p,
+.settings-skill-health-finding small,
+.settings-skill-candidate-head small,
+.settings-skill-candidate-card p,
+.settings-skill-candidate-meta,
+.settings-skill-candidate-gates small {
+  color: #6b6b6b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-skill-health-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-skill-health-summary span {
+  display: grid;
+  gap: 2px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #fbfcfa;
+}
+
+.settings-skill-health-summary small {
+  overflow: hidden;
+  color: #6b6b6b;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-health-summary strong {
+  color: #111111;
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.settings-skill-health-findings {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-skill-candidate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-skill-health-finding {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.settings-skill-candidate-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.settings-skill-health-finding.critical {
+  border-color: #f1b8b3;
+  background: #fffafa;
+}
+
+.settings-skill-health-finding.warning {
+  border-color: #e2d4bc;
+  background: #fffaf0;
+}
+
+.settings-skill-health-finding-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-skill-candidate-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-skill-candidate-title {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-skill-candidate-title > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-skill-candidate-title strong,
+.settings-skill-candidate-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-candidate-title strong {
+  color: #111111;
+  font-size: 13px;
+}
+
+.settings-skill-candidate-card p {
+  margin: 0;
+}
+
+.settings-skill-candidate-meta,
+.settings-skill-candidate-gates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.settings-skill-candidate-gates > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-skill-candidate-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  min-width: 150px;
+}
+
+.settings-skill-health-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #111111;
+}
+
+.settings-skill-health-title strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-health-finding p {
+  margin: 0;
+}
+
+.settings-skill-health-finding-meta {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+  min-width: 0;
+}
+
+.settings-skill-health-severity {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.settings-skill-candidate-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.settings-skill-candidate-status.approved_for_draft {
+  color: #111111;
+}
+
+.settings-skill-candidate-status.needs_edit {
+  border-color: #e2d4bc;
+  color: #7a4d00;
+}
+
+.settings-skill-candidate-status.rejected,
+.settings-skill-candidate-status.quarantined,
+.settings-skill-candidate-status.expired {
+  border-color: #f1b8b3;
+  color: #b42318;
+}
+
+.settings-skill-health-severity.critical {
+  border-color: #f1b8b3;
+  color: #b42318;
+}
+
+.settings-skill-health-severity.warning {
+  border-color: #e2d4bc;
+  color: #7a4d00;
+}
+
 .settings-skill-library-toolbar {
   display: grid;
   grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1fr) auto;
@@ -1182,7 +1454,20 @@
     grid-template-columns: 1fr;
   }
 
-  .settings-skill-library-stats {
+  .settings-skill-library-stats,
+  .settings-skill-health-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-skill-health-finding,
+  .settings-skill-candidate-card {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-skill-health-finding-meta,
+  .settings-skill-candidate-actions {
+    justify-items: start;
+    align-items: start;
+    min-width: 0;
   }
 }

@@ -146,6 +146,12 @@ const APPROVAL_CHECKPOINTS_MIGRATION_VERSION = 67;
 const APPROVAL_CHECKPOINTS_MIGRATION_NAME = "create_approval_checkpoints";
 const USER_PROFILE_MIGRATION_VERSION = 68;
 const USER_PROFILE_MIGRATION_NAME = "create_user_profile";
+const SKILL_CANDIDATES_MIGRATION_VERSION = 69;
+const SKILL_CANDIDATES_MIGRATION_NAME = "create_skill_candidates";
+const PROCEDURE_OBSERVATIONS_MIGRATION_VERSION = 70;
+const PROCEDURE_OBSERVATIONS_MIGRATION_NAME = "create_procedure_observations";
+const SKILL_USAGE_EVENTS_MIGRATION_VERSION = 71;
+const SKILL_USAGE_EVENTS_MIGRATION_NAME = "create_skill_usage_events";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3477,6 +3483,135 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasUserProfileMigration) {
         context.recordMigration(USER_PROFILE_MIGRATION_VERSION, USER_PROFILE_MIGRATION_NAME);
+      }
+    }
+
+    const hasSkillCandidatesMigration = context.hasMigration(SKILL_CANDIDATES_MIGRATION_VERSION);
+    if (
+      !hasSkillCandidatesMigration ||
+      !context.hasTable("skill_candidates") ||
+      !context.hasTable("skill_candidate_review_records")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS skill_candidates (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          target_skill_id TEXT,
+          proposed_action TEXT NOT NULL,
+          status TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          definition_json TEXT NOT NULL,
+          duplicate_analysis_json TEXT NOT NULL,
+          safety_findings_json TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          review_notes_json TEXT NOT NULL,
+          expires_at TEXT,
+          superseded_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_candidates_workspace_status_updated
+        ON skill_candidates(workspace_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_skill_candidates_target_skill
+        ON skill_candidates(workspace_id, target_skill_id, status);
+
+        CREATE TABLE IF NOT EXISTS skill_candidate_review_records (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          candidate_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          previous_status TEXT NOT NULL,
+          next_status TEXT NOT NULL,
+          reason TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_candidate_reviews_candidate_created
+        ON skill_candidate_review_records(candidate_id, created_at);
+      `);
+      if (!hasSkillCandidatesMigration) {
+        context.recordMigration(SKILL_CANDIDATES_MIGRATION_VERSION, SKILL_CANDIDATES_MIGRATION_NAME);
+      }
+    }
+
+    const hasProcedureObservationsMigration = context.hasMigration(PROCEDURE_OBSERVATIONS_MIGRATION_VERSION);
+    if (
+      !hasProcedureObservationsMigration ||
+      !context.hasTable("procedure_observations")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS procedure_observations (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          cluster_id TEXT NOT NULL,
+          channel_id TEXT,
+          teammate_id TEXT,
+          task_id TEXT,
+          run_id TEXT,
+          source TEXT NOT NULL,
+          signals_json TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          normalized_goal TEXT NOT NULL,
+          positive_triggers_json TEXT NOT NULL,
+          negative_triggers_json TEXT NOT NULL,
+          procedure_steps_json TEXT NOT NULL,
+          validation_steps_json TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          confidence TEXT NOT NULL,
+          reusable_score REAL NOT NULL,
+          route_kind TEXT,
+          route_reason_code TEXT,
+          route_blockers_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_procedure_observations_cluster
+        ON procedure_observations(workspace_id, cluster_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_procedure_observations_route
+        ON procedure_observations(workspace_id, route_kind, created_at);
+      `);
+      if (!hasProcedureObservationsMigration) {
+        context.recordMigration(PROCEDURE_OBSERVATIONS_MIGRATION_VERSION, PROCEDURE_OBSERVATIONS_MIGRATION_NAME);
+      }
+    }
+
+    const hasSkillUsageEventsMigration = context.hasMigration(SKILL_USAGE_EVENTS_MIGRATION_VERSION);
+    if (
+      !hasSkillUsageEventsMigration ||
+      !context.hasTable("skill_usage_events")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS skill_usage_events (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          skill_id TEXT,
+          candidate_id TEXT,
+          run_id TEXT,
+          teammate_id TEXT,
+          channel_id TEXT,
+          kind TEXT NOT NULL,
+          reason TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_usage_events_skill
+        ON skill_usage_events(workspace_id, skill_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_skill_usage_events_candidate
+        ON skill_usage_events(workspace_id, candidate_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_skill_usage_events_run
+        ON skill_usage_events(workspace_id, run_id, kind);
+      `);
+      if (!hasSkillUsageEventsMigration) {
+        context.recordMigration(SKILL_USAGE_EVENTS_MIGRATION_VERSION, SKILL_USAGE_EVENTS_MIGRATION_NAME);
       }
     }
 }

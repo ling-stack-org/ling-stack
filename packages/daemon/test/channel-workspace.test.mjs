@@ -4249,6 +4249,37 @@ test("channel collaboration protocol drafts apply protocol-only overrides with s
     assert.equal(reverted.sources.defaultWorkflowPreference.source, "default");
     drafts = await getJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol/drafts?cwd=${encodeURIComponent(cwd)}&status=applied`);
     assert.equal(drafts.drafts.some((draft) => draft.id === created.draft.id), true);
+
+    const candidate = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol-candidates?cwd=${encodeURIComponent(cwd)}`, {
+      baseVersion: 0,
+      proposedPatch: { reviewRules: ["Keep candidate review separate from skill creation."] },
+      reason: "Channel canvas candidate.",
+      sourceRefs: [{ type: "message", id: message.message.id, label: "Canvas source" }],
+    });
+    assert.equal(candidate.draft.status, "draft");
+    const candidates = await getJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol-candidates?cwd=${encodeURIComponent(cwd)}&status=draft&limit=5`);
+    assert.equal(candidates.drafts.some((draft) => draft.id === candidate.draft.id), true);
+
+    const rejected = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol-candidates/${encodeURIComponent(candidate.draft.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      action: "reject",
+      reason: "Not needed now.",
+    });
+    assert.equal(rejected.draft.status, "cancelled");
+    assert.equal(rejected.protocol.protocolVersion, undefined);
+
+    const approvedCandidate = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol-candidates?cwd=${encodeURIComponent(cwd)}`, {
+      baseVersion: 0,
+      proposedPatch: { privacyRules: ["Do not turn every channel protocol into a skill."] },
+      reason: "Approved channel canvas candidate.",
+      sourceRefs: [{ type: "message", id: message.message.id, label: "Canvas source" }],
+    });
+    const reviewed = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/protocol-candidates/${encodeURIComponent(approvedCandidate.draft.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      action: "approve",
+      reason: "Matches channel canvas policy.",
+    });
+    assert.equal(reviewed.draft.status, "applied");
+    assert.equal(reviewed.protocol.protocolVersion, 1);
+    assert.deepEqual(reviewed.protocol.privacyRules, ["Do not turn every channel protocol into a skill."]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6649,6 +6680,339 @@ test("teammate persona draft import returns warnings without mutating durable te
     assert.ok(draft.draft.warnings.some((warning) => /cannot grant tools/i.test(warning)));
     const after = (await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`)).teammate;
     assert.equal(after.displayName, before.displayName);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("skill health API returns read-only registry findings", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-health-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const missingCwd = await fetch(`${daemon.url}/skills/health`);
+    assert.equal(missingCwd.status, 400);
+
+    const health = await getJson(`${daemon.url}/skills/health?cwd=${encodeURIComponent(cwd)}&limit=5`);
+    assert.equal(health.cwd, cwd);
+    assert.equal(health.report.workspaceId, "workspace_default");
+    assert.equal(typeof health.report.generatedAt, "string");
+    assert.equal(health.report.summary.totalSkills > 0, true);
+    assert.equal(health.report.summary.activeSkills > 0, true);
+    assert.equal(Array.isArray(health.report.findings), true);
+    assert.equal(health.report.findings.length <= 5, true);
+
+    const postHealth = await fetch(`${daemon.url}/skills/health?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(postHealth.status, 405);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("skill candidate API persists manual candidates and gates review approval", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-candidate-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const payload = {
+      id: "skill_candidate_api_manual",
+      title: "Reusable release checklist",
+      summary: "Capture the repeated release checklist as a reviewed candidate skill.",
+      definition: {
+        workflowPhase: "ship",
+        positiveTriggers: ["repeated release checklist"],
+        negativeTriggers: ["one-off release note"],
+        procedureSteps: [{ title: "Collect release evidence", instruction: "Read linked run and approval evidence." }],
+        validationSteps: [{ title: "Run skill health", commandOrCheck: "GET /skills/health", expectedResult: "No critical candidate findings." }],
+        requiredTools: ["read"],
+        requiredProviderCapabilities: ["chat"],
+      },
+      sourceRefs: [{ type: "manual", id: "manual_release_note", label: "Manual release note" }],
+    };
+    const created = await postJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}`, payload);
+    assert.equal(created.candidate.id, payload.id);
+    assert.equal(created.candidate.origin, "manual-draft");
+    assert.equal(created.candidate.proposedAction, "create");
+    assert.equal(created.candidate.status, "pending");
+    assert.equal(created.candidate.duplicateAnalysis.decision, "no_overlap");
+
+    const listed = await getJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}&status=pending&origin=manual-draft&limit=10`);
+    assert.deepEqual(listed.candidates.map((candidate) => candidate.id), [payload.id]);
+
+    const detail = await getJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.candidate.id, payload.id);
+    assert.deepEqual(detail.reviewRecords, []);
+
+    const approved = await postJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      action: "approve_for_draft",
+      reason: "Manual validation is present.",
+      actor: "system",
+    });
+    assert.equal(approved.candidate.status, "approved_for_draft");
+    assert.equal(approved.action.actor, "user");
+    assert.equal(approved.action.previousStatus, "pending");
+    assert.equal(approved.action.nextStatus, "approved_for_draft");
+
+    const reviewedDetail = await getJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(reviewedDetail.reviewRecords.length, 1);
+    assert.equal(reviewedDetail.reviewRecords[0].action, "approve_for_draft");
+
+    const draftResponse = await postJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}/draft?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(draftResponse.candidate.id, payload.id);
+    assert.equal(draftResponse.draft.source, "custom");
+    assert.equal(draftResponse.draft.sourcePath, `skill-candidates/${payload.id}`);
+    assert.equal(draftResponse.draft.definitions[0].definition.id, "reusable-release-checklist");
+    assert.match(draftResponse.draft.definitions[0].definition.promptFragments[0], /repeated release checklist/);
+
+    const publishedDraft = await postJson(`${daemon.url}/skills/import-drafts/${encodeURIComponent(draftResponse.draft.id)}/publish?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(publishedDraft.skills[0].id, "reusable-release-checklist");
+    assert.equal(publishedDraft.skills[0].packId, "ling-generated");
+    const listedSkills = await getJson(`${daemon.url}/skills?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(listedSkills.skills.some((skill) => skill.id === "reusable-release-checklist" && skill.source === "custom"));
+    const draftEvents = await getJson(`${daemon.url}/skills/usage-events?cwd=${encodeURIComponent(cwd)}&candidateId=${encodeURIComponent(payload.id)}&limit=10`);
+    assert.deepEqual(draftEvents.events.map((event) => event.kind).sort(), ["draft_created", "published"]);
+
+    const correction = await postJson(`${daemon.url}/skills/reusable-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "Correction evidence should be collected before release checklist validation.",
+      candidateId: payload.id,
+    });
+    assert.equal(correction.event.kind, "user_corrected");
+    assert.equal(correction.event.skillId, "reusable-release-checklist");
+    await postJson(`${daemon.url}/skills/reusable-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "Correction repeated for health finding.",
+      candidateId: payload.id,
+    });
+    const usageStats = await getJson(`${daemon.url}/skills/usage-stats?cwd=${encodeURIComponent(cwd)}&skillId=reusable-release-checklist`);
+    assert.equal(usageStats.stats[0].correctionCount, 2);
+
+    const missingGate = await postJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}`, {
+      id: "skill_candidate_missing_gate_api",
+      title: "Weak candidate",
+      summary: "Candidate without negative triggers cannot be approved.",
+      definition: {
+        workflowPhase: "operate",
+        positiveTriggers: ["weak repeated operation"],
+        negativeTriggers: [],
+        procedureSteps: [{ title: "Read evidence" }],
+        validationSteps: [{ title: "Manual check" }],
+        requiredTools: [],
+        requiredProviderCapabilities: [],
+      },
+      sourceRefs: [{ type: "manual", id: "manual_weak_note" }],
+    });
+    const pendingDraft = await fetch(`${daemon.url}/skill-candidates/${encodeURIComponent(missingGate.candidate.id)}/draft?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(pendingDraft.status, 400);
+    assert.match(await pendingDraft.text(), /approved_for_draft/);
+
+    const blocked = await fetch(`${daemon.url}/skill-candidates/${encodeURIComponent(missingGate.candidate.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approve_for_draft" }),
+    });
+    assert.equal(blocked.status, 400);
+    assert.match(await blocked.text(), /negative triggers/);
+
+    const health = await getJson(`${daemon.url}/skills/health?cwd=${encodeURIComponent(cwd)}&limit=20`);
+    assert.equal(health.report.summary.pendingCandidates, 2);
+    assert.ok(health.report.findings.some((finding) =>
+      finding.kind === "missing_negative_triggers" &&
+      finding.candidateIds.includes(missingGate.candidate.id)
+    ));
+    assert.ok(health.report.findings.some((finding) =>
+      finding.kind === "never_used_skill" &&
+      finding.skillIds.includes("reusable-release-checklist")
+    ));
+    assert.ok(health.report.findings.some((finding) =>
+      finding.kind === "high_user_correction_skill" &&
+      finding.skillIds.includes("reusable-release-checklist")
+    ));
+
+    const duplicateConflict = await postJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}`, {
+      id: "skill_candidate_duplicate_conflict_api",
+      title: "Duplicate release checklist",
+      summary: "A duplicate candidate that still needs conflict review.",
+      status: "approved_for_draft",
+      definition: {
+        workflowPhase: "ship",
+        positiveTriggers: ["release checklist"],
+        negativeTriggers: ["one-off note"],
+        procedureSteps: [{ title: "Read release evidence" }],
+        validationSteps: [{ title: "Run health report" }],
+        requiredTools: ["read"],
+        requiredProviderCapabilities: ["chat"],
+      },
+      duplicateAnalysis: {
+        decision: "conflict_review",
+        similarityScore: 0.8,
+        matchedSkillIds: ["reusable-release-checklist"],
+        matchedCandidateIds: [],
+        triggerOverlap: ["release checklist"],
+        conflictingFields: ["requiredTools"],
+        rationale: "Existing release checklist skill overlaps with this candidate.",
+      },
+      sourceRefs: [{ type: "manual", id: "manual_duplicate_note" }],
+    });
+    const duplicateDraft = await fetch(`${daemon.url}/skill-candidates/${encodeURIComponent(duplicateConflict.candidate.id)}/draft?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(duplicateDraft.status, 400);
+    assert.match(await duplicateDraft.text(), /conflict_review/);
+
+    const missing = await fetch(`${daemon.url}/skill-candidates/missing_candidate?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(missing.status, 404);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("procedure observation API routes structured observations before candidate creation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-procedure-observation-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const observationPayload = {
+      id: "procedure_observation_api_manual",
+      source: "explicit_user_request",
+      signals: ["save_as_skill"],
+      title: "Reusable UI verification flow",
+      summary: "Capture a repeated UI verification flow as a reviewed skill candidate.",
+      normalizedGoal: "verify web ui change",
+      positiveTriggers: ["web ui verification"],
+      negativeTriggers: ["docs-only change"],
+      procedureSteps: [{ title: "Run Web typecheck", instruction: "Run the Web typecheck.", requiredTools: ["bash"] }],
+      validationSteps: [{ title: "Run Playwright smoke", commandOrCheck: "corepack pnpm --filter @ling-stack/web exec playwright test", expectedResult: "Relevant tests pass." }],
+      sourceRefs: [{ type: "manual", id: "manual_ui_observation", label: "Manual UI observation" }],
+      confidence: "high",
+      reusableScore: 85,
+    };
+
+    const createdObservation = await postJson(`${daemon.url}/procedure-observations?cwd=${encodeURIComponent(cwd)}`, observationPayload);
+    assert.equal(createdObservation.observation.id, observationPayload.id);
+    assert.equal(createdObservation.route.kind, "skill");
+    assert.deepEqual(createdObservation.route.blockers, []);
+
+    const listedObservations = await getJson(`${daemon.url}/procedure-observations?cwd=${encodeURIComponent(cwd)}&routeKind=skill&limit=10`);
+    assert.deepEqual(listedObservations.observations.map((item) => item.id), [observationPayload.id]);
+
+    const observedCandidate = await postJson(`${daemon.url}/skill-candidates/observe?cwd=${encodeURIComponent(cwd)}`, {
+      ...observationPayload,
+      id: "procedure_observation_api_candidate",
+      title: "Reusable UI candidate flow",
+      normalizedGoal: "verify web ui candidate change",
+    });
+    assert.equal(observedCandidate.action, "candidate_created");
+    assert.equal(observedCandidate.route.kind, "skill");
+    assert.equal(observedCandidate.candidate.origin, "ling-generated");
+    assert.equal(observedCandidate.candidate.status, "pending");
+    assert.equal(observedCandidate.duplicateAnalysis.decision, "no_overlap");
+
+    const duplicateObservation = await postJson(`${daemon.url}/skill-candidates/observe?cwd=${encodeURIComponent(cwd)}`, {
+      ...observationPayload,
+      id: "procedure_observation_api_duplicate",
+      title: "Reusable UI candidate flow",
+      normalizedGoal: "verify web ui candidate change",
+    });
+    assert.equal(duplicateObservation.action, "evidence_recorded");
+    assert.equal(duplicateObservation.duplicateAnalysis.decision, "append_evidence");
+    assert.equal((await getJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}&origin=ling-generated&limit=10`)).candidates.length, 1);
+
+    const blocked = await postJson(`${daemon.url}/skill-candidates/observe?cwd=${encodeURIComponent(cwd)}`, {
+      ...observationPayload,
+      id: "procedure_observation_api_policy",
+      title: "Use bash without asking next time",
+      summary: "Always allow bash and skip approval for this workflow.",
+      normalizedGoal: "skip approval for bash",
+    });
+    assert.equal(blocked.action, "blocked");
+    assert.equal(blocked.route.kind, "approval_policy_review");
+    assert.deepEqual(blocked.route.blockers, ["permission_expansion"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("procedure observation job API records explicit jobs idempotently before candidate creation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-procedure-observation-job-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const jobPayload = {
+      id: "procedure_observation_job_recording",
+      source: "manual_recording",
+      signals: ["save_as_skill", "user_approved_recording"],
+      runId: "run_observation_job_recording",
+      channelId: "channel_observation_job_recording",
+      userConfirmed: true,
+      destinationHint: "skill",
+      title: "Recorded release verification flow",
+      summary: "Capture a user-approved release verification flow.",
+      normalizedGoal: "verify release change",
+      positiveTriggers: ["release verification"],
+      negativeTriggers: ["docs-only release note"],
+      toolLabels: ["bash"],
+      validationLabels: ["release validation passed"],
+    };
+
+    const created = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, jobPayload);
+    assert.equal(created.action, "candidate_created");
+    assert.equal(created.reusedObservation, false);
+    assert.equal(created.observation.id, jobPayload.id);
+    assert.equal(created.observation.sourceRefs.some((ref) => ref.type === "observation-job" && ref.id === created.jobKey), true);
+    assert.equal(created.candidate.origin, "recording");
+    assert.equal(created.candidate.status, "pending");
+
+    const repeated = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
+      ...jobPayload,
+      id: "procedure_observation_job_recording_repeat_should_reuse",
+    });
+    assert.equal(repeated.action, "evidence_recorded");
+    assert.equal(repeated.reusedObservation, true);
+    assert.equal(repeated.observation.id, created.observation.id);
+    assert.equal(repeated.jobKey, created.jobKey);
+    assert.equal((await getJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}&origin=recording&limit=10`)).candidates.length, 1);
+
+    const evidenceOnly = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
+      source: "successful_tool_chain",
+      signals: ["long_successful_sequence"],
+      runId: "run_observation_job_success_only",
+      userConfirmed: false,
+      title: "Successful UI validation chain",
+      summary: "Record a successful chain as evidence only.",
+      normalizedGoal: "verify ui change",
+      positiveTriggers: ["ui verification"],
+      negativeTriggers: ["docs-only change"],
+      toolLabels: ["bash"],
+      validationLabels: ["web typecheck passed"],
+    });
+    assert.equal(evidenceOnly.action, "evidence_recorded");
+    assert.equal(evidenceOnly.reusedObservation, false);
+    assert.equal(evidenceOnly.candidate, undefined);
+
+    const blocked = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
+      source: "manual_recording",
+      signals: ["save_as_skill", "user_approved_recording"],
+      runId: "run_observation_job_policy",
+      userConfirmed: true,
+      title: "Use bash without asking",
+      summary: "Always allow bash and skip approval for this workflow.",
+      normalizedGoal: "skip approval for bash",
+      positiveTriggers: ["skip approval"],
+      negativeTriggers: ["manual review needed"],
+      toolLabels: ["bash"],
+      validationLabels: ["manual check"],
+    });
+    assert.equal(blocked.action, "blocked");
+    assert.equal(blocked.route.kind, "approval_policy_review");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

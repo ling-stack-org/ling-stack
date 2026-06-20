@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  AlertTriangle,
   Archive,
   BookOpen,
   CheckCircle2,
   Eye,
+  Gauge,
   Loader2,
   Plus,
   RefreshCw,
@@ -12,16 +14,25 @@ import {
 } from "lucide-react";
 import {
   archiveSkill,
+  createSkillCandidateDraft,
   createSkillImportDraft,
+  getSkillHealth,
   listAiTeammates,
+  listSkillCandidates,
   listSkills,
   listTeammateSkills,
   publishSkillImportDraft,
+  reviewSkillCandidate,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type {
   AiTeammate,
+  SkillCandidate,
+  SkillCandidateReviewAction,
+  SkillHealthFinding,
+  SkillHealthReport,
+  SkillHealthSeverity,
   SkillImportDraft,
   SkillPackSource,
   SkillRegistryEntry,
@@ -43,6 +54,8 @@ interface TeammateSkillBindingSummary {
   readonly bindings: readonly TeammateSkillBinding[];
 }
 
+type SettingsTranslator = (key: string, values?: Readonly<Record<string, string | number>>) => string;
+
 const initialSkillImportForm: SkillImportForm = {
   name: "",
   sourcePath: "",
@@ -53,6 +66,8 @@ const initialSkillImportForm: SkillImportForm = {
 export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly cwd: string; readonly refreshToken?: number }): JSX.Element {
   const { t } = useI18n();
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
+  const [skillHealth, setSkillHealth] = useState<SkillHealthReport | undefined>();
+  const [skillCandidates, setSkillCandidates] = useState<readonly SkillCandidate[]>([]);
   const [bindingSummaries, setBindingSummaries] = useState<readonly TeammateSkillBindingSummary[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -138,8 +153,10 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setLoading(true);
     try {
       setError("");
-      const [skillsResponse, teammatesResponse] = await Promise.all([
+      const [skillsResponse, skillHealthResponse, candidatesResponse, teammatesResponse] = await Promise.all([
         listSkills(workspaceCwd),
+        getSkillHealth(workspaceCwd, { limit: 6 }),
+        listSkillCandidates(workspaceCwd, { limit: 8 }),
         listAiTeammates(workspaceCwd),
       ]);
       const visibleTeammates = teammatesResponse.teammates.filter((teammate) => teammate.status !== "disabled" && !teammate.hidden);
@@ -150,6 +167,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         })),
       );
       setSkills(skillsResponse.skills);
+      setSkillHealth(skillHealthResponse.report);
+      setSkillCandidates(candidatesResponse.candidates);
       setBindingSummaries(teammateSkillResponses);
       setMessage(t("Skill library refreshed"));
     } catch (loadError) {
@@ -198,6 +217,55 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setMessage(t("Published {count} skills", { count: response.skills.length }));
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : String(publishError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function reviewCandidate(candidateId: string, action: SkillCandidateReviewAction): Promise<void> {
+    if (saving) {
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      const response = await reviewSkillCandidate(workspaceCwd, candidateId, {
+        action,
+        reason: skillCandidateReviewReason(action, t),
+      });
+      setSkillCandidates((current) => current.map((candidate) => candidate.id === candidateId ? response.candidate : candidate));
+      await refresh();
+      setMessage(skillCandidateReviewMessage(action, t));
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : String(reviewError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createDraftFromCandidate(candidateId: string): Promise<void> {
+    if (saving) {
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      const response = await createSkillCandidateDraft(workspaceCwd, candidateId);
+      setImportDraft(response.draft);
+      setImportOpen(true);
+      setMessage(t("Draft ready"));
+    } catch (draftError) {
+      setError(draftError instanceof Error ? draftError.message : String(draftError));
     } finally {
       setSaving(false);
     }
@@ -258,6 +326,17 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         <span><small>{t("Drafts")}</small><strong>{stats.draft}</strong></span>
         <span><small>{t("Blocked")}</small><strong>{stats.blocked}</strong></span>
       </div>
+
+      <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
+
+      <SkillCandidateReviewPanel
+        candidates={skillCandidates}
+        loading={loading}
+        saving={saving}
+        onReview={(candidateId, action) => void reviewCandidate(candidateId, action)}
+        onCreateDraft={(candidateId) => void createDraftFromCandidate(candidateId)}
+        t={t}
+      />
 
       <div className="settings-skill-library-toolbar">
         <label className="settings-skill-search">
@@ -455,6 +534,182 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   );
 }
 
+function SkillHealthPanel({
+  report,
+  loading,
+  t,
+}: {
+  readonly report: SkillHealthReport | undefined;
+  readonly loading: boolean;
+  readonly t: (key: string, values?: Readonly<Record<string, string | number>>) => string;
+}): JSX.Element {
+  const findings = report?.findings ?? [];
+  const summary = report?.summary;
+  return (
+    <section className="settings-skill-health" aria-label={t("Skill Health")}>
+      <header className="settings-skill-health-head">
+        <span>
+          <Gauge size={15} />
+          <strong>{t("Skill Health")}</strong>
+        </span>
+        <small>
+          {report ? t("Generated {time}", { time: formatDateTime(report.generatedAt) }) : loading ? t("Loading skill health...") : t("No health report loaded")}
+        </small>
+      </header>
+      <div className="settings-skill-health-summary" aria-label={t("Skill health summary")}>
+        <span><small>{t("Critical")}</small><strong>{summary?.findings.critical ?? 0}</strong></span>
+        <span><small>{t("Warnings")}</small><strong>{summary?.findings.warning ?? 0}</strong></span>
+        <span><small>{t("Duplicate clusters")}</small><strong>{summary?.duplicateClusters ?? 0}</strong></span>
+        <span><small>{t("Conflicts")}</small><strong>{summary?.conflictCount ?? 0}</strong></span>
+      </div>
+      {findings.length === 0 ? (
+        <div className="compact-empty">{loading ? t("Loading skill health...") : t("No skill health findings")}</div>
+      ) : (
+        <div className="settings-skill-health-findings">
+          {findings.map((finding) => (
+            <SkillHealthFindingRow key={finding.id} finding={finding} t={t} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SkillHealthFindingRow({
+  finding,
+  t,
+}: {
+  readonly finding: SkillHealthFinding;
+  readonly t: (key: string, values?: Readonly<Record<string, string | number>>) => string;
+}): JSX.Element {
+  const relatedIds = [...finding.skillIds, ...finding.candidateIds].slice(0, 4);
+  return (
+    <article className={`settings-skill-health-finding ${finding.severity}`}>
+      <div className="settings-skill-health-finding-main">
+        <span className="settings-skill-health-title">
+          <AlertTriangle size={14} />
+          <strong>{finding.title}</strong>
+        </span>
+        <p>{finding.message}</p>
+        <small>{skillHealthKindLabel(finding.kind, t)} · {t("Action")}: {skillHealthActionLabel(finding.recommendedAction, t)}</small>
+      </div>
+      <div className="settings-skill-health-finding-meta">
+        <SkillHealthSeverityPill severity={finding.severity} t={t} />
+        <SkillTokenList values={relatedIds} emptyLabel={t("No related ids")} />
+      </div>
+    </article>
+  );
+}
+
+function SkillHealthSeverityPill({
+  severity,
+  t,
+}: {
+  readonly severity: SkillHealthSeverity;
+  readonly t: (key: string) => string;
+}): JSX.Element {
+  return <span className={`settings-skill-health-severity ${severity}`}>{skillHealthSeverityLabel(severity, t)}</span>;
+}
+
+function SkillCandidateReviewPanel({
+  candidates,
+  loading,
+  saving,
+  onReview,
+  onCreateDraft,
+  t,
+}: {
+  readonly candidates: readonly SkillCandidate[];
+  readonly loading: boolean;
+  readonly saving: boolean;
+  readonly onReview: (candidateId: string, action: SkillCandidateReviewAction) => void;
+  readonly onCreateDraft: (candidateId: string) => void;
+  readonly t: SettingsTranslator;
+}): JSX.Element {
+  const openCandidates = candidates.filter((candidate) => isOpenSkillCandidateStatus(candidate.status));
+  return (
+    <section className="settings-skill-candidate-review" aria-label={t("Skill Candidate Review")}>
+      <header className="settings-skill-candidate-head">
+        <span>
+          <CheckCircle2 size={15} />
+          <strong>{t("Skill Candidate Review")}</strong>
+        </span>
+        <small>{t("{open} open · {total} total", { open: openCandidates.length, total: candidates.length })}</small>
+      </header>
+      {openCandidates.length === 0 ? (
+        <div className="compact-empty">{loading ? t("Loading skill candidates...") : t("No open skill candidates")}</div>
+      ) : (
+        <div className="settings-skill-candidate-list">
+          {openCandidates.map((candidate) => {
+            const gate = skillCandidateGate(candidate, t);
+            const canApprove = (candidate.status === "pending" || candidate.status === "needs_edit") && !gate.approvalBlocked;
+            const canReject = !isTerminalSkillCandidateStatus(candidate.status);
+            const canCreateDraft = candidate.status === "approved_for_draft" && !gate.draftBlocked;
+            return (
+              <article key={candidate.id} className="settings-skill-candidate-card">
+                <div className="settings-skill-candidate-main">
+                  <div className="settings-skill-candidate-title">
+                    <span>
+                      <strong>{candidate.title}</strong>
+                      <small>{candidate.id} · {skillCandidateOriginLabel(candidate.origin, t)}</small>
+                    </span>
+                    <SkillCandidateStatusPill candidate={candidate} t={t} />
+                  </div>
+                  <p>{candidate.summary}</p>
+                  <div className="settings-skill-candidate-meta">
+                    <span>{t("Duplicate")}: {skillDuplicateDecisionLabel(candidate.duplicateAnalysis.decision, t)}</span>
+                    <span>{t("Similarity")}: {Math.round(candidate.duplicateAnalysis.similarityScore * 100)}%</span>
+                    <span>{t("Updated {time}", { time: formatDateTime(candidate.updatedAt) })}</span>
+                  </div>
+                  <div className="settings-skill-candidate-gates">
+                    <span>
+                      <small>{t("Gates")}</small>
+                      <SkillTokenList values={gate.labels} emptyLabel={t("Draft gates clear")} />
+                    </span>
+                    <span>
+                      <small>{t("Source refs")}</small>
+                      <SkillTokenList values={candidate.sourceRefs.map((ref) => `${ref.label ?? ref.type}:${ref.id}`)} emptyLabel={t("No source refs")} />
+                    </span>
+                  </div>
+                </div>
+                <div className="settings-skill-candidate-actions">
+                  {candidate.status === "approved_for_draft" ? (
+                    <button className="primary-button compact-button" type="button" onClick={() => onCreateDraft(candidate.id)} disabled={saving || !canCreateDraft}>
+                      <Upload size={14} />
+                      {t("Create registry draft")}
+                    </button>
+                  ) : (
+                    <button className="secondary-button compact-button" type="button" onClick={() => onReview(candidate.id, "approve_for_draft")} disabled={saving || !canApprove}>
+                      <CheckCircle2 size={14} />
+                      {t("Approve for draft")}
+                    </button>
+                  )}
+                  {canReject ? (
+                    <button className="secondary-button danger compact-button" type="button" onClick={() => onReview(candidate.id, "reject")} disabled={saving}>
+                      <Archive size={14} />
+                      {t("Reject candidate")}
+                    </button>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SkillCandidateStatusPill({
+  candidate,
+  t,
+}: {
+  readonly candidate: SkillCandidate;
+  readonly t: SettingsTranslator;
+}): JSX.Element {
+  return <span className={`settings-skill-candidate-status ${candidate.status}`}>{skillCandidateStatusLabel(candidate.status, t)}</span>;
+}
+
 function SkillTokenList({ values, emptyLabel }: { readonly values: readonly string[]; readonly emptyLabel: string }): JSX.Element {
   if (values.length === 0) {
     return <span className="settings-skill-empty-token">{emptyLabel}</span>;
@@ -526,6 +781,177 @@ function skillSourceLabel(source: SkillPackSource, t: (key: string) => string): 
     return "gstack";
   }
   return t("Custom");
+}
+
+function skillHealthSeverityLabel(severity: SkillHealthSeverity, t: (key: string) => string): string {
+  if (severity === "critical") {
+    return t("Critical");
+  }
+  if (severity === "warning") {
+    return t("Warning");
+  }
+  return t("Info");
+}
+
+function skillHealthKindLabel(kind: SkillHealthFinding["kind"], t: (key: string) => string): string {
+  switch (kind) {
+    case "duplicate_clusters":
+      return t("Duplicate skill cluster");
+    case "conflicting_triggers":
+      return t("Conflicting triggers");
+    case "shadowed_skill":
+      return t("Shadowed skill");
+    case "never_used_skill":
+      return t("Never used skill");
+    case "stale_candidate":
+      return t("Stale candidate");
+    case "high_failure_rate_skill":
+      return t("High failure rate");
+    case "high_user_correction_skill":
+      return t("High correction rate");
+    case "external_overlap_generated_skill":
+      return t("External overlap");
+    case "superseded_but_active":
+      return t("Superseded but active");
+    case "missing_validation_steps":
+      return t("Missing validation");
+    case "missing_negative_triggers":
+      return t("Missing negative triggers");
+  }
+}
+
+function skillHealthActionLabel(action: SkillHealthFinding["recommendedAction"], t: (key: string) => string): string {
+  switch (action) {
+    case "review":
+      return t("Review");
+    case "merge":
+      return t("Merge");
+    case "supersede":
+      return t("Supersede");
+    case "disable":
+      return t("Disable");
+    case "archive":
+      return t("Archive");
+    case "add_validation":
+      return t("Add validation");
+    case "add_negative_triggers":
+      return t("Add negative triggers");
+    case "reject_candidate":
+      return t("Reject candidate");
+  }
+}
+
+function isOpenSkillCandidateStatus(status: SkillCandidate["status"]): boolean {
+  return status === "pending" || status === "needs_edit" || status === "approved_for_draft";
+}
+
+function isTerminalSkillCandidateStatus(status: SkillCandidate["status"]): boolean {
+  return status === "published" || status === "rejected" || status === "quarantined" || status === "superseded" || status === "expired";
+}
+
+function skillCandidateGate(candidate: SkillCandidate, t: SettingsTranslator): {
+  readonly labels: readonly string[];
+  readonly approvalBlocked: boolean;
+  readonly draftBlocked: boolean;
+} {
+  const labels: string[] = [];
+  if (candidate.definition.negativeTriggers.length === 0) {
+    labels.push(t("Missing negative triggers"));
+  }
+  if (candidate.definition.validationSteps.length === 0) {
+    labels.push(t("Missing validation"));
+  }
+  if (candidate.safetyFindings.some((finding) => finding.severity === "critical")) {
+    labels.push(t("Critical safety finding"));
+  }
+  const duplicateBlocking = candidate.duplicateAnalysis.decision === "update_existing" ||
+    candidate.duplicateAnalysis.decision === "conflict_review" ||
+    candidate.duplicateAnalysis.decision === "reject_duplicate";
+  if (duplicateBlocking) {
+    labels.push(t("Duplicate review required"));
+  }
+  return {
+    labels: labels.length > 0 ? labels : [t("Draft gates clear")],
+    approvalBlocked: candidate.definition.negativeTriggers.length === 0 ||
+      candidate.definition.validationSteps.length === 0 ||
+      candidate.safetyFindings.some((finding) => finding.severity === "critical"),
+    draftBlocked: duplicateBlocking,
+  };
+}
+
+function skillCandidateStatusLabel(status: SkillCandidate["status"], t: (key: string) => string): string {
+  switch (status) {
+    case "pending":
+      return t("Pending");
+    case "needs_edit":
+      return t("Needs edit");
+    case "approved_for_draft":
+      return t("Approved for draft");
+    case "published":
+      return t("Published");
+    case "rejected":
+      return t("Rejected");
+    case "quarantined":
+      return t("Quarantined");
+    case "superseded":
+      return t("Superseded");
+    case "expired":
+      return t("Expired");
+  }
+}
+
+function skillCandidateOriginLabel(origin: SkillCandidate["origin"], t: (key: string) => string): string {
+  switch (origin) {
+    case "ling-generated":
+      return t("Ling generated");
+    case "recording":
+      return t("Recording");
+    case "manual-draft":
+      return t("Manual draft");
+    case "import-overlay":
+      return t("Import overlay");
+  }
+}
+
+function skillDuplicateDecisionLabel(decision: SkillCandidate["duplicateAnalysis"]["decision"], t: (key: string) => string): string {
+  switch (decision) {
+    case "no_overlap":
+      return t("No overlap");
+    case "append_evidence":
+      return t("Append evidence");
+    case "update_existing":
+      return t("Update existing");
+    case "conflict_review":
+      return t("Conflict review");
+    case "reject_duplicate":
+      return t("Reject duplicate");
+  }
+}
+
+function skillCandidateReviewReason(action: SkillCandidateReviewAction, t: (key: string) => string): string {
+  if (action === "approve_for_draft") {
+    return t("Approved from Skill Candidate Review panel.");
+  }
+  if (action === "reject") {
+    return t("Rejected from Skill Candidate Review panel.");
+  }
+  if (action === "request_changes") {
+    return t("Changes requested from Skill Candidate Review panel.");
+  }
+  return t("Reviewed from Skill Candidate Review panel.");
+}
+
+function skillCandidateReviewMessage(action: SkillCandidateReviewAction, t: (key: string) => string): string {
+  if (action === "approve_for_draft") {
+    return t("Candidate approved for draft");
+  }
+  if (action === "reject") {
+    return t("Candidate rejected");
+  }
+  if (action === "request_changes") {
+    return t("Candidate marked needs edit");
+  }
+  return t("Candidate reviewed");
 }
 
 function boundTeammateNames(skillId: string, summaries: readonly TeammateSkillBindingSummary[]): readonly string[] {

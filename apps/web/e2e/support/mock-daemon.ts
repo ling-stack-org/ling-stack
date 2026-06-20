@@ -36,9 +36,12 @@ export interface MockState {
   channelContextSummaries: unknown[];
   channelWorkflows: unknown[];
   channelWorkflowSteps: unknown[];
+  channelProtocolDrafts: unknown[];
   aiTeammates: unknown[];
   skillRegistryEntries: unknown[];
   skillImportDrafts: unknown[];
+  skillCandidates: unknown[];
+  skillCandidateReviewRecords: unknown[];
   teammateChannelMemberships: unknown[];
   teammateSkillBindings: unknown[];
   teammateMemoryScopes: unknown[];
@@ -877,9 +880,12 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelContextSummaries: [],
     channelWorkflows: [],
     channelWorkflowSteps: [],
+    channelProtocolDrafts: [],
     aiTeammates: [],
     skillRegistryEntries: buildMockSkillRegistryEntries(),
     skillImportDrafts: [],
+    skillCandidates: createMockSkillCandidates(),
+    skillCandidateReviewRecords: [],
     teammateChannelMemberships: [],
     teammateSkillBindings: [],
     teammateMemoryScopes: [],
@@ -1833,6 +1839,208 @@ export function buildMockSkillRegistryEntries(): unknown[] {
   }));
 }
 
+export function createMockSkillCandidates(): unknown[] {
+  const timestamp = "2026-06-20T00:05:00.000Z";
+  return [
+    {
+      id: "skill_candidate_channel_canvas_protocol",
+      workspaceId: "workspace_default",
+      origin: "recording",
+      proposedAction: "create",
+      status: "pending",
+      title: "Channel canvas protocol skill",
+      summary: "Codify a repeated channel canvas workflow as a governed Ling skill candidate.",
+      definition: {
+        workflowPhase: "operate",
+        positiveTriggers: [
+          "A channel repeatedly follows the same canvas protocol",
+          "The user asks to turn a successful workflow into a reusable skill",
+        ],
+        negativeTriggers: [
+          "A built-in, external, or registry skill already owns the same workflow",
+          "The flow needs live credentials or irreversible production actions",
+        ],
+        procedureSteps: [
+          {
+            title: "Check existing registry skills",
+            instruction: "Search for overlapping triggers before drafting a new skill.",
+            requiredTools: ["grep"],
+          },
+          {
+            title: "Summarize the channel protocol",
+            instruction: "Capture positive triggers, negative triggers, procedure, and validation evidence.",
+          },
+        ],
+        validationSteps: [
+          {
+            title: "Draft stays unpublished",
+            commandOrCheck: "Create a SkillImportDraft and verify no registry entry is published.",
+            expectedResult: "Candidate creates a draft only after user approval.",
+          },
+        ],
+        requiredTools: ["read", "grep"],
+        requiredProviderCapabilities: ["chat"],
+      },
+      duplicateAnalysis: {
+        decision: "no_overlap",
+        similarityScore: 0.18,
+        matchedSkillIds: [],
+        matchedCandidateIds: [],
+        triggerOverlap: [],
+        conflictingFields: [],
+        rationale: "No existing registry skill owns this channel canvas protocol.",
+      },
+      safetyFindings: [],
+      sourceRefs: [
+        {
+          type: "message",
+          id: "message_skill_canvas_discussion",
+          label: "channel canvas discussion",
+        },
+      ],
+      reviewNotes: ["Keep publication separate from candidate approval."],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  ];
+}
+
+export function createMockSkillHealthReport(state: MockState, limit = 100): Record<string, unknown> {
+  const activeSkills = state.skillRegistryEntries.filter((item) =>
+    isRecord(item) &&
+    (item.reviewStatus === "builtin" || item.reviewStatus === "published")
+  );
+  const openCandidates = state.skillCandidates.filter((item) =>
+    isRecord(item) &&
+    (item.status === "pending" || item.status === "needs_edit" || item.status === "approved_for_draft")
+  );
+  const byName = new Map<string, Record<string, unknown>[]>();
+  for (const entry of activeSkills) {
+    if (!isRecord(entry) || !isRecord(entry.definition) || typeof entry.definition.name !== "string") {
+      continue;
+    }
+    const key = entry.definition.name.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!key) {
+      continue;
+    }
+    byName.set(key, [...(byName.get(key) ?? []), entry]);
+  }
+  const duplicateFindings = [...byName.values()]
+    .filter((cluster) => cluster.length > 1)
+    .flatMap((cluster) => {
+      const skillIds = cluster
+        .map((entry) => typeof entry.id === "string" ? entry.id : "")
+        .filter(Boolean)
+        .sort();
+      const duplicate = {
+        id: `skill-health:duplicate_clusters:${skillIds.join("+")}`,
+        kind: "duplicate_clusters",
+        severity: "warning",
+        skillIds,
+        candidateIds: [],
+        title: "Duplicate skill cluster",
+        message: "Multiple active skills share the same id or canonical name.",
+        recommendation: "Keep one canonical skill and archive or merge the duplicate.",
+        recommendedAction: "merge",
+      };
+      const toolSets = new Set(cluster.map((entry) => {
+        const tools = isRecord(entry.definition) && Array.isArray(entry.definition.requiredTools)
+          ? entry.definition.requiredTools.map(String).sort()
+          : [];
+        return tools.join(",");
+      }));
+      if (toolSets.size <= 1) {
+        return [duplicate];
+      }
+      return [
+        duplicate,
+        {
+          id: `skill-health:conflicting_triggers:${skillIds.join("+")}`,
+          kind: "conflicting_triggers",
+          severity: "warning",
+          skillIds,
+          candidateIds: [],
+          title: "Conflicting skill triggers",
+          message: "Skills overlap in trigger language but differ on requiredTools.",
+          recommendation: "Clarify trigger boundaries or merge the overlapping workflow.",
+          recommendedAction: "review",
+        },
+      ];
+    });
+  const candidateFindings = openCandidates.flatMap((candidate) => {
+    const definition = isRecord(candidate.definition) ? candidate.definition : {};
+    const candidateId = typeof candidate.id === "string" ? candidate.id : "";
+    const findings: Record<string, unknown>[] = [];
+    if (!Array.isArray(definition.negativeTriggers) || definition.negativeTriggers.length === 0) {
+      findings.push({
+        id: `skill-health:missing_negative_triggers:${candidateId}`,
+        kind: "missing_negative_triggers",
+        severity: "warning",
+        skillIds: [],
+        candidateIds: [candidateId],
+        title: "Missing negative triggers",
+        message: "Candidate needs explicit non-trigger boundaries before approval.",
+        recommendation: "Add negative triggers before approving the candidate for draft.",
+        recommendedAction: "add_negative_triggers",
+      });
+    }
+    if (!Array.isArray(definition.validationSteps) || definition.validationSteps.length === 0) {
+      findings.push({
+        id: `skill-health:missing_validation_steps:${candidateId}`,
+        kind: "missing_validation_steps",
+        severity: "warning",
+        skillIds: [],
+        candidateIds: [candidateId],
+        title: "Missing validation",
+        message: "Candidate needs a verification step before approval.",
+        recommendation: "Add at least one validation check before approving the candidate.",
+        recommendedAction: "add_validation",
+      });
+    }
+    if (findings.length === 0 && candidate.status !== "approved_for_draft") {
+      findings.push({
+        id: `skill-health:stale_candidate:${candidateId}`,
+        kind: "stale_candidate",
+        severity: "info",
+        skillIds: [],
+        candidateIds: [candidateId],
+        title: "Candidate waiting for review",
+        message: "Skill candidate passed basic gates and is waiting for user review.",
+        recommendation: "Approve it for draft or reject it from the candidate review panel.",
+        recommendedAction: "review",
+      });
+    }
+    return findings;
+  });
+  const findings = [...duplicateFindings, ...candidateFindings];
+  const limitedFindings = findings.slice(0, Math.max(limit, 1));
+  return {
+    workspaceId: "workspace_default",
+    generatedAt: "2026-06-20T00:00:00.000Z",
+    staleCandidateDays: 30,
+    summary: {
+      totalSkills: state.skillRegistryEntries.length,
+      activeSkills: activeSkills.length,
+      generatedSkills: state.skillRegistryEntries.filter((entry) =>
+        isRecord(entry) &&
+        entry.source === "custom" &&
+        (entry.packId === "ling-generated" || (typeof entry.sourcePath === "string" && entry.sourcePath.includes("ling-generated")))
+      ).length,
+      pendingCandidates: openCandidates.length,
+      duplicateClusters: findings.filter((finding) => finding.kind === "duplicate_clusters").length,
+      conflictCount: findings.filter((finding) => finding.kind === "conflicting_triggers").length,
+      staleCandidates: findings.filter((finding) => finding.kind === "stale_candidate").length,
+      highFailureRateSkills: 0,
+      findings: {
+        critical: findings.filter((finding) => finding.severity === "critical").length,
+        warning: findings.filter((finding) => finding.severity === "warning").length,
+        info: findings.filter((finding) => finding.severity === "info").length,
+      },
+    },
+    findings: limitedFindings,
+  };
+}
+
 export function buildMockEffectiveSkills(state: MockState, teammateId: string): unknown[] {
   const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
   if (!isRecord(teammate)) {
@@ -1901,6 +2109,142 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
     createdAt: "2026-06-04T00:20:00.000Z",
     updatedAt: "2026-06-04T00:20:00.000Z",
   };
+}
+
+export function createMockSkillCandidateDraft(state: MockState, candidate: Record<string, unknown>): Record<string, unknown> {
+  const definition = isRecord(candidate.definition) ? candidate.definition : {};
+  const skillDefinition = isRecord(definition.skillDefinition)
+    ? definition.skillDefinition
+    : {
+        id: uniqueMockSkillId(state, slugMockSkillId(typeof candidate.title === "string" ? candidate.title : "skill candidate")),
+        name: typeof candidate.title === "string" ? candidate.title : "Skill candidate",
+        summary: typeof candidate.summary === "string" ? candidate.summary : "Generated from a skill candidate.",
+        roleAffinity: ["qa"],
+        workflowPhase: typeof definition.workflowPhase === "string" ? definition.workflowPhase : "operate",
+        promptFragments: [mockSkillCandidatePrompt(candidate)],
+        requiredTools: Array.isArray(definition.requiredTools) ? definition.requiredTools.map(String) : [],
+        requiredProviderCapabilities: Array.isArray(definition.requiredProviderCapabilities) ? definition.requiredProviderCapabilities.map(String) : ["chat"],
+        approvalProfile: { mode: "none" },
+        stateEffects: [],
+      };
+  return {
+    id: `skill_draft_${state.skillImportDrafts.length + 1}`,
+    workspaceId: "workspace_default",
+    source: "custom",
+    sourcePath: `skill-candidates/${String(candidate.id)}`,
+    packId: `skill_pack_candidate_${state.skillImportDrafts.length + 1}`,
+    name: typeof candidate.title === "string" ? candidate.title : "Skill candidate draft",
+    version: "0.1.0",
+    description: typeof candidate.summary === "string" ? candidate.summary : "Generated from a skill candidate.",
+    definitions: [
+      {
+        definition: skillDefinition,
+        visibility: {
+          workspaceVisible: true,
+          promotableToWorkspace: true,
+        },
+        warnings: [],
+      },
+    ],
+    warnings: [],
+    createdAt: "2026-06-20T00:12:00.000Z",
+    updatedAt: "2026-06-20T00:12:00.000Z",
+  };
+}
+
+function mockSkillCandidatePrompt(candidate: Record<string, unknown>): string {
+  const definition = isRecord(candidate.definition) ? candidate.definition : {};
+  const positiveTriggers = Array.isArray(definition.positiveTriggers) ? definition.positiveTriggers.map(String) : [];
+  const negativeTriggers = Array.isArray(definition.negativeTriggers) ? definition.negativeTriggers.map(String) : [];
+  const procedureSteps = Array.isArray(definition.procedureSteps) ? definition.procedureSteps.filter(isRecord) : [];
+  const validationSteps = Array.isArray(definition.validationSteps) ? definition.validationSteps.filter(isRecord) : [];
+  return [
+    `# ${typeof candidate.title === "string" ? candidate.title : "Skill candidate"}`,
+    "",
+    typeof candidate.summary === "string" ? candidate.summary : "Generated from a skill candidate.",
+    "",
+    "Use when:",
+    ...positiveTriggers.map((trigger) => `- ${trigger}`),
+    "",
+    "Do not use when:",
+    ...negativeTriggers.map((trigger) => `- ${trigger}`),
+    "",
+    "Procedure:",
+    ...procedureSteps.map((step, index) => `- ${index + 1}. ${typeof step.title === "string" ? step.title : "Step"}`),
+    "",
+    "Validation:",
+    ...validationSteps.map((step) => `- ${typeof step.title === "string" ? step.title : "Validation"}`),
+  ].join("\n");
+}
+
+function slugMockSkillId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "skill-candidate";
+}
+
+function uniqueMockSkillId(state: MockState, requestedId: string): string {
+  const existing = new Set(state.skillRegistryEntries
+    .filter(isRecord)
+    .map((entry) => typeof entry.id === "string" ? entry.id : "")
+    .filter(Boolean));
+  if (!existing.has(requestedId)) {
+    return requestedId;
+  }
+  let index = 2;
+  while (existing.has(`${requestedId}-${index}`)) {
+    index += 1;
+  }
+  return `${requestedId}-${index}`;
+}
+
+function nextMockSkillCandidateStatus(candidate: Record<string, unknown>, action: string, body: Record<string, unknown>): string | undefined {
+  if (
+    candidate.status === "published" ||
+    candidate.status === "rejected" ||
+    candidate.status === "quarantined" ||
+    candidate.status === "superseded" ||
+    candidate.status === "expired"
+  ) {
+    return undefined;
+  }
+  if (action === "keep_pending") {
+    return "pending";
+  }
+  if (action === "request_changes") {
+    return "needs_edit";
+  }
+  if (action === "approve_for_draft") {
+    return "approved_for_draft";
+  }
+  if (action === "reject") {
+    return "rejected";
+  }
+  if (action === "quarantine") {
+    return "quarantined";
+  }
+  if (action === "supersede" && typeof body.supersededBy === "string") {
+    return "superseded";
+  }
+  return undefined;
+}
+
+function mockSkillCandidateApprovalError(candidate: Record<string, unknown>): string | undefined {
+  const definition = isRecord(candidate.definition) ? candidate.definition : {};
+  if (!Array.isArray(definition.negativeTriggers) || definition.negativeTriggers.length === 0) {
+    return "Skill candidate requires negative triggers before draft approval";
+  }
+  if (!Array.isArray(definition.validationSteps) || definition.validationSteps.length === 0) {
+    return "Skill candidate requires validation steps before draft approval";
+  }
+  const safetyFindings = Array.isArray(candidate.safetyFindings) ? candidate.safetyFindings.filter(isRecord) : [];
+  if (safetyFindings.some((finding) => finding.severity === "critical")) {
+    return "Skill candidate has critical safety findings and cannot be approved for draft";
+  }
+  return undefined;
 }
 
 export function createMockPersonaDraft(teammateId: string, body: Record<string, unknown>): Record<string, unknown> {
@@ -3098,6 +3442,14 @@ function buildMockChannelCollaborationProtocolResponse(channelId: string, channe
     ? channel.defaultTeammateId
     : undefined;
   const updatedAt = typeof channel.updatedAt === "string" ? channel.updatedAt : "2026-05-25T00:15:00.000Z";
+  const protocolOverride = isRecord(channel._protocolOverride) ? channel._protocolOverride : {};
+  const protocolVersion = typeof protocolOverride.version === "number" ? protocolOverride.version : undefined;
+  const defaultWorkflowPreference = protocolOverride.defaultWorkflowPreference === "architect_engineer_qa" ? "architect_engineer_qa" : "manual";
+  const visibleMultiReplyMaxParticipants = typeof protocolOverride.visibleMultiReplyMaxParticipants === "number"
+    ? protocolOverride.visibleMultiReplyMaxParticipants
+    : 3;
+  const privacyRules = Array.isArray(protocolOverride.privacyRules) ? protocolOverride.privacyRules.map(String) : [];
+  const reviewRules = Array.isArray(protocolOverride.reviewRules) ? protocolOverride.reviewRules.map(String) : [];
   return {
     cwd,
     protocol: {
@@ -3106,11 +3458,14 @@ function buildMockChannelCollaborationProtocolResponse(channelId: string, channe
       responseLanguage,
       autoReplyMode,
       defaultTeammateId,
-      defaultWorkflowPreference: "manual",
-      visibleMultiReplyMaxParticipants: 3,
-      privacyRules: [],
-      reviewRules: [],
-      updatedBy: responseLanguageChannelValue || autoReplyMode !== "mentions_only" || defaultTeammateId ? "local-user" : "system_template",
+      protocolVersion,
+      defaultWorkflowPreference,
+      visibleMultiReplyMaxParticipants,
+      privacyRules,
+      reviewRules,
+      updatedBy: typeof protocolOverride.updatedBy === "string"
+        ? protocolOverride.updatedBy
+        : responseLanguageChannelValue || autoReplyMode !== "mentions_only" || defaultTeammateId ? "local-user" : "system_template",
       updatedAt,
     },
     sources: {
@@ -3131,26 +3486,83 @@ function buildMockChannelCollaborationProtocolResponse(channelId: string, channe
         channelValue: defaultTeammateId,
       },
       defaultWorkflowPreference: {
-        value: "manual",
-        source: "default",
+        value: defaultWorkflowPreference,
+        source: protocolVersion ? "protocol_override" : "default",
       },
       visibleMultiReplyMaxParticipants: {
-        value: 3,
-        source: "default",
+        value: visibleMultiReplyMaxParticipants,
+        source: protocolVersion ? "protocol_override" : "default",
       },
       privacyRules: {
-        value: [],
-        source: "default",
+        value: privacyRules,
+        source: protocolVersion ? "protocol_override" : "default",
       },
       reviewRules: {
-        value: [],
-        source: "default",
+        value: reviewRules,
+        source: protocolVersion ? "protocol_override" : "default",
       },
     },
     storage: {
       mode: "channel_fields_and_protocol_overrides",
       editableFields: ["responseLanguage", "autoReplyMode", "defaultTeammateId", "defaultWorkflowPreference", "visibleMultiReplyMaxParticipants", "privacyRules", "reviewRules"],
       unsupportedFields: [],
+    },
+  };
+}
+
+function createMockChannelProtocolDraft(state: MockState, channelId: string, body: Record<string, unknown>): Record<string, unknown> {
+  const proposedPatch = isRecord(body.proposedPatch) ? body.proposedPatch : {};
+  return {
+    id: `channel_protocol_draft_${state.channelProtocolDrafts.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId,
+    baseVersion: typeof body.baseVersion === "number" ? body.baseVersion : undefined,
+    proposedPatch,
+    reason: typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim()
+      : "AI drafted channel protocol changes for user review.",
+    createdBy: body.createdBy === "local-user" ? "local-user" : "ai-draft",
+    sourceRefs: Array.isArray(body.sourceRefs) ? body.sourceRefs.filter(isRecord) : [],
+    status: "draft",
+    appliedProtocolVersion: undefined,
+    expiresAt: typeof body.expiresAt === "string" ? body.expiresAt : undefined,
+    createdAt: "2026-06-20T00:30:00.000Z",
+    updatedAt: "2026-06-20T00:30:00.000Z",
+  };
+}
+
+function applyMockChannelProtocolDraft(channel: Record<string, unknown>, draft: Record<string, unknown>): {
+  readonly channel: Record<string, unknown>;
+  readonly draft: Record<string, unknown>;
+} {
+  const currentOverride = isRecord(channel._protocolOverride) ? channel._protocolOverride : {};
+  const proposedPatch = isRecord(draft.proposedPatch) ? draft.proposedPatch : {};
+  const nextVersion = typeof currentOverride.version === "number" ? currentOverride.version + 1 : 1;
+  const nextOverride = {
+    ...currentOverride,
+    version: nextVersion,
+    defaultWorkflowPreference: proposedPatch.defaultWorkflowPreference ?? currentOverride.defaultWorkflowPreference,
+    visibleMultiReplyMaxParticipants: proposedPatch.visibleMultiReplyMaxParticipants ?? currentOverride.visibleMultiReplyMaxParticipants,
+    privacyRules: Array.isArray(proposedPatch.privacyRules) ? proposedPatch.privacyRules : currentOverride.privacyRules,
+    reviewRules: Array.isArray(proposedPatch.reviewRules) ? proposedPatch.reviewRules : currentOverride.reviewRules,
+    updatedBy: draft.createdBy === "local-user" ? "local-user" : "ai-draft",
+  };
+  const nextChannel = createChannelFromBody({
+    responseLanguage: proposedPatch.responseLanguage,
+    autoReplyMode: proposedPatch.autoReplyMode,
+    defaultTeammateId: proposedPatch.defaultTeammateId,
+  }, String(channel.id ?? "channel_engineering"), channel);
+  const updatedChannel = {
+    ...nextChannel,
+    _protocolOverride: nextOverride,
+  };
+  return {
+    channel: updatedChannel,
+    draft: {
+      ...draft,
+      status: "applied",
+      appliedProtocolVersion: nextVersion,
+      updatedAt: "2026-06-20T00:31:00.000Z",
     },
   };
 }
@@ -4150,6 +4562,103 @@ export async function handleDaemonRoute(
       },
     });
     return;
+  }
+  if (request.method() === "GET" && path === "/skills/health") {
+    const rawLimit = Number(url.searchParams.get("limit") ?? 100);
+    await route.fulfill({
+      json: {
+        cwd,
+        report: createMockSkillHealthReport(state, Number.isFinite(rawLimit) ? rawLimit : 100),
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/skill-candidates") {
+    const status = url.searchParams.get("status");
+    const origin = url.searchParams.get("origin");
+    const rawLimit = Number(url.searchParams.get("limit") ?? 100);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 500)) : 100;
+    const candidates = state.skillCandidates
+      .filter((item) =>
+        isRecord(item) &&
+        (!status || item.status === status) &&
+        (!origin || item.origin === origin)
+      )
+      .slice(0, limit);
+    await route.fulfill({ json: { cwd, candidates } });
+    return;
+  }
+  const skillCandidateMatch = /^\/skill-candidates\/([^/]+)(?:\/([^/]+))?$/.exec(path);
+  if (skillCandidateMatch) {
+    const candidateId = decodeURIComponent(skillCandidateMatch[1]);
+    const action = skillCandidateMatch[2];
+    const candidate = state.skillCandidates.find((item) => isRecord(item) && item.id === candidateId);
+    if (!isRecord(candidate)) {
+      await route.fulfill({ status: 404, json: { error: "skill_candidate_not_found", message: `Skill candidate not found: ${candidateId}` } });
+      return;
+    }
+    if (!action && request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          cwd,
+          candidate,
+          reviewRecords: state.skillCandidateReviewRecords.filter((item) => isRecord(item) && item.candidateId === candidateId),
+        },
+      });
+      return;
+    }
+    if (action === "review" && request.method() === "POST") {
+      const body = safePostDataJson(request);
+      const reviewAction = typeof body.action === "string" ? body.action : "";
+      const nextStatus = nextMockSkillCandidateStatus(candidate, reviewAction, body);
+      if (!nextStatus) {
+        await route.fulfill({ status: 400, json: { error: "invalid_skill_candidate_review_action" } });
+        return;
+      }
+      if (nextStatus === "approved_for_draft") {
+        const approvalError = mockSkillCandidateApprovalError(candidate);
+        if (approvalError) {
+          await route.fulfill({ status: 400, json: { error: "skill_candidate_review_blocked", message: approvalError } });
+          return;
+        }
+      }
+      const updated = {
+        ...candidate,
+        status: nextStatus,
+        supersededBy: nextStatus === "superseded" && typeof body.supersededBy === "string" ? body.supersededBy : candidate.supersededBy,
+        updatedAt: "2026-06-20T00:10:00.000Z",
+      };
+      state.skillCandidates = state.skillCandidates.map((item) => isRecord(item) && item.id === candidateId ? updated : item);
+      const reviewRecord = {
+        id: `skill_candidate_review_${state.skillCandidateReviewRecords.length + 1}`,
+        workspaceId: "workspace_default",
+        candidateId,
+        action: reviewAction,
+        actor: "user",
+        previousStatus: candidate.status,
+        nextStatus,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+        createdAt: "2026-06-20T00:10:00.000Z",
+      };
+      state.skillCandidateReviewRecords.unshift(reviewRecord);
+      await route.fulfill({ json: { cwd, candidate: updated, action: reviewRecord } });
+      return;
+    }
+    if (action === "draft" && request.method() === "POST") {
+      if (candidate.status !== "approved_for_draft") {
+        await route.fulfill({ status: 400, json: { error: "skill_candidate_draft_blocked", message: "Skill candidate must be approved_for_draft before creating a registry draft" } });
+        return;
+      }
+      const duplicateAnalysis = isRecord(candidate.duplicateAnalysis) ? candidate.duplicateAnalysis : {};
+      if (duplicateAnalysis.decision === "update_existing" || duplicateAnalysis.decision === "conflict_review" || duplicateAnalysis.decision === "reject_duplicate") {
+        await route.fulfill({ status: 400, json: { error: "skill_candidate_duplicate_review_required" } });
+        return;
+      }
+      const draft = createMockSkillCandidateDraft(state, candidate);
+      state.skillImportDrafts.unshift(draft);
+      await route.fulfill({ status: 201, json: { cwd, candidate, draft } });
+      return;
+    }
   }
   if (request.method() === "GET" && path === "/plugins") {
     await route.fulfill({ json: { cwd, plugins: state.managedPlugins } });
@@ -5698,6 +6207,63 @@ export async function handleDaemonRoute(
       };
       state.channels[channelIndex] = updated;
       await route.fulfill({ json: { ...buildMockChannelCollaborationProtocolResponse(channelId, updated), revertedFields: ["responseLanguage", "autoReplyMode", "defaultTeammateId"] } });
+      return;
+    }
+  }
+  const channelProtocolDraftMatch = /^\/channels\/([^/]+)\/protocol\/drafts(?:\/([^/]+)\/apply)?$/.exec(path);
+  const channelProtocolCandidateMatch = /^\/channels\/([^/]+)\/protocol-candidates(?:\/([^/]+)\/review)?$/.exec(path);
+  if (channelProtocolDraftMatch || channelProtocolCandidateMatch) {
+    const match = channelProtocolDraftMatch ?? channelProtocolCandidateMatch;
+    const channelId = decodeURIComponent(match?.[1] ?? "");
+    const draftId = match?.[2] ? decodeURIComponent(match[2]) : "";
+    const channelIndex = state.channels.findIndex((item) => isRecord(item) && item.id === channelId);
+    if (channelIndex === -1 || !isRecord(state.channels[channelIndex])) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const channel = state.channels[channelIndex] as Record<string, unknown>;
+    const isCandidateRoute = Boolean(channelProtocolCandidateMatch);
+    if (!draftId && request.method() === "GET") {
+      const status = url.searchParams.get("status");
+      const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 50), 200));
+      const drafts = state.channelProtocolDrafts
+        .filter((item) => isRecord(item) && item.channelId === channelId && (!status || item.status === status))
+        .slice(0, limit);
+      await route.fulfill({ json: { cwd, channelId, drafts } });
+      return;
+    }
+    if (!draftId && request.method() === "POST") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const draft = createMockChannelProtocolDraft(state, channelId, body);
+      state.channelProtocolDrafts.unshift(draft);
+      await route.fulfill({ status: 201, json: { ...buildMockChannelCollaborationProtocolResponse(channelId, channel), draft } });
+      return;
+    }
+    const draftIndex = state.channelProtocolDrafts.findIndex((item) => isRecord(item) && item.id === draftId && item.channelId === channelId);
+    if (draftIndex === -1 || !isRecord(state.channelProtocolDrafts[draftIndex])) {
+      await route.fulfill({ status: 404, json: { error: isCandidateRoute ? "protocol_candidate_not_found" : "protocol_draft_not_found" } });
+      return;
+    }
+    const draft = state.channelProtocolDrafts[draftIndex] as Record<string, unknown>;
+    if (request.method() === "POST" && channelProtocolDraftMatch) {
+      const applied = applyMockChannelProtocolDraft(channel, draft);
+      state.channels[channelIndex] = applied.channel;
+      state.channelProtocolDrafts[draftIndex] = applied.draft;
+      await route.fulfill({ json: { ...buildMockChannelCollaborationProtocolResponse(channelId, applied.channel), draft: applied.draft } });
+      return;
+    }
+    if (request.method() === "POST" && channelProtocolCandidateMatch) {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      if (body.action === "approve") {
+        const applied = applyMockChannelProtocolDraft(channel, draft);
+        state.channels[channelIndex] = applied.channel;
+        state.channelProtocolDrafts[draftIndex] = applied.draft;
+        await route.fulfill({ json: { ...buildMockChannelCollaborationProtocolResponse(channelId, applied.channel), draft: applied.draft } });
+        return;
+      }
+      const cancelled = { ...draft, status: "cancelled", updatedAt: "2026-06-20T00:31:00.000Z" };
+      state.channelProtocolDrafts[draftIndex] = cancelled;
+      await route.fulfill({ json: { ...buildMockChannelCollaborationProtocolResponse(channelId, channel), draft: cancelled } });
       return;
     }
   }
