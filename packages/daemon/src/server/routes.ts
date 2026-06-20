@@ -275,7 +275,7 @@ export function parseChannelRoute(
   readonly playbookAction?: "candidates" | "candidate-from-cluster" | "review-candidate";
   readonly playbookCandidateId?: string;
   readonly playbookClusterId?: string;
-  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
+  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh" | "cleanup";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
@@ -330,7 +330,7 @@ export function parseChannelRoute(
     segments.length === 4 &&
     segments[0] === "channels" &&
     segments[2] === "workspace" &&
-    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh")
+    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh" || segments[3] === "cleanup")
   ) {
     return { channelId: segments[1], action: "workspace", workspaceAction: segments[3] };
   }
@@ -374,7 +374,7 @@ export function parseTeammateRoute(
 ): {
   readonly teammateId: string;
   readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "direct-messages-stream" | "direct-runtime" | "direct-interventions" | "direct-workspace" | "direct-link-previews" | "direct-attachments" | "avatar" | "hard-delete" | "tasks" | "activity";
-  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
+  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh" | "cleanup";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "teammates") {
@@ -384,7 +384,7 @@ export function parseTeammateRoute(
     segments.length === 4 &&
     segments[0] === "teammates" &&
     segments[2] === "direct-workspace" &&
-    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh")
+    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh" || segments[3] === "cleanup")
   ) {
     return { teammateId: segments[1], action: "direct-workspace", workspaceAction: segments[3] };
   }

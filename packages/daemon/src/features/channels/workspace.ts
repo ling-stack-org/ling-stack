@@ -1,8 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { dirname, resolve as resolvePath } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { resolve as resolvePath } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   createChannelWorkspaceSnapshot,
@@ -15,8 +12,12 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-
-const execFileAsync = promisify(execFile);
+import {
+  createManagedGitWorktree,
+  inspectManagedWorktree,
+  removeManagedWorktreeIfClean,
+  resolveGitRepoRoot,
+} from "../workspaces/managed-worktrees.js";
 
 type ChannelWorktreeTarget = Pick<Channel, "id" | "boundPath" | "workspaceBinding">;
 
@@ -50,7 +51,7 @@ export async function handleChannelWorkspace(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
-  action?: "create-worktree" | "handoff" | "refresh",
+  action?: "create-worktree" | "handoff" | "refresh" | "cleanup",
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -73,7 +74,7 @@ export async function handleChannelWorkspace(
     }
 
     if (action === "refresh" && request.method === "POST") {
-      const binding = refreshChannelWorkspaceBinding(channel, cwd, new Date().toISOString());
+      const binding = await refreshChannelWorkspaceBinding(channel, cwd, new Date().toISOString());
       const updated = store.updateChannel(channelId, { workspaceBinding: binding }, binding.updatedAt) ?? channel;
       writeJson(response, 200, buildChannelWorkspaceResponse(cwd, updated));
       return;
@@ -81,8 +82,28 @@ export async function handleChannelWorkspace(
 
     if (action === "handoff" && request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const binding = readHandoffBinding(body, channel, cwd, new Date().toISOString());
+      const binding = await readHandoffBinding(body, channel, cwd, new Date().toISOString());
       const updated = store.updateChannel(channelId, { workspaceBinding: binding }, binding.updatedAt) ?? channel;
+      writeJson(response, 200, buildChannelWorkspaceResponse(cwd, updated));
+      return;
+    }
+
+    if (action === "cleanup" && request.method === "POST") {
+      const result = await cleanupManagedChannelWorktree(channel, cwd, new Date().toISOString());
+      if (!result.ok) {
+        if (result.binding) {
+          const updated = store.updateChannel(channelId, { workspaceBinding: result.binding }, result.binding.updatedAt) ?? channel;
+          writeJson(response, result.code === "worktree_dirty" ? 409 : 400, {
+            error: result.code,
+            message: result.message,
+            ...buildChannelWorkspaceResponse(cwd, updated),
+          });
+          return;
+        }
+        writeJson(response, 400, { error: result.code, message: result.message });
+        return;
+      }
+      const updated = store.updateChannel(channelId, { workspaceBinding: result.binding }, result.binding.updatedAt) ?? channel;
       writeJson(response, 200, buildChannelWorkspaceResponse(cwd, updated));
       return;
     }
@@ -121,24 +142,46 @@ function buildChannelWorkspaceResponse(cwd: string, channel: Channel) {
   };
 }
 
-function refreshChannelWorkspaceBinding(channel: Channel, workspaceCwd: string, now: string): ChannelWorkspaceBinding {
+async function refreshChannelWorkspaceBinding(channel: Channel, workspaceCwd: string, now: string): Promise<ChannelWorkspaceBinding> {
   const binding = channel.workspaceBinding ?? defaultChannelWorkspaceBinding(channel, workspaceCwd);
   const executionPath = resolveChannelExecutionCwd({ ...channel, workspaceBinding: binding }, workspaceCwd);
   if (binding.mode === "local") {
     return { ...binding, executionPath, status: "ready", checkedAt: now, updatedAt: now };
   }
-  const exists = existsSync(executionPath);
+  if (binding.mode === "external_path") {
+    const exists = existsSync(executionPath);
+    return {
+      ...binding,
+      executionPath,
+      status: exists ? "ready" : "missing",
+      errorMessage: exists ? undefined : "频道工作区目录不存在。",
+      checkedAt: now,
+      updatedAt: now,
+    };
+  }
+  if (!binding.worktreePath) {
+    return {
+      ...binding,
+      executionPath: undefined,
+      status: "not_created",
+      errorMessage: undefined,
+      checkedAt: now,
+      updatedAt: now,
+    };
+  }
+  const inspection = await inspectManagedWorktree(binding.worktreePath);
+  const status = statusFromManagedInspection(binding, inspection);
   return {
     ...binding,
-    executionPath,
-    status: exists ? "ready" : "missing",
-    errorMessage: exists ? undefined : "频道工作区目录不存在。",
+    executionPath: binding.worktreePath,
+    status,
+    errorMessage: managedInspectionMessage(status, inspection, "频道工作区目录不存在。"),
     checkedAt: now,
     updatedAt: now,
   };
 }
 
-function readHandoffBinding(value: unknown, channel: Channel, workspaceCwd: string, now: string): ChannelWorkspaceBinding {
+async function readHandoffBinding(value: unknown, channel: Channel, workspaceCwd: string, now: string): Promise<ChannelWorkspaceBinding> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Workspace handoff request must be a JSON object");
   }
@@ -174,7 +217,7 @@ function readHandoffBinding(value: unknown, channel: Channel, workspaceCwd: stri
   if (existing?.mode !== "managed_worktree" || !existing.worktreePath) {
     throw new Error("Managed worktree has not been created for this channel.");
   }
-  return refreshChannelWorkspaceBinding({ ...channel, workspaceBinding: existing }, workspaceCwd, now);
+  return await refreshChannelWorkspaceBinding({ ...channel, workspaceBinding: existing }, workspaceCwd, now);
 }
 
 export async function createManagedWorktreeBinding(
@@ -187,33 +230,33 @@ export async function createManagedWorktreeBinding(
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
   const root = channel.boundPath ?? workspaceCwd;
-  const repo = await git(root, ["rev-parse", "--show-toplevel"]).catch(() => undefined);
-  if (!repo?.stdout.trim()) {
+  const repo = await resolveGitRepoRoot(root);
+  if (!repo.ok) {
     return { ok: false, code: "not_git_repository", message: "当前工作区不是 Git 仓库，无法创建独立频道工作区。" };
   }
-  const repoRoot = repo.stdout.trim();
+  const repoRoot = repo.repoRoot;
   const now = new Date().toISOString();
-  const baseCommit = (await git(repoRoot, ["rev-parse", "HEAD"])).stdout.trim();
-  const currentBranch = (await git(repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
-  const baseBranch = requestedBaseBranch || currentBranch || baseCommit;
   const branchName = `ling/channel-${channel.id}`;
   const worktreePath = resolvePath(workspacePaths.worktreesDir, "channels", channel.id);
-  if (!existsSync(worktreePath)) {
-    await mkdir(dirname(worktreePath), { recursive: true });
-    await git(repoRoot, ["worktree", "add", "-B", branchName, worktreePath, baseBranch]).catch((error: unknown) => {
-      throw new Error(`创建频道 worktree 失败：${redactGitError(error)}`);
-    });
+  const created = await createManagedGitWorktree({
+    repoRoot,
+    worktreePath,
+    branchName,
+    requestedBaseBranch,
+  });
+  if (!created.ok) {
+    return { ok: false, code: created.code, message: created.message.replace("创建 worktree", "创建频道 worktree") };
   }
   return {
     ok: true,
     binding: {
       mode: "managed_worktree",
-      status: existsSync(worktreePath) ? "ready" : "missing",
+      status: "ready",
       executionPath: worktreePath,
       worktreePath,
       branchName,
-      baseBranch,
-      baseCommit,
+      baseBranch: created.result.baseBranch,
+      baseCommit: created.result.baseCommit,
       createdAt: channel.workspaceBinding?.createdAt ?? now,
       checkedAt: now,
       updatedAt: now,
@@ -221,12 +264,72 @@ export async function createManagedWorktreeBinding(
   };
 }
 
-async function git(cwd: string, args: readonly string[]): Promise<{ readonly stdout: string; readonly stderr: string }> {
-  const result = await execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024 });
-  return { stdout: result.stdout, stderr: result.stderr };
+async function cleanupManagedChannelWorktree(
+  channel: Channel,
+  workspaceCwd: string,
+  now: string,
+): Promise<
+  | { readonly ok: true; readonly binding: ChannelWorkspaceBinding }
+  | { readonly ok: false; readonly code: string; readonly message: string; readonly binding?: ChannelWorkspaceBinding }
+> {
+  const binding = channel.workspaceBinding;
+  if (binding?.mode !== "managed_worktree" || !binding.worktreePath) {
+    return { ok: false, code: "workspace_not_managed", message: "频道工作区不是 Ling 管理的 worktree，无法清理。" };
+  }
+  const repo = await resolveGitRepoRoot(channel.boundPath ?? workspaceCwd);
+  if (!repo.ok) {
+    return { ok: false, code: repo.code, message: repo.message };
+  }
+  const cleanup = await removeManagedWorktreeIfClean({
+    repoRoot: repo.repoRoot,
+    worktreePath: binding.worktreePath,
+  });
+  if (!cleanup.ok) {
+    const status = statusFromManagedInspection(binding, cleanup.inspection);
+    return {
+      ok: false,
+      code: cleanup.code,
+      message: cleanup.message,
+      binding: {
+        ...binding,
+        executionPath: binding.worktreePath,
+        status,
+        errorMessage: managedInspectionMessage(status, cleanup.inspection, cleanup.message),
+        checkedAt: now,
+        updatedAt: now,
+      },
+    };
+  }
+  return {
+    ok: true,
+    binding: {
+      ...binding,
+      executionPath: binding.worktreePath,
+      status: "not_created",
+      errorMessage: undefined,
+      checkedAt: now,
+      updatedAt: now,
+    },
+  };
 }
 
-function redactGitError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\/[^\s"']+/g, "<path>");
+function statusFromManagedInspection(binding: ChannelWorkspaceBinding, inspection: { readonly status: "ready" | "missing" | "blocked" }): ChannelWorkspaceBinding["status"] {
+  if (inspection.status === "ready") {
+    return "ready";
+  }
+  if (inspection.status === "blocked") {
+    return "blocked";
+  }
+  return binding.status === "not_created" || !binding.createdAt ? "not_created" : "missing";
+}
+
+function managedInspectionMessage(
+  status: ChannelWorkspaceBinding["status"],
+  inspection: { readonly errorMessage?: string },
+  fallback: string,
+): string | undefined {
+  if (status === "ready" || status === "not_created") {
+    return undefined;
+  }
+  return inspection.errorMessage ?? fallback;
 }

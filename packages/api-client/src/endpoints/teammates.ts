@@ -156,6 +156,10 @@ export const teammateEndpoints = {
       return this._post(`/teammates/${encodeURIComponent(teammateId)}/direct-workspace/refresh`, { cwd });
     },
 
+  async cleanupTeammateDirectWorkspace(this: LingDaemonEndpointContext, cwd: string, teammateId: string): Promise<DirectWorkspaceMutationResponse> {
+      return this._post(`/teammates/${encodeURIComponent(teammateId)}/direct-workspace/cleanup`, { cwd });
+    },
+
   async listTeammateDirectMessages(this: LingDaemonEndpointContext,
       cwd: string,
       teammateId: string,

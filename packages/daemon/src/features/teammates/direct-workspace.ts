@@ -1,8 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   createDirectWorkspaceSnapshot,
@@ -18,8 +15,13 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-
-const execFileAsync = promisify(execFile);
+import {
+  createManagedGitWorktree,
+  inspectManagedWorktree,
+  removeManagedWorktreeIfClean,
+  resolveGitRepoRoot,
+  safeGitBranchSegment,
+} from "../workspaces/managed-worktrees.js";
 
 type DirectWorktreeTarget = Pick<TeammateDirectThread, "id" | "teammateId" | "workspaceBinding">;
 type DirectWorkspaceStore = RunStorePathsFacet & TeammateStoreFacet;
@@ -84,7 +86,7 @@ export async function ensureDirectWorkspaceReady(input: {
   | { readonly ok: true; readonly workspace: DirectWorkspaceReady }
   | { readonly ok: false; readonly code: string; readonly message: string; readonly thread: TeammateDirectThread; readonly binding: DirectWorkspaceBinding }
 > {
-  const refreshed = refreshDirectWorkspaceBinding(input.thread, input.workspaceCwd, input.store.paths, new Date().toISOString());
+  const refreshed = await refreshDirectWorkspaceBinding(input.thread, input.workspaceCwd, input.store.paths, new Date().toISOString());
   if (refreshed.mode === "local" || refreshed.mode === "external_path") {
     if (refreshed.status === "ready" && existsSync(refreshed.executionPath ?? input.workspaceCwd)) {
       const updated = input.store.updateTeammateDirectThreadWorkspace(input.thread.id, refreshed, refreshed.updatedAt) ?? input.thread;
@@ -138,7 +140,7 @@ export async function handleTeammateDirectWorkspace(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   teammateId: string,
-  action?: "create-worktree" | "handoff" | "refresh",
+  action?: "create-worktree" | "handoff" | "refresh" | "cleanup",
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -162,7 +164,7 @@ export async function handleTeammateDirectWorkspace(
     }
 
     if (action === "refresh" && request.method === "POST") {
-      const binding = refreshDirectWorkspaceBinding(thread, cwd, store.paths, new Date().toISOString());
+      const binding = await refreshDirectWorkspaceBinding(thread, cwd, store.paths, new Date().toISOString());
       const updated = store.updateTeammateDirectThreadWorkspace(thread.id, binding, binding.updatedAt) ?? thread;
       writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
@@ -170,8 +172,28 @@ export async function handleTeammateDirectWorkspace(
 
     if (action === "handoff" && request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const binding = readHandoffBinding(body, thread, cwd, store.paths, new Date().toISOString());
+      const binding = await readHandoffBinding(body, thread, cwd, store.paths, new Date().toISOString());
       const updated = store.updateTeammateDirectThreadWorkspace(thread.id, binding, binding.updatedAt) ?? thread;
+      writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
+      return;
+    }
+
+    if (action === "cleanup" && request.method === "POST") {
+      const result = await cleanupManagedDirectWorktree(thread, cwd, store.paths, new Date().toISOString());
+      if (!result.ok) {
+        if (result.binding) {
+          const updated = store.updateTeammateDirectThreadWorkspace(thread.id, result.binding, result.binding.updatedAt) ?? thread;
+          writeJson(response, result.code === "worktree_dirty" ? 409 : 400, {
+            error: result.code,
+            message: result.message,
+            ...buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths),
+          });
+          return;
+        }
+        writeJson(response, 400, { error: result.code, message: result.message });
+        return;
+      }
+      const updated = store.updateTeammateDirectThreadWorkspace(thread.id, result.binding, result.binding.updatedAt) ?? thread;
       writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
@@ -223,12 +245,12 @@ function buildDirectWorkspaceReady(workspaceCwd: string, thread: TeammateDirectT
   };
 }
 
-function refreshDirectWorkspaceBinding(
+async function refreshDirectWorkspaceBinding(
   thread: TeammateDirectThread,
   workspaceCwd: string,
   workspacePaths: LingStackRuntimePaths,
   now: string,
-): DirectWorkspaceBinding {
+): Promise<DirectWorkspaceBinding> {
   const binding = thread.workspaceBinding ?? defaultDirectWorkspaceBinding(thread, workspaceCwd, workspacePaths);
   if (binding.mode === "local") {
     return { ...binding, executionPath: workspaceCwd, status: "ready", checkedAt: now, updatedAt: now };
@@ -246,27 +268,27 @@ function refreshDirectWorkspaceBinding(
     };
   }
   const worktreePath = binding.worktreePath ?? directWorktreePath(workspaceCwd, thread.teammateId, thread.id, workspacePaths);
-  const exists = existsSync(worktreePath);
-  const hasCreatedBinding = Boolean(thread.workspaceBinding?.createdAt);
+  const inspection = await inspectManagedWorktree(worktreePath);
+  const status = statusFromManagedInspection(binding, inspection);
   return {
     ...binding,
     executionPath: worktreePath,
     worktreePath,
     branchName: binding.branchName ?? directWorktreeBranchName(thread.teammateId, thread.id),
-    status: exists ? "ready" : hasCreatedBinding ? "missing" : "not_created",
-    errorMessage: exists || !hasCreatedBinding ? undefined : "私聊工作区目录不存在。",
+    status,
+    errorMessage: managedInspectionMessage(status, inspection, "私聊工作区目录不存在。"),
     checkedAt: now,
     updatedAt: now,
   };
 }
 
-function readHandoffBinding(
+async function readHandoffBinding(
   value: unknown,
   thread: TeammateDirectThread,
   workspaceCwd: string,
   workspacePaths: LingStackRuntimePaths,
   now: string,
-): DirectWorkspaceBinding {
+): Promise<DirectWorkspaceBinding> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Workspace handoff request must be a JSON object");
   }
@@ -302,7 +324,7 @@ function readHandoffBinding(
   if (existing?.mode !== "managed_worktree" || !existing.worktreePath) {
     throw new Error("Managed worktree has not been created for this direct chat.");
   }
-  return refreshDirectWorkspaceBinding({ ...thread, workspaceBinding: existing }, workspaceCwd, workspacePaths, now);
+  return await refreshDirectWorkspaceBinding({ ...thread, workspaceBinding: existing }, workspaceCwd, workspacePaths, now);
 }
 
 async function createManagedDirectWorktreeBinding(
@@ -314,35 +336,33 @@ async function createManagedDirectWorktreeBinding(
   | { readonly ok: true; readonly binding: DirectWorkspaceBinding }
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
-  const repo = await git(workspaceCwd, ["rev-parse", "--show-toplevel"]).catch(() => undefined);
-  if (!repo?.stdout.trim()) {
+  const repo = await resolveGitRepoRoot(workspaceCwd);
+  if (!repo.ok) {
     return { ok: false, code: "not_git_repository", message: "当前工作区不是 Git 仓库，无法创建独立私聊工作区。" };
   }
-  const repoRoot = repo.stdout.trim();
+  const repoRoot = repo.repoRoot;
   const now = new Date().toISOString();
-  const baseCommit = (await git(repoRoot, ["rev-parse", "HEAD"])).stdout.trim();
-  const currentBranch = (await git(repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
-  const baseBranch = requestedBaseBranch || currentBranch || baseCommit;
   const branchName = directWorktreeBranchName(thread.teammateId, thread.id);
   const worktreePath = directWorktreePath(workspaceCwd, thread.teammateId, thread.id, workspacePaths);
-  if (!existsSync(worktreePath)) {
-    await mkdir(dirname(worktreePath), { recursive: true });
-    try {
-      await git(repoRoot, ["worktree", "add", "-B", branchName, worktreePath, baseBranch]);
-    } catch (error) {
-      return { ok: false, code: "worktree_create_failed", message: `创建私聊 worktree 失败：${redactGitError(error)}` };
-    }
+  const created = await createManagedGitWorktree({
+    repoRoot,
+    worktreePath,
+    branchName,
+    requestedBaseBranch,
+  });
+  if (!created.ok) {
+    return { ok: false, code: created.code, message: created.message.replace("创建 worktree", "创建私聊 worktree") };
   }
   return {
     ok: true,
     binding: {
       mode: "managed_worktree",
-      status: existsSync(worktreePath) ? "ready" : "missing",
+      status: "ready",
       executionPath: worktreePath,
       worktreePath,
       branchName,
-      baseBranch,
-      baseCommit,
+      baseBranch: created.result.baseBranch,
+      baseCommit: created.result.baseCommit,
       createdAt: thread.workspaceBinding?.createdAt ?? now,
       checkedAt: now,
       updatedAt: now,
@@ -361,11 +381,7 @@ function directWorktreePath(
 }
 
 function directWorktreeBranchName(teammateId: string, threadId: string): string {
-  return `ling/teammate-${safeBranchSegment(teammateId)}-${safeBranchSegment(threadId)}`;
-}
-
-function safeBranchSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "thread";
+  return `ling/teammate-${safeGitBranchSegment(teammateId)}-${safeGitBranchSegment(threadId)}`;
 }
 
 function uniquePaths(paths: readonly string[]): readonly string[] {
@@ -387,12 +403,73 @@ function isPathInside(basePath: string, targetPath: string): boolean {
   return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
 }
 
-async function git(cwd: string, args: readonly string[]): Promise<{ readonly stdout: string; readonly stderr: string }> {
-  const result = await execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024 });
-  return { stdout: result.stdout, stderr: result.stderr };
+async function cleanupManagedDirectWorktree(
+  thread: TeammateDirectThread,
+  workspaceCwd: string,
+  workspacePaths: LingStackRuntimePaths,
+  now: string,
+): Promise<
+  | { readonly ok: true; readonly binding: DirectWorkspaceBinding }
+  | { readonly ok: false; readonly code: string; readonly message: string; readonly binding?: DirectWorkspaceBinding }
+> {
+  const binding = thread.workspaceBinding ?? defaultDirectWorkspaceBinding(thread, workspaceCwd, workspacePaths);
+  if (binding.mode !== "managed_worktree" || !binding.worktreePath) {
+    return { ok: false, code: "workspace_not_managed", message: "私聊工作区不是 Ling 管理的 worktree，无法清理。" };
+  }
+  const repo = await resolveGitRepoRoot(workspaceCwd);
+  if (!repo.ok) {
+    return { ok: false, code: repo.code, message: repo.message };
+  }
+  const cleanup = await removeManagedWorktreeIfClean({
+    repoRoot: repo.repoRoot,
+    worktreePath: binding.worktreePath,
+  });
+  if (!cleanup.ok) {
+    const status = statusFromManagedInspection(binding, cleanup.inspection);
+    return {
+      ok: false,
+      code: cleanup.code,
+      message: cleanup.message,
+      binding: {
+        ...binding,
+        executionPath: binding.worktreePath,
+        status,
+        errorMessage: managedInspectionMessage(status, cleanup.inspection, cleanup.message),
+        checkedAt: now,
+        updatedAt: now,
+      },
+    };
+  }
+  return {
+    ok: true,
+    binding: {
+      ...binding,
+      executionPath: binding.worktreePath,
+      status: "not_created",
+      errorMessage: undefined,
+      checkedAt: now,
+      updatedAt: now,
+    },
+  };
 }
 
-function redactGitError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\/[^\s"']+/g, "<path>");
+function statusFromManagedInspection(binding: DirectWorkspaceBinding, inspection: { readonly status: "ready" | "missing" | "blocked" }): DirectWorkspaceBinding["status"] {
+  if (inspection.status === "ready") {
+    return "ready";
+  }
+  if (inspection.status === "blocked") {
+    return "blocked";
+  }
+  return binding.status === "not_created" || !binding.createdAt ? "not_created" : "missing";
+}
+
+function managedInspectionMessage(
+  status: DirectWorkspaceBinding["status"],
+  inspection: { readonly errorMessage?: string },
+  fallback: string,
+): string | undefined {
+  if (status === "ready" || status === "not_created") {
+    return undefined;
+  }
+  return inspection.errorMessage ?? fallback;
 }

@@ -5354,6 +5354,7 @@ test("workflow skipped optional step allows downstream steps to start", async ()
 test("workflow orchestrator starts independent parallel branches within channel budget", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-parallel-"));
   const runner = new ParallelDelayedRunner();
+  let cleanupWorkflowId;
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
     storeFactory: (storeCwd) => {
@@ -5400,6 +5401,7 @@ test("workflow orchestrator starts independent parallel branches within channel 
       maxParallelSiblings: 2,
       providerPresetId: provider.id,
     });
+    cleanupWorkflowId = workflow.id;
 
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(tick.status, "started");
@@ -5409,9 +5411,15 @@ test("workflow orchestrator starts independent parallel branches within channel 
     const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["running", "running"]);
   } finally {
-    runner.resolveAll("parallel cleanup");
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
+    try {
+      runner.resolveAll("parallel cleanup");
+      if (cleanupWorkflowId) {
+        await settleParallelDelayedWorkflow(daemon.url, cwd, cleanupWorkflowId, runner, "parallel cleanup");
+      }
+    } finally {
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
   }
 });
 
@@ -5571,6 +5579,7 @@ test("custom workflow template unsafe autostart requires explicit confirmation",
 test("custom workflow template parallel branches start within compiled budget", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-parallel-"));
   const runner = new ParallelDelayedRunner();
+  let cleanupWorkflowId;
   const daemon = await startDaemonForTest(runner);
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -5623,18 +5632,26 @@ test("custom workflow template parallel branches start within compiled budget", 
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(tick.status, "started");
     assert.equal(tick.startedSteps.length, 2);
+    cleanupWorkflowId = compiled.workflow.id;
     await runner.waitUntilStarted(2);
     assert.deepEqual(runner.runs.map((run) => run.task.title).sort(), ["Branch A", "Branch B"]);
   } finally {
-    runner.resolveAll("custom parallel cleanup");
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
+    try {
+      runner.resolveAll("custom parallel cleanup");
+      if (cleanupWorkflowId) {
+        await settleParallelDelayedWorkflow(daemon.url, cwd, cleanupWorkflowId, runner, "custom parallel cleanup");
+      }
+    } finally {
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
   }
 });
 
 test("workflow orchestrator keeps serial behavior without parallel runtime policy", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-serial-budget-"));
   const runner = new ParallelDelayedRunner();
+  let cleanupWorkflowId;
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
     storeFactory: (storeCwd) => {
@@ -5681,13 +5698,20 @@ test("workflow orchestrator keeps serial behavior without parallel runtime polic
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(tick.status, "started");
     assert.equal(tick.startedSteps.length, 1);
+    cleanupWorkflowId = workflow.id;
     await runner.waitUntilStarted(1);
     const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["queued", "running"]);
   } finally {
-    runner.resolveAll("serial cleanup");
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
+    try {
+      runner.resolveAll("serial cleanup");
+      if (cleanupWorkflowId) {
+        await settleParallelDelayedWorkflow(daemon.url, cwd, cleanupWorkflowId, runner, "serial cleanup", { drainQueued: true });
+      }
+    } finally {
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
   }
 });
 
@@ -6274,6 +6298,115 @@ test("managed channel and direct worktrees use resolved workspace worktrees dire
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
     await rm(userRoot, { recursive: true, force: true });
+  }
+});
+
+test("channel workspace cleanup removes clean managed worktrees and keeps the binding recreatable", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-worktree-cleanup-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const worktreePath = channel.workspaceBinding?.worktreePath;
+    assert.ok(worktreePath);
+    await access(worktreePath);
+
+    const cleaned = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/cleanup?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cleaned.binding.mode, "managed_worktree");
+    assert.equal(cleaned.binding.status, "not_created");
+    assert.equal(cleaned.binding.worktreePath, worktreePath);
+    await assert.rejects(() => access(worktreePath), /ENOENT/);
+
+    const refreshed = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/refresh?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(refreshed.binding.status, "not_created");
+
+    const recreated = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(recreated.binding.status, "ready");
+    assert.equal(recreated.binding.worktreePath, worktreePath);
+    await access(worktreePath);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel workspace cleanup refuses dirty managed worktrees without blocking refresh", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-worktree-dirty-cleanup-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const worktreePath = channel.workspaceBinding?.worktreePath;
+    assert.ok(worktreePath);
+    await writeFile(resolve(worktreePath, "dirty.txt"), "dirty\n", "utf8");
+
+    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/cleanup?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 409);
+    const body = await response.json();
+    assert.equal(body.error, "worktree_dirty");
+    assert.equal(body.binding.status, "ready");
+    await access(resolve(worktreePath, "dirty.txt"));
+
+    const refreshed = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/refresh?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(refreshed.binding.status, "ready");
+    assert.equal(refreshed.binding.errorMessage, undefined);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("direct teammate workspace cleanup removes clean managed worktrees and can recreate them", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-worktree-cleanup-"));
+  const daemon = await startDaemonForTest();
+  try {
+    await ensureGitRepo(cwd);
+    const teammateId = "teammate_builtin_engineer";
+    const created = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
+    const worktreePath = created.binding.worktreePath;
+    await access(worktreePath);
+
+    const cleaned = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/cleanup?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cleaned.binding.mode, "managed_worktree");
+    assert.equal(cleaned.binding.status, "not_created");
+    assert.equal(cleaned.binding.worktreePath, worktreePath);
+    await assert.rejects(() => access(worktreePath), /ENOENT/);
+
+    const recreated = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(recreated.binding.status, "ready");
+    assert.equal(recreated.binding.worktreePath, worktreePath);
+    await access(worktreePath);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("direct teammate workspace cleanup refuses dirty managed worktrees", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-worktree-dirty-cleanup-"));
+  const daemon = await startDaemonForTest();
+  try {
+    await ensureGitRepo(cwd);
+    const teammateId = "teammate_builtin_engineer";
+    const created = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
+    const worktreePath = created.binding.worktreePath;
+    await writeFile(resolve(worktreePath, "dirty.txt"), "dirty\n", "utf8");
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/cleanup?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 409);
+    const body = await response.json();
+    assert.equal(body.error, "worktree_dirty");
+    assert.equal(body.binding.status, "ready");
+    await access(resolve(worktreePath, "dirty.txt"));
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
   }
 });
 
@@ -7992,14 +8125,18 @@ class ParallelDelayedRunner {
     this.runs = [];
     this.pendingResolvers = [];
     this.startedResolvers = [];
+    this.autoResolveText = undefined;
   }
 
   async runTask(options) {
     this.runs.push(options);
     this.startedResolvers.splice(0).forEach((resolveStarted) => resolveStarted());
-    const text = await new Promise((resolve) => {
-      this.pendingResolvers.push(resolve);
-    });
+    let text = this.autoResolveText;
+    if (text === undefined) {
+      text = await new Promise((resolve) => {
+        this.pendingResolvers.push(resolve);
+      });
+    }
     options.onEvent?.({ type: "assistant_text_delta", text });
     return {
       taskId: options.task.id,
@@ -8023,6 +8160,7 @@ class ParallelDelayedRunner {
   }
 
   resolveAll(text) {
+    this.autoResolveText = text;
     this.pendingResolvers.splice(0).forEach((resolvePending) => resolvePending(text));
   }
 }
@@ -8381,6 +8519,33 @@ async function waitForWorkflowStepStatus(baseUrl, cwd, workflowId, workflowStepI
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   assert.fail(`Timed out waiting for workflow step ${workflowStepId} to become ${status}. Latest: ${JSON.stringify(latest)}`);
+}
+
+async function settleParallelDelayedWorkflow(baseUrl, cwd, workflowId, runner, text, options = {}) {
+  const deadline = Date.now() + 2_000;
+  let latest;
+  while (Date.now() < deadline) {
+    runner.resolveAll(text);
+    latest = await getJson(`${baseUrl}/workflows/${encodeURIComponent(workflowId)}/steps?cwd=${encodeURIComponent(cwd)}`);
+    const runningSteps = latest.workflowSteps.filter((step) => step.status === "running");
+    const queuedSteps = options.drainQueued ? latest.workflowSteps.filter((step) => step.status === "queued") : [];
+    if (runningSteps.length === 0) {
+      if (queuedSteps.length > 0) {
+        await postJson(`${baseUrl}/workflows/${encodeURIComponent(workflowId)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const settled = await getJson(`${baseUrl}/workflows/${encodeURIComponent(workflowId)}/steps?cwd=${encodeURIComponent(cwd)}`);
+      const hasRunning = settled.workflowSteps.some((step) => step.status === "running");
+      const hasQueued = options.drainQueued && settled.workflowSteps.some((step) => step.status === "queued");
+      if (!hasRunning && !hasQueued) {
+        return settled.workflowSteps;
+      }
+      continue;
+    }
+    await Promise.all(runningSteps.map((step) => waitForWorkflowStepStatus(baseUrl, cwd, workflowId, step.id, "succeeded")));
+  }
+  assert.fail(`Timed out waiting for parallel delayed workflow ${workflowId} to settle. Latest: ${JSON.stringify(latest)}`);
 }
 
 async function waitForWorkflowTemplateStepStatus(baseUrl, cwd, workflowId, templateStepId, status) {
