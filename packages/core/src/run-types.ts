@@ -46,6 +46,8 @@ import type {
   ChannelBrief,
   ChannelCollaborationProtocolDraft,
   ChannelCollaborationProtocolOverride,
+  ChannelPlaybookCandidate,
+  ChannelPlaybookCandidateStatus,
   ChannelProtocolDraftStatus,
   ChannelContextSummary,
   ChannelDecision,
@@ -62,6 +64,7 @@ import type {
   CreateChannelAttachmentInput,
   CreateChannelBranchInput,
   CreateChannelCollaborationProtocolDraftInput,
+  CreateChannelPlaybookCandidateInput,
   CreateChannelContextSummaryInput,
   CreateChannelDecisionInput,
   CreateChannelExecutionProposalInput,
@@ -120,6 +123,7 @@ import type {
   TeammatePrivateAttachment,
   TeammateSkillBinding,
   UpdateChannelBriefInput,
+  UpdateChannelPlaybookCandidateInput,
   UpdateChannelContextSummaryInput,
   UpdateChannelDecisionInput,
   UpdateChannelExecutionProposalInput,
@@ -1191,6 +1195,18 @@ export interface RunStore {
     input: { readonly status?: ChannelProtocolDraftStatus; readonly appliedProtocolVersion?: number | null },
     now: string,
   ): ChannelCollaborationProtocolDraft | undefined;
+  createChannelPlaybookCandidate(input: CreateChannelPlaybookCandidateInput, now: string): ChannelPlaybookCandidate;
+  getChannelPlaybookCandidate(id: string): ChannelPlaybookCandidate | undefined;
+  listChannelPlaybookCandidates(options: {
+    readonly channelId: string;
+    readonly status?: ChannelPlaybookCandidateStatus;
+    readonly limit?: number;
+  }): ChannelPlaybookCandidate[];
+  updateChannelPlaybookCandidate(
+    id: string,
+    input: UpdateChannelPlaybookCandidateInput,
+    now: string,
+  ): ChannelPlaybookCandidate | undefined;
   createChannelWorkflow(input: CreateChannelWorkflowInput, now: string): ChannelWorkflow;
   getChannelWorkflow(id: string): ChannelWorkflow | undefined;
   listChannelWorkflows(options: ListChannelWorkflowsOptions): ChannelWorkflow[];

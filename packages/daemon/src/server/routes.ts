@@ -267,11 +267,14 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "workspace" | "protocol" | "branches";
+  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "workspace" | "protocol" | "playbooks" | "branches";
   readonly branchId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
   readonly protocolClusterId?: string;
+  readonly playbookAction?: "candidates" | "candidate-from-cluster" | "review-candidate";
+  readonly playbookCandidateId?: string;
+  readonly playbookClusterId?: string;
   readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
@@ -313,6 +316,15 @@ export function parseChannelRoute(
   }
   if (segments.length === 5 && segments[0] === "channels" && segments[2] === "protocol-candidates" && segments[4] === "review") {
     return { channelId: segments[1], action: "protocol", protocolAction: "review-candidate", protocolDraftId: segments[3] };
+  }
+  if (segments.length === 3 && segments[0] === "channels" && segments[2] === "playbook-candidates") {
+    return { channelId: segments[1], action: "playbooks", playbookAction: "candidates" };
+  }
+  if (segments.length === 5 && segments[0] === "channels" && segments[2] === "playbook-candidates" && segments[3] === "from-cluster") {
+    return { channelId: segments[1], action: "playbooks", playbookAction: "candidate-from-cluster", playbookClusterId: segments[4] };
+  }
+  if (segments.length === 5 && segments[0] === "channels" && segments[2] === "playbook-candidates" && segments[4] === "review") {
+    return { channelId: segments[1], action: "playbooks", playbookAction: "review-candidate", playbookCandidateId: segments[3] };
   }
   if (
     segments.length === 4 &&

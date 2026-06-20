@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   archiveSkill,
+  createChannelPlaybookCandidateFromCluster,
   createChannelProtocolCandidateFromCluster,
   createSkillCandidateDraft,
   createSkillImportDraft,
@@ -303,6 +304,32 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
+  async function createPlaybookCandidateFromCluster(cluster: ProcedureObservationCluster): Promise<void> {
+    if (saving) {
+      return;
+    }
+    if (!cluster.channelId) {
+      setError(t("Candidate cluster is not bound to a channel."));
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      await createChannelPlaybookCandidateFromCluster(workspaceCwd, cluster.channelId, cluster.id);
+      await refresh();
+      setMessage(t("Playbook candidate created"));
+    } catch (draftError) {
+      setError(draftError instanceof Error ? draftError.message : String(draftError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function archiveRegistrySkill(skillId: string): Promise<void> {
     if (saving) {
       return;
@@ -375,6 +402,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         loading={loading}
         saving={saving}
         onCreateProtocolCandidate={(cluster) => void createProtocolCandidateFromCluster(cluster)}
+        onCreatePlaybookCandidate={(cluster) => void createPlaybookCandidateFromCluster(cluster)}
         t={t}
       />
 
@@ -656,12 +684,14 @@ function ProcedureObservationClusterPanel({
   loading,
   saving,
   onCreateProtocolCandidate,
+  onCreatePlaybookCandidate,
   t,
 }: {
   readonly clusters: readonly ProcedureObservationCluster[];
   readonly loading: boolean;
   readonly saving: boolean;
   readonly onCreateProtocolCandidate: (cluster: ProcedureObservationCluster) => void;
+  readonly onCreatePlaybookCandidate: (cluster: ProcedureObservationCluster) => void;
   readonly t: SettingsTranslator;
 }): JSX.Element {
   const reviewable = clusters.filter((cluster) => cluster.status === "ready_for_review");
@@ -684,6 +714,11 @@ function ProcedureObservationClusterPanel({
               cluster.routeKind === "channel_protocol" &&
               cluster.status === "ready_for_review" &&
               cluster.recommendedAction === "create_channel_protocol_candidate" &&
+              cluster.routeBlockers.length === 0;
+            const canCreatePlaybookCandidate = cluster.channelId &&
+              cluster.routeKind === "playbook" &&
+              cluster.status === "ready_for_review" &&
+              cluster.recommendedAction === "create_playbook_candidate" &&
               cluster.routeBlockers.length === 0;
             return (
               <article key={cluster.id} className="settings-skill-candidate-card">
@@ -718,6 +753,14 @@ function ProcedureObservationClusterPanel({
                     <button className="primary-button compact-button" type="button" onClick={() => onCreateProtocolCandidate(cluster)} disabled={saving}>
                       <BookOpen size={14} />
                       {t("Create protocol candidate")}
+                    </button>
+                  </div>
+                ) : null}
+                {canCreatePlaybookCandidate ? (
+                  <div className="settings-skill-candidate-actions">
+                    <button className="primary-button compact-button" type="button" onClick={() => onCreatePlaybookCandidate(cluster)} disabled={saving}>
+                      <BookOpen size={14} />
+                      {t("Create playbook candidate")}
                     </button>
                   </div>
                 ) : null}

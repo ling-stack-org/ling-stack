@@ -26,6 +26,10 @@ import type {
   ChannelMessageRouteDecisionListResponse,
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  ChannelPlaybookCandidateListResponse,
+  ChannelPlaybookCandidateMutationResponse,
+  ChannelPlaybookCandidateReviewRequest,
+  ChannelPlaybookCandidateStatus,
   ChannelProtocolCandidateListResponse,
   ChannelProtocolCandidateMutationResponse,
   ChannelProtocolCandidateReviewRequest,
@@ -49,6 +53,7 @@ import type {
   WorkflowCollaborationCardResponse,
   CreateChannelBranchRequest,
   CreateChannelCollaborationProtocolDraftRequest,
+  CreateChannelPlaybookCandidateFromClusterRequest,
   CreateChannelProtocolCandidateFromClusterRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
@@ -160,6 +165,32 @@ export async function createChannelProtocolCandidateFromCluster(
   input: CreateChannelProtocolCandidateFromClusterRequest = {},
 ): Promise<ChannelProtocolCandidateMutationResponse> {
   return daemonClient.createChannelProtocolCandidateFromCluster(cwd, channelId, clusterId, input);
+}
+
+export async function listChannelPlaybookCandidates(
+  cwd: string,
+  channelId: string,
+  options: { readonly status?: ChannelPlaybookCandidateStatus; readonly limit?: number } = {},
+): Promise<ChannelPlaybookCandidateListResponse> {
+  return daemonClient.listChannelPlaybookCandidates(cwd, channelId, options);
+}
+
+export async function createChannelPlaybookCandidateFromCluster(
+  cwd: string,
+  channelId: string,
+  clusterId: string,
+  input: CreateChannelPlaybookCandidateFromClusterRequest = {},
+): Promise<ChannelPlaybookCandidateMutationResponse> {
+  return daemonClient.createChannelPlaybookCandidateFromCluster(cwd, channelId, clusterId, input);
+}
+
+export async function reviewChannelPlaybookCandidate(
+  cwd: string,
+  channelId: string,
+  candidateId: string,
+  input: ChannelPlaybookCandidateReviewRequest,
+): Promise<ChannelPlaybookCandidateMutationResponse> {
+  return daemonClient.reviewChannelPlaybookCandidate(cwd, channelId, candidateId, input);
 }
 
 export async function applyChannelCollaborationProtocolDraft(

@@ -23,6 +23,7 @@ import {
 } from "../features/channels/attachments.js";
 import { createAiChannelReply } from "../features/channels/ai-replies.js";
 import { handleChannelCollaborationProtocol } from "../features/channels/collaboration-protocol.js";
+import { handleChannelPlaybookCandidates } from "../features/channels/playbooks.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
 import { handleChannelMessagesCollection, handleChannelMessageStream } from "../features/channels/messages.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
@@ -1425,6 +1426,19 @@ export async function routeRequest(
         channelRoute.protocolAction,
         channelRoute.protocolDraftId,
         channelRoute.protocolClusterId,
+      );
+      return;
+    }
+    if (channelRoute.action === "playbooks") {
+      await handleChannelPlaybookCandidates(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
+        channelRoute.playbookAction,
+        channelRoute.playbookCandidateId,
+        channelRoute.playbookClusterId,
       );
       return;
     }

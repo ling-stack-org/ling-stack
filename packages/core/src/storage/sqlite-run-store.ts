@@ -45,6 +45,8 @@ import {
   type ChannelBranchUpdateInput,
   type ChannelCollaborationProtocolDraft,
   type ChannelCollaborationProtocolOverride,
+  type ChannelPlaybookCandidate,
+  type ChannelPlaybookCandidateStatus,
   type ChannelProtocolDraftStatus,
   type ChannelProtocolSourceRef,
   type ChannelContextSummary,
@@ -65,6 +67,7 @@ import {
   type CreateChannelAttachmentInput,
   type CreateChannelBranchInput,
   type CreateChannelCollaborationProtocolDraftInput,
+  type CreateChannelPlaybookCandidateInput,
   type CreateChannelContextSummaryInput,
   type CreateChannelDecisionInput,
   type CreateChannelExecutionProposalInput,
@@ -124,6 +127,7 @@ import {
   type UpdateTeammateDirectLinkPreviewInput,
   type TeammateSkillBinding,
   type UpdateChannelBriefInput,
+  type UpdateChannelPlaybookCandidateInput,
   type UpdateChannelContextSummaryInput,
   type UpdateChannelDecisionInput,
   type UpdateChannelExecutionProposalInput,
@@ -407,6 +411,7 @@ import { SqliteChannelProposalStore } from "./sqlite/channel-proposal-store.js";
 import { SqliteChannelAssetStore } from "./sqlite/channel-asset-store.js";
 import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-store.js";
 import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
+import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
 import { SqliteChannelWorkflowStore } from "./sqlite/channel-workflow-store.js";
 import { SqliteChannelCoreStore } from "./sqlite/channel-core-store.js";
 import { SqliteExternalWorkStore } from "./sqlite/external-work-store.js";
@@ -470,6 +475,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelAssets: SqliteChannelAssetStore;
   private readonly channelCollaborations: SqliteChannelCollaborationStore;
   private readonly channelProtocols: SqliteChannelProtocolStore;
+  private readonly channelPlaybooks: SqliteChannelPlaybookStore;
   private readonly channelWorkflows: SqliteChannelWorkflowStore;
   private readonly channelCore: SqliteChannelCoreStore;
   private readonly externalWork: SqliteExternalWorkStore;
@@ -737,6 +743,10 @@ export class SqliteRunStore implements RunStore {
         assertChannelExists: (channelId) => this.assertChannelExists(channelId),
         assertChannelProtocolSourceRefsInChannel: (channelId, sourceRefs) => this.assertChannelProtocolSourceRefsInChannel(channelId, sourceRefs),
       },
+    );
+    this.channelPlaybooks = new SqliteChannelPlaybookStore(
+      { database: this.database },
+      { assertChannelExists: (channelId) => this.assertChannelExists(channelId) },
     );
     this.channelWorkflows = new SqliteChannelWorkflowStore(
       { database: this.database },
@@ -1883,6 +1893,30 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): ChannelCollaborationProtocolDraft | undefined {
     return this.channelProtocols.updateChannelCollaborationProtocolDraft(id, input, now);
+  }
+
+  createChannelPlaybookCandidate(input: CreateChannelPlaybookCandidateInput, now: string): ChannelPlaybookCandidate {
+    return this.channelPlaybooks.createChannelPlaybookCandidate(input, now);
+  }
+
+  getChannelPlaybookCandidate(id: string): ChannelPlaybookCandidate | undefined {
+    return this.channelPlaybooks.getChannelPlaybookCandidate(id);
+  }
+
+  listChannelPlaybookCandidates(options: {
+    readonly channelId: string;
+    readonly status?: ChannelPlaybookCandidateStatus;
+    readonly limit?: number;
+  }): ChannelPlaybookCandidate[] {
+    return this.channelPlaybooks.listChannelPlaybookCandidates(options);
+  }
+
+  updateChannelPlaybookCandidate(
+    id: string,
+    input: UpdateChannelPlaybookCandidateInput,
+    now: string,
+  ): ChannelPlaybookCandidate | undefined {
+    return this.channelPlaybooks.updateChannelPlaybookCandidate(id, input, now);
   }
 
   createChannelWorkflow(input: CreateChannelWorkflowInput, now: string): ChannelWorkflow {

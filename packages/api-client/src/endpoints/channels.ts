@@ -26,6 +26,9 @@ import type {
   ChannelListResponse,
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
+  ChannelPlaybookCandidateListResponse,
+  ChannelPlaybookCandidateMutationResponse,
+  ChannelPlaybookCandidateReviewRequest,
   ChannelProtocolCandidateListResponse,
   ChannelProtocolCandidateMutationResponse,
   ChannelProtocolCandidateReviewRequest,
@@ -55,6 +58,7 @@ import type {
   CreateChannelAttachmentRequest,
   CreateChannelBranchRequest,
   CreateChannelCollaborationProtocolDraftRequest,
+  CreateChannelPlaybookCandidateFromClusterRequest,
   CreateChannelProtocolCandidateFromClusterRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
@@ -202,6 +206,32 @@ export const channelEndpoints = {
       input: ChannelProtocolCandidateReviewRequest,
     ): Promise<ChannelProtocolCandidateMutationResponse> {
       return this._post(`/channels/${encodeURIComponent(channelId)}/protocol-candidates/${encodeURIComponent(candidateId)}/review`, { cwd }, input);
+    },
+
+  async listChannelPlaybookCandidates(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      options: { readonly status?: "draft" | "active" | "cancelled" | "stale"; readonly limit?: number } = {},
+    ): Promise<ChannelPlaybookCandidateListResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/playbook-candidates`, { cwd, status: options.status, limit: options.limit });
+    },
+
+  async createChannelPlaybookCandidateFromCluster(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      clusterId: string,
+      input: CreateChannelPlaybookCandidateFromClusterRequest = {},
+    ): Promise<ChannelPlaybookCandidateMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/playbook-candidates/from-cluster/${encodeURIComponent(clusterId)}`, { cwd }, input);
+    },
+
+  async reviewChannelPlaybookCandidate(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      candidateId: string,
+      input: ChannelPlaybookCandidateReviewRequest,
+    ): Promise<ChannelPlaybookCandidateMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/playbook-candidates/${encodeURIComponent(candidateId)}/review`, { cwd }, input);
     },
 
   async revertChannelCollaborationProtocol(this: LingDaemonEndpointContext, cwd: string, channelId: string): Promise<ChannelCollaborationProtocolMutationResponse> {

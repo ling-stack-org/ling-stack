@@ -149,6 +149,51 @@ test("procedure observation clusters aggregate channel playbooks and blocked ski
   });
 });
 
+test("sqlite channel playbook candidates persist review state", async () => {
+  await withStore("ling-stack-channel-playbook-candidates-", async (store, cwd) => {
+    const channel = store.createChannel({ name: "Release", boundPath: cwd }, now);
+    const candidate = store.createChannelPlaybookCandidate({
+      channelId: channel.id,
+      title: "Channel release verification playbook",
+      summary: "Repeatable channel release verification steps.",
+      normalizedGoal: "channel release verification",
+      procedureSteps: [
+        { title: "Collect release evidence", instruction: "Summarize test and review evidence.", requiredTools: ["read"] },
+      ],
+      validationSteps: [
+        { title: "Confirm linked evidence", commandOrCheck: "Review linked test evidence.", expectedResult: "Evidence is linked." },
+      ],
+      positiveTriggers: ["release workflow"],
+      negativeTriggers: ["docs-only change"],
+      sourceRefs: [{ type: "run", id: "run_release_playbook", label: "Release run" }],
+      reason: "Created from a ready playbook cluster.",
+      createdBy: "ai-draft",
+    }, now);
+
+    assert.equal(candidate.channelId, channel.id);
+    assert.equal(candidate.status, "draft");
+    assert.equal(candidate.procedureSteps[0].requiredTools[0], "read");
+    assert.equal(store.listChannelPlaybookCandidates({ channelId: channel.id, status: "draft" }).length, 1);
+
+    const active = store.updateChannelPlaybookCandidate(candidate.id, {
+      status: "active",
+      activatedAt: "2026-06-20T00:30:00.000Z",
+    }, "2026-06-20T00:30:00.000Z");
+    assert.equal(active.status, "active");
+    assert.equal(active.activatedAt, "2026-06-20T00:30:00.000Z");
+
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      const [persisted] = reopened.listChannelPlaybookCandidates({ channelId: channel.id, status: "active" });
+      assert.equal(persisted.id, candidate.id);
+      assert.equal(persisted.sourceRefs[0].type, "run");
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
 test("procedure observation job helper creates stable bounded observation input", () => {
   const input = {
     source: "manual_recording",
