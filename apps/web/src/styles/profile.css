@@ -53,15 +53,20 @@
   position: relative;
   display: grid;
   place-items: center;
+  flex: 0 0 112px;
   width: 112px;
   height: 112px;
+  aspect-ratio: 1 / 1;
+  padding: 0;
   overflow: visible;
   border: 1px solid var(--border);
   border-radius: 999px;
+  appearance: none;
   background: #f59e0b;
   color: #ffffff;
   font-size: 34px;
   font-weight: 700;
+  line-height: 1;
 }
 
 .profile-avatar-button.has-avatar {
@@ -81,8 +86,8 @@
 
 .profile-avatar-edit {
   position: absolute;
-  right: 3px;
-  bottom: 6px;
+  right: -4px;
+  bottom: 2px;
   display: grid;
   place-items: center;
   width: 30px;
@@ -90,6 +95,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-panel);
+  box-shadow: 0 0 0 4px var(--app-bg);
   color: var(--text);
 }
 
