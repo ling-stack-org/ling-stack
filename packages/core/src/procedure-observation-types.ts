@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { SkillDuplicateDecision } from "./skill-health.js";
 import type { SkillCandidateSourceRef } from "./skill-candidate-types.js";
 
 export type ProcedureObservationSource =
@@ -124,6 +125,61 @@ export interface ProcedureObservationCluster {
   readonly lastObservedAt: string;
 }
 
+export type CandidateGenerationDecisionSource =
+  | "explicit_user_save"
+  | "approved_recording"
+  | "post_run_terminal"
+  | "selected_transcript_snippet"
+  | "workflow_fanin"
+  | "correction_health";
+
+export type CandidateGenerationDecisionAction =
+  | "append_evidence"
+  | "create_skill_candidate"
+  | "create_channel_protocol_candidate"
+  | "create_playbook_candidate"
+  | "create_memory_candidate"
+  | "create_automation_candidate"
+  | "policy_review"
+  | "reject";
+
+export interface CandidateGenerationDecision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly observationId: string;
+  readonly clusterId: string;
+  readonly source: CandidateGenerationDecisionSource;
+  readonly route: CandidateRoute;
+  readonly decision: CandidateGenerationDecisionAction;
+  readonly blockers: readonly CandidateRouteBlocker[];
+  readonly duplicateDecision?: SkillDuplicateDecision;
+  readonly reason: string;
+  readonly createdCandidateId?: string;
+  readonly createdAt: string;
+}
+
+export interface CreateCandidateGenerationDecisionInput {
+  readonly id?: string;
+  readonly workspaceId?: string;
+  readonly observationId: string;
+  readonly clusterId: string;
+  readonly source: CandidateGenerationDecisionSource;
+  readonly route: CandidateRoute;
+  readonly decision: CandidateGenerationDecisionAction;
+  readonly blockers?: readonly CandidateRouteBlocker[];
+  readonly duplicateDecision?: SkillDuplicateDecision;
+  readonly reason: string;
+  readonly createdCandidateId?: string;
+}
+
+export interface ListCandidateGenerationDecisionsOptions {
+  readonly workspaceId?: string;
+  readonly observationId?: string;
+  readonly clusterId?: string;
+  readonly decision?: CandidateGenerationDecisionAction;
+  readonly limit?: number;
+}
+
 export interface CreateProcedureObservationInput {
   readonly id?: string;
   readonly workspaceId?: string;
@@ -165,6 +221,10 @@ export interface ListProcedureObservationClustersOptions {
 
 export function createProcedureObservationId(): string {
   return `procedure_observation_${randomUUID()}`;
+}
+
+export function createCandidateGenerationDecisionId(): string {
+  return `candidate_generation_decision_${randomUUID()}`;
 }
 
 export function createProcedureObservationClusterId(input: {

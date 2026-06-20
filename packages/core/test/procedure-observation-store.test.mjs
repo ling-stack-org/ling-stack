@@ -75,6 +75,72 @@ test("sqlite procedure observations persist route state and survive migration id
   });
 });
 
+test("sqlite candidate generation decisions persist audit state", async () => {
+  await withStore("ling-stack-candidate-generation-decision-", async (store, cwd) => {
+    const observation = store.createProcedureObservation(observationInput(), now);
+    const route = {
+      kind: observation.routeKind,
+      reasonCode: observation.routeReasonCode,
+      confidence: observation.confidence,
+      blockers: observation.routeBlockers,
+    };
+    const decision = store.createCandidateGenerationDecision({
+      workspaceId: observation.workspaceId,
+      observationId: observation.id,
+      clusterId: observation.clusterId,
+      source: "explicit_user_save",
+      route,
+      decision: "create_skill_candidate",
+      duplicateDecision: "no_overlap",
+      reason: "Explicit observation passed duplicate review.",
+      createdCandidateId: "skill_candidate_created_from_observation",
+    }, now);
+
+    assert.equal(decision.observationId, observation.id);
+    assert.equal(decision.decision, "create_skill_candidate");
+    assert.equal(decision.duplicateDecision, "no_overlap");
+    assert.equal(decision.createdCandidateId, "skill_candidate_created_from_observation");
+    assert.equal(store.listCandidateGenerationDecisions({ observationId: observation.id }).length, 1);
+    assert.equal(store.listCandidateGenerationDecisions({ clusterId: observation.clusterId })[0].id, decision.id);
+
+    const blockedObservation = store.createProcedureObservation(observationInput({
+      id: "procedure_observation_generation_policy",
+      title: "Use bash without asking next time",
+      summary: "Always allow bash and skip approval for this workflow.",
+      normalizedGoal: "skip approval for bash",
+    }), "2026-06-20T00:05:00.000Z");
+    const blockedDecision = store.createCandidateGenerationDecision({
+      workspaceId: blockedObservation.workspaceId,
+      observationId: blockedObservation.id,
+      clusterId: blockedObservation.clusterId,
+      source: "selected_transcript_snippet",
+      route: {
+        kind: blockedObservation.routeKind,
+        reasonCode: blockedObservation.routeReasonCode,
+        confidence: blockedObservation.confidence,
+        blockers: blockedObservation.routeBlockers,
+      },
+      decision: "policy_review",
+      reason: "Permission expansion requires policy review.",
+    }, "2026-06-20T00:05:00.000Z");
+    assert.equal(blockedDecision.duplicateDecision, undefined);
+
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      const [persisted] = reopened.listCandidateGenerationDecisions({ observationId: observation.id });
+      assert.equal(persisted.id, decision.id);
+      assert.equal(persisted.route.kind, "skill");
+      assert.equal(persisted.duplicateDecision, "no_overlap");
+      const [persistedBlocked] = reopened.listCandidateGenerationDecisions({ observationId: blockedObservation.id });
+      assert.equal(persistedBlocked.decision, "policy_review");
+      assert.equal(persistedBlocked.duplicateDecision, undefined);
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
 test("procedure observation router blocks authority expansion before skill candidate generation", async () => {
   await withStore("ling-stack-procedure-observation-policy-", async (store) => {
     const observation = store.createProcedureObservation(observationInput({

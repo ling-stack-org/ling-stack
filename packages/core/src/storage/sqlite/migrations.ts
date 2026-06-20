@@ -154,6 +154,8 @@ const SKILL_USAGE_EVENTS_MIGRATION_VERSION = 71;
 const SKILL_USAGE_EVENTS_MIGRATION_NAME = "create_skill_usage_events";
 const CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_VERSION = 72;
 const CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_NAME = "create_channel_playbook_candidates";
+const CANDIDATE_GENERATION_DECISIONS_MIGRATION_VERSION = 73;
+const CANDIDATE_GENERATION_DECISIONS_MIGRATION_NAME = "create_candidate_generation_decisions";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3651,6 +3653,38 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasChannelPlaybookCandidatesMigration) {
         context.recordMigration(CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_VERSION, CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_NAME);
+      }
+    }
+
+    const hasCandidateGenerationDecisionsMigration = context.hasMigration(CANDIDATE_GENERATION_DECISIONS_MIGRATION_VERSION);
+    if (
+      !hasCandidateGenerationDecisionsMigration ||
+      !context.hasTable("candidate_generation_decisions")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS candidate_generation_decisions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          observation_id TEXT NOT NULL,
+          cluster_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          route_json TEXT NOT NULL,
+          decision TEXT NOT NULL,
+          blockers_json TEXT NOT NULL,
+          duplicate_decision TEXT,
+          reason TEXT NOT NULL,
+          created_candidate_id TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_candidate_generation_decisions_cluster
+        ON candidate_generation_decisions(workspace_id, cluster_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_candidate_generation_decisions_observation
+        ON candidate_generation_decisions(workspace_id, observation_id, created_at);
+      `);
+      if (!hasCandidateGenerationDecisionsMigration) {
+        context.recordMigration(CANDIDATE_GENERATION_DECISIONS_MIGRATION_VERSION, CANDIDATE_GENERATION_DECISIONS_MIGRATION_NAME);
       }
     }
 }

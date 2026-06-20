@@ -1287,7 +1287,7 @@ interface CandidateGenerationDecision {
     | "policy_review"
     | "reject";
   readonly blockers: readonly CandidateRouteBlocker[];
-  readonly duplicateDecision: SkillDuplicateDecision;
+  readonly duplicateDecision?: SkillDuplicateDecision;
   readonly reason: string;
   readonly createdCandidateId?: string;
   readonly createdAt: string;
@@ -1306,7 +1306,7 @@ CREATE TABLE IF NOT EXISTS candidate_generation_decisions (
   route_json TEXT NOT NULL,
   decision TEXT NOT NULL,
   blockers_json TEXT NOT NULL,
-  duplicate_decision TEXT NOT NULL,
+  duplicate_decision TEXT,
   reason TEXT NOT NULL,
   created_candidate_id TEXT,
   created_at TEXT NOT NULL
@@ -1315,6 +1315,10 @@ CREATE TABLE IF NOT EXISTS candidate_generation_decisions (
 CREATE INDEX IF NOT EXISTS idx_candidate_generation_decisions_cluster
   ON candidate_generation_decisions(workspace_id, cluster_id, created_at);
 ```
+
+`duplicate_decision` is nullable because duplicate analysis only runs for skill-candidate
+creation paths. Policy-review, reject, memory, automation, and playbook routes must not
+claim a `no_overlap` result they did not compute.
 
 Accepted source events:
 

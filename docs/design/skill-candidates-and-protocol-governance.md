@@ -586,7 +586,8 @@ of these bounded inputs:
 - workflow fan-in summary that already has channel, participant, and role metadata;
 - usage/correction health finding that already summarizes repeated failures.
 
-Generation writes a decision record before any destination candidate is created:
+Generation writes a decision record for every generation attempt. When the same request
+creates a destination candidate, the persisted decision includes that candidate id:
 
 ```ts
 interface CandidateGenerationDecision {
@@ -612,7 +613,7 @@ interface CandidateGenerationDecision {
     | "policy_review"
     | "reject";
   readonly blockers: readonly CandidateRouteBlocker[];
-  readonly duplicateDecision: SkillDuplicateDecision;
+  readonly duplicateDecision?: SkillDuplicateDecision;
   readonly reason: string;
   readonly createdCandidateId?: string;
   readonly createdAt: string;
@@ -620,6 +621,8 @@ interface CandidateGenerationDecision {
 ```
 
 The decision record is for auditability and replay. It is not user-facing authority.
+`duplicateDecision` is present only when duplicate analysis actually ran; routed-elsewhere
+or policy-review paths must not pretend they passed duplicate analysis.
 
 Generation rules:
 

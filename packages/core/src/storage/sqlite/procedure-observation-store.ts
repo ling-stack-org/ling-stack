@@ -1,12 +1,19 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
+  createCandidateGenerationDecisionId,
   createProcedureObservationClusterId,
   createProcedureObservationId,
+  type CandidateGenerationDecision,
+  type CandidateGenerationDecisionAction,
+  type CandidateGenerationDecisionSource,
   type CandidateRouteBlocker,
   type CandidateRouteKind,
+  type CreateCandidateGenerationDecisionInput,
   type CreateProcedureObservationInput,
+  type ListCandidateGenerationDecisionsOptions,
   type ListProcedureObservationClustersOptions,
   type ListProcedureObservationsOptions,
+  type CandidateRoute,
   type ProcedureObservation,
   type ProcedureObservationCluster,
   type ProcedureObservationClusterRecommendedAction,
@@ -17,6 +24,7 @@ import {
   type ProcedureObservationStep,
   type ProcedureObservationValidationStep,
 } from "../../procedure-observation-types.js";
+import type { SkillDuplicateDecision } from "../../skill-health.js";
 import type { SkillCandidateSourceRef } from "../../skill-candidate-types.js";
 import { routeProcedureObservation } from "../../candidate-router.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
@@ -49,6 +57,23 @@ const procedureObservationSelectSql = `
     route_blockers_json,
     created_at
   FROM procedure_observations
+`;
+
+const candidateGenerationDecisionSelectSql = `
+  SELECT
+    id,
+    workspace_id,
+    observation_id,
+    cluster_id,
+    source,
+    route_json,
+    decision,
+    blockers_json,
+    duplicate_decision,
+    reason,
+    created_candidate_id,
+    created_at
+  FROM candidate_generation_decisions
 `;
 
 export class SqliteProcedureObservationStore {
@@ -195,6 +220,78 @@ export class SqliteProcedureObservationStore {
   getProcedureObservationCluster(id: string, workspaceId = DEFAULT_WORKSPACE_ID): ProcedureObservationCluster | undefined {
     return this.listProcedureObservationClusters({ workspaceId, limit: 500 }).find((cluster) => cluster.id === id);
   }
+
+  createCandidateGenerationDecision(input: CreateCandidateGenerationDecisionInput, now: string): CandidateGenerationDecision {
+    const decision: CandidateGenerationDecision = {
+      id: input.id ?? createCandidateGenerationDecisionId(),
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      observationId: input.observationId,
+      clusterId: input.clusterId,
+      source: input.source,
+      route: input.route,
+      decision: input.decision,
+      blockers: input.blockers ?? input.route.blockers,
+      duplicateDecision: input.duplicateDecision,
+      reason: input.reason,
+      createdCandidateId: input.createdCandidateId,
+      createdAt: now,
+    };
+    validateCandidateGenerationDecision(decision);
+    this.context.database
+      .prepare(`
+        INSERT INTO candidate_generation_decisions (
+          id,
+          workspace_id,
+          observation_id,
+          cluster_id,
+          source,
+          route_json,
+          decision,
+          blockers_json,
+          duplicate_decision,
+          reason,
+          created_candidate_id,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        decision.id,
+        decision.workspaceId,
+        decision.observationId,
+        decision.clusterId,
+        decision.source,
+        stringifyJson(decision.route),
+        decision.decision,
+        stringifyJson(decision.blockers),
+        decision.duplicateDecision ?? null,
+        decision.reason,
+        decision.createdCandidateId ?? null,
+        decision.createdAt,
+      );
+    return decision;
+  }
+
+  listCandidateGenerationDecisions(options: ListCandidateGenerationDecisionsOptions = {}): CandidateGenerationDecision[] {
+    const conditions = ["workspace_id = ?"];
+    const params: Array<string | number> = [options.workspaceId ?? DEFAULT_WORKSPACE_ID];
+    if (options.observationId) {
+      conditions.push("observation_id = ?");
+      params.push(options.observationId);
+    }
+    if (options.clusterId) {
+      conditions.push("cluster_id = ?");
+      params.push(options.clusterId);
+    }
+    if (options.decision) {
+      conditions.push("decision = ?");
+      params.push(options.decision);
+    }
+    params.push(Math.min(Math.max(options.limit ?? 100, 1), 500));
+    return this.context.database
+      .prepare(`${candidateGenerationDecisionSelectSql} WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map((row) => mapCandidateGenerationDecision(row as Record<string, SQLOutputValue>));
+  }
 }
 
 function toProcedureObservationCluster(observations: readonly ProcedureObservation[]): ProcedureObservationCluster {
@@ -340,6 +437,36 @@ function mapProcedureObservation(row: Record<string, SQLOutputValue>): Procedure
   };
 }
 
+function mapCandidateGenerationDecision(row: Record<string, SQLOutputValue>): CandidateGenerationDecision {
+  return {
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    observationId: readString(row, "observation_id"),
+    clusterId: readString(row, "cluster_id"),
+    source: readString(row, "source") as CandidateGenerationDecisionSource,
+    route: parseCandidateRoute(readString(row, "route_json")),
+    decision: readString(row, "decision") as CandidateGenerationDecisionAction,
+    blockers: parseStringArray(readString(row, "blockers_json")) as readonly CandidateRouteBlocker[],
+    duplicateDecision: readNullableString(row, "duplicate_decision") as SkillDuplicateDecision | undefined,
+    reason: readString(row, "reason"),
+    createdCandidateId: readNullableString(row, "created_candidate_id"),
+    createdAt: readString(row, "created_at"),
+  };
+}
+
+function parseCandidateRoute(value: string): CandidateRoute {
+  const parsed = parseJson(value);
+  if (!isPlainRecord(parsed)) {
+    throw new Error("Expected candidate route object");
+  }
+  return {
+    kind: readRecordString(parsed, "kind") as CandidateRouteKind,
+    reasonCode: readRecordString(parsed, "reasonCode"),
+    confidence: readRecordString(parsed, "confidence") as ProcedureObservationConfidence,
+    blockers: Array.isArray(parsed.blockers) ? parsed.blockers.map(String) as CandidateRouteBlocker[] : [],
+  };
+}
+
 function parseProcedureSteps(value: string): readonly ProcedureObservationStep[] {
   return parseJsonArray(value).map((item) => {
     if (!isPlainRecord(item)) {
@@ -405,6 +532,15 @@ function validateProcedureObservation(observation: ProcedureObservation): void {
   }
   if (observation.reusableScore < 0 || observation.reusableScore > 100) {
     throw new Error("Procedure observation reusable score must be between 0 and 100");
+  }
+}
+
+function validateCandidateGenerationDecision(decision: CandidateGenerationDecision): void {
+  if (!decision.id || !decision.workspaceId || !decision.observationId || !decision.clusterId) {
+    throw new Error("Candidate generation decision id, workspace id, observation id, and cluster id are required");
+  }
+  if (!decision.reason.trim()) {
+    throw new Error("Candidate generation decision reason is required");
   }
 }
 

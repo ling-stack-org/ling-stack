@@ -11,6 +11,9 @@ import {
   riskyRunTools,
   type CreateSkillCandidateInput,
   type CreateSkillImportDraftInput,
+  type CandidateGenerationDecision,
+  type CandidateGenerationDecisionAction,
+  type CandidateGenerationDecisionSource,
   type CandidateRoute,
   type ProviderCapability,
   type ProcedureObservation,
@@ -18,6 +21,7 @@ import {
   type SkillCandidate,
   type SkillCandidateHealthInput,
   type SkillDefinition,
+  type SkillDuplicateAnalysis,
   type SkillImportWarning,
   type SkillRegistryEntry,
   type SkillWorkflowPhase,
@@ -214,19 +218,36 @@ export async function handleSkillRoute(
       const existing = store.listProcedureObservations({ limit: 500 })
         .find((observation) => procedureObservationHasJobKey(observation, built.jobKey));
       if (existing) {
+        const route = routeFromObservation(existing);
+        const generationDecision = generationDecisionForExistingObservation(
+          store,
+          existing,
+          generationSourceFromJob(job),
+          route,
+          now,
+        );
         writeJson(response, 200, {
           cwd,
           jobKey: built.jobKey,
           reusedObservation: true,
           observation: existing,
-          route: routeFromObservation(existing),
+          route,
           action: "evidence_recorded",
+          generationDecision,
         });
         return;
       }
       const observation = store.createProcedureObservation(built.observationInput, now);
       const route = routeFromObservation(observation);
       if (route.kind !== "skill") {
+        const generationDecision = persistGenerationDecision(store, {
+          observation,
+          route,
+          source: generationSourceFromJob(job),
+          decision: generationDecisionActionForRoute(route),
+          reason: generationReasonForRoute(route),
+          now,
+        });
         writeJson(response, 202, {
           cwd,
           jobKey: built.jobKey,
@@ -234,10 +255,19 @@ export async function handleSkillRoute(
           observation,
           route,
           action: route.blockers.length > 0 ? "blocked" : "routed_elsewhere",
+          generationDecision,
         });
         return;
       }
       if (route.blockers.length > 0) {
+        const generationDecision = persistGenerationDecision(store, {
+          observation,
+          route,
+          source: generationSourceFromJob(job),
+          decision: "append_evidence",
+          reason: `Skill candidate generation is blocked until gates are complete: ${route.blockers.join(", ")}.`,
+          now,
+        });
         writeJson(response, 202, {
           cwd,
           jobKey: built.jobKey,
@@ -245,10 +275,19 @@ export async function handleSkillRoute(
           observation,
           route,
           action: "blocked",
+          generationDecision,
         });
         return;
       }
       if (!isExplicitObservationJob(job)) {
+        const generationDecision = persistGenerationDecision(store, {
+          observation,
+          route,
+          source: generationSourceFromJob(job),
+          decision: "append_evidence",
+          reason: "Observation job was not explicitly confirmed as a save-as-skill request, so it stays evidence-only.",
+          now,
+        });
         writeJson(response, 202, {
           cwd,
           jobKey: built.jobKey,
@@ -256,12 +295,22 @@ export async function handleSkillRoute(
           observation,
           route,
           action: "evidence_recorded",
+          generationDecision,
         });
         return;
       }
       const input = skillCandidateInputFromObservation(observation);
       const withAnalysis = withDuplicateAnalysis(input, store);
       if (withAnalysis.duplicateAnalysis.decision !== "no_overlap") {
+        const generationDecision = persistGenerationDecision(store, {
+          observation,
+          route,
+          source: generationSourceFromJob(job),
+          decision: "append_evidence",
+          duplicateAnalysis: withAnalysis.duplicateAnalysis,
+          reason: `Duplicate analysis returned ${withAnalysis.duplicateAnalysis.decision}; evidence was retained without creating a new skill candidate.`,
+          now,
+        });
         writeJson(response, 202, {
           cwd,
           jobKey: built.jobKey,
@@ -270,10 +319,21 @@ export async function handleSkillRoute(
           route,
           action: "evidence_recorded",
           duplicateAnalysis: withAnalysis.duplicateAnalysis,
+          generationDecision,
         });
         return;
       }
       const candidate = store.createSkillCandidate(withAnalysis, now);
+      const generationDecision = persistGenerationDecision(store, {
+        observation,
+        route,
+        source: generationSourceFromJob(job),
+        decision: "create_skill_candidate",
+        duplicateAnalysis: candidate.duplicateAnalysis,
+        createdCandidateId: candidate.id,
+        reason: "Explicit observation passed routing gates and duplicate analysis, so a pending skill candidate was created.",
+        now,
+      });
       appendSkillCandidateChangedEvent(store, controlPlaneEvents, cwd, "observation_job_create", candidate.id, candidate.status);
       writeJson(response, 201, {
         cwd,
@@ -284,6 +344,7 @@ export async function handleSkillRoute(
         action: "candidate_created",
         candidate,
         duplicateAnalysis: candidate.duplicateAnalysis,
+        generationDecision,
       });
       return;
     }
@@ -298,26 +359,62 @@ export async function handleSkillRoute(
       const observation = store.createProcedureObservation(parseProcedureObservationRequest(body), now);
       const route = routeFromObservation(observation);
       if (route.kind !== "skill") {
-        writeJson(response, 202, { cwd, observation, route, action: route.blockers.length > 0 ? "blocked" : "routed_elsewhere" });
+        const generationDecision = persistGenerationDecision(store, {
+          observation,
+          route,
+          source: generationSourceFromObservation(observation),
+          decision: generationDecisionActionForRoute(route),
+          reason: generationReasonForRoute(route),
+          now,
+        });
+        writeJson(response, 202, { cwd, observation, route, action: route.blockers.length > 0 ? "blocked" : "routed_elsewhere", generationDecision });
         return;
       }
       if (route.blockers.length > 0) {
-        writeJson(response, 202, { cwd, observation, route, action: "blocked" });
+        const generationDecision = persistGenerationDecision(store, {
+          observation,
+          route,
+          source: generationSourceFromObservation(observation),
+          decision: "append_evidence",
+          reason: `Skill candidate generation is blocked until gates are complete: ${route.blockers.join(", ")}.`,
+          now,
+        });
+        writeJson(response, 202, { cwd, observation, route, action: "blocked", generationDecision });
         return;
       }
       const input = skillCandidateInputFromObservation(observation);
       const withAnalysis = withDuplicateAnalysis(input, store);
       if (withAnalysis.duplicateAnalysis.decision !== "no_overlap") {
+        const generationDecision = persistGenerationDecision(store, {
+          observation,
+          route,
+          source: generationSourceFromObservation(observation),
+          decision: "append_evidence",
+          duplicateAnalysis: withAnalysis.duplicateAnalysis,
+          reason: `Duplicate analysis returned ${withAnalysis.duplicateAnalysis.decision}; evidence was retained without creating a new skill candidate.`,
+          now,
+        });
         writeJson(response, 202, {
           cwd,
           observation,
           route,
           action: "evidence_recorded",
           duplicateAnalysis: withAnalysis.duplicateAnalysis,
+          generationDecision,
         });
         return;
       }
       const candidate = store.createSkillCandidate(withAnalysis, now);
+      const generationDecision = persistGenerationDecision(store, {
+        observation,
+        route,
+        source: generationSourceFromObservation(observation),
+        decision: "create_skill_candidate",
+        duplicateAnalysis: candidate.duplicateAnalysis,
+        createdCandidateId: candidate.id,
+        reason: "Observation passed routing gates and duplicate analysis, so a pending skill candidate was created.",
+        now,
+      });
       appendSkillCandidateChangedEvent(store, controlPlaneEvents, cwd, "observe_create", candidate.id, candidate.status);
       writeJson(response, 201, {
         cwd,
@@ -326,6 +423,7 @@ export async function handleSkillRoute(
         action: "candidate_created",
         candidate,
         duplicateAnalysis: candidate.duplicateAnalysis,
+        generationDecision,
       });
       return;
     }
@@ -523,6 +621,138 @@ function routeFromObservation(observation: ProcedureObservation): CandidateRoute
     confidence: observation.confidence,
     blockers: observation.routeBlockers,
   };
+}
+
+type SkillRouteStore = ReturnType<RunStoreRegistry["getStore"]>;
+
+function generationDecisionForExistingObservation(
+  store: SkillRouteStore,
+  observation: ProcedureObservation,
+  source: CandidateGenerationDecisionSource,
+  route: CandidateRoute,
+  now: string,
+): CandidateGenerationDecision {
+  const [existing] = store.listCandidateGenerationDecisions({
+    observationId: observation.id,
+    limit: 1,
+  });
+  if (existing) {
+    return existing;
+  }
+  return persistGenerationDecision(store, {
+    observation,
+    route,
+    source,
+    decision: "append_evidence",
+    reason: "Reused an existing idempotent observation job; no new candidate generation was attempted.",
+    now,
+  });
+}
+
+function persistGenerationDecision(
+  store: SkillRouteStore,
+  input: {
+    readonly observation: ProcedureObservation;
+    readonly route: CandidateRoute;
+    readonly source: CandidateGenerationDecisionSource;
+    readonly decision: CandidateGenerationDecisionAction;
+    readonly duplicateAnalysis?: SkillDuplicateAnalysis;
+    readonly createdCandidateId?: string;
+    readonly reason: string;
+    readonly now: string;
+  },
+): CandidateGenerationDecision {
+  return store.createCandidateGenerationDecision({
+    workspaceId: input.observation.workspaceId,
+    observationId: input.observation.id,
+    clusterId: input.observation.clusterId,
+    source: input.source,
+    route: input.route,
+    decision: input.decision,
+    blockers: input.route.blockers,
+    duplicateDecision: input.duplicateAnalysis?.decision,
+    reason: input.reason,
+    createdCandidateId: input.createdCandidateId,
+  }, input.now);
+}
+
+function generationSourceFromJob(job: ReturnType<typeof parseProcedureObservationJobRequest>): CandidateGenerationDecisionSource {
+  if (job.source === "manual_recording" || job.signals.includes("user_approved_recording")) {
+    return "approved_recording";
+  }
+  if (job.signals.includes("save_as_skill")) {
+    return "explicit_user_save";
+  }
+  if (job.source === "workflow_step_output" || job.source === "multi_agent_handoff" || job.signals.includes("handoff_stabilized")) {
+    return "workflow_fanin";
+  }
+  if (job.runId || job.terminalStatus) {
+    return "post_run_terminal";
+  }
+  if (job.source === "user_correction" || job.signals.includes("correction_phrase")) {
+    return "correction_health";
+  }
+  if (job.userConfirmed) {
+    return "explicit_user_save";
+  }
+  return "selected_transcript_snippet";
+}
+
+function generationSourceFromObservation(observation: ProcedureObservation): CandidateGenerationDecisionSource {
+  if (observation.source === "manual_recording" || observation.signals.includes("user_approved_recording")) {
+    return "approved_recording";
+  }
+  if (observation.signals.includes("save_as_skill")) {
+    return "explicit_user_save";
+  }
+  if (observation.source === "workflow_step_output" || observation.source === "multi_agent_handoff" || observation.signals.includes("handoff_stabilized")) {
+    return "workflow_fanin";
+  }
+  if (observation.runId) {
+    return "post_run_terminal";
+  }
+  if (observation.source === "user_correction" || observation.signals.includes("correction_phrase")) {
+    return "correction_health";
+  }
+  return "selected_transcript_snippet";
+}
+
+function generationDecisionActionForRoute(route: CandidateRoute): CandidateGenerationDecisionAction {
+  if (route.kind === "approval_policy_review" || route.blockers.includes("permission_expansion")) {
+    return "policy_review";
+  }
+  if (route.kind === "reject") {
+    return "reject";
+  }
+  if (route.blockers.length > 0) {
+    return "append_evidence";
+  }
+  if (route.kind === "channel_protocol") {
+    return "create_channel_protocol_candidate";
+  }
+  if (route.kind === "playbook") {
+    return "create_playbook_candidate";
+  }
+  if (route.kind === "memory") {
+    return "create_memory_candidate";
+  }
+  if (route.kind === "automation") {
+    return "create_automation_candidate";
+  }
+  return "create_skill_candidate";
+}
+
+function generationReasonForRoute(route: CandidateRoute): string {
+  if (route.kind === "approval_policy_review" || route.blockers.includes("permission_expansion")) {
+    return "Observation requested permission or approval expansion, so it was routed to policy review.";
+  }
+  if (route.kind === "reject") {
+    return `Observation was rejected by the router: ${route.reasonCode}.`;
+  }
+  if (route.blockers.length > 0) {
+    return `Observation was routed to ${route.kind} but blocked by: ${route.blockers.join(", ")}.`;
+  }
+  return `Observation was routed to ${route.kind} candidate handling: ${route.reasonCode}.`;
 }
 
 function skillCandidateInputFromObservation(observation: ProcedureObservation): ParsedCreateSkillCandidateRequest {

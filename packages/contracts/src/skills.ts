@@ -294,6 +294,39 @@ export interface ProcedureObservationCluster {
   readonly lastObservedAt: string;
 }
 
+export type CandidateGenerationDecisionSource =
+  | "explicit_user_save"
+  | "approved_recording"
+  | "post_run_terminal"
+  | "selected_transcript_snippet"
+  | "workflow_fanin"
+  | "correction_health";
+
+export type CandidateGenerationDecisionAction =
+  | "append_evidence"
+  | "create_skill_candidate"
+  | "create_channel_protocol_candidate"
+  | "create_playbook_candidate"
+  | "create_memory_candidate"
+  | "create_automation_candidate"
+  | "policy_review"
+  | "reject";
+
+export interface CandidateGenerationDecision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly observationId: string;
+  readonly clusterId: string;
+  readonly source: CandidateGenerationDecisionSource;
+  readonly route: CandidateRoute;
+  readonly decision: CandidateGenerationDecisionAction;
+  readonly blockers: readonly CandidateRouteBlocker[];
+  readonly duplicateDecision?: SkillDuplicateDecision;
+  readonly reason: string;
+  readonly createdCandidateId?: string;
+  readonly createdAt: string;
+}
+
 export interface ProcedureObservationRequest {
   readonly id?: string;
   readonly clusterId?: string;
@@ -381,6 +414,7 @@ export interface SkillCandidateObserveResponse {
   readonly action: SkillCandidateObserveAction;
   readonly candidate?: SkillCandidate;
   readonly duplicateAnalysis?: SkillDuplicateAnalysis;
+  readonly generationDecision?: CandidateGenerationDecision;
 }
 
 export interface ProcedureObservationJobResponse extends SkillCandidateObserveResponse {

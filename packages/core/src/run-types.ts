@@ -224,7 +224,10 @@ import type {
   SkillCandidateReviewRecord,
 } from "./skill-candidate-types.js";
 import type {
+  CandidateGenerationDecision,
+  CreateCandidateGenerationDecisionInput,
   CreateProcedureObservationInput,
+  ListCandidateGenerationDecisionsOptions,
   ListProcedureObservationClustersOptions,
   ListProcedureObservationsOptions,
   ProcedureObservation,
@@ -1384,6 +1387,8 @@ export interface RunStore {
   listProcedureObservations(options?: ListProcedureObservationsOptions): ProcedureObservation[];
   listProcedureObservationClusters(options?: ListProcedureObservationClustersOptions): ProcedureObservationCluster[];
   getProcedureObservationCluster(id: string, workspaceId?: string): ProcedureObservationCluster | undefined;
+  createCandidateGenerationDecision(input: CreateCandidateGenerationDecisionInput, now: string): CandidateGenerationDecision;
+  listCandidateGenerationDecisions(options?: ListCandidateGenerationDecisionsOptions): CandidateGenerationDecision[];
   appendSkillUsageEvent(input: CreateSkillUsageEventInput, now: string): SkillUsageEvent;
   listSkillUsageEvents(options?: ListSkillUsageEventsOptions): SkillUsageEvent[];
   listSkillUsageStats(options?: ListSkillUsageStatsOptions): SkillUsageStats[];
@@ -1774,6 +1779,8 @@ export type SkillCandidateStoreFacet = RunStoreFacet<
 export type ProcedureObservationStoreFacet = RunStoreFacet<
   | "createProcedureObservation"
   | "listProcedureObservations"
+  | "createCandidateGenerationDecision"
+  | "listCandidateGenerationDecisions"
 >;
 
 export type SkillUsageStoreFacet = RunStoreFacet<
