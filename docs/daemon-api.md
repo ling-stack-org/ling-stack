@@ -502,6 +502,8 @@ POST /skills/:id/corrections?cwd=/path/to/project
 GET /procedure-observations?cwd=/path/to/project
 POST /procedure-observations?cwd=/path/to/project
 POST /procedure-observations/jobs?cwd=/path/to/project
+GET /procedure-observation-clusters?cwd=/path/to/project
+GET /procedure-observation-clusters/:id?cwd=/path/to/project
 GET /skill-candidates?cwd=/path/to/project
 GET /skill-candidates/:id?cwd=/path/to/project
 POST /skill-candidates?cwd=/path/to/project
@@ -581,10 +583,11 @@ not create or update a `SkillCandidate`.
 ```
 
 `GET /procedure-observations` lists bounded structured observations. Optional
-`clusterId`, `routeKind`, and `limit` query parameters are supported. `POST
+`clusterId`, `channelId`, `routeKind`, and `limit` query parameters are supported. `POST
 /procedure-observations` persists a structured observation, computes the conservative
 candidate route, and returns the observation plus route. The route can be `memory`,
-`channel_protocol`, `automation`, `skill`, `approval_policy_review`, or `reject`.
+`channel_protocol`, `playbook`, `automation`, `skill`, `approval_policy_review`, or
+`reject`.
 
 Observation requests are intentionally structured and bounded. They do not accept raw
 transcripts, full prompts, secret values, or artifact bodies.
@@ -607,6 +610,50 @@ transcripts, full prompts, secret values, or artifact bodies.
   "sourceRefs": [{ "type": "manual", "id": "manual_ui_observation" }],
   "confidence": "high",
   "reusableScore": 85
+}
+```
+
+`GET /procedure-observation-clusters` returns a read-only governance queue grouped from
+existing `ProcedureObservation` rows. It accepts optional `channelId`, `routeKind`,
+`status`, and `limit` query parameters. `GET /procedure-observation-clusters/:id` returns
+the cluster plus its bounded observations.
+
+Clusters are not destination records. A `ready_for_review` cluster recommends a human
+action such as `create_skill_candidate`, `create_channel_protocol_candidate`, or
+`create_playbook_candidate`; it does not create that candidate automatically.
+
+```http
+GET /procedure-observation-clusters?cwd=/path/to/project&channelId=channel_...&routeKind=playbook&status=ready_for_review&limit=50
+GET /procedure-observation-clusters/procedure_cluster_...?cwd=/path/to/project
+```
+
+Cluster response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "clusters": [
+    {
+      "id": "procedure_cluster_...",
+      "workspaceId": "workspace_default",
+      "channelId": "channel_...",
+      "routeKind": "playbook",
+      "status": "ready_for_review",
+      "recommendedAction": "create_playbook_candidate",
+      "title": "Channel workflow release playbook",
+      "summary": "A channel workflow produced a repeatable release playbook.",
+      "normalizedGoal": "channel release playbook",
+      "observationCount": 2,
+      "confidence": "high",
+      "reusableScore": 79,
+      "positiveTriggers": ["channel release workflow"],
+      "negativeTriggers": [],
+      "routeBlockers": [],
+      "sourceRefs": [{ "type": "run", "id": "run_..." }],
+      "firstObservedAt": "2026-06-20T00:00:00.000Z",
+      "lastObservedAt": "2026-06-20T00:10:00.000Z"
+    }
+  ]
 }
 ```
 
@@ -1164,6 +1211,7 @@ POST /channels/:id/context-summaries?cwd=/path/to/project
 PATCH /context-summaries/:id?cwd=/path/to/project
 
 GET /channels/:id/protocol?cwd=/path/to/project
+GET /channels/:id/protocol/canvas?cwd=/path/to/project&limit=50
 PATCH /channels/:id/protocol?cwd=/path/to/project
 POST /channels/:id/protocol/revert?cwd=/path/to/project
 GET /channels/:id/protocol/drafts?cwd=/path/to/project&status=draft&limit=50
@@ -1198,6 +1246,11 @@ displayable `400` error. Missing channels return `404 channel_not_found`.
 channel settings, workspace defaults, and protocol-only overrides resolved into one
 read model. `PATCH /channels/:id/protocol` edits channel-backed fields only:
 `responseLanguage`, `autoReplyMode`, and `defaultTeammateId`.
+
+`GET /channels/:id/protocol/canvas` returns the effective protocol plus the channel
+canvas governance view: draft protocol candidates, channel-scoped `channel_protocol` and
+`playbook` observation clusters, and compact section summaries. It is read-only and does
+not create drafts, apply protocols, publish skills, or grant authority.
 
 Protocol-only fields use draft review before activation: `defaultWorkflowPreference`,
 `visibleMultiReplyMaxParticipants`, `privacyRules`, and `reviewRules`.

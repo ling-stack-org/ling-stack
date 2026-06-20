@@ -207,6 +207,7 @@ export interface ProcedureObservationValidationStep {
 export type CandidateRouteKind =
   | "memory"
   | "channel_protocol"
+  | "playbook"
   | "automation"
   | "skill"
   | "approval_policy_review"
@@ -255,6 +256,44 @@ export interface ProcedureObservation {
   readonly createdAt: string;
 }
 
+export type ProcedureObservationClusterStatus =
+  | "collecting"
+  | "ready_for_review"
+  | "blocked"
+  | "routed_elsewhere";
+
+export type ProcedureObservationClusterRecommendedAction =
+  | "append_evidence"
+  | "create_skill_candidate"
+  | "create_channel_protocol_candidate"
+  | "create_playbook_candidate"
+  | "create_memory_candidate"
+  | "create_automation_candidate"
+  | "policy_review"
+  | "dismiss";
+
+export interface ProcedureObservationCluster {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId?: string;
+  readonly routeKind: CandidateRouteKind;
+  readonly routeReasonCode?: string;
+  readonly status: ProcedureObservationClusterStatus;
+  readonly recommendedAction: ProcedureObservationClusterRecommendedAction;
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly observationCount: number;
+  readonly confidence: ProcedureObservationConfidence;
+  readonly reusableScore: number;
+  readonly positiveTriggers: readonly string[];
+  readonly negativeTriggers: readonly string[];
+  readonly routeBlockers: readonly CandidateRouteBlocker[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+  readonly firstObservedAt: string;
+  readonly lastObservedAt: string;
+}
+
 export interface ProcedureObservationRequest {
   readonly id?: string;
   readonly clusterId?: string;
@@ -295,7 +334,7 @@ export interface ProcedureObservationJobRequest {
   readonly validationLabels?: readonly string[];
   readonly artifactRefs?: readonly string[];
   readonly userConfirmed: boolean;
-  readonly destinationHint?: "skill" | "channel_protocol" | "automation" | "memory";
+  readonly destinationHint?: "skill" | "channel_protocol" | "playbook" | "automation" | "memory";
   readonly title: string;
   readonly summary: string;
   readonly normalizedGoal: string;
@@ -309,6 +348,17 @@ export interface ProcedureObservationJobRequest {
 
 export interface ProcedureObservationListResponse {
   readonly cwd: string;
+  readonly observations: readonly ProcedureObservation[];
+}
+
+export interface ProcedureObservationClusterListResponse {
+  readonly cwd: string;
+  readonly clusters: readonly ProcedureObservationCluster[];
+}
+
+export interface ProcedureObservationClusterResponse {
+  readonly cwd: string;
+  readonly cluster: ProcedureObservationCluster;
   readonly observations: readonly ProcedureObservation[];
 }
 

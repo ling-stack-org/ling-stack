@@ -37,6 +37,7 @@ export interface ProcedureObservationValidationStep {
 export type CandidateRouteKind =
   | "memory"
   | "channel_protocol"
+  | "playbook"
   | "automation"
   | "skill"
   | "approval_policy_review"
@@ -85,6 +86,44 @@ export interface ProcedureObservation {
   readonly createdAt: string;
 }
 
+export type ProcedureObservationClusterStatus =
+  | "collecting"
+  | "ready_for_review"
+  | "blocked"
+  | "routed_elsewhere";
+
+export type ProcedureObservationClusterRecommendedAction =
+  | "append_evidence"
+  | "create_skill_candidate"
+  | "create_channel_protocol_candidate"
+  | "create_playbook_candidate"
+  | "create_memory_candidate"
+  | "create_automation_candidate"
+  | "policy_review"
+  | "dismiss";
+
+export interface ProcedureObservationCluster {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId?: string;
+  readonly routeKind: CandidateRouteKind;
+  readonly routeReasonCode?: string;
+  readonly status: ProcedureObservationClusterStatus;
+  readonly recommendedAction: ProcedureObservationClusterRecommendedAction;
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly observationCount: number;
+  readonly confidence: ProcedureObservationConfidence;
+  readonly reusableScore: number;
+  readonly positiveTriggers: readonly string[];
+  readonly negativeTriggers: readonly string[];
+  readonly routeBlockers: readonly CandidateRouteBlocker[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+  readonly firstObservedAt: string;
+  readonly lastObservedAt: string;
+}
+
 export interface CreateProcedureObservationInput {
   readonly id?: string;
   readonly workspaceId?: string;
@@ -111,7 +150,16 @@ export interface CreateProcedureObservationInput {
 export interface ListProcedureObservationsOptions {
   readonly workspaceId?: string;
   readonly clusterId?: string;
+  readonly channelId?: string;
   readonly routeKind?: CandidateRouteKind;
+  readonly limit?: number;
+}
+
+export interface ListProcedureObservationClustersOptions {
+  readonly workspaceId?: string;
+  readonly channelId?: string;
+  readonly routeKind?: CandidateRouteKind;
+  readonly status?: ProcedureObservationClusterStatus;
   readonly limit?: number;
 }
 

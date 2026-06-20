@@ -1006,11 +1006,23 @@
   color: #111111;
 }
 
+.settings-skill-candidate-status.ready_for_review {
+  border-color: #b9d9c4;
+  color: #17633a;
+}
+
+.settings-skill-candidate-status.collecting,
+.settings-skill-candidate-status.routed_elsewhere {
+  border-color: #cfd7e6;
+  color: #31547a;
+}
+
 .settings-skill-candidate-status.needs_edit {
   border-color: #e2d4bc;
   color: #7a4d00;
 }
 
+.settings-skill-candidate-status.blocked,
 .settings-skill-candidate-status.rejected,
 .settings-skill-candidate-status.quarantined,
 .settings-skill-candidate-status.expired {

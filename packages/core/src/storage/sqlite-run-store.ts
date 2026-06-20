@@ -159,8 +159,10 @@ import {
 } from "../skill-candidate-types.js";
 import type {
   CreateProcedureObservationInput,
+  ListProcedureObservationClustersOptions,
   ListProcedureObservationsOptions,
   ProcedureObservation,
+  ProcedureObservationCluster,
 } from "../procedure-observation-types.js";
 import type {
   CreateSkillUsageEventInput,
@@ -1405,6 +1407,14 @@ export class SqliteRunStore implements RunStore {
 
   listProcedureObservations(options: ListProcedureObservationsOptions = {}): ProcedureObservation[] {
     return this.procedureObservations.listProcedureObservations(options);
+  }
+
+  listProcedureObservationClusters(options: ListProcedureObservationClustersOptions = {}): ProcedureObservationCluster[] {
+    return this.procedureObservations.listProcedureObservationClusters(options);
+  }
+
+  getProcedureObservationCluster(id: string, workspaceId?: string): ProcedureObservationCluster | undefined {
+    return this.procedureObservations.getProcedureObservationCluster(id, workspaceId);
   }
 
   appendSkillUsageEvent(input: CreateSkillUsageEventInput, now: string): SkillUsageEvent {

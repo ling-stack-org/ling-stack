@@ -24,6 +24,13 @@ export function routeProcedureObservation(observation: ProcedureObservation): Ca
   if (observation.source === "multi_agent_handoff" || hasSignal(observation.signals, "handoff_stabilized")) {
     return route("channel_protocol", "multi_agent_handoff_protocol", observation.confidence, []);
   }
+  if (
+    observation.source === "workflow_step_output" &&
+    observation.channelId &&
+    observation.procedureSteps.length > 0
+  ) {
+    return route("playbook", "channel_scoped_repeatable_playbook", observation.confidence, []);
+  }
   if (looksScheduled(text)) {
     return route("automation", "scheduled_or_recurring_work", observation.confidence, []);
   }

@@ -39,6 +39,7 @@ import {
   parseSkillCandidateReviewRequest,
   parseSkillImportDraftRequest,
   readOptionalCandidateRouteKindQuery,
+  readOptionalProcedureObservationClusterStatusQuery,
   readOptionalSkillCandidateOriginQuery,
   readOptionalSkillCandidateStatusQuery,
   readOptionalSkillUsageEventKindQuery,
@@ -138,12 +139,49 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (url.pathname === "/procedure-observation-clusters") {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /procedure-observation-clusters` });
+        return;
+      }
+      writeJson(response, 200, {
+        cwd,
+        clusters: store.listProcedureObservationClusters({
+          channelId: url.searchParams.get("channelId") || undefined,
+          routeKind: readOptionalCandidateRouteKindQuery(url, "routeKind"),
+          status: readOptionalProcedureObservationClusterStatusQuery(url, "status"),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    const clusterId = procedureObservationClusterIdFromPath(url.pathname);
+    if (clusterId) {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /procedure-observation-clusters/:id` });
+        return;
+      }
+      const cluster = store.getProcedureObservationCluster(clusterId);
+      if (!cluster) {
+        writeJson(response, 404, { error: "procedure_observation_cluster_not_found", message: `Procedure observation cluster not found: ${clusterId}` });
+        return;
+      }
+      writeJson(response, 200, {
+        cwd,
+        cluster,
+        observations: store.listProcedureObservations({ clusterId, limit: 500 }),
+      });
+      return;
+    }
+
     if (url.pathname === "/procedure-observations") {
       if (request.method === "GET") {
         writeJson(response, 200, {
           cwd,
           observations: store.listProcedureObservations({
             clusterId: url.searchParams.get("clusterId") || undefined,
+            channelId: url.searchParams.get("channelId") || undefined,
             routeKind: readOptionalCandidateRouteKindQuery(url, "routeKind"),
             limit: readOptionalIntegerQuery(url, "limit", 1),
           }),
@@ -445,6 +483,14 @@ export async function handleSkillRoute(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function procedureObservationClusterIdFromPath(pathname: string): string | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "procedure-observation-clusters") {
+    return segments[1];
+  }
+  return undefined;
 }
 
 function appendSkillRegistryChangedEvent(

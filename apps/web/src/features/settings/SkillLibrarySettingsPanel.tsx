@@ -18,6 +18,7 @@ import {
   createSkillImportDraft,
   getSkillHealth,
   listAiTeammates,
+  listProcedureObservationClusters,
   listSkillCandidates,
   listSkills,
   listTeammateSkills,
@@ -30,6 +31,7 @@ import type {
   AiTeammate,
   SkillCandidate,
   SkillCandidateReviewAction,
+  ProcedureObservationCluster,
   SkillHealthFinding,
   SkillHealthReport,
   SkillHealthSeverity,
@@ -68,6 +70,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
   const [skillHealth, setSkillHealth] = useState<SkillHealthReport | undefined>();
   const [skillCandidates, setSkillCandidates] = useState<readonly SkillCandidate[]>([]);
+  const [observationClusters, setObservationClusters] = useState<readonly ProcedureObservationCluster[]>([]);
   const [bindingSummaries, setBindingSummaries] = useState<readonly TeammateSkillBindingSummary[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -153,9 +156,10 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setLoading(true);
     try {
       setError("");
-      const [skillsResponse, skillHealthResponse, candidatesResponse, teammatesResponse] = await Promise.all([
+      const [skillsResponse, skillHealthResponse, clustersResponse, candidatesResponse, teammatesResponse] = await Promise.all([
         listSkills(workspaceCwd),
         getSkillHealth(workspaceCwd, { limit: 6 }),
+        listProcedureObservationClusters(workspaceCwd, { limit: 8 }),
         listSkillCandidates(workspaceCwd, { limit: 8 }),
         listAiTeammates(workspaceCwd),
       ]);
@@ -168,6 +172,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       );
       setSkills(skillsResponse.skills);
       setSkillHealth(skillHealthResponse.report);
+      setObservationClusters(clustersResponse.clusters);
       setSkillCandidates(candidatesResponse.candidates);
       setBindingSummaries(teammateSkillResponses);
       setMessage(t("Skill library refreshed"));
@@ -335,6 +340,12 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         saving={saving}
         onReview={(candidateId, action) => void reviewCandidate(candidateId, action)}
         onCreateDraft={(candidateId) => void createDraftFromCandidate(candidateId)}
+        t={t}
+      />
+
+      <ProcedureObservationClusterPanel
+        clusters={observationClusters}
+        loading={loading}
         t={t}
       />
 
@@ -609,6 +620,66 @@ function SkillHealthSeverityPill({
   readonly t: (key: string) => string;
 }): JSX.Element {
   return <span className={`settings-skill-health-severity ${severity}`}>{skillHealthSeverityLabel(severity, t)}</span>;
+}
+
+function ProcedureObservationClusterPanel({
+  clusters,
+  loading,
+  t,
+}: {
+  readonly clusters: readonly ProcedureObservationCluster[];
+  readonly loading: boolean;
+  readonly t: SettingsTranslator;
+}): JSX.Element {
+  const reviewable = clusters.filter((cluster) => cluster.status === "ready_for_review");
+  const blocked = clusters.filter((cluster) => cluster.status === "blocked");
+  return (
+    <section className="settings-skill-candidate-review settings-skill-clusters" aria-label={t("Candidate Clusters")}>
+      <header className="settings-skill-candidate-head">
+        <span>
+          <CheckCircle2 size={15} />
+          <strong>{t("Candidate Clusters")}</strong>
+        </span>
+        <small>{t("{review} review · {blocked} blocked · {total} total", { review: reviewable.length, blocked: blocked.length, total: clusters.length })}</small>
+      </header>
+      {clusters.length === 0 ? (
+        <div className="compact-empty">{loading ? t("Loading candidate clusters...") : t("No candidate clusters yet")}</div>
+      ) : (
+        <div className="settings-skill-candidate-list">
+          {clusters.slice(0, 6).map((cluster) => (
+            <article key={cluster.id} className="settings-skill-candidate-card">
+              <div className="settings-skill-candidate-main">
+                <div className="settings-skill-candidate-title">
+                  <span>
+                    <strong>{cluster.title}</strong>
+                    <small>{cluster.id} · {candidateRouteKindLabel(cluster.routeKind, t)}</small>
+                  </span>
+                  <span className={`settings-skill-candidate-status ${cluster.status}`}>{procedureObservationClusterStatusLabel(cluster.status, t)}</span>
+                </div>
+                <p>{cluster.summary}</p>
+                <div className="settings-skill-candidate-meta">
+                  <span>{t("Recommended")}: {procedureObservationClusterActionLabel(cluster.recommendedAction, t)}</span>
+                  <span>{t("Evidence")}: {cluster.observationCount}</span>
+                  <span>{t("Reusable")}: {cluster.reusableScore}</span>
+                  <span>{t("Updated {time}", { time: formatDateTime(cluster.lastObservedAt) })}</span>
+                </div>
+                <div className="settings-skill-candidate-gates">
+                  <span>
+                    <small>{t("Triggers")}</small>
+                    <SkillTokenList values={cluster.positiveTriggers} emptyLabel={t("No positive triggers")} />
+                  </span>
+                  <span>
+                    <small>{t("Blockers")}</small>
+                    <SkillTokenList values={cluster.routeBlockers.map((blocker) => candidateRouteBlockerLabel(blocker, t))} emptyLabel={t("No blockers")} />
+                  </span>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function SkillCandidateReviewPanel({
@@ -897,6 +968,80 @@ function skillCandidateStatusLabel(status: SkillCandidate["status"], t: (key: st
       return t("Superseded");
     case "expired":
       return t("Expired");
+  }
+}
+
+function procedureObservationClusterStatusLabel(status: ProcedureObservationCluster["status"], t: (key: string) => string): string {
+  switch (status) {
+    case "collecting":
+      return t("Collecting");
+    case "ready_for_review":
+      return t("Ready for review");
+    case "blocked":
+      return t("Blocked");
+    case "routed_elsewhere":
+      return t("Routed elsewhere");
+  }
+}
+
+function procedureObservationClusterActionLabel(action: ProcedureObservationCluster["recommendedAction"], t: (key: string) => string): string {
+  switch (action) {
+    case "append_evidence":
+      return t("Append evidence");
+    case "create_skill_candidate":
+      return t("Create skill candidate");
+    case "create_channel_protocol_candidate":
+      return t("Create channel protocol candidate");
+    case "create_playbook_candidate":
+      return t("Create playbook candidate");
+    case "create_memory_candidate":
+      return t("Create memory candidate");
+    case "create_automation_candidate":
+      return t("Create automation candidate");
+    case "policy_review":
+      return t("Policy review");
+    case "dismiss":
+      return t("Dismiss");
+  }
+}
+
+function candidateRouteKindLabel(routeKind: ProcedureObservationCluster["routeKind"], t: (key: string) => string): string {
+  switch (routeKind) {
+    case "memory":
+      return t("Memory");
+    case "channel_protocol":
+      return t("Channel protocol");
+    case "playbook":
+      return t("Playbook");
+    case "automation":
+      return t("Automation");
+    case "skill":
+      return t("Skill");
+    case "approval_policy_review":
+      return t("Approval policy review");
+    case "reject":
+      return t("Reject");
+  }
+}
+
+function candidateRouteBlockerLabel(blocker: ProcedureObservationCluster["routeBlockers"][number], t: (key: string) => string): string {
+  switch (blocker) {
+    case "insufficient_evidence":
+      return t("Insufficient evidence");
+    case "one_off_preference":
+      return t("One-off preference");
+    case "missing_validation":
+      return t("Missing validation");
+    case "missing_negative_trigger":
+      return t("Missing negative trigger");
+    case "duplicate_existing_skill":
+      return t("Duplicate existing skill");
+    case "conflicts_with_pending_candidate":
+      return t("Conflicts with pending candidate");
+    case "permission_expansion":
+      return t("Permission expansion");
+    case "unsafe_or_secret_adjacent":
+      return t("Secret-adjacent");
   }
 }
 

@@ -28,7 +28,7 @@ export interface ProcedureObservationJobInput {
   readonly validationLabels?: readonly string[];
   readonly artifactRefs?: readonly string[];
   readonly userConfirmed: boolean;
-  readonly destinationHint?: "skill" | "channel_protocol" | "automation" | "memory";
+  readonly destinationHint?: "skill" | "channel_protocol" | "playbook" | "automation" | "memory";
   readonly title: string;
   readonly summary: string;
   readonly normalizedGoal: string;

@@ -1,5 +1,6 @@
 import type { RunTool, ToolName } from "./shared.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
+import type { ProcedureObservationCluster } from "./skills.js";
 import type { ChannelWorkflow, ChannelWorkflowOrchestrationResponse, ChannelWorkflowStep } from "./workflows.js";
 
 export type ChannelStatus = "active" | "paused" | "archived";
@@ -253,6 +254,27 @@ export interface ChannelProtocolCandidateReviewRequest {
 export type ChannelProtocolCandidateListResponse = ChannelCollaborationProtocolDraftListResponse;
 
 export type ChannelProtocolCandidateMutationResponse = ChannelCollaborationProtocolDraftMutationResponse;
+
+export type ChannelProtocolCanvasSectionKind =
+  | "current_protocol"
+  | "candidate_clusters"
+  | "draft_backlog"
+  | "review_rules"
+  | "privacy_rules";
+
+export interface ChannelProtocolCanvasSection {
+  readonly kind: ChannelProtocolCanvasSectionKind;
+  readonly title: string;
+  readonly summary: string;
+  readonly itemCount: number;
+  readonly status: "empty" | "healthy" | "needs_review" | "blocked";
+}
+
+export interface ChannelProtocolCanvasResponse extends ChannelCollaborationProtocolResponse {
+  readonly candidateClusters: readonly ProcedureObservationCluster[];
+  readonly draftCandidates: readonly ChannelProtocolCandidate[];
+  readonly sections: readonly ChannelProtocolCanvasSection[];
+}
 
 export interface ChannelCollaborationProtocolMutationResponse extends ChannelCollaborationProtocolResponse {
   readonly revertedFields?: readonly string[];

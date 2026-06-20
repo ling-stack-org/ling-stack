@@ -86,7 +86,15 @@ test("builds URL query parameters for list endpoints", async () => {
     reason: "Repeated review rule.",
   });
   await client.reviewChannelProtocolCandidate("/repo path", "channel 1", "candidate 1", { action: "reject", reason: "Not reusable." });
-  await client.listProcedureObservations("/repo path", { clusterId: "cluster 1", routeKind: "skill", limit: 8 });
+  await client.getChannelProtocolCanvas("/repo path", "channel 1", { limit: 7 });
+  await client.listProcedureObservations("/repo path", { clusterId: "cluster 1", channelId: "channel 1", routeKind: "skill", limit: 8 });
+  await client.listProcedureObservationClusters("/repo path", {
+    channelId: "channel 1",
+    routeKind: "playbook",
+    status: "ready_for_review",
+    limit: 9,
+  });
+  await client.getProcedureObservationCluster("/repo path", "cluster 1");
   await client.createProcedureObservation("/repo path", {
     source: "explicit_user_request",
     signals: ["save_as_skill"],
@@ -152,13 +160,16 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[30].method, "POST");
   assert.equal(mock.calls[31].url, "http://daemon.test/channels/channel%201/protocol-candidates/candidate%201/review?cwd=%2Frepo+path");
   assert.equal(mock.calls[31].method, "POST");
-  assert.equal(mock.calls[32].url, "http://daemon.test/procedure-observations?cwd=%2Frepo+path&clusterId=cluster+1&routeKind=skill&limit=8");
-  assert.equal(mock.calls[33].url, "http://daemon.test/procedure-observations?cwd=%2Frepo+path");
-  assert.equal(mock.calls[33].method, "POST");
-  assert.equal(mock.calls[34].url, "http://daemon.test/procedure-observations/jobs?cwd=%2Frepo+path");
-  assert.equal(mock.calls[34].method, "POST");
-  assert.equal(mock.calls[35].url, "http://daemon.test/skill-candidates/observe?cwd=%2Frepo+path");
-  assert.equal(mock.calls[35].method, "POST");
+  assert.equal(mock.calls[32].url, "http://daemon.test/channels/channel%201/protocol/canvas?cwd=%2Frepo+path&limit=7");
+  assert.equal(mock.calls[33].url, "http://daemon.test/procedure-observations?cwd=%2Frepo+path&clusterId=cluster+1&channelId=channel+1&routeKind=skill&limit=8");
+  assert.equal(mock.calls[34].url, "http://daemon.test/procedure-observation-clusters?cwd=%2Frepo+path&channelId=channel+1&routeKind=playbook&status=ready_for_review&limit=9");
+  assert.equal(mock.calls[35].url, "http://daemon.test/procedure-observation-clusters/cluster%201?cwd=%2Frepo+path");
+  assert.equal(mock.calls[36].url, "http://daemon.test/procedure-observations?cwd=%2Frepo+path");
+  assert.equal(mock.calls[36].method, "POST");
+  assert.equal(mock.calls[37].url, "http://daemon.test/procedure-observations/jobs?cwd=%2Frepo+path");
+  assert.equal(mock.calls[37].method, "POST");
+  assert.equal(mock.calls[38].url, "http://daemon.test/skill-candidates/observe?cwd=%2Frepo+path");
+  assert.equal(mock.calls[38].method, "POST");
 });
 
 test("parses daemon health transport feature flags", async () => {

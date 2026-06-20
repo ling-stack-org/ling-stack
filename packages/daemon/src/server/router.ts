@@ -822,6 +822,8 @@ export async function routeRequest(
     url.pathname === "/skills/usage-stats" ||
     url.pathname === "/skill-candidates" ||
     url.pathname === "/skill-candidates/observe" ||
+    url.pathname === "/procedure-observation-clusters" ||
+    url.pathname.startsWith("/procedure-observation-clusters/") ||
     url.pathname === "/procedure-observations" ||
     url.pathname === "/procedure-observations/jobs" ||
     skillRoute
