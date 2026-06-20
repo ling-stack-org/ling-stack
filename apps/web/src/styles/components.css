@@ -4977,6 +4977,44 @@ code,
   align-items: start;
 }
 
+.message-bubble-inline.message-bubble-own.message-bubble-own-with-author {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 4px;
+}
+
+.message-bubble-own-with-author .message-content {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.message-own-identity {
+  display: inline-flex;
+  grid-column: 1;
+  grid-row: 1;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+}
+
+.message-own-identity strong {
+  overflow: hidden;
+  max-width: 220px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-own-identity .avatar-initial,
+.message-own-identity .teammate-avatar-image.compact,
+.message-own-identity .user-profile-avatar {
+  flex: 0 0 auto;
+}
+
 .message-bubble-inline.message-bubble-peer {
   grid-template-columns: 30px minmax(0, 1fr);
   align-items: start;
