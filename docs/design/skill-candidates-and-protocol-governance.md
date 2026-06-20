@@ -55,6 +55,7 @@ This design extends:
 - [Automations](automations.md)
 - [Approval Policy](approval-policy.md)
 - [Runtime Supervisor](runtime-supervisor.md)
+- [Channel And Agent Governance Notifications](channel-and-agent-governance-notifications.md)
 - [Daemon API](../daemon-api.md)
 
 External product patterns are references, not runtime dependencies:

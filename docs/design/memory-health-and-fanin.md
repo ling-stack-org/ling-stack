@@ -70,6 +70,7 @@ This design extends:
 - [Execution And Orchestration Hardening](execution-orchestration-hardening.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Codex-Like Execution Experience](codex-like-execution.md)
+- [Channel And Agent Governance Notifications](channel-and-agent-governance-notifications.md)
 
 The external framework should be treated as a reference design, not as a runtime
 dependency.

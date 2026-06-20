@@ -36,6 +36,7 @@ Related docs:
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
 - [Channel Workspace v1.25 Codex-Inspired Attention Popover](channel-workspace-v1.25.md)
 - [Channel Workspace v1.26 Channel Branches](channel-workspace-v1.26.md)
+- [Channel And Agent Governance Notifications](channel-and-agent-governance-notifications.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)

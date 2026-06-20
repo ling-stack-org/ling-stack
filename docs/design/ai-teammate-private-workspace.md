@@ -70,6 +70,8 @@ memory design for private, channel, shared, and task/run recall lives in
 Skill, and skill-aware run model lives in [Ling Skill Import v1](ling-skill-import-v1.md).
 The future council grouping model for built-in and custom teammate rosters lives in
 [AI Councils](ai-councils.md).
+The routing model for teammate-private and channel-scoped governance notifications lives
+in [Channel And Agent Governance Notifications](channel-and-agent-governance-notifications.md).
 The shared Codex-style conversation, evidence folding, right drawer, and component
 extraction direction lives in
 [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md) and
