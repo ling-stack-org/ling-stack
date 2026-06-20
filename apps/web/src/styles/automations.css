@@ -19,31 +19,39 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   align-content: stretch;
-  gap: 16px;
+  gap: 0;
   overflow: hidden;
-  padding: 28px 24px 24px;
+  padding: 0;
+  background: #ffffff;
 }
 
 .automations-inbox-header {
-  width: min(1160px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  min-height: 96px;
+  margin: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 18px;
+  padding: 24px 32px 22px;
+  border-bottom: 1px solid #e5e5e5;
+  background: #ffffff;
 }
 
 .automations-inbox-header h1 {
   margin: 0;
-  font-size: 1.8rem;
-  font-weight: 680;
+  color: #111111;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 34px;
   letter-spacing: 0;
 }
 
 .automations-inbox-header p {
   margin: 6px 0 0;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
+  color: #707070;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .automation-header-meta {
@@ -84,35 +92,36 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  background: var(--surface-panel-strong);
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  border: 0;
+  border-radius: 7px;
+  background: #111111;
+  box-shadow: none;
 }
 
 .automation-create-trigger,
 .automation-create-caret {
   border: 0;
   background: transparent;
-  color: var(--text-primary);
+  color: #ffffff;
   font: inherit;
   cursor: pointer;
 }
 
 .automation-create-trigger {
-  min-height: 34px;
+  min-height: 40px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 7px 10px 7px 12px;
+  padding: 0 14px 0 16px;
+  font-weight: 650;
 }
 
 .automation-create-caret {
-  width: 30px;
-  min-height: 34px;
+  width: 34px;
+  min-height: 40px;
   display: inline-grid;
   place-items: center;
-  border-left: 1px solid var(--border-subtle);
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
 }
 
 .automation-create-menu,
@@ -157,16 +166,42 @@
 }
 
 .automations-inbox-main {
-  width: min(1160px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.32fr);
   align-items: stretch;
-  gap: 16px;
+  gap: 0;
   height: 100%;
   min-height: 0;
   overflow: hidden;
   padding: 0;
+}
+
+.automation-attention-banner {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  margin: 32px 48px 0;
+  padding: 0 20px;
+  border: 1px solid #f3c7c1;
+  border-radius: 8px;
+  background: #fff5f3;
+  color: #b42318;
+}
+
+.automation-attention-banner strong {
+  color: #b42318;
+  font-size: 15px;
+}
+
+.automation-attention-banner span {
+  color: #b42318;
+  font-size: 14px;
+  justify-self: end;
 }
 
 .automations-inbox-main h2,
@@ -193,15 +228,24 @@
   height: 100%;
   max-height: none;
   overflow: auto;
-  padding: 14px 16px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  background: var(--surface-panel);
+  padding: 32px 48px;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
   box-shadow: inset 0 1px 0 var(--hairline);
 }
 
 .automation-current-pane {
   gap: 10px;
+}
+
+.automations-inbox-main .automation-attention-banner + .automation-current-pane {
+  padding-top: 28px;
+}
+
+.automation-history-lite {
+  border-left: 1px solid #e5e5e5;
+  padding-inline: 44px;
 }
 
 .automation-secondary-section {
@@ -217,21 +261,21 @@
   top: 0;
   z-index: 1;
   padding: 6px 0;
-  background: var(--surface-panel);
+  background: #ffffff;
 }
 
 .automation-inbox-row {
   width: 100%;
-  min-height: 58px;
+  min-height: 76px;
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   border: 0;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid #e5e5e5;
   background: transparent;
   color: var(--text-primary);
-  padding: 12px 4px;
+  padding: 16px 4px;
   text-align: left;
   cursor: pointer;
 }
@@ -242,10 +286,16 @@
 }
 
 .automation-row-dot {
+  justify-self: center;
   width: 8px;
   height: 8px;
+  border: 0;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--text-secondary) 48%, transparent);
+  background: #168c78;
+}
+
+.automation-inbox-row.draft .automation-row-dot {
+  background: #b7791f;
 }
 
 .automation-inbox-row-main {
@@ -263,14 +313,17 @@
 }
 
 .automation-inbox-row-main strong {
-  font-size: 0.94rem;
+  color: #171717;
+  font-size: 16px;
   font-weight: 650;
+  line-height: 22px;
 }
 
 .automation-inbox-row-main small,
 .automation-row-schedule {
-  color: var(--text-secondary);
-  font-size: 0.82rem;
+  color: #707070;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .automation-row-actions {
@@ -281,7 +334,7 @@
 }
 
 .automation-row-primary-action {
-  min-height: 30px;
+  min-height: 34px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -328,30 +381,60 @@
   color: var(--text-secondary);
 }
 
-.automation-composer-form {
-  min-height: 320px;
+.automation-modal-title-copy {
   display: grid;
-  grid-template-rows: auto minmax(220px, 1fr) auto;
+  gap: 4px;
+}
+
+.automation-modal-title-copy p {
+  margin: 0;
+  color: #707070;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.automation-composer-form {
+  min-height: 460px;
+  display: grid;
+  grid-template-rows: auto auto minmax(160px, auto) auto;
+  gap: 24px;
+}
+
+.automation-composer-field,
+.automation-trigger-section {
+  display: grid;
   gap: 10px;
+}
+
+.automation-composer-field > span,
+.automation-trigger-section > span {
+  color: #171717;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 18px;
 }
 
 .automation-composer-title,
 .automation-composer-prompt {
   width: 100%;
-  border: 0;
-  background: transparent;
+  border: 1px solid #e5e5e5;
+  border-radius: 7px;
+  background: #ffffff;
   color: var(--text-primary);
   font: inherit;
+  padding: 12px 14px;
 }
 
 .automation-composer-title {
-  min-height: 34px;
-  font-size: 1rem;
-  font-weight: 650;
+  min-height: 46px;
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .automation-composer-prompt {
-  resize: none;
+  min-height: 140px;
+  resize: vertical;
   line-height: 1.5;
   color: var(--text-primary);
 }
@@ -362,13 +445,48 @@
 }
 
 .automation-composer-toolbar {
-  min-height: 44px;
+  min-height: 64px;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 10px;
+  border-top: 1px solid #e5e5e5;
+  padding-top: 16px;
+}
+
+.automation-trigger-segmented {
+  display: inline-flex;
+  width: fit-content;
+  overflow: hidden;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.automation-trigger-segmented button {
+  min-height: 42px;
+  min-width: 86px;
+  border: 0;
+  border-right: 1px solid #e5e5e5;
+  background: #ffffff;
+  color: #707070;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.automation-trigger-segmented button:last-child {
+  border-right: 0;
+}
+
+.automation-trigger-segmented button.active {
+  background: #f5f5f5;
+  color: #111111;
+}
+
+.automation-trigger-segmented button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .automation-composer-actions {
@@ -716,9 +834,9 @@
 .automation-modal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(880px, 100%);
-  max-height: min(760px, calc(100vh - 48px));
-  min-height: min(520px, calc(100vh - 48px));
+  width: min(860px, 100%);
+  max-height: min(860px, calc(100vh - 48px));
+  min-height: min(620px, calc(100vh - 48px));
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
@@ -728,16 +846,16 @@
 }
 
 .automation-modal > .panel-title {
-  min-height: 54px;
+  min-height: 108px;
   margin: 0;
-  padding: 14px 16px;
+  padding: 28px 32px 24px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .automation-modal-body {
   min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding: 28px 32px;
 }
 
 .automation-modal-actions {

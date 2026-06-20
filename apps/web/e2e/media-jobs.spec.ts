@@ -107,11 +107,20 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Generation" }).click();
   await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
-  const failedJob = page.locator(".media-job-row").filter({ hasText: "Live gated product mockup." });
+  const jobRows = page.locator(".media-job-row");
+  const detailPanel = page.locator(".media-job-detail-panel");
+  await expect(jobRows).toHaveCount(3);
+
+  const failedJob = jobRows.nth(0);
   await expect(failedJob).toContainText("failed");
-  await expect(failedJob).toContainText("Seedream image generation failed with HTTP 429");
-  const imageJob = page.locator(".media-job-row").filter({ hasText: "Generated Seedream image artifact." });
-  const imageArtifactRow = imageJob.locator(".artifact-row").filter({ hasText: "Seedream image 1" });
+  await expect(failedJob).not.toContainText("Live gated product mockup.");
+  await expect(detailPanel).toContainText("Live gated product mockup.");
+  await expect(detailPanel).toContainText("Seedream image generation failed with HTTP 429");
+
+  const imageJob = jobRows.nth(1);
+  await imageJob.click();
+  await expect(detailPanel).toContainText("Generated Seedream image artifact.");
+  const imageArtifactRow = detailPanel.locator(".artifact-row").filter({ hasText: "Seedream image 1" });
   await expect(imageArtifactRow).toContainText("image");
   await expect(imageArtifactRow).toContainText("4.0 KB");
   await expect(imageArtifactRow.getByRole("link", { name: "Open" })).toHaveAttribute("href", /\/artifacts\/artifact_media_image\/content/);
@@ -119,8 +128,10 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await expect(mediaDownloadLink).toHaveAttribute("href", /\/artifacts\/artifact_media_image\/content/);
   await expect(mediaDownloadLink).toHaveAttribute("download", "001-seedream-image.png");
 
-  const existingJob = page.locator(".media-job-row").filter({ hasText: "Existing product mockup." });
-  await expect(existingJob).toContainText("Existing product mockup.");
+  const existingJob = jobRows.nth(2);
+  await existingJob.click();
+  await expect(existingJob).not.toContainText("Existing product mockup.");
+  await expect(detailPanel).toContainText("Existing product mockup.");
   state.approvals.unshift({
     id: "approval_media_job_existing",
     mediaJobId: "media_job_existing",
@@ -141,13 +152,16 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   });
   await existingJob.getByRole("button", { name: "Run" }).click();
   await expect(existingJob).toContainText("succeeded");
-  await expect(existingJob.locator(".artifact-row")).toContainText("Seedream image result");
-  await expect(existingJob.locator(".artifact-main-link")).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
+  await expect(detailPanel.locator(".artifact-row")).toContainText("Seedream image result");
+  await expect(detailPanel.locator(".artifact-main-link")).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
 
-  await page.getByRole("textbox", { name: "Prompt" }).fill("New campaign image.");
   await page.getByRole("button", { name: "Create generation task" }).click();
+  const createDialog = page.getByRole("dialog", { name: "Create generation task" });
+  await createDialog.getByRole("textbox", { name: "Prompt" }).fill("New campaign image.");
+  await createDialog.getByRole("button", { name: "Create generation task" }).click();
 
-  await expect(page.locator(".media-job-row").first()).toContainText("New campaign image.");
+  await expect(page.locator(".media-job-row").first()).toContainText("queued");
+  await expect(detailPanel).toContainText("New campaign image.");
   await expect.poll(() => state.mediaJobs.length).toBe(4);
 });
 
@@ -190,10 +204,12 @@ test("generation tasks page surfaces live generation cost approvals", async ({ p
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Generation" }).click();
-  const jobRow = page.locator(".media-job-row").filter({ hasText: "Approval gated product mockup." });
+  const detailPanel = page.locator(".media-job-detail-panel");
+  const jobRow = page.locator(".media-job-row").first();
+  await expect(detailPanel).toContainText("Approval gated product mockup.");
   await jobRow.getByRole("button", { name: "Run" }).click();
   await expect(jobRow).toContainText("waiting_for_approval");
-  await expect(jobRow).toContainText("Approval required before live execution");
+  await expect(detailPanel).toContainText("This task is ready to run when approvals and model settings are satisfied.");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
   const mediaApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve generation cost" });
@@ -211,5 +227,5 @@ test("generation tasks page surfaces live generation cost approvals", async ({ p
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Generation" }).click();
   await jobRow.getByRole("button", { name: "Run" }).click();
   await expect(jobRow).toContainText("succeeded");
-  await expect(jobRow.locator(".artifact-row")).toContainText("Seedream image result");
+  await expect(detailPanel.locator(".artifact-row")).toContainText("Seedream image result");
 });

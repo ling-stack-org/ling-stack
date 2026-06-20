@@ -174,6 +174,7 @@ export function AppShell(): JSX.Element {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [skillLibraryRefreshToken, setSkillLibraryRefreshToken] = useState(0);
+  const [teammateCreateRequestId, setTeammateCreateRequestId] = useState(0);
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
@@ -996,6 +997,12 @@ export function AppShell(): JSX.Element {
     refreshTasks,
     handleDomainEvent,
   });
+
+  function openTeammateCreatePanel(): void {
+    openPlainView("teammates");
+    setTeammateCreateRequestId((current) => current + 1);
+  }
+
   const {
     saveChannel,
     saveDefaultChannel,
@@ -1493,6 +1500,7 @@ export function AppShell(): JSX.Element {
         teammateNotifications={sidebarTeammateNotifications}
         onOpenView={openPlainView}
         onCreateChannel={openChannelCreatePanel}
+        onCreateTeammate={openTeammateCreatePanel}
         onCreateChannelBranch={(channelId, name) => void saveChannelBranch(channelId, name)}
         onArchiveChannel={(channelId) => void archiveSidebarChannel(channelId)}
         onArchiveChannelBranch={(channelId, branchId) => void archiveSidebarChannelBranch(channelId, branchId)}
@@ -1688,15 +1696,13 @@ export function AppShell(): JSX.Element {
               />
             ) : (
               <>
-                {activeView === "providers" || activeView === "automations" || activeView === "profile" || (activeView === "teammates" && selectedAiTeammate) ? null : (
+                {activeView === "providers" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" ? null : (
                   <div className="workspace-head">
                     <div>
                       <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
                       <p>{selectedAiTeammate ? selectedAiTeammate.description : t(viewDescription(activeView))}</p>
                     </div>
-                    {activeView === "teammates" ? (
-                      <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-                    ) : activeView === "settings" ? null : (
+                    {activeView === "settings" ? null : (
                       <StatusBadge status={latestStatus} />
                     )}
                   </div>
@@ -1725,10 +1731,13 @@ export function AppShell(): JSX.Element {
                 providers={providers}
                 channels={channels}
                 localTeammates={localTeammates}
+                createRequestId={teammateCreateRequestId}
+                onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
                 onCreateTeammate={(input) => void addAiTeammate(input)}
                 onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
                 onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
                 onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
+                onOpenTeammate={selectAiTeammate}
                 onOpenProviders={() => openPlainView("providers")}
                   />
                 ) : activeView === "runs" ? (

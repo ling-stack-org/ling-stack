@@ -43,6 +43,18 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New teammate" }).click();
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await expect(page.locator(".channel-create-dialog.teammate-create-dialog")).toBeVisible();
+  await expect(page.locator(".teammate-create-sheet")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
+  await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No teammate yet" }).click();
+  await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
+  await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
+
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
   await expect(page.locator(".teammate-management-grid")).toBeVisible();
@@ -63,7 +75,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
   await expect(page.getByLabel("Teammate setup steps")).toHaveCount(0);
   await expect(page.getByLabel("Teammate preview")).toHaveCount(0);
-  await page.getByRole("button", { name: "Close teammate creator" }).click();
+  await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
   await page.getByLabel("Teammate templates").getByRole("button", { name: "Add teammate" }).click();
   const creator = page.getByRole("dialog", { name: "Create AI teammate" });
@@ -72,10 +84,10 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByLabel("Teammate preview")).toHaveCount(0);
   await page.getByLabel("Teammate template chooser").getByRole("button", { name: /Engineer/ }).click();
 
-  await expect(page.getByLabel("Model choices").getByRole("button", { name: /Local Relay/ })).toBeVisible();
-
   await page.getByLabel("Teammate name").fill("Ling Engineer");
-  await page.getByLabel("Description").fill("Owns scoped implementation in the Engineering channel.");
+  await expect(creator.getByLabel("Join channels")).toHaveValue("channel_engineering");
+  await expect(creator.getByLabel("Base model")).toBeVisible();
+  await creator.getByLabel("Base model").selectOption("provider_local");
   await creator.getByText("Advanced settings").click();
   await expect(page.getByLabel("Channel choices").getByRole("button", { name: /Engineering/ })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Create teammate" }).click();
