@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   archiveSkill,
+  createChannelProtocolCandidateFromCluster,
   createSkillCandidateDraft,
   createSkillImportDraft,
   getSkillHealth,
@@ -276,6 +277,32 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
+  async function createProtocolCandidateFromCluster(cluster: ProcedureObservationCluster): Promise<void> {
+    if (saving) {
+      return;
+    }
+    if (!cluster.channelId) {
+      setError(t("Candidate cluster is not bound to a channel."));
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      await createChannelProtocolCandidateFromCluster(workspaceCwd, cluster.channelId, cluster.id);
+      await refresh();
+      setMessage(t("Protocol candidate created"));
+    } catch (draftError) {
+      setError(draftError instanceof Error ? draftError.message : String(draftError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function archiveRegistrySkill(skillId: string): Promise<void> {
     if (saving) {
       return;
@@ -346,6 +373,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       <ProcedureObservationClusterPanel
         clusters={observationClusters}
         loading={loading}
+        saving={saving}
+        onCreateProtocolCandidate={(cluster) => void createProtocolCandidateFromCluster(cluster)}
         t={t}
       />
 
@@ -625,10 +654,14 @@ function SkillHealthSeverityPill({
 function ProcedureObservationClusterPanel({
   clusters,
   loading,
+  saving,
+  onCreateProtocolCandidate,
   t,
 }: {
   readonly clusters: readonly ProcedureObservationCluster[];
   readonly loading: boolean;
+  readonly saving: boolean;
+  readonly onCreateProtocolCandidate: (cluster: ProcedureObservationCluster) => void;
   readonly t: SettingsTranslator;
 }): JSX.Element {
   const reviewable = clusters.filter((cluster) => cluster.status === "ready_for_review");
@@ -646,36 +679,51 @@ function ProcedureObservationClusterPanel({
         <div className="compact-empty">{loading ? t("Loading candidate clusters...") : t("No candidate clusters yet")}</div>
       ) : (
         <div className="settings-skill-candidate-list">
-          {clusters.slice(0, 6).map((cluster) => (
-            <article key={cluster.id} className="settings-skill-candidate-card">
-              <div className="settings-skill-candidate-main">
-                <div className="settings-skill-candidate-title">
-                  <span>
-                    <strong>{cluster.title}</strong>
-                    <small>{cluster.id} · {candidateRouteKindLabel(cluster.routeKind, t)}</small>
-                  </span>
-                  <span className={`settings-skill-candidate-status ${cluster.status}`}>{procedureObservationClusterStatusLabel(cluster.status, t)}</span>
+          {clusters.slice(0, 6).map((cluster) => {
+            const canCreateProtocolCandidate = cluster.channelId &&
+              cluster.routeKind === "channel_protocol" &&
+              cluster.status === "ready_for_review" &&
+              cluster.recommendedAction === "create_channel_protocol_candidate" &&
+              cluster.routeBlockers.length === 0;
+            return (
+              <article key={cluster.id} className="settings-skill-candidate-card">
+                <div className="settings-skill-candidate-main">
+                  <div className="settings-skill-candidate-title">
+                    <span>
+                      <strong>{cluster.title}</strong>
+                      <small>{cluster.id} · {candidateRouteKindLabel(cluster.routeKind, t)}</small>
+                    </span>
+                    <span className={`settings-skill-candidate-status ${cluster.status}`}>{procedureObservationClusterStatusLabel(cluster.status, t)}</span>
+                  </div>
+                  <p>{cluster.summary}</p>
+                  <div className="settings-skill-candidate-meta">
+                    <span>{t("Recommended")}: {procedureObservationClusterActionLabel(cluster.recommendedAction, t)}</span>
+                    <span>{t("Evidence")}: {cluster.observationCount}</span>
+                    <span>{t("Reusable")}: {cluster.reusableScore}</span>
+                    <span>{t("Updated {time}", { time: formatDateTime(cluster.lastObservedAt) })}</span>
+                  </div>
+                  <div className="settings-skill-candidate-gates">
+                    <span>
+                      <small>{t("Triggers")}</small>
+                      <SkillTokenList values={cluster.positiveTriggers} emptyLabel={t("No positive triggers")} />
+                    </span>
+                    <span>
+                      <small>{t("Blockers")}</small>
+                      <SkillTokenList values={cluster.routeBlockers.map((blocker) => candidateRouteBlockerLabel(blocker, t))} emptyLabel={t("No blockers")} />
+                    </span>
+                  </div>
                 </div>
-                <p>{cluster.summary}</p>
-                <div className="settings-skill-candidate-meta">
-                  <span>{t("Recommended")}: {procedureObservationClusterActionLabel(cluster.recommendedAction, t)}</span>
-                  <span>{t("Evidence")}: {cluster.observationCount}</span>
-                  <span>{t("Reusable")}: {cluster.reusableScore}</span>
-                  <span>{t("Updated {time}", { time: formatDateTime(cluster.lastObservedAt) })}</span>
-                </div>
-                <div className="settings-skill-candidate-gates">
-                  <span>
-                    <small>{t("Triggers")}</small>
-                    <SkillTokenList values={cluster.positiveTriggers} emptyLabel={t("No positive triggers")} />
-                  </span>
-                  <span>
-                    <small>{t("Blockers")}</small>
-                    <SkillTokenList values={cluster.routeBlockers.map((blocker) => candidateRouteBlockerLabel(blocker, t))} emptyLabel={t("No blockers")} />
-                  </span>
-                </div>
-              </div>
-            </article>
-          ))}
+                {canCreateProtocolCandidate ? (
+                  <div className="settings-skill-candidate-actions">
+                    <button className="primary-button compact-button" type="button" onClick={() => onCreateProtocolCandidate(cluster)} disabled={saving}>
+                      <BookOpen size={14} />
+                      {t("Create protocol candidate")}
+                    </button>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       )}
     </section>

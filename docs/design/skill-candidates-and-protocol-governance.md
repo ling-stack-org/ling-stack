@@ -125,6 +125,9 @@ Already implemented in Ling:
   `POST /channels/:id/protocol-candidates/from-cluster/:clusterId`. It only accepts
   same-channel `ready_for_review` clusters with `routeKind: channel_protocol`; `playbook`
   and other cluster routes remain separate review surfaces.
+- Settings > Skill Library renders candidate clusters and exposes a manual
+  "Create protocol candidate" action only for ready same-channel `channel_protocol`
+  clusters.
 
 Current gaps:
 

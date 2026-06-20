@@ -395,6 +395,15 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(clusterPanel).toContainText("1 review · 1 blocked · 2 total");
   await expect(clusterPanel).toContainText("Channel canvas handoff protocol");
   await expect(clusterPanel).toContainText("Create channel protocol candidate");
+  await clusterPanel.getByRole("button", { name: "Create protocol candidate" }).click();
+  await expect.poll(() => state.channelProtocolDrafts.length).toBe(1);
+  await expect.poll(() => {
+    const draft = state.channelProtocolDrafts[0];
+    return isRecord(draft) && isRecord(draft.proposedPatch) && Array.isArray(draft.proposedPatch.reviewRules)
+      ? draft.proposedPatch.reviewRules.join("\n")
+      : "";
+  }).toContain("Channel canvas handoff protocol");
+  await expect(panel).toContainText("Protocol candidate created");
   await expect(clusterPanel).toContainText("Generated skill missing gates");
   await expect(clusterPanel).toContainText("Append evidence");
 });

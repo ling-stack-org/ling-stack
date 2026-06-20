@@ -221,7 +221,8 @@ Implemented in this slice:
 - manual cluster-to-protocol candidate API at
   `POST /channels/:id/protocol-candidates/from-cluster/:clusterId` for same-channel
   ready `channel_protocol` clusters only;
-- Settings > Skill Library shows candidate clusters as a read-only governance queue.
+- Settings > Skill Library shows candidate clusters and exposes manual protocol-candidate
+  creation only for ready same-channel `channel_protocol` clusters.
 
 Still not implemented:
 
@@ -231,7 +232,8 @@ Still not implemented:
 - transcript-derived or post-run automatic candidate creation for channel protocol or
   playbook destinations;
 - playbook destination draft creation from clusters;
-- explicit Web channel protocol candidate queue beyond the existing protocol draft surface;
+- dedicated Web channel protocol candidate queue beyond the existing protocol draft
+  surface and Settings cluster action;
 - destination-specific playbook draft table/UI;
 - automatic correction-to-update-candidate generation;
 - superseded active generated skill automation beyond the reserved `superseded` event kind.
@@ -822,6 +824,8 @@ Tests:
 - create a channel-scoped workflow-step observation and list its playbook cluster;
 - create a channel protocol observation cluster, manually convert it into a protocol
   candidate, and reject playbook cluster conversion through the protocol endpoint;
+- click the Settings > Skill Library cluster action and verify it creates a protocol
+  draft candidate through the shared API client;
 - canvas response includes protocol/playbook clusters and section summaries;
 - source refs visible in API response;
 - existing Context protocol panel continues to show active protocol state.
