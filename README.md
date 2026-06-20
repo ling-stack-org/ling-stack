@@ -45,6 +45,8 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Input Materialization Detailed Design](docs/design/input-materialization-detailed-design.md)
 - [Web E2E Acceptance Matrix](docs/design/web-e2e-acceptance-matrix.md)
 - [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
+- [Skill candidates and protocol governance](docs/design/skill-candidates-and-protocol-governance.md)
+- [Skill candidates and protocol governance implementation plan](docs/design/skill-candidates-and-protocol-governance-implementation-plan.md)
 - [AI teammate private workspace](docs/design/ai-teammate-private-workspace.md)
 - [Platform architecture](docs/design/platform-architecture.md)
 - [External work orchestration](docs/design/external-work-orchestration.md)
@@ -599,6 +601,10 @@ Implemented:
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, Model Workbench provider setup, approval list, and persisted English / Chinese UI language switching.
 - Durable AI teammate storage and daemon APIs: seeded `gstack-default` teammates, custom teammate creation, channel memberships, skill bindings, memory-scope metadata, private direct threads/messages, task/activity read models, and soft disable.
 - AI Teammates Web wizard and private workspace: per-teammate model selection, channel/memory/file scoping metadata, daemon-backed sidebar roster, private chat, tasks/activity/channels/skills/memory/settings tabs, and persisted pin/hide/status/settings controls.
+- Skill governance foundation: read-only Skill Health report and Settings panel, durable manual SkillCandidate queue, shared contracts/API client helpers, daemon candidate list/get/create/review/draft routes, duplicate analysis, review gates before draft approval, and Web candidate review-to-import-draft flow.
+- Procedure observation foundation: structured `ProcedureObservation` storage, conservative candidate routing, `/procedure-observations`, `/procedure-observations/jobs`, and `/skill-candidates/observe` for pending skill candidates without raw transcript ingestion or auto-publication. Observation jobs are explicit/idempotent and only create candidates when user-confirmed gates pass.
+- Channel protocol candidate API: `/channels/:id/protocol-candidates` reuses reviewed channel protocol drafts so channel canvas rules can be approved or rejected without creating skills or granting authority.
+- Skill usage governance telemetry: event-first local usage/failure/correction records, `/skills/usage-events`, `/skills/usage-stats`, `/skills/:id/corrections`, and health findings for never-used generated skills, high failure rates, and repeated user corrections. Telemetry never auto-publishes, auto-disables, or auto-deletes skills.
 - Model Workbench grouping for GPT/Claude, domestic AI, OpenAI-compatible relays, custom compatible access, and media providers, with coding-task readiness shown separately from media-only capabilities.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.

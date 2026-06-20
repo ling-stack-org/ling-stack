@@ -87,6 +87,497 @@ export interface SkillRegistryEntry {
   readonly updatedAt: string;
 }
 
+export type SkillHealthSeverity = "info" | "warning" | "critical";
+
+export type SkillDuplicateDecision =
+  | "no_overlap"
+  | "append_evidence"
+  | "update_existing"
+  | "conflict_review"
+  | "reject_duplicate";
+
+export type SkillHealthFindingKind =
+  | "duplicate_clusters"
+  | "conflicting_triggers"
+  | "shadowed_skill"
+  | "never_used_skill"
+  | "stale_candidate"
+  | "high_failure_rate_skill"
+  | "high_user_correction_skill"
+  | "external_overlap_generated_skill"
+  | "superseded_but_active"
+  | "missing_validation_steps"
+  | "missing_negative_triggers";
+
+export type SkillHealthRecommendedAction =
+  | "review"
+  | "merge"
+  | "supersede"
+  | "disable"
+  | "archive"
+  | "add_validation"
+  | "add_negative_triggers"
+  | "reject_candidate";
+
+export type SkillCandidateHealthStatus =
+  | "pending"
+  | "needs_edit"
+  | "approved_for_draft"
+  | "published"
+  | "rejected"
+  | "quarantined"
+  | "superseded"
+  | "expired";
+
+export type SkillCandidateHealthOrigin =
+  | "ling-generated"
+  | "recording"
+  | "manual-draft"
+  | "import-overlay";
+
+export type SkillCandidateOrigin = SkillCandidateHealthOrigin;
+export type SkillCandidateStatus = SkillCandidateHealthStatus;
+
+export type SkillCandidateProposedAction =
+  | "create"
+  | "update_existing"
+  | "wrap_external"
+  | "supersede";
+
+export type SkillCandidateReviewAction =
+  | "keep_pending"
+  | "request_changes"
+  | "approve_for_draft"
+  | "reject"
+  | "quarantine"
+  | "supersede";
+
+export type SkillCandidateReviewActor = "user" | "system";
+
+export type SkillCandidateSourceRefType =
+  | "manual"
+  | "message"
+  | "decision"
+  | "run"
+  | "run-event"
+  | "artifact"
+  | "import"
+  | "observation-job";
+
+export interface SkillCandidateSourceRef {
+  readonly type: SkillCandidateSourceRefType;
+  readonly id: string;
+  readonly label?: string;
+  readonly url?: string;
+}
+
+export type ProcedureObservationSource =
+  | "explicit_user_request"
+  | "user_correction"
+  | "successful_tool_chain"
+  | "repeated_pattern"
+  | "workflow_step_output"
+  | "multi_agent_handoff"
+  | "manual_recording";
+
+export type ProcedureObservationSignal =
+  | "save_as_skill"
+  | "next_time_instruction"
+  | "correction_phrase"
+  | "long_successful_sequence"
+  | "same_sequence_repeated"
+  | "handoff_stabilized"
+  | "user_approved_recording";
+
+export type ProcedureObservationConfidence = "low" | "medium" | "high";
+
+export interface ProcedureObservationStep {
+  readonly title: string;
+  readonly instruction?: string;
+  readonly requiredTools?: readonly string[];
+  readonly expectedEvidence?: string;
+}
+
+export interface ProcedureObservationValidationStep {
+  readonly title: string;
+  readonly commandOrCheck?: string;
+  readonly expectedResult?: string;
+}
+
+export type CandidateRouteKind =
+  | "memory"
+  | "channel_protocol"
+  | "automation"
+  | "skill"
+  | "approval_policy_review"
+  | "reject";
+
+export type CandidateRouteBlocker =
+  | "insufficient_evidence"
+  | "one_off_preference"
+  | "missing_validation"
+  | "missing_negative_trigger"
+  | "duplicate_existing_skill"
+  | "conflicts_with_pending_candidate"
+  | "permission_expansion"
+  | "unsafe_or_secret_adjacent";
+
+export interface CandidateRoute {
+  readonly kind: CandidateRouteKind;
+  readonly reasonCode: string;
+  readonly confidence: ProcedureObservationConfidence;
+  readonly blockers: readonly CandidateRouteBlocker[];
+}
+
+export interface ProcedureObservation {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly clusterId: string;
+  readonly channelId?: string;
+  readonly teammateId?: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly source: ProcedureObservationSource;
+  readonly signals: readonly ProcedureObservationSignal[];
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly positiveTriggers: readonly string[];
+  readonly negativeTriggers: readonly string[];
+  readonly procedureSteps: readonly ProcedureObservationStep[];
+  readonly validationSteps: readonly ProcedureObservationValidationStep[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+  readonly confidence: ProcedureObservationConfidence;
+  readonly reusableScore: number;
+  readonly routeKind?: CandidateRouteKind;
+  readonly routeReasonCode?: string;
+  readonly routeBlockers: readonly CandidateRouteBlocker[];
+  readonly createdAt: string;
+}
+
+export interface ProcedureObservationRequest {
+  readonly id?: string;
+  readonly clusterId?: string;
+  readonly channelId?: string;
+  readonly teammateId?: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly source: ProcedureObservationSource;
+  readonly signals: readonly ProcedureObservationSignal[];
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly positiveTriggers?: readonly string[];
+  readonly negativeTriggers?: readonly string[];
+  readonly procedureSteps?: readonly ProcedureObservationStep[];
+  readonly validationSteps?: readonly ProcedureObservationValidationStep[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+  readonly confidence?: ProcedureObservationConfidence;
+  readonly reusableScore?: number;
+}
+
+export type ProcedureObservationJobTerminalStatus = "succeeded" | "failed" | "cancelled";
+
+export interface ProcedureObservationJobRequest {
+  readonly id?: string;
+  readonly workspaceId?: string;
+  readonly source: ProcedureObservationSource;
+  readonly signals: readonly ProcedureObservationSignal[];
+  readonly runId?: string;
+  readonly messageId?: string;
+  readonly reviewActionId?: string;
+  readonly channelId?: string;
+  readonly teammateId?: string;
+  readonly taskId?: string;
+  readonly selectedSkillId?: string;
+  readonly terminalStatus?: ProcedureObservationJobTerminalStatus;
+  readonly toolLabels?: readonly string[];
+  readonly validationLabels?: readonly string[];
+  readonly artifactRefs?: readonly string[];
+  readonly userConfirmed: boolean;
+  readonly destinationHint?: "skill" | "channel_protocol" | "automation" | "memory";
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly positiveTriggers?: readonly string[];
+  readonly negativeTriggers?: readonly string[];
+  readonly procedureSteps?: readonly ProcedureObservationStep[];
+  readonly validationSteps?: readonly ProcedureObservationValidationStep[];
+  readonly confidence?: ProcedureObservationConfidence;
+  readonly reusableScore?: number;
+}
+
+export interface ProcedureObservationListResponse {
+  readonly cwd: string;
+  readonly observations: readonly ProcedureObservation[];
+}
+
+export interface ProcedureObservationResponse {
+  readonly cwd: string;
+  readonly observation: ProcedureObservation;
+  readonly route: CandidateRoute;
+}
+
+export type SkillCandidateObserveAction =
+  | "candidate_created"
+  | "evidence_recorded"
+  | "routed_elsewhere"
+  | "blocked";
+
+export interface SkillCandidateObserveResponse {
+  readonly cwd: string;
+  readonly observation: ProcedureObservation;
+  readonly route: CandidateRoute;
+  readonly action: SkillCandidateObserveAction;
+  readonly candidate?: SkillCandidate;
+  readonly duplicateAnalysis?: SkillDuplicateAnalysis;
+}
+
+export interface ProcedureObservationJobResponse extends SkillCandidateObserveResponse {
+  readonly jobKey: string;
+  readonly reusedObservation: boolean;
+}
+
+export interface SkillCandidateProcedureStep {
+  readonly title: string;
+  readonly instruction?: string;
+  readonly requiredTools?: readonly string[];
+}
+
+export interface SkillCandidateValidationStep {
+  readonly title: string;
+  readonly commandOrCheck?: string;
+  readonly expectedResult?: string;
+}
+
+export interface SkillCandidateDraftDefinition {
+  readonly workflowPhase: SkillWorkflowPhase | string;
+  readonly positiveTriggers: readonly string[];
+  readonly negativeTriggers: readonly string[];
+  readonly procedureSteps: readonly SkillCandidateProcedureStep[];
+  readonly validationSteps: readonly SkillCandidateValidationStep[];
+  readonly requiredTools: readonly (ToolName | string)[];
+  readonly requiredProviderCapabilities: readonly (ProviderCapability | string)[];
+  readonly skillDefinition?: SkillDefinition;
+}
+
+export interface SkillCandidate {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly origin: SkillCandidateOrigin;
+  readonly targetSkillId?: string;
+  readonly proposedAction: SkillCandidateProposedAction;
+  readonly status: SkillCandidateStatus;
+  readonly title: string;
+  readonly summary: string;
+  readonly definition: SkillCandidateDraftDefinition;
+  readonly duplicateAnalysis: SkillDuplicateAnalysis;
+  readonly safetyFindings: readonly SkillHealthFinding[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+  readonly reviewNotes: readonly string[];
+  readonly expiresAt?: string;
+  readonly supersededBy?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateSkillCandidateRequest {
+  readonly id?: string;
+  readonly origin?: SkillCandidateOrigin;
+  readonly targetSkillId?: string;
+  readonly proposedAction?: SkillCandidateProposedAction;
+  readonly status?: SkillCandidateStatus;
+  readonly title: string;
+  readonly summary: string;
+  readonly definition: SkillCandidateDraftDefinition;
+  readonly duplicateAnalysis?: SkillDuplicateAnalysis;
+  readonly safetyFindings?: readonly SkillHealthFinding[];
+  readonly sourceRefs: readonly SkillCandidateSourceRef[];
+  readonly reviewNotes?: readonly string[];
+  readonly expiresAt?: string;
+  readonly supersededBy?: string;
+}
+
+export interface SkillCandidateReviewRequest {
+  readonly action: SkillCandidateReviewAction;
+  readonly reason?: string;
+  readonly supersededBy?: string;
+}
+
+export interface SkillCandidateReviewRecord {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly candidateId: string;
+  readonly action: SkillCandidateReviewAction;
+  readonly actor: SkillCandidateReviewActor;
+  readonly previousStatus: SkillCandidateStatus;
+  readonly nextStatus: SkillCandidateStatus;
+  readonly reason?: string;
+  readonly createdAt: string;
+}
+
+export interface SkillCandidateListResponse {
+  readonly cwd: string;
+  readonly candidates: readonly SkillCandidate[];
+}
+
+export interface SkillCandidateResponse {
+  readonly cwd: string;
+  readonly candidate: SkillCandidate;
+  readonly reviewRecords?: readonly SkillCandidateReviewRecord[];
+}
+
+export interface SkillCandidateReviewResponse {
+  readonly cwd: string;
+  readonly candidate: SkillCandidate;
+  readonly action: SkillCandidateReviewRecord;
+}
+
+export interface SkillCandidateDraftResponse {
+  readonly cwd: string;
+  readonly candidate: SkillCandidate;
+  readonly draft: SkillImportDraft;
+}
+
+export interface SkillCandidateHealthInput {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly origin: SkillCandidateHealthOrigin;
+  readonly status: SkillCandidateHealthStatus;
+  readonly targetSkillId?: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly workflowPhase: SkillWorkflowPhase | string;
+  readonly positiveTriggers: readonly string[];
+  readonly negativeTriggers: readonly string[];
+  readonly procedureSteps?: readonly {
+    readonly title: string;
+    readonly instruction?: string;
+    readonly requiredTools?: readonly string[];
+  }[];
+  readonly validationSteps?: readonly {
+    readonly title: string;
+    readonly commandOrCheck?: string;
+    readonly expectedResult?: string;
+  }[];
+  readonly requiredTools?: readonly (ToolName | string)[];
+  readonly requiredProviderCapabilities?: readonly (ProviderCapability | string)[];
+  readonly createdAt: string;
+  readonly updatedAt?: string;
+  readonly expiresAt?: string;
+  readonly supersededBy?: string;
+}
+
+export interface SkillDuplicateAnalysis {
+  readonly decision: SkillDuplicateDecision;
+  readonly similarityScore: number;
+  readonly matchedSkillIds: readonly string[];
+  readonly matchedCandidateIds: readonly string[];
+  readonly triggerOverlap: readonly string[];
+  readonly conflictingFields: readonly string[];
+  readonly rationale: string;
+}
+
+export interface SkillHealthFinding {
+  readonly id: string;
+  readonly kind: SkillHealthFindingKind;
+  readonly severity: SkillHealthSeverity;
+  readonly skillIds: readonly string[];
+  readonly candidateIds: readonly string[];
+  readonly title: string;
+  readonly message: string;
+  readonly recommendation: string;
+  readonly recommendedAction: SkillHealthRecommendedAction;
+}
+
+export interface SkillHealthSummary {
+  readonly totalSkills: number;
+  readonly activeSkills: number;
+  readonly generatedSkills: number;
+  readonly pendingCandidates: number;
+  readonly duplicateClusters: number;
+  readonly conflictCount: number;
+  readonly staleCandidates: number;
+  readonly highFailureRateSkills: number;
+  readonly findings: {
+    readonly critical: number;
+    readonly warning: number;
+    readonly info: number;
+  };
+}
+
+export interface SkillHealthReport {
+  readonly workspaceId: string;
+  readonly generatedAt: string;
+  readonly staleCandidateDays: number;
+  readonly summary: SkillHealthSummary;
+  readonly findings: readonly SkillHealthFinding[];
+}
+
+export interface SkillHealthResponse {
+  readonly cwd: string;
+  readonly report: SkillHealthReport;
+}
+
+export type SkillUsageEventKind =
+  | "selected"
+  | "started"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "user_corrected"
+  | "draft_created"
+  | "published"
+  | "superseded";
+
+export interface SkillUsageEvent {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly skillId?: string;
+  readonly candidateId?: string;
+  readonly runId?: string;
+  readonly teammateId?: string;
+  readonly channelId?: string;
+  readonly kind: SkillUsageEventKind;
+  readonly reason?: string;
+  readonly createdAt: string;
+}
+
+export interface SkillUsageStats {
+  readonly skillId: string;
+  readonly useCount: number;
+  readonly successCount: number;
+  readonly failureCount: number;
+  readonly cancelledCount: number;
+  readonly correctionCount: number;
+  readonly lastUsedAt?: string;
+  readonly lastFailureAt?: string;
+  readonly lastUserCorrectionAt?: string;
+}
+
+export interface SkillUsageEventListResponse {
+  readonly cwd: string;
+  readonly events: readonly SkillUsageEvent[];
+}
+
+export interface SkillUsageStatsListResponse {
+  readonly cwd: string;
+  readonly stats: readonly SkillUsageStats[];
+}
+
+export interface SkillCorrectionRequest {
+  readonly reason?: string;
+  readonly candidateId?: string;
+  readonly runId?: string;
+  readonly teammateId?: string;
+  readonly channelId?: string;
+}
+
+export interface SkillCorrectionResponse {
+  readonly cwd: string;
+  readonly event: SkillUsageEvent;
+}
+
 export interface SkillImportWarning {
   readonly code: SkillImportWarningCode;
   readonly severity: SkillImportWarningSeverity;

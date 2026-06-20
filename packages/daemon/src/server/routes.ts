@@ -174,15 +174,28 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string };
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" }
+  | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "skill-candidates" && segments[1] !== "observe") {
+    return { kind: "candidate", candidateId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "skill-candidates" && segments[2] === "review") {
+    return { kind: "candidate", candidateId: segments[1], action: "review" };
+  }
+  if (segments.length === 3 && segments[0] === "skill-candidates" && segments[2] === "draft") {
+    return { kind: "candidate", candidateId: segments[1], action: "draft" };
+  }
   if (segments.length === 3 && segments[0] === "skills" && segments[1] === "import-drafts") {
     return { kind: "draft", draftId: segments[2] };
   }
   if (segments.length === 4 && segments[0] === "skills" && segments[1] === "import-drafts" && segments[3] === "publish") {
     return { kind: "draft", draftId: segments[2], action: "publish" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "corrections") {
+    return { kind: "skill", skillId: segments[1], action: "corrections" };
   }
   if (segments.length === 2 && segments[0] === "skills") {
     return { kind: "skill", skillId: segments[1] };
@@ -256,7 +269,7 @@ export function parseChannelRoute(
   readonly channelId: string;
   readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "workspace" | "protocol" | "branches";
   readonly branchId?: string;
-  readonly protocolAction?: "revert" | "drafts" | "apply-draft";
+  readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate";
   readonly protocolDraftId?: string;
   readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
 } | undefined {
@@ -287,6 +300,12 @@ export function parseChannelRoute(
   }
   if (segments.length === 6 && segments[0] === "channels" && segments[2] === "protocol" && segments[3] === "drafts" && segments[5] === "apply") {
     return { channelId: segments[1], action: "protocol", protocolAction: "apply-draft", protocolDraftId: segments[4] };
+  }
+  if (segments.length === 3 && segments[0] === "channels" && segments[2] === "protocol-candidates") {
+    return { channelId: segments[1], action: "protocol", protocolAction: "candidates" };
+  }
+  if (segments.length === 5 && segments[0] === "channels" && segments[2] === "protocol-candidates" && segments[4] === "review") {
+    return { channelId: segments[1], action: "protocol", protocolAction: "review-candidate", protocolDraftId: segments[3] };
   }
   if (
     segments.length === 4 &&

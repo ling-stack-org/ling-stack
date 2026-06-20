@@ -3,16 +3,548 @@ import { basename, extname } from "node:path";
 import {
   providerCapabilities,
   readOnlyRunTools,
+  type ApplySkillCandidateReviewActionInput,
+  type CreateSkillCandidateInput,
+  type CreateProcedureObservationInput,
+  type ProcedureObservationJobInput,
+  type ProcedureObservationJobTerminalStatus,
+  type CandidateRouteKind,
   type CreateSkillImportDraftInput,
+  type CreateSkillUsageEventInput,
+  type ListProcedureObservationsOptions,
+  type ListSkillUsageEventsOptions,
   type RunTool,
+  type SkillCandidateOrigin,
+  type SkillCandidateProposedAction,
+  type SkillCandidateReviewAction,
+  type SkillCandidateSourceRef,
+  type SkillCandidateStatus,
   type SkillDefinition,
+  type SkillDuplicateAnalysis,
+  type SkillHealthFinding,
   type SkillImportWarning,
   type SkillPackSource,
   type SkillRegistryEntry,
+  type SkillUsageEventKind,
 } from "@ling-stack/core";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { extractMarkdownTitle, firstMarkdownParagraph, parseMarkdownFrontmatter } from "../../shared/markdown.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
+
+export type ParsedCreateSkillCandidateRequest = Omit<CreateSkillCandidateInput, "duplicateAnalysis"> & {
+  readonly duplicateAnalysis?: SkillDuplicateAnalysis;
+};
+
+export function parseCreateSkillCandidateRequest(value: unknown): ParsedCreateSkillCandidateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Skill candidate request must be a JSON object");
+  }
+  const definition = readSkillCandidateDraftDefinition(value.definition);
+  return {
+    id: readOptionalString(value, "id"),
+    origin: readOptionalSkillCandidateOrigin(value, "origin") ?? "manual-draft",
+    targetSkillId: readOptionalString(value, "targetSkillId"),
+    proposedAction: readOptionalSkillCandidateProposedAction(value, "proposedAction") ?? "create",
+    status: readOptionalSkillCandidateStatus(value, "status"),
+    title: readString(value, "title"),
+    summary: readString(value, "summary"),
+    definition,
+    duplicateAnalysis: readOptionalSkillDuplicateAnalysis(value, "duplicateAnalysis"),
+    safetyFindings: readOptionalSkillHealthFindings(value, "safetyFindings"),
+    sourceRefs: readSkillCandidateSourceRefs(value.sourceRefs),
+    reviewNotes: readOptionalStringArray(value, "reviewNotes"),
+    expiresAt: readOptionalString(value, "expiresAt"),
+    supersededBy: readOptionalString(value, "supersededBy"),
+  };
+}
+
+export function parseSkillCandidateReviewRequest(value: unknown): Omit<ApplySkillCandidateReviewActionInput, "candidateId" | "actor"> {
+  if (!isRecord(value)) {
+    throw new Error("Skill candidate review request must be a JSON object");
+  }
+  return {
+    action: readSkillCandidateReviewAction(value, "action"),
+    reason: readOptionalString(value, "reason"),
+    supersededBy: readOptionalString(value, "supersededBy"),
+  };
+}
+
+export function parseProcedureObservationRequest(value: unknown): CreateProcedureObservationInput {
+  if (!isRecord(value)) {
+    throw new Error("Procedure observation request must be a JSON object");
+  }
+  return {
+    id: readOptionalString(value, "id"),
+    clusterId: readOptionalString(value, "clusterId"),
+    channelId: readOptionalString(value, "channelId"),
+    teammateId: readOptionalString(value, "teammateId"),
+    taskId: readOptionalString(value, "taskId"),
+    runId: readOptionalString(value, "runId"),
+    source: readProcedureObservationSource(value, "source"),
+    signals: readProcedureObservationSignals(value.signals),
+    title: readString(value, "title"),
+    summary: readString(value, "summary"),
+    normalizedGoal: readString(value, "normalizedGoal"),
+    positiveTriggers: readOptionalStringArray(value, "positiveTriggers"),
+    negativeTriggers: readOptionalStringArray(value, "negativeTriggers"),
+    procedureSteps: readProcedureObservationSteps(value.procedureSteps),
+    validationSteps: readProcedureObservationValidationSteps(value.validationSteps),
+    sourceRefs: readSkillCandidateSourceRefs(value.sourceRefs),
+    confidence: readOptionalProcedureObservationConfidence(value, "confidence"),
+    reusableScore: readOptionalNumber(value, "reusableScore"),
+  };
+}
+
+export function parseProcedureObservationJobRequest(value: unknown): ProcedureObservationJobInput {
+  if (!isRecord(value)) {
+    throw new Error("Procedure observation job request must be a JSON object");
+  }
+  return {
+    id: readOptionalString(value, "id"),
+    workspaceId: readOptionalString(value, "workspaceId"),
+    source: readProcedureObservationSource(value, "source"),
+    signals: readProcedureObservationSignals(value.signals),
+    runId: readOptionalString(value, "runId"),
+    messageId: readOptionalString(value, "messageId"),
+    reviewActionId: readOptionalString(value, "reviewActionId"),
+    channelId: readOptionalString(value, "channelId"),
+    teammateId: readOptionalString(value, "teammateId"),
+    taskId: readOptionalString(value, "taskId"),
+    selectedSkillId: readOptionalString(value, "selectedSkillId"),
+    terminalStatus: readOptionalProcedureObservationJobTerminalStatus(value, "terminalStatus"),
+    toolLabels: readOptionalStringArray(value, "toolLabels"),
+    validationLabels: readOptionalStringArray(value, "validationLabels"),
+    artifactRefs: readOptionalStringArray(value, "artifactRefs"),
+    userConfirmed: readBoolean(value, "userConfirmed"),
+    destinationHint: readOptionalDestinationHint(value, "destinationHint"),
+    title: readString(value, "title"),
+    summary: readString(value, "summary"),
+    normalizedGoal: readString(value, "normalizedGoal"),
+    positiveTriggers: readOptionalStringArray(value, "positiveTriggers"),
+    negativeTriggers: readOptionalStringArray(value, "negativeTriggers"),
+    procedureSteps: readProcedureObservationSteps(value.procedureSteps),
+    validationSteps: readProcedureObservationValidationSteps(value.validationSteps),
+    confidence: readOptionalProcedureObservationConfidence(value, "confidence"),
+    reusableScore: readOptionalNumber(value, "reusableScore"),
+  };
+}
+
+export function readOptionalSkillCandidateStatusQuery(url: URL, key: string): SkillCandidateStatus | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null || value === "") {
+    return undefined;
+  }
+  if (!skillCandidateStatuses.includes(value as SkillCandidateStatus)) {
+    throw new Error(`${key} must be one of: ${skillCandidateStatuses.join(", ")}`);
+  }
+  return value as SkillCandidateStatus;
+}
+
+export function readOptionalSkillCandidateOriginQuery(url: URL, key: string): SkillCandidateOrigin | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null || value === "") {
+    return undefined;
+  }
+  if (!skillCandidateOrigins.includes(value as SkillCandidateOrigin)) {
+    throw new Error(`${key} must be one of: ${skillCandidateOrigins.join(", ")}`);
+  }
+  return value as SkillCandidateOrigin;
+}
+
+export function readOptionalCandidateRouteKindQuery(url: URL, key: string): ListProcedureObservationsOptions["routeKind"] {
+  const value = url.searchParams.get(key);
+  if (value === null || value === "") {
+    return undefined;
+  }
+  if (!candidateRouteKinds.includes(value as CandidateRouteKind)) {
+    throw new Error(`${key} must be one of: ${candidateRouteKinds.join(", ")}`);
+  }
+  return value as CandidateRouteKind;
+}
+
+export function readOptionalSkillUsageEventKindQuery(url: URL, key: string): ListSkillUsageEventsOptions["kind"] {
+  const value = url.searchParams.get(key);
+  if (value === null || value === "") {
+    return undefined;
+  }
+  if (!skillUsageEventKinds.includes(value as SkillUsageEventKind)) {
+    throw new Error(`${key} must be one of: ${skillUsageEventKinds.join(", ")}`);
+  }
+  return value as SkillUsageEventKind;
+}
+
+export function parseSkillCorrectionRequest(value: unknown): Omit<CreateSkillUsageEventInput, "skillId" | "kind"> {
+  if (!isRecord(value)) {
+    throw new Error("Skill correction request must be a JSON object");
+  }
+  return {
+    candidateId: readOptionalString(value, "candidateId"),
+    runId: readOptionalString(value, "runId"),
+    teammateId: readOptionalString(value, "teammateId"),
+    channelId: readOptionalString(value, "channelId"),
+    reason: readOptionalString(value, "reason"),
+  };
+}
+
+function readSkillCandidateDraftDefinition(value: unknown): CreateSkillCandidateInput["definition"] {
+  if (!isRecord(value)) {
+    throw new Error("definition must be an object");
+  }
+  return {
+    workflowPhase: readString(value, "workflowPhase"),
+    positiveTriggers: readRequiredStringArray(value, "positiveTriggers"),
+    negativeTriggers: readOptionalStringArray(value, "negativeTriggers") ?? [],
+    procedureSteps: readSkillCandidateProcedureSteps(value.procedureSteps),
+    validationSteps: readSkillCandidateValidationSteps(value.validationSteps),
+    requiredTools: readOptionalStringArray(value, "requiredTools") ?? [],
+    requiredProviderCapabilities: readOptionalStringArray(value, "requiredProviderCapabilities") ?? [],
+    ...(isRecord(value.skillDefinition) ? { skillDefinition: value.skillDefinition as unknown as SkillDefinition } : {}),
+  };
+}
+
+function readSkillCandidateProcedureSteps(value: unknown): CreateSkillCandidateInput["definition"]["procedureSteps"] {
+  if (!Array.isArray(value)) {
+    throw new Error("definition.procedureSteps must be an array");
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`definition.procedureSteps[${index}] must be an object`);
+    }
+    return {
+      title: readString(item, "title"),
+      instruction: readOptionalString(item, "instruction"),
+      requiredTools: readOptionalStringArray(item, "requiredTools"),
+    };
+  });
+}
+
+function readSkillCandidateValidationSteps(value: unknown): CreateSkillCandidateInput["definition"]["validationSteps"] {
+  if (!Array.isArray(value)) {
+    throw new Error("definition.validationSteps must be an array");
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`definition.validationSteps[${index}] must be an object`);
+    }
+    return {
+      title: readString(item, "title"),
+      commandOrCheck: readOptionalString(item, "commandOrCheck"),
+      expectedResult: readOptionalString(item, "expectedResult"),
+    };
+  });
+}
+
+function readProcedureObservationSteps(value: unknown): CreateProcedureObservationInput["procedureSteps"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("procedureSteps must be an array");
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`procedureSteps[${index}] must be an object`);
+    }
+    return {
+      title: readString(item, "title"),
+      instruction: readOptionalString(item, "instruction"),
+      requiredTools: readOptionalStringArray(item, "requiredTools"),
+      expectedEvidence: readOptionalString(item, "expectedEvidence"),
+    };
+  });
+}
+
+function readProcedureObservationValidationSteps(value: unknown): CreateProcedureObservationInput["validationSteps"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("validationSteps must be an array");
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`validationSteps[${index}] must be an object`);
+    }
+    return {
+      title: readString(item, "title"),
+      commandOrCheck: readOptionalString(item, "commandOrCheck"),
+      expectedResult: readOptionalString(item, "expectedResult"),
+    };
+  });
+}
+
+function readProcedureObservationSignals(value: unknown): CreateProcedureObservationInput["signals"] {
+  if (!Array.isArray(value)) {
+    throw new Error("signals must be an array");
+  }
+  return value.map((item, index) => {
+    if (typeof item !== "string" || !procedureObservationSignals.includes(item as CreateProcedureObservationInput["signals"][number])) {
+      throw new Error(`signals[${index}] must be one of: ${procedureObservationSignals.join(", ")}`);
+    }
+    return item as CreateProcedureObservationInput["signals"][number];
+  });
+}
+
+function readSkillCandidateSourceRefs(value: unknown): readonly SkillCandidateSourceRef[] {
+  if (!Array.isArray(value)) {
+    throw new Error("sourceRefs must be an array");
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`sourceRefs[${index}] must be an object`);
+    }
+    return {
+      type: readSkillCandidateSourceRefType(item, "type"),
+      id: readString(item, "id"),
+      label: readOptionalString(item, "label"),
+      url: readOptionalString(item, "url"),
+    };
+  });
+}
+
+function readOptionalSkillDuplicateAnalysis(record: Record<string, unknown>, key: string): SkillDuplicateAnalysis | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  return {
+    decision: readSkillDuplicateDecision(value, "decision"),
+    similarityScore: readNumber(value, "similarityScore"),
+    matchedSkillIds: readRequiredStringArray(value, "matchedSkillIds"),
+    matchedCandidateIds: readRequiredStringArray(value, "matchedCandidateIds"),
+    triggerOverlap: readRequiredStringArray(value, "triggerOverlap"),
+    conflictingFields: readRequiredStringArray(value, "conflictingFields"),
+    rationale: readString(value, "rationale"),
+  };
+}
+
+function readOptionalSkillHealthFindings(record: Record<string, unknown>, key: string): readonly SkillHealthFinding[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    return {
+      id: readString(item, "id"),
+      kind: readSkillHealthFindingKind(item, "kind"),
+      severity: readSkillHealthSeverity(item, "severity"),
+      skillIds: readRequiredStringArray(item, "skillIds"),
+      candidateIds: readRequiredStringArray(item, "candidateIds"),
+      title: readString(item, "title"),
+      message: readString(item, "message"),
+      recommendation: readString(item, "recommendation"),
+      recommendedAction: readSkillHealthRecommendedAction(item, "recommendedAction"),
+    };
+  });
+}
+
+function readOptionalSkillCandidateOrigin(record: Record<string, unknown>, key: string): SkillCandidateOrigin | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!skillCandidateOrigins.includes(value as SkillCandidateOrigin)) {
+    throw new Error(`${key} must be one of: ${skillCandidateOrigins.join(", ")}`);
+  }
+  return value as SkillCandidateOrigin;
+}
+
+function readOptionalSkillCandidateStatus(record: Record<string, unknown>, key: string): SkillCandidateStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!skillCandidateStatuses.includes(value as SkillCandidateStatus)) {
+    throw new Error(`${key} must be one of: ${skillCandidateStatuses.join(", ")}`);
+  }
+  return value as SkillCandidateStatus;
+}
+
+function readOptionalSkillCandidateProposedAction(record: Record<string, unknown>, key: string): SkillCandidateProposedAction | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!skillCandidateProposedActions.includes(value as SkillCandidateProposedAction)) {
+    throw new Error(`${key} must be one of: ${skillCandidateProposedActions.join(", ")}`);
+  }
+  return value as SkillCandidateProposedAction;
+}
+
+function readSkillCandidateReviewAction(record: Record<string, unknown>, key: string): SkillCandidateReviewAction {
+  const value = readString(record, key);
+  if (!skillCandidateReviewActions.includes(value as SkillCandidateReviewAction)) {
+    throw new Error(`${key} must be one of: ${skillCandidateReviewActions.join(", ")}`);
+  }
+  return value as SkillCandidateReviewAction;
+}
+
+function readSkillCandidateSourceRefType(record: Record<string, unknown>, key: string): SkillCandidateSourceRef["type"] {
+  const value = readString(record, key);
+  if (!skillCandidateSourceRefTypes.includes(value as SkillCandidateSourceRef["type"])) {
+    throw new Error(`${key} must be one of: ${skillCandidateSourceRefTypes.join(", ")}`);
+  }
+  return value as SkillCandidateSourceRef["type"];
+}
+
+function readProcedureObservationSource(record: Record<string, unknown>, key: string): CreateProcedureObservationInput["source"] {
+  const value = readString(record, key);
+  if (!procedureObservationSources.includes(value as CreateProcedureObservationInput["source"])) {
+    throw new Error(`${key} must be one of: ${procedureObservationSources.join(", ")}`);
+  }
+  return value as CreateProcedureObservationInput["source"];
+}
+
+function readOptionalProcedureObservationConfidence(record: Record<string, unknown>, key: string): CreateProcedureObservationInput["confidence"] {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!procedureObservationConfidences.includes(value as NonNullable<CreateProcedureObservationInput["confidence"]>)) {
+    throw new Error(`${key} must be one of: ${procedureObservationConfidences.join(", ")}`);
+  }
+  return value as NonNullable<CreateProcedureObservationInput["confidence"]>;
+}
+
+function readSkillDuplicateDecision(record: Record<string, unknown>, key: string): SkillDuplicateAnalysis["decision"] {
+  const value = readString(record, key);
+  if (!skillDuplicateDecisions.includes(value as SkillDuplicateAnalysis["decision"])) {
+    throw new Error(`${key} must be one of: ${skillDuplicateDecisions.join(", ")}`);
+  }
+  return value as SkillDuplicateAnalysis["decision"];
+}
+
+function readSkillHealthFindingKind(record: Record<string, unknown>, key: string): SkillHealthFinding["kind"] {
+  const value = readString(record, key);
+  if (!skillHealthFindingKinds.includes(value as SkillHealthFinding["kind"])) {
+    throw new Error(`${key} must be one of: ${skillHealthFindingKinds.join(", ")}`);
+  }
+  return value as SkillHealthFinding["kind"];
+}
+
+function readSkillHealthSeverity(record: Record<string, unknown>, key: string): SkillHealthFinding["severity"] {
+  const value = readString(record, key);
+  if (!skillHealthSeverities.includes(value as SkillHealthFinding["severity"])) {
+    throw new Error(`${key} must be one of: ${skillHealthSeverities.join(", ")}`);
+  }
+  return value as SkillHealthFinding["severity"];
+}
+
+function readSkillHealthRecommendedAction(record: Record<string, unknown>, key: string): SkillHealthFinding["recommendedAction"] {
+  const value = readString(record, key);
+  if (!skillHealthRecommendedActions.includes(value as SkillHealthFinding["recommendedAction"])) {
+    throw new Error(`${key} must be one of: ${skillHealthRecommendedActions.join(", ")}`);
+  }
+  return value as SkillHealthFinding["recommendedAction"];
+}
+
+function readRequiredStringArray(record: Record<string, unknown>, key: string): readonly string[] {
+  return readOptionalStringArray(record, key) ?? (() => {
+    throw new Error(`${key} must be an array`);
+  })();
+}
+
+function readNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${key} must be a finite number`);
+  }
+  return value;
+}
+
+function readBoolean(record: Record<string, unknown>, key: string): boolean {
+  const value = record[key];
+  if (typeof value !== "boolean") {
+    throw new Error(`${key} must be a boolean`);
+  }
+  return value;
+}
+
+function readOptionalNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${key} must be a finite number`);
+  }
+  return value;
+}
+
+function readOptionalProcedureObservationJobTerminalStatus(
+  record: Record<string, unknown>,
+  key: string,
+): ProcedureObservationJobInput["terminalStatus"] {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!procedureObservationJobTerminalStatuses.includes(value as ProcedureObservationJobTerminalStatus)) {
+    throw new Error(`${key} must be one of: ${procedureObservationJobTerminalStatuses.join(", ")}`);
+  }
+  return value as ProcedureObservationJobTerminalStatus;
+}
+
+function readOptionalDestinationHint(
+  record: Record<string, unknown>,
+  key: string,
+): ProcedureObservationJobInput["destinationHint"] {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!procedureObservationDestinationHints.includes(value as NonNullable<ProcedureObservationJobInput["destinationHint"]>)) {
+    throw new Error(`${key} must be one of: ${procedureObservationDestinationHints.join(", ")}`);
+  }
+  return value as NonNullable<ProcedureObservationJobInput["destinationHint"]>;
+}
+
+const skillCandidateOrigins = ["ling-generated", "recording", "manual-draft", "import-overlay"] as const;
+const skillCandidateStatuses = ["pending", "needs_edit", "approved_for_draft", "published", "rejected", "quarantined", "superseded", "expired"] as const;
+const skillCandidateProposedActions = ["create", "update_existing", "wrap_external", "supersede"] as const;
+const skillCandidateReviewActions = ["keep_pending", "request_changes", "approve_for_draft", "reject", "quarantine", "supersede"] as const;
+const skillCandidateSourceRefTypes = ["manual", "message", "decision", "run", "run-event", "artifact", "import", "observation-job"] as const;
+const procedureObservationSources = ["explicit_user_request", "user_correction", "successful_tool_chain", "repeated_pattern", "workflow_step_output", "multi_agent_handoff", "manual_recording"] as const;
+const procedureObservationSignals = ["save_as_skill", "next_time_instruction", "correction_phrase", "long_successful_sequence", "same_sequence_repeated", "handoff_stabilized", "user_approved_recording"] as const;
+const procedureObservationConfidences = ["low", "medium", "high"] as const;
+const procedureObservationJobTerminalStatuses = ["succeeded", "failed", "cancelled"] as const;
+const procedureObservationDestinationHints = ["skill", "channel_protocol", "automation", "memory"] as const;
+const candidateRouteKinds = ["memory", "channel_protocol", "automation", "skill", "approval_policy_review", "reject"] as const;
+const skillDuplicateDecisions = ["no_overlap", "append_evidence", "update_existing", "conflict_review", "reject_duplicate"] as const;
+const skillHealthFindingKinds = [
+  "duplicate_clusters",
+  "conflicting_triggers",
+  "shadowed_skill",
+  "never_used_skill",
+  "stale_candidate",
+  "high_failure_rate_skill",
+  "high_user_correction_skill",
+  "external_overlap_generated_skill",
+  "superseded_but_active",
+  "missing_validation_steps",
+  "missing_negative_triggers",
+] as const;
+const skillHealthSeverities = ["info", "warning", "critical"] as const;
+const skillHealthRecommendedActions = [
+  "review",
+  "merge",
+  "supersede",
+  "disable",
+  "archive",
+  "add_validation",
+  "add_negative_triggers",
+  "reject_candidate",
+] as const;
+const skillUsageEventKinds = ["selected", "started", "succeeded", "failed", "cancelled", "user_corrected", "draft_created", "published", "superseded"] as const;
 
 export function parseSkillImportDraftRequest(
   value: unknown,

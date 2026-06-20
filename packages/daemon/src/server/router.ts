@@ -814,7 +814,18 @@ export async function routeRequest(
   }
 
   const skillRoute = parseSkillRoute(url.pathname);
-  if (url.pathname === "/skills" || url.pathname === "/skills/refresh" || url.pathname === "/skills/import-draft" || skillRoute) {
+  if (
+    url.pathname === "/skills" ||
+    url.pathname === "/skills/refresh" ||
+    url.pathname === "/skills/import-draft" ||
+    url.pathname === "/skills/usage-events" ||
+    url.pathname === "/skills/usage-stats" ||
+    url.pathname === "/skill-candidates" ||
+    url.pathname === "/skill-candidates/observe" ||
+    url.pathname === "/procedure-observations" ||
+    url.pathname === "/procedure-observations/jobs" ||
+    skillRoute
+  ) {
     await handleSkillRoute(request, response, config, storeRegistry, controlPlaneEvents, skillRoute);
     return;
   }

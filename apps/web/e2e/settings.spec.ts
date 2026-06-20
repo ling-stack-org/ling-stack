@@ -13,8 +13,9 @@ import {
 
 test("language switcher toggles Chinese and English UI labels", async ({ page }) => {
   await page.addInitScript(() => {
-    if (!localStorage.getItem("ling-stack.locale")) {
+    if (!sessionStorage.getItem("ling-stack.localeSwitcherInitialized")) {
       localStorage.setItem("ling-stack.locale", "en-US");
+      sessionStorage.setItem("ling-stack.localeSwitcherInitialized", "true");
     }
   });
   const state = createBaseState({ approvalStatus: "expired" });
@@ -39,6 +40,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await channelEventFilterToggle(page).click();
   await expect(page.getByLabel("动态类别").getByRole("button", { name: /全部/ })).toBeVisible();
   await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
+  await expect.poll(() => state.workspaceSettings.locale).toBe("zh-CN");
   await page.locator(".task-toolbar-progress").click();
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
@@ -53,6 +55,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByLabel("设置分组").getByRole("button", { name: /界面偏好/ }).click();
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
+  await expect.poll(() => state.workspaceSettings.locale).toBe("en-US");
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Tasks" })).toHaveCount(0);
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
@@ -333,6 +336,62 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
   await expect(page.locator(".mcp-server-row").filter({ hasText: "Cua Driver" })).toBeVisible();
 });
 
+test("settings skill library shows read-only skill health findings", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const implementationSkill = state.skillRegistryEntries.find((item) => isRecord(item) && item.id === "implement");
+  if (isRecord(implementationSkill) && isRecord(implementationSkill.definition)) {
+    state.skillRegistryEntries.unshift({
+      ...implementationSkill,
+      id: "implement-duplicate",
+      packId: "skill_pack_duplicate",
+      source: "custom",
+      reviewStatus: "published",
+      definition: {
+        ...implementationSkill.definition,
+        id: "implement-duplicate",
+        requiredTools: ["bash"],
+      },
+      visibility: {
+        workspaceVisible: true,
+        promotableToWorkspace: true,
+      },
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    });
+  }
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Skill Library/ }).click();
+  const panel = page.locator(".settings-skill-library");
+  const healthPanel = panel.getByRole("region", { name: "Skill Health" });
+  await expect(panel.getByRole("heading", { name: "Skill Library" })).toBeVisible();
+  await expect(healthPanel).toContainText("Duplicate clusters");
+  await expect(healthPanel).toContainText("Duplicate skill cluster");
+  await expect(healthPanel).toContainText("Conflicting skill triggers");
+  await expect(healthPanel).toContainText("implement-duplicate");
+  await expect(panel.getByRole("button", { name: "Archive" }).first()).toBeVisible();
+
+  const candidatePanel = panel.getByRole("region", { name: "Skill Candidate Review" });
+  await expect(candidatePanel).toContainText("Channel canvas protocol skill");
+  await expect(candidatePanel).toContainText("No overlap");
+  await expect(candidatePanel).toContainText("Draft gates clear");
+  await candidatePanel.getByRole("button", { name: "Approve for draft" }).click();
+  await expect(candidatePanel).toContainText("Approved for draft");
+  await candidatePanel.getByRole("button", { name: "Create registry draft" }).click();
+  await expect(panel.locator(".settings-skill-import-preview")).toContainText("Channel canvas protocol skill");
+  await expect(panel).toContainText("Draft ready");
+  await panel.getByRole("button", { name: "Publish to registry" }).click();
+  await expect(panel).toContainText("Published 1 skills");
+  await expect(panel).toContainText("channel-canvas-protocol-skill");
+  await candidatePanel.getByRole("button", { name: "Reject candidate" }).click();
+  await expect(candidatePanel).toContainText("No open skill candidates");
+});
+
 test("settings external work status shows setup and explicit controls", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -342,6 +401,7 @@ test("settings external work status shows setup and explicit controls", async ({
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("External work");
   await expect(panel).toContainText("openclaw/openclaw");
@@ -381,6 +441,7 @@ test("settings external work token setup saves to daemon and clears the input", 
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("External token");
   await expect(panel).toContainText("env:GITHUB_TOKEN");
@@ -418,6 +479,7 @@ test("settings external work status renders invalid, missing, and Linear states"
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("invalid");
   await expect(panel).toContainText("source.kind is required");

@@ -1,14 +1,112 @@
 import type {
+  CandidateRouteKind,
+  ProcedureObservationListResponse,
+  ProcedureObservationJobRequest,
+  ProcedureObservationJobResponse,
+  ProcedureObservationRequest,
+  ProcedureObservationResponse,
+  SkillCandidateDraftResponse,
+  SkillCandidateListResponse,
+  SkillCandidateObserveResponse,
+  SkillCandidateOrigin,
+  SkillCandidateResponse,
+  SkillCandidateReviewRequest,
+  SkillCandidateReviewResponse,
+  SkillCandidateStatus,
+  SkillCorrectionRequest,
+  SkillCorrectionResponse,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
   SkillImportPublishResponse,
+  SkillHealthResponse,
   SkillRegistryListResponse,
   SkillRegistryMutationResponse,
+  SkillUsageEventKind,
+  SkillUsageEventListResponse,
+  SkillUsageStatsListResponse,
 } from "../types.js";
 import { daemonClient } from "./client.js";
 
 export async function listSkills(cwd: string): Promise<SkillRegistryListResponse> {
   return daemonClient.listSkills(cwd);
+}
+
+export async function getSkillHealth(cwd: string, options: { readonly limit?: number } = {}): Promise<SkillHealthResponse> {
+  return daemonClient.getSkillHealth(cwd, options);
+}
+
+export async function listSkillUsageEvents(
+  cwd: string,
+  options: {
+    readonly skillId?: string;
+    readonly candidateId?: string;
+    readonly runId?: string;
+    readonly kind?: SkillUsageEventKind;
+    readonly limit?: number;
+  } = {},
+): Promise<SkillUsageEventListResponse> {
+  return daemonClient.listSkillUsageEvents(cwd, options);
+}
+
+export async function listSkillUsageStats(
+  cwd: string,
+  options: { readonly skillId?: string } = {},
+): Promise<SkillUsageStatsListResponse> {
+  return daemonClient.listSkillUsageStats(cwd, options);
+}
+
+export async function recordSkillCorrection(cwd: string, skillId: string, input: SkillCorrectionRequest): Promise<SkillCorrectionResponse> {
+  return daemonClient.recordSkillCorrection(cwd, skillId, input);
+}
+
+export async function listProcedureObservations(
+  cwd: string,
+  options: {
+    readonly clusterId?: string;
+    readonly routeKind?: CandidateRouteKind;
+    readonly limit?: number;
+  } = {},
+): Promise<ProcedureObservationListResponse> {
+  return daemonClient.listProcedureObservations(cwd, options);
+}
+
+export async function createProcedureObservation(cwd: string, input: ProcedureObservationRequest): Promise<ProcedureObservationResponse> {
+  return daemonClient.createProcedureObservation(cwd, input);
+}
+
+export async function createProcedureObservationJob(cwd: string, input: ProcedureObservationJobRequest): Promise<ProcedureObservationJobResponse> {
+  return daemonClient.createProcedureObservationJob(cwd, input);
+}
+
+export async function listSkillCandidates(
+  cwd: string,
+  options: {
+    readonly status?: SkillCandidateStatus;
+    readonly origin?: SkillCandidateOrigin;
+    readonly limit?: number;
+  } = {},
+): Promise<SkillCandidateListResponse> {
+  return daemonClient.listSkillCandidates(cwd, options);
+}
+
+export async function getSkillCandidate(cwd: string, candidateId: string): Promise<SkillCandidateResponse> {
+  return daemonClient.getSkillCandidate(cwd, candidateId);
+}
+
+export async function reviewSkillCandidate(
+  cwd: string,
+  candidateId: string,
+  input: SkillCandidateReviewRequest,
+): Promise<SkillCandidateReviewResponse> {
+  return daemonClient.reviewSkillCandidate(cwd, candidateId, input);
+}
+
+export async function observeSkillCandidate(cwd: string, input: ProcedureObservationRequest): Promise<SkillCandidateObserveResponse> {
+  return daemonClient.observeSkillCandidate(cwd, input);
+}
+
+export async function createSkillCandidateDraft(cwd: string, candidateId: string): Promise<SkillCandidateDraftResponse> {
+  return daemonClient.createSkillCandidateDraft(cwd, candidateId);
 }
 
 export async function createSkillImportDraft(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {

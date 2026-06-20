@@ -151,6 +151,26 @@ import {
   type SkillRegistryEntry,
 } from "../skill-types.js";
 import {
+  type ApplySkillCandidateReviewActionInput,
+  type CreateSkillCandidateInput,
+  type ListSkillCandidatesOptions,
+  type SkillCandidate,
+  type SkillCandidateReviewRecord,
+} from "../skill-candidate-types.js";
+import type {
+  CreateProcedureObservationInput,
+  ListProcedureObservationsOptions,
+  ProcedureObservation,
+} from "../procedure-observation-types.js";
+import type {
+  CreateSkillUsageEventInput,
+  ListSkillUsageEventsOptions,
+  ListSkillUsageStatsOptions,
+  SkillUsageEvent,
+  SkillUsageEventKind,
+  SkillUsageStats,
+} from "../skill-usage-types.js";
+import {
   type AppendControlPlaneEventInput,
   type ControlPlaneEvent,
   type CreateLingThreadInput,
@@ -364,6 +384,9 @@ import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js"
 import { SqliteUserProfileStore } from "./sqlite/user-profile-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
+import { SqliteSkillCandidateStore } from "./sqlite/skill-candidate-store.js";
+import { SqliteSkillUsageStore } from "./sqlite/skill-usage-store.js";
+import { SqliteProcedureObservationStore } from "./sqlite/procedure-observation-store.js";
 import { SqliteTaskStore } from "./sqlite/task-store.js";
 import { SqliteTeammateDirectStore } from "./sqlite/teammate-direct-store.js";
 import { SqliteTeammateAssociationStore } from "./sqlite/teammate-association-store.js";
@@ -424,6 +447,9 @@ export class SqliteRunStore implements RunStore {
   private readonly userProfile: SqliteUserProfileStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
   private readonly skillRegistry: SqliteSkillRegistryStore;
+  private readonly skillCandidates: SqliteSkillCandidateStore;
+  private readonly skillUsage: SqliteSkillUsageStore;
+  private readonly procedureObservations: SqliteProcedureObservationStore;
   private readonly tasks: SqliteTaskStore;
   private readonly teammateDirect: SqliteTeammateDirectStore;
   private readonly teammateAssociations: SqliteTeammateAssociationStore;
@@ -586,6 +612,9 @@ export class SqliteRunStore implements RunStore {
     this.userProfile = new SqliteUserProfileStore({ database: this.database });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
+    this.skillCandidates = new SqliteSkillCandidateStore({ database: this.database });
+    this.skillUsage = new SqliteSkillUsageStore({ database: this.database });
+    this.procedureObservations = new SqliteProcedureObservationStore({ database: this.database });
     this.tasks = new SqliteTaskStore({ database: this.database });
     this.teammateDirect = new SqliteTeammateDirectStore(
       { database: this.database },
@@ -857,11 +886,14 @@ export class SqliteRunStore implements RunStore {
   }
 
   createRun(input: CreateRunInput): RunSession {
-    return this.runSessions.createRun(input);
+    const run = this.runSessions.createRun(input);
+    this.recordRunSkillUsage(run, "selected", run.createdAt);
+    return run;
   }
 
   markRunStarted(runId: string, startedAt: string): void {
     this.runSessions.markRunStarted(runId, startedAt);
+    this.recordRunSkillUsage(this.getRun(runId), "started", startedAt);
   }
 
   markRunWaitingForApproval(runId: string, updatedAt: string): void {
@@ -874,14 +906,17 @@ export class SqliteRunStore implements RunStore {
 
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void {
     this.runSessions.markRunSucceeded(runId, endedAt, summaryPath);
+    this.recordRunSkillUsage(this.getRun(runId), "succeeded", endedAt);
   }
 
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void {
     this.runSessions.markRunFailed(runId, endedAt, errorMessage, summaryPath);
+    this.recordRunSkillUsage(this.getRun(runId), "failed", endedAt, errorMessage);
   }
 
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void {
     this.runSessions.markRunCancelled(runId, endedAt, summaryPath);
+    this.recordRunSkillUsage(this.getRun(runId), "cancelled", endedAt);
   }
 
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope {
@@ -1161,7 +1196,16 @@ export class SqliteRunStore implements RunStore {
     readonly summaryPath?: string;
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus> {
-    return this.runSessions.transitionRunStatus(input);
+    const result = this.runSessions.transitionRunStatus(input);
+    if (result.ok && !result.duplicate) {
+      const run = this.getRun(input.runId);
+      if (result.to === "running") {
+        this.recordRunSkillUsage(run, "started", input.now, input.reason);
+      } else if (result.to === "succeeded" || result.to === "failed" || result.to === "cancelled") {
+        this.recordRunSkillUsage(run, result.to, input.now, input.errorMessage ?? input.reason);
+      }
+    }
+    return result;
   }
 
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined {
@@ -1330,6 +1374,68 @@ export class SqliteRunStore implements RunStore {
 
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined {
     return this.skillRegistry.archiveSkillRegistryEntry(id, now);
+  }
+
+  createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate {
+    return this.skillCandidates.createSkillCandidate(input, now);
+  }
+
+  getSkillCandidate(id: string): SkillCandidate | undefined {
+    return this.skillCandidates.getSkillCandidate(id);
+  }
+
+  listSkillCandidates(options: ListSkillCandidatesOptions = {}): SkillCandidate[] {
+    return this.skillCandidates.listSkillCandidates(options);
+  }
+
+  listSkillCandidateReviewRecords(candidateId: string): SkillCandidateReviewRecord[] {
+    return this.skillCandidates.listSkillCandidateReviewRecords(candidateId);
+  }
+
+  applySkillCandidateReviewAction(
+    input: ApplySkillCandidateReviewActionInput,
+    now: string,
+  ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord } {
+    return this.skillCandidates.applySkillCandidateReviewAction(input, now);
+  }
+
+  createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation {
+    return this.procedureObservations.createProcedureObservation(input, now);
+  }
+
+  listProcedureObservations(options: ListProcedureObservationsOptions = {}): ProcedureObservation[] {
+    return this.procedureObservations.listProcedureObservations(options);
+  }
+
+  appendSkillUsageEvent(input: CreateSkillUsageEventInput, now: string): SkillUsageEvent {
+    return this.skillUsage.appendSkillUsageEvent(input, now);
+  }
+
+  listSkillUsageEvents(options: ListSkillUsageEventsOptions = {}): SkillUsageEvent[] {
+    return this.skillUsage.listSkillUsageEvents(options);
+  }
+
+  listSkillUsageStats(options: ListSkillUsageStatsOptions = {}): SkillUsageStats[] {
+    return this.skillUsage.listSkillUsageStats(options);
+  }
+
+  private recordRunSkillUsage(
+    run: RunSession | undefined,
+    kind: Extract<SkillUsageEventKind, "selected" | "started" | "succeeded" | "failed" | "cancelled">,
+    now: string,
+    reason?: string | null,
+  ): void {
+    if (!run?.selectedSkillId) {
+      return;
+    }
+    this.skillUsage.appendSkillUsageEvent({
+      skillId: run.selectedSkillId,
+      runId: run.id,
+      teammateId: run.teammateId,
+      channelId: run.channelId,
+      kind,
+      reason: reason ?? undefined,
+    }, now);
   }
 
   listTeammateMemoryScopes(teammateId: string): TeammateMemoryScope[] {

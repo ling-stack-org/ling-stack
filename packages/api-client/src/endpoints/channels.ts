@@ -26,6 +26,9 @@ import type {
   ChannelListResponse,
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
+  ChannelProtocolCandidateListResponse,
+  ChannelProtocolCandidateMutationResponse,
+  ChannelProtocolCandidateReviewRequest,
   ChannelProtocolDraftStatus,
   ChannelIntentDecisionListResponse,
   ChannelMessageRouteDecisionListResponse,
@@ -155,6 +158,31 @@ export const channelEndpoints = {
       draftId: string,
     ): Promise<ChannelCollaborationProtocolDraftMutationResponse> {
       return this._post(`/channels/${encodeURIComponent(channelId)}/protocol/drafts/${encodeURIComponent(draftId)}/apply`, { cwd });
+    },
+
+  async listChannelProtocolCandidates(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      options: { readonly status?: ChannelProtocolDraftStatus; readonly limit?: number } = {},
+    ): Promise<ChannelProtocolCandidateListResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/protocol-candidates`, { cwd, status: options.status, limit: options.limit });
+    },
+
+  async createChannelProtocolCandidate(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      input: CreateChannelCollaborationProtocolDraftRequest,
+    ): Promise<ChannelProtocolCandidateMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/protocol-candidates`, { cwd }, input);
+    },
+
+  async reviewChannelProtocolCandidate(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      candidateId: string,
+      input: ChannelProtocolCandidateReviewRequest,
+    ): Promise<ChannelProtocolCandidateMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/protocol-candidates/${encodeURIComponent(candidateId)}/review`, { cwd }, input);
     },
 
   async revertChannelCollaborationProtocol(this: LingDaemonEndpointContext, cwd: string, channelId: string): Promise<ChannelCollaborationProtocolMutationResponse> {
