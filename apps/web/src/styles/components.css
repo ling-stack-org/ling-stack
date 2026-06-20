@@ -1128,8 +1128,10 @@ button.artifact-action-link {
 }
 
 .channel-message-row.local-user {
-  grid-template-columns: minmax(0, min(620px, 76%)) 30px;
+  grid-template-columns: minmax(0, min(620px, 76%));
   justify-content: end;
+  justify-items: end;
+  row-gap: 4px;
 }
 
 .channel-message-row.local-user > .avatar-initial,
@@ -1137,8 +1139,38 @@ button.artifact-action-link {
   grid-column: 2;
 }
 
-.channel-message-row.local-user > div {
+.channel-message-row.local-user > .message-row-own-identity {
+  display: inline-flex;
   grid-column: 1;
+  grid-row: 1;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+}
+
+.channel-message-row.local-user > .message-row-own-identity strong {
+  overflow: hidden;
+  max-width: 220px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-message-row.local-user > .message-row-own-identity .avatar-initial,
+.channel-message-row.local-user > .message-row-own-identity .user-profile-avatar {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+}
+
+.channel-message-row.local-user > .message-content {
+  grid-column: 1;
+  grid-row: 2;
   justify-self: end;
   justify-items: end;
   padding-right: 2px;
@@ -1160,7 +1192,7 @@ button.artifact-action-link {
   height: 30px;
 }
 
-.channel-message-row > div {
+.channel-message-row > .message-content {
   position: relative;
   display: grid;
   gap: 5px;
@@ -1176,20 +1208,20 @@ button.artifact-action-link {
     border-color 160ms ease;
 }
 
-.channel-message-row:not(.local-user):hover > div,
-.channel-message-row:not(.local-user):focus-within > div {
+.channel-message-row:not(.local-user):hover > .message-content,
+.channel-message-row:not(.local-user):focus-within > .message-content {
   border-color: var(--border);
   background: color-mix(in srgb, var(--surface-panel-strong) 92%, transparent);
 }
 
-.channel-message-row.local-user:hover > div,
-.channel-message-row.local-user:focus-within > div {
+.channel-message-row.local-user:hover > .message-content,
+.channel-message-row.local-user:focus-within > .message-content {
   border-color: var(--border);
   background: color-mix(in srgb, var(--surface-selected) 80%, transparent);
 }
 
-.channel-message-row.blocked:hover > div,
-.channel-message-row.blocked:focus-within > div {
+.channel-message-row.blocked:hover > .message-content,
+.channel-message-row.blocked:focus-within > .message-content {
   border-color: var(--warning-border);
   background: color-mix(in srgb, var(--warning-soft) 44%, var(--surface-panel-strong));
 }
@@ -1201,7 +1233,7 @@ button.artifact-action-link {
   min-width: 0;
 }
 
-.channel-message-row.local-user header {
+.channel-message-row.local-user > .message-content > header {
   display: none;
 }
 
@@ -1856,7 +1888,7 @@ button.message-local-file-link {
   }
 }
 
-.channel-message-row > div > p,
+.channel-message-row > .message-content > p,
 .channel-message-row .message-body-paragraph {
   margin: 0;
   color: var(--text);
@@ -1867,13 +1899,13 @@ button.message-local-file-link {
 }
 
 .channel-message-row.local-user .message-body-shell,
-.channel-message-row.local-user > div > .message-body-renderer {
+.channel-message-row.local-user > .message-content > .message-body-renderer {
   padding-right: 26px;
   color: var(--text-strong);
   text-align: right;
 }
 
-.channel-message-row.local-user > div > p,
+.channel-message-row.local-user > .message-content > p,
 .channel-message-row.local-user .message-body-paragraph {
   color: var(--text-strong);
   text-align: right;
