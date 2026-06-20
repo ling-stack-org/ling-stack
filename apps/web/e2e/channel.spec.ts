@@ -1965,7 +1965,12 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
       ],
       collaborationSteps: [
         { teammateId: "teammate_builtin_engineer", action: "coordinated", summary: "Summarized discussion into one execution proposal. Preserved approval-sensitive context for the implementation path." },
-        { teammateId: "teammate_builtin_designer", action: "reviewed", summary: "Checked visual hierarchy before execution. Verified long collaboration summaries stay inside the card." },
+        {
+          teammateId: "teammate_builtin_designer",
+          action: "reviewed",
+          summary: "Checked visual hierarchy before execution. Verified long collaboration summaries stay inside the card.",
+          sources: [{ kind: "council", councilId: "council_builtin_development", councilDisplayName: "Development Council", slotKey: "designer", label: "Design review" }],
+        },
       ],
       requiredTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
       riskSummary: "Provider must be ready before execution and approval-sensitive publication steps must stay explicitly gated.",
@@ -2005,6 +2010,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(collaboration.locator("li").first()).toBeVisible();
   await expect(collaboration).toContainText("Coordinated");
   await expect(collaboration).toContainText("Reviewed");
+  await expect(collaboration.locator(".channel-proposal-step-source")).toContainText("From Development Council");
   await proposal.getByRole("button", { name: "Edit" }).click();
   const editForm = proposal.locator(".channel-proposal-edit-form");
   await editForm.getByLabel("Scope").fill("Refine the channel workspace copy, then run focused QA checks.");
@@ -2019,8 +2025,9 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
       return "";
     }
     const secondStep = updated.collaborationSteps[1];
-    return isRecord(secondStep) ? `${updated.prompt}|${secondStep.teammateId}|${secondStep.summary}` : "";
-  }).toBe("Refine the channel workspace copy, then run focused QA checks.|teammate_builtin_qa|Run focused regression checks before execution.");
+    const sourceState = isRecord(secondStep) && Array.isArray(secondStep.sources) ? `sources:${secondStep.sources.length}` : "sources:none";
+    return isRecord(secondStep) ? `${updated.prompt}|${secondStep.teammateId}|${secondStep.summary}|${sourceState}` : "";
+  }).toBe("Refine the channel workspace copy, then run focused QA checks.|teammate_builtin_qa|Run focused regression checks before execution.|sources:none");
   await proposal.getByRole("button", { name: "Authorize and start task" }).click();
 
   await expect.poll(() => {

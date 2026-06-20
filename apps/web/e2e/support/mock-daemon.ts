@@ -3876,9 +3876,14 @@ function mockTeammateCanRunInChannel(state: MockState, channelId: string, teamma
   if (isRecord(channel) && channel.defaultTeammateId === teammateId) {
     return true;
   }
-  return state.teammateChannelMemberships.some((item) =>
+  if (state.teammateChannelMemberships.some((item) =>
     isRecord(item) && item.channelId === channelId && item.teammateId === teammateId
-  );
+  )) {
+    return true;
+  }
+  const effectiveCouncil = buildMockEffectiveChannelCouncil(state, channelId);
+  return Array.isArray(effectiveCouncil.specialists) &&
+    effectiveCouncil.specialists.some((specialist) => isRecord(specialist) && specialist.teammateId === teammateId);
 }
 
 function readMockChannelCouncilPolicy(state: MockState, channelId: string): Record<string, unknown> {
@@ -3934,7 +3939,7 @@ function buildMockEffectiveChannelCouncil(state: MockState, channelId: string): 
 
   function addSpecialist(teammateId: string, source: Record<string, unknown>, isDefault = false): void {
     const teammate = teammateForId(teammateId);
-    if (!teammate || teammate.status === "disabled" || teammate.hidden === true) {
+    if (!teammate || teammateId === "ling_agent" || teammate.systemRole === "ling_agent" || teammate.status === "disabled" || teammate.hidden === true) {
       return;
     }
     const existing = specialistById.get(teammateId);
@@ -4022,11 +4027,18 @@ function maybeCreateMockWorkflowProposal(
     return undefined;
   }
 
-  const activeTeammates = state.aiTeammates.filter((teammate): teammate is Record<string, unknown> =>
-    isRecord(teammate) && teammate.status !== "disabled" && teammate.hidden !== true);
-  const channelTeammates = activeTeammates.filter((teammate) =>
-    typeof teammate.id === "string" && mockTeammateCanRunInChannel(state, channelId, teammate.id)
-  );
+  const effectiveCouncil = buildMockEffectiveChannelCouncil(state, channelId);
+  const effectiveSpecialists = Array.isArray(effectiveCouncil.specialists)
+    ? effectiveCouncil.specialists.filter(isRecord)
+    : [];
+  const channelTeammates = effectiveSpecialists
+    .map((specialist) => isRecord(specialist.teammate) ? specialist.teammate : undefined)
+    .filter((teammate): teammate is Record<string, unknown> => Boolean(teammate));
+  const sourcesByTeammateId = new Map(effectiveSpecialists.flatMap((specialist) =>
+    typeof specialist.teammateId === "string" && Array.isArray(specialist.sources)
+      ? [[specialist.teammateId, specialist.sources.filter(isRecord)] as const]
+      : []
+  ));
   const selectedTeammates = allTeammates
     ? roleOrder.flatMap((role) => {
         const teammate = channelTeammates.find((item) => item.roleKey === role);
@@ -4064,6 +4076,9 @@ function maybeCreateMockWorkflowProposal(
       teammateId: typeof teammate.id === "string" ? teammate.id : "teammate_builtin_engineer",
       action: teammate.roleKey === "qa" || teammate.roleKey === "designer" || teammate.roleKey === "docs" ? "reviewed" : "coordinated",
       summary: mockProposalStepSummary(typeof teammate.roleKey === "string" ? teammate.roleKey : "engineer"),
+      ...(typeof teammate.id === "string" && sourcesByTeammateId.get(teammate.id)?.length
+        ? { sources: sourcesByTeammateId.get(teammate.id) }
+        : {}),
     })),
     requiredTools: Array.from(new Set(finalSelectedTeammates.flatMap((teammate) => Array.isArray(teammate.allowedTools) ? teammate.allowedTools : []))),
     riskSummary: allTeammates
