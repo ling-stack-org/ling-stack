@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -11,6 +11,12 @@ import {
 import {
   readSidebarSelection,
 } from "./support/test-helpers";
+
+async function openAiTeammatesFromSettings(page: Page): Promise<void> {
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Workspace tools/ }).click();
+  await page.getByRole("button", { name: "Open AI Teammates" }).click();
+}
 
 test("AI teammates page creates a durable teammate and opens its private workspace", async ({ page }) => {
   await page.addInitScript(() => {
@@ -43,20 +49,24 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New teammate" }).click();
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Teammate actions" }).hover();
+  await expect(navigation.getByRole("menuitem", { name: "New teammate" })).toBeVisible();
+  await navigation.getByRole("menuitem", { name: "New teammate" }).click();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
   await expect(page.locator(".channel-create-dialog.teammate-create-dialog")).toBeVisible();
   await expect(page.locator(".teammate-create-sheet")).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No teammate yet" }).click();
+  await navigation.getByRole("button", { name: "No teammate yet" }).click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
-  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await openAiTeammatesFromSettings(page);
+  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(page.locator(".teammate-management-grid")).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByLabel("Teammate templates")).toBeVisible();
@@ -98,7 +108,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect.poll(() => state.aiTeammates.some((item) => isRecord(item) && item.displayName === "Ling Engineer")).toBe(true);
   await expect.poll(() => state.teammateChannelMemberships.some((item) => isRecord(item) && item.teammateId === "teammate_created_1" && item.channelId === "channel_engineering")).toBe(true);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
+  await openAiTeammatesFromSettings(page);
   await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
   const lingEngineerRow = page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" });
   await expect(lingEngineerRow.locator(".teammate-row-status.ready")).toContainText("Ready teammate");
@@ -205,7 +215,10 @@ test("AI teammates page links council management to Council Workspace", async ({
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Teammate actions" }).hover();
+  await navigation.getByRole("menuitem", { name: "New teammate" }).click();
+  await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.locator(".teammate-council-panel")).toHaveCount(0);
@@ -241,6 +254,35 @@ test("AI teammates page links council management to Council Workspace", async ({
   await expect(page.getByLabel("Council members")).toContainText("Ling Engineer");
   expect(state.aiCouncilMembers).toHaveLength(1);
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
+});
+
+test("AI teammate sidebar menu archives all visible chats without deleting teammates", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_archive_engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({ id: "teammate_archive_designer", displayName: "Ling Designer", roleKey: "designer" }),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Ling Designer" })).toBeVisible();
+  await navigation.getByRole("button", { name: "Teammate actions" }).hover();
+  await expect(navigation.getByRole("menuitem", { name: "Archive all chats" })).toBeVisible();
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Archive all chats?");
+    await dialog.accept();
+  });
+  await navigation.getByRole("menuitem", { name: "Archive all chats" }).click();
+
+  await expect.poll(() => state.aiTeammates.every((item) => isRecord(item) && item.hidden === true)).toBe(true);
+  await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Ling Designer" })).toHaveCount(0);
+  await expect.poll(() => state.aiTeammates.length).toBe(2);
 });
 
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
@@ -424,6 +466,11 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const privateFeed = page.getByLabel("Private message feed", { exact: true });
   await expect(privateFeed).toBeVisible();
   await expect(privateFeed.locator(".message-feed-virtualizer")).toBeVisible();
+  await expect(page.getByLabel("Conversation context")).toBeVisible();
+  await page.getByRole("button", { name: "Hide details" }).click();
+  await expect(page.getByLabel("Conversation context")).toHaveCount(0);
+  await page.getByRole("button", { name: "Show details" }).click();
+  await expect(page.getByLabel("Conversation context")).toBeVisible();
   const pendingPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "AI teammate is replying..." });
   await expect(pendingPrivateRow).toBeVisible();
   await expect(pendingPrivateRow).toHaveClass(/message-bubble/);
@@ -656,7 +703,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row.selected .teammate-avatar-image")).toBeVisible();
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).click();
+  await openAiTeammatesFromSettings(page);
   const rosterRowWithAvatar = page.locator(".teammate-draft-row").filter({ hasText: "Imported QA Persona" });
   await expect(rosterRowWithAvatar.locator(".teammate-avatar-image")).toBeVisible();
 

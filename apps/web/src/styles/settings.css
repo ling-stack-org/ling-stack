@@ -2,9 +2,9 @@
   gap: 7px;
   min-height: 32px;
   padding: 0 10px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
-  color: #4f5e59;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 650;
 }
@@ -23,8 +23,8 @@
 }
 
 .check-result.ok {
-  background: #e7f5ef;
-  color: #116149;
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 
 .check-result.bad {
@@ -119,6 +119,41 @@
   max-width: none;
 }
 
+.settings-tool-return-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0;
+}
+
+.settings-tool-return-row .secondary-button {
+  width: fit-content;
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.account-profile-settings-panel .profile-page {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.account-profile-settings-panel .profile-topbar {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.account-profile-settings-panel .profile-avatar-button {
+  background: var(--text-strong);
+}
+
+.settings-tool-shortcut-list {
+  display: grid;
+  gap: 12px;
+}
+
 .startup-summary-grid,
 .startup-phase-grid,
 .startup-warmup-list {
@@ -167,14 +202,14 @@
 }
 
 .startup-phase-row.ready {
-  border-color: #b7dfcc;
-  background: #f1faf5;
+  border-color: var(--success-border);
+  background: var(--success-soft);
 }
 
 .startup-phase-row.degraded,
 .startup-phase-row.loading {
-  border-color: #e6d39d;
-  background: #fffaf0;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
 }
 
 .startup-phase-row.failed {
@@ -226,8 +261,8 @@
 }
 
 .startup-diagnostic.warning {
-  border-color: #e6d39d;
-  background: #fffaf0;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
 }
 
 .runtime-runner-settings-panel .runtime-runner-row {
@@ -267,8 +302,8 @@
   gap: 12px;
   min-width: 0;
   padding: 10px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .interface-preference-row > span {
@@ -276,7 +311,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  color: #37433f;
+  color: var(--text);
 }
 
 .interface-preference-row strong {
@@ -300,9 +335,9 @@
 .external-work-counts span {
   min-height: 28px;
   padding: 6px 9px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
-  color: #4f5e59;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 700;
 }
@@ -313,8 +348,8 @@
   gap: 10px;
   margin: 12px 0;
   padding: 12px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .external-work-secret-box > div:first-child,
@@ -325,7 +360,7 @@
 
 .external-work-secret-box strong,
 .external-work-workflow-box strong {
-  color: #25312d;
+  color: var(--text-strong);
   font-size: 13px;
 }
 
@@ -423,9 +458,9 @@
   gap: 8px;
   min-width: 0;
   padding: 9px 10px;
-  border: 1px solid #b9decf;
-  background: #e7f5ef;
-  color: #116149;
+  border: 1px solid var(--border);
+  background: var(--surface-selected);
+  color: var(--text-strong);
   font-size: 13px;
 }
 
@@ -435,9 +470,9 @@
   gap: 8px;
   min-width: 0;
   padding: 9px 10px;
-  border: 1px solid #b9decf;
-  background: #e7f5ef;
-  color: #116149;
+  border: 1px solid var(--border);
+  background: var(--surface-selected);
+  color: var(--text-strong);
   font-size: 13px;
 }
 
@@ -461,9 +496,9 @@
 
 .settings-plugin-runtime-preview.blocked,
 .settings-plugin-runtime-preview.disabled {
-  border-color: #e2d4bc;
-  background: #fffaf0;
-  color: #7c4a03;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .settings-plugin-list {
@@ -483,7 +518,7 @@
 
 .settings-plugin-row.blocked,
 .settings-plugin-row.disabled {
-  background: #fbfcfa;
+  background: var(--surface-subtle);
 }
 
 .settings-plugin-main {
@@ -540,9 +575,9 @@
 
 .settings-plugin-warning {
   padding: 8px;
-  border: 1px solid #e2d4bc;
-  background: #fffaf0;
-  color: #7c4a03;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
   font-size: 12px;
 }
 
@@ -571,9 +606,9 @@
   gap: 8px;
   margin: 10px 0;
   padding: 10px;
-  border: 1px solid #e2d4bc;
-  background: #fffaf0;
-  color: #7c4a03;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
   font-size: 13px;
 }
 
@@ -601,15 +636,15 @@
   min-width: 0;
   min-height: 92px;
   padding: 12px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
-  color: #37433f;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
   text-align: left;
 }
 
 .permission-preset-card.active {
-  border-color: #1b74e4;
-  background: #eef6ff;
+  border-color: var(--text-strong);
+  background: var(--surface-selected);
 }
 
 .permission-preset-card strong {
@@ -617,7 +652,7 @@
 }
 
 .permission-preset-card small {
-  color: #62706b;
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -627,8 +662,8 @@
   gap: 10px;
   margin-bottom: 14px;
   padding: 12px;
-  border: 1px solid #d8ded7;
-  background: #f6f8f5;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .permission-preview-card > div:first-child {
@@ -637,13 +672,13 @@
 }
 
 .permission-preview-card strong {
-  color: #24302c;
+  color: var(--text-strong);
   font-size: 13px;
 }
 
 .permission-preview-card small,
 .permission-preview-list {
-  color: #62706b;
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -667,17 +702,17 @@
   gap: 10px;
   min-width: 0;
   padding: 10px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .policy-tool-row.risky {
-  border-color: #e2d4bc;
-  background: #fffaf0;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
 }
 
 .policy-tool-row span {
-  color: #37433f;
+  color: var(--text);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   font-weight: 800;
@@ -822,7 +857,7 @@
   padding: 8px 10px;
   border: 1px solid #e5e5e5;
   border-radius: 6px;
-  background: #fbfcfa;
+  background: var(--surface-panel);
 }
 
 .settings-skill-health-summary small {
@@ -879,8 +914,8 @@
 }
 
 .settings-skill-health-finding.warning {
-  border-color: #e2d4bc;
-  background: #fffaf0;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
 }
 
 .settings-skill-health-finding-main {
@@ -1024,8 +1059,8 @@
 }
 
 .settings-skill-candidate-status.needs_edit {
-  border-color: #e2d4bc;
-  color: #7a4d00;
+  border-color: var(--warning-border);
+  color: var(--warning);
 }
 
 .settings-skill-candidate-status.blocked,
@@ -1043,8 +1078,8 @@
 }
 
 .settings-skill-health-severity.warning {
-  border-color: #e2d4bc;
-  color: #7a4d00;
+  border-color: var(--warning-border);
+  color: var(--warning);
 }
 
 .settings-skill-library-toolbar {

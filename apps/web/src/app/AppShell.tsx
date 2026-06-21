@@ -155,6 +155,7 @@ export function AppShell(): JSX.Element {
   const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
+  const [settingsReturnSection, setSettingsReturnSection] = useState<"" | "workspace-tools">("");
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
   const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
@@ -415,6 +416,7 @@ export function AppShell(): JSX.Element {
     cwd: form.cwd.trim(),
     builtinTeammateTemplates,
     setErrorMessage,
+    t,
     refreshChannels,
     openTeammate: (teammateId) => {
       setActiveView("teammates");
@@ -442,6 +444,7 @@ export function AppShell(): JSX.Element {
     upsertAiTeammate,
     toggleAiTeammatePinned,
     toggleAiTeammateHidden,
+    archiveAllVisibleTeammateChats,
     addChannelTeammate,
     removeChannelTeammate,
     setDefaultChannelTeammate,
@@ -1019,8 +1022,26 @@ export function AppShell(): JSX.Element {
     handleDomainEvent,
   });
 
+  function openPlainViewWithoutSettingsReturn(view: ViewId): void {
+    setSettingsReturnSection("");
+    openPlainView(view);
+  }
+
+  function openSettingsWorkspaceTool(view: "providers" | "teammates" | "work_board"): void {
+    setSettingsReturnSection("workspace-tools");
+    if (view === "work_board") {
+      setWorkBoardRequestedScope("actionable");
+    }
+    openPlainView(view);
+  }
+
+  function returnToWorkspaceTools(): void {
+    setSettingsReturnSection("");
+    openPlainView("settings");
+  }
+
   function openTeammateCreatePanel(): void {
-    openPlainView("teammates");
+    openPlainViewWithoutSettingsReturn("teammates");
     setTeammateCreateRequestId((current) => current + 1);
   }
 
@@ -1030,6 +1051,7 @@ export function AppShell(): JSX.Element {
     saveChannelEdit,
     saveChannelBranch,
     archiveSidebarChannel,
+    archiveAllSidebarChannels,
     archiveSidebarChannelBranch,
     removeChannel,
     saveTask,
@@ -1505,6 +1527,7 @@ export function AppShell(): JSX.Element {
         if (provider) {
           editProvider(provider);
         }
+        setSettingsReturnSection("");
         setActiveView("providers");
         setActiveSidebarTarget("providers");
         return;
@@ -1565,15 +1588,26 @@ export function AppShell(): JSX.Element {
         cwd={form.cwd}
         channelNotifications={sidebarChannelNotifications}
         teammateNotifications={sidebarTeammateNotifications}
-        onOpenView={openPlainView}
+        onOpenView={openPlainViewWithoutSettingsReturn}
         onCreateChannel={openChannelCreatePanel}
         onCreateTeammate={openTeammateCreatePanel}
         onCreateChannelBranch={(channelId, name) => void saveChannelBranch(channelId, name)}
         onArchiveChannel={(channelId) => void archiveSidebarChannel(channelId)}
+        onArchiveAllChannels={() => void archiveAllSidebarChannels()}
+        onArchiveAllTeammateChats={() => void archiveAllVisibleTeammateChats()}
         onArchiveChannelBranch={(channelId, branchId) => void archiveSidebarChannelBranch(channelId, branchId)}
-        onSelectChannel={selectWorkspaceChannel}
-        onSelectChannelBranch={selectWorkspaceChannelBranch}
-        onSelectTeammate={selectAiTeammate}
+        onSelectChannel={(channelId) => {
+          setSettingsReturnSection("");
+          selectWorkspaceChannel(channelId);
+        }}
+        onSelectChannelBranch={(channelId, branchId) => {
+          setSettingsReturnSection("");
+          selectWorkspaceChannelBranch(channelId, branchId);
+        }}
+        onSelectTeammate={(teammateId) => {
+          setSettingsReturnSection("");
+          selectAiTeammate(teammateId);
+        }}
         channelDrawer
         channelDrawerOpen={channelSidebarOpen}
         onChannelDrawerOpenChange={setChannelSidebarOpen}
@@ -1707,7 +1741,7 @@ export function AppShell(): JSX.Element {
             onAddChannelTeammate={(teammateId) => addChannelTeammate(selectedChannelId, teammateId)}
             onRemoveChannelTeammate={(teammateId) => removeChannelTeammate(selectedChannelId, teammateId)}
             onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(selectedChannelId, teammateId)}
-            onOpenTeammates={() => openPlainView("teammates")}
+            onOpenTeammates={() => openPlainViewWithoutSettingsReturn("teammates")}
             onRefreshChannels={() => void refreshChannels()}
             onCreateChannel={() => void saveChannel()}
             onSaveChannel={() => selectedChannelId ? void saveChannelEdit(selectedChannelId) : undefined}
@@ -1776,7 +1810,10 @@ export function AppShell(): JSX.Element {
             onCompleteWorkItem={(workItemId, claimToken) => void completeDurableWorkItem(workItemId, claimToken)}
             onFailWorkItem={(workItemId, claimToken) => void failDurableWorkItem(workItemId, claimToken)}
             busyWorkItemId={busyWorkItemId}
-            onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
+            onOpenProviders={(sourceRun) => {
+              setSettingsReturnSection("");
+              sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers");
+            }}
             workspaceSettings={workspaceSettings}
             onWorkspaceSettingsPatch={patchWorkspaceSettings}
               />
@@ -1805,7 +1842,10 @@ export function AppShell(): JSX.Element {
                 onTeammateUpdated={upsertAiTeammate}
                 onDisableTeammate={removeAiTeammate}
                 onHardDeleteTeammate={hardDeleteAiTeammateAndRefresh}
-                onOpenProviders={() => openPlainView("providers")}
+                onOpenProviders={() => {
+                  settingsReturnSection ? openSettingsWorkspaceTool("providers") : openPlainViewWithoutSettingsReturn("providers");
+                }}
+                onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                 onRefreshTeammates={() => refreshAiTeammates(form.cwd.trim())}
                 onRefreshChannels={() => refreshChannels()}
                 onRefreshTasks={(channelId) => refreshTasks(channelId)}
@@ -1833,7 +1873,10 @@ export function AppShell(): JSX.Element {
                     onOpenTeammate={selectAiTeammate}
                     onOpenCouncils={() => openPlainView("councils")}
                     onOpenChannel={selectWorkspaceChannel}
-                    onOpenProviders={() => openPlainView("providers")}
+                    onOpenProviders={() => {
+                      settingsReturnSection ? openSettingsWorkspaceTool("providers") : openPlainViewWithoutSettingsReturn("providers");
+                    }}
+                    onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "councils" ? (
                   <CouncilWorkspacePage
@@ -1874,7 +1917,10 @@ export function AppShell(): JSX.Element {
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
                 onCancelRun={(sourceRun) => void cancelRunOrWorkUnit(sourceRun)}
                 onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
-                onOpenProviders={(sourceRun) => openProvidersFromRun(sourceRun)}
+                onOpenProviders={(sourceRun) => {
+                  setSettingsReturnSection("");
+                  openProvidersFromRun(sourceRun);
+                }}
                 onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
                 onEditTask={(sourceRun) => void openTaskFromRun(sourceRun)}
                 onSelect={(runId) => void selectRun(runId)}
@@ -1926,7 +1972,10 @@ export function AppShell(): JSX.Element {
                 onArchive={() => void archiveSelectedAutomation()}
                 onSetStatus={(status) => void setSelectedStatus(status)}
                 onSetSchedule={(trigger) => void setSelectedSchedule(trigger)}
-                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onOpenRun={(runId) => {
+                  setSettingsReturnSection("");
+                  void openRunFromWorkspace(runId);
+                }}
                 onOpenThread={(threadId) => {
                   setThreadPageTargetId(threadId);
                   setActiveView("threads");
@@ -1970,9 +2019,13 @@ export function AppShell(): JSX.Element {
                 onStopUse={clearProviderFromRun}
                 onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
-                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onOpenRun={(runId) => {
+                  setSettingsReturnSection("");
+                  void openRunFromWorkspace(runId);
+                }}
                 onClearCheckFeedback={clearProviderCheckFeedback}
                 onClearRepair={() => setProviderRepairRunId("")}
+                onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "work_board" ? (
                   <GlobalWorkBoardPage
@@ -1994,13 +2047,23 @@ export function AppShell(): JSX.Element {
                         refreshWorkItems(),
                       ]);
                     }}
-                    onOpenTask={openTaskFromWorkBoard}
-                    onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                    onOpenTask={(taskId) => {
+                      setSettingsReturnSection("");
+                      openTaskFromWorkBoard(taskId);
+                    }}
+                    onOpenRun={(runId) => {
+                      setSettingsReturnSection("");
+                      void openRunFromWorkspace(runId);
+                    }}
                     onOpenApproval={(approvalId) => {
+                      setSettingsReturnSection("");
                       setSelectedApprovalId(approvalId);
                       openPlainView("approvals");
                     }}
-                    onOpenChannel={selectWorkspaceChannel}
+                    onOpenChannel={(channelId) => {
+                      setSettingsReturnSection("");
+                      selectWorkspaceChannel(channelId);
+                    }}
                     onRouteExternalWork={(externalWorkId, channelId) => void routeExternalWorkToChannel(externalWorkId, channelId)}
                     onClaimWorkItem={(workItemId) => void claimDurableWorkItem(workItemId)}
                     onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
@@ -2010,6 +2073,7 @@ export function AppShell(): JSX.Element {
                     routingExternalWorkId={routingExternalWorkId}
                     busyWorkItemId={busyWorkItemId}
                     requestedScope={workBoardRequestedScope}
+                    onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "media" ? (
                   <MediaJobsPage
@@ -2027,7 +2091,7 @@ export function AppShell(): JSX.Element {
                 onCreate={() => void saveMediaJob()}
                 onSelectJob={setSelectedMediaJobId}
                 onRun={(jobId) => void executeMediaJob(jobId)}
-                onOpenProviders={() => openPlainView("providers")}
+                onOpenProviders={() => openPlainViewWithoutSettingsReturn("providers")}
                   />
                 ) : activeView === "profile" ? (
                   <ProfilePage cwd={form.cwd} onProfileChange={setUserProfile} />
@@ -2106,14 +2170,22 @@ export function AppShell(): JSX.Element {
                     onDeleteMcpServer={(serverId) => void removeMcpServer(serverId)}
                     onCheckMcpServer={runMcpServerCheck}
                     onSyncMcpTools={syncMcpTools}
+                    onProfileChange={setUserProfile}
+                    onOpenProviders={() => openSettingsWorkspaceTool("providers")}
+                    onOpenTeammates={() => openSettingsWorkspaceTool("teammates")}
+                    onOpenWorkBoard={() => {
+                      openSettingsWorkspaceTool("work_board");
+                    }}
                     onOpenExternalWorkRecords={() => {
                       if (selectedChannelId) {
+                        setSettingsReturnSection("");
                         setActiveView("workspace");
                         setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
                       }
                     }}
                     onOpenExternalWorkTriage={() => {
                       if (selectedChannelId) {
+                        setSettingsReturnSection("");
                         setActiveView("workspace");
                         setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
                       }
@@ -2140,8 +2212,12 @@ export function AppShell(): JSX.Element {
                 onResolve={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
                 onExecuteExternalAction={(actionId) => void executeExternalAction(actionId)}
                 onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inbox")}
-                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onOpenRun={(runId) => {
+                  setSettingsReturnSection("");
+                  void openRunFromWorkspace(runId);
+                }}
                 onOpenWorkBoard={(scope) => {
+                  setSettingsReturnSection("");
                   setWorkBoardRequestedScope(scope ?? "actionable");
                   setActiveView("work_board");
                   setActiveSidebarTarget("work_board");

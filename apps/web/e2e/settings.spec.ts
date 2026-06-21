@@ -96,8 +96,11 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByLabel("频道运行策略")).toBeVisible();
   await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI 队友" }).click();
-  await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toBeVisible();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /工作区工具/ }).click();
+  await page.getByRole("button", { name: "打开 AI 队友" }).click();
+  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "返回工作区工具" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("AI 队友上下文")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
   await page.getByLabel("队友模板").getByRole("button", { name: /产品策略/ }).click();

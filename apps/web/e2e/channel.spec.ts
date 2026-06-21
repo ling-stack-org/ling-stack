@@ -61,368 +61,144 @@ test("channel governance notifications stay in the header review queue", async (
   expect(isRecord(state.governanceNotifications[0]) ? state.governanceNotifications[0].status : undefined).toBe("dismissed");
 });
 
-test("channel drawers match the accepted HTML layout", async ({ page }) => {
+test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];
+  for (let index = 0; index < 28; index += 1) {
+    state.channels.push({
+      id: `channel_recent_${index}`,
+      workspaceId: "workspace_default",
+      name: `Recent ${index}`,
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "",
+      allowedTools: ["read", "grep"],
+      runtimePolicy: defaultRuntimePolicy,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:00.000Z",
+    });
+  }
   await mockDaemon(page, state);
   await page.goto("/");
-  await expect(page.locator(".channel-left-drawer .sidebar-channel-group > .sidebar-row-shell.selected")).toContainText("Engineering");
-  await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
-  await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
-  await expect(page.locator(".task-toolbar-attention")).toHaveCount(0);
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
-  await page.waitForTimeout(100);
-  await page.locator(".task-toolbar-progress").click();
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(1);
-  await expect(page.locator(".task-toolbar-progress")).toHaveClass(/active/);
-  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
-  await expect(page.locator("article.task-detail")).toHaveCount(0);
-  await page.locator(".task-toolbar-panel").click();
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Files");
-  await expect(page.locator("article.task-detail")).toHaveCount(0);
-  await page.mouse.move(640, 120);
-  await page.waitForTimeout(200);
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expect(navigation.locator(".sidebar-fixed-top")).toBeVisible();
+  await expect(navigation.locator(".sidebar-scroll-region")).toBeVisible();
+  await expect(navigation.locator(".sidebar-bottom")).toBeVisible();
+  await expect(page.locator(".channel-sidebar-toolbar")).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Inbox" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Image Generation" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Automations" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
 
   const expanded = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
-    const leftToolbar = document.querySelector(".channel-sidebar-toolbar");
-    const rightDrawer = document.querySelector(".channel-side-panel");
-    const header = document.querySelector(".task-workbench-header");
-    const chatPanel = document.querySelector(".channel-chat-panel");
-    const chat = document.querySelector(".activity-chat-layout");
-    const activityShell = document.querySelector(".activity-shell");
-    const activityMain = document.querySelector(".activity-chat-main");
-    const branchTree = document.querySelector(".channel-work-thread-tree");
-    const workbenchMain = document.querySelector(".task-workbench-main");
-    const workbenchWindow = document.querySelector(".task-workbench-window");
-    const workspace = document.querySelector(".workspace");
-    const composer = document.querySelector(".channel-composer");
-    const feed = document.querySelector(".message-feed");
-    const emptyState = document.querySelector(".activity-shell .message-feed-empty-state");
+    const fixedTop = document.querySelector(".channel-left-drawer .sidebar-fixed-top");
+    const scrollRegion = document.querySelector(".channel-left-drawer .sidebar-scroll-region");
+    const bottom = document.querySelector(".channel-left-drawer .sidebar-bottom");
     const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-channel-group > .sidebar-row-shell.selected");
-    const selectedChannelBefore = selectedChannel ? getComputedStyle(selectedChannel, "::before") : undefined;
     const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
-    const drawerSections = Array.from(document.querySelectorAll(".channel-left-drawer .sidebar-section"));
-    const firstSection = drawerSections[0];
-    const teammateSection = drawerSections[1];
-    const firstSectionTitle = firstSection?.querySelector(".sidebar-section-title");
-    const teammateSectionTitle = teammateSection?.querySelector(".sidebar-section-title");
-    const teammateRows = Array.from(teammateSection?.querySelectorAll(".sidebar-row") ?? []);
-    const teammateFirstRow = teammateSection?.querySelector(".sidebar-row");
-    const teammateSecondRow = teammateRows[1];
-    const sidebarAction = firstSection?.querySelector(".sidebar-section-action");
-    const sidebarActionSvg = sidebarAction?.querySelector("svg");
-    const sidebarSwitchSvg = document.querySelector(".channel-sidebar-switch svg");
-    const titleIcon = document.querySelector(".channel-title-icon");
-    const channelMoreButton = document.querySelector(".channel-more-button");
-    const toolbarButton = document.querySelector(".task-toolbar-progress");
-    const toolbarButtonSvg = toolbarButton?.querySelector("svg");
+    const firstSectionTitle = document.querySelector(".channel-left-drawer .sidebar-section-title");
     const sidebarSwitch = document.querySelector(".channel-sidebar-switch");
-    const toolbarCount = toolbarButton?.querySelector(".toolbar-count");
-    const sidePanelActions = document.querySelector(".channel-side-panel-actions");
-    const sidebarBottom = document.querySelector(".channel-left-drawer .sidebar-bottom");
-    const approvals = document.querySelector(".channel-left-drawer .sidebar-inbox-alert");
-    const settings = Array.from(document.querySelectorAll(".channel-left-drawer .config-button"))
-      .find((button) => button.textContent?.trim() === "Settings");
-    const chatPanelRect = chatPanel?.getBoundingClientRect();
-    const chatRect = chat?.getBoundingClientRect();
-    const composerRect = composer?.getBoundingClientRect();
-    const feedRect = feed?.getBoundingClientRect();
-    const emptyStateRect = emptyState?.getBoundingClientRect();
+    const settings = document.querySelector(".channel-left-drawer .config-button");
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
-      leftToolbarWidth: Math.round(leftToolbar?.getBoundingClientRect().width ?? 0),
+      leftBackground: leftDrawer ? getComputedStyle(leftDrawer).backgroundColor : "",
+      fixedTopTop: Math.round(fixedTop?.getBoundingClientRect().top ?? -1),
+      scrollOverflowY: scrollRegion ? getComputedStyle(scrollRegion).overflowY : "",
+      scrollCanScroll: scrollRegion ? scrollRegion.scrollHeight > scrollRegion.clientHeight : false,
+      scrollTop: Math.round(scrollRegion?.getBoundingClientRect().top ?? -1),
+      bottomBottomGap: leftDrawer && bottom ? Math.round(leftDrawer.getBoundingClientRect().bottom - bottom.getBoundingClientRect().bottom) : -1,
       selectedChannelText: selectedChannel?.textContent?.trim() ?? "",
       selectedChannelBackground: selectedChannel ? getComputedStyle(selectedChannel).backgroundColor : "",
-      selectedChannelBeforeContent: selectedChannelBefore?.content ?? "",
       primaryNavBorderBottom: primaryNav ? getComputedStyle(primaryNav).borderBottomWidth : "",
-      primaryNavSectionGap: primaryNav && firstSectionTitle
-        ? Math.round(firstSectionTitle.getBoundingClientRect().top - primaryNav.getBoundingClientRect().bottom)
-        : -1,
-      teammateTitleListGap: teammateSectionTitle && teammateFirstRow
-        ? Math.round(teammateFirstRow.getBoundingClientRect().top - teammateSectionTitle.getBoundingClientRect().bottom)
-        : -1,
-      teammateRowGap: teammateFirstRow && teammateSecondRow
-        ? Math.round(teammateSecondRow.getBoundingClientRect().top - teammateFirstRow.getBoundingClientRect().bottom)
-        : -1,
       sectionTitleColor: firstSectionTitle ? getComputedStyle(firstSectionTitle).color : "",
       sectionTitleFontSize: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontSize : "",
       sectionTitleFontWeight: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontWeight : "",
-      sidebarActionWidth: Math.round(sidebarAction?.getBoundingClientRect().width ?? 0),
-      sidebarActionHeight: Math.round(sidebarAction?.getBoundingClientRect().height ?? 0),
-      sidebarActionColor: sidebarAction ? getComputedStyle(sidebarAction).color : "",
-      sidebarActionSvgStroke: sidebarActionSvg ? getComputedStyle(sidebarActionSvg).strokeWidth : "",
       sidebarSwitchBorderWidth: sidebarSwitch ? getComputedStyle(sidebarSwitch).borderTopWidth : "",
-      sidebarSwitchColor: sidebarSwitch ? getComputedStyle(sidebarSwitch).color : "",
-      sidebarSwitchSvgWidth: Math.round(sidebarSwitchSvg?.getBoundingClientRect().width ?? 0),
-      sidebarSwitchSvgHeight: Math.round(sidebarSwitchSvg?.getBoundingClientRect().height ?? 0),
-      sidebarSwitchSvgStroke: sidebarSwitchSvg ? getComputedStyle(sidebarSwitchSvg).strokeWidth : "",
-      titleIconText: titleIcon?.textContent?.trim() ?? "",
-      titleIconBorderWidth: titleIcon ? getComputedStyle(titleIcon).borderTopWidth : "",
-      titleIconColor: titleIcon ? getComputedStyle(titleIcon).color : "",
-      titleIconFontSize: titleIcon ? getComputedStyle(titleIcon).fontSize : "",
-      titleIconFontWeight: titleIcon ? getComputedStyle(titleIcon).fontWeight : "",
-      titleIconWidth: Math.round(titleIcon?.getBoundingClientRect().width ?? 0),
-      titleIconHeight: Math.round(titleIcon?.getBoundingClientRect().height ?? 0),
-      channelMoreButtonColor: channelMoreButton ? getComputedStyle(channelMoreButton).color : "",
-      channelMoreButtonBorderWidth: channelMoreButton ? getComputedStyle(channelMoreButton).borderTopWidth : "",
-      channelMoreButtonWidth: Math.round(channelMoreButton?.getBoundingClientRect().width ?? 0),
-      toolbarButtonBorderWidth: toolbarButton ? getComputedStyle(toolbarButton).borderTopWidth : "",
-      toolbarButtonColor: toolbarButton ? getComputedStyle(toolbarButton).color : "",
-      toolbarButtonWidth: Math.round(toolbarButton?.getBoundingClientRect().width ?? 0),
-      toolbarButtonSvgWidth: Math.round(toolbarButtonSvg?.getBoundingClientRect().width ?? 0),
-      toolbarButtonSvgHeight: Math.round(toolbarButtonSvg?.getBoundingClientRect().height ?? 0),
-      toolbarButtonSvgStroke: toolbarButtonSvg ? getComputedStyle(toolbarButtonSvg).strokeWidth : "",
-      toolbarCountText: toolbarCount?.textContent?.trim() ?? "",
-      selectedChannelMentionText: selectedChannel?.querySelector(".channel-mention")?.textContent?.trim() ?? "",
-      selectedChannelUnreadCount: selectedChannel?.querySelectorAll(".channel-unread").length ?? 0,
-      channelMentionCount: document.querySelectorAll(".channel-left-drawer .sidebar-section:first-of-type .channel-mention").length,
-      selectedChannelHashText: selectedChannel?.querySelector(".sidebar-hash")?.textContent?.trim() ?? "",
-      teammateAvatarCount: document.querySelectorAll(".channel-left-drawer .sidebar-section .avatar-initial").length,
-      teammateNotificationCount: Array.from(document.querySelectorAll(".channel-left-drawer .sidebar-row")).filter((row) =>
-        row.querySelector(".avatar-initial") && (
-          row.querySelector(".channel-mention") ||
-          row.querySelector(".channel-unread") ||
-          row.querySelector(".status-dot")
-        )
-      ).length,
-      rightY: Math.round(rightDrawer?.getBoundingClientRect().y ?? -1),
-      rightWidth: Math.round(rightDrawer?.getBoundingClientRect().width ?? 0),
-      rightHeight: Math.round(rightDrawer?.getBoundingClientRect().height ?? 0),
-      rightPanelLabel: rightDrawer?.getAttribute("aria-label") ?? "",
-      rightPanelText: rightDrawer?.textContent ?? "",
-      viewportHeight: window.innerHeight,
-      headerRight: Math.round(header?.getBoundingClientRect().right ?? 0),
-      rightLeft: Math.round(rightDrawer?.getBoundingClientRect().left ?? 0),
-      sidePanelActions: document.querySelectorAll(".channel-side-panel-actions .icon-button").length,
-      sidePanelActionsOpacity: sidePanelActions ? getComputedStyle(sidePanelActions).opacity : "",
-      sidePanelActionsVisibility: sidePanelActions ? getComputedStyle(sidePanelActions).visibility : "",
-      chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
-      composerCenterDelta: chatPanelRect && composerRect ? Math.round((composerRect.left + composerRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
-      chatPanelWidth: Math.round(chatPanelRect?.width ?? 0),
-      chatWidth: Math.round(chatRect?.width ?? 0),
-      composerWidth: Math.round(composerRect?.width ?? 0),
-      workspaceHeight: Math.round(workspace?.getBoundingClientRect().height ?? 0),
-      workbenchWindowHeight: Math.round(workbenchWindow?.getBoundingClientRect().height ?? 0),
-      workbenchMainHeight: Math.round(workbenchMain?.getBoundingClientRect().height ?? 0),
-      chatPanelHeight: Math.round(chatPanelRect?.height ?? 0),
-      activityShellHeight: Math.round(activityShell?.getBoundingClientRect().height ?? 0),
-      chatHeight: Math.round(chatRect?.height ?? 0),
-      activityMainHeight: Math.round(activityMain?.getBoundingClientRect().height ?? 0),
-      branchTreeHeight: Math.round(branchTree?.getBoundingClientRect().height ?? 0),
-      branchTreeText: branchTree?.textContent?.trim() ?? "",
-      emptyStateText: emptyState?.textContent?.trim() ?? "",
-      emptyStateCenterDelta: feedRect && emptyStateRect
-        ? Math.round((emptyStateRect.top + emptyStateRect.height / 2) - (feedRect.top + feedRect.height / 2))
-        : 999,
-      emptyStateIconCount: emptyState?.querySelectorAll("svg").length ?? 0,
-      composerBottomGap: chatPanelRect && composerRect ? Math.round(chatPanelRect.bottom - composerRect.bottom) : 999,
-      feedHeight: Math.round(feedRect?.height ?? 0),
-      feedBottomComposerGap: feedRect && composerRect ? Math.round(composerRect.top - feedRect.bottom) : 999,
-      sidebarBottomDisplay: sidebarBottom ? getComputedStyle(sidebarBottom).display : "",
-      sidebarBottomBorderTop: sidebarBottom ? getComputedStyle(sidebarBottom).borderTopWidth : "",
-      approvalsText: approvals?.textContent?.trim() ?? "",
-      approvalsHeight: Math.round(approvals?.getBoundingClientRect().height ?? 0),
-      approvalsColumns: approvals ? getComputedStyle(approvals).gridTemplateColumns : "",
       settingsText: settings?.textContent?.trim() ?? "",
-      settingsHeight: Math.round(settings?.getBoundingClientRect().height ?? 0),
-      settingsColumns: settings ? getComputedStyle(settings).gridTemplateColumns : "",
       globalRightPanels: document.querySelectorAll(".right-panel").length,
     };
   });
-  expect(expanded.columns.startsWith("272px ")).toBe(true);
-  expect(expanded.leftWidth).toBe(272);
-  expect(expanded.leftToolbarWidth).toBe(272);
+  expect(expanded.columns.startsWith("252px ")).toBe(true);
+  expect(expanded.leftWidth).toBe(252);
+  expect(expanded.leftBackground).toBe("rgb(255, 255, 255)");
+  expect(expanded.fixedTopTop).toBeGreaterThanOrEqual(10);
+  expect(expanded.scrollOverflowY).toBe("auto");
+  expect(expanded.scrollCanScroll).toBe(true);
+  expect(expanded.scrollTop).toBeGreaterThan(expanded.fixedTopTop);
+  expect(expanded.bottomBottomGap).toBeGreaterThanOrEqual(8);
   expect(expanded.selectedChannelText).toContain("Engineering");
   expect(expanded.selectedChannelBackground).toBe("rgb(245, 245, 245)");
-  expect(expanded.selectedChannelBeforeContent).toBe("none");
   expect(expanded.primaryNavBorderBottom).toBe("0px");
-  expect(expanded.primaryNavSectionGap).toBeLessThanOrEqual(16);
-  expect(expanded.teammateTitleListGap).toBeLessThanOrEqual(6);
-  expect(expanded.teammateRowGap).toBeLessThanOrEqual(6);
-  expect(expanded.sectionTitleColor).toBe("rgb(107, 107, 107)");
-  expect(expanded.sectionTitleFontSize).toBe("12px");
-  expect(expanded.sectionTitleFontWeight).toBe("500");
-  expect(expanded.sidebarActionWidth).toBe(20);
-  expect(expanded.sidebarActionHeight).toBe(20);
-  expect(expanded.sidebarActionColor).toBe("rgb(17, 17, 17)");
-  expect(expanded.sidebarActionSvgStroke).toBe("2.4px");
+  expect(expanded.sectionTitleColor).toBe("rgb(138, 138, 138)");
+  expect(expanded.sectionTitleFontSize).toBe("10px");
+  expect(Number(expanded.sectionTitleFontWeight)).toBeGreaterThanOrEqual(700);
   expect(expanded.sidebarSwitchBorderWidth).toBe("0px");
-  expect(expanded.sidebarSwitchColor).toBe("rgb(17, 17, 17)");
-  expect(expanded.sidebarSwitchSvgWidth).toBe(18);
-  expect(expanded.sidebarSwitchSvgHeight).toBe(18);
-  expect(expanded.sidebarSwitchSvgStroke).toBe("2.4px");
-  expect(expanded.titleIconText).toBe("#");
-  expect(expanded.titleIconBorderWidth).toBe("0px");
-  expect(expanded.titleIconColor).toBe("rgb(17, 17, 17)");
-  expect(expanded.titleIconFontSize).toBe("18px");
-  expect(expanded.titleIconFontWeight).toBe("600");
-  expect(expanded.titleIconWidth).toBe(30);
-  expect(expanded.titleIconHeight).toBe(30);
-  expect(expanded.channelMoreButtonColor).toBe("rgb(17, 17, 17)");
-  expect(expanded.channelMoreButtonBorderWidth).toBe("0px");
-  expect(expanded.channelMoreButtonWidth).toBe(30);
-  expect(expanded.toolbarButtonBorderWidth).toBe("0px");
-  expect(expanded.toolbarButtonColor).toBe("rgb(17, 17, 17)");
-  expect(expanded.toolbarButtonWidth).toBe(34);
-  expect(expanded.toolbarButtonSvgWidth).toBe(18);
-  expect(expanded.toolbarButtonSvgHeight).toBe(18);
-  expect(expanded.toolbarButtonSvgStroke).toBe("2.4px");
-  expect(expanded.toolbarCountText).toBe("");
-  expect(expanded.selectedChannelHashText).toBe("#");
-  expect(expanded.selectedChannelMentionText).toBe("");
-  expect(expanded.selectedChannelUnreadCount).toBe(0);
-  expect(expanded.channelMentionCount).toBe(0);
-  expect(expanded.teammateAvatarCount).toBeGreaterThan(0);
-  expect(expanded.teammateNotificationCount).toBe(0);
-  expect(expanded.rightPanelLabel).toBe("Files");
-  expect(expanded.rightPanelText).not.toContain("Context");
-  expect(expanded.rightPanelText).not.toContain("Channel protocol");
-  expect(expanded.rightPanelText).not.toContain("Progress");
-  expect(expanded.sidePanelActions).toBe(2);
-  expect(Number(expanded.sidePanelActionsOpacity)).toBeLessThanOrEqual(0.05);
-  expect(expanded.sidePanelActionsVisibility).toBe("hidden");
-  expect(Math.abs(expanded.chatCenterDelta)).toBeLessThanOrEqual(1);
-  expect(Math.abs(expanded.composerCenterDelta)).toBeLessThanOrEqual(1);
-  expect(expanded.chatPanelWidth - expanded.chatWidth).toBe(48);
-  expect(expanded.composerWidth).toBe(expanded.chatWidth);
-  expect(expanded.emptyStateText).toBe("No channel messages yet");
-  expect(expanded.emptyStateIconCount).toBe(1);
-  expect(Math.abs(expanded.emptyStateCenterDelta)).toBeLessThanOrEqual(2);
-  expect(expanded.composerBottomGap).toBeLessThanOrEqual(18);
-  expect(expanded.branchTreeText).toBe("");
-  expect(expanded.branchTreeHeight).toBe(0);
-  await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
-  await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
-  expect(expanded.feedHeight).toBeGreaterThan(240);
-  expect(expanded.feedBottomComposerGap).toBe(0);
-  expect(expanded.sidebarBottomDisplay).toBe("grid");
-  expect(expanded.sidebarBottomBorderTop).toBe("1px");
-  expect(expanded.approvalsText).toContain("pending approvals");
-  expect(expanded.approvalsHeight).toBe(38);
-  expect(expanded.approvalsColumns.startsWith("24px ")).toBe(true);
   expect(expanded.settingsText).toBe("Settings");
-  expect(expanded.settingsHeight).toBe(38);
-  expect(expanded.settingsColumns.startsWith("24px ")).toBe(true);
   expect(expanded.globalRightPanels).toBe(0);
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
-  await page.mouse.move(640, 120);
+  await page.mouse.move(22, 22);
   await page.waitForTimeout(200);
   const leftCollapsed = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
-    const leftToolbar = document.querySelector(".channel-sidebar-toolbar");
-    const chatPanel = document.querySelector(".channel-chat-panel");
-    const chat = document.querySelector(".activity-chat-layout");
-    const composer = document.querySelector(".channel-composer");
-    const chatPanelRect = chatPanel?.getBoundingClientRect();
-    const chatRect = chat?.getBoundingClientRect();
-    const composerRect = composer?.getBoundingClientRect();
-    return {
-      columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
-      leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? 0),
-      leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
-      toolbarWidth: Math.round(leftToolbar?.getBoundingClientRect().width ?? 0),
-      chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
-      composerCenterDelta: chatPanelRect && composerRect ? Math.round((composerRect.left + composerRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
-    };
-  });
-  expect(leftCollapsed.columns.startsWith("48px ")).toBe(true);
-  expect(leftCollapsed.leftX).toBe(-224);
-  expect(leftCollapsed.leftOpacity).toBe("0");
-  expect(leftCollapsed.toolbarWidth).toBe(48);
-  expect(Math.abs(leftCollapsed.chatCenterDelta)).toBeLessThanOrEqual(1);
-  expect(Math.abs(leftCollapsed.composerCenterDelta)).toBeLessThanOrEqual(1);
-
-  await page.mouse.move(22, 22);
-  await page.waitForTimeout(200);
-  const leftPeek = await page.evaluate(() => {
-    const leftDrawer = document.querySelector(".channel-left-drawer");
-    return {
-      leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? -999),
-      leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
-    };
-  });
-  expect(leftPeek.leftX).toBe(0);
-  expect(leftPeek.leftOpacity).toBe("1");
-  await page.mouse.move(640, 120);
-  await page.waitForTimeout(200);
-
-  const detailsPanelButton = page.locator(".task-toolbar-panel");
-  if (await detailsPanelButton.getAttribute("aria-expanded") === "true") {
-    await detailsPanelButton.click();
-  } else {
-    await expect(page.getByRole("button", { name: "Show details" })).toBeVisible();
-  }
-  await page.waitForTimeout(200);
-  const rightCollapsed = await page.evaluate(() => {
-    const shell = document.querySelector(".app-shell");
-    const main = document.querySelector(".task-workbench-main");
-    const chatPanel = document.querySelector(".channel-chat-panel");
-    const chat = document.querySelector(".activity-chat-layout");
-    const composer = document.querySelector(".channel-composer");
-    const attention = document.querySelector(".channel-progress-popover");
-    const chatPanelRect = chatPanel?.getBoundingClientRect();
-    const chatRect = chat?.getBoundingClientRect();
-    const composerRect = composer?.getBoundingClientRect();
-    return {
-      columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
-      sidePanelCount: document.querySelectorAll(".channel-side-panel").length,
-      mainPaddingRight: main ? getComputedStyle(main).paddingRight : "",
-      chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
-      composerCenterDelta: chatPanelRect && composerRect ? Math.round((composerRect.left + composerRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
-      chatTransform: chat ? getComputedStyle(chat).transform : "",
-      composerTransform: composer ? getComputedStyle(composer).transform : "",
-      attentionCount: document.querySelectorAll(".channel-progress-popover").length,
-      attentionTop: Math.round(attention?.getBoundingClientRect().top ?? 0),
-      chatLeft: Math.round(chatRect?.left ?? 0),
-      attentionLeft: Math.round(attention?.getBoundingClientRect().left ?? 0),
-      composerRight: Math.round(composerRect?.right ?? 0),
-      composerAttentionGap: composerRect && attention
-        ? Math.round(attention.getBoundingClientRect().left - composerRect.right)
-        : 0,
-      composerAttentionOverlapX: composerRect && attention
-        ? Math.max(0, Math.round(Math.min(composerRect.right, attention.getBoundingClientRect().right) - Math.max(composerRect.left, attention.getBoundingClientRect().left)))
-        : 0,
-    };
-  });
-  expect(rightCollapsed.columns.startsWith("48px ")).toBe(true);
-  expect(rightCollapsed.sidePanelCount).toBe(0);
-  expect(rightCollapsed.mainPaddingRight).toBe("0px");
-  expect(rightCollapsed.chatTransform).toBe("none");
-  expect(rightCollapsed.composerTransform).toBe("none");
-  expect(rightCollapsed.attentionCount).toBe(0);
-  expect(rightCollapsed.chatLeft).toBeGreaterThanOrEqual(70);
-  expect(rightCollapsed.composerAttentionOverlapX).toBe(0);
-
-  await page.locator(".task-toolbar-panel").click();
-  await page.getByRole("button", { name: "Show navigation" }).click();
-  await page.waitForTimeout(200);
-  await expect(page.locator(".channel-side-panel")).toHaveCount(1);
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Files");
-  const restored = await page.evaluate(() => {
-    const shell = document.querySelector(".app-shell");
-    const leftDrawer = document.querySelector(".channel-left-drawer");
-    const chatPanel = document.querySelector(".channel-chat-panel");
-    const chat = document.querySelector(".activity-chat-layout");
-    const chatPanelRect = chatPanel?.getBoundingClientRect();
-    const chatRect = chat?.getBoundingClientRect();
+    const brandCopy = document.querySelector(".channel-left-drawer .sidebar-brand-copy");
+    const firstNavText = document.querySelector(".channel-left-drawer .primary-nav .nav-item span");
+    const settingsLabel = document.querySelector(".channel-left-drawer .config-button-label");
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
-      sidePanelCount: document.querySelectorAll(".channel-side-panel").length,
-      chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
-      attentionCount: document.querySelectorAll(".channel-progress-popover").length,
+      leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? -1),
+      leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
+      transform: leftDrawer ? getComputedStyle(leftDrawer).transform : "",
+      brandCopyDisplay: brandCopy ? getComputedStyle(brandCopy).display : "",
+      firstNavTextDisplay: firstNavText ? getComputedStyle(firstNavText).display : "",
+      settingsLabelDisplay: settingsLabel ? getComputedStyle(settingsLabel).display : "",
     };
   });
-  expect(restored.columns.startsWith("272px ")).toBe(true);
-  expect(restored.leftWidth).toBe(272);
-  expect(restored.sidePanelCount).toBe(1);
-  expect(Math.abs(restored.chatCenterDelta)).toBeLessThanOrEqual(1);
-  expect(restored.attentionCount).toBe(0);
+  expect(leftCollapsed.columns.startsWith("52px ")).toBe(true);
+  expect(leftCollapsed.leftWidth).toBe(52);
+  expect(leftCollapsed.leftX).toBe(0);
+  expect(leftCollapsed.leftOpacity).toBe("1");
+  expect(leftCollapsed.transform).toBe("none");
+  expect(leftCollapsed.brandCopyDisplay).toBe("none");
+  expect(leftCollapsed.firstNavTextDisplay).toBe("none");
+  expect(leftCollapsed.settingsLabelDisplay).toBe("none");
+
+  await navigation.getByRole("button", { name: "Image Generation" }).click();
+  await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Automations" }).click();
+  await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByLabel("Settings sections")).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Account and profile/ })).toBeVisible();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Workspace tools/ }).click();
+  await page.getByRole("button", { name: "Open AI Teammates" }).click();
+  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.getByLabel("Workspace teammates")).toBeVisible();
+
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await page.waitForTimeout(200);
+  const restored = await page.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    const leftDrawer = document.querySelector(".channel-left-drawer");
+    return {
+      columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
+      leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
+    };
+  });
+  expect(restored.columns.startsWith("252px ")).toBe(true);
+  expect(restored.leftWidth).toBe(252);
 });
 
 test("progress popover shows active context source groups and opens source detail", async ({ page }) => {
@@ -579,10 +355,13 @@ test("channel drawer does not flash legacy create labels in section headers", as
   await page.goto("/");
 
   const drawer = page.locator(".channel-left-drawer");
-  await expect(drawer.getByRole("button", { name: "New channel" })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "New channel" })).toHaveCount(0);
+  await expect(drawer.getByRole("button", { name: "Channel actions" })).toBeVisible();
   await expect(drawer.locator(".sidebar-section-title small")).toHaveCount(0);
   await expect(drawer.getByText("Create", { exact: true })).toHaveCount(0);
   await expect(drawer.locator(".sidebar-section:first-of-type .sidebar-section-action")).toHaveText("");
+  await drawer.getByRole("button", { name: "Channel actions" }).hover();
+  await expect(drawer.getByRole("menuitem", { name: "New channel" })).toBeVisible();
 });
 
 test("channel drawer uses unread dots instead of count badges and clears on channel open", async ({ page }) => {
@@ -754,7 +533,10 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
   await currentManagement.getByRole("button", { name: "Save channel" }).click();
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New channel" }).click();
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Channel actions" }).hover();
+  await expect(navigation.getByRole("menuitem", { name: "New channel" })).toBeVisible();
+  await navigation.getByRole("menuitem", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
   await expect(createChannelPanel).toBeVisible();
   await expect(createChannelPanel.getByLabel("Execution path")).toHaveCount(0);
@@ -780,7 +562,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
   expect(runtimePolicy.maxConcurrentRuns).toBe(2);
   expect(runtimePolicy.queueOnConflict).toBe(false);
   await expect(createChannelPanel).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Release" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Release" })).toBeVisible();
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
   const details = page.getByLabel("Channel management");
   await expect(details.getByLabel("Preferred specialist")).toHaveCount(0);
@@ -812,7 +594,10 @@ test("channel reply routing mode is not exposed in ordinary settings", async ({ 
   await expect(currentManagement.getByText("Auto route")).toHaveCount(0);
   await expect(currentManagement.getByText("Ling Agent decides")).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New channel" }).click();
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Channel actions" }).hover();
+  await expect(navigation.getByRole("menuitem", { name: "New channel" })).toBeVisible();
+  await navigation.getByRole("menuitem", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
   await expect(createChannelPanel.getByLabel("Ling reply")).toHaveCount(0);
   await expect(createChannelPanel.getByLabel("Preferred specialist")).toHaveCount(0);

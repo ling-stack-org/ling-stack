@@ -1,20 +1,15 @@
 import type { Dispatch, SetStateAction } from "react";
 import {
   createChannel,
-  createChannelBranch,
   createChannelContextSummary,
   createChannelDecision,
   createChannelHandoff,
   createChannelLinkPreview,
   createChannelWorkflowFromHandoff,
   createTask,
-  deleteChannel,
-  deleteChannelBranch,
   deleteChannelAttachment,
-  patchChannel,
   streamChannelMessage,
   updateChannel,
-  updateChannelBranch,
   updateChannelBrief,
   updateChannelCollaborationProtocol,
   updateChannelDecision,
@@ -71,6 +66,13 @@ import {
   upsertChannelMessages,
 } from "./app-shell-selectors.js";
 import { defaultTaskForm } from "../domains/workspace/use-workspace-domain.js";
+import {
+  archiveAllSidebarChannelsWithState,
+  archiveSidebarChannelBranchWithState,
+  archiveSidebarChannelWithState,
+  createSidebarChannelBranchWithState,
+  removeSidebarChannelWithState,
+} from "./channel-sidebar-archive-actions.js";
 
 export interface ChannelActionsController {
   readonly saveChannel: () => Promise<void>;
@@ -78,6 +80,7 @@ export interface ChannelActionsController {
   readonly saveChannelEdit: (channelId: string) => Promise<void>;
   readonly saveChannelBranch: (channelId: string, name: string) => Promise<void>;
   readonly archiveSidebarChannel: (channelId: string) => Promise<void>;
+  readonly archiveAllSidebarChannels: () => Promise<void>;
   readonly archiveSidebarChannelBranch: (channelId: string, branchId: string) => Promise<void>;
   readonly removeChannel: (channelId: string) => Promise<void>;
   readonly saveTask: () => Promise<void>;
@@ -174,12 +177,8 @@ export function useChannelActionsController(input: {
     };
   }
 
-  function selectedCreateTeammateIds(form: ChannelCreateFormState): readonly string[] {
-    return [...new Set(form.selectedTeammateIds.filter(Boolean))];
-  }
-
   async function applyCreatedChannelTeammates(channelId: string, form: ChannelCreateFormState): Promise<void> {
-    const teammateIds = selectedCreateTeammateIds(form);
+    const teammateIds = [...new Set(form.selectedTeammateIds.filter(Boolean))];
     for (const teammateId of teammateIds) {
       await input.addChannelTeammate(channelId, teammateId);
     }
@@ -296,76 +295,77 @@ export function useChannelActionsController(input: {
   }
 
   async function saveChannelBranch(channelId: string, name: string): Promise<void> {
-    const workspaceCwd = input.form.cwd.trim();
-    if (!workspaceCwd) {
-      input.setErrorMessage("本地工作区未就绪");
-      return;
-    }
-    try {
-      input.setErrorMessage("");
-      const response = await createChannelBranch(workspaceCwd, channelId, { name, status: "active" });
-      input.setSelectedChannelId(channelId);
-      input.setSelectedChannelBranchId(response.branch.id);
-      input.setActiveView("workspace");
-      input.setActiveSidebarTarget(channelSidebarTarget(channelId));
-      await input.refreshChannels(workspaceCwd);
-    } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
+    await createSidebarChannelBranchWithState({
+      cwd: input.form.cwd.trim(),
+      channelId,
+      name,
+      setActiveView: input.setActiveView,
+      setActiveSidebarTarget: input.setActiveSidebarTarget,
+      setSelectedChannelId: input.setSelectedChannelId,
+      setSelectedChannelBranchId: input.setSelectedChannelBranchId,
+      setErrorMessage: input.setErrorMessage,
+      refreshChannels: input.refreshChannels,
+    });
   }
 
   async function archiveSidebarChannel(channelId: string): Promise<void> {
-    const workspaceCwd = input.form.cwd.trim();
-    const channel = input.channels.find((item) => item.id === channelId);
-    if (!workspaceCwd || !channel) {
-      return;
-    }
-    try {
-      input.setErrorMessage("");
-      await patchChannel(workspaceCwd, channelId, { status: "archived" });
-      input.setChannels((current) => current.filter((item) => item.id !== channelId));
-      input.setChannelBranches((current) => current.filter((branch) => branch.channelId !== channelId));
-      if (input.selectedChannelId === channelId) {
-        input.setSelectedChannelId("");
-        input.setSelectedChannelBranchId("");
-        input.setActiveSidebarTarget("workspace");
-      }
-      await input.refreshChannels(workspaceCwd);
-    } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
+    await archiveSidebarChannelWithState({
+      cwd: input.form.cwd.trim(),
+      channels: input.channels,
+      channelId,
+      selectedChannelId: input.selectedChannelId,
+      activeSidebarTarget: input.activeSidebarTarget,
+      setActiveView: input.setActiveView,
+      setActiveSidebarTarget: input.setActiveSidebarTarget,
+      setSelectedChannelId: input.setSelectedChannelId,
+      setSelectedChannelBranchId: input.setSelectedChannelBranchId,
+      setChannels: input.setChannels,
+      setChannelBranches: input.setChannelBranches,
+      setErrorMessage: input.setErrorMessage,
+      refreshChannels: input.refreshChannels,
+    });
+  }
+
+  async function archiveAllSidebarChannels(): Promise<void> {
+    await archiveAllSidebarChannelsWithState({
+      cwd: input.form.cwd.trim(),
+      channels: input.channels,
+      selectedChannelId: input.selectedChannelId,
+      setActiveView: input.setActiveView,
+      setActiveSidebarTarget: input.setActiveSidebarTarget,
+      setSelectedChannelId: input.setSelectedChannelId,
+      setSelectedChannelBranchId: input.setSelectedChannelBranchId,
+      setChannels: input.setChannels,
+      setChannelBranches: input.setChannelBranches,
+      setErrorMessage: input.setErrorMessage,
+      refreshChannels: input.refreshChannels,
+      confirmMessage: input.t("Archive all channels? You can restore archived channels from Settings."),
+      confirm: (message) => globalThis.confirm(message),
+    });
   }
 
   async function archiveSidebarChannelBranch(channelId: string, branchId: string): Promise<void> {
-    const workspaceCwd = input.form.cwd.trim();
-    if (!workspaceCwd) {
-      return;
-    }
-    try {
-      input.setErrorMessage("");
-      await updateChannelBranch(workspaceCwd, channelId, branchId, { status: "archived" });
-      input.setChannelBranches((current) => current.filter((branch) => branch.id !== branchId));
-      await input.refreshChannels(workspaceCwd);
-    } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
+    await archiveSidebarChannelBranchWithState({
+      cwd: input.form.cwd.trim(),
+      channelId,
+      branchId,
+      setChannelBranches: input.setChannelBranches,
+      setErrorMessage: input.setErrorMessage,
+      refreshChannels: input.refreshChannels,
+    });
   }
 
   async function removeChannel(channelId: string): Promise<void> {
-    try {
-      input.setErrorMessage("");
-      await deleteChannel(input.form.cwd.trim(), channelId);
-      if (input.selectedChannelId === channelId) {
-        input.setSelectedChannelId("");
-      }
-      if (input.activeSidebarTarget === channelSidebarTarget(channelId)) {
-        input.setActiveSidebarTarget("workspace");
-      }
-      await input.refreshChannels();
-    } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
+    await removeSidebarChannelWithState({
+      cwd: input.form.cwd.trim(),
+      channelId,
+      selectedChannelId: input.selectedChannelId,
+      activeSidebarTarget: input.activeSidebarTarget,
+      setActiveSidebarTarget: input.setActiveSidebarTarget,
+      setSelectedChannelId: input.setSelectedChannelId,
+      setErrorMessage: input.setErrorMessage,
+      refreshChannels: input.refreshChannels,
+    });
   }
 
   async function saveTask(): Promise<void> {
@@ -778,6 +778,7 @@ export function useChannelActionsController(input: {
     saveChannelEdit,
     saveChannelBranch,
     archiveSidebarChannel,
+    archiveAllSidebarChannels,
     archiveSidebarChannelBranch,
     removeChannel,
     saveTask,

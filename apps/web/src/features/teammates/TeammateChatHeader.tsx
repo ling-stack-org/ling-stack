@@ -1,4 +1,5 @@
-import { RefreshCw, Search, Settings, X } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, RefreshCw, Search, Settings, X } from "lucide-react";
+import type { ReactNode } from "react";
 import { useI18n } from "../../i18n.js";
 import { StatusBadge } from "../../shared/components/index.js";
 import { ConversationStatusStrip } from "../../shared/conversation/index.js";
@@ -14,11 +15,14 @@ export function TeammateChatHeader({
   loading,
   searchOpen,
   searchQuery,
+  contextPanelOpen,
   onToggleSearch,
   onSearchQueryChange,
   onClearSearch,
   onRefresh,
   onOpenSettings,
+  onToggleContextPanel,
+  toolbarStart,
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
@@ -28,15 +32,26 @@ export function TeammateChatHeader({
   readonly loading: boolean;
   readonly searchOpen: boolean;
   readonly searchQuery: string;
+  readonly contextPanelOpen: boolean;
   readonly onToggleSearch: () => void;
   readonly onSearchQueryChange: (value: string) => void;
   readonly onClearSearch: () => void;
   readonly onRefresh: () => void | Promise<void>;
   readonly onOpenSettings: () => void;
+  readonly onToggleContextPanel: () => void;
+  readonly toolbarStart?: ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <section className={searchOpen ? "teammate-chat-header searching" : "teammate-chat-header"} aria-label={t("AI teammate private chat")}>
+    <section
+      className={[
+        "teammate-chat-header",
+        searchOpen ? "searching" : "",
+        toolbarStart ? "has-toolbar-start" : "",
+      ].filter(Boolean).join(" ")}
+      aria-label={t("AI teammate private chat")}
+    >
+      {toolbarStart ? <div className="teammate-chat-toolbar-start">{toolbarStart}</div> : null}
       <div className="teammate-workspace-identity">
         <TeammateAvatarView teammate={teammate} cwd={cwd} />
         <div>
@@ -73,6 +88,16 @@ export function TeammateChatHeader({
           onClick={onOpenSettings}
         >
           <Settings size={15} />
+        </button>
+        <button
+          className={contextPanelOpen ? "secondary-button compact-button active" : "secondary-button compact-button"}
+          type="button"
+          aria-expanded={contextPanelOpen}
+          aria-label={contextPanelOpen ? t("Hide details") : t("Show details")}
+          title={contextPanelOpen ? t("Hide details") : t("Show details")}
+          onClick={onToggleContextPanel}
+        >
+          {contextPanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
         </button>
       </div>
       <ConversationStatusStrip

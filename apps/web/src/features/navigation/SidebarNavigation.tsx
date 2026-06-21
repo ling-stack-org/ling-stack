@@ -6,17 +6,14 @@ import {
   GitBranch,
   Hash,
   Inbox,
-  Kanban,
   Network,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
-  PlugZap,
   Plus,
   Settings,
   ShieldCheck,
   Timer,
-  UserRound,
-  Users,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -49,6 +46,8 @@ export function SidebarNavigation({
   onCreateTeammate,
   onCreateChannelBranch,
   onArchiveChannel,
+  onArchiveAllChannels,
+  onArchiveAllTeammateChats,
   onArchiveChannelBranch,
   onSelectChannel,
   onSelectChannelBranch,
@@ -71,6 +70,8 @@ export function SidebarNavigation({
   readonly onCreateTeammate?: () => void;
   readonly onCreateChannelBranch?: (channelId: string, name: string) => void | Promise<void>;
   readonly onArchiveChannel?: (channelId: string) => void | Promise<void>;
+  readonly onArchiveAllChannels?: () => void | Promise<void>;
+  readonly onArchiveAllTeammateChats?: () => void | Promise<void>;
   readonly onArchiveChannelBranch?: (channelId: string, branchId: string) => void | Promise<void>;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onSelectChannelBranch?: (channelId: string, branchId: string) => void;
@@ -82,6 +83,7 @@ export function SidebarNavigation({
   const { t } = useI18n();
   const [branchDraftChannelId, setBranchDraftChannelId] = useState("");
   const [branchDraftName, setBranchDraftName] = useState("");
+  const [openSectionMenu, setOpenSectionMenu] = useState<"channels" | "teammates" | "">("");
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const visibleTeammates = teammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
   const branchesByChannel = new Map<string, readonly ChannelBranch[]>();
@@ -106,32 +108,67 @@ export function SidebarNavigation({
   }
 
   return (
-    <>
-      {channelDrawer ? (
-        <div className="channel-sidebar-toolbar">
+    <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
+      <div className="sidebar-fixed-top">
+        <div className="sidebar-brand-row">
           <button
-            className="channel-sidebar-switch"
+            className="sidebar-brand-button"
             type="button"
-            aria-label={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
-            title={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
-            onClick={() => onChannelDrawerOpenChange?.(!channelDrawerOpen)}
+            onClick={() => onOpenView("workspace")}
+            aria-label="Ling Stack"
+            title="Ling Stack"
           >
-            {channelDrawerOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+            <span className="sidebar-brand-mark" aria-hidden="true">L</span>
+            <span className="sidebar-brand-copy">
+              <strong>Ling Stack</strong>
+              <small>{t("AI teammate workspace")}</small>
+            </span>
           </button>
+          {channelDrawer ? (
+            <button
+              className="channel-sidebar-switch"
+              type="button"
+              aria-label={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
+              title={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
+              onClick={() => onChannelDrawerOpenChange?.(!channelDrawerOpen)}
+            >
+              {channelDrawerOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+            </button>
+          ) : null}
         </div>
-      ) : null}
-      <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
-      <nav className="primary-nav">
-        <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
-        <NavItem icon={<Kanban />} label={t("Work Board")} active={activeSidebarTarget === "work_board"} onClick={() => onOpenView("work_board")} />
-        <NavItem icon={<Timer />} label={t("Automations")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} />
-        <NavItem icon={<Inbox />} label={t("Review Queue")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
-        <NavItem icon={<Database />} label={t("Generation")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
-        <NavItem icon={<Users />} label={t("AI Teammates")} active={activeSidebarTarget === "teammates"} onClick={() => onOpenView("teammates")} />
-        <NavItem icon={<Network />} label={t("AI Councils")} active={activeSidebarTarget === "councils"} onClick={() => onOpenView("councils")} />
-      </nav>
 
-      <SidebarSection title={t("Channels")} actionLabel={t("New channel")} onAction={onCreateChannel}>
+        <nav className="primary-nav">
+          <NavItem icon={<Inbox />} label={t("Review Queue")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
+          <NavItem icon={<Database />} label={t("Image Generation")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
+          <NavItem icon={<Timer />} label={t("Automations")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} />
+          <NavItem icon={<Network />} label={t("AI Councils")} active={activeSidebarTarget === "councils"} onClick={() => onOpenView("councils")} />
+        </nav>
+      </div>
+
+      <div className="sidebar-scroll-region" aria-label={t("Recent")}>
+      <SidebarSection
+        title={t("Channels")}
+        menuLabel={t("Channel actions")}
+        menuOpen={openSectionMenu === "channels"}
+        onMenuOpenChange={(open) => setOpenSectionMenu(open ? "channels" : "")}
+        menuItems={[
+          {
+            id: "new-channel",
+            label: t("New channel"),
+            icon: <Plus size={14} />,
+            onSelect: onCreateChannel,
+          },
+          {
+            id: "archive-all-channels",
+            label: t("Archive all channels"),
+            icon: <Archive size={14} />,
+            disabled: channels.length === 0 || !onArchiveAllChannels,
+            disabledLabel: t("No channels to archive"),
+            danger: true,
+            onSelect: () => void onArchiveAllChannels?.(),
+          },
+        ]}
+      >
         {channels.length === 0 ? (
           <button className="sidebar-row muted-row" type="button" onClick={onCreateChannel}>
             <Hash size={14} />
@@ -245,7 +282,30 @@ export function SidebarNavigation({
         )}
       </SidebarSection>
 
-      <SidebarSection title={t("AI Teammates")} actionLabel={t("New teammate")} onAction={onCreateTeammate}>
+      <SidebarSection
+        title={t("AI Teammates")}
+        menuLabel={t("AI teammate actions")}
+        menuOpen={openSectionMenu === "teammates"}
+        onMenuOpenChange={(open) => setOpenSectionMenu(open ? "teammates" : "")}
+        menuItems={[
+          {
+            id: "new-teammate",
+            label: t("New teammate"),
+            icon: <Plus size={14} />,
+            disabled: !onCreateTeammate,
+            onSelect: () => onCreateTeammate?.(),
+          },
+          {
+            id: "archive-all-chats",
+            label: t("Archive all chats"),
+            icon: <Archive size={14} />,
+            disabled: visibleTeammates.length === 0 || !onArchiveAllTeammateChats,
+            disabledLabel: t("No chats to archive"),
+            danger: true,
+            onSelect: () => void onArchiveAllTeammateChats?.(),
+          },
+        ]}
+      >
         {visibleTeammates.length === 0 ? (
           <button className="sidebar-row muted-row" type="button" onClick={onCreateTeammate ?? (() => onOpenView("teammates"))}>
             <Bot size={14} />
@@ -266,6 +326,7 @@ export function SidebarNavigation({
           ))
         )}
       </SidebarSection>
+      </div>
 
       <div className={channelDrawer ? "sidebar-bottom" : "sidebar-config"}>
         {pendingApprovalCount > 0 ? (
@@ -275,18 +336,12 @@ export function SidebarNavigation({
           </button>
         ) : null}
 
-        <button className={activeSidebarTarget === "profile" ? "config-button active" : "config-button"} type="button" onClick={() => onOpenView("profile")} aria-label={t("Profile")} title={t("Profile")}>
-          <UserRound size={15} />
-          <span className="config-button-label">{t("Profile")}</span>
-        </button>
-
         <button className={activeSidebarTarget === "settings" ? "config-button active" : "config-button"} type="button" onClick={() => onOpenView("settings")} aria-label={t("Settings")} title={t("Settings")}>
           <Settings size={15} />
           <span className="config-button-label">{t("Settings")}</span>
         </button>
       </div>
-      </aside>
-    </>
+    </aside>
   );
 }
 
@@ -305,28 +360,89 @@ function renderSidebarNotification(notification: SidebarNotification | undefined
 
 function SidebarSection({
   title,
-  actionLabel,
-  onAction,
+  menuLabel,
+  menuOpen,
+  onMenuOpenChange,
+  menuItems,
   children,
 }: {
   readonly title: string;
-  readonly actionLabel?: string;
-  readonly onAction?: () => void;
+  readonly menuLabel: string;
+  readonly menuOpen: boolean;
+  readonly onMenuOpenChange: (open: boolean) => void;
+  readonly menuItems: readonly SidebarSectionMenuItem[];
   readonly children: ReactNode;
 }): JSX.Element {
   return (
     <section className="sidebar-section">
       <div className="sidebar-section-title">
         <span>{title}</span>
-        {actionLabel && onAction ? (
-          <button className="sidebar-section-action" type="button" onClick={onAction} aria-label={actionLabel} title={actionLabel}>
-            <Plus size={12} />
+        <span
+          className={menuOpen ? "sidebar-section-menu open" : "sidebar-section-menu"}
+          onMouseEnter={() => onMenuOpenChange(true)}
+          onMouseLeave={() => onMenuOpenChange(false)}
+          onFocus={() => onMenuOpenChange(true)}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              onMenuOpenChange(false);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              onMenuOpenChange(false);
+            }
+          }}
+        >
+          <button
+            className="sidebar-section-action"
+            type="button"
+            aria-label={menuLabel}
+            title={menuLabel}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => onMenuOpenChange(!menuOpen)}
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            <MoreHorizontal size={14} />
           </button>
-        ) : null}
+          <span className="sidebar-section-menu-popover" role="menu" hidden={!menuOpen}>
+            {menuItems.map((item) => (
+              <button
+                key={item.id}
+                className={item.danger ? "danger" : undefined}
+                type="button"
+                role="menuitem"
+                disabled={item.disabled}
+                title={item.disabled ? item.disabledLabel ?? item.label : item.label}
+                onClick={() => {
+                  if (item.disabled) {
+                    return;
+                  }
+                  onMenuOpenChange(false);
+                  item.onSelect();
+                }}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </span>
+        </span>
       </div>
       <div className="sidebar-section-list">{children}</div>
     </section>
   );
+}
+
+interface SidebarSectionMenuItem {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: ReactNode;
+  readonly disabled?: boolean;
+  readonly disabledLabel?: string;
+  readonly danger?: boolean;
+  readonly onSelect: () => void;
 }
 
 function NavItem({
@@ -343,7 +459,7 @@ function NavItem({
   readonly onClick?: () => void;
 }): JSX.Element {
   return (
-    <button className={active ? "nav-item active" : "nav-item"} type="button" disabled={disabled} onClick={onClick}>
+    <button className={active ? "nav-item active" : "nav-item"} type="button" disabled={disabled} onClick={onClick} aria-label={label} title={label}>
       {icon}
       <span>{label}</span>
     </button>

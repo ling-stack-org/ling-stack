@@ -17,7 +17,7 @@ import {
   type WorkItemView,
   type WorkItemWaitingReason,
 } from "../../lib/work-items.js";
-import { StatusBadge } from "../../shared/components/index.js";
+import { SettingsToolReturnRow, StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -59,6 +59,7 @@ export function GlobalWorkBoardPage({
   routingExternalWorkId,
   busyWorkItemId,
   requestedScope,
+  onBackToWorkspaceTools,
 }: {
   readonly channels: readonly Channel[];
   readonly tasks: readonly Task[];
@@ -83,6 +84,7 @@ export function GlobalWorkBoardPage({
   readonly routingExternalWorkId?: string;
   readonly busyWorkItemId?: string;
   readonly requestedScope?: WorkBoardScope;
+  readonly onBackToWorkspaceTools?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [channelFilter, setChannelFilter] = useState("");
@@ -154,92 +156,130 @@ export function GlobalWorkBoardPage({
   };
   const headerTitle = t(scopeTitle(activeScope));
   const headerDescription = t(scopeDescription(activeScope));
+  const settingsToolMode = Boolean(onBackToWorkspaceTools);
+  const workBoardTabs = (
+    <div className="work-board-tabs" aria-label={t("Work board views")}>
+      {workBoardScopeOrder.map((scope) => (
+        <button
+          key={scope}
+          type="button"
+          className={activeScope === scope ? "active" : ""}
+          aria-pressed={activeScope === scope}
+          onClick={() => selectScope(scope)}
+        >
+          {t(scopeLabel(scope))}
+        </button>
+      ))}
+    </div>
+  );
+  const filterToggleButton = (
+    <button className="secondary-button compact-button" type="button" onClick={() => setFiltersExpanded((current) => !current)}>
+      <ListFilter size={14} />
+      {filtersExpanded ? t("Hide filters") : t("Show filters")}
+    </button>
+  );
+  const clearFiltersButton = filtersActive ? (
+    <button className="text-button" type="button" onClick={clearFilters}>
+      {t("Clear filters")}
+    </button>
+  ) : null;
+  const filterControls = (
+    <div className="work-board-filters">
+      <label>
+        <span>{t("Channel")}</span>
+        <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)}>
+          <option value="">{t("All")}</option>
+          {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+        </select>
+      </label>
+      <label>
+        <span>{t("Status")}</span>
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as WorkItemStatus | "")}>
+          <option value="">{t("All")}</option>
+          {workItemStatusOrder.map((status) => <option key={status} value={status}>{t(workItemStatusLabel(status))}</option>)}
+        </select>
+      </label>
+      <label>
+        <span>{t("Source")}</span>
+        <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as WorkItemSourceType | "")}>
+          <option value="">{t("All")}</option>
+          {sourceOptions.map((source) => <option key={source} value={source}>{t(source)}</option>)}
+        </select>
+      </label>
+      <label>
+        <span>{t("Waiting reason")}</span>
+        <select value={waitingFilter} onChange={(event) => setWaitingFilter(event.target.value as WorkItemWaitingReason | "")}>
+          <option value="">{t("All")}</option>
+          {waitingOptions.map((reason) => <option key={reason} value={reason}>{t(reason)}</option>)}
+        </select>
+      </label>
+    </div>
+  );
 
   return (
-    <section className="panel work-board-page" aria-labelledby="global-work-board-title">
-      <div className="panel-title split">
-        <span className="work-board-heading">
-          <Kanban size={18} />
-          <span>
-            <h2 id="global-work-board-title">{headerTitle}</h2>
-            <small>{headerDescription}</small>
+    <section
+      className={settingsToolMode ? "panel work-board-page settings-return-mode" : "panel work-board-page"}
+      aria-label={settingsToolMode ? headerTitle : undefined}
+      aria-labelledby={settingsToolMode ? undefined : "global-work-board-title"}
+    >
+      {!settingsToolMode ? (
+        <div className="panel-title split">
+          <span className="work-board-heading">
+            <Kanban size={18} />
+            <span>
+              <h2 id="global-work-board-title">{headerTitle}</h2>
+              <small>{headerDescription}</small>
+            </span>
           </span>
-        </span>
-        <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
-          <RefreshCw size={15} />
-          {t("Refresh")}
-        </button>
-      </div>
+          <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
+            <RefreshCw size={15} />
+            {t("Refresh")}
+          </button>
+        </div>
+      ) : null}
       <div className="work-board-shell">
         <div className="work-board-list-pane">
-          <div className="work-board-toolbar">
-            <div className="work-board-tabs" aria-label={t("Work board views")}>
-              {workBoardScopeOrder.map((scope) => (
-                <button
-                  key={scope}
-                  type="button"
-                  className={activeScope === scope ? "active" : ""}
-                  aria-pressed={activeScope === scope}
-                  onClick={() => selectScope(scope)}
-                >
-                  {t(scopeLabel(scope))}
+          <div className={settingsToolMode ? "work-board-toolbar settings-tool-mode" : "work-board-toolbar"}>
+            {settingsToolMode ? (
+              <div className="work-board-settings-toolbar">
+                {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
+                {workBoardTabs}
+                {filterToggleButton}
+                {clearFiltersButton}
+                <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
+                  <RefreshCw size={15} />
+                  {t("Refresh")}
                 </button>
-              ))}
-            </div>
-            <div className="work-board-count-line">
-              <button className={activeScope === "actionable" ? "active" : ""} type="button" onClick={() => selectScope("actionable")}>{t("{count} need action", { count: stats.actionable })}</button>
-              <button className={activeScope === "global" ? "active" : ""} type="button" onClick={() => selectScope("global")}>{t("{count} running", { count: stats.running })}</button>
-              <button className={activeScope === "blocked" ? "active" : ""} type="button" onClick={() => selectScope("blocked")}>{t("{count} blocked or failed", { count: stats.blocked })}</button>
-              <button className={activeScope === "history" ? "active" : ""} type="button" onClick={() => selectScope("history")}>{t("{count} recently completed", { count: stats.completed })}</button>
-            </div>
+              </div>
+            ) : (
+              <>
+                {workBoardTabs}
+                <div className="work-board-count-line">
+                  <button className={activeScope === "actionable" ? "active" : ""} type="button" onClick={() => selectScope("actionable")}>{t("{count} need action", { count: stats.actionable })}</button>
+                  <button className={activeScope === "global" ? "active" : ""} type="button" onClick={() => selectScope("global")}>{t("{count} running", { count: stats.running })}</button>
+                  <button className={activeScope === "blocked" ? "active" : ""} type="button" onClick={() => selectScope("blocked")}>{t("{count} blocked or failed", { count: stats.blocked })}</button>
+                  <button className={activeScope === "history" ? "active" : ""} type="button" onClick={() => selectScope("history")}>{t("{count} recently completed", { count: stats.completed })}</button>
+                </div>
+              </>
+            )}
           </div>
 
-          <div className={filtersExpanded ? "work-board-filter-card expanded" : "work-board-filter-card"}>
-            <div className="work-board-filter-bar">
-              <button className="secondary-button compact-button" type="button" onClick={() => setFiltersExpanded((current) => !current)}>
-                <ListFilter size={14} />
-                {filtersExpanded ? t("Hide filters") : t("Show filters")}
-              </button>
-              <span>{filtersActive ? t("Current filters: {summary}", { summary: filterSummary }) : t("Showing all work items")}</span>
-              {filtersActive ? (
-                <button className="text-button" type="button" onClick={clearFilters}>
-                  {t("Clear filters")}
-                </button>
-              ) : null}
-            </div>
-            {filtersExpanded ? (
-              <div className="work-board-filters">
-                <label>
-                  <span>{t("Channel")}</span>
-                  <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)}>
-                    <option value="">{t("All")}</option>
-                    {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>{t("Status")}</span>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as WorkItemStatus | "")}>
-                    <option value="">{t("All")}</option>
-                    {workItemStatusOrder.map((status) => <option key={status} value={status}>{t(workItemStatusLabel(status))}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>{t("Source")}</span>
-                  <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as WorkItemSourceType | "")}>
-                    <option value="">{t("All")}</option>
-                    {sourceOptions.map((source) => <option key={source} value={source}>{t(source)}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>{t("Waiting reason")}</span>
-                  <select value={waitingFilter} onChange={(event) => setWaitingFilter(event.target.value as WorkItemWaitingReason | "")}>
-                    <option value="">{t("All")}</option>
-                    {waitingOptions.map((reason) => <option key={reason} value={reason}>{t(reason)}</option>)}
-                  </select>
-                </label>
+          {settingsToolMode ? (
+            filtersExpanded ? (
+              <div className="work-board-filter-card settings-tool-mode expanded">
+                {filterControls}
               </div>
-            ) : null}
-          </div>
+            ) : null
+          ) : (
+            <div className={filtersExpanded ? "work-board-filter-card expanded" : "work-board-filter-card"}>
+              <div className="work-board-filter-bar">
+                {filterToggleButton}
+                <span>{filtersActive ? t("Current filters: {summary}", { summary: filterSummary }) : t("Showing all work items")}</span>
+                {clearFiltersButton}
+              </div>
+              {filtersExpanded ? filterControls : null}
+            </div>
+          )}
 
           {filteredItems.length === 0 ? (
             <WorkBoardEmptyState

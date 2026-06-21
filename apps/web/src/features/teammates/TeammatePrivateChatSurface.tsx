@@ -219,6 +219,7 @@ export function TeammatePrivateChatSurface({
                 body={messageBody}
                 bodyCwd={cwd}
                 bodyCompact
+                showOwnAuthor={message.authorType === "local-user"}
                 pending={pendingAiReply}
                 attachmentsNode={message.attachmentIds.length > 0 ? (
                   <ConversationAttachmentStrip

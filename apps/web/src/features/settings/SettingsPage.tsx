@@ -5,6 +5,7 @@ import {
   CircleAlert,
   Database,
   GitBranch,
+  Kanban,
   KeyRound,
   Languages,
   Library,
@@ -14,11 +15,13 @@ import {
   Power,
   PowerOff,
   Plug,
+  PlugZap,
   RefreshCw,
   Save,
   Settings,
   ShieldCheck,
   Trash2,
+  UserRound,
   Wrench,
 } from "lucide-react";
 import {
@@ -65,14 +68,16 @@ import type {
   ManagedPluginView,
   ResponseLanguagePreference,
   StartupStatusResponse,
+  UserProfile,
 } from "../../types.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
+import { ProfilePage } from "../profile/ProfilePage.js";
 
-type SettingsSection = "startup" | "external-work" | "interface" | "archived-items" | "runtime" | "approval-policy" | "skill-library" | "mcp" | "plugins" | "developer";
+type SettingsSection = "startup" | "account-profile" | "workspace-tools" | "external-work" | "interface" | "archived-items" | "runtime" | "approval-policy" | "skill-library" | "mcp" | "plugins" | "developer";
 
 export function SettingsPage({
   cwd,
@@ -148,6 +153,10 @@ export function SettingsPage({
   onDeleteMcpServer,
   onCheckMcpServer,
   onSyncMcpTools,
+  onProfileChange,
+  onOpenProviders,
+  onOpenTeammates,
+  onOpenWorkBoard,
 }: {
   readonly cwd: string;
   readonly policy: ApprovalPolicy | undefined;
@@ -226,10 +235,14 @@ export function SettingsPage({
   readonly onDeleteMcpServer: (serverId: string) => void;
   readonly onCheckMcpServer: (serverId: string) => boolean | Promise<boolean> | void | Promise<void>;
   readonly onSyncMcpTools: (serverId: string) => boolean | Promise<boolean> | void | Promise<void>;
+  readonly onProfileChange?: (profile: UserProfile) => void;
+  readonly onOpenProviders: () => void;
+  readonly onOpenTeammates: () => void;
+  readonly onOpenWorkBoard: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [externalWorkToken, setExternalWorkToken] = useState("");
-  const [activeSection, setActiveSection] = useState<SettingsSection>("startup");
+  const [activeSection, setActiveSection] = useState<SettingsSection>("workspace-tools");
   const [workflowSourceKind, setWorkflowSourceKind] = useState<"github" | "linear">("github");
   const [workflowRepository, setWorkflowRepository] = useState("");
   const [workflowProjectSlug, setWorkflowProjectSlug] = useState("");
@@ -377,6 +390,17 @@ export function SettingsPage({
     <div className="settings-layout">
       <nav className="settings-section-nav" aria-label={t("Settings sections")}>
         <button
+          className={activeSection === "workspace-tools" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("workspace-tools")}
+        >
+          <span className="settings-section-icon"><Kanban size={16} /></span>
+          <span>
+            <strong>{t("Workspace tools")}</strong>
+            <small>{t("Model, teammates, and board shortcuts")}</small>
+          </span>
+        </button>
+        <button
           className={activeSection === "startup" ? "settings-section-item active" : "settings-section-item"}
           type="button"
           onClick={() => setActiveSection("startup")}
@@ -385,6 +409,17 @@ export function SettingsPage({
           <span>
             <strong>{t("Startup readiness")}</strong>
             <small>{startupStatus ? startupStatusLabel(startupStatus, t) : startupStatusLoading ? t("Loading") : t("not loaded")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "account-profile" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("account-profile")}
+        >
+          <span className="settings-section-icon"><UserRound size={16} /></span>
+          <span>
+            <strong>{t("Account and profile")}</strong>
+            <small>{t("Profile, preferences, and identity")}</small>
           </span>
         </button>
         <button
@@ -590,6 +625,57 @@ export function SettingsPage({
           </div>
         </div>
       </section>
+      ) : null}
+
+      {activeSection === "account-profile" ? (
+        <section className="panel settings-panel account-profile-settings-panel" aria-labelledby="account-profile-settings-title">
+          <div className="panel-title">
+            <UserRound size={18} />
+            <h2 id="account-profile-settings-title">{t("Account and profile")}</h2>
+          </div>
+          <ProfilePage cwd={cwd} onProfileChange={onProfileChange} />
+        </section>
+      ) : null}
+
+      {activeSection === "workspace-tools" ? (
+        <section className="panel settings-panel workspace-tools-settings-panel" aria-labelledby="workspace-tools-settings-title">
+          <div className="panel-title">
+            <Kanban size={18} />
+            <h2 id="workspace-tools-settings-title">{t("Workspace tools")}</h2>
+          </div>
+          <div className="settings-tool-shortcut-list">
+            <div className="external-work-secret-box">
+              <div>
+                <strong>{t("Model Workbench")}</strong>
+                <small>{t("Configure providers, models, and checks.")}</small>
+              </div>
+              <button className="secondary-button" type="button" onClick={onOpenProviders}>
+                <PlugZap size={16} />
+                {t("Open Model Workbench")}
+              </button>
+            </div>
+            <div className="external-work-secret-box">
+              <div>
+                <strong>{t("AI Teammates")}</strong>
+                <small>{t("Manage teammate roster, models, and private chats.")}</small>
+              </div>
+              <button className="secondary-button" type="button" onClick={onOpenTeammates}>
+                <Bot size={16} />
+                {t("Open AI Teammates")}
+              </button>
+            </div>
+            <div className="external-work-secret-box">
+              <div>
+                <strong>{t("Work Board")}</strong>
+                <small>{t("Review actionable work across channels and runs.")}</small>
+              </div>
+              <button className="secondary-button" type="button" onClick={onOpenWorkBoard}>
+                <Kanban size={16} />
+                {t("Open Work Board")}
+              </button>
+            </div>
+          </div>
+        </section>
       ) : null}
 
       {activeSection === "archived-items" ? (

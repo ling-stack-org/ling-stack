@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState } from "./support/mock-state";
+import { createBaseState, cwd, defaultRuntimePolicy } from "./support/mock-state";
 
 test("channel branch list shows real branches without default branch chrome", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
@@ -86,6 +86,43 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect(archivedPanel).toContainText("Engineering");
   await expect(archivedPanel.getByRole("button", { name: "Restore" })).toBeVisible();
   await expect(archivedPanel.getByRole("button", { name: "Delete" })).toBeVisible();
+});
+
+test("channel sidebar menu archives all active channels", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channels.push({
+    id: "channel_design",
+    workspaceId: "workspace_default",
+    name: "Design",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "designer",
+    allowedTools: ["read", "grep"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z",
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Design" })).toBeVisible();
+  await navigation.getByRole("button", { name: "Channel actions" }).hover();
+  await expect(navigation.getByRole("menuitem", { name: "Archive all channels" })).toBeVisible();
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Archive all channels?");
+    await dialog.accept();
+  });
+  await navigation.getByRole("menuitem", { name: "Archive all channels" }).click();
+
+  await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("archived");
+  await expect.poll(() => mockChannelStatus(state, "Design")).toBe("archived");
+  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Design" })).toHaveCount(0);
 });
 
 function mockChannelStatus(state: ReturnType<typeof createBaseState>, name: string): string | undefined {
