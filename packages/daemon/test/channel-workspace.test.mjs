@@ -6358,6 +6358,13 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     const initial = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(initial.settings.schemaVersion, 1);
     assert.equal(initial.settings.workspaceCwd, undefined);
+    assert.deepEqual(initial.settings.skillGovernancePolicy, {
+      generationMode: "semi_auto",
+      recordingMode: "user_initiated",
+      invocationMode: "explicit_only",
+      publishMode: "manual_review",
+      bindMode: "manual_review",
+    });
 
     const patched = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       workspaceCwd: cwd,
@@ -6365,15 +6372,29 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
       locale: "zh-CN",
       channelNotifications: { channel_one: "mentions" },
       channelActivityViews: { channel_one: [{ id: "custom:review", name: "Review" }] },
+      skillGovernancePolicy: {
+        generationMode: "approval_only",
+        recordingMode: "user_initiated",
+        invocationMode: "explicit_only",
+        publishMode: "manual_review",
+        bindMode: "manual_review",
+      },
     });
     assert.equal(patched.settings.workspaceCwd, cwd);
     assert.equal(patched.settings.theme, "dark");
     assert.equal(patched.settings.locale, "zh-CN");
     assert.equal(patched.settings.channelNotifications.channel_one, "mentions");
+    assert.equal(patched.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reopened = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(reopened.settings.theme, "dark");
     assert.equal(reopened.settings.channelActivityViews.channel_one[0].id, "custom:review");
+    assert.equal(reopened.settings.skillGovernancePolicy.generationMode, "approval_only");
+
+    const reset = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      skillGovernancePolicy: null,
+    });
+    assert.equal(reset.settings.skillGovernancePolicy.generationMode, "semi_auto");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7487,6 +7508,22 @@ test("procedure observation job API records explicit jobs idempotently before ca
     assert.equal(repeated.jobKey, created.jobKey);
     assert.equal((await getJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}&origin=recording&limit=10`)).candidates.length, 1);
 
+    const recordingEndpoint = await postJson(`${daemon.url}/skill-recordings?cwd=${encodeURIComponent(cwd)}`, {
+      id: "skill_recording_endpoint_observation",
+      runId: "run_skill_recording_endpoint",
+      title: "Recorded workspace cleanup flow",
+      summary: "Capture a user-initiated workspace cleanup recording.",
+      normalizedGoal: "record workspace cleanup",
+      positiveTriggers: ["workspace cleanup recording"],
+      negativeTriggers: ["destructive cleanup"],
+      toolLabels: ["bash"],
+      validationLabels: ["cleanup reviewed"],
+    });
+    assert.equal(recordingEndpoint.action, "candidate_created");
+    assert.equal(recordingEndpoint.generationMode, "semi_auto");
+    assert.equal(recordingEndpoint.recordingMode, "user_initiated");
+    assert.equal(recordingEndpoint.candidate.origin, "recording");
+
     const evidenceOnly = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
       source: "successful_tool_chain",
       signals: ["long_successful_sequence"],
@@ -7564,6 +7601,96 @@ test("procedure observation job API records explicit jobs idempotently before ca
     });
     assert.equal(blocked.action, "blocked");
     assert.equal(blocked.route.kind, "approval_policy_review");
+
+    await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      skillGovernancePolicy: {
+        generationMode: "approval_only",
+        recordingMode: "user_initiated",
+        invocationMode: "explicit_only",
+        publishMode: "manual_review",
+        bindMode: "manual_review",
+      },
+    });
+    const approvalOnlyFirst = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
+      source: "successful_tool_chain",
+      signals: ["long_successful_sequence"],
+      runId: "run_observation_job_approval_only_one",
+      terminalStatus: "succeeded",
+      selectedSkillId: "implement",
+      userConfirmed: false,
+      title: "Approval-only regression verification chain",
+      summary: "Record a successful chain under approval-only policy.",
+      normalizedGoal: "verify approval only regression",
+      positiveTriggers: ["approval-only regression verification"],
+      negativeTriggers: ["docs-only change"],
+      toolLabels: ["bash"],
+      validationLabels: ["approval-only typecheck passed"],
+    });
+    const approvalOnlySecond = await postJson(`${daemon.url}/procedure-observations/jobs?cwd=${encodeURIComponent(cwd)}`, {
+      source: "successful_tool_chain",
+      signals: ["long_successful_sequence"],
+      runId: "run_observation_job_approval_only_two",
+      terminalStatus: "succeeded",
+      selectedSkillId: "implement",
+      userConfirmed: false,
+      title: "Approval-only regression verification chain",
+      summary: "Record another successful chain under approval-only policy.",
+      normalizedGoal: "verify approval only regression",
+      positiveTriggers: ["approval-only regression verification"],
+      negativeTriggers: ["docs-only change"],
+      toolLabels: ["bash"],
+      validationLabels: ["approval-only typecheck passed"],
+    });
+    assert.equal(approvalOnlyFirst.action, "evidence_recorded");
+    assert.equal(approvalOnlySecond.action, "evidence_recorded");
+    assert.equal(approvalOnlySecond.candidate, undefined);
+    assert.match(approvalOnlySecond.generationDecision.reason, /approval_only/);
+
+    await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      skillGovernancePolicy: {
+        generationMode: "off",
+        recordingMode: "user_initiated",
+        invocationMode: "explicit_only",
+        publishMode: "manual_review",
+        bindMode: "manual_review",
+      },
+    });
+    const generationOffRecording = await postJson(`${daemon.url}/skill-recordings?cwd=${encodeURIComponent(cwd)}`, {
+      id: "skill_recording_generation_off",
+      runId: "run_skill_recording_generation_off",
+      title: "Recorded evidence-only flow",
+      summary: "Recording should be retained as evidence when generation is off.",
+      normalizedGoal: "record evidence only",
+      positiveTriggers: ["evidence-only recording"],
+      negativeTriggers: ["candidate creation"],
+      toolLabels: ["bash"],
+      validationLabels: ["manual review"],
+    });
+    assert.equal(generationOffRecording.action, "evidence_recorded");
+    assert.equal(generationOffRecording.candidate, undefined);
+    assert.equal(generationOffRecording.generationMode, "off");
+
+    await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      skillGovernancePolicy: {
+        generationMode: "approval_only",
+        recordingMode: "disabled",
+        invocationMode: "explicit_only",
+        publishMode: "manual_review",
+        bindMode: "manual_review",
+      },
+    });
+    const disabledRecording = await fetch(`${daemon.url}/skill-recordings?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: "run_skill_recording_disabled",
+        title: "Disabled recording",
+        summary: "This should be rejected by policy.",
+        normalizedGoal: "disabled recording",
+      }),
+    });
+    assert.equal(disabledRecording.status, 409);
+    assert.equal((await disabledRecording.json()).error, "skill_recording_disabled");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

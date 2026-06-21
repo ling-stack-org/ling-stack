@@ -2,7 +2,8 @@
 
 Status: Design direction; Skill Health, manual SkillCandidate review, candidate-to-draft,
 ProcedureObservation jobs, usage telemetry, observation clusters, playbook routing, and
-Channel Protocol Canvas read model implemented
+Channel Protocol Canvas read model, workspace Skill Governance Policy, and user-initiated
+Skill Recording entry implemented
 Date: 2026-06-20
 Scope: Ling-native reusable workflow candidate generation, duplicate/conflict governance,
 channel protocol candidates, and skill health diagnostics.
@@ -138,13 +139,23 @@ Already implemented in Ling:
   shows their steps, validation checks, positive/negative triggers, source refs, and review
   reason, and lets the reviewer approve or reject draft playbook candidates without
   leaving the governance surface.
+- Workspace Skill Governance Policy is persisted through workspace settings, exposed in
+  effective config, and gates observation job candidate creation with `off`,
+  `approval_only`, `semi_auto`, and `auto_candidate` modes. Invocation, publication, and
+  binding remain fixed to explicit/manual review paths.
+- User-initiated skill recording has a dedicated daemon/API-client entry point at
+  `POST /skill-recordings`. It converts the request into a `manual_recording`
+  `ProcedureObservationJob`, respects `recordingMode`, reuses idempotency, routing,
+  duplicate detection, and generation decisions, and only creates pending candidates.
 
 Current gaps:
 
-- No implemented automatic post-run hook or transcript-derived candidate generation. The
-  next-slice design below defines the gates, but the code path remains explicit/manual.
-- No implemented automatic candidate routing from run completion, workflow fan-in, or
-  selected transcript snippets. The implemented job path is explicit/idempotent only.
+- No implemented runtime hook that automatically submits post-run observation jobs from
+  run completion or workflow fan-in. The daemon job path is policy-gated, but callers
+  still submit bounded observations explicitly.
+- No implemented transcript-derived candidate generation from raw transcripts. Selected
+  transcript snippets should become bounded observation jobs, not hidden transcript
+  crawls.
 - No implemented automatic correction-to-update-candidate job yet. Correction telemetry
   is recorded and surfaced through health; a reviewer can create an update candidate.
 - No implemented automatic observation-to-protocol-draft or observation-to-playbook-draft
@@ -176,6 +187,86 @@ or route to memory/channel/automation/approval
 
 New active skills are the last resort.
 
+## Global Skill Governance Policy
+
+Skill generation has a workspace-level policy. Channel and teammate scopes may later
+tighten this policy, but they must not make it more permissive than the workspace policy.
+
+```ts
+type SkillGovernanceGenerationMode =
+  | "off"
+  | "approval_only"
+  | "semi_auto"
+  | "auto_candidate";
+
+type SkillGovernanceRecordingMode =
+  | "disabled"
+  | "user_initiated";
+
+interface SkillGovernancePolicy {
+  generationMode: SkillGovernanceGenerationMode;
+  recordingMode: SkillGovernanceRecordingMode;
+  invocationMode: "explicit_only";
+  publishMode: "manual_review";
+  bindMode: "manual_review";
+}
+```
+
+Mode semantics:
+
+| Mode | Behavior |
+| --- | --- |
+| `off` | Store observations and generation decisions only. Do not create generated or recorded candidates from observation jobs. Manual candidate authoring remains available. |
+| `approval_only` | Only user-confirmed save/recording jobs may create pending candidates after routing and duplicate checks. Post-run evidence stays evidence-only. |
+| `semi_auto` | User-confirmed jobs may create pending candidates, and post-run jobs may create a pending candidate only after repeated successful observations with stable validation evidence. This is the default. |
+| `auto_candidate` | Post-run jobs may create a pending candidate with fewer repetition gates, but still never publish, bind, invoke, grant tools, or mutate existing skills. |
+
+The fixed modes are intentionally narrow:
+
+- `invocationMode: "explicit_only"` means configured skills can be used through
+  `requestedSkillId` or existing bindings, while unconfigured skills are suggestions only.
+- `publishMode: "manual_review"` means a candidate must become an import draft and pass
+  the existing publication route before it is active.
+- `bindMode: "manual_review"` means candidate creation never attaches the skill to a
+  channel or teammate.
+
+Built-in, imported, default, external, and user-managed skills are protected resources.
+Policy gates may propose an overlay, wrapper, supersede action, or review task; they must
+not silently rewrite those skills.
+
+## User-Initiated Skill Recording
+
+Recording is a user action, not hidden background learning.
+
+The first implementation should model recording as a semantic entry point over the
+existing `ProcedureObservationJob` path:
+
+```text
+user starts recording
+  -> user demonstrates or selects a run/message/artifact slice
+  -> user stops and confirms
+  -> POST /skill-recordings
+  -> manual_recording ProcedureObservationJob
+  -> routing, duplicate checks, policy gate
+  -> pending SkillCandidate or evidence-only decision
+```
+
+The recording endpoint sets:
+
+- `source: "manual_recording"`;
+- `signals: ["save_as_skill", "user_approved_recording"]`;
+- `userConfirmed: true`;
+- `destinationHint: "skill"` unless the client explicitly routes to a channel protocol,
+  playbook, automation, or memory review destination.
+
+Recording output is still a candidate. It is not an active skill, not a teammate binding,
+and not a permission grant.
+
+Future Desktop/PC apps should call the same daemon route and render the same candidate
+review state. They may provide richer UI affordances such as start/stop capture, selected
+transcript snippets, or artifact pickers, but the durable object remains a
+`ProcedureObservation` plus candidate/review records.
+
 ## Non-Goals
 
 - No automatic publication of generated skills.
@@ -204,6 +295,8 @@ packages/daemon
   observation ingestion routes
   candidate review routes
   health routes
+  workspace skill governance policy gate
+  user-initiated skill recording entry point
   optional post-run observation jobs
 
 apps/web

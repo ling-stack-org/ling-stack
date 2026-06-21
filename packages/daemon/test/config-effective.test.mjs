@@ -40,6 +40,8 @@ test("effective config reports user defaults and workspace execution sources", a
     assert.equal(initial.values.theme.source, "user");
     assert.equal(initial.values.locale.value, "zh-CN");
     assert.equal(initial.values.responseLanguage.value, "en-US");
+    assert.equal(initial.values.skillGovernancePolicy.value.generationMode, "semi_auto");
+    assert.equal(initial.values.skillGovernancePolicy.source, "workspace");
     assert.equal(initial.values.runtime.defaultRunnerId.value, "pi");
     assert.equal(initial.values.runtime.defaultRunnerId.source, "user");
     assert.equal(initial.values.runtime.defaultRunnerId.path, resolve(userRoot, "config.json"));
@@ -53,6 +55,13 @@ test("effective config reports user defaults and workspace execution sources", a
     await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       theme: "light",
       locale: "en-US",
+      skillGovernancePolicy: {
+        generationMode: "approval_only",
+        recordingMode: "user_initiated",
+        invocationMode: "explicit_only",
+        publishMode: "manual_review",
+        bindMode: "manual_review",
+      },
     });
     await patchJson(`${daemon.url}/runtime/settings?cwd=${encodeURIComponent(cwd)}`, {
       defaultRunnerId: "pi",
@@ -64,6 +73,8 @@ test("effective config reports user defaults and workspace execution sources", a
     assert.equal(patched.values.theme.value, "light");
     assert.equal(patched.values.theme.source, "workspace");
     assert.equal(patched.values.theme.path, resolve(cwd, ".ling-stack", "ling-stack.sqlite"));
+    assert.equal(patched.values.skillGovernancePolicy.value.generationMode, "approval_only");
+    assert.equal(patched.values.skillGovernancePolicy.source, "workspace");
     assert.equal(patched.values.runtime.defaultRunnerId.source, "workspace");
     assert.equal(patched.values.runtime.defaultRunnerId.path, resolve(cwd, ".ling-stack", "runtime-settings.json"));
     assert.equal(patched.values.runtime.explicitRunnerFallback.value, "allow_to_default");

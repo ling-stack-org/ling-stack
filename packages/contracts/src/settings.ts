@@ -2,6 +2,18 @@ export type ResponseLanguage = "zh-CN" | "en-US";
 
 export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
 
+export type SkillGovernanceGenerationMode = "off" | "approval_only" | "semi_auto" | "auto_candidate";
+
+export type SkillGovernanceRecordingMode = "disabled" | "user_initiated";
+
+export interface SkillGovernancePolicy {
+  readonly generationMode: SkillGovernanceGenerationMode;
+  readonly recordingMode: SkillGovernanceRecordingMode;
+  readonly invocationMode: "explicit_only";
+  readonly publishMode: "manual_review";
+  readonly bindMode: "manual_review";
+}
+
 export interface WorkspaceSettings {
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
@@ -10,6 +22,7 @@ export interface WorkspaceSettings {
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly channelNotifications?: Record<string, string>;
   readonly channelActivityViews?: Record<string, unknown>;
+  readonly skillGovernancePolicy: SkillGovernancePolicy;
   readonly updatedAt: string;
 }
 
@@ -20,6 +33,7 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly channelNotifications?: Record<string, string> | null;
   readonly channelActivityViews?: Record<string, unknown> | null;
+  readonly skillGovernancePolicy?: SkillGovernancePolicy | null;
 }
 
 export interface WorkspaceSettingsResponse {
@@ -79,6 +93,7 @@ export interface EffectiveConfigResponse {
     readonly theme: EffectiveConfigValue<"light" | "dark" | "system">;
     readonly locale: EffectiveConfigValue<string>;
     readonly responseLanguage: EffectiveConfigValue<ResponseLanguagePreference>;
+    readonly skillGovernancePolicy: EffectiveConfigValue<SkillGovernancePolicy>;
     readonly runtime: {
       readonly defaultRunnerId: EffectiveConfigValue<string>;
       readonly explicitRunnerFallback: EffectiveConfigValue<"disabled" | "allow_to_default">;

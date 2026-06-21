@@ -2,6 +2,7 @@ import type { ToolName } from "./shared.js";
 import type { SkillApprovalProfile } from "./approvals.js";
 import type { ProviderCapability } from "./providers.js";
 import type { AiTeammateRoleKey } from "./teammates.js";
+import type { SkillGovernanceGenerationMode, SkillGovernanceRecordingMode } from "./settings.js";
 
 export type TeammateSkillBindingSource = "template" | "user";
 
@@ -426,6 +427,37 @@ export interface SkillCandidateObserveResponse {
 export interface ProcedureObservationJobResponse extends SkillCandidateObserveResponse {
   readonly jobKey: string;
   readonly reusedObservation: boolean;
+}
+
+export interface SkillRecordingObservationRequest {
+  readonly id?: string;
+  readonly workspaceId?: string;
+  readonly runId?: string;
+  readonly messageId?: string;
+  readonly reviewActionId?: string;
+  readonly channelId?: string;
+  readonly teammateId?: string;
+  readonly taskId?: string;
+  readonly selectedSkillId?: string;
+  readonly terminalStatus?: ProcedureObservationJobTerminalStatus;
+  readonly toolLabels?: readonly string[];
+  readonly validationLabels?: readonly string[];
+  readonly artifactRefs?: readonly string[];
+  readonly destinationHint?: "skill" | "channel_protocol" | "playbook" | "automation" | "memory";
+  readonly title: string;
+  readonly summary: string;
+  readonly normalizedGoal: string;
+  readonly positiveTriggers?: readonly string[];
+  readonly negativeTriggers?: readonly string[];
+  readonly procedureSteps?: readonly ProcedureObservationStep[];
+  readonly validationSteps?: readonly ProcedureObservationValidationStep[];
+  readonly confidence?: ProcedureObservationConfidence;
+  readonly reusableScore?: number;
+}
+
+export interface SkillRecordingObservationResponse extends ProcedureObservationJobResponse {
+  readonly generationMode: SkillGovernanceGenerationMode;
+  readonly recordingMode: SkillGovernanceRecordingMode;
 }
 
 export type SkillInvocationSuggestionBlocker =

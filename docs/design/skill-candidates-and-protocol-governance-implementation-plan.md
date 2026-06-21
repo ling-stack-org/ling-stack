@@ -2,7 +2,8 @@
 
 Status: Implementation breakdown; Skill Health, manual SkillCandidate review,
 candidate-to-draft flow, channel protocol candidate alias, and structured
-ProcedureObservation observe route implemented
+ProcedureObservation observe route, workspace Skill Governance Policy, and
+user-initiated Skill Recording entry implemented
 Date: 2026-06-20
 Source design: [Skill Candidates And Protocol Governance](skill-candidates-and-protocol-governance.md)
 
@@ -230,11 +231,15 @@ Implemented in this slice:
 - Settings > Skill Library playbook candidate review panel lists channel-local candidates,
   shows steps, validation checks, positive/negative triggers, source refs, and review
   reason, and supports approve/reject for draft playbook candidates.
+- workspace-level Skill Governance Policy in settings, effective config, and observation
+  job candidate creation gates;
+- dedicated user-initiated skill recording entry at `POST /skill-recordings`, backed by
+  `manual_recording` observation jobs, duplicate checks, and generation decisions.
 
 Still not implemented:
 
-- automatic post-run observation hooks; this document now defines the next implementation
-  slice, but no code has landed for it yet;
+- runtime wiring for automatic post-run observation jobs. The daemon job path is
+  policy-gated, but run completion and workflow fan-in do not submit jobs automatically;
 - native Desktop candidate review UI;
 - direct candidate-to-registry publish without the import draft review step;
 - transcript-derived or post-run automatic candidate creation for channel protocol or
@@ -1557,6 +1562,97 @@ Required coverage:
 - renderer cannot access stores or SQLite directly;
 - notification/deep-link targets use route/source refs.
 
+## Phase SG.14: Workspace Skill Governance Policy
+
+Type: additive settings contract and daemon gate.
+
+Files:
+
+```text
+packages/contracts/src/settings.ts
+packages/core/src/workspace-types.ts
+packages/core/src/storage/sqlite/workspace-settings-store.ts
+packages/daemon/src/features/settings/effective-config.ts
+packages/daemon/src/features/skills/routes.ts
+packages/daemon/test/channel-workspace.test.mjs
+```
+
+Tasks:
+
+- Add `SkillGovernancePolicy` to workspace settings with this default:
+  `generationMode: "semi_auto"`, `recordingMode: "user_initiated"`,
+  `invocationMode: "explicit_only"`, `publishMode: "manual_review"`,
+  `bindMode: "manual_review"`.
+- Parse and persist policy through `PATCH /workspace-settings`.
+- Expose the effective policy through `GET /effective-config`.
+- Gate observation job candidate creation:
+  - `off`: persist observations and decisions only;
+  - `approval_only`: only explicit save/recording jobs may create pending candidates;
+  - `semi_auto`: existing repeated-success post-run gate;
+  - `auto_candidate`: post-run candidate creation may use a lower repetition threshold,
+    but still only creates pending candidates.
+- Keep `/skill-candidates`, `/skill-candidates/:id/draft`, import draft publication, and
+  teammate/channel bindings on their existing manual review paths.
+
+Exit criteria:
+
+- Settings can round-trip the policy.
+- Post-run observations respect `approval_only` and `off`.
+- Existing candidate review and duplicate checks still run before candidate creation.
+
+## Phase SG.15: User-Initiated Skill Recording Entry
+
+Type: semantic API entry over existing observation jobs.
+
+Files:
+
+```text
+packages/contracts/src/skills.ts
+packages/core/src/procedure-observation-job.ts
+packages/daemon/src/features/skills/schemas.ts
+packages/daemon/src/features/skills/routes.ts
+packages/api-client/src/endpoints/skills.ts
+apps/web/src/api/skills.ts
+packages/daemon/test/channel-workspace.test.mjs
+packages/api-client/test/client.test.mjs
+```
+
+Tasks:
+
+- Add `SkillRecordingObservationRequest` and `SkillRecordingObservationResponse`.
+- Add `POST /skill-recordings?cwd=...`.
+- Convert a recording request to a `manual_recording` `ProcedureObservationJob` with
+  `save_as_skill` and `user_approved_recording` signals.
+- Reject the route when `recordingMode` is `disabled`.
+- Reuse the existing idempotency key, routing, duplicate detection, candidate creation,
+  and generation decision persistence.
+
+Exit criteria:
+
+- Recording creates a pending `recording` candidate only after policy, route, and
+  duplicate gates pass.
+- Disabled recording returns a stable error and does not create observations.
+- Repeating the same recording request reuses the existing observation.
+
+## Phase SG.16: Policy-Gated Post-Run Candidate Generation
+
+Type: conservative runtime hook.
+
+Tasks:
+
+- Wire run completion and workflow fan-in to submit bounded observation jobs.
+- Do not include raw full transcripts; use selected summaries, run ids, tool labels,
+  validation labels, artifacts, and source refs.
+- Ensure `approval_only` and `off` keep hooks evidence-only.
+- Ensure `auto_candidate` remains candidate-only and does not publish, bind, invoke, or
+  grant authority.
+
+Exit criteria:
+
+- Runtime hooks can create observations without creating candidates when policy blocks.
+- Candidate creation remains deduped, review-only, and explainable through generation
+  decisions.
+
 ## Parallelization Strategy
 
 Recommended order:
@@ -1570,6 +1666,7 @@ Lane E: SG.8 after SG.6
 Lane F: SG.9 -> SG.10 -> SG.11 after SG.7
 Lane G: SG.12 after SG.9 and SG.11
 Lane H: SG.13 after SG.10 and SG.11
+Lane I: SG.14 -> SG.15 -> SG.16 after SG.12
 ```
 
 Dependency table:
@@ -1589,6 +1686,9 @@ Dependency table:
 | SG.11 | `packages/core/storage`, run terminal events | SG.10 |
 | SG.12 | `packages/core/storage`, `packages/daemon` observation jobs | SG.9, SG.11 |
 | SG.13 | `packages/contracts`, `packages/core`, `packages/daemon`, `apps/web` | SG.10, SG.11 |
+| SG.14 | `packages/contracts`, `packages/core`, `packages/daemon` | SG.12 |
+| SG.15 | `packages/contracts`, `packages/core`, `packages/daemon`, `packages/api-client` | SG.14 |
+| SG.16 | `packages/daemon` run/channel hooks | SG.15 |
 
 Do not parallelize SG.6 and SG.8 in separate worktrees if both edit SQLite migrations.
 Keep schema-bearing phases sequential unless each phase has already landed on main.
