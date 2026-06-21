@@ -881,6 +881,13 @@
   line-height: 18px;
 }
 
+.settings-skill-governance-intro {
+  margin: 0;
+  color: #5f5f5f;
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .settings-skill-governance-field span {
   color: #424242;
   font-size: 12px;
@@ -896,6 +903,71 @@
 .settings-skill-governance-actions small {
   overflow-wrap: anywhere;
   color: #6b6b6b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-skill-governance-mode-guide,
+.settings-skill-governance-recording-guide {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.settings-skill-governance-mode-guide > strong,
+.settings-skill-governance-recording-guide > strong {
+  color: #242424;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-skill-governance-mode-guide > div {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  border-top: 1px solid #efefef;
+}
+
+.settings-skill-governance-mode-guide span {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid #efefef;
+}
+
+.settings-skill-governance-mode-guide span.active small {
+  color: #111111;
+}
+
+.settings-skill-governance-mode-guide span.active em {
+  color: #2f2f2f;
+}
+
+.settings-skill-governance-mode-guide small {
+  color: #686868;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.settings-skill-governance-mode-guide em {
+  min-width: 0;
+  color: #6b6b6b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 18px;
+}
+
+.settings-skill-governance-recording-guide ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: #5f5f5f;
   font-size: 12px;
   line-height: 18px;
 }
@@ -1625,5 +1697,10 @@
 
   .settings-skill-governance-actions {
     display: grid;
+  }
+
+  .settings-skill-governance-mode-guide span {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }

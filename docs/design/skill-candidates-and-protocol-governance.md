@@ -234,6 +234,22 @@ Built-in, imported, default, external, and user-managed skills are protected res
 Policy gates may propose an overlay, wrapper, supersede action, or review task; they must
 not silently rewrite those skills.
 
+The Settings UI presents this as a dedicated Skill Governance settings submodule rather
+than folding it into the general skill registry controls. The submodule has three jobs:
+
+- expose the current workspace policy source and save path so reviewers can tell whether
+  they are editing the workspace policy, a user default, or a built-in fallback;
+- explain all candidate generation modes in place, with the selected mode highlighted,
+  so `auto_candidate` is understood as creating pending candidates and not auto-publishing
+  skills;
+- explain recording as an explicit user action: start recording deliberately, finish the
+  run, review captured evidence, then let the normal draft, publish, and binding reviews
+  decide whether the candidate can become runtime-usable.
+
+This keeps the governance boundary visible at the exact point where operators change it:
+generation policy may change how candidates are proposed, but invocation, publication,
+and binding remain fixed review gates.
+
 ## User-Initiated Skill Recording
 
 Recording is a user action, not hidden background learning.
