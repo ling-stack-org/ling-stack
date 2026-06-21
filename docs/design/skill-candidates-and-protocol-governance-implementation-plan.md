@@ -1574,6 +1574,9 @@ packages/core/src/workspace-types.ts
 packages/core/src/storage/sqlite/workspace-settings-store.ts
 packages/daemon/src/features/settings/effective-config.ts
 packages/daemon/src/features/skills/routes.ts
+apps/web/src/features/settings/SkillGovernanceSettingsPanel.tsx
+apps/web/src/features/settings/SkillLibrarySettingsPanel.tsx
+apps/web/src/styles/settings.css
 packages/daemon/test/channel-workspace.test.mjs
 ```
 
@@ -1593,12 +1596,20 @@ Tasks:
     but still only creates pending candidates.
 - Keep `/skill-candidates`, `/skill-candidates/:id/draft`, import draft publication, and
   teammate/channel bindings on their existing manual review paths.
+- Keep the Settings UI governance controls in a dedicated submodule so candidate
+  generation, recording, and fixed review guards can evolve without expanding the
+  general skill library panel.
+- Explain the four candidate generation options and the explicit recording flow inline:
+  operators should understand that generated/recorded output is still only a pending
+  candidate until draft, publish, and binding reviews pass.
 
 Exit criteria:
 
 - Settings can round-trip the policy.
 - Post-run observations respect `approval_only` and `off`.
 - Existing candidate review and duplicate checks still run before candidate creation.
+- The Settings panel renders cleanly on desktop and narrow PC/mobile widths without
+  horizontal overflow or hidden policy descriptions.
 
 ## Phase SG.15: User-Initiated Skill Recording Entry
 

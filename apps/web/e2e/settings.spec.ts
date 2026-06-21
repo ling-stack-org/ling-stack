@@ -473,6 +473,11 @@ test("settings skill library saves skill governance policy", async ({ page }) =>
   await expect(governancePanel).toContainText("Semi-auto");
   await expect(governancePanel).toContainText("User initiated");
   await expect(governancePanel).toContainText("Explicit only");
+  await expect(governancePanel).toContainText("Candidate generation options");
+  await expect(governancePanel).toContainText("Create pending candidates from one stable successful observation");
+  await expect(governancePanel).toContainText("How recording works");
+  await expect(governancePanel).toContainText("Ling does not record background agent work automatically");
+  await expect(governancePanel).toContainText("Generated candidates still require draft, publish, and binding review");
 
   await governancePanel.getByRole("combobox", { name: "Skill candidate generation mode" }).selectOption("approval_only");
   await governancePanel.getByRole("combobox", { name: "Skill recording mode" }).selectOption("disabled");
