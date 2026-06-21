@@ -458,6 +458,35 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(clusterPanel).toContainText("Append evidence");
 });
 
+test("settings skill library saves skill governance policy", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Skill Library/ }).click();
+  const panel = page.locator(".settings-skill-library");
+  const governancePanel = panel.getByRole("region", { name: "Skill Governance Policy" });
+  await expect(governancePanel).toContainText("Semi-auto");
+  await expect(governancePanel).toContainText("User initiated");
+  await expect(governancePanel).toContainText("Explicit only");
+
+  await governancePanel.getByRole("combobox", { name: "Skill candidate generation mode" }).selectOption("approval_only");
+  await governancePanel.getByRole("combobox", { name: "Skill recording mode" }).selectOption("disabled");
+  await governancePanel.getByRole("button", { name: "Save governance policy" }).click();
+
+  await expect.poll(() => {
+    const policy = state.workspaceSettings.skillGovernancePolicy;
+    return isRecord(policy) ? `${policy.generationMode}:${policy.recordingMode}` : "";
+  }).toBe("approval_only:disabled");
+  await expect(panel).toContainText("Skill governance policy saved");
+  await expect(governancePanel).toContainText("Approval only");
+  await expect(governancePanel).toContainText("Disabled");
+});
+
 test("settings external work status shows setup and explicit controls", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

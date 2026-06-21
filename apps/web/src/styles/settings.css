@@ -801,6 +801,16 @@
   background: #ffffff;
 }
 
+.settings-skill-governance {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
 .settings-skill-candidate-review {
   display: grid;
   gap: 10px;
@@ -813,6 +823,8 @@
 
 .settings-skill-health-head,
 .settings-skill-health-head span,
+.settings-skill-governance-head,
+.settings-skill-governance-head span,
 .settings-skill-candidate-head,
 .settings-skill-candidate-head span {
   display: flex;
@@ -822,17 +834,20 @@
 }
 
 .settings-skill-health-head,
+.settings-skill-governance-head,
 .settings-skill-candidate-head {
   justify-content: space-between;
 }
 
 .settings-skill-health-head strong,
+.settings-skill-governance-head strong,
 .settings-skill-candidate-head strong {
   color: #111111;
   font-size: 13px;
 }
 
 .settings-skill-health-head small,
+.settings-skill-governance-head small,
 .settings-skill-health-finding p,
 .settings-skill-health-finding small,
 .settings-skill-candidate-head small,
@@ -842,6 +857,86 @@
   color: #6b6b6b;
   font-size: 12px;
   line-height: 18px;
+}
+
+.settings-skill-governance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-skill-governance-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-skill-governance-notice {
+  padding: 8px 10px;
+  border: 1px solid #f1dd9b;
+  border-radius: 6px;
+  background: #fff8df;
+  color: #7a5200;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-skill-governance-field span {
+  color: #424242;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.settings-skill-governance-field select {
+  width: 100%;
+  min-height: 36px;
+}
+
+.settings-skill-governance-field small,
+.settings-skill-governance-actions small {
+  overflow-wrap: anywhere;
+  color: #6b6b6b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-skill-governance-fixed {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-skill-governance-fixed span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid #ececec;
+  border-radius: 6px;
+  background: var(--surface-panel);
+}
+
+.settings-skill-governance-fixed small {
+  overflow: hidden;
+  color: #6b6b6b;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-governance-fixed strong {
+  color: #111111;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.settings-skill-governance-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
 }
 
 .settings-skill-health-summary {
@@ -1502,6 +1597,8 @@
 
   .external-work-secret-form,
   .external-work-workflow-form,
+  .settings-skill-governance-grid,
+  .settings-skill-governance-fixed,
   .settings-skill-library-toolbar,
   .settings-skill-import-grid,
   .settings-skill-library-body {
@@ -1519,9 +1616,14 @@
   }
 
   .settings-skill-health-finding-meta,
-  .settings-skill-candidate-actions {
+  .settings-skill-candidate-actions,
+  .settings-skill-governance-actions {
     justify-items: start;
     align-items: start;
     min-width: 0;
+  }
+
+  .settings-skill-governance-actions {
+    display: grid;
   }
 }
