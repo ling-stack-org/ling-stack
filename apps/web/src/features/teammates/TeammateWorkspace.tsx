@@ -60,6 +60,7 @@ import {
   revokePendingAttachmentPreview,
   revokePendingAttachmentPreviews,
   serializeComposerInputParts,
+  SettingsToolReturnRow,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import type {
@@ -170,6 +171,7 @@ export function TeammateWorkspace({
   onRefreshTeammates,
   onRefreshChannels,
   onRefreshTasks,
+  onBackToWorkspaceTools,
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
@@ -185,6 +187,7 @@ export function TeammateWorkspace({
   readonly onRefreshTeammates?: () => MaybePromise<void>;
   readonly onRefreshChannels?: () => MaybePromise<void>;
   readonly onRefreshTasks?: (channelId: string) => MaybePromise<void>;
+  readonly onBackToWorkspaceTools?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
@@ -201,6 +204,7 @@ export function TeammateWorkspace({
   const [directGuidancePromotingId, setDirectGuidancePromotingId] = useState("");
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
+  const [chatContextPanelOpen, setChatContextPanelOpen] = useState(true);
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<TeammatePrivateAttachment>[]>([]);
   const [directLinkPreviews, setDirectLinkPreviews] = useState<readonly TeammateDirectLinkPreview[]>([]);
@@ -496,6 +500,7 @@ export function TeammateWorkspace({
     setSkillImportOpen(false);
     setMessageSearchOpen(false);
     setMessageSearchQuery("");
+    setChatContextPanelOpen(true);
     setMessages([]);
     setHasMoreDirectMessages(false);
     setNextDirectBeforeMessageId(undefined);
@@ -1833,7 +1838,12 @@ export function TeammateWorkspace({
   }
 
   return (
-    <div className={`teammate-workspace ${workspaceView === "settings" ? "settings-mode" : "chat-mode"}`}>
+    <div className={[
+      "teammate-workspace",
+      workspaceView === "settings" ? "settings-mode" : "chat-mode",
+      onBackToWorkspaceTools ? "settings-return-mode" : "",
+      workspaceView === "chat" && !chatContextPanelOpen ? "context-collapsed" : "",
+    ].filter(Boolean).join(" ")}>
       {workspaceView === "chat" ? (
         <TeammateChatHeader
           cwd={cwd}
@@ -1844,6 +1854,7 @@ export function TeammateWorkspace({
           loading={loading}
           searchOpen={messageSearchOpen}
           searchQuery={messageSearchQuery}
+          contextPanelOpen={chatContextPanelOpen}
           onToggleSearch={() => setMessageSearchOpen((current) => !current)}
           onSearchQueryChange={setMessageSearchQuery}
           onClearSearch={() => setMessageSearchQuery("")}
@@ -1852,17 +1863,35 @@ export function TeammateWorkspace({
             setWorkspaceView("settings");
             setActiveTab("profile");
           }}
+          onToggleContextPanel={() => setChatContextPanelOpen((current) => !current)}
+          toolbarStart={onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : undefined}
         />
       ) : (
-        <section className="teammate-settings-header" aria-label={t("Single agent settings")}>
-          <button className="secondary-button compact-button" type="button" onClick={() => setWorkspaceView("chat")}>
-            <ArrowLeft size={15} />
-            {t("Back to private chat")}
-          </button>
-          <div>
-            <h2>{t("{name} settings", { name: teammate.displayName })}</h2>
-            <p>{isProtectedSystemTeammate ? t("Built-in teammate profile and user-added instructions") : t("Single agent profile, permissions, and tool configuration")}</p>
-          </div>
+        <section className={onBackToWorkspaceTools ? "teammate-settings-header settings-return-mode" : "teammate-settings-header"} aria-label={t("Single agent settings")}>
+          {onBackToWorkspaceTools ? (
+            <span className="teammate-settings-return-actions">
+              <SettingsToolReturnRow onBack={onBackToWorkspaceTools} />
+              <button className="secondary-button compact-button" type="button" onClick={() => setWorkspaceView("chat")}>
+                <ArrowLeft size={15} />
+                {t("Back to private chat")}
+              </button>
+            </span>
+          ) : (
+            <span className="teammate-settings-header-back-actions">
+              <button className="secondary-button compact-button" type="button" onClick={() => setWorkspaceView("chat")}>
+                <ArrowLeft size={15} />
+                {t("Back to private chat")}
+              </button>
+            </span>
+          )}
+          {!onBackToWorkspaceTools ? (
+            <div>
+              <h2>{t("{name} settings", { name: teammate.displayName })}</h2>
+              <p>{isProtectedSystemTeammate ? t("Built-in teammate profile and user-added instructions") : t("Single agent profile, permissions, and tool configuration")}</p>
+            </div>
+          ) : (
+            <div className="teammate-settings-header-spacer" aria-hidden="true" />
+          )}
           <div className="teammate-settings-header-actions">
             <button className="secondary-button compact-button" type="button" onClick={() => setSettingsForm(teammateToSettingsForm(teammate))}>
               {t("Reset")}
@@ -1959,7 +1988,7 @@ export function TeammateWorkspace({
         />
       ) : null}
 
-      {workspaceView === "chat" ? (
+      {workspaceView === "chat" && chatContextPanelOpen ? (
         <TeammateChatContextPanel
           cwd={cwd}
           lastAiMessage={lastAiMessage}

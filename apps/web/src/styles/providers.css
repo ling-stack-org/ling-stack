@@ -1091,6 +1091,14 @@
   padding: 0 0 14px;
 }
 
+.provider-workbench-header.settings-return-mode {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding-bottom: 10px;
+}
+
 .provider-workbench-header h1 {
   color: #111111;
   font-size: 28px;
@@ -1149,6 +1157,31 @@
   justify-items: end;
   gap: 8px;
   min-width: min(560px, 50%);
+}
+
+.provider-workbench-header.settings-return-mode .provider-header-tools {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.provider-workbench-header.settings-return-mode .provider-toolbar-controls {
+  order: 1;
+  flex: 1;
+  justify-content: flex-start;
+}
+
+.provider-workbench-header.settings-return-mode .provider-title-actions {
+  order: 2;
+}
+
+.provider-workbench-header.settings-return-mode .provider-search-field {
+  flex: 1;
+  width: auto;
+  max-width: 360px;
 }
 
 .provider-page-meta {

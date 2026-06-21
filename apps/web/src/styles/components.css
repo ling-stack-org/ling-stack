@@ -3526,15 +3526,29 @@ code,
 }
 
 .channel-left-drawer .sidebar-section-action {
-  width: 20px;
-  height: 20px;
-  color: var(--text);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--text-muted);
 }
 
 .channel-left-drawer .sidebar-section-action svg {
-  width: 20px;
-  height: 20px;
-  stroke-width: 2.4;
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.2;
+}
+
+.channel-left-drawer .sidebar-section-action:hover,
+.channel-left-drawer .sidebar-section-menu.open .sidebar-section-action {
+  background: #ffffff;
+  color: var(--text);
+}
+
+.channel-left-drawer .sidebar-section-menu-popover {
+  right: 8px;
+  border-color: #e5e5e5;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(17, 17, 17, 0.1);
 }
 
 .channel-left-drawer .sidebar-row {

@@ -62,7 +62,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   appearance: none;
-  background: #f59e0b;
+  background: var(--text-strong);
   color: #ffffff;
   font-size: 34px;
   font-weight: 700;
@@ -255,19 +255,19 @@
 }
 
 .profile-heatmap-cell.level-1 {
-  background: #bfd9cf;
+  background: #d9d9d9;
 }
 
 .profile-heatmap-cell.level-2 {
-  background: #80b6a4;
+  background: #b5b5b5;
 }
 
 .profile-heatmap-cell.level-3 {
-  background: #3f947c;
+  background: #767676;
 }
 
 .profile-heatmap-cell.level-4 {
-  background: #0e7a63;
+  background: #111111;
 }
 
 .profile-heatmap-months {
@@ -442,9 +442,9 @@
 .profile-crop-frame::after {
   position: absolute;
   inset: 0;
-  border: 2px solid color-mix(in srgb, var(--surface-panel) 84%, var(--accent, #0e7a63));
+  border: 2px solid color-mix(in srgb, var(--surface-panel) 84%, var(--accent, #111111));
   border-radius: inherit;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #0e7a63 42%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #111111 42%, transparent);
   content: "";
   pointer-events: none;
 }
@@ -479,7 +479,7 @@
 .profile-crop-control input {
   flex: 1;
   min-width: 0;
-  accent-color: #0e7a63;
+  accent-color: var(--text-strong);
 }
 
 .profile-crop-error {

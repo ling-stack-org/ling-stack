@@ -32,7 +32,7 @@ import type {
 } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
 import { isMediaProvider, providerPreflightReady } from "../../lib/providers.js";
-import { MetaRow } from "../../shared/components/index.js";
+import { MetaRow, SettingsToolReturnRow } from "../../shared/components/index.js";
 import type {
   AiCouncil,
   Channel,
@@ -84,6 +84,7 @@ export function AiTeammatesPage({
   onOpenCouncils,
   onOpenChannel,
   onOpenProviders,
+  onBackToWorkspaceTools,
 }: {
   readonly cwd: string;
   readonly skillPack: SkillPack | undefined;
@@ -107,6 +108,7 @@ export function AiTeammatesPage({
   readonly onOpenCouncils?: () => void;
   readonly onOpenChannel?: (channelId: string) => void;
   readonly onOpenProviders: () => void;
+  readonly onBackToWorkspaceTools?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const templates = skillPack?.teammateTemplates ?? [];
@@ -264,40 +266,45 @@ export function AiTeammatesPage({
   }
 
   return (
-    <div className="teammates-page">
-      <header className="teammates-page-header">
-        <div>
-          <h1>{t("AI Teammates")}</h1>
-          <p>
-            {t("{count} teammates · {needsModel} need configuration · {channels} connected channels", {
-              count: activeLocalTeammates.length,
-              needsModel: needsModelTeammateCount,
-              channels: connectedChannelCount,
-            })}
-          </p>
-        </div>
-        <div className="teammate-management-tabs" role="tablist" aria-label={t("Teammate management tabs")}>
-          <button
-            className={activeManagementView === "teammates" ? "active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={activeManagementView === "teammates"}
-            onClick={() => setActiveManagementView("teammates")}
-          >
-            <Users size={14} />
-            {t("Teammates")}
-          </button>
-          <button
-            className={activeManagementView === "councils" ? "active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={activeManagementView === "councils"}
-            onClick={() => setActiveManagementView("councils")}
-          >
-            <Brain size={14} />
-            {t("AI Councils")}
-          </button>
-        </div>
+    <div className={onBackToWorkspaceTools ? "teammates-page settings-return-mode" : "teammates-page"}>
+      <header className={onBackToWorkspaceTools ? "teammates-page-header settings-return-mode" : "teammates-page-header"}>
+        {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
+        {!onBackToWorkspaceTools ? (
+          <div>
+            <h1>{t("AI Teammates")}</h1>
+            <p>
+              {t("{count} teammates · {needsModel} need configuration · {channels} connected channels", {
+                count: activeLocalTeammates.length,
+                needsModel: needsModelTeammateCount,
+                channels: connectedChannelCount,
+              })}
+            </p>
+          </div>
+        ) : null}
+        {!onBackToWorkspaceTools ? (
+          <div className="teammate-management-tabs" role="tablist" aria-label={t("Teammate management tabs")}>
+            <button
+              className={activeManagementView === "teammates" ? "active" : ""}
+              type="button"
+              role="tab"
+              aria-selected={activeManagementView === "teammates"}
+              onClick={() => setActiveManagementView("teammates")}
+            >
+              <Users size={14} />
+              {t("Teammates")}
+            </button>
+            <button
+              className={activeManagementView === "councils" ? "active" : ""}
+              type="button"
+              role="tab"
+              aria-selected={activeManagementView === "councils"}
+              onClick={() => setActiveManagementView("councils")}
+            >
+              <Brain size={14} />
+              {t("AI Councils")}
+            </button>
+          </div>
+        ) : null}
         <button className="primary-button teammate-page-create-button" type="button" onClick={focusCreateFlow}>
           <Plus size={16} />
           {t("Add teammate")}

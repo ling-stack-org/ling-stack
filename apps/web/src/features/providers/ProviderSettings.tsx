@@ -46,6 +46,7 @@ import {
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
+import { SettingsToolReturnRow } from "../../shared/components/index.js";
 import type {
   ProviderCheckResult,
   ProviderFormState,
@@ -101,6 +102,7 @@ export function ProviderSettings({
   onOpenRun,
   onClearCheckFeedback,
   onClearRepair,
+  onBackToWorkspaceTools,
 }: {
   readonly cwd: string;
   readonly providers: readonly ProviderPreset[];
@@ -137,6 +139,7 @@ export function ProviderSettings({
   readonly onOpenRun: (runId: string) => void;
   readonly onClearCheckFeedback: (providerId: string) => void;
   readonly onClearRepair: () => void;
+  readonly onBackToWorkspaceTools?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const workbenchReadyProviderCount = providers.filter(isWorkbenchReadyProvider).length;
@@ -384,19 +387,26 @@ export function ProviderSettings({
   }
 
   return (
-    <div className="provider-layout provider-management-layout provider-workbench-surface">
-      <section className="provider-list-panel provider-workbench" aria-labelledby="provider-workbench-title">
-        <header className="provider-workbench-header">
-          <div>
-            <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>
-            <p>{t("Manage and configure all available model presets.")}</p>
-            <div className="provider-page-meta" aria-label={t("Provider workbench action summary")}>
-              <span>{t("Ready to use")} {workbenchReadyProviderCount}</span>
-              <span>{t("Needs config")} {needsAttentionProviderCount}</span>
-              <span>{t("Missing key")} {missingSecretCount}</span>
-              <span>{t("Disabled")} {disabledProviderCount}</span>
+    <div className={onBackToWorkspaceTools ? "provider-layout provider-management-layout provider-workbench-surface settings-return-mode" : "provider-layout provider-management-layout provider-workbench-surface"}>
+      <section
+        className="provider-list-panel provider-workbench"
+        aria-label={onBackToWorkspaceTools ? t("Model Workbench") : undefined}
+        aria-labelledby={onBackToWorkspaceTools ? undefined : "provider-workbench-title"}
+      >
+        <header className={onBackToWorkspaceTools ? "provider-workbench-header settings-return-mode" : "provider-workbench-header"}>
+          {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
+          {!onBackToWorkspaceTools ? (
+            <div>
+              <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>
+              <p>{t("Manage and configure all available model presets.")}</p>
+              <div className="provider-page-meta" aria-label={t("Provider workbench action summary")}>
+                <span>{t("Ready to use")} {workbenchReadyProviderCount}</span>
+                <span>{t("Needs config")} {needsAttentionProviderCount}</span>
+                <span>{t("Missing key")} {missingSecretCount}</span>
+                <span>{t("Disabled")} {disabledProviderCount}</span>
+              </div>
             </div>
-          </div>
+          ) : null}
           <div className="provider-header-tools">
             <div className="provider-title-actions">
               <button className="primary-button compact-button" type="button" onClick={openNewProviderSheet}>

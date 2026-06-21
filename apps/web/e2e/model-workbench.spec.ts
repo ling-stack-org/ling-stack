@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -20,6 +20,12 @@ async function clickProviderRowMenuItem(row: Locator, name: string | RegExp): Pr
   await menu.getByRole("menuitem", { name }).click();
 }
 
+async function openModelWorkbench(page: Page): Promise<void> {
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /^(Settings|设置)$/ }).click();
+  await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Workspace tools|工作区工具)/ }).click();
+  await page.getByRole("button", { name: /^(Open Model Workbench|打开模型工作台)$/ }).click();
+}
+
 test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
@@ -36,9 +42,9 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
-  await expect(page.getByRole("heading", { name: "模型工作台" }).first()).toBeVisible();
-  await expect(page.getByRole("heading", { name: "模型工作台" })).toHaveCount(1);
+  await openModelWorkbench(page);
+  await expect(page.locator(".provider-workbench-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "返回工作区工具" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "模型工作台" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "模型预设" })).toHaveCount(0);
   await expect(page.locator(".provider-table")).toBeVisible();
   await expect(page.getByText("上一页")).toHaveCount(0);
@@ -65,13 +71,8 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(workbenchBounds?.workbench.right).toBeLessThanOrEqual((workbenchBounds?.workspaceContent.right ?? 0) + 1.5);
   expect(workbenchBounds ? workbenchBounds.workspaceContent.right - workbenchBounds.workbench.right : 0).toBeLessThanOrEqual(1.5);
   await expect(page.locator(".workspace-head .status-badge")).toHaveCount(0);
-  await expect(page.locator(".provider-page-meta")).toContainText("可直接使用");
-  await expect(page.locator(".provider-page-meta")).toContainText("需配置");
-  await expect(page.locator(".provider-page-meta")).toContainText("缺少 Key");
-  await expect(page.locator(".provider-page-meta")).not.toContainText("聊天模型");
-  await expect(page.locator(".provider-page-meta")).not.toContainText("媒体模型");
+  await expect(page.locator(".provider-page-meta")).toHaveCount(0);
   await expect(page.getByText("Chat-capable")).toHaveCount(0);
-  await expect(page.locator(".provider-page-meta")).not.toContainText("模板");
   await expect(page.getByRole("button", { name: "添加模型" })).toBeVisible();
   await expect(page.getByText("修复队列")).toHaveCount(0);
   await expect(page.getByText("Repair queue")).toHaveCount(0);
@@ -251,7 +252,7 @@ test("model workbench hides capability state row while keeping advanced override
   });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await openModelWorkbench(page);
   await page.getByRole("button", { name: "Add model" }).first().click();
   const editor = page.getByRole("dialog", { name: "New preset" });
   await expect(editor).toBeVisible();
@@ -284,7 +285,7 @@ test("model workbench localizes unsupported daemon model discovery errors", asyn
   });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await openModelWorkbench(page);
   await page.getByRole("button", { name: "添加模型" }).first().click();
   await page.getByLabel("模型供应商").selectOption("custom-openai-compatible");
   await page.getByLabel("API Key", { exact: true }).fill("test-visible-key");
@@ -302,7 +303,7 @@ test("model workbench save validates before persisting and keeps errors inside t
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await openModelWorkbench(page);
   await page.getByRole("button", { name: "添加模型" }).first().click();
   const editor = page.getByRole("dialog", { name: "新建预设" });
   await expect(editor).toBeVisible();
@@ -328,7 +329,7 @@ test("model workbench imports Doubao supplier models without hiding media-lookin
   });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await openModelWorkbench(page);
   await page.getByRole("button", { name: "添加模型" }).first().click();
   const editor = page.getByRole("dialog", { name: "新建预设" });
   await editor.getByLabel("模型供应商").selectOption("doubao-ark");
@@ -380,7 +381,7 @@ test("model workbench media suppliers stay in the unified supplier picker", asyn
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await openModelWorkbench(page);
   await page.getByRole("button", { name: "添加模型" }).first().click();
   await expect(page.getByRole("tab")).toHaveCount(0);
   const supplierSelect = page.getByLabel("模型供应商");
@@ -435,7 +436,7 @@ test("model workbench edits media presets from the unified supplier picker", asy
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await openModelWorkbench(page);
   const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
   await clickProviderRowMenuItem(seedreamRow, "编辑");
   const editor = page.getByRole("dialog", { name: "编辑预设" });
@@ -555,13 +556,10 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
-  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
-  await expect(page.locator(".provider-page-meta")).toContainText("Ready to use");
-  await expect(page.locator(".provider-page-meta")).toContainText("Needs config");
-  await expect(page.locator(".provider-page-meta")).toContainText("Missing key");
-  await expect(page.locator(".provider-page-meta")).not.toContainText("Chat models");
-  await expect(page.locator(".provider-page-meta")).not.toContainText("Media models");
+  await openModelWorkbench(page);
+  await expect(page.locator(".provider-workbench-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
+  await expect(page.locator(".provider-page-meta")).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
   const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
@@ -619,7 +617,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
 
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await openModelWorkbench(page);
   const reloadedOpenAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
   await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Clear default" })).toBeVisible();
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
@@ -760,16 +758,10 @@ test("model workbench status counts align with saved chat and media presets", as
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await openModelWorkbench(page);
   const filters = page.getByLabel("Filter model presets");
   const summary = page.locator(".provider-page-meta");
-  await expect(summary).toContainText("Ready to use 3");
-  await expect(summary).toContainText("Needs config 0");
-  await expect(summary).toContainText("Missing key 0");
-  await expect(summary).toContainText("Disabled 0");
-  await expect(summary).not.toContainText("Chat models");
-  await expect(summary).not.toContainText("Media models");
-  await expect(summary).not.toContainText("Templates");
+  await expect(summary).toHaveCount(0);
   await expect(page.locator(".provider-group-row")).toHaveCount(0);
   await expect(page.locator(".provider-row")).toHaveCount(3);
 
@@ -804,7 +796,7 @@ test("model workbench row checks show inline feedback without spinning batch che
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await openModelWorkbench(page);
   const checkAllButton = page.getByRole("button", { name: "Check all" });
   const readyRow = page.locator(".provider-row").filter({ hasText: "Ready Local Relay" });
   await readyRow.getByRole("button", { name: "Check" }).click();
@@ -832,7 +824,7 @@ test("model workbench row checks show inline feedback without spinning batch che
   await expect(mediaFeedback).toHaveCount(0, { timeout: 3500 });
 
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await openModelWorkbench(page);
   await page.getByRole("button", { name: "Check all" }).click();
   await expect(checkAllButton.locator(".spin")).toHaveCount(1);
   await expect(page.locator(".provider-check-feedback-row")).toHaveCount(0);
@@ -857,7 +849,7 @@ test("save and check enables a disabled provider before checking", async ({ page
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await openModelWorkbench(page);
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Disabled Relay" });
   await clickProviderRowMenuItem(disabledRow, "Edit");
   await page.getByLabel("API key", { exact: true }).fill("disabled-provider-key");
@@ -891,7 +883,7 @@ test("row check enables a configured disabled chat provider before checking", as
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await openModelWorkbench(page);
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Configured Disabled Relay" });
   await clickProviderRowMenuItem(disabledRow, "Check");
 
