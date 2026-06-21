@@ -14,6 +14,14 @@ export const defaultRuntimePolicy = {
   queueOnConflict: true,
 };
 
+const defaultSkillGovernancePolicy = {
+  generationMode: "semi_auto",
+  recordingMode: "user_initiated",
+  invocationMode: "explicit_only",
+  publishMode: "manual_review",
+  bindMode: "manual_review",
+};
+
 const mockCreateAiCouncilRequestKeys = new Set(["displayName", "description", "routingPolicy", "members", "pinned"]);
 const mockCreateAiCouncilRoutingPolicyKeys = new Set(["defaultMode", "maxActiveMembers", "notes"]);
 const mockCloneAiCouncilRequestKeys = new Set(["displayName", "description", "pinned"]);
@@ -1065,12 +1073,46 @@ function normalizeWorkspaceSettings(settings: Record<string, unknown>): Record<s
     schemaVersion: 1,
     ...settings,
     workspaceCwd: typeof settings.workspaceCwd === "string" ? settings.workspaceCwd : cwd,
+    skillGovernancePolicy: normalizeSkillGovernancePolicy(settings.skillGovernancePolicy),
     updatedAt: typeof settings.updatedAt === "string" ? settings.updatedAt : "2026-05-22T00:00:00.000Z",
+  };
+}
+
+function normalizeSkillGovernancePolicy(value: unknown): Record<string, string> {
+  const record = isRecord(value) ? value : {};
+  const generationMode = record.generationMode;
+  const recordingMode = record.recordingMode;
+  return {
+    generationMode: generationMode === "off" || generationMode === "approval_only" || generationMode === "semi_auto" || generationMode === "auto_candidate"
+      ? generationMode
+      : defaultSkillGovernancePolicy.generationMode,
+    recordingMode: recordingMode === "disabled" || recordingMode === "user_initiated"
+      ? recordingMode
+      : defaultSkillGovernancePolicy.recordingMode,
+    invocationMode: "explicit_only",
+    publishMode: "manual_review",
+    bindMode: "manual_review",
   };
 }
 
 function effectiveWorkspaceSettingValue(value: unknown, key: string, builtInValue: string): Record<string, unknown> {
   if (typeof value === "string") {
+    return {
+      value,
+      source: "workspace",
+      path: `${cwd}/.ling-stack/ling-stack.sqlite`,
+      key,
+    };
+  }
+  return {
+    value: builtInValue,
+    source: "built_in",
+    key,
+  };
+}
+
+function effectiveWorkspaceObjectSettingValue(value: unknown, key: string, builtInValue: Record<string, unknown>): Record<string, unknown> {
+  if (isRecord(value)) {
     return {
       value,
       source: "workspace",
@@ -4899,11 +4941,11 @@ export async function handleDaemonRoute(
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const nextSettings = { ...state.workspaceSettings };
-    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "channelNotifications", "channelActivityViews"] as const) {
+    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
       if (body[key] === null) {
         delete nextSettings[key];
       } else if (body[key] !== undefined) {
-        nextSettings[key] = body[key];
+        nextSettings[key] = key === "skillGovernancePolicy" ? normalizeSkillGovernancePolicy(body[key]) : body[key];
       }
     }
     state.workspaceSettings = {
@@ -5011,6 +5053,11 @@ export async function handleDaemonRoute(
           theme: effectiveWorkspaceSettingValue(state.workspaceSettings.theme, "theme", "system"),
           locale: effectiveWorkspaceSettingValue(state.workspaceSettings.locale, "locale", "system"),
           responseLanguage: effectiveWorkspaceSettingValue(state.workspaceSettings.responseLanguage, "responseLanguage", "follow_user"),
+          skillGovernancePolicy: effectiveWorkspaceObjectSettingValue(
+            state.workspaceSettings.skillGovernancePolicy,
+            "skillGovernancePolicy",
+            defaultSkillGovernancePolicy,
+          ),
           runtime: {
             defaultRunnerId: { value: "pi", source: "built_in", key: "runtime.defaultRunnerId" },
             explicitRunnerFallback: { value: "disabled", source: "built_in", key: "runtime.explicitRunnerFallback" },

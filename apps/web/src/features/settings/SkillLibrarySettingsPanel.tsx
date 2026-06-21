@@ -10,6 +10,8 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Save,
+  ShieldCheck,
   Upload,
 } from "lucide-react";
 import {
@@ -18,6 +20,7 @@ import {
   createChannelProtocolCandidateFromCluster,
   createSkillCandidateDraft,
   createSkillImportDraft,
+  getEffectiveConfig,
   getSkillHealth,
   listChannelPlaybookCandidates,
   listChannels,
@@ -30,6 +33,7 @@ import {
   reviewChannelPlaybookCandidate,
   reviewSkillCandidate,
 } from "../../api.js";
+import { updateWorkspaceSettings } from "../../api/workspace-settings.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type {
@@ -37,9 +41,13 @@ import type {
   Channel,
   ChannelPlaybookCandidate,
   ChannelPlaybookCandidateReviewAction,
+  EffectiveConfigResponse,
+  ProcedureObservationCluster,
   SkillCandidate,
   SkillCandidateReviewAction,
-  ProcedureObservationCluster,
+  SkillGovernanceGenerationMode,
+  SkillGovernancePolicy,
+  SkillGovernanceRecordingMode,
   SkillHealthFinding,
   SkillHealthReport,
   SkillHealthSeverity,
@@ -73,6 +81,23 @@ const initialSkillImportForm: SkillImportForm = {
   content: "",
 };
 
+const defaultSkillGovernancePolicy: SkillGovernancePolicy = {
+  generationMode: "semi_auto",
+  recordingMode: "user_initiated",
+  invocationMode: "explicit_only",
+  publishMode: "manual_review",
+  bindMode: "manual_review",
+};
+
+const skillGovernanceGenerationModes: readonly SkillGovernanceGenerationMode[] = [
+  "off",
+  "approval_only",
+  "semi_auto",
+  "auto_candidate",
+];
+
+const skillGovernanceRecordingModes: readonly SkillGovernanceRecordingMode[] = ["disabled", "user_initiated"];
+
 export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly cwd: string; readonly refreshToken?: number }): JSX.Element {
   const { t } = useI18n();
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
@@ -82,6 +107,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [observationClusters, setObservationClusters] = useState<readonly ProcedureObservationCluster[]>([]);
   const [bindingSummaries, setBindingSummaries] = useState<readonly TeammateSkillBindingSummary[]>([]);
+  const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();
+  const [skillGovernanceDraft, setSkillGovernanceDraft] = useState<SkillGovernancePolicy>(defaultSkillGovernancePolicy);
   const [selectedSkillId, setSelectedSkillId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<SkillLibraryFilter>("all");
@@ -166,13 +193,14 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setLoading(true);
     try {
       setError("");
-      const [skillsResponse, skillHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
+      const [skillsResponse, skillHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse, effectiveConfigResponse] = await Promise.all([
         listSkills(workspaceCwd),
         getSkillHealth(workspaceCwd, { limit: 6 }),
         listProcedureObservationClusters(workspaceCwd, { limit: 8 }),
         listSkillCandidates(workspaceCwd, { limit: 8 }),
         listChannels(workspaceCwd),
         listAiTeammates(workspaceCwd),
+        getEffectiveConfig(workspaceCwd),
       ]);
       const visibleTeammates = teammatesResponse.teammates.filter((teammate) => teammate.status !== "disabled" && !teammate.hidden);
       const [teammateSkillResponses, playbookCandidateResponses] = await Promise.all([
@@ -191,11 +219,38 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setPlaybookCandidates(playbookCandidateResponses.flatMap((response) => response.candidates));
       setChannels(channelsResponse.channels);
       setBindingSummaries(teammateSkillResponses);
+      setEffectiveConfig(effectiveConfigResponse);
+      setSkillGovernanceDraft(effectiveConfigResponse.values.skillGovernancePolicy?.value ?? defaultSkillGovernancePolicy);
       setMessage(t("Skill library refreshed"));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function saveSkillGovernancePolicy(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      setMessage("");
+      if (effectiveConfig && !effectiveConfig.values.skillGovernancePolicy) {
+        setError(t("Skill governance policy is not supported by this daemon."));
+        return;
+      }
+      await updateWorkspaceSettings(workspaceCwd, { skillGovernancePolicy: skillGovernanceDraft });
+      const nextConfig = await getEffectiveConfig(workspaceCwd);
+      setEffectiveConfig(nextConfig);
+      setSkillGovernanceDraft(nextConfig.values.skillGovernancePolicy?.value ?? defaultSkillGovernancePolicy);
+      setMessage(t("Skill governance policy saved"));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -426,6 +481,17 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         <span><small>{t("Blocked")}</small><strong>{stats.blocked}</strong></span>
       </div>
 
+      <SkillGovernancePolicyPanel
+        policy={skillGovernanceDraft}
+        source={effectiveConfig?.values.skillGovernancePolicy?.source}
+        path={effectiveConfig?.values.skillGovernancePolicy?.path}
+        supported={effectiveConfig === undefined || effectiveConfig.values.skillGovernancePolicy !== undefined}
+        saving={saving}
+        onChange={setSkillGovernanceDraft}
+        onSave={() => void saveSkillGovernancePolicy()}
+        t={t}
+      />
+
       <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
 
       <SkillCandidateReviewPanel
@@ -646,6 +712,83 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       <footer className="settings-skill-audit-note">
         {message ? <span>{message}</span> : null}
         <span>{t("Persona cannot grant tools, approvals, or secrets; Skill permissions are enforced by binding and policy checks.")}</span>
+      </footer>
+    </section>
+  );
+}
+
+function SkillGovernancePolicyPanel({
+  policy,
+  source,
+  path,
+  supported,
+  saving,
+  onChange,
+  onSave,
+  t,
+}: {
+  readonly policy: SkillGovernancePolicy;
+  readonly source?: string;
+  readonly path?: string;
+  readonly supported: boolean;
+  readonly saving: boolean;
+  readonly onChange: (policy: SkillGovernancePolicy) => void;
+  readonly onSave: () => void;
+  readonly t: (key: string, values?: Readonly<Record<string, string | number>>) => string;
+}): JSX.Element {
+  return (
+    <section className="settings-skill-governance" aria-label={t("Skill Governance Policy")}>
+      <header className="settings-skill-governance-head">
+        <span>
+          <ShieldCheck size={15} />
+          <strong>{t("Skill Governance Policy")}</strong>
+        </span>
+        <small>{t("Source")}: {supported ? (source ? t(skillGovernanceSourceLabel(source)) : t("not loaded")) : t("Unsupported by daemon")}</small>
+      </header>
+      {!supported ? (
+        <div className="settings-skill-governance-notice">
+          {t("Update Ling daemon to save skill governance policy.")}
+        </div>
+      ) : null}
+      <div className="settings-skill-governance-grid">
+        <label className="settings-skill-governance-field">
+          <span>{t("Candidate generation")}</span>
+          <select
+            aria-label={t("Skill candidate generation mode")}
+            value={policy.generationMode}
+            onChange={(event) => onChange({ ...policy, generationMode: event.target.value as SkillGovernanceGenerationMode })}
+          >
+            {skillGovernanceGenerationModes.map((mode) => (
+              <option key={mode} value={mode}>{skillGovernanceGenerationModeLabel(mode, t)}</option>
+            ))}
+          </select>
+          <small>{skillGovernanceGenerationModeDescription(policy.generationMode, t)}</small>
+        </label>
+        <label className="settings-skill-governance-field">
+          <span>{t("Recording")}</span>
+          <select
+            aria-label={t("Skill recording mode")}
+            value={policy.recordingMode}
+            onChange={(event) => onChange({ ...policy, recordingMode: event.target.value as SkillGovernanceRecordingMode })}
+          >
+            {skillGovernanceRecordingModes.map((mode) => (
+              <option key={mode} value={mode}>{skillGovernanceRecordingModeLabel(mode, t)}</option>
+            ))}
+          </select>
+          <small>{skillGovernanceRecordingModeDescription(policy.recordingMode, t)}</small>
+        </label>
+      </div>
+      <div className="settings-skill-governance-fixed" aria-label={t("Fixed skill governance guards")}>
+        <span><small>{t("Invocation")}</small><strong>{skillGovernanceFixedModeLabel(policy.invocationMode, t)}</strong></span>
+        <span><small>{t("Publish")}</small><strong>{skillGovernanceFixedModeLabel(policy.publishMode, t)}</strong></span>
+        <span><small>{t("Bind")}</small><strong>{skillGovernanceFixedModeLabel(policy.bindMode, t)}</strong></span>
+      </div>
+      <footer className="settings-skill-governance-actions">
+        <small>{supported ? (path ? t("Stored in {path}", { path }) : t("Stored in workspace settings")) : t("Read-only compatibility mode")}</small>
+        <button className="primary-button compact-button" type="button" onClick={onSave} disabled={saving || !supported}>
+          {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
+          {t("Save governance policy")}
+        </button>
       </footer>
     </section>
   );
@@ -1342,6 +1485,60 @@ function skillCandidateReviewReason(action: SkillCandidateReviewAction, t: (key:
     return t("Changes requested from Skill Candidate Review panel.");
   }
   return t("Reviewed from Skill Candidate Review panel.");
+}
+
+function skillGovernanceGenerationModeLabel(mode: SkillGovernanceGenerationMode, t: (key: string) => string): string {
+  if (mode === "off") {
+    return t("Off");
+  }
+  if (mode === "approval_only") {
+    return t("Approval only");
+  }
+  if (mode === "auto_candidate") {
+    return t("Auto candidate");
+  }
+  return t("Semi-auto");
+}
+
+function skillGovernanceGenerationModeDescription(mode: SkillGovernanceGenerationMode, t: (key: string) => string): string {
+  if (mode === "off") {
+    return t("Record evidence only");
+  }
+  if (mode === "approval_only") {
+    return t("Create candidates only from approved recording jobs");
+  }
+  if (mode === "auto_candidate") {
+    return t("Create pending candidates from one stable successful observation");
+  }
+  return t("Create pending candidates after repeated stable success");
+}
+
+function skillGovernanceRecordingModeLabel(mode: SkillGovernanceRecordingMode, t: (key: string) => string): string {
+  return mode === "disabled" ? t("Disabled") : t("User initiated");
+}
+
+function skillGovernanceRecordingModeDescription(mode: SkillGovernanceRecordingMode, t: (key: string) => string): string {
+  return mode === "disabled" ? t("Skill recording endpoint is disabled") : t("Users can start skill recording explicitly");
+}
+
+function skillGovernanceFixedModeLabel(
+  mode: SkillGovernancePolicy["invocationMode"] | SkillGovernancePolicy["publishMode"] | SkillGovernancePolicy["bindMode"],
+  t: (key: string) => string,
+): string {
+  if (mode === "explicit_only") {
+    return t("Explicit only");
+  }
+  return t("Manual review");
+}
+
+function skillGovernanceSourceLabel(source: string): string {
+  if (source === "workspace") {
+    return "Workspace";
+  }
+  if (source === "user") {
+    return "User default";
+  }
+  return "Built-in";
 }
 
 function skillCandidateReviewMessage(action: SkillCandidateReviewAction, t: (key: string) => string): string {
