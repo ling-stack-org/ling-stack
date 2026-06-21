@@ -461,6 +461,16 @@ Rules:
 - Ling Agent has protected always-on coordinator memory and a dedicated Memory panel. Users
   can review or manage memory content, but cannot disable recall or grant new memory
   authority to Ling Agent.
+- Ling Agent has protected default skill bindings for non-strict general-purpose planning,
+  implementation, QA, documentation, browser-evidence, and context handoff workflows.
+  These bindings make the built-in coordinator usable without requiring a specialist
+  teammate for common tasks, but they do not grant tools or approvals by themselves.
+  When a bound skill has a reviewed source snapshot, Ling Agent may use that source as
+  bounded run context only after Effective Skill checks pass.
+- Ling Agent coordinates AI Councils but is not a normal council member. A council can
+  provide routing evidence, member rosters, workflow defaults, and governance ceilings,
+  but Ling Agent remains the visible coordinator and council membership never grants
+  tools, provider access, MCP access, credentials, deploy authority, or approval bypass.
 - Ling Agent is the default visible responder for ordinary root channel messages unless
   the user explicitly mentions a specialist or asks for a visible multi-participant reply.
 - `Channel.defaultTeammateId` must not point at Ling Agent for default-speaker semantics.
@@ -581,6 +591,10 @@ user-facing conversation artifacts.
 - Do not let Ling Agent self-grant tools, write scopes, MCP access, credentials, deploy
   authority, external-send authority, provider access, or memory authority beyond the
   protected always-on defaults.
+- Do not treat Ling Agent's protected default skill bindings as a bypass around allowed
+  tools, provider capabilities, channel policy, approval policy, or run state machines.
+- Do not let raw skill source snapshots bypass Ling Agent's turn envelope, confirmation
+  decisions, or approval policy.
 - Do not let user personalization override Ling Agent's protected identity, lifecycle,
   core system instructions, approval policy, or audit requirements.
 - Do not inject follow-up prompts into an active Pi `session.prompt(...)`.

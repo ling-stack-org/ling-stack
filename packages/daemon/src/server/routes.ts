@@ -267,7 +267,7 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "workspace" | "protocol" | "playbooks" | "branches";
+  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council";
   readonly branchId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
@@ -350,10 +350,25 @@ export function parseChannelRoute(
       segments[2] === "context-summaries" ||
       segments[2] === "workflows" ||
       segments[2] === "collaboration-cards" ||
+      segments[2] === "council-policy" ||
+      segments[2] === "effective-council" ||
       segments[2] === "protocol"
     )
   ) {
     return { channelId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
+export function parseAiCouncilRoute(
+  pathname: string,
+): { readonly councilId: string; readonly action?: "members" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "ai-councils") {
+    return { councilId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "ai-councils" && segments[2] === "members") {
+    return { councilId: segments[1], action: "members" };
   }
   return undefined;
 }

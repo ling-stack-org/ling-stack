@@ -1,7 +1,17 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
-import { buildMemoryHealthReport, buildMemoryMarkdownExport, DEFAULT_WORKSPACE_ID, parseMemoryMarkdownImport } from "@ling-stack/core";
+import {
+  buildMemoryHealthReport,
+  buildMemoryMarkdownExport,
+  DEFAULT_WORKSPACE_ID,
+  LING_AGENT_ID,
+  memoryCandidateGovernanceNotificationDedupeKey,
+  memoryCandidateGovernanceNotificationInput,
+  parseMemoryMarkdownImport,
+  type GovernanceNotificationSurface,
+  type MemoryObject,
+} from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
@@ -107,6 +117,7 @@ export async function handleMemoryCollection(
       const input = parseCreateMemoryObjectInput(body);
       const now = new Date().toISOString();
       const memory = store.createMemoryObject(input, now);
+      upsertMemoryCandidateGovernanceNotification(store, memory, now);
       appendControlPlaneEvent(store, controlPlaneEvents, {
         workspaceId: DEFAULT_WORKSPACE_ID,
         cwd,
@@ -164,7 +175,11 @@ export async function handleMemoryConsolidationJobs(
 
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const result = runMemoryConsolidationJob(store, parseCreateMemoryConsolidationJobRequest(body), new Date().toISOString());
+      const now = new Date().toISOString();
+      const result = runMemoryConsolidationJob(store, parseCreateMemoryConsolidationJobRequest(body), now);
+      for (const candidate of result.candidates) {
+        upsertMemoryCandidateGovernanceNotification(store, candidate, now);
+      }
       writeJson(response, 201, { cwd, ...result });
       return;
     }
@@ -286,6 +301,7 @@ export async function handleMemoryImport(
       : plan.candidates.map((candidate) => store.createMemoryObject(candidate.createInput, now));
     if (!body.dryRun) {
       for (const memory of memories) {
+        upsertMemoryCandidateGovernanceNotification(store, memory, now);
         appendControlPlaneEvent(store, controlPlaneEvents, {
           workspaceId: DEFAULT_WORKSPACE_ID,
           cwd,
@@ -466,6 +482,9 @@ export async function handleMemoryReviewAction(
     const input = parseApplyMemoryReviewActionInput(memoryId, body);
     const now = new Date().toISOString();
     const result = store.applyMemoryReviewAction(input, now);
+    if (input.action !== "keep_candidate") {
+      resolveMemoryCandidateGovernanceNotification(store, existing, now);
+    }
     appendControlPlaneEvent(store, controlPlaneEvents, {
       workspaceId: DEFAULT_WORKSPACE_ID,
       cwd,
@@ -487,6 +506,50 @@ export async function handleMemoryReviewAction(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+type MemoryNotificationStore = ReturnType<RunStoreRegistry["getStore"]>;
+
+function upsertMemoryCandidateGovernanceNotification(
+  store: MemoryNotificationStore,
+  memory: MemoryObject,
+  now: string,
+): void {
+  const surface = governanceSurfaceForMemory(store, memory, now);
+  const input = memoryCandidateGovernanceNotificationInput(memory, surface);
+  if (!input) {
+    return;
+  }
+  store.upsertGovernanceNotification(input, now);
+}
+
+function resolveMemoryCandidateGovernanceNotification(
+  store: MemoryNotificationStore,
+  memory: MemoryObject,
+  now: string,
+): void {
+  const surface = governanceSurfaceForMemory(store, memory, now);
+  const dedupeKey = memoryCandidateGovernanceNotificationDedupeKey(memory, surface);
+  store.resolveGovernanceNotificationByDedupeKey(memory.workspaceId, dedupeKey, now);
+}
+
+function governanceSurfaceForMemory(
+  store: MemoryNotificationStore,
+  memory: MemoryObject,
+  now: string,
+): GovernanceNotificationSurface {
+  if (memory.scopeType === "channel") {
+    return { kind: "channel", channelId: memory.ownerId };
+  }
+  if (memory.scopeType === "teammate") {
+    try {
+      const thread = store.getOrCreateTeammateDirectThread(memory.ownerId, now);
+      return { kind: "teammate_direct", teammateId: memory.ownerId, threadId: thread.id };
+    } catch {
+      return { kind: "ling_agent", teammateId: LING_AGENT_ID };
+    }
+  }
+  return { kind: "ling_agent", teammateId: LING_AGENT_ID };
 }
 
 function readOptionalStringField(value: unknown, key: string): string | undefined {

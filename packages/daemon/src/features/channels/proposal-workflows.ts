@@ -12,6 +12,7 @@ import {
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import { teammateCanWorkInEffectiveChannel } from "./channel-teammate-availability.js";
 import { responseLanguageInstruction } from "./response-language.js";
 import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
 import { compileWorkflowGraph } from "./workflow-graph.js";
@@ -180,7 +181,7 @@ function resolveProposalParticipants(
     if (teammate.hidden) {
       throw new HttpError(400, "proposal_teammate_unavailable", `${teammate.displayName} is hidden. Show it or edit the proposal before starting.`);
     }
-    if (!teammateCanRunInChannel(store, channel, teammate.id)) {
+    if (!teammateCanWorkInEffectiveChannel(store, channel, teammate.id)) {
       throw new HttpError(400, "proposal_teammate_not_in_channel", `${teammate.displayName} is not available in this channel. Add it to the channel or edit the proposal before starting.`);
     }
     return {
@@ -191,16 +192,6 @@ function resolveProposalParticipants(
         : {}),
     };
   });
-}
-
-function teammateCanRunInChannel(store: RunStore, channel: Channel, teammateId: string): boolean {
-  if (isLingAgentExecutorId(teammateId)) {
-    return true;
-  }
-  if (channel.defaultTeammateId === teammateId) {
-    return true;
-  }
-  return store.listTeammateChannelMemberships(teammateId).some((membership) => membership.channelId === channel.id);
 }
 
 function buildValidationRunRequest(
@@ -241,6 +232,7 @@ function buildProposalWorkflowGraph(
     ...(participant.providerPresetId ? { providerPresetId: participant.providerPresetId } : {}),
     ...(participant.teammate.runnerId ? { requestedRunnerId: participant.teammate.runnerId } : {}),
     ...(boundedRequiredTools.length > 0 ? { requiredTools: boundedRequiredTools } : {}),
+    ...(participant.step.sources?.length ? { proposalStepSources: participant.step.sources } : {}),
     autoStart: true,
   }));
   return {

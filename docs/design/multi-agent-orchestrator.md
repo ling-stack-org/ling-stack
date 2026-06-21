@@ -111,6 +111,9 @@ Ling Stack already has most of the lower-level pieces:
 
 - Built-in teammate templates for product, architect, engineer, designer, QA, security,
   release, and docs.
+- Future AI Council grouping for these built-in specialists is defined in
+  [AI Councils](ai-councils.md). The orchestrator should treat councils as roster and slot
+  resolution evidence, not as a replacement for workflow state machines.
 - Built-in skill definitions and the `gstack-default` skill pack.
 - A built-in `autoplan-lite` `WorkflowTemplate`.
 - Durable `ChannelWorkflow` and `ChannelWorkflowStep` records.
@@ -205,12 +208,18 @@ interface WorkflowStepTemplate {
   readonly id: string;
   readonly name: string;
   readonly phase: SkillWorkflowPhase;
-  readonly teammateTemplateId: string;
+  readonly teammateTemplateId: string; // legacy fallback
+  readonly councilSlotKey?: string;
   readonly skillId: string;
   readonly dependsOn?: readonly string[];
   readonly approvalGate?: SkillApprovalProfile;
 }
 ```
+
+When a workflow is started from an AI Council, the compiler should resolve
+`councilSlotKey` through the selected council's enabled members and persist the resolved
+`teammateId` into step metadata before any run starts. Missing required council slots block
+workflow creation instead of falling back to a hidden model choice.
 
 Compilation creates:
 

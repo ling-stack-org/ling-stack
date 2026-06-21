@@ -8,7 +8,9 @@ import {
   buildEffectiveTeammateSkills,
   createBuiltinAiTeammateId,
   createSqliteRunStore,
+  DEVELOPMENT_COUNCIL_ID,
   GSTACK_DEFAULT_SKILL_PACK_ID,
+  LING_AGENT_DEFAULT_SKILL_IDS,
   LING_AGENT_ID,
   LING_AGENT_SYSTEM_PROMPT,
   lingAgentAllowedTools,
@@ -68,6 +70,20 @@ test("sqlite seeds Ling Agent as a protected system teammate and channel member"
     assert.equal(lingAgent.hidden, false);
     assert.equal(lingAgent.systemPrompt, LING_AGENT_SYSTEM_PROMPT);
     assert.deepEqual(lingAgent.allowedTools, lingAgentAllowedTools);
+    const lingAgentSkillBindings = store.listTeammateSkillBindings(LING_AGENT_ID);
+    assert.deepEqual(lingAgentSkillBindings.map((binding) => binding.skillId).sort(), [...LING_AGENT_DEFAULT_SKILL_IDS].sort());
+    assert.ok(lingAgentSkillBindings.every((binding) => binding.source === "template" && binding.enabled));
+    const lingAgentEffectiveSkills = buildEffectiveTeammateSkills({
+      teammate: lingAgent,
+      bindings: lingAgentSkillBindings,
+      skills: listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID),
+      channelAllowedTools: lingAgentAllowedTools,
+      providerCapabilities: ["chat", "reasoning", "tool_call"],
+    });
+    assert.deepEqual(
+      lingAgentEffectiveSkills.filter((skill) => !skill.executable).map((skill) => [skill.skillId, skill.blockedReasons.map((reason) => reason.code)]),
+      [],
+    );
 
     const channel = store.createChannel(
       {
@@ -143,6 +159,79 @@ test("sqlite seeds Ling Agent as a protected system teammate and channel member"
   }
 });
 
+test("sqlite seeds Development Council and projects channel council members without copying memberships", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-development-council-"));
+  const now = "2026-06-20T00:00:00.000Z";
+  const updatedAt = "2026-06-20T00:01:00.000Z";
+  const engineerId = createBuiltinAiTeammateId("engineer");
+  const store = createSqliteRunStore(cwd);
+  try {
+    const council = store.getAiCouncil(DEVELOPMENT_COUNCIL_ID);
+    assert.ok(council);
+    assert.equal(council.source, "builtin");
+    assert.equal(council.templateId, "development");
+    assert.equal(council.displayName, "Development Council");
+    assert.equal(council.status, "active");
+    assert.equal(council.governanceProfile.permissionBoundary, "restrict_only");
+    assert.equal(council.governanceProfile.approvalBoundary, "cannot_bypass");
+
+    const members = store.listAiCouncilMembers(DEVELOPMENT_COUNCIL_ID);
+    assert.ok(members.length >= 8);
+    assert.ok(members.some((member) => member.teammateId === engineerId));
+    assert.equal(members.some((member) => member.teammateId === LING_AGENT_ID), false);
+
+    const channel = store.createChannel({ name: "Council Channel", boundPath: cwd }, now);
+    const defaultPolicy = store.getChannelCouncilPolicy(channel.id);
+    assert.ok(defaultPolicy);
+    assert.deepEqual(defaultPolicy.attachedCouncilIds, []);
+    assert.equal(defaultPolicy.preferredCouncilId, undefined);
+
+    const policy = store.upsertChannelCouncilPolicy(
+      channel.id,
+      {
+        attachedCouncilIds: [DEVELOPMENT_COUNCIL_ID],
+        preferredCouncilId: DEVELOPMENT_COUNCIL_ID,
+      },
+      updatedAt,
+    );
+    assert.deepEqual(policy.attachedCouncilIds, [DEVELOPMENT_COUNCIL_ID]);
+    assert.equal(policy.preferredCouncilId, DEVELOPMENT_COUNCIL_ID);
+
+    const effective = store.getEffectiveChannelCouncil(channel.id);
+    assert.ok(effective);
+    assert.deepEqual(effective.policy.attachedCouncilIds, [DEVELOPMENT_COUNCIL_ID]);
+    assert.ok(effective.councils.some((item) => item.council.id === DEVELOPMENT_COUNCIL_ID));
+    const engineerSpecialist = effective.specialists.find((specialist) => specialist.teammateId === engineerId);
+    assert.ok(engineerSpecialist);
+    assert.ok(engineerSpecialist.sources.some((source) => source.kind === "council" && source.councilId === DEVELOPMENT_COUNCIL_ID));
+    assert.equal(
+      store.listTeammateChannelMemberships(engineerId).some((membership) => membership.channelId === channel.id),
+      false,
+    );
+
+    const disabledMembers = members.map((member) => ({
+      teammateId: member.teammateId,
+      slotKey: member.slotKey,
+      label: member.label,
+      position: member.position,
+      enabled: member.teammateId === engineerId ? false : member.enabled,
+    }));
+    store.replaceAiCouncilMembers(DEVELOPMENT_COUNCIL_ID, disabledMembers, updatedAt);
+    const effectiveAfterDisable = store.getEffectiveChannelCouncil(channel.id);
+    assert.ok(effectiveAfterDisable);
+    assert.equal(effectiveAfterDisable.specialists.some((specialist) => specialist.teammateId === engineerId), false);
+    const disabledEngineer = effectiveAfterDisable.councils
+      .find((item) => item.council.id === DEVELOPMENT_COUNCIL_ID)
+      .members.find((member) => member.member.teammateId === engineerId);
+    assert.ok(disabledEngineer);
+    assert.equal(disabledEngineer.enabled, false);
+    assert.equal(disabledEngineer.blockedReason, "member_disabled");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite backfills current template skill defaults for existing builtin teammates without resetting overrides", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-skill-backfill-"));
   const store = createSqliteRunStore(cwd);
@@ -183,7 +272,19 @@ test("sqlite backfills current template skill defaults for existing builtin team
     try {
       const bindings = reopened.listTeammateSkillBindings(qaId);
       const bySkill = new Map(bindings.map((binding) => [binding.skillId, binding]));
-      for (const skillId of ["qa", "qa-only", "investigate", "design-review", "devex-review", "benchmark"]) {
+      for (const skillId of [
+        "qa",
+        "qa-only",
+        "investigate",
+        "design-review",
+        "devex-review",
+        "benchmark",
+        "benchmark-models",
+        "browse",
+        "scrape",
+        "ios-qa",
+        "ios-design-review",
+      ]) {
         assert.ok(bySkill.has(skillId), `${skillId} should be present after template backfill`);
       }
       assert.equal(bySkill.get("qa").enabled, false, "existing disabled template binding should stay disabled");
@@ -191,14 +292,14 @@ test("sqlite backfills current template skill defaults for existing builtin team
       assert.equal(bySkill.get("health").source, "user", "custom user binding should stay present");
       assert.equal(bySkill.get("qa-only").source, "template");
       assert.equal(bySkill.get("qa-only").enabled, true);
-      assert.equal(bindings.length, 7);
+      assert.equal(bindings.length, 12);
     } finally {
       reopened.close();
     }
 
     const reopenedAgain = createSqliteRunStore(cwd);
     try {
-      assert.equal(reopenedAgain.listTeammateSkillBindings(qaId).length, 7, "backfill should be idempotent");
+      assert.equal(reopenedAgain.listTeammateSkillBindings(qaId).length, 12, "backfill should be idempotent");
     } finally {
       reopenedAgain.close();
     }
@@ -435,6 +536,9 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
       now,
     );
     assert.deepEqual(skillBindings.map((item) => [item.skillId, item.source, item.enabled]), [
+      ["claude", "template", true],
+      ["context-restore", "template", true],
+      ["context-save", "template", true],
       ["design-html", "template", true],
       ["health", "template", true],
       ["implement", "template", false],
@@ -448,6 +552,9 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
       "2026-05-29T01:00:01.000Z",
     );
     assert.deepEqual(deletedUserSkillBindings.map((item) => [item.skillId, item.source, item.enabled]), [
+      ["claude", "template", true],
+      ["context-restore", "template", true],
+      ["context-save", "template", true],
       ["design-html", "template", true],
       ["health", "template", true],
       ["implement", "template", false],

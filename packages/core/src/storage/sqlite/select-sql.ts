@@ -487,6 +487,56 @@ export function teammateChannelMembershipSelectSql(whereClause: string): string 
   `;
 }
 
+export function aiCouncilSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      source,
+      template_id,
+      display_name,
+      description,
+      routing_policy_json,
+      governance_profile_json,
+      status,
+      pinned,
+      created_at,
+      updated_at
+    FROM ai_councils
+    ${whereClause}
+  `;
+}
+
+export function aiCouncilMemberSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      council_id,
+      teammate_id,
+      slot_key,
+      label,
+      position,
+      enabled,
+      created_at,
+      updated_at
+    FROM ai_council_members
+    ${whereClause}
+  `;
+}
+
+export function channelCouncilPolicySelectSql(whereClause: string): string {
+  return `
+    SELECT
+      workspace_id,
+      channel_id,
+      attached_council_ids_json,
+      preferred_council_id,
+      created_at,
+      updated_at
+    FROM channel_council_policies
+    ${whereClause}
+  `;
+}
+
 export function teammateSkillBindingSelectSql(whereClause: string): string {
   return `
     SELECT

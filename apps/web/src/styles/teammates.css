@@ -4238,13 +4238,14 @@
 }
 
 .teammates-page > .teammate-management-grid {
-  grid-template-columns: minmax(560px, 1fr) minmax(280px, 0.34fr);
+  grid-template-columns: minmax(560px, 1fr) minmax(340px, 0.4fr);
   gap: 0;
   height: 100%;
   min-height: 0;
 }
 
 .teammates-page .teammate-add-panel,
+.teammates-page .teammate-council-panel,
 .teammates-page .teammate-template-panel {
   border: 0;
   border-radius: 0;
@@ -4253,14 +4254,35 @@
 }
 
 .teammates-page .teammate-add-panel {
-  border-right: 1px solid #e5e5e5;
+  border-right: 0;
 }
 
 .teammates-page .teammate-template-panel {
-  padding-inline: 44px;
+  flex: 1 0 360px;
+  min-height: 360px;
+  padding-inline: 32px;
+  position: relative;
+}
+
+.teammate-side-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid #e5e5e5;
+  overflow-y: auto;
+  position: relative;
+}
+
+.teammates-page .teammate-council-panel {
+  flex: 0 0 auto;
+  max-height: min(430px, calc(100vh - 220px));
+  overflow-y: auto;
+  padding: 36px 44px;
+  border-bottom: 1px solid #e5e5e5;
 }
 
 .teammates-page .teammate-add-panel > .panel-title,
+.teammates-page .teammate-council-panel > .panel-title,
 .teammates-page .teammate-template-panel > .panel-title {
   min-height: 36px;
   margin-bottom: 26px;
@@ -4272,6 +4294,174 @@
   font-size: 16px;
   font-weight: 700;
   line-height: 22px;
+}
+
+.teammate-council-manager {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.teammate-council-selector {
+  display: grid;
+  gap: 6px;
+}
+
+.teammate-council-summary {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.teammate-council-summary strong {
+  color: #171717;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+.teammate-council-summary small {
+  color: #707070;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.teammate-council-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teammate-council-meta span,
+.teammate-council-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f1f1f1;
+  color: #5e5e5e;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.teammate-council-add-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.teammate-council-add-row select {
+  min-width: 0;
+}
+
+.teammate-council-member-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  max-height: 154px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.teammate-council-member-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 126px;
+  padding: 10px 12px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.teammate-council-member-row.disabled {
+  background: #fbfbfb;
+  opacity: 0.78;
+}
+
+.teammate-council-member-head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-areas:
+    "avatar copy"
+    "avatar status";
+  align-items: center;
+  gap: 5px 10px;
+  min-width: 0;
+}
+
+.teammate-council-member-head .avatar-initial,
+.teammate-council-member-head .teammate-avatar-image.compact {
+  grid-area: avatar;
+  width: 32px;
+  height: 32px;
+}
+
+.teammate-council-member-copy {
+  grid-area: copy;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.teammate-council-member-copy strong,
+.teammate-council-member-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-council-member-copy strong {
+  color: #171717;
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 18px;
+}
+
+.teammate-council-member-copy small {
+  color: #707070;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.teammate-council-status.enabled {
+  grid-area: status;
+  justify-self: start;
+  background: #edfdf3;
+  color: #087443;
+}
+
+.teammate-council-status.disabled {
+  grid-area: status;
+  justify-self: start;
+  background: #f1f1f1;
+  color: #707070;
+}
+
+.teammate-council-member-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 28px) minmax(0, 1fr) 28px;
+  gap: 6px;
+  flex: 0 0 30px;
+  height: 30px;
+  min-height: 30px;
+  justify-self: stretch;
+}
+
+.teammate-council-member-actions .secondary-button {
+  min-height: 28px;
+  padding-inline: 9px;
+  font-size: 12px;
 }
 
 .teammates-page .teammate-panel-meta {
@@ -4390,11 +4580,14 @@
 }
 
 .teammates-page > .teammate-management-grid .teammate-template-row {
+  position: relative;
+  z-index: 1;
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: auto;
   padding: 0;
   border: 0;
-  background: transparent;
+  background: #ffffff;
+  cursor: pointer;
 }
 
 .teammates-page > .teammate-management-grid .teammate-template-row .teammate-role-icon,
@@ -4404,7 +4597,7 @@
 
 .teammates-page > .teammate-management-grid .teammate-template-row:hover,
 .teammates-page > .teammate-management-grid .teammate-template-row.selected {
-  background: transparent;
+  background: #fafafa;
 }
 
 .teammates-page > .teammate-management-grid .teammate-template-copy strong {
@@ -4426,6 +4619,7 @@
   color: #111111;
   font-size: 13px;
   font-weight: 600;
+  pointer-events: none;
 }
 
 .teammate-create-dialog {
@@ -4583,6 +4777,7 @@
 
 @media (max-width: 900px) {
   .teammates-page > .teammate-management-grid,
+  .teammate-side-stack,
   .teammate-create-dialog .teammate-create-list.role-grid,
   .teammate-create-dialog .teammate-create-fields,
   .teammates-page .teammate-draft-row {
@@ -4605,6 +4800,7 @@
   }
 
   .teammates-page .teammate-add-panel,
+  .teammates-page .teammate-council-panel,
   .teammates-page .teammate-template-panel,
   .teammates-page-header,
   .teammate-create-dialog .channel-create-head,
@@ -4615,6 +4811,25 @@
   .teammates-page .teammate-add-panel {
     border-right: 0;
     border-bottom: 1px solid #e5e5e5;
+  }
+
+  .teammate-side-stack {
+    border-left: 0;
+    overflow: visible;
+  }
+
+  .teammates-page .teammate-council-panel {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .teammate-council-member-row {
+    grid-template-columns: 1fr;
+  }
+
+  .teammate-council-member-actions {
+    justify-self: stretch;
+    grid-template-columns: repeat(2, 32px) minmax(0, 1fr) 32px;
   }
 
   .teammate-create-steps {

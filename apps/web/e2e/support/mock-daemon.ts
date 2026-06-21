@@ -39,11 +39,15 @@ export interface MockState {
   channelProtocolDrafts: unknown[];
   channelPlaybookCandidates: unknown[];
   aiTeammates: unknown[];
+  aiCouncils: unknown[];
+  aiCouncilMembers: unknown[];
+  channelCouncilPolicies: unknown[];
   skillRegistryEntries: unknown[];
   skillImportDrafts: unknown[];
   skillCandidates: unknown[];
   skillCandidateReviewRecords: unknown[];
   procedureObservationClusters: unknown[];
+  governanceNotifications: unknown[];
   teammateChannelMemberships: unknown[];
   teammateSkillBindings: unknown[];
   teammateMemoryScopes: unknown[];
@@ -885,11 +889,15 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelProtocolDrafts: [],
     channelPlaybookCandidates: [],
     aiTeammates: [],
+    aiCouncils: [createMockAiCouncil()],
+    aiCouncilMembers: createMockAiCouncilMembers(),
+    channelCouncilPolicies: [],
     skillRegistryEntries: buildMockSkillRegistryEntries(),
     skillImportDrafts: [],
     skillCandidates: createMockSkillCandidates(),
     skillCandidateReviewRecords: [],
     procedureObservationClusters: createMockProcedureObservationClusters(),
+    governanceNotifications: [],
     teammateChannelMemberships: [],
     teammateSkillBindings: [],
     teammateMemoryScopes: [],
@@ -3773,6 +3781,69 @@ export function createMockTeammate(overrides: Record<string, unknown> = {}): Rec
   };
 }
 
+function createMockAiCouncil(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "council_builtin_development",
+    workspaceId: "workspace_default",
+    source: "builtin",
+    templateId: "development",
+    displayName: "Development Council",
+    description: "Engineering, design, and QA specialists for product development channels.",
+    routingPolicy: {
+      defaultMode: "parallel_review",
+      maxActiveMembers: 4,
+      notes: ["Attach by reference; do not copy members into channel memberships."],
+    },
+    governanceProfile: {
+      permissionBoundary: "restrict_only",
+      approvalBoundary: "cannot_bypass",
+      toolGrantBoundary: "cannot_grant",
+      credentialBoundary: "cannot_grant",
+      notes: ["Council policy can restrict authority only."],
+    },
+    status: "active",
+    pinned: true,
+    createdAt: "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createMockAiCouncilMembers(councilId = "council_builtin_development"): Record<string, unknown>[] {
+  return [
+    {
+      councilId,
+      teammateId: "teammate_builtin_engineer",
+      slotKey: "implementation",
+      label: "Implementation",
+      position: 0,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+    {
+      councilId,
+      teammateId: "teammate_builtin_designer",
+      slotKey: "product_design",
+      label: "Product design",
+      position: 1,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+    {
+      councilId,
+      teammateId: "teammate_builtin_qa",
+      slotKey: "verification",
+      label: "Verification",
+      position: 2,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+}
+
 function createMockLingAgentTeammate(): Record<string, unknown> {
   return {
     id: "ling_agent",
@@ -3805,9 +3876,133 @@ function mockTeammateCanRunInChannel(state: MockState, channelId: string, teamma
   if (isRecord(channel) && channel.defaultTeammateId === teammateId) {
     return true;
   }
-  return state.teammateChannelMemberships.some((item) =>
+  if (state.teammateChannelMemberships.some((item) =>
     isRecord(item) && item.channelId === channelId && item.teammateId === teammateId
-  );
+  )) {
+    return true;
+  }
+  const effectiveCouncil = buildMockEffectiveChannelCouncil(state, channelId);
+  return Array.isArray(effectiveCouncil.specialists) &&
+    effectiveCouncil.specialists.some((specialist) => isRecord(specialist) && specialist.teammateId === teammateId);
+}
+
+function readMockChannelCouncilPolicy(state: MockState, channelId: string): Record<string, unknown> {
+  const existing = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === channelId);
+  if (isRecord(existing)) {
+    return existing;
+  }
+  return {
+    workspaceId: "workspace_default",
+    channelId,
+    attachedCouncilIds: [],
+    preferredCouncilId: undefined,
+    createdAt: "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:00:00.000Z",
+  };
+}
+
+function writeMockChannelCouncilPolicy(state: MockState, channelId: string, patch: Record<string, unknown>): Record<string, unknown> {
+  const existing = readMockChannelCouncilPolicy(state, channelId);
+  const attachedCouncilIds = Array.isArray(patch.attachedCouncilIds)
+    ? patch.attachedCouncilIds.filter((id): id is string => typeof id === "string")
+    : Array.isArray(existing.attachedCouncilIds) ? existing.attachedCouncilIds.filter((id): id is string => typeof id === "string") : [];
+  const preferredCouncilId = patch.preferredCouncilId === null
+    ? undefined
+    : typeof patch.preferredCouncilId === "string"
+      ? patch.preferredCouncilId
+      : typeof existing.preferredCouncilId === "string" ? existing.preferredCouncilId : undefined;
+  const next = {
+    workspaceId: "workspace_default",
+    channelId,
+    attachedCouncilIds,
+    preferredCouncilId: preferredCouncilId && attachedCouncilIds.includes(preferredCouncilId) ? preferredCouncilId : attachedCouncilIds[0],
+    createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:01:00.000Z",
+  };
+  state.channelCouncilPolicies = [
+    ...state.channelCouncilPolicies.filter((item) => !isRecord(item) || item.channelId !== channelId),
+    next,
+  ];
+  return next;
+}
+
+function buildMockEffectiveChannelCouncil(state: MockState, channelId: string): Record<string, unknown> {
+  const policy = readMockChannelCouncilPolicy(state, channelId);
+  const attachedCouncilIds = Array.isArray(policy.attachedCouncilIds) ? policy.attachedCouncilIds.filter((id): id is string => typeof id === "string") : [];
+  const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+  const specialistById = new Map<string, Record<string, unknown>>();
+
+  function teammateForId(teammateId: string): Record<string, unknown> | undefined {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return isRecord(teammate) ? teammate : undefined;
+  }
+
+  function addSpecialist(teammateId: string, source: Record<string, unknown>, isDefault = false): void {
+    const teammate = teammateForId(teammateId);
+    if (!teammate || teammateId === "ling_agent" || teammate.systemRole === "ling_agent" || teammate.status === "disabled" || teammate.hidden === true) {
+      return;
+    }
+    const existing = specialistById.get(teammateId);
+    if (existing) {
+      existing.sources = [...(Array.isArray(existing.sources) ? existing.sources : []), source];
+      existing.isDefault = existing.isDefault === true || isDefault;
+      return;
+    }
+    specialistById.set(teammateId, {
+      teammateId,
+      teammate,
+      sources: [source],
+      isDefault,
+    });
+  }
+
+  for (const membership of state.teammateChannelMemberships) {
+    if (!isRecord(membership) || membership.channelId !== channelId || typeof membership.teammateId !== "string") {
+      continue;
+    }
+    addSpecialist(membership.teammateId, { kind: "direct", isDefault: membership.isDefault === true }, membership.isDefault === true);
+  }
+  if (isRecord(channel) && typeof channel.defaultTeammateId === "string") {
+    addSpecialist(channel.defaultTeammateId, { kind: "direct", isDefault: true }, true);
+  }
+
+  const councils = attachedCouncilIds
+    .map((councilId) => state.aiCouncils.find((item) => isRecord(item) && item.id === councilId && item.status === "active"))
+    .filter((council): council is Record<string, unknown> => isRecord(council))
+    .map((council) => {
+      const councilId = String(council.id);
+      const members = state.aiCouncilMembers
+        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0))
+        .map((member) => {
+          const teammateId = typeof member.teammateId === "string" ? member.teammateId : "";
+          const teammate = teammateForId(teammateId);
+          const enabled = member.enabled !== false && Boolean(teammate) && teammate?.status !== "disabled" && teammate?.hidden !== true;
+          if (enabled && teammateId) {
+            addSpecialist(teammateId, {
+              kind: "council",
+              councilId,
+              councilDisplayName: council.displayName,
+              slotKey: member.slotKey,
+              label: member.label,
+            });
+          }
+          return {
+            member,
+            teammate,
+            enabled,
+            blockedReason: enabled ? undefined : "teammate_unavailable",
+          };
+        });
+      return { council, members };
+    });
+
+  return {
+    channelId,
+    policy,
+    councils,
+    specialists: [...specialistById.values()],
+  };
 }
 
 function maybeCreateMockWorkflowProposal(
@@ -3832,11 +4027,18 @@ function maybeCreateMockWorkflowProposal(
     return undefined;
   }
 
-  const activeTeammates = state.aiTeammates.filter((teammate): teammate is Record<string, unknown> =>
-    isRecord(teammate) && teammate.status !== "disabled" && teammate.hidden !== true);
-  const channelTeammates = activeTeammates.filter((teammate) =>
-    typeof teammate.id === "string" && mockTeammateCanRunInChannel(state, channelId, teammate.id)
-  );
+  const effectiveCouncil = buildMockEffectiveChannelCouncil(state, channelId);
+  const effectiveSpecialists = Array.isArray(effectiveCouncil.specialists)
+    ? effectiveCouncil.specialists.filter(isRecord)
+    : [];
+  const channelTeammates = effectiveSpecialists
+    .map((specialist) => isRecord(specialist.teammate) ? specialist.teammate : undefined)
+    .filter((teammate): teammate is Record<string, unknown> => Boolean(teammate));
+  const sourcesByTeammateId = new Map(effectiveSpecialists.flatMap((specialist) =>
+    typeof specialist.teammateId === "string" && Array.isArray(specialist.sources)
+      ? [[specialist.teammateId, specialist.sources.filter(isRecord)] as const]
+      : []
+  ));
   const selectedTeammates = allTeammates
     ? roleOrder.flatMap((role) => {
         const teammate = channelTeammates.find((item) => item.roleKey === role);
@@ -3874,6 +4076,9 @@ function maybeCreateMockWorkflowProposal(
       teammateId: typeof teammate.id === "string" ? teammate.id : "teammate_builtin_engineer",
       action: teammate.roleKey === "qa" || teammate.roleKey === "designer" || teammate.roleKey === "docs" ? "reviewed" : "coordinated",
       summary: mockProposalStepSummary(typeof teammate.roleKey === "string" ? teammate.roleKey : "engineer"),
+      ...(typeof teammate.id === "string" && sourcesByTeammateId.get(teammate.id)?.length
+        ? { sources: sourcesByTeammateId.get(teammate.id) }
+        : {}),
     })),
     requiredTools: Array.from(new Set(finalSelectedTeammates.flatMap((teammate) => Array.isArray(teammate.allowedTools) ? teammate.allowedTools : []))),
     riskSummary: allTeammates
@@ -4128,6 +4333,7 @@ function mockAutoStartExecutionProposalWorkflow(state: MockState, proposal: Reco
       metadata: {
         sourceProposalId: proposal.id,
         sourceMessageId: proposal.sourceMessageId,
+        ...(Array.isArray(step.sources) ? { proposalStepSources: step.sources.filter(isRecord) } : {}),
         dependsOnStepIds: index === 0 ? undefined : [`workflow_step_${state.channelWorkflowSteps.length + index}`],
         autoStart: true,
       },
@@ -4448,6 +4654,43 @@ export async function handleDaemonRoute(
     }
     state.userProfile = nextProfile;
     await route.fulfill({ json: { cwd, profile: state.userProfile } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/governance-notifications") {
+    const notifications = state.governanceNotifications
+      .filter(isGovernanceNotification)
+      .filter((notification) => governanceNotificationMatchesQuery(notification, url.searchParams))
+      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(b.createdAt).localeCompare(String(a.createdAt)));
+    const limit = Number(url.searchParams.get("limit") ?? "0");
+    await route.fulfill({
+      json: {
+        cwd,
+        notifications: limit > 0 ? notifications.slice(0, limit) : notifications,
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/governance-notifications/summary") {
+    await route.fulfill({ json: { cwd, summary: buildGovernanceNotificationSummary(state.governanceNotifications) } });
+    return;
+  }
+  const governanceNotificationMutationMatch = /^\/governance-notifications\/([^/]+)\/(seen|dismiss)$/.exec(path);
+  if (governanceNotificationMutationMatch && request.method() === "POST") {
+    const notificationId = decodeURIComponent(governanceNotificationMutationMatch[1]);
+    const action = governanceNotificationMutationMatch[2];
+    const index = state.governanceNotifications.findIndex((item) => isRecord(item) && item.id === notificationId);
+    if (index === -1 || !isRecord(state.governanceNotifications[index])) {
+      await route.fulfill({ status: 404, json: { error: "governance_notification_not_found" } });
+      return;
+    }
+    const existing = state.governanceNotifications[index] as Record<string, unknown>;
+    const updated = {
+      ...existing,
+      status: action === "dismiss" ? "dismissed" : existing.status === "unread" ? "seen" : existing.status,
+      updatedAt: "2026-05-25T00:30:00.000Z",
+    };
+    state.governanceNotifications[index] = updated;
+    await route.fulfill({ json: { cwd, notification: updated } });
     return;
   }
   if (request.method() === "GET" && path === "/config/effective") {
@@ -5244,6 +5487,60 @@ export async function handleDaemonRoute(
       return;
     }
   }
+  if (request.method() === "GET" && path === "/ai-councils") {
+    const includeArchived = url.searchParams.get("includeArchived") === "true";
+    const councils = state.aiCouncils.filter((item) =>
+      isRecord(item) && (includeArchived || item.status !== "archived")
+    );
+    await route.fulfill({ json: { cwd, councils } });
+    return;
+  }
+  const aiCouncilMatch = /^\/ai-councils\/([^/]+)(?:\/members)?$/.exec(path);
+  if (aiCouncilMatch) {
+    const councilId = decodeURIComponent(aiCouncilMatch[1]);
+    const council = state.aiCouncils.find((item) => isRecord(item) && item.id === councilId);
+    const isMembersRoute = path.endsWith("/members");
+    if (!isRecord(council)) {
+      await route.fulfill({ status: 404, json: { error: "ai_council_not_found" } });
+      return;
+    }
+    if (!isMembersRoute && request.method() === "GET") {
+      await route.fulfill({ json: { cwd, council } });
+      return;
+    }
+    if (isMembersRoute && request.method() === "GET") {
+      const members = state.aiCouncilMembers
+        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
+      await route.fulfill({ json: { cwd, councilId, members } });
+      return;
+    }
+    if (isMembersRoute && request.method() === "PUT") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const inputMembers = Array.isArray(body.members) ? body.members : [];
+      state.aiCouncilMembers = state.aiCouncilMembers.filter((item) => !isRecord(item) || item.councilId !== councilId);
+      inputMembers.forEach((member, index) => {
+        if (!isRecord(member) || typeof member.teammateId !== "string" || member.teammateId === "ling_agent") {
+          return;
+        }
+        state.aiCouncilMembers.push({
+          councilId,
+          teammateId: member.teammateId,
+          slotKey: typeof member.slotKey === "string" ? member.slotKey : undefined,
+          label: typeof member.label === "string" ? member.label : undefined,
+          position: typeof member.position === "number" ? member.position : index,
+          enabled: member.enabled !== false,
+          createdAt: "2026-06-20T00:02:00.000Z",
+          updatedAt: "2026-06-20T00:02:00.000Z",
+        });
+      });
+      const members = state.aiCouncilMembers
+        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
+      await route.fulfill({ json: { cwd, councilId, members } });
+      return;
+    }
+  }
   if (request.method() === "GET" && path === "/teammates") {
     const includeHidden = url.searchParams.get("includeHidden") === "true";
     const includeDisabled = url.searchParams.get("includeDisabled") === "true";
@@ -5324,6 +5621,7 @@ export async function handleDaemonRoute(
         usedMemoryEvents: state.usedMemoryEvents.filter((item) => isRecord(item) && item.teammateId === teammateId).length,
       };
       state.aiTeammates = state.aiTeammates.filter((item) => !isRecord(item) || item.id !== teammateId);
+      state.aiCouncilMembers = state.aiCouncilMembers.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       state.teammateChannelMemberships = state.teammateChannelMemberships.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       state.teammateSkillBindings = state.teammateSkillBindings.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       state.teammateMemoryScopes = state.teammateMemoryScopes.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
@@ -6353,6 +6651,42 @@ export async function handleDaemonRoute(
     await route.fulfill({ status: 201, json: { channel } });
     return;
   }
+  const channelCouncilPolicyMatch = /^\/channels\/([^/]+)\/council-policy$/.exec(path);
+  if (channelCouncilPolicyMatch) {
+    const channelId = decodeURIComponent(channelCouncilPolicyMatch[1]);
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found" } });
+      return;
+    }
+    if (request.method() === "GET") {
+      await route.fulfill({ json: { cwd, channelId, policy: readMockChannelCouncilPolicy(state, channelId) } });
+      return;
+    }
+    if (request.method() === "PUT") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const policy = writeMockChannelCouncilPolicy(state, channelId, body);
+      await route.fulfill({ json: { cwd, channelId, policy } });
+      return;
+    }
+  }
+  const channelEffectiveCouncilMatch = /^\/channels\/([^/]+)\/effective-council$/.exec(path);
+  if (channelEffectiveCouncilMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelEffectiveCouncilMatch[1]);
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        effectiveCouncil: buildMockEffectiveChannelCouncil(state, channelId),
+      },
+    });
+    return;
+  }
   const channelProtocolMatch = /^\/channels\/([^/]+)\/protocol(?:\/([^/]+))?$/.exec(path);
   if (channelProtocolMatch) {
     const channelId = decodeURIComponent(channelProtocolMatch[1]);
@@ -7160,6 +7494,7 @@ export async function handleDaemonRoute(
         metadata: {
           sourceProposalId: proposal.id,
           sourceMessageId: proposal.sourceMessageId,
+          ...(Array.isArray(step.sources) ? { proposalStepSources: step.sources.filter(isRecord) } : {}),
           dependsOnStepIds: index === 0 ? undefined : [`workflow_step_${state.channelWorkflowSteps.length + index}`],
           autoStart: true,
         },
@@ -7725,6 +8060,7 @@ export async function handleDaemonRoute(
     }
     state.channels = state.channels.filter((item) => !isRecord(item) || item.id !== channelId);
     state.channelBranches = state.channelBranches.filter((item) => !isRecord(item) || item.channelId !== channelId);
+    state.channelCouncilPolicies = state.channelCouncilPolicies.filter((item) => !isRecord(item) || item.channelId !== channelId);
     await route.fulfill({ status: 204, body: "" });
     return;
   }
@@ -9903,6 +10239,106 @@ function isMemoryObject(value: unknown): value is MemoryObject {
     typeof value.verifyBeforeUse === "boolean" &&
     typeof value.createdAt === "string" &&
     typeof value.updatedAt === "string";
+}
+
+function isGovernanceNotification(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.workspaceId === "string" &&
+    isRecord(value.surface) &&
+    typeof value.kind === "string" &&
+    typeof value.severity === "string" &&
+    typeof value.status === "string" &&
+    typeof value.title === "string" &&
+    typeof value.summary === "string";
+}
+
+function governanceNotificationMatchesQuery(notification: Record<string, unknown>, params: URLSearchParams): boolean {
+  const surface = isRecord(notification.surface) ? notification.surface : {};
+  const requestedSurface = params.get("surface");
+  const requestedChannelId = params.get("channelId");
+  const requestedTeammateId = params.get("teammateId");
+  const requestedThreadId = params.get("threadId");
+  const requestedKind = params.get("kind");
+  const requestedStatus = params.get("status");
+  const includeResolved = params.get("includeResolved") === "true";
+  const includeDismissed = params.get("includeDismissed") === "true";
+
+  if (requestedSurface && surface.kind !== requestedSurface) {
+    return false;
+  }
+  if (requestedChannelId && surface.channelId !== requestedChannelId) {
+    return false;
+  }
+  if (requestedTeammateId && surface.teammateId !== requestedTeammateId) {
+    return false;
+  }
+  if (requestedThreadId && surface.threadId !== requestedThreadId) {
+    return false;
+  }
+  if (requestedKind && notification.kind !== requestedKind) {
+    return false;
+  }
+  if (requestedStatus && notification.status !== requestedStatus) {
+    return false;
+  }
+  if (!includeResolved && notification.status === "resolved") {
+    return false;
+  }
+  if (!includeDismissed && notification.status === "dismissed") {
+    return false;
+  }
+  return true;
+}
+
+function buildGovernanceNotificationSummary(values: readonly unknown[]): Record<string, unknown> {
+  const notifications = values.filter(isGovernanceNotification);
+  const buckets = new Map<string, Record<string, unknown>>();
+  for (const notification of notifications) {
+    const surface = isRecord(notification.surface) ? notification.surface : { kind: "workspace" };
+    const surfaceKey = JSON.stringify(surface);
+    const existing = buckets.get(surfaceKey) ?? {
+      surface,
+      total: 0,
+      unread: 0,
+      seen: 0,
+      dismissed: 0,
+      resolved: 0,
+      pendingDelivery: 0,
+      bySeverity: {},
+      byKind: {},
+      latestUpdatedAt: undefined,
+    };
+    existing.total = Number(existing.total) + 1;
+    existing.unread = Number(existing.unread) + (notification.status === "unread" ? 1 : 0);
+    existing.seen = Number(existing.seen) + (notification.status === "seen" ? 1 : 0);
+    existing.dismissed = Number(existing.dismissed) + (notification.status === "dismissed" ? 1 : 0);
+    existing.resolved = Number(existing.resolved) + (notification.status === "resolved" ? 1 : 0);
+    existing.pendingDelivery = Number(existing.pendingDelivery) + (notification.deliveryStatus === "pending" ? 1 : 0);
+    incrementCountMap(existing.bySeverity, String(notification.severity));
+    incrementCountMap(existing.byKind, String(notification.kind));
+    if (typeof notification.updatedAt === "string" && (!existing.latestUpdatedAt || notification.updatedAt > String(existing.latestUpdatedAt))) {
+      existing.latestUpdatedAt = notification.updatedAt;
+    }
+    buckets.set(surfaceKey, existing);
+  }
+
+  return {
+    workspaceId: "workspace_default",
+    generatedAt: "2026-05-25T00:30:00.000Z",
+    total: notifications.length,
+    actionable: notifications.filter((notification) => notification.status !== "dismissed" && notification.status !== "resolved").length,
+    unread: notifications.filter((notification) => notification.status === "unread").length,
+    pendingDelivery: notifications.filter((notification) => notification.deliveryStatus === "pending").length,
+    bySurface: [...buckets.values()],
+  };
+}
+
+function incrementCountMap(value: unknown, key: string): void {
+  if (!isRecord(value)) {
+    return;
+  }
+  value[key] = Number(value[key] ?? 0) + 1;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

@@ -19,6 +19,48 @@ import {
   readScrollState,
 } from "./support/test-helpers";
 
+test("channel governance notifications stay in the header review queue", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.governanceNotifications = [
+    {
+      id: "gov_memory_candidate_1",
+      workspaceId: "workspace_default",
+      surface: { kind: "channel", channelId: "channel_engineering" },
+      kind: "memory_candidate",
+      severity: "action_required",
+      title: "Memory candidate ready",
+      summary: "A candidate from this channel is waiting for review.",
+      sourceRefs: [{ type: "memory", id: "memory_candidate_1", label: "Memory candidate" }],
+      targetRoute: { page: "memory_promotion_inbox", memoryId: "memory_candidate_1", channelId: "channel_engineering" },
+      status: "unread",
+      deliveryStatus: "pending",
+      dedupeKey: "memory:memory_candidate_1:channel:channel_engineering",
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:01:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.locator(".channel-governance-button")).toContainText("Review");
+  await expect(page.locator(".channel-governance-button")).toContainText("1");
+  await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
+
+  await page.locator(".channel-governance-button").click();
+  const reviewQueue = page.getByRole("dialog", { name: "Governance notifications" });
+  await expect(reviewQueue).toBeVisible();
+  await expect(reviewQueue).toContainText("Memory candidate ready");
+  await expect(reviewQueue).toContainText("A candidate from this channel is waiting for review.");
+
+  await reviewQueue.getByRole("button", { name: "Seen" }).click();
+  await expect(reviewQueue.getByRole("button", { name: "Seen" })).toHaveCount(0);
+  expect(isRecord(state.governanceNotifications[0]) ? state.governanceNotifications[0].status : undefined).toBe("seen");
+
+  await reviewQueue.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.locator(".channel-governance-button")).toHaveCount(0);
+  expect(isRecord(state.governanceNotifications[0]) ? state.governanceNotifications[0].status : undefined).toBe("dismissed");
+});
+
 test("channel drawers match the accepted HTML layout", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];
@@ -81,7 +123,8 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const sidePanelActions = document.querySelector(".channel-side-panel-actions");
     const sidebarBottom = document.querySelector(".channel-left-drawer .sidebar-bottom");
     const approvals = document.querySelector(".channel-left-drawer .sidebar-inbox-alert");
-    const settings = document.querySelector(".channel-left-drawer .config-button");
+    const settings = Array.from(document.querySelectorAll(".channel-left-drawer .config-button"))
+      .find((button) => button.textContent?.trim() === "Settings");
     const chatPanelRect = chatPanel?.getBoundingClientRect();
     const chatRect = chat?.getBoundingClientRect();
     const composerRect = composer?.getBoundingClientRect();
@@ -476,7 +519,17 @@ test("progress popover shows active context source groups and opens source detai
       toParticipantId: "engineer",
       toParticipantLabel: "Engineer",
       status: "running",
-      metadata: {},
+      metadata: {
+        proposalStepSources: [
+          {
+            kind: "council",
+            councilId: "council_builtin_development",
+            councilDisplayName: "Development Council",
+            slotKey: "engineer",
+            label: "Implementation",
+          },
+        ],
+      },
       createdAt: "2026-05-25T01:04:00.000Z",
       updatedAt: "2026-05-25T01:05:00.000Z",
     },
@@ -484,6 +537,11 @@ test("progress popover shows active context source groups and opens source detai
 
   await mockDaemon(page, state);
   await page.goto("/");
+
+  const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Engineer" });
+  await expect(workCell).toBeVisible();
+  await workCell.locator(".conversation-work-cell-agent-span-head").click();
+  await expect(workCell.locator(".conversation-work-cell-agent-span-detail")).toContainText("From Development Council");
 
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
 
@@ -1198,6 +1256,106 @@ test("channel settings can add and remove teammates without preferred specialist
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBeNull();
 });
 
+test("channel settings attaches an AI council by reference", async ({ page }) => {
+  const consoleMessages: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") {
+      consoleMessages.push(`${message.type()}: ${message.text()}`);
+    }
+  });
+  page.on("pageerror", (error) => {
+    consoleMessages.push(`pageerror: ${error.message}`);
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, defaultTeammateId: undefined }
+      : channel,
+  );
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({
+      id: "teammate_builtin_designer",
+      templateId: "designer",
+      roleKey: "designer",
+      displayName: "Ling Designer",
+      description: "Owns channel design review.",
+    }),
+    createMockTeammate({
+      id: "teammate_builtin_qa",
+      templateId: "qa",
+      roleKey: "qa",
+      displayName: "Ling QA",
+      description: "Owns verification.",
+    }),
+    createMockTeammate({
+      id: "ling_agent",
+      templateId: "ling_agent",
+      kind: "system_teammate",
+      systemRole: "ling_agent",
+      displayName: "Ling Agent",
+      roleKey: "custom",
+    }),
+  ];
+  state.aiCouncilMembers = [
+    ...state.aiCouncilMembers,
+    {
+      councilId: "council_builtin_development",
+      teammateId: "ling_agent",
+      slotKey: "coordination",
+      label: "Coordination",
+      position: 99,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+  state.teammateChannelMemberships = [
+    {
+      teammateId: "teammate_builtin_engineer",
+      channelId: "channel_engineering",
+      isDefault: false,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  const councils = page.getByLabel("Channel AI councils");
+  await expect(councils).toContainText("No AI councils attached");
+  await councils.getByLabel("Attach AI council").selectOption("council_builtin_development");
+  await councils.getByRole("button", { name: "Attach" }).click();
+
+  await expect.poll(() => {
+    const policy = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === "channel_engineering");
+    return isRecord(policy) && Array.isArray(policy.attachedCouncilIds) ? policy.attachedCouncilIds.join(",") : "";
+  }).toBe("council_builtin_development");
+  await expect(councils).toContainText("Development Council");
+  await expect(councils.getByLabel("Projected council specialists")).toContainText("Ling Designer");
+  await expect(councils.getByLabel("Projected council specialists")).toContainText("Ling QA");
+  await expect(councils.getByLabel("Projected council specialists")).not.toContainText("Ling Agent");
+
+  const directTeammates = page.getByLabel("Channel teammates");
+  await expect(directTeammates.locator(".channel-teammate-chip")).toHaveCount(1);
+  await expect(directTeammates).toContainText("Ling Engineer");
+  await expect(directTeammates.locator(".channel-teammate-chip").filter({ hasText: "Ling Designer" })).toHaveCount(0);
+  expect(state.teammateChannelMemberships.filter((item) => isRecord(item) && item.channelId === "channel_engineering")).toHaveLength(1);
+
+  await councils.getByRole("button", { name: "Detach council" }).click();
+  await expect.poll(() => {
+    const policy = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === "channel_engineering");
+    return isRecord(policy) && Array.isArray(policy.attachedCouncilIds) ? policy.attachedCouncilIds.length : -1;
+  }).toBe(0);
+  await expect(councils).toContainText("No AI councils attached");
+  expect(state.teammateChannelMemberships.filter((item) => isRecord(item) && item.channelId === "channel_engineering")).toHaveLength(1);
+  expect(consoleMessages.filter((message) => !message.includes("Failed to load resource"))).toEqual([]);
+});
+
 test("channel message feed renders AI teammate avatar images", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [
@@ -1822,7 +1980,12 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
       ],
       collaborationSteps: [
         { teammateId: "teammate_builtin_engineer", action: "coordinated", summary: "Summarized discussion into one execution proposal. Preserved approval-sensitive context for the implementation path." },
-        { teammateId: "teammate_builtin_designer", action: "reviewed", summary: "Checked visual hierarchy before execution. Verified long collaboration summaries stay inside the card." },
+        {
+          teammateId: "teammate_builtin_designer",
+          action: "reviewed",
+          summary: "Checked visual hierarchy before execution. Verified long collaboration summaries stay inside the card.",
+          sources: [{ kind: "council", councilId: "council_builtin_development", councilDisplayName: "Development Council", slotKey: "designer", label: "Design review" }],
+        },
       ],
       requiredTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
       riskSummary: "Provider must be ready before execution and approval-sensitive publication steps must stay explicitly gated.",
@@ -1862,6 +2025,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(collaboration.locator("li").first()).toBeVisible();
   await expect(collaboration).toContainText("Coordinated");
   await expect(collaboration).toContainText("Reviewed");
+  await expect(collaboration.locator(".channel-proposal-step-source")).toContainText("From Development Council");
   await proposal.getByRole("button", { name: "Edit" }).click();
   const editForm = proposal.locator(".channel-proposal-edit-form");
   await editForm.getByLabel("Scope").fill("Refine the channel workspace copy, then run focused QA checks.");
@@ -1876,8 +2040,9 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
       return "";
     }
     const secondStep = updated.collaborationSteps[1];
-    return isRecord(secondStep) ? `${updated.prompt}|${secondStep.teammateId}|${secondStep.summary}` : "";
-  }).toBe("Refine the channel workspace copy, then run focused QA checks.|teammate_builtin_qa|Run focused regression checks before execution.");
+    const sourceState = isRecord(secondStep) && Array.isArray(secondStep.sources) ? `sources:${secondStep.sources.length}` : "sources:none";
+    return isRecord(secondStep) ? `${updated.prompt}|${secondStep.teammateId}|${secondStep.summary}|${sourceState}` : "";
+  }).toBe("Refine the channel workspace copy, then run focused QA checks.|teammate_builtin_qa|Run focused regression checks before execution.|sources:none");
   await proposal.getByRole("button", { name: "Authorize and start task" }).click();
 
   await expect.poll(() => {
@@ -1895,6 +2060,12 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
       ? secondStep.metadata.dependsOnStepIds.join(",")
       : "";
   }).toBe("workflow_step_1");
+  await expect.poll(() => {
+    const secondStep = state.channelWorkflowSteps.find((item) => isRecord(item) && item.workflowId === "workflow_1" && item.position === 2);
+    return isRecord(secondStep) && isRecord(secondStep.metadata) && Array.isArray(secondStep.metadata.proposalStepSources)
+      ? `sources:${secondStep.metadata.proposalStepSources.length}`
+      : "sources:none";
+  }).toBe("sources:none");
   await expect.poll(() => {
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_1");
     return isRecord(updated) ? [updated.status, updated.linkedWorkflowId].join("|") : "";

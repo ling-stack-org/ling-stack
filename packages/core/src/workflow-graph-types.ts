@@ -1,5 +1,5 @@
 import type { RunTool } from "./approval-policy.js";
-import type { WorkflowStepGate, WorkflowStepPolicy } from "./workspace-types.js";
+import type { ChannelExecutionProposalStepSource, WorkflowStepGate, WorkflowStepPolicy } from "./workspace-types.js";
 
 export type WorkflowGraphNodeKind = "step" | "join";
 
@@ -46,6 +46,7 @@ export interface WorkflowGraphNode {
   readonly gates?: readonly WorkflowStepGate[];
   readonly requiredTools?: readonly RunTool[];
   readonly autoStart?: boolean;
+  readonly proposalStepSources?: readonly ChannelExecutionProposalStepSource[];
 }
 
 export interface WorkflowGraph {

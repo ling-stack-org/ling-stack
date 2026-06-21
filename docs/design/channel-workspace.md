@@ -36,6 +36,7 @@ Related docs:
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
 - [Channel Workspace v1.25 Codex-Inspired Attention Popover](channel-workspace-v1.25.md)
 - [Channel Workspace v1.26 Channel Branches](channel-workspace-v1.26.md)
+- [Channel And Agent Governance Notifications](channel-and-agent-governance-notifications.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
@@ -608,6 +609,7 @@ Mention targets:
 | Mention | MVP behavior | Future behavior |
 | --- | --- | --- |
 | `@Engineer`, `@Designer`, built-in AI teammate | On `Send`, route the next AI reply to that teammate. | Use persisted teammate instances and per-teammate memory/tools. |
+| `@Development Council`, custom AI council | Not in MVP. | Route through the channel's attached council policy; Ling Agent selects a member, visible multi-reply, or council-scoped workflow. |
 | `@local-teammate` draft | UI-only mention until teammate persistence exists. | Persist mention target and route to teammate instance. |
 | `@user` | Highlight and notification metadata only. | Notify real workspace members when team sync exists. |
 | `@channel` / `@all` | Not in MVP. | Add only with notification controls and abuse limits. |
@@ -626,6 +628,9 @@ Rules:
 - A mention never grants new tools or provider capabilities.
 - A mentioned teammate can only use the channel's allowed tools and the selected
   provider's capabilities.
+- Future council attachment is a daemon/core policy, not Web-only state. A channel may
+  attach a whole council as a projected availability set while still preserving Ling Agent
+  as the visible coordinator; see [AI Councils](ai-councils.md).
 - Provider resolution for a discussion reply is deterministic: mentioned teammate
   provider, explicit run provider, channel default provider, workspace selected provider,
   then first preflight-ready chat provider.

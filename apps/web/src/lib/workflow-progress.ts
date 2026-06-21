@@ -647,12 +647,13 @@ function workflowStepToAgentRow(
   scope: "latest" | "history",
 ): ConversationWorkCellRow {
   const title = workflowStepOperationTitle(step, t);
+  const sourceLabel = workflowStepProposalSourceLabel(step, t);
   return {
     id: `${scope}:workflow-step:${step.id}`,
     kind: workflowStepOperationKind(step),
     title,
     description: workflowStepOperationSummary(step, 160, title),
-    meta: workflowStepStatusMeta(step.status, t),
+    meta: [workflowStepStatusMeta(step.status, t), sourceLabel].filter(Boolean).join(" · "),
     tone: workflowStepTone(step.status),
   };
 }
@@ -912,6 +913,18 @@ function workflowStepDisplayDescription(step: ChannelWorkflowStep, maxLength: nu
     return undefined;
   }
   return summary;
+}
+
+function workflowStepProposalSourceLabel(step: ChannelWorkflowStep, t: Translate): string | undefined {
+  const councilSource = step.metadata?.proposalStepSources?.find((source) => source.kind === "council");
+  if (councilSource) {
+    return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
+  }
+  const directSource = step.metadata?.proposalStepSources?.find((source) => source.kind === "direct");
+  if (directSource?.isDefault) {
+    return t("Default channel teammate");
+  }
+  return directSource ? t("Direct channel teammate") : undefined;
 }
 
 function semanticWorkflowPromptSummary(prompt: string, maxLength: number): string | undefined {

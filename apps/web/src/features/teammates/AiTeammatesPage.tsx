@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
   Bot,
   Brain,
   CheckCircle2,
@@ -13,6 +15,7 @@ import {
   PinOff,
   PlugZap,
   Plus,
+  RefreshCw,
   Rocket,
   Sparkles,
   ShieldCheck,
@@ -29,12 +32,19 @@ import type {
   SkillPack,
   WorkflowStepTemplate,
 } from "@ling-stack/core/skill-types";
+import {
+  listAiCouncilMembers,
+  replaceAiCouncilMembers,
+} from "../../api/ai-councils.js";
 import { useI18n } from "../../i18n.js";
 import { isMediaProvider, providerPreflightReady } from "../../lib/providers.js";
 import { MetaRow } from "../../shared/components/index.js";
 import type {
+  AiCouncil,
+  AiCouncilMember,
   Channel,
   ProviderPreset,
+  ReplaceAiCouncilMembersRequest,
 } from "../../types.js";
 import {
   approvalProfileText,
@@ -60,12 +70,15 @@ export function AiTeammatesPage({
   providers,
   channels,
   localTeammates,
+  aiCouncils = [],
+  aiCouncilsLoading = false,
   createRequestId = 0,
   onCreateRequestHandled,
   onCreateTeammate,
   onRemoveTeammate,
   onToggleTeammatePinned,
   onToggleTeammateHidden,
+  onRefreshAiCouncils,
   onOpenTeammate,
   onOpenProviders,
 }: {
@@ -74,12 +87,15 @@ export function AiTeammatesPage({
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
   readonly localTeammates: readonly LocalTeammateDraft[];
+  readonly aiCouncils?: readonly AiCouncil[];
+  readonly aiCouncilsLoading?: boolean;
   readonly createRequestId?: number;
   readonly onCreateRequestHandled?: () => void;
   readonly onCreateTeammate: (teammate: LocalTeammateCreateInput) => void;
   readonly onRemoveTeammate: (teammateId: string) => void;
   readonly onToggleTeammatePinned: (teammateId: string) => void;
   readonly onToggleTeammateHidden: (teammateId: string) => void;
+  readonly onRefreshAiCouncils?: () => void;
   readonly onOpenTeammate?: (teammateId: string) => void;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
@@ -103,6 +119,10 @@ export function AiTeammatesPage({
   }).length;
   const noChannelTeammateCount = activeLocalTeammates.filter((teammate) => teammate.channelIds.length === 0).length;
   const hiddenTeammateCount = localTeammates.filter((teammate) => teammate.hidden && !teammate.disabled).length;
+  const activeAiCouncils = useMemo(
+    () => aiCouncils.filter((council) => council.status !== "archived"),
+    [aiCouncils],
+  );
   const [selectedTemplateId, setSelectedTemplateId] = useState(() => templates[0]?.id ?? "");
   const [draftName, setDraftName] = useState(() => templates[0] ? t(templates[0].name) : t("Custom teammate"));
   const [draftDescription, setDraftDescription] = useState(() => templates[0] ? t(templates[0].summary) : "");
@@ -111,9 +131,16 @@ export function AiTeammatesPage({
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [detailTemplateId, setDetailTemplateId] = useState<string>("");
   const [openTeammateMenuId, setOpenTeammateMenuId] = useState("");
+  const [selectedCouncilId, setSelectedCouncilId] = useState("");
+  const [councilMembers, setCouncilMembers] = useState<readonly AiCouncilMember[]>([]);
+  const [councilMembersLoading, setCouncilMembersLoading] = useState(false);
+  const [councilMembersSaving, setCouncilMembersSaving] = useState(false);
+  const [councilMemberError, setCouncilMemberError] = useState("");
+  const [pendingCouncilTeammateId, setPendingCouncilTeammateId] = useState("");
   const wizardRef = useRef<HTMLElement | null>(null);
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
   const detailTemplate = templates.find((template) => template.id === detailTemplateId);
+  const selectedCouncil = activeAiCouncils.find((council) => council.id === selectedCouncilId) ?? activeAiCouncils[0];
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
   const previewName = draftName.trim() || selectedTemplate?.name || t("Custom teammate");
   const previewDescription = draftDescription.trim() || selectedTemplate?.summary || t("Describe this teammate with a short working brief.");
@@ -121,6 +148,30 @@ export function AiTeammatesPage({
   const canCreateTeammate = Boolean(previewName.trim()) && Boolean(selectedProvider) && selectedProviderReady;
   const connectedChannelCount = new Set(activeLocalTeammates.flatMap((teammate) => teammate.channelIds)).size;
   const visibleCreateTemplates = templates.slice(0, 5);
+  const teammateById = useMemo(
+    () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
+    [activeLocalTeammates],
+  );
+  const councilMemberTeammateIds = useMemo(
+    () => new Set(councilMembers.map((member) => member.teammateId)),
+    [councilMembers],
+  );
+  const councilEligibleTeammates = useMemo(
+    () => activeLocalTeammates.filter((teammate) => !isLingAgentDraft(teammate)),
+    [activeLocalTeammates],
+  );
+  const availableCouncilTeammates = useMemo(
+    () => councilEligibleTeammates.filter((teammate) => !councilMemberTeammateIds.has(teammate.id)),
+    [councilEligibleTeammates, councilMemberTeammateIds],
+  );
+  const sortedCouncilMembers = useMemo(
+    () => [...councilMembers].sort((left, right) => left.position - right.position || left.teammateId.localeCompare(right.teammateId)),
+    [councilMembers],
+  );
+  const renderedCouncilMembers = useMemo(
+    () => sortedCouncilMembers.filter((member) => teammateById.has(member.teammateId)),
+    [sortedCouncilMembers, teammateById],
+  );
 
   useEffect(() => {
     if (!selectedProviderId || !providerOptions.some((provider) => provider.id === selectedProviderId)) {
@@ -140,6 +191,46 @@ export function AiTeammatesPage({
       onCreateRequestHandled?.();
     }
   }, [createRequestId, onCreateRequestHandled]);
+
+  useEffect(() => {
+    if (!selectedCouncil || !activeAiCouncils.some((council) => council.id === selectedCouncilId)) {
+      setSelectedCouncilId(activeAiCouncils[0]?.id ?? "");
+    }
+  }, [activeAiCouncils, selectedCouncil, selectedCouncilId]);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedCouncilId) {
+      setCouncilMembers([]);
+      setCouncilMembersLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCouncilMembersLoading(true);
+    setCouncilMemberError("");
+    void listAiCouncilMembers(workspaceCwd, selectedCouncilId)
+      .then((response) => {
+        if (!cancelled) {
+          setCouncilMembers(response.members);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) {
+          setCouncilMembers([]);
+          setCouncilMemberError(caught instanceof Error ? caught.message : String(caught));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCouncilMembersLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, selectedCouncilId]);
 
   function selectTemplate(template: AiTeammateTemplate): void {
     setSelectedTemplateId(template.id);
@@ -186,6 +277,70 @@ export function AiTeammatesPage({
     selectTemplate(template);
     setDetailTemplateId("");
     setCreateOpen(true);
+  }
+
+  async function saveCouncilMembers(nextMembers: readonly AiCouncilMember[]): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedCouncil || councilMembersSaving) {
+      return;
+    }
+
+    setCouncilMembersSaving(true);
+    setCouncilMemberError("");
+    try {
+      const response = await replaceAiCouncilMembers(workspaceCwd, selectedCouncil.id, {
+        members: toCouncilMemberReplaceInput(nextMembers),
+      });
+      setCouncilMembers(response.members);
+    } catch (caught) {
+      setCouncilMemberError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setCouncilMembersSaving(false);
+    }
+  }
+
+  function addCouncilMember(): void {
+    if (!selectedCouncil || !pendingCouncilTeammateId) {
+      return;
+    }
+    const teammate = councilEligibleTeammates.find((item) => item.id === pendingCouncilTeammateId);
+    if (!teammate || councilMemberTeammateIds.has(teammate.id)) {
+      return;
+    }
+    const nextMember: AiCouncilMember = {
+      councilId: selectedCouncil.id,
+      teammateId: teammate.id,
+      slotKey: teammate.roleKey,
+      label: teammate.roleKey ? roleLabel(teammate.roleKey, t) : teammate.displayName,
+      position: sortedCouncilMembers.length,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setPendingCouncilTeammateId("");
+    void saveCouncilMembers([...sortedCouncilMembers, nextMember]);
+  }
+
+  function removeCouncilMember(teammateId: string): void {
+    void saveCouncilMembers(sortedCouncilMembers.filter((member) => member.teammateId !== teammateId));
+  }
+
+  function toggleCouncilMember(teammateId: string): void {
+    void saveCouncilMembers(sortedCouncilMembers.map((member) =>
+      member.teammateId === teammateId ? { ...member, enabled: !member.enabled } : member,
+    ));
+  }
+
+  function moveCouncilMember(teammateId: string, delta: -1 | 1): void {
+    const currentIndex = sortedCouncilMembers.findIndex((member) => member.teammateId === teammateId);
+    const targetIndex = currentIndex + delta;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= sortedCouncilMembers.length) {
+      return;
+    }
+    const nextMembers = [...sortedCouncilMembers];
+    const [member] = nextMembers.splice(currentIndex, 1);
+    nextMembers.splice(targetIndex, 0, member);
+    void saveCouncilMembers(nextMembers);
   }
 
   if (!skillPack || templates.length === 0) {
@@ -488,36 +643,160 @@ export function AiTeammatesPage({
           )}
         </section>
 
-        <section className="teammate-template-panel" aria-label={t("Teammate templates")}>
-          <div className="panel-title split">
-            <span>
-              <Brain size={16} />
-              <h2>{t("Default roles")}</h2>
-            </span>
-            <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
-              <UserPlus size={14} />
-              {t("Add teammate")}
-            </button>
-          </div>
-          <div className="teammate-template-list">
-            {templates.map((template) => (
-              <button
-                key={template.id}
-                className={template.id === detailTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
-                type="button"
-                aria-pressed={template.id === detailTemplate?.id}
-                onClick={() => openTemplateDetail(template)}
-              >
-                <span className="teammate-role-icon">{templateRoleIcon(template)}</span>
-                <span className="teammate-template-copy">
-                  <strong>{t(template.name)}</strong>
-                  <small>{t(template.summary)}</small>
-                </span>
-                <small className="template-skill-count">{roleLabel(template.roleKey, t)}</small>
+        <div className="teammate-side-stack">
+          <section className="teammate-council-panel" aria-label={t("AI Councils")}>
+            <div className="panel-title split">
+              <span>
+                <Users size={16} />
+                <h2>{t("AI Councils")}</h2>
+              </span>
+              <button className="icon-button compact-icon-button" type="button" onClick={onRefreshAiCouncils} disabled={aiCouncilsLoading} aria-label={t("Refresh AI councils")} title={t("Refresh AI councils")}>
+                <RefreshCw className={aiCouncilsLoading ? "spin" : undefined} size={14} />
               </button>
-            ))}
-          </div>
-        </section>
+            </div>
+
+            {activeAiCouncils.length === 0 ? (
+              <div className="client-empty-state teammate-empty">
+                <Users size={18} />
+                <span>{aiCouncilsLoading ? t("Loading councils...") : t("No AI councils available")}</span>
+              </div>
+            ) : (
+              <div className="teammate-council-manager">
+                <label className="field teammate-council-selector">
+                  <span>{t("Council")}</span>
+                  <select
+                    aria-label={t("Select AI council")}
+                    value={selectedCouncil?.id ?? ""}
+                    onChange={(event) => setSelectedCouncilId(event.target.value)}
+                    disabled={aiCouncilsLoading || councilMembersSaving}
+                  >
+                    {activeAiCouncils.map((council) => (
+                      <option key={council.id} value={council.id}>{council.displayName}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {selectedCouncil ? (
+                  <div className="teammate-council-summary">
+                    <strong>{selectedCouncil.displayName}</strong>
+                    <small>{selectedCouncil.description}</small>
+                    <span className="teammate-council-meta">
+                      <span>{councilSourceLabel(selectedCouncil.source, t)}</span>
+                      <span>{councilRoutingModeLabel(selectedCouncil.routingPolicy.defaultMode, t)}</span>
+                      <span>{selectedCouncil.status}</span>
+                    </span>
+                  </div>
+                ) : null}
+
+                {councilMemberError ? (
+                  <div className="provider-run-notice warning">
+                    <ShieldCheck size={15} />
+                    <span>{councilMemberError}</span>
+                  </div>
+                ) : null}
+
+                <div className="teammate-council-add-row">
+                  <select
+                    aria-label={t("Add teammate to council")}
+                    value={pendingCouncilTeammateId}
+                    onChange={(event) => setPendingCouncilTeammateId(event.target.value)}
+                    disabled={availableCouncilTeammates.length === 0 || councilMembersLoading || councilMembersSaving}
+                  >
+                    <option value="">{availableCouncilTeammates.length === 0 ? t("No teammates available") : t("Select teammate")}</option>
+                    {availableCouncilTeammates.map((teammate) => (
+                      <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
+                    ))}
+                  </select>
+                  <button className="secondary-button compact-button" type="button" onClick={addCouncilMember} disabled={!pendingCouncilTeammateId || councilMembersLoading || councilMembersSaving}>
+                    <Plus size={14} />
+                    {t("Add member")}
+                  </button>
+                </div>
+
+                {councilMembersLoading ? (
+                  <div className="client-empty-state teammate-empty compact">
+                    <RefreshCw className="spin" size={16} />
+                    <span>{t("Loading council members...")}</span>
+                  </div>
+                ) : renderedCouncilMembers.length === 0 ? (
+                  <div className="client-empty-state teammate-empty compact">
+                    <Users size={16} />
+                    <span>{t("No council members")}</span>
+                  </div>
+                ) : (
+                  <div className="teammate-council-member-list" role="list" aria-label={t("Council members")}>
+                    {renderedCouncilMembers.map((member) => {
+                      const teammate = teammateById.get(member.teammateId);
+                      if (!teammate) {
+                        return null;
+                      }
+                      const memberIndex = sortedCouncilMembers.findIndex((item) => item.teammateId === member.teammateId);
+                      return (
+                        <article key={member.teammateId} className={member.enabled ? "teammate-council-member-row" : "teammate-council-member-row disabled"} role="listitem">
+                          <div className="teammate-council-member-head">
+                            <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
+                            <span className="teammate-council-member-copy">
+                              <strong>{teammate.displayName}</strong>
+                              <small>{member.label ?? member.slotKey ?? t("Council member")}</small>
+                            </span>
+                            <span className={member.enabled ? "teammate-council-status enabled" : "teammate-council-status disabled"}>
+                              {member.enabled ? t("Enabled") : t("Disabled")}
+                            </span>
+                          </div>
+                          <div className="teammate-council-member-actions">
+                            <button className="icon-button compact-icon-button" type="button" aria-label={t("Move council member up")} title={t("Move council member up")} onClick={() => moveCouncilMember(member.teammateId, -1)} disabled={memberIndex <= 0 || councilMembersSaving}>
+                              <ArrowUp size={13} />
+                            </button>
+                            <button className="icon-button compact-icon-button" type="button" aria-label={t("Move council member down")} title={t("Move council member down")} onClick={() => moveCouncilMember(member.teammateId, 1)} disabled={memberIndex < 0 || memberIndex === sortedCouncilMembers.length - 1 || councilMembersSaving}>
+                              <ArrowDown size={13} />
+                            </button>
+                            <button className="secondary-button compact-button" type="button" onClick={() => toggleCouncilMember(member.teammateId)} disabled={councilMembersSaving}>
+                              {member.enabled ? t("Disable") : t("Enable")}
+                            </button>
+                            <button className="icon-button compact-icon-button" type="button" aria-label={t("Remove council member")} title={t("Remove council member")} onClick={() => removeCouncilMember(member.teammateId)} disabled={councilMembersSaving}>
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          <section className="teammate-template-panel" aria-label={t("Teammate templates")}>
+            <div className="panel-title split">
+              <span>
+                <Brain size={16} />
+                <h2>{t("Default roles")}</h2>
+              </span>
+              <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
+                <UserPlus size={14} />
+                {t("Add teammate")}
+              </button>
+            </div>
+            <div className="teammate-template-list">
+              {templates.map((template) => (
+                <button
+                  key={template.id}
+                  className={template.id === detailTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
+                  type="button"
+                  aria-pressed={template.id === detailTemplate?.id}
+                  onClick={() => openTemplateDetail(template)}
+                >
+                  <span className="teammate-role-icon">{templateRoleIcon(template)}</span>
+                  <span className="teammate-template-copy">
+                    <strong>{t(template.name)}</strong>
+                    <small>{t(template.summary)}</small>
+                  </span>
+                  <small className="template-skill-count">{roleLabel(template.roleKey, t)}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
       </div>
 
       {detailTemplate ? (
@@ -533,6 +812,40 @@ export function AiTeammatesPage({
       ) : null}
     </div>
   );
+}
+
+function toCouncilMemberReplaceInput(members: readonly AiCouncilMember[]): ReplaceAiCouncilMembersRequest["members"] {
+  return members.map((member, index) => ({
+    teammateId: member.teammateId,
+    slotKey: member.slotKey,
+    label: member.label,
+    position: index,
+    enabled: member.enabled,
+  }));
+}
+
+function isLingAgentDraft(teammate: LocalTeammateDraft): boolean {
+  return teammate.id === "ling_agent" || teammate.id === "ling-agent" || teammate.systemRole === "ling_agent";
+}
+
+function councilSourceLabel(source: AiCouncil["source"], t: (key: string) => string): string {
+  if (source === "builtin") {
+    return t("Built-in");
+  }
+  if (source === "template") {
+    return t("Template");
+  }
+  return t("Custom");
+}
+
+function councilRoutingModeLabel(mode: AiCouncil["routingPolicy"]["defaultMode"], t: (key: string) => string): string {
+  if (mode === "parallel_review") {
+    return t("Parallel review");
+  }
+  if (mode === "handoff") {
+    return t("Handoff");
+  }
+  return t("Advisory");
 }
 
 function templateRoleIcon(template: AiTeammateTemplate): JSX.Element {

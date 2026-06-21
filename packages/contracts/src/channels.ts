@@ -592,10 +592,22 @@ export type ChannelExecutionProposalStatus = "draft" | "accepted" | "cancelled" 
 
 export type ChannelExecutionProposalStepAction = "coordinated" | "consulted" | "reviewed" | "flagged_risk";
 
+export type ChannelExecutionProposalStepSourceKind = "direct" | "council";
+
+export interface ChannelExecutionProposalStepSource {
+  readonly kind: ChannelExecutionProposalStepSourceKind;
+  readonly councilId?: string;
+  readonly councilDisplayName?: string;
+  readonly slotKey?: string;
+  readonly label?: string;
+  readonly isDefault?: boolean;
+}
+
 export interface ChannelExecutionProposalStep {
   readonly teammateId: string;
   readonly action: ChannelExecutionProposalStepAction;
   readonly summary: string;
+  readonly sources?: readonly ChannelExecutionProposalStepSource[];
 }
 
 export type ChannelRequirementShapingStatus =

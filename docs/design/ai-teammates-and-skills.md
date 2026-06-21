@@ -9,16 +9,22 @@ Tools are atomic capabilities such as `read`, `grep`, `bash`, `edit`, and `write
 - Let different AI teammates have different default skills.
 - Keep skills as workflow templates, not direct execution permission.
 - Support gstack-inspired defaults without vendoring gstack's long runtime `SKILL.md` files.
+- Support reviewed source snapshots for full `SKILL.md` content without turning source
+  text into execution permission.
 - Leave room for future `AGENTS.md` and custom user-defined skill packs.
 - Ensure every skill execution still goes through allowed tools, provider capability checks, approval policy, and workflow state machines.
 
 This design sits under the broader [Ling Framework](ling-framework.md). Memory-specific
 behavior for teammates is covered by [Ling Memory v1](ling-memory-v1.md).
 The concrete import, persona draft, Effective Skill UI, and skill-aware run implementation
-slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md). Automatic
-multi-teammate execution is covered by [Multi-Agent Orchestrator](multi-agent-orchestrator.md).
+slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md). The workspace-level
+grouping model for built-in and user-defined specialist rosters is covered by
+[AI Councils](ai-councils.md). Automatic multi-teammate execution is covered by
+[Multi-Agent Orchestrator](multi-agent-orchestrator.md).
 The broader daemon and registry evolution is covered by
-[Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md).
+[Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md). Full Codex/gstack-style
+`SKILL.md` preservation and lazy loading is covered by
+[GStack Skill Source Sync](gstack-skill-source-sync.md).
 
 ## Model
 
@@ -104,7 +110,11 @@ grant.
 
 ## Built-In Pack: `gstack-default`
 
-`gstack-default` is a Ling-native template pack inspired by gstack's virtual engineering team model. It borrows the role, workflow, and generic skill taxonomy, not the full gstack runtime instruction files or machine-specific tools.
+`gstack-default` is a Ling-native template pack adapted from gstack's virtual
+engineering team model and current v1.58.3.0 skill taxonomy. It records the workflow
+surface, role affinity, tool needs, and approval profile for gstack workflows, but it
+does not vendor full gstack runtime `SKILL.md` files, generated hook scripts, browser
+extension code, iOS debug bridge code, or machine-specific tools.
 
 Default teammate templates:
 
@@ -117,42 +127,34 @@ Default teammate templates:
 - `Release`
 - `Docs`
 
-Default skills:
+Default skill registry surface:
 
-- `office-hours`
-- `plan-ceo-review`
-- `plan-eng-review`
-- `plan-design-review`
-- `plan-devex-review`
-- `autoplan`
-- `spec`
-- `design-consultation`
-- `design-shotgun`
-- `design-html`
-- `implement`
-- `investigate`
-- `health`
-- `review`
-- `design-review`
-- `qa`
-- `qa-only`
-- `devex-review`
-- `benchmark`
-- `cso`
-- `landing-report`
-- `setup-deploy`
-- `ship`
-- `land-and-deploy`
-- `canary`
-- `document-generate`
-- `document-release`
-- `retro`
-- `learn`
+- planning: `office-hours`, `plan-ceo-review`, `plan-eng-review`,
+  `plan-design-review`, `plan-devex-review`, `autoplan`, `spec`, `plan-tune`;
+- design and implementation: `design-consultation`, `design-shotgun`, `design-html`,
+  `implement`, `investigate`, `health`, `review`, `claude`;
+- QA and browser evidence: `qa`, `qa-only`, `devex-review`, `benchmark`,
+  `benchmark-models`, `browse`, `scrape`, `skillify`, `open-gstack-browser`;
+- security and safety: `cso`, `careful`, `guard`, `freeze`, `unfreeze`,
+  `setup-browser-cookies`, `pair-agent`;
+- release and operations: `landing-report`, `setup-deploy`, `ship`,
+  `land-and-deploy`, `canary`, `context-save`, `context-restore`, `checkpoint`,
+  `setup-gbrain`, `sync-gbrain`, `gstack-upgrade`;
+- docs and artifacts: `document-generate`, `document-release`, `retro`, `learn`,
+  `diagram`, `make-pdf`;
+- iOS workflows: `ios-qa`, `ios-design-review`, `ios-fix`, `ios-sync`, `ios-clean`.
 
-Runtime-only gstack commands such as `gstack-upgrade`, browser-cookie import,
-gbrain sync/setup, iOS device automation, and other host-specific tools remain outside
-the built-in Ling pack until Ling has first-class capability and approval models for
-those surfaces.
+High-risk or host-specific workflows are visible as registry definitions but are not
+automatically granted. Their executability is still constrained by teammate bindings,
+allowed tools, provider capabilities, channel policy, approval profile, and the run
+state machine. Full `SKILL.md` imports remain a reviewed draft flow; importing text does
+not grant hooks, credentials, MCP servers, browser access, external-send authority, or
+deployment authority.
+
+Ling Agent also receives protected default bindings for the non-strict general-purpose
+skills so the built-in coordinator can use skills directly for common planning,
+implementation, QA, documentation, browser-evidence, and context handoff tasks. Strict
+release/security workflows remain specialist- or approval-gated.
 
 ## Template Defaults And Durable Overrides
 
@@ -358,6 +360,13 @@ approval previews before any teammate can bind or run imported definitions. PATC
 draft editing and deeper custom skill editing remain follow-ups. See
 [Ling Skill Import v1](ling-skill-import-v1.md).
 
+Phase 5 should add source snapshots for Codex/gstack-style skills. `SkillDefinition`
+remains the lightweight executable registry contract, while `SkillSourceSnapshot`
+preserves raw `SKILL.md`, optional `agents/openai.yaml` metadata, source checksums,
+referenced file inventory, drift state, and warning evidence. Runtime context loads the
+source snapshot lazily only after a skill is selected and Effective Skill checks pass.
+See [GStack Skill Source Sync](gstack-skill-source-sync.md).
+
 ### Failure Modes To Avoid
 
 - Free-form agent-to-agent loops that create hidden work, hidden context transfer, or
@@ -366,6 +375,7 @@ draft editing and deeper custom skill editing remain follow-ups. See
   grant.
 - Letting private chat memory silently leak into channel tasks or cross-agent handoffs.
 - Letting imports run immediately. Imported skills need review, diff, and explicit bind.
+- Treating raw `SKILL.md` source as the same object as a runnable `SkillDefinition`.
 - Mixing template defaults with user overrides without source and enabled state.
 
 ## Future Work

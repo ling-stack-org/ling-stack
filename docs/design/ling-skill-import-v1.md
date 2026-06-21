@@ -6,6 +6,9 @@ Updated: 2026-06-05 UI refinement for workspace skill library and teammate skill
 Scope: Unified skill registry, custom skill packs, persona import drafts, Effective
 Skills UI, and skill-aware task/run polish
 
+Follow-up source preservation and gstack sync are covered by
+[GStack Skill Source Sync](gstack-skill-source-sync.md).
+
 ## Summary
 
 Ling needs one skill model, not separate "global skills" and "agent skills" that drift
@@ -19,6 +22,7 @@ Unified Skill Registry
   -> workspace custom skill packs
   -> imported skill directories
   -> optional teammate-scoped skill sources
+  -> reviewed source snapshots for full SKILL.md content
   -> teammate bindings
   -> Effective Skill read model
   -> skill-aware tasks and runs
@@ -69,6 +73,8 @@ missing import and registry workflow.
 - No automatic execution of imported `SKILL.md` or `AGENTS.md` content.
 - No remote marketplace, package manager, or dependency installer.
 - No automatic tool, MCP, secret, provider, approval, or external-send grant.
+- No complete upstream source preservation in v1; raw `SKILL.md` snapshots and drift
+  detection are deferred to GStack Skill Source Sync.
 - No agent-to-agent hidden delegation through private chat.
 - No vector retrieval provider work in this slice.
 
@@ -170,6 +176,11 @@ Supported v1 inputs:
 - a pasted `SKILL.md` body,
 - future-compatible `AGENTS.md` hints, but only as draft metadata unless the parser can
   confidently produce a safe `SkillDefinition`.
+
+V1 may place bounded markdown into `promptFragments`; it does not preserve upstream
+source as a first-class snapshot. The follow-up GStack Skill Source Sync design adds
+`SkillSourceSnapshot` records for raw `SKILL.md`, `agents/openai.yaml`, checksums,
+referenced file inventory, and lazy runtime loading.
 
 Draft warnings should be explicit and actionable:
 
@@ -388,6 +399,7 @@ Rules:
 - `POST /skills/import-draft` parses source content and returns draft definitions plus
   warnings.
 - Publishing an import draft writes registry definitions but does not bind them.
+- Publishing an import draft in v1 does not create a complete source snapshot.
 - Binding still happens through teammate skills APIs.
 - `DELETE /skills/:id` archives a custom/imported registry definition.
 - PATCH-style draft editing and skill editing are deferred; users can create a new draft

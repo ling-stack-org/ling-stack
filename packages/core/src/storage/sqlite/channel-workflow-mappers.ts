@@ -3,6 +3,7 @@ import type { RunTool } from "../../approval-policy.js";
 import type { SkillApprovalProfile } from "../../skill-types.js";
 import {
   channelWorkflowStepStatuses,
+  type ChannelExecutionProposalStepSource,
   type ChannelWorkflow,
   type ChannelWorkflowMetadata,
   type ChannelWorkflowStatus,
@@ -174,6 +175,7 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     handoffIntentIds: readOptionalStringListValue(record.handoffIntentIds),
     sourceProposalId: readOptionalStringValue(record.sourceProposalId),
     sourceMessageId: readOptionalStringValue(record.sourceMessageId),
+    proposalStepSources: parseOptionalProposalStepSourcesValue(record.proposalStepSources),
     fanInSummaryArtifactId: readOptionalStringValue(record.fanInSummaryArtifactId),
     memoryCandidateIds: readOptionalStringListValue(record.memoryCandidateIds),
   });
@@ -314,6 +316,37 @@ function readOptionalStringValue(value: unknown): string | undefined {
 
 function readOptionalStringListValue(value: unknown): readonly string[] | undefined {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value as string[] : undefined;
+}
+
+function parseOptionalProposalStepSourcesValue(value: unknown): readonly ChannelExecutionProposalStepSource[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const sources: ChannelExecutionProposalStepSource[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const kind = record.kind;
+    if (kind !== "direct" && kind !== "council") {
+      continue;
+    }
+    const councilId = readOptionalStringValue(record.councilId);
+    const councilDisplayName = readOptionalStringValue(record.councilDisplayName);
+    const slotKey = readOptionalStringValue(record.slotKey);
+    const label = readOptionalStringValue(record.label);
+    const source: ChannelExecutionProposalStepSource = {
+      kind,
+      ...(councilId ? { councilId } : {}),
+      ...(councilDisplayName ? { councilDisplayName } : {}),
+      ...(slotKey ? { slotKey } : {}),
+      ...(label ? { label } : {}),
+      ...(typeof record.isDefault === "boolean" ? { isDefault: record.isDefault } : {}),
+    };
+    sources.push(source);
+  }
+  return sources.length > 0 ? sources : undefined;
 }
 
 function readOptionalRunToolListValue(value: unknown): readonly RunTool[] | undefined {

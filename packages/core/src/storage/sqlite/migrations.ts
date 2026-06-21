@@ -156,6 +156,10 @@ const CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_VERSION = 72;
 const CHANNEL_PLAYBOOK_CANDIDATES_MIGRATION_NAME = "create_channel_playbook_candidates";
 const CANDIDATE_GENERATION_DECISIONS_MIGRATION_VERSION = 73;
 const CANDIDATE_GENERATION_DECISIONS_MIGRATION_NAME = "create_candidate_generation_decisions";
+const GOVERNANCE_NOTIFICATIONS_MIGRATION_VERSION = 74;
+const GOVERNANCE_NOTIFICATIONS_MIGRATION_NAME = "create_governance_notifications";
+const AI_COUNCILS_MIGRATION_VERSION = 75;
+const AI_COUNCILS_MIGRATION_NAME = "create_ai_councils";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3685,6 +3689,117 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasCandidateGenerationDecisionsMigration) {
         context.recordMigration(CANDIDATE_GENERATION_DECISIONS_MIGRATION_VERSION, CANDIDATE_GENERATION_DECISIONS_MIGRATION_NAME);
+      }
+    }
+
+    const hasGovernanceNotificationsMigration = context.hasMigration(GOVERNANCE_NOTIFICATIONS_MIGRATION_VERSION);
+    if (
+      !hasGovernanceNotificationsMigration ||
+      !context.hasTable("governance_notifications")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS governance_notifications (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          surface_kind TEXT NOT NULL,
+          surface_teammate_id TEXT,
+          surface_thread_id TEXT,
+          surface_channel_id TEXT,
+          kind TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          target_route_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          delivery_status TEXT NOT NULL,
+          delivery_blocked_reason TEXT,
+          deliver_after TEXT,
+          delivered_at TEXT,
+          dedupe_key TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          resolved_at TEXT,
+          UNIQUE(workspace_id, dedupe_key),
+          CHECK (
+            (surface_kind = 'workspace' AND surface_teammate_id IS NULL AND surface_thread_id IS NULL AND surface_channel_id IS NULL)
+            OR (surface_kind = 'channel' AND surface_channel_id IS NOT NULL AND surface_teammate_id IS NULL AND surface_thread_id IS NULL)
+            OR (surface_kind = 'teammate_direct' AND surface_teammate_id IS NOT NULL AND surface_thread_id IS NOT NULL AND surface_channel_id IS NULL)
+            OR (surface_kind = 'ling_agent' AND surface_teammate_id IS NOT NULL AND surface_thread_id IS NULL AND surface_channel_id IS NULL)
+          )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_governance_notifications_surface
+        ON governance_notifications(workspace_id, surface_kind, surface_channel_id, surface_teammate_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_governance_notifications_status
+        ON governance_notifications(workspace_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_governance_notifications_kind
+        ON governance_notifications(workspace_id, kind, status, updated_at);
+      `);
+      if (!hasGovernanceNotificationsMigration) {
+        context.recordMigration(GOVERNANCE_NOTIFICATIONS_MIGRATION_VERSION, GOVERNANCE_NOTIFICATIONS_MIGRATION_NAME);
+      }
+    }
+    const hasAiCouncilsMigration = context.hasMigration(AI_COUNCILS_MIGRATION_VERSION);
+    if (
+      !hasAiCouncilsMigration ||
+      !context.hasTable("ai_councils") ||
+      !context.hasTable("ai_council_members") ||
+      !context.hasTable("channel_council_policies")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS ai_councils (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          template_id TEXT,
+          display_name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          routing_policy_json TEXT NOT NULL,
+          governance_profile_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          pinned INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_councils_workspace_status
+        ON ai_councils(workspace_id, status, pinned);
+
+        CREATE TABLE IF NOT EXISTS ai_council_members (
+          council_id TEXT NOT NULL,
+          teammate_id TEXT NOT NULL,
+          slot_key TEXT,
+          label TEXT,
+          position INTEGER NOT NULL,
+          enabled INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(council_id, teammate_id),
+          FOREIGN KEY(council_id) REFERENCES ai_councils(id) ON DELETE CASCADE,
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_council_members_teammate
+        ON ai_council_members(teammate_id);
+
+        CREATE TABLE IF NOT EXISTS channel_council_policies (
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT PRIMARY KEY,
+          attached_council_ids_json TEXT NOT NULL,
+          preferred_council_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(preferred_council_id) REFERENCES ai_councils(id) ON DELETE SET NULL
+        );
+      `);
+      if (!hasAiCouncilsMigration) {
+        context.recordMigration(AI_COUNCILS_MIGRATION_VERSION, AI_COUNCILS_MIGRATION_NAME);
       }
     }
 }

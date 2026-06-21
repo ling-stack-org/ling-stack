@@ -36,6 +36,8 @@ import {
 } from "../approval-policy.js";
 import {
   DEFAULT_WORKSPACE_ID,
+  type AiCouncil,
+  type AiCouncilMember,
   type AiTeammate,
   type AiTeammateUpdateInput,
   type Channel,
@@ -58,6 +60,7 @@ import {
   type ChannelMessage,
   type ChannelMessageListPage,
   type ChannelMessageRouteDecision,
+  type ChannelCouncilPolicy,
   type ChannelUpdateInput,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
@@ -87,8 +90,10 @@ import {
   type CreateTeammatePrivateAttachmentInput,
   type CreateTaskInput,
   type DirectWorkspaceBinding,
+  type EffectiveChannelCouncilProjection,
   type HardDeleteAiTeammateInput,
   type HardDeleteAiTeammateResult,
+  type ListAiCouncilsOptions,
   type ListAiTeammatesOptions,
   type ListChannelAttachmentsOptions,
   type ListChannelBranchesOptions,
@@ -110,6 +115,7 @@ import {
   type ListTeammateDirectReplyInterventionsOptions,
   type ListTeammatePrivateAttachmentsOptions,
   type ListTasksOptions,
+  type ReplaceAiCouncilMemberInput,
   type ReplaceTeammateChannelMembershipInput,
   type ReplaceTeammateMemoryScopeInput,
   type ReplaceTeammateSkillBindingInput,
@@ -141,6 +147,7 @@ import {
   type UpdateWorkflowHandoffIntentInput,
   type UpdateWorkflowSelectorDecisionInput,
   type UpdateWorkspaceSettingsInput,
+  type UpsertChannelCouncilPolicyInput,
   type UserProfile,
   type UpsertChannelCollaborationProtocolOverrideInput,
   type WorkspaceSettings,
@@ -354,6 +361,14 @@ import {
   type UsedMemoryEvent,
   type UpsertMemorySelfImprovingMetadataInput,
 } from "../memory-types.js";
+import {
+  type CreateGovernanceNotificationInput,
+  type GovernanceNotification,
+  type GovernanceNotificationSummary,
+  type ListGovernanceNotificationsOptions,
+  type UpdateGovernanceNotificationDeliveryInput,
+  type UpsertGovernanceNotificationResult,
+} from "../governance-notification-types.js";
 import { redactSecrets } from "../redaction.js";
 import { applySqliteRunStoreMigrations, configureSqliteRunStoreDatabase } from "./sqlite/migrations.js";
 import {
@@ -402,10 +417,12 @@ import { SqliteTeammateAssociationStore } from "./sqlite/teammate-association-st
 import { SqliteTeammateCoreStore } from "./sqlite/teammate-core-store.js";
 import { SqliteTeammateBootstrapCoordinator } from "./sqlite/teammate-bootstrap-coordinator.js";
 import { SqliteTeammateCleanupStore } from "./sqlite/teammate-cleanup-store.js";
+import { SqliteAiCouncilStore } from "./sqlite/ai-council-store.js";
 import { SqliteMemoryConsolidationStore } from "./sqlite/memory-consolidation-store.js";
 import { SqliteMemoryObjectStore } from "./sqlite/memory-object-store.js";
 import { SqliteMemoryReviewStore } from "./sqlite/memory-review-store.js";
 import { SqliteMemoryRetrievalStore } from "./sqlite/memory-retrieval-store.js";
+import { SqliteGovernanceNotificationStore } from "./sqlite/governance-notification-store.js";
 import { SqliteChannelMessageStore } from "./sqlite/channel-message-store.js";
 import { SqliteChannelReferenceValidator } from "./sqlite/channel-reference-validator.js";
 import { SqliteChannelRouteDecisionStore } from "./sqlite/channel-route-decision-store.js";
@@ -466,10 +483,12 @@ export class SqliteRunStore implements RunStore {
   private readonly aiTeammates: SqliteTeammateCoreStore;
   private readonly teammateBootstrap: SqliteTeammateBootstrapCoordinator;
   private readonly teammateCleanup: SqliteTeammateCleanupStore;
+  private readonly aiCouncils: SqliteAiCouncilStore;
   private readonly memoryConsolidation: SqliteMemoryConsolidationStore;
   private readonly memoryObjects: SqliteMemoryObjectStore;
   private readonly memoryReviews: SqliteMemoryReviewStore;
   private readonly memoryRetrieval: SqliteMemoryRetrievalStore;
+  private readonly governanceNotifications: SqliteGovernanceNotificationStore;
   private readonly channelReferences: SqliteChannelReferenceValidator;
   private readonly channelMessages: SqliteChannelMessageStore;
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
@@ -651,6 +670,14 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       { getAiTeammate: (id) => this.getAiTeammate(id) },
     );
+    this.aiCouncils = new SqliteAiCouncilStore(
+      { database: this.database },
+      {
+        getAiTeammate: (id) => this.getAiTeammate(id),
+        getChannel: (id) => this.getChannel(id),
+        hasTable: (tableName) => this.hasTable(tableName),
+      },
+    );
     this.teammateBootstrap = new SqliteTeammateBootstrapCoordinator(
       { database: this.database },
       {
@@ -680,6 +707,7 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       { listMemoryObjects: (options) => this.listMemoryObjects(options) },
     );
+    this.governanceNotifications = new SqliteGovernanceNotificationStore({ database: this.database });
     this.channelReferences = new SqliteChannelReferenceValidator({
       getChannel: (channelId) => this.getChannel(channelId),
       getChannelMessage: (messageId) => this.getChannelMessage(messageId),
@@ -1343,6 +1371,42 @@ export class SqliteRunStore implements RunStore {
     return this.teammateCleanup.hardDeleteAiTeammate(id, input, now);
   }
 
+  getAiCouncil(id: string): AiCouncil | undefined {
+    return this.aiCouncils.getAiCouncil(id);
+  }
+
+  listAiCouncils(options: ListAiCouncilsOptions = {}): AiCouncil[] {
+    return this.aiCouncils.listAiCouncils(options);
+  }
+
+  listAiCouncilMembers(councilId: string): AiCouncilMember[] {
+    return this.aiCouncils.listAiCouncilMembers(councilId);
+  }
+
+  replaceAiCouncilMembers(
+    councilId: string,
+    members: readonly ReplaceAiCouncilMemberInput[],
+    now: string,
+  ): AiCouncilMember[] {
+    return this.aiCouncils.replaceAiCouncilMembers(councilId, members, now);
+  }
+
+  getChannelCouncilPolicy(channelId: string): ChannelCouncilPolicy | undefined {
+    return this.aiCouncils.getChannelCouncilPolicy(channelId);
+  }
+
+  upsertChannelCouncilPolicy(
+    channelId: string,
+    input: UpsertChannelCouncilPolicyInput,
+    now: string,
+  ): ChannelCouncilPolicy {
+    return this.aiCouncils.upsertChannelCouncilPolicy(channelId, input, now);
+  }
+
+  getEffectiveChannelCouncil(channelId: string): EffectiveChannelCouncilProjection | undefined {
+    return this.aiCouncils.getEffectiveChannelCouncil(channelId);
+  }
+
   listTeammateChannelMemberships(teammateId: string): TeammateChannelMembership[] {
     return this.teammateAssociations.listTeammateChannelMemberships(teammateId);
   }
@@ -1559,6 +1623,38 @@ export class SqliteRunStore implements RunStore {
 
   listUsedMemoryEvents(options: ListUsedMemoryEventsOptions = {}): UsedMemoryEvent[] {
     return this.memoryRetrieval.listUsedMemoryEvents(options);
+  }
+
+  upsertGovernanceNotification(input: CreateGovernanceNotificationInput, now: string): UpsertGovernanceNotificationResult {
+    return this.governanceNotifications.upsertGovernanceNotification(input, now);
+  }
+
+  getGovernanceNotification(id: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.getGovernanceNotification(id);
+  }
+
+  listGovernanceNotifications(options: ListGovernanceNotificationsOptions = {}): GovernanceNotification[] {
+    return this.governanceNotifications.listGovernanceNotifications(options);
+  }
+
+  updateGovernanceNotificationDelivery(id: string, input: UpdateGovernanceNotificationDeliveryInput, now: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.updateGovernanceNotificationDelivery(id, input, now);
+  }
+
+  markGovernanceNotificationSeen(id: string, now: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.markGovernanceNotificationSeen(id, now);
+  }
+
+  dismissGovernanceNotification(id: string, now: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.dismissGovernanceNotification(id, now);
+  }
+
+  resolveGovernanceNotificationByDedupeKey(workspaceId: string, dedupeKey: string, now: string): GovernanceNotification | undefined {
+    return this.governanceNotifications.resolveGovernanceNotificationByDedupeKey(workspaceId, dedupeKey, now);
+  }
+
+  getGovernanceNotificationSummary(workspaceId = DEFAULT_WORKSPACE_ID, generatedAt?: string): GovernanceNotificationSummary {
+    return this.governanceNotifications.getGovernanceNotificationSummary(workspaceId, generatedAt);
   }
 
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread {
@@ -2496,6 +2592,7 @@ export class SqliteRunStore implements RunStore {
 
   private ensureDefaultAiTeammates(): void {
     this.teammateBootstrap.ensureDefaultAiTeammates();
+    this.aiCouncils.ensureBuiltinDevelopmentCouncil(new Date().toISOString());
   }
 
   private hasMigration(version: number): boolean {

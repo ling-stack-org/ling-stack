@@ -839,6 +839,72 @@ daemon also updates the matching channel's `defaultTeammateId`.
 }
 ```
 
+## AI Councils
+
+AI councils are durable management collections of multiple AI teammates. They are not
+super-agents and do not grant tools, MCP access, provider credentials, deployment rights,
+external-send rights, or approval bypass. Ling Agent remains the protected system
+coordinator and is excluded from normal council membership.
+
+The daemon seeds a built-in `Development Council` with id
+`council_builtin_development`. It is available by default but is not attached to every
+channel automatically.
+
+```http
+GET /ai-councils?cwd=/path/to/project&includeArchived=false&limit=100
+GET /ai-councils/:id?cwd=/path/to/project
+GET /ai-councils/:id/members?cwd=/path/to/project
+PUT /ai-councils/:id/members?cwd=/path/to/project
+```
+
+`PUT /members` replaces the council member projection. Members reference durable
+teammate ids and may be disabled without deleting the teammate.
+
+```json
+{
+  "members": [
+    {
+      "teammateId": "teammate_builtin_engineer",
+      "slotKey": "engineer",
+      "label": "Engineer",
+      "position": 2,
+      "enabled": true
+    }
+  ]
+}
+```
+
+Channels attach councils by reference through a channel council policy. This does not
+copy council members into `teammate_channel_memberships`.
+
+```http
+GET /channels/:id/council-policy?cwd=/path/to/project
+PUT /channels/:id/council-policy?cwd=/path/to/project
+GET /channels/:id/effective-council?cwd=/path/to/project
+```
+
+Default channel policy has no attached councils:
+
+```json
+{
+  "attachedCouncilIds": [],
+  "preferredCouncilId": null
+}
+```
+
+Attach the built-in development council:
+
+```json
+{
+  "attachedCouncilIds": ["council_builtin_development"],
+  "preferredCouncilId": "council_builtin_development"
+}
+```
+
+`GET /channels/:id/effective-council` returns a stable projection for Web and desktop
+clients: the channel policy, attached active councils, effective member health, and the
+merged specialist roster from direct teammate memberships plus attached councils.
+
 ### Skill Bindings
 
 ```http
@@ -961,6 +1027,53 @@ For `edit_and_approve`, pass changed memory fields under `editedMemory`:
   "reason": "Stable workspace rule confirmed by user."
 }
 ```
+
+### Governance Notifications
+
+```http
+GET /governance-notifications?cwd=/path/to/project
+GET /governance-notifications/summary?cwd=/path/to/project
+POST /governance-notifications/:id/seen?cwd=/path/to/project
+POST /governance-notifications/:id/dismiss?cwd=/path/to/project
+```
+
+Governance notifications are durable projections over authoritative review queues.
+They do not replace memory, skill, protocol, playbook, approval, or workflow source
+records. Dismissal hides the reminder only; source review state stays in its own API.
+
+Optional list filters:
+
+```text
+surface=channel|teammate_direct|ling_agent|workspace
+channelId=channel_...
+teammateId=teammate_...
+threadId=thread_...
+kind=memory_candidate|memory_health_finding|skill_candidate|procedure_cluster|channel_protocol_candidate|channel_playbook_candidate|workflow_fanin
+status=unread|seen|dismissed|resolved
+includeResolved=true|false
+includeDismissed=true|false
+limit=1..500
+```
+
+Surface semantics:
+
+- `channel` is a channel-header notification projection. It never writes rows into
+  `channel_messages`.
+- `teammate_direct` is a single teammate private-thread projection. Delivery is quiet
+  window gated and writes a short direct `system` message only after the thread is idle.
+- `ling_agent` is for workspace or cross-owner review pressure with no safer local
+  owner. Delivery writes one bounded Ling Agent private `system` digest per flush, not
+  one chat row per source record.
+- `workspace` is reserved for a future workspace notification center; first clients
+  should read the daemon list/summary APIs rather than SQLite directly.
+
+The first implementation slice creates memory candidate notifications when candidate
+memory is created through `POST /memory`, `POST /memory/import`, or
+`POST /memory/consolidation-jobs`, and marks those notifications resolved after terminal
+memory review actions. Notification summaries deliberately omit memory bodies and raw
+transcript text. Channel-scoped memory candidates use the channel surface, teammate
+memory candidates use the teammate direct surface, and workspace-scoped memory candidates
+use the Ling Agent digest surface.
 
 ### Private Thread And Messages
 

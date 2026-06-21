@@ -1,5 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultTeammateTemplates } from "../../builtin-skill-packs.js";
+import { GSTACK_DEFAULT_SKILL_PACK_ID, LING_AGENT_DEFAULT_SKILL_IDS, listDefaultTeammateTemplates } from "../../builtin-skill-packs.js";
 import type { AiTeammateTemplate } from "../../skill-types.js";
 import {
   DEFAULT_WORKSPACE_ID,
@@ -41,6 +41,7 @@ export class SqliteTeammateBootstrapCoordinator {
     }
     const now = new Date().toISOString();
     this.ensureLingAgentSystemTeammate(now);
+    this.ensureLingAgentSkillBindings(now);
     this.ensureLingAgentChannelMemberships(now);
     for (const template of listDefaultTeammateTemplates(GSTACK_DEFAULT_SKILL_PACK_ID)) {
       const teammateId = createBuiltinAiTeammateId(template.id);
@@ -140,6 +141,40 @@ export class SqliteTeammateBootstrapCoordinator {
     try {
       for (const skillId of missingSkillIds) {
         insert.run(teammateId, skillId, now, now);
+      }
+      this.context.database.exec("COMMIT");
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+    return true;
+  }
+
+  private ensureLingAgentSkillBindings(now: string): boolean {
+    if (!this.ports.hasTable("teammate_skill_bindings") || !this.ports.getAiTeammate(LING_AGENT_ID)) {
+      return false;
+    }
+
+    const existingSkillIds = new Set(this.ports.listTeammateSkillBindings(LING_AGENT_ID).map((binding) => binding.skillId));
+    const missingSkillIds = LING_AGENT_DEFAULT_SKILL_IDS.filter((skillId) => !existingSkillIds.has(skillId));
+    if (missingSkillIds.length === 0) {
+      return false;
+    }
+
+    const insert = this.context.database.prepare(`
+      INSERT INTO teammate_skill_bindings (
+        teammate_id,
+        skill_id,
+        source,
+        enabled,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, 'template', 1, ?, ?)
+    `);
+    this.context.database.exec("BEGIN");
+    try {
+      for (const skillId of missingSkillIds) {
+        insert.run(LING_AGENT_ID, skillId, now, now);
       }
       this.context.database.exec("COMMIT");
     } catch (error) {

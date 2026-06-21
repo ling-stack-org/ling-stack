@@ -45,6 +45,7 @@ import {
   SquareTerminal,
   Trash2,
   UserPlus,
+  UsersRound,
   Workflow,
   X,
 } from "lucide-react";
@@ -160,11 +161,13 @@ import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, Conversat
 import type {
   ApprovalRequest,
   ApprovalPolicy,
+  AiCouncil,
   Channel,
   ChannelAttachment,
   ChannelBrief,
   ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
+  ChannelCouncilPolicy,
   ChannelCreateFormState,
   ChannelDecision,
   ChannelFormState,
@@ -185,6 +188,7 @@ import type {
   ChannelWorkspaceBinding,
   ChannelWorkspaceMode,
   ExecutionAction,
+  GovernanceNotification,
   WorkflowContextInspectSummary,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
@@ -205,8 +209,10 @@ import type {
   TaskFormState,
   TaskRunActionState,
   TeammateChannelMembership,
+  EffectiveChannelCouncilProjection,
   UpdateChannelCollaborationProtocolRequest,
   UpdateChannelBriefRequest,
+  UpdateChannelCouncilPolicyRequest,
   UsedMemoryEvent,
   WorkflowEvidenceDiagnostic,
   WorkItemView,
@@ -234,6 +240,7 @@ type ChannelProposalStepDraft = {
   readonly teammateId: string;
   readonly action: ChannelExecutionProposal["collaborationSteps"][number]["action"];
   readonly summary: string;
+  readonly sources?: ChannelExecutionProposal["collaborationSteps"][number]["sources"];
 };
 type ChannelProposalEditDraft = {
   readonly title: string;
@@ -505,6 +512,15 @@ export function WorkspaceClientView({
   channelStateTransitions,
   channelActivityTransitionsLoading,
   channelActivityTransitionError,
+  channelGovernanceNotifications,
+  channelGovernanceNotificationsLoading,
+  channelGovernanceNotificationActionId,
+  aiCouncils,
+  aiCouncilsLoading,
+  channelCouncilPolicy,
+  channelEffectiveCouncil,
+  channelCouncilLoading,
+  channelCouncilSaving,
   externalWorkCiTriage,
   externalWorkCiTriageLoading,
   durableWorkItems,
@@ -592,6 +608,12 @@ export function WorkspaceClientView({
   onRefreshWorkItems,
   onRefreshChannelProtocol,
   onRefreshChannelFiles,
+  onRefreshChannelGovernanceNotifications,
+  onMarkChannelGovernanceNotificationSeen,
+  onDismissChannelGovernanceNotification,
+  onRefreshAiCouncils,
+  onRefreshChannelCouncil,
+  onUpdateChannelCouncilPolicy,
   attachmentContentUrl,
   onRefreshTasks,
   onSelectTask,
@@ -651,6 +673,15 @@ export function WorkspaceClientView({
   readonly channelStateTransitions: readonly StateTransitionEvent[];
   readonly channelActivityTransitionsLoading: boolean;
   readonly channelActivityTransitionError: string;
+  readonly channelGovernanceNotifications: readonly GovernanceNotification[];
+  readonly channelGovernanceNotificationsLoading: boolean;
+  readonly channelGovernanceNotificationActionId: string;
+  readonly aiCouncils: readonly AiCouncil[];
+  readonly aiCouncilsLoading: boolean;
+  readonly channelCouncilPolicy: ChannelCouncilPolicy | undefined;
+  readonly channelEffectiveCouncil: EffectiveChannelCouncilProjection | undefined;
+  readonly channelCouncilLoading: boolean;
+  readonly channelCouncilSaving: boolean;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
   readonly externalWorkCiTriageLoading: boolean;
   readonly durableWorkItems: readonly WorkItemView[];
@@ -749,6 +780,12 @@ export function WorkspaceClientView({
   readonly onRefreshWorkItems: () => void;
   readonly onRefreshChannelProtocol: () => void;
   readonly onRefreshChannelFiles: () => void;
+  readonly onRefreshChannelGovernanceNotifications: () => void;
+  readonly onMarkChannelGovernanceNotificationSeen: (notificationId: string) => void;
+  readonly onDismissChannelGovernanceNotification: (notificationId: string) => void;
+  readonly onRefreshAiCouncils: () => void;
+  readonly onRefreshChannelCouncil: () => void;
+  readonly onUpdateChannelCouncilPolicy: (input: UpdateChannelCouncilPolicyRequest) => Promise<void>;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onRefreshTasks: () => void;
   readonly onSelectTask: (taskId: string) => void;
@@ -787,6 +824,7 @@ export function WorkspaceClientView({
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
+  const [governanceNotificationsOpen, setGovernanceNotificationsOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
   const [activityToolsOpen, setActivityToolsOpen] = useState(false);
@@ -840,6 +878,7 @@ export function WorkspaceClientView({
   const [threadReplyPending, setThreadReplyPending] = useState(false);
   const [threadReplyError, setThreadReplyError] = useState("");
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
+  const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
   const [channelWorkspaceBusyAction, setChannelWorkspaceBusyAction] = useState("");
   const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
@@ -860,6 +899,7 @@ export function WorkspaceClientView({
   const messageFeedOlderLoadArmedRef = useRef(true);
   const messageFeedOlderLoadSnapshotRef = useRef<{ readonly anchorId: string; readonly anchorOffset: number } | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
+  const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
   const teammateManagerPanelRef = useRef<HTMLElement | null>(null);
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
@@ -1422,6 +1462,34 @@ export function WorkspaceClientView({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [channelMoreOpen]);
+
+  useEffect(() => {
+    setGovernanceNotificationsOpen(false);
+  }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (!governanceNotificationsOpen) {
+      return undefined;
+    }
+    function handlePointerDown(event: MouseEvent): void {
+      const target = event.target;
+      if (target instanceof Node && governanceNotificationsRef.current?.contains(target)) {
+        return;
+      }
+      setGovernanceNotificationsOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setGovernanceNotificationsOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [governanceNotificationsOpen]);
 
   useEffect(() => {
     if (!teammateManagerOpen) {
@@ -2540,6 +2608,42 @@ export function WorkspaceClientView({
     void onAddChannelTeammate(teammateId);
   }
 
+  function addSelectedChannelCouncil(): void {
+    if (!pendingChannelCouncilId || channelCouncilSaving) {
+      return;
+    }
+    const councilId = pendingChannelCouncilId;
+    const currentIds = channelCouncilPolicy?.attachedCouncilIds ?? [];
+    const nextIds = currentIds.includes(councilId) ? currentIds : [...currentIds, councilId];
+    setPendingChannelCouncilId("");
+    void onUpdateChannelCouncilPolicy({
+      attachedCouncilIds: nextIds,
+      preferredCouncilId: channelCouncilPolicy?.preferredCouncilId ?? councilId,
+    });
+  }
+
+  function removeChannelCouncil(councilId: string): void {
+    if (channelCouncilSaving) {
+      return;
+    }
+    const nextIds = (channelCouncilPolicy?.attachedCouncilIds ?? []).filter((id) => id !== councilId);
+    void onUpdateChannelCouncilPolicy({
+      attachedCouncilIds: nextIds,
+      preferredCouncilId: channelCouncilPolicy?.preferredCouncilId === councilId ? (nextIds[0] ?? null) : (channelCouncilPolicy?.preferredCouncilId ?? null),
+    });
+  }
+
+  function setPreferredChannelCouncil(councilId: string): void {
+    if (channelCouncilSaving) {
+      return;
+    }
+    const currentIds = channelCouncilPolicy?.attachedCouncilIds ?? [];
+    void onUpdateChannelCouncilPolicy({
+      attachedCouncilIds: currentIds.includes(councilId) ? currentIds : [...currentIds, councilId],
+      preferredCouncilId: councilId,
+    });
+  }
+
   function toggleCreateChannelTeammate(teammateId: string): void {
     const selected = new Set(channelForm.selectedTeammateIds);
     if (selected.has(teammateId)) {
@@ -2772,6 +2876,8 @@ export function WorkspaceClientView({
     }
     if (sidePanelView === "settings") {
       onRefreshChannels();
+      onRefreshAiCouncils();
+      onRefreshChannelCouncil();
       return;
     }
     onRefreshRunApprovals();
@@ -2847,6 +2953,35 @@ export function WorkspaceClientView({
   const createChannelTeammateOptions = useMemo(
     () => activeLocalTeammates.filter((teammate) => teammate.id !== LING_AGENT_AUTHOR_ID && !teammate.hidden),
     [activeLocalTeammates],
+  );
+  const activeAiCouncils = useMemo(
+    () => aiCouncils.filter((council) => council.status === "active"),
+    [aiCouncils],
+  );
+  const attachedCouncilIds = channelCouncilPolicy?.attachedCouncilIds ?? [];
+  const attachedCouncilIdSet = useMemo(
+    () => new Set(attachedCouncilIds),
+    [attachedCouncilIds],
+  );
+  const aiCouncilById = useMemo(
+    () => new Map(aiCouncils.map((council) => [council.id, council])),
+    [aiCouncils],
+  );
+  const attachedAiCouncils = useMemo(
+    () => attachedCouncilIds
+      .map((councilId) => aiCouncilById.get(councilId))
+      .filter((council): council is AiCouncil => council !== undefined),
+    [aiCouncilById, attachedCouncilIds],
+  );
+  const availableAiCouncils = useMemo(
+    () => activeAiCouncils.filter((council) => !attachedCouncilIdSet.has(council.id)),
+    [activeAiCouncils, attachedCouncilIdSet],
+  );
+  const projectedCouncilSpecialists = useMemo(
+    () => (channelEffectiveCouncil?.specialists ?? []).filter((specialist) =>
+      specialist.sources.some((source) => source.kind === "council") && !isLingAgentTeammate(specialist.teammate),
+    ),
+    [channelEffectiveCouncil],
   );
 
   function updateMentionPicker(value: string, caret: number): void {
@@ -4418,6 +4553,104 @@ export function WorkspaceClientView({
     </section>
   );
 
+  const channelCouncilPanel = (
+    <section className="channel-settings-card channel-council-panel" aria-label={t("Channel AI councils")}>
+      <div className="channel-settings-section-head">
+        <span>
+          <UsersRound size={15} />
+          <strong>{t("AI Councils")}</strong>
+        </span>
+        <small>
+          {channelCouncilLoading || aiCouncilsLoading
+            ? t("Loading councils...")
+            : t("{count} council(s) attached", { count: attachedAiCouncils.length })}
+        </small>
+      </div>
+      {attachedAiCouncils.length === 0 ? (
+        <div className="client-empty-state channel-teammate-empty channel-council-empty">
+          <UsersRound size={18} />
+          <span>{aiCouncils.length === 0 ? t("No AI councils available") : t("No AI councils attached")}</span>
+        </div>
+      ) : (
+        <div className="channel-council-list" role="list">
+          {attachedAiCouncils.map((council) => {
+            const preferred = channelCouncilPolicy?.preferredCouncilId === council.id;
+            const memberCount = channelEffectiveCouncil?.councils
+              .find((item) => item.council.id === council.id)
+              ?.members.filter((item) => item.enabled && item.teammate && !isLingAgentTeammate(item.teammate)).length ?? 0;
+            return (
+              <article key={council.id} className={preferred ? "channel-council-card preferred" : "channel-council-card"} role="listitem">
+                <div className="channel-council-card-main">
+                  <span className="channel-council-icon" aria-hidden="true">
+                    <UsersRound size={16} />
+                  </span>
+                  <span>
+                    <strong>{council.displayName}</strong>
+                    <small>{t("{count} projected specialist(s)", { count: memberCount })}</small>
+                  </span>
+                </div>
+                <div className="channel-council-actions">
+                  <button className="secondary-button compact-button" type="button" onClick={() => setPreferredChannelCouncil(council.id)} disabled={preferred || channelCouncilSaving}>
+                    {preferred ? <Check size={13} /> : <Pin size={13} />}
+                    {preferred ? t("Preferred") : t("Prefer")}
+                  </button>
+                  <button className="icon-button compact-icon-button" type="button" aria-label={t("Detach council")} title={t("Detach council")} onClick={() => removeChannelCouncil(council.id)} disabled={channelCouncilSaving}>
+                    {channelCouncilSaving ? <Loader2 className="spin" size={13} /> : <X size={13} />}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+      <div className="channel-teammate-add-row channel-council-add-row">
+        <label className="channel-teammate-select">
+          <select
+            aria-label={t("Attach AI council")}
+            value={pendingChannelCouncilId}
+            disabled={!selectedChannelId || availableAiCouncils.length === 0 || channelCouncilSaving}
+            onChange={(event) => setPendingChannelCouncilId(event.target.value)}
+          >
+            <option value="">{availableAiCouncils.length > 0 ? t("Select AI council") : t("No councils available")}</option>
+            {availableAiCouncils.map((council) => (
+              <option key={council.id} value={council.id}>{council.displayName}</option>
+            ))}
+          </select>
+        </label>
+        <button className="primary-button compact-button" type="button" onClick={addSelectedChannelCouncil} disabled={!pendingChannelCouncilId || channelCouncilSaving}>
+          {channelCouncilSaving ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+          {t("Attach")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => {
+          onRefreshAiCouncils();
+          onRefreshChannelCouncil();
+        }} disabled={aiCouncilsLoading || channelCouncilLoading}>
+          {aiCouncilsLoading || channelCouncilLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {t("Refresh")}
+        </button>
+      </div>
+      {projectedCouncilSpecialists.length > 0 ? (
+        <div className="channel-council-projection" aria-label={t("Projected council specialists")}>
+          <strong>{t("Projected specialists")}</strong>
+          <div className="channel-council-specialist-list" role="list">
+            {projectedCouncilSpecialists.map((specialist) => {
+              const councilSource = specialist.sources.find((source) => source.kind === "council");
+              return (
+                <article key={specialist.teammateId} className="channel-council-specialist" role="listitem">
+                  <TeammateAvatarView teammate={specialist.teammate} cwd={cwd} compact />
+                  <span>
+                    <strong>{specialist.teammate.displayName}</strong>
+                    <small>{councilSource?.councilDisplayName ?? t("AI council")}</small>
+                  </span>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+
   const channelNotificationPanel = (
     <section className="channel-settings-card channel-notification-panel" aria-label={t("Channel notifications")}>
       <div className="channel-settings-section-head">
@@ -4485,6 +4718,19 @@ export function WorkspaceClientView({
     } : undefined,
   ];
   const attentionProgressRows: readonly AttentionProgressRow[] = attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined);
+  const actionableGovernanceNotifications = useMemo(
+    () => channelGovernanceNotifications
+      .filter((notification) => notification.status !== "dismissed" && notification.status !== "resolved")
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt)),
+    [channelGovernanceNotifications],
+  );
+  const unreadGovernanceNotificationCount = actionableGovernanceNotifications.filter((notification) => notification.status === "unread").length;
+  const governanceNotificationCount = actionableGovernanceNotifications.length;
+  useEffect(() => {
+    if (governanceNotificationCount === 0) {
+      setGovernanceNotificationsOpen(false);
+    }
+  }, [governanceNotificationCount]);
   const activeProgressSourceSummary = useMemo(
     () => buildActiveProgressSourceSummary({
       contextSummaries: channelContextSummaries,
@@ -4515,6 +4761,8 @@ export function WorkspaceClientView({
       onRefreshChannelProtocol();
     } else if (view === "settings") {
       onRefreshChannels();
+      onRefreshAiCouncils();
+      onRefreshChannelCouncil();
     } else if (view === "sources") {
       return;
     } else {
@@ -4733,6 +4981,7 @@ export function WorkspaceClientView({
   ) : sidePanelView === "settings" ? (
     <div className="channel-settings-stack">
       {channelNotificationPanel}
+      {channelCouncilPanel}
       {channelTeammateManager}
       {channelManagementPanel}
     </div>
@@ -4814,8 +5063,49 @@ export function WorkspaceClientView({
 	              ) : null}
 	            </div>
 	          </div>
-	        </div>
+        </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
+          {governanceNotificationCount > 0 || channelGovernanceNotificationsLoading ? (
+            <div className="channel-governance-wrap" ref={governanceNotificationsRef}>
+              <button
+                className={governanceNotificationsOpen ? "channel-governance-button active" : "channel-governance-button"}
+                type="button"
+                aria-expanded={governanceNotificationsOpen}
+                title={t("Review queue")}
+                onClick={() => {
+                  if (governanceNotificationCount === 0 && !channelGovernanceNotificationsLoading) {
+                    return;
+                  }
+                  const nextOpen = !governanceNotificationsOpen;
+                  setGovernanceNotificationsOpen(nextOpen);
+                  if (nextOpen) {
+                    setProgressPopoverOpen(false);
+                    setChannelMoreOpen(false);
+                    setActivityToolsOpen(false);
+                    setTeammateManagerOpen(false);
+                    setSidePanelOpen(false);
+                    onChannelCreateOpenChange(false);
+                  }
+                }}
+                disabled={governanceNotificationCount === 0 && channelGovernanceNotificationsLoading}
+              >
+                {channelGovernanceNotificationsLoading ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />}
+                <span>{t("Review")}</span>
+                <strong>{governanceNotificationCount}</strong>
+                {unreadGovernanceNotificationCount > 0 ? <small>{unreadGovernanceNotificationCount}</small> : null}
+              </button>
+              {governanceNotificationsOpen ? (
+                <ChannelGovernanceNotificationsPopover
+                  notifications={actionableGovernanceNotifications}
+                  loading={channelGovernanceNotificationsLoading}
+                  actionId={channelGovernanceNotificationActionId}
+                  onRefresh={onRefreshChannelGovernanceNotifications}
+                  onMarkSeen={onMarkChannelGovernanceNotificationSeen}
+                  onDismiss={onDismissChannelGovernanceNotification}
+                />
+              ) : null}
+            </div>
+          ) : null}
           <button
             ref={teammateManagerButtonRef}
             className={teammateManagerOpen ? "icon-button active task-toolbar-teammates" : "icon-button task-toolbar-teammates"}
@@ -5369,6 +5659,136 @@ export function WorkspaceClientView({
       </div>
     </div>
   );
+}
+
+function ChannelGovernanceNotificationsPopover({
+  notifications,
+  loading,
+  actionId,
+  onRefresh,
+  onMarkSeen,
+  onDismiss,
+}: {
+  readonly notifications: readonly GovernanceNotification[];
+  readonly loading: boolean;
+  readonly actionId: string;
+  readonly onRefresh: () => void;
+  readonly onMarkSeen: (notificationId: string) => void;
+  readonly onDismiss: (notificationId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+
+  return (
+    <section className="channel-governance-popover" role="dialog" aria-label={t("Governance notifications")}>
+      <div className="channel-governance-head">
+        <span>
+          <ShieldCheck size={15} />
+          <strong>{t("Review queue")}</strong>
+        </span>
+        <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} aria-label={t("Refresh")} title={t("Refresh")}>
+          {loading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+        </button>
+      </div>
+      {notifications.length === 0 ? (
+        <div className="client-empty-state compact-empty channel-governance-empty">
+          {loading ? <Loader2 className="spin" /> : <ShieldCheck />}
+          <span>{loading ? t("Loading review queue...") : t("No review items")}</span>
+        </div>
+      ) : (
+        <div className="channel-governance-list">
+          {notifications.map((notification) => {
+            const busy = actionId === notification.id;
+            return (
+              <article
+                key={notification.id}
+                className={`channel-governance-item ${notification.severity} ${notification.status}`}
+              >
+                <div className="channel-governance-item-head">
+                  <span className={`channel-governance-icon ${notification.severity}`}>
+                    {governanceNotificationIcon(notification)}
+                  </span>
+                  <div>
+                    <strong>{notification.title}</strong>
+                    <small>
+                      {t(governanceNotificationKindLabel(notification.kind))}
+                      {" · "}
+                      {t(governanceNotificationRouteLabel(notification.targetRoute.page))}
+                      {" · "}
+                      {formatDateTime(notification.updatedAt)}
+                    </small>
+                  </div>
+                </div>
+                <p>{notification.summary}</p>
+                <div className="channel-governance-actions">
+                  {notification.status === "unread" ? (
+                    <button className="secondary-button compact-button" type="button" onClick={() => onMarkSeen(notification.id)} disabled={busy}>
+                      {busy ? <Loader2 className="spin" size={13} /> : <Check size={13} />}
+                      {t("Seen")}
+                    </button>
+                  ) : null}
+                  <button className="secondary-button compact-button" type="button" onClick={() => onDismiss(notification.id)} disabled={busy}>
+                    {busy ? <Loader2 className="spin" size={13} /> : <X size={13} />}
+                    {t("Dismiss")}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function governanceNotificationIcon(notification: GovernanceNotification): JSX.Element {
+  if (notification.severity === "critical" || notification.severity === "action_required") {
+    return <CircleAlert size={15} />;
+  }
+  if (notification.severity === "warning") {
+    return <Info size={15} />;
+  }
+  return <ShieldCheck size={15} />;
+}
+
+function governanceNotificationKindLabel(kind: GovernanceNotification["kind"]): string {
+  if (kind === "memory_candidate") {
+    return "Memory review";
+  }
+  if (kind === "memory_health_finding") {
+    return "Memory health";
+  }
+  if (kind === "skill_candidate") {
+    return "Skill review";
+  }
+  if (kind === "procedure_cluster") {
+    return "Procedure review";
+  }
+  if (kind === "channel_protocol_candidate") {
+    return "Protocol review";
+  }
+  if (kind === "channel_playbook_candidate") {
+    return "Playbook review";
+  }
+  return "Workflow review";
+}
+
+function governanceNotificationRouteLabel(page: GovernanceNotification["targetRoute"]["page"]): string {
+  if (page === "memory_promotion_inbox") {
+    return "Memory inbox";
+  }
+  if (page === "memory_health") {
+    return "Memory health";
+  }
+  if (page === "skill_candidate") {
+    return "Skill candidate";
+  }
+  if (page === "procedure_cluster") {
+    return "Procedure cluster";
+  }
+  if (page === "channel_protocol_candidate") {
+    return "Channel protocol";
+  }
+  return "Channel playbook";
 }
 
 type ChannelInspectorMode = "protocol" | "brief" | "routing" | "decisions" | "handoffs" | "runtime";
@@ -6645,6 +7065,7 @@ function WorkflowStepCard({
     metadata?.outputArtifactId,
     ...additionalOutputArtifactIds,
   ].filter((artifactId): artifactId is string => Boolean(artifactId)));
+  const workflowSourceLabel = metadata ? workflowStepSourceLabel(metadata, t) : "";
   const gates = metadata?.gates ?? [];
   return (
     <article className="workflow-step-card compact">
@@ -6672,6 +7093,7 @@ function WorkflowStepCard({
           {metadata.skillId ? <span>{t("Skill")}: {metadata.skillId}</span> : null}
           {metadata.requestedRunnerId ? <span>{t("Runner")}: {metadata.requestedRunnerId}</span> : null}
           {metadata.providerPresetId ? <span>{t("Provider")}: {metadata.providerPresetId}</span> : null}
+          {workflowSourceLabel ? <span>{t("Source")}: {workflowSourceLabel}</span> : null}
           {metadata.dependsOnStepIds?.length ? <span>{t("Depends")}: {metadata.dependsOnStepIds.length}</span> : null}
           {metadata.preStepApprovalId ? <span>{t("Pre-step approval")}: {metadata.preStepApprovalId}</span> : null}
         </div>
@@ -8029,7 +8451,13 @@ function ChannelExecutionProposalCard({
     setDraft((current) => ({
       ...current,
       collaborationSteps: current.collaborationSteps.map((step, stepIndex) =>
-        stepIndex === index ? { ...step, ...patch } : step
+        stepIndex === index
+          ? {
+              ...step,
+              ...patch,
+              ...(patch.teammateId && patch.teammateId !== step.teammateId ? { sources: undefined } : {}),
+            }
+          : step
       ),
     }));
   }
@@ -8216,13 +8644,21 @@ function ChannelExecutionProposalCard({
             </span>
           </summary>
           <ol>
-            {proposal.collaborationSteps.map((step, index) => (
-              <li key={`${step.teammateId}-${step.action}-${index}`}>
-                <strong>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</strong>
-                <small>{t(proposalStepActionLabel(step.action))}</small>
-                <span>{step.summary}</span>
-              </li>
-            ))}
+            {proposal.collaborationSteps.map((step, index) => {
+              const sourceLabel = proposalStepSourceLabel(step, t);
+              return (
+                <li key={`${step.teammateId}-${step.action}-${index}`}>
+                  <strong>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</strong>
+                  <span className="channel-proposal-step-meta">
+                    <small>{t(proposalStepActionLabel(step.action))}</small>
+                    {sourceLabel ? (
+                      <small className="channel-proposal-step-source">{sourceLabel}</small>
+                    ) : null}
+                  </span>
+                  <span className="channel-proposal-step-summary">{step.summary}</span>
+                </li>
+              );
+            })}
           </ol>
         </details>
       ) : null}
@@ -9900,6 +10336,7 @@ function proposalDraftToUpdateInput(proposal: ChannelExecutionProposal, draft: C
       teammateId: step.teammateId.trim(),
       action: step.action,
       summary: step.summary.trim(),
+      ...(step.sources && step.sources.length > 0 ? { sources: step.sources } : {}),
     })),
     shaping: proposalShapingFromEditDraft(proposal, draft),
   };
@@ -10157,6 +10594,36 @@ function proposalStepActionLabel(action: ChannelExecutionProposal["collaboration
     return "Reviewed";
   }
   return "Flagged risk";
+}
+
+function proposalStepSourceLabel(
+  step: ChannelExecutionProposal["collaborationSteps"][number],
+  t: Translate,
+): string {
+  const councilSource = step.sources?.find((source) => source.kind === "council");
+  if (councilSource) {
+    return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
+  }
+  const directSource = step.sources?.find((source) => source.kind === "direct");
+  if (directSource?.isDefault) {
+    return t("Default channel teammate");
+  }
+  return directSource ? t("Direct channel teammate") : "";
+}
+
+function workflowStepSourceLabel(
+  metadata: NonNullable<ChannelWorkflowStep["metadata"]>,
+  t: Translate,
+): string {
+  const councilSource = metadata.proposalStepSources?.find((source) => source.kind === "council");
+  if (councilSource) {
+    return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
+  }
+  const directSource = metadata.proposalStepSources?.find((source) => source.kind === "direct");
+  if (directSource?.isDefault) {
+    return t("Default channel teammate");
+  }
+  return directSource ? t("Direct channel teammate") : "";
 }
 
 function proposalCollaborationSummary(
@@ -10633,6 +11100,10 @@ function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPick
   return candidates
     .filter((candidate): candidate is ActiveMentionPicker => Boolean(candidate))
     .sort((left, right) => (right.end - right.start) - (left.end - left.start))[0];
+}
+
+function isLingAgentTeammate(teammate: { readonly id: string; readonly systemRole?: string }): boolean {
+  return teammate.id === LING_AGENT_AUTHOR_ID || teammate.systemRole === "ling_agent";
 }
 
 function formatBytes(value: number): string {

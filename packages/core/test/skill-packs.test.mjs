@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
+  GSTACK_DEFAULT_UPSTREAM_VERSION,
+  LING_AGENT_DEFAULT_SKILL_IDS,
   buildEffectiveTeammateSkills,
   getBuiltinSkillPack,
   listBuiltinSkillPacks,
@@ -23,42 +25,90 @@ test("gstack default skill pack is exposed as a builtin template", () => {
   assert.ok(pack);
   assert.equal(pack.id, "gstack-default");
   assert.equal(pack.source, "gstack");
-  assert.equal(pack.version, "0.2.0");
+  assert.equal(pack.version, GSTACK_DEFAULT_UPSTREAM_VERSION);
   assert.equal(packs.some((item) => item.id === pack.id), true);
   assert.equal(listDefaultSkills(pack.id).length, pack.skills.length);
   assert.equal(listDefaultTeammateTemplates(pack.id).length, pack.teammateTemplates.length);
 });
 
-test("gstack default skill pack mirrors the adapted generic gstack workflow surface", () => {
+test("gstack default skill pack mirrors the adapted current gstack workflow surface", () => {
   const pack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
   assert.ok(pack);
   const skillIds = new Set(pack.skills.map((skill) => skill.id));
 
   for (const skillId of [
     "autoplan",
+    "benchmark",
+    "benchmark-models",
+    "browse",
+    "canary",
+    "careful",
+    "checkpoint",
+    "claude",
+    "context-restore",
+    "context-save",
+    "cso",
     "plan-devex-review",
     "design-consultation",
     "design-shotgun",
     "design-html",
     "design-review",
-    "devex-review",
-    "qa-only",
-    "benchmark",
-    "health",
-    "landing-report",
-    "setup-deploy",
-    "land-and-deploy",
-    "canary",
+    "diagram",
     "document-generate",
-    "spec",
-    "retro",
+    "document-release",
+    "devex-review",
+    "freeze",
+    "guard",
+    "qa-only",
+    "health",
+    "investigate",
+    "ios-clean",
+    "ios-design-review",
+    "ios-fix",
+    "ios-qa",
+    "ios-sync",
+    "land-and-deploy",
+    "landing-report",
     "learn",
+    "make-pdf",
+    "office-hours",
+    "open-gstack-browser",
+    "pair-agent",
+    "plan-ceo-review",
+    "plan-design-review",
+    "plan-eng-review",
+    "plan-tune",
+    "qa",
+    "review",
+    "retro",
+    "scrape",
+    "setup-browser-cookies",
+    "setup-deploy",
+    "setup-gbrain",
+    "ship",
+    "skillify",
+    "spec",
+    "sync-gbrain",
+    "unfreeze",
+    "gstack-upgrade",
   ]) {
     assert.equal(skillIds.has(skillId), true, `${skillId} should be adapted into the Ling-native pack`);
   }
 
-  for (const excludedRuntimeSkill of ["gstack-upgrade", "browse", "setup-browser-cookies", "ios-qa", "sync-gbrain"]) {
-    assert.equal(skillIds.has(excludedRuntimeSkill), false, `${excludedRuntimeSkill} should remain outside the static Ling pack`);
+  assert.equal(skillIds.has("gstack"), false, "The gstack meta/root skill should remain outside the static Ling pack");
+  assert.equal(skillIds.has("implement"), true, "Ling keeps its native implementation skill alongside adapted gstack skills");
+  assert.equal(pack.skills.length, 55);
+});
+
+test("Ling Agent default skill list references executable non-strict skills", () => {
+  const pack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
+  assert.ok(pack);
+  const skillsById = new Map(pack.skills.map((skill) => [skill.id, skill]));
+
+  for (const skillId of LING_AGENT_DEFAULT_SKILL_IDS) {
+    const skill = skillsById.get(skillId);
+    assert.ok(skill, `${skillId} should exist in the built-in pack`);
+    assert.notEqual(skill.approvalProfile.mode, "strict", `${skillId} should not require strict approval by default`);
   }
 });
 
