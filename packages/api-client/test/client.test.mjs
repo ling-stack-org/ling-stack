@@ -123,6 +123,12 @@ test("builds URL query parameters for list endpoints", async () => {
     summary: "Recorded observation summary",
     normalizedGoal: "recorded observation",
   });
+  await client.recordSkillRecording("/repo path", {
+    runId: "run 2",
+    title: "Recorded skill",
+    summary: "Recorded skill summary",
+    normalizedGoal: "recorded skill",
+  });
   await client.observeSkillCandidate("/repo path", {
     source: "explicit_user_request",
     signals: ["save_as_skill"],
@@ -189,8 +195,10 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[42].method, "POST");
   assert.equal(mock.calls[43].url, "http://daemon.test/procedure-observations/jobs?cwd=%2Frepo+path");
   assert.equal(mock.calls[43].method, "POST");
-  assert.equal(mock.calls[44].url, "http://daemon.test/skill-candidates/observe?cwd=%2Frepo+path");
+  assert.equal(mock.calls[44].url, "http://daemon.test/skill-recordings?cwd=%2Frepo+path");
   assert.equal(mock.calls[44].method, "POST");
+  assert.equal(mock.calls[45].url, "http://daemon.test/skill-candidates/observe?cwd=%2Frepo+path");
+  assert.equal(mock.calls[45].method, "POST");
 });
 
 test("builds governance notification endpoint URLs", async () => {

@@ -1,5 +1,12 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { DEFAULT_WORKSPACE_ID, type ResponseLanguagePreference, type UpdateWorkspaceSettingsInput, type WorkspaceSettings } from "../../workspace-types.js";
+import {
+  DEFAULT_SKILL_GOVERNANCE_POLICY,
+  DEFAULT_WORKSPACE_ID,
+  type ResponseLanguagePreference,
+  type SkillGovernancePolicy,
+  type UpdateWorkspaceSettingsInput,
+  type WorkspaceSettings,
+} from "../../workspace-types.js";
 import { nullableUpdate, omitUndefined, parseJsonObject, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -26,6 +33,9 @@ export class SqliteWorkspaceSettingsStore {
       responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
       channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
       channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
+      skillGovernancePolicy: input.skillGovernancePolicy === undefined
+        ? current.skillGovernancePolicy
+        : input.skillGovernancePolicy ?? DEFAULT_SKILL_GOVERNANCE_POLICY,
       updatedAt: now,
     });
     this.context.database
@@ -44,6 +54,7 @@ export class SqliteWorkspaceSettingsStore {
 function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
   return {
     schemaVersion: 1,
+    skillGovernancePolicy: DEFAULT_SKILL_GOVERNANCE_POLICY,
     updatedAt: now,
   };
 }
@@ -64,8 +75,32 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
     channelNotifications: parseOptionalStringRecord(parsed.channelNotifications),
     channelActivityViews: parseOptionalUnknownRecord(parsed.channelActivityViews),
+    skillGovernancePolicy: parseSkillGovernancePolicy(parsed.skillGovernancePolicy) ?? DEFAULT_SKILL_GOVERNANCE_POLICY,
     updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim() ? parsed.updatedAt : updatedAt,
   });
+}
+
+function parseSkillGovernancePolicy(value: unknown): SkillGovernancePolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const generationMode = record.generationMode;
+  const recordingMode = record.recordingMode;
+  return {
+    generationMode: generationMode === "off" || generationMode === "approval_only" || generationMode === "semi_auto" || generationMode === "auto_candidate"
+      ? generationMode
+      : DEFAULT_SKILL_GOVERNANCE_POLICY.generationMode,
+    recordingMode: recordingMode === "disabled" || recordingMode === "user_initiated"
+      ? recordingMode
+      : DEFAULT_SKILL_GOVERNANCE_POLICY.recordingMode,
+    invocationMode: "explicit_only",
+    publishMode: "manual_review",
+    bindMode: "manual_review",
+  };
 }
 
 function parseOptionalStringRecord(value: unknown): Record<string, string> | undefined {

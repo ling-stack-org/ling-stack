@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import {
+  DEFAULT_SKILL_GOVERNANCE_POLICY,
   resolveConfigPaths,
+  type SkillGovernancePolicy,
   type RunStorePathsFacet,
   type UpdateWorkspaceSettingsInput,
   type WorkspaceStoreFacet,
@@ -121,6 +123,16 @@ export async function buildEffectiveConfigResponse(input: {
         paths.user.settingsPath,
         "follow_user",
       ),
+      skillGovernancePolicy: effectiveValue(
+        workspaceSettings.skillGovernancePolicy,
+        "workspace",
+        paths.workspace.databasePath,
+        "skillGovernancePolicy",
+        undefined,
+        "user",
+        undefined,
+        DEFAULT_SKILL_GOVERNANCE_POLICY,
+      ),
       runtime: {
         defaultRunnerId: runtimeEffectiveValue(runtimeSettings.defaultRunnerId, runtimeResolution.sources.defaultRunnerId, "runtime.defaultRunnerId"),
         explicitRunnerFallback: runtimeEffectiveValue(runtimeSettings.explicitRunnerFallback, runtimeResolution.sources.explicitRunnerFallback, "runtime.explicitRunnerFallback"),
@@ -148,6 +160,7 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
     channelNotifications: readNullableStringRecord(record.channelNotifications, "channelNotifications"),
     channelActivityViews: readNullableUnknownRecord(record.channelActivityViews, "channelActivityViews"),
+    skillGovernancePolicy: readNullableSkillGovernancePolicy(record.skillGovernancePolicy),
   };
 }
 
@@ -292,6 +305,42 @@ function readNullableResponseLanguagePreference(value: unknown): UpdateWorkspace
     throw new Error("responseLanguage must be follow_user, zh-CN, en-US, or null");
   }
   return value;
+}
+
+function readNullableSkillGovernancePolicy(value: unknown): SkillGovernancePolicy | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    throw new Error("skillGovernancePolicy must be an object or null");
+  }
+  const generationMode = value.generationMode;
+  const recordingMode = value.recordingMode;
+  if (generationMode !== "off" && generationMode !== "approval_only" && generationMode !== "semi_auto" && generationMode !== "auto_candidate") {
+    throw new Error("skillGovernancePolicy.generationMode must be off, approval_only, semi_auto, or auto_candidate");
+  }
+  if (recordingMode !== "disabled" && recordingMode !== "user_initiated") {
+    throw new Error("skillGovernancePolicy.recordingMode must be disabled or user_initiated");
+  }
+  if (value.invocationMode !== undefined && value.invocationMode !== "explicit_only") {
+    throw new Error("skillGovernancePolicy.invocationMode must be explicit_only");
+  }
+  if (value.publishMode !== undefined && value.publishMode !== "manual_review") {
+    throw new Error("skillGovernancePolicy.publishMode must be manual_review");
+  }
+  if (value.bindMode !== undefined && value.bindMode !== "manual_review") {
+    throw new Error("skillGovernancePolicy.bindMode must be manual_review");
+  }
+  return {
+    generationMode,
+    recordingMode,
+    invocationMode: "explicit_only",
+    publishMode: "manual_review",
+    bindMode: "manual_review",
+  };
 }
 
 function readNullableStringRecord(value: unknown, key: string): Record<string, string> | null | undefined {

@@ -16,6 +16,7 @@ import {
   type ListProcedureObservationClustersOptions,
   type ListSkillUsageEventsOptions,
   type RunTool,
+  type SkillRecordingObservationInput,
   type SkillCandidateOrigin,
   type SkillCandidateProposedAction,
   type SkillCandidateReviewAction,
@@ -129,6 +130,37 @@ export function parseProcedureObservationJobRequest(value: unknown): ProcedureOb
     validationLabels: readOptionalStringArray(value, "validationLabels"),
     artifactRefs: readOptionalStringArray(value, "artifactRefs"),
     userConfirmed: readBoolean(value, "userConfirmed"),
+    destinationHint: readOptionalDestinationHint(value, "destinationHint"),
+    title: readString(value, "title"),
+    summary: readString(value, "summary"),
+    normalizedGoal: readString(value, "normalizedGoal"),
+    positiveTriggers: readOptionalStringArray(value, "positiveTriggers"),
+    negativeTriggers: readOptionalStringArray(value, "negativeTriggers"),
+    procedureSteps: readProcedureObservationSteps(value.procedureSteps),
+    validationSteps: readProcedureObservationValidationSteps(value.validationSteps),
+    confidence: readOptionalProcedureObservationConfidence(value, "confidence"),
+    reusableScore: readOptionalNumber(value, "reusableScore"),
+  };
+}
+
+export function parseSkillRecordingObservationRequest(value: unknown): SkillRecordingObservationInput {
+  if (!isRecord(value)) {
+    throw new Error("Skill recording observation request must be a JSON object");
+  }
+  return {
+    id: readOptionalString(value, "id"),
+    workspaceId: readOptionalString(value, "workspaceId"),
+    runId: readOptionalString(value, "runId"),
+    messageId: readOptionalString(value, "messageId"),
+    reviewActionId: readOptionalString(value, "reviewActionId"),
+    channelId: readOptionalString(value, "channelId"),
+    teammateId: readOptionalString(value, "teammateId"),
+    taskId: readOptionalString(value, "taskId"),
+    selectedSkillId: readOptionalString(value, "selectedSkillId"),
+    terminalStatus: readOptionalProcedureObservationJobTerminalStatus(value, "terminalStatus"),
+    toolLabels: readOptionalStringArray(value, "toolLabels"),
+    validationLabels: readOptionalStringArray(value, "validationLabels"),
+    artifactRefs: readOptionalStringArray(value, "artifactRefs"),
     destinationHint: readOptionalDestinationHint(value, "destinationHint"),
     title: readString(value, "title"),
     summary: readString(value, "summary"),

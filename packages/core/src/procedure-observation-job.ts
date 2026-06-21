@@ -40,9 +40,24 @@ export interface ProcedureObservationJobInput {
   readonly reusableScore?: number;
 }
 
+export type SkillRecordingObservationInput = Omit<
+  ProcedureObservationJobInput,
+  "source" | "signals" | "userConfirmed"
+>;
+
 export interface ProcedureObservationJobBuildResult {
   readonly jobKey: string;
   readonly observationInput: CreateProcedureObservationInput;
+}
+
+export function createProcedureObservationJobFromRecording(input: SkillRecordingObservationInput): ProcedureObservationJobInput {
+  return {
+    ...input,
+    source: "manual_recording",
+    signals: ["save_as_skill", "user_approved_recording"],
+    userConfirmed: true,
+    destinationHint: input.destinationHint ?? "skill",
+  };
 }
 
 export function createProcedureObservationJobKey(input: ProcedureObservationJobInput): string {

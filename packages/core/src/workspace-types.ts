@@ -49,6 +49,35 @@ export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
 
 export const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", "zh-CN", "en-US"];
 
+export type SkillGovernanceGenerationMode = "off" | "approval_only" | "semi_auto" | "auto_candidate";
+
+export const skillGovernanceGenerationModes: readonly SkillGovernanceGenerationMode[] = [
+  "off",
+  "approval_only",
+  "semi_auto",
+  "auto_candidate",
+];
+
+export type SkillGovernanceRecordingMode = "disabled" | "user_initiated";
+
+export const skillGovernanceRecordingModes: readonly SkillGovernanceRecordingMode[] = ["disabled", "user_initiated"];
+
+export interface SkillGovernancePolicy {
+  readonly generationMode: SkillGovernanceGenerationMode;
+  readonly recordingMode: SkillGovernanceRecordingMode;
+  readonly invocationMode: "explicit_only";
+  readonly publishMode: "manual_review";
+  readonly bindMode: "manual_review";
+}
+
+export const DEFAULT_SKILL_GOVERNANCE_POLICY: SkillGovernancePolicy = {
+  generationMode: "semi_auto",
+  recordingMode: "user_initiated",
+  invocationMode: "explicit_only",
+  publishMode: "manual_review",
+  bindMode: "manual_review",
+};
+
 export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
 
 export const channelResponseLanguages: readonly ChannelResponseLanguage[] = ["workspace", "follow_user", "zh-CN", "en-US"];
@@ -431,6 +460,7 @@ export interface WorkspaceSettings {
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly channelNotifications?: Record<string, string>;
   readonly channelActivityViews?: Record<string, unknown>;
+  readonly skillGovernancePolicy: SkillGovernancePolicy;
   readonly updatedAt: string;
 }
 
@@ -441,6 +471,7 @@ export interface UpdateWorkspaceSettingsInput {
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly channelNotifications?: Record<string, string> | null;
   readonly channelActivityViews?: Record<string, unknown> | null;
+  readonly skillGovernancePolicy?: SkillGovernancePolicy | null;
 }
 
 export interface Task {
