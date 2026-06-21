@@ -70,6 +70,31 @@ export interface ReplaceAiCouncilMembersRequest {
   }[];
 }
 
+export interface CreateAiCouncilRequest {
+  readonly displayName: string;
+  readonly description?: string;
+  readonly routingPolicy?: {
+    readonly defaultMode?: AiCouncilRoutingMode;
+    readonly maxActiveMembers?: number;
+    readonly notes?: readonly string[];
+  };
+  readonly members?: ReplaceAiCouncilMembersRequest["members"];
+  readonly pinned?: boolean;
+}
+
+export interface CloneAiCouncilRequest {
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly pinned?: boolean;
+}
+
+export interface UpdateAiCouncilRequest {
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly status?: AiCouncilStatus;
+  readonly pinned?: boolean;
+}
+
 export interface ChannelCouncilPolicy {
   readonly workspaceId: string;
   readonly channelId: string;
@@ -129,4 +154,50 @@ export interface EffectiveChannelCouncilResponse {
   readonly cwd: string;
   readonly channelId: string;
   readonly effectiveCouncil: EffectiveChannelCouncilProjection;
+}
+
+export type AiCouncilHealthSeverity = "info" | "warning" | "critical";
+
+export type AiCouncilHealthFindingKind =
+  | "council_not_active"
+  | "council_empty"
+  | "council_no_available_members"
+  | "member_disabled"
+  | "teammate_missing"
+  | "teammate_not_active"
+  | "teammate_hidden"
+  | "system_teammate_excluded";
+
+export interface AiCouncilHealthFinding {
+  readonly id: string;
+  readonly kind: AiCouncilHealthFindingKind;
+  readonly severity: AiCouncilHealthSeverity;
+  readonly councilId: string;
+  readonly councilDisplayName: string;
+  readonly teammateId?: string;
+  readonly slotKey?: string;
+  readonly label?: string;
+  readonly title: string;
+  readonly message: string;
+}
+
+export interface AiCouncilHealthSummary {
+  readonly totalCouncils: number;
+  readonly activeCouncils: number;
+  readonly totalMembers: number;
+  readonly availableMembers: number;
+  readonly blockedMembers: number;
+  readonly findings: Record<AiCouncilHealthSeverity, number>;
+}
+
+export interface AiCouncilHealthReport {
+  readonly workspaceId: string;
+  readonly generatedAt: string;
+  readonly summary: AiCouncilHealthSummary;
+  readonly findings: readonly AiCouncilHealthFinding[];
+}
+
+export interface AiCouncilHealthResponse {
+  readonly cwd: string;
+  readonly report: AiCouncilHealthReport;
 }

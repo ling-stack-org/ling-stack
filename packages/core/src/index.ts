@@ -31,6 +31,7 @@ export * from "./skill-suggestions.js";
 export * from "./procedure-observation-types.js";
 export * from "./procedure-observation-job.js";
 export * from "./candidate-router.js";
+export * from "./ai-council-view.js";
 export * from "./workflow-graph-types.js";
 export * from "./builtin-skill-packs.js";
 export * from "./builtin-extensions.js";

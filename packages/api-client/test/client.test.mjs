@@ -231,6 +231,22 @@ test("builds AI council endpoint URLs", async () => {
 
   await client.listAiCouncils("/repo path", { includeArchived: true, limit: 9 });
   await client.getAiCouncil("/repo path", "council 1");
+  await client.createAiCouncil("/repo path", {
+    displayName: "Review Council",
+    description: "Reviews implementation slices.",
+    routingPolicy: { defaultMode: "advisory", maxActiveMembers: 2 },
+    members: [{ teammateId: "teammate 1", slotKey: "engineer", label: "Engineer" }],
+    pinned: true,
+  });
+  await client.cloneAiCouncil("/repo path", "council 1", {
+    displayName: "Clone Council",
+    pinned: false,
+  });
+  await client.updateAiCouncil("/repo path", "council 1", {
+    displayName: "Updated Council",
+    status: "archived",
+  });
+  await client.getAiCouncilHealth("/repo path", { limit: 4 });
   await client.listAiCouncilMembers("/repo path", "council 1");
   await client.replaceAiCouncilMembers("/repo path", "council 1", {
     members: [{ teammateId: "teammate 1", slotKey: "engineer", enabled: false }],
@@ -244,20 +260,42 @@ test("builds AI council endpoint URLs", async () => {
 
   assert.equal(mock.calls[0].url, "http://daemon.test/ai-councils?cwd=%2Frepo+path&includeArchived=true&limit=9");
   assert.equal(mock.calls[1].url, "http://daemon.test/ai-councils/council%201?cwd=%2Frepo+path");
-  assert.equal(mock.calls[2].url, "http://daemon.test/ai-councils/council%201/members?cwd=%2Frepo+path");
-  assert.equal(mock.calls[3].method, "PUT");
-  assert.equal(mock.calls[3].url, "http://daemon.test/ai-councils/council%201/members?cwd=%2Frepo+path");
+  assert.equal(mock.calls[2].method, "POST");
+  assert.equal(mock.calls[2].url, "http://daemon.test/ai-councils?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[2].body), {
+    displayName: "Review Council",
+    description: "Reviews implementation slices.",
+    routingPolicy: { defaultMode: "advisory", maxActiveMembers: 2 },
+    members: [{ teammateId: "teammate 1", slotKey: "engineer", label: "Engineer" }],
+    pinned: true,
+  });
+  assert.equal(mock.calls[3].method, "POST");
+  assert.equal(mock.calls[3].url, "http://daemon.test/ai-councils/council%201/clone?cwd=%2Frepo+path");
   assert.deepEqual(JSON.parse(mock.calls[3].body), {
+    displayName: "Clone Council",
+    pinned: false,
+  });
+  assert.equal(mock.calls[4].method, "PATCH");
+  assert.equal(mock.calls[4].url, "http://daemon.test/ai-councils/council%201?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[4].body), {
+    displayName: "Updated Council",
+    status: "archived",
+  });
+  assert.equal(mock.calls[5].url, "http://daemon.test/ai-councils/health?cwd=%2Frepo+path&limit=4");
+  assert.equal(mock.calls[6].url, "http://daemon.test/ai-councils/council%201/members?cwd=%2Frepo+path");
+  assert.equal(mock.calls[7].method, "PUT");
+  assert.equal(mock.calls[7].url, "http://daemon.test/ai-councils/council%201/members?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[7].body), {
     members: [{ teammateId: "teammate 1", slotKey: "engineer", enabled: false }],
   });
-  assert.equal(mock.calls[4].url, "http://daemon.test/channels/channel%201/council-policy?cwd=%2Frepo+path");
-  assert.equal(mock.calls[5].method, "PUT");
-  assert.equal(mock.calls[5].url, "http://daemon.test/channels/channel%201/council-policy?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[5].body), {
+  assert.equal(mock.calls[8].url, "http://daemon.test/channels/channel%201/council-policy?cwd=%2Frepo+path");
+  assert.equal(mock.calls[9].method, "PUT");
+  assert.equal(mock.calls[9].url, "http://daemon.test/channels/channel%201/council-policy?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[9].body), {
     attachedCouncilIds: ["council 1"],
     preferredCouncilId: "council 1",
   });
-  assert.equal(mock.calls[6].url, "http://daemon.test/channels/channel%201/effective-council?cwd=%2Frepo+path");
+  assert.equal(mock.calls[10].url, "http://daemon.test/channels/channel%201/effective-council?cwd=%2Frepo+path");
 });
 
 test("builds managed workspace cleanup endpoint URLs", async () => {

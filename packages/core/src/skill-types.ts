@@ -89,6 +89,7 @@ export interface WorkflowStepTemplate {
   readonly name: string;
   readonly phase: SkillWorkflowPhase;
   readonly teammateTemplateId: string;
+  readonly councilSlotKey?: string;
   readonly skillId: string;
   readonly dependsOn?: readonly string[];
   readonly approvalGate?: SkillApprovalProfile;

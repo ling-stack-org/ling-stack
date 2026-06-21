@@ -846,16 +846,63 @@ super-agents and do not grant tools, MCP access, provider credentials, deploymen
 external-send rights, or approval bypass. Ling Agent remains the protected system
 coordinator and is excluded from normal council membership.
 
+Council governance is restrict-only. `governanceProfile.permissionBoundary` is
+`restrict_only`, and approval, tool grant, and credential boundaries are all
+`cannot_*`. Council APIs must not be treated as an authority mutation path.
+
 The daemon seeds a built-in `Development Council` with id
 `council_builtin_development`. It is available by default but is not attached to every
 channel automatically.
 
 ```http
 GET /ai-councils?cwd=/path/to/project&includeArchived=false&limit=100
+POST /ai-councils?cwd=/path/to/project
+GET /ai-councils/health?cwd=/path/to/project&limit=100
 GET /ai-councils/:id?cwd=/path/to/project
+PATCH /ai-councils/:id?cwd=/path/to/project
+POST /ai-councils/:id/clone?cwd=/path/to/project
 GET /ai-councils/:id/members?cwd=/path/to/project
 PUT /ai-councils/:id/members?cwd=/path/to/project
 ```
+
+`POST /ai-councils` creates a user-owned council. It accepts only metadata, optional
+routing policy, optional member references, and `pinned`; it cannot grant authority:
+
+```json
+{
+  "displayName": "Design Council",
+  "description": "Design review and implementation advisors.",
+  "routingPolicy": {
+    "defaultMode": "advisory",
+    "maxActiveMembers": 2
+  },
+  "members": [
+    {
+      "teammateId": "teammate_builtin_designer",
+      "slotKey": "design",
+      "label": "Design",
+      "position": 0,
+      "enabled": true
+    }
+  ],
+  "pinned": false
+}
+```
+
+`POST /ai-councils/:id/clone` clones a non-archived council into a user-owned council
+and copies member references, not teammate profiles:
+
+```json
+{
+  "displayName": "Frontend Review Council",
+  "description": "A channel-specific clone of Development Council."
+}
+```
+
+`PATCH /ai-councils/:id` currently accepts `displayName`, `description`, `status`, and
+`pinned` for user-owned councils only. Built-in and template councils return
+`400 bad_request`; clone them first. Setting `status` to `archived` detaches that
+council id from channel council policies without deleting member teammates.
 
 `PUT /members` replaces the council member projection. Members reference durable
 teammate ids and may be disabled without deleting the teammate.
@@ -873,6 +920,39 @@ teammate ids and may be disabled without deleting the teammate.
   ]
 }
 ```
+
+`GET /ai-councils/health` is read-only and returns a shared Web/Desktop health report:
+
+```json
+{
+  "report": {
+    "workspaceId": "workspace_default",
+    "generatedAt": "2026-06-21T00:00:00.000Z",
+    "summary": {
+      "totalCouncils": 1,
+      "activeCouncils": 1,
+      "totalMembers": 8,
+      "availableMembers": 7,
+      "blockedMembers": 1,
+      "findings": { "info": 1, "warning": 0, "critical": 0 }
+    },
+    "findings": [
+      {
+        "kind": "member_disabled",
+        "severity": "info",
+        "councilId": "council_builtin_development",
+        "teammateId": "teammate_builtin_engineer",
+        "title": "Council member is disabled"
+      }
+    ]
+  }
+}
+```
+
+First-slice finding kinds are deterministic membership/governance issues:
+`council_not_active`, `council_empty`, `council_no_available_members`,
+`member_disabled`, `teammate_missing`, `teammate_not_active`, `teammate_hidden`, and
+`system_teammate_excluded`.
 
 Channels attach councils by reference through a channel council policy. This does not
 copy council members into `teammate_channel_memberships`.
@@ -900,6 +980,12 @@ Attach the built-in development council:
   "preferredCouncilId": "council_builtin_development"
 }
 ```
+
+Council create/clone/update, channel council policy, and member replacement requests
+accept only their documented fields. Unknown fields return `400 bad_request`, including
+`allowedTools`, `approvalProfile`, `credentialRef`, `runtimePolicy`, provider ids, or
+teammate permissions. These endpoints do not mutate the referenced teammate's own tools,
+provider, runner, or approval profile.
 
 `GET /channels/:id/effective-council` returns a stable projection for Web and desktop
 clients: the channel policy, attached active councils, effective member health, and the
@@ -1431,6 +1517,14 @@ Workflow statuses are `draft`, `ready`, `running`, `waiting_for_approval`, `bloc
 
 `POST /handoffs/:id/workflow` creates a draft `ChannelWorkflow` and first queued
 `ChannelWorkflowStep` from the handoff. It does not start execution.
+
+`POST /channels/:id/workflows` accepts exactly one of `templateId`, `customTemplate`,
+`customTemplateId`, or `workflowGraph`. Custom template steps and workflow graph nodes may
+use `councilSlotKey` instead of `teammateId`/`teammateTemplateId`; the daemon resolves the
+slot through the channel's effective AI council, stores the resolved teammate on the step,
+and persists `metadata.councilSlotKey` plus `metadata.proposalStepSources` as source
+evidence. Built-in templates use `councilSlotKey` first and fall back to their legacy
+`teammateTemplateId` when the channel has no matching active council member.
 
 `POST /workflow-steps/:id/start` accepts:
 

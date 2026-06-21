@@ -6,15 +6,24 @@ import {
 } from "../../builtin-skill-packs.js";
 import {
   DEFAULT_WORKSPACE_ID,
+  aiCouncilRoutingModes,
   createBuiltinAiTeammateId,
+  createAiCouncilId,
   isLingAgentTeammateId,
   type AiCouncil,
   type AiCouncilGovernanceProfile,
+  type AiCouncilHealthFinding,
+  type AiCouncilHealthFindingKind,
+  type AiCouncilHealthReport,
+  type AiCouncilHealthReportOptions,
+  type AiCouncilHealthSeverity,
   type AiCouncilMember,
   type AiCouncilRoutingPolicy,
   type AiTeammate,
   type Channel,
   type ChannelCouncilPolicy,
+  type CloneAiCouncilInput,
+  type CreateAiCouncilInput,
   type EffectiveChannelCouncil,
   type EffectiveChannelCouncilMember,
   type EffectiveChannelCouncilProjection,
@@ -22,6 +31,7 @@ import {
   type ListAiCouncilsOptions,
   type ReplaceAiCouncilMemberInput,
   type TeammateChannelMembership,
+  type UpdateAiCouncilInput,
   type UpsertChannelCouncilPolicyInput,
 } from "../../workspace-types.js";
 import {
@@ -55,6 +65,25 @@ const developmentCouncilGovernanceProfile: AiCouncilGovernanceProfile = {
   notes: [
     "Council policy can only narrow execution authority.",
     "Tools, MCP servers, provider credentials, deploy rights, external-send rights, and approvals stay owned by teammates and runtime policy.",
+  ],
+};
+
+const customCouncilGovernanceProfile: AiCouncilGovernanceProfile = {
+  permissionBoundary: "restrict_only",
+  approvalBoundary: "cannot_bypass",
+  toolGrantBoundary: "cannot_grant",
+  credentialBoundary: "cannot_grant",
+  notes: [
+    "Custom councils are management collections only.",
+    "Council settings cannot grant tools, credentials, deploy rights, external-send rights, or approval bypass.",
+  ],
+};
+
+const defaultCustomCouncilRoutingPolicy: AiCouncilRoutingPolicy = {
+  defaultMode: "advisory",
+  notes: [
+    "Attach by reference; do not copy members into channel memberships.",
+    "Route execution to explicit teammates; the council itself is not a super-agent.",
   ],
 };
 
@@ -132,6 +161,185 @@ export class SqliteAiCouncilStore {
       .map((row) => mapAiCouncil(row as Record<string, SQLOutputValue>));
   }
 
+  createAiCouncil(input: CreateAiCouncilInput, now: string): AiCouncil {
+    const id = createAiCouncilId();
+    const displayName = normalizeNonEmptyText(input.displayName, "displayName");
+    const description = normalizeOptionalText(input.description) ?? "";
+    const routingPolicy = createCustomCouncilRoutingPolicy(input.routingPolicy);
+    const members = this.normalizeAndValidateCouncilMembers(input.members ?? []);
+    this.context.database.exec("BEGIN");
+    try {
+      this.insertAiCouncil({
+        id,
+        source: "user",
+        templateId: undefined,
+        displayName,
+        description,
+        routingPolicy,
+        governanceProfile: customCouncilGovernanceProfile,
+        status: "active",
+        pinned: input.pinned ?? false,
+        now,
+      });
+      this.writeCouncilMembers(id, members, now);
+      this.context.database.exec("COMMIT");
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+    const council = this.getAiCouncil(id);
+    if (!council) {
+      throw new Error(`Failed to create AI council: ${id}`);
+    }
+    return council;
+  }
+
+  cloneAiCouncil(sourceCouncilId: string, input: CloneAiCouncilInput, now: string): AiCouncil {
+    const source = this.getAiCouncil(sourceCouncilId);
+    if (!source) {
+      throw new Error(`AI council not found: ${sourceCouncilId}`);
+    }
+    if (source.status === "archived") {
+      throw new Error(`Archived AI council cannot be cloned: ${sourceCouncilId}`);
+    }
+    const id = createAiCouncilId();
+    const displayName = normalizeOptionalText(input.displayName) ?? `Copy of ${source.displayName}`;
+    const description = normalizeOptionalText(input.description) ?? source.description;
+    const members = this.normalizeAndValidateCouncilMembers(this.listAiCouncilMembers(sourceCouncilId));
+    this.context.database.exec("BEGIN");
+    try {
+      this.insertAiCouncil({
+        id,
+        source: "user",
+        templateId: undefined,
+        displayName,
+        description,
+        routingPolicy: source.routingPolicy,
+        governanceProfile: customCouncilGovernanceProfile,
+        status: "active",
+        pinned: input.pinned ?? false,
+        now,
+      });
+      this.writeCouncilMembers(id, members, now);
+      this.context.database.exec("COMMIT");
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+    const council = this.getAiCouncil(id);
+    if (!council) {
+      throw new Error(`Failed to clone AI council: ${sourceCouncilId}`);
+    }
+    return council;
+  }
+
+  updateAiCouncil(id: string, input: UpdateAiCouncilInput, now: string): AiCouncil | undefined {
+    const existing = this.getAiCouncil(id);
+    if (!existing) {
+      return undefined;
+    }
+    if (existing.source !== "user") {
+      throw new Error("Built-in and template councils cannot be modified; clone them first.");
+    }
+    const displayName = input.displayName === undefined
+      ? existing.displayName
+      : normalizeNonEmptyText(input.displayName, "displayName");
+    const description = input.description === undefined
+      ? existing.description
+      : normalizeOptionalText(input.description) ?? "";
+    const status = input.status ?? existing.status;
+    const pinned = input.pinned ?? existing.pinned;
+
+    this.context.database.exec("BEGIN");
+    try {
+      this.context.database
+        .prepare(`
+          UPDATE ai_councils
+          SET display_name = ?, description = ?, status = ?, pinned = ?, updated_at = ?
+          WHERE id = ?
+        `)
+        .run(displayName, description, status, pinned ? 1 : 0, now, id);
+      if (status === "archived") {
+        this.detachCouncilFromChannels(id, now);
+      }
+      this.context.database.exec("COMMIT");
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getAiCouncil(id);
+  }
+
+  getAiCouncilHealthReport(generatedAt: string, options: AiCouncilHealthReportOptions = {}): AiCouncilHealthReport {
+    const councils = this.listAiCouncils({ includeArchived: true, limit: 500 });
+    const findings: AiCouncilHealthFinding[] = [];
+    let totalMembers = 0;
+    let availableMembers = 0;
+    let blockedMembers = 0;
+
+    for (const council of councils) {
+      const members = this.listAiCouncilMembers(council.id);
+      totalMembers += members.length;
+      if (council.status !== "active") {
+        findings.push(createCouncilHealthFinding({
+          kind: "council_not_active",
+          severity: "warning",
+          council,
+          title: "Council is not active",
+          message: `${council.displayName} is ${council.status} and will not project specialists into channels.`,
+        }));
+      }
+      if (members.length === 0) {
+        findings.push(createCouncilHealthFinding({
+          kind: "council_empty",
+          severity: council.status === "active" ? "critical" : "warning",
+          council,
+          title: "Council has no members",
+          message: `${council.displayName} has no member projections.`,
+        }));
+      }
+
+      let availableMembersForCouncil = 0;
+      for (const member of members) {
+        const teammate = this.ports.getAiTeammate(member.teammateId);
+        const blockedReason = resolveCouncilMemberBlockedReason(member, teammate);
+        if (!blockedReason) {
+          availableMembers += 1;
+          availableMembersForCouncil += 1;
+          continue;
+        }
+        blockedMembers += 1;
+        findings.push(createCouncilMemberHealthFinding(council, member, blockedReason));
+      }
+
+      if (council.status === "active" && members.length > 0 && availableMembersForCouncil === 0) {
+        findings.push(createCouncilHealthFinding({
+          kind: "council_no_available_members",
+          severity: "critical",
+          council,
+          title: "Council has no available members",
+          message: `${council.displayName} cannot project any runnable specialists.`,
+        }));
+      }
+    }
+
+    const summary = {
+      totalCouncils: councils.length,
+      activeCouncils: councils.filter((council) => council.status === "active").length,
+      totalMembers,
+      availableMembers,
+      blockedMembers,
+      findings: countCouncilHealthFindings(findings),
+    };
+    const limit = Math.min(Math.max(options.limit ?? findings.length, 0), 500);
+    return {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      generatedAt,
+      summary,
+      findings: findings.slice(0, limit),
+    };
+  }
+
   listAiCouncilMembers(councilId: string): AiCouncilMember[] {
     return this.context.database
       .prepare(`${aiCouncilMemberSelectSql("WHERE council_id = ?")} ORDER BY position ASC, created_at ASC`)
@@ -145,44 +353,11 @@ export class SqliteAiCouncilStore {
     now: string,
   ): AiCouncilMember[] {
     this.assertCouncilExists(councilId);
-    const normalized = dedupeCouncilMemberInputs(members);
-    for (const member of normalized) {
-      const teammate = this.ports.getAiTeammate(member.teammateId);
-      if (!teammate) {
-        throw new Error(`AI teammate not found: ${member.teammateId}`);
-      }
-      if (isLingAgentTeammateId(member.teammateId)) {
-        throw new Error("Ling Agent cannot be added as a council member.");
-      }
-    }
+    const normalized = this.normalizeAndValidateCouncilMembers(members);
 
     this.context.database.exec("BEGIN");
     try {
-      this.context.database.prepare("DELETE FROM ai_council_members WHERE council_id = ?").run(councilId);
-      const insert = this.context.database.prepare(`
-        INSERT INTO ai_council_members (
-          council_id,
-          teammate_id,
-          slot_key,
-          label,
-          position,
-          enabled,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const member of normalized) {
-        insert.run(
-          councilId,
-          member.teammateId,
-          member.slotKey ?? null,
-          member.label ?? null,
-          member.position,
-          member.enabled ? 1 : 0,
-          now,
-          now,
-        );
-      }
+      this.writeCouncilMembers(councilId, normalized, now);
       this.context.database.exec("COMMIT");
     } catch (error) {
       this.context.database.exec("ROLLBACK");
@@ -366,6 +541,124 @@ export class SqliteAiCouncilStore {
     }
   }
 
+  private insertAiCouncil(input: {
+    readonly id: string;
+    readonly source: AiCouncil["source"];
+    readonly templateId?: string;
+    readonly displayName: string;
+    readonly description: string;
+    readonly routingPolicy: AiCouncilRoutingPolicy;
+    readonly governanceProfile: AiCouncilGovernanceProfile;
+    readonly status: AiCouncil["status"];
+    readonly pinned: boolean;
+    readonly now: string;
+  }): void {
+    this.context.database
+      .prepare(`
+        INSERT INTO ai_councils (
+          id,
+          workspace_id,
+          source,
+          template_id,
+          display_name,
+          description,
+          routing_policy_json,
+          governance_profile_json,
+          status,
+          pinned,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        input.id,
+        DEFAULT_WORKSPACE_ID,
+        input.source,
+        input.templateId ?? null,
+        input.displayName,
+        input.description,
+        stringifyJson(input.routingPolicy),
+        stringifyJson(input.governanceProfile),
+        input.status,
+        input.pinned ? 1 : 0,
+        input.now,
+        input.now,
+      );
+  }
+
+  private normalizeAndValidateCouncilMembers(
+    members: readonly ReplaceAiCouncilMemberInput[],
+  ): readonly RequiredCouncilMemberInput[] {
+    const normalized = dedupeCouncilMemberInputs(members);
+    for (const member of normalized) {
+      const teammate = this.ports.getAiTeammate(member.teammateId);
+      if (!teammate) {
+        throw new Error(`AI teammate not found: ${member.teammateId}`);
+      }
+      if (isLingAgentTeammateId(member.teammateId)) {
+        throw new Error("Ling Agent cannot be added as a council member.");
+      }
+    }
+    return normalized;
+  }
+
+  private writeCouncilMembers(
+    councilId: string,
+    members: readonly RequiredCouncilMemberInput[],
+    now: string,
+  ): void {
+    this.context.database.prepare("DELETE FROM ai_council_members WHERE council_id = ?").run(councilId);
+    const insert = this.context.database.prepare(`
+      INSERT INTO ai_council_members (
+        council_id,
+        teammate_id,
+        slot_key,
+        label,
+        position,
+        enabled,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const member of members) {
+      insert.run(
+        councilId,
+        member.teammateId,
+        member.slotKey ?? null,
+        member.label ?? null,
+        member.position,
+        member.enabled ? 1 : 0,
+        now,
+        now,
+      );
+    }
+  }
+
+  private detachCouncilFromChannels(councilId: string, now: string): void {
+    const policies = this.context.database
+      .prepare(channelCouncilPolicySelectSql("WHERE workspace_id = ?"))
+      .all(DEFAULT_WORKSPACE_ID)
+      .map((row) => mapChannelCouncilPolicy(row as Record<string, SQLOutputValue>));
+    const update = this.context.database.prepare(`
+      UPDATE channel_council_policies
+      SET attached_council_ids_json = ?, preferred_council_id = ?, updated_at = ?
+      WHERE channel_id = ?
+    `);
+    for (const policy of policies) {
+      if (!policy.attachedCouncilIds.includes(councilId)) {
+        continue;
+      }
+      const attachedCouncilIds = policy.attachedCouncilIds.filter((id) => id !== councilId);
+      const preferredCouncilId = policy.preferredCouncilId === councilId ? attachedCouncilIds[0] : policy.preferredCouncilId;
+      update.run(
+        stringifyJson(attachedCouncilIds),
+        preferredCouncilId ?? null,
+        now,
+        policy.channelId,
+      );
+    }
+  }
+
   private listDirectChannelMemberships(channelId: string): TeammateChannelMembership[] {
     return this.context.database
       .prepare(`${teammateChannelMembershipSelectSql("WHERE channel_id = ?")} ORDER BY created_at ASC`)
@@ -435,6 +728,39 @@ function dedupeStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function createCustomCouncilRoutingPolicy(
+  input: CreateAiCouncilInput["routingPolicy"],
+): AiCouncilRoutingPolicy {
+  const defaultMode = input?.defaultMode ?? defaultCustomCouncilRoutingPolicy.defaultMode;
+  if (!aiCouncilRoutingModes.includes(defaultMode)) {
+    throw new Error(`routingPolicy.defaultMode must be one of: ${aiCouncilRoutingModes.join(", ")}`);
+  }
+  const maxActiveMembers = input?.maxActiveMembers;
+  if (maxActiveMembers !== undefined && (!Number.isInteger(maxActiveMembers) || maxActiveMembers < 1)) {
+    throw new Error("routingPolicy.maxActiveMembers must be a positive integer");
+  }
+  return {
+    defaultMode,
+    maxActiveMembers,
+    notes: input?.notes ?? defaultCustomCouncilRoutingPolicy.notes,
+  };
+}
+
+function normalizeNonEmptyText(value: string, fieldName: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(`${fieldName} must be a non-empty string`);
+  }
+  return normalized;
+}
+
+function normalizeOptionalText(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value.trim();
+}
+
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
@@ -461,6 +787,100 @@ function resolveCouncilMemberBlockedReason(member: AiCouncilMember, teammate: Ai
     return "teammate_hidden";
   }
   return undefined;
+}
+
+function createCouncilHealthFinding(input: {
+  readonly kind: AiCouncilHealthFindingKind;
+  readonly severity: AiCouncilHealthSeverity;
+  readonly council: AiCouncil;
+  readonly title: string;
+  readonly message: string;
+}): AiCouncilHealthFinding {
+  return {
+    id: `ai-council-health:${input.kind}:${input.council.id}`,
+    kind: input.kind,
+    severity: input.severity,
+    councilId: input.council.id,
+    councilDisplayName: input.council.displayName,
+    title: input.title,
+    message: input.message,
+  };
+}
+
+function createCouncilMemberHealthFinding(
+  council: AiCouncil,
+  member: AiCouncilMember,
+  blockedReason: string,
+): AiCouncilHealthFinding {
+  const kind = councilHealthKindFromBlockedReason(blockedReason);
+  const label = member.label ?? member.slotKey ?? member.teammateId;
+  return {
+    id: `ai-council-health:${kind}:${council.id}:${member.teammateId}`,
+    kind,
+    severity: councilHealthSeverityFromFindingKind(kind),
+    councilId: council.id,
+    councilDisplayName: council.displayName,
+    teammateId: member.teammateId,
+    slotKey: member.slotKey,
+    label: member.label,
+    title: councilHealthTitleFromFindingKind(kind),
+    message: `${label} is not available in ${council.displayName}: ${blockedReason}.`,
+  };
+}
+
+function councilHealthKindFromBlockedReason(blockedReason: string): AiCouncilHealthFindingKind {
+  if (blockedReason === "member_disabled") {
+    return "member_disabled";
+  }
+  if (blockedReason === "teammate_missing") {
+    return "teammate_missing";
+  }
+  if (blockedReason === "teammate_not_active") {
+    return "teammate_not_active";
+  }
+  if (blockedReason === "teammate_hidden") {
+    return "teammate_hidden";
+  }
+  if (blockedReason === "system_teammate_excluded") {
+    return "system_teammate_excluded";
+  }
+  return "teammate_not_active";
+}
+
+function councilHealthSeverityFromFindingKind(kind: AiCouncilHealthFindingKind): AiCouncilHealthSeverity {
+  if (kind === "teammate_missing" || kind === "council_no_available_members" || kind === "council_empty") {
+    return "critical";
+  }
+  if (kind === "member_disabled") {
+    return "info";
+  }
+  return "warning";
+}
+
+function councilHealthTitleFromFindingKind(kind: AiCouncilHealthFindingKind): string {
+  if (kind === "member_disabled") {
+    return "Council member is disabled";
+  }
+  if (kind === "teammate_missing") {
+    return "Council member teammate is missing";
+  }
+  if (kind === "teammate_hidden") {
+    return "Council member teammate is hidden";
+  }
+  if (kind === "system_teammate_excluded") {
+    return "System teammate is excluded";
+  }
+  return "Council member teammate is not active";
+}
+
+function countCouncilHealthFindings(findings: readonly AiCouncilHealthFinding[]): Record<AiCouncilHealthSeverity, number> {
+  return findings.reduce<Record<AiCouncilHealthSeverity, number>>(
+    (counts, finding) => ({
+      ...counts,
+      [finding.severity]: counts[finding.severity] + 1,
+    }),
+    { info: 0, warning: 0, critical: 0 },
+  );
 }
 
 function builtinCouncilMemberLabel(templateId: string): string {

@@ -1,6 +1,6 @@
 # AI Councils
 
-Status: Design draft
+Status: Partially implemented
 Scope: Workspace-level advisor groups for built-in and user-defined AI teammates,
 default council seeding, channel attachments, workflow slot resolution, and cross-client
 management surfaces
@@ -88,23 +88,106 @@ Already implemented:
 
 - `ai_teammates` persists durable teammate instances.
 - `ling_agent` is a protected `system_teammate`.
+- `ai_councils` persists durable council records.
+- `ai_council_members` persists council membership by durable teammate id.
+- `channel_council_policies` persists channel-level council references.
 - `teammate_skill_bindings` records per-teammate skill bindings.
 - `teammate_channel_memberships` records channel membership.
 - `teammate_memory_scopes` records private and channel memory scopes.
 - built-in templates from `gstack-default` seed Product, Architect, Engineer, Designer,
   QA, Security, Release, and Docs teammates.
+- workspace bootstrap seeds `council_builtin_development` after built-in teammates.
+- daemon APIs expose council list/get/create/clone/update, member list/replace, channel
+  council policy, and effective channel council projection.
+- daemon exposes a read-only council health report for Web and future desktop clients.
+- Web AI teammates management shows a read-only council summary and routes council
+  management to Council Workspace.
+- Web exposes a first Council Workspace page for council overview, create/clone/archive,
+  custom settings, member roster editing, health, and channel attach/open management.
+- Web channel Settings can attach an AI council by reference and show projected
+  specialists without copying direct channel memberships.
+- workflow proposal step `sources` are persisted into workflow step metadata so channel
+  progress can show whether a specialist came from a council or direct membership.
 - `WorkflowTemplate` steps currently reference `teammateTemplateId` and `skillId`.
 - Ling Agent Session owns the default channel message path and specialist selection.
 
-The gap:
+Still deferred:
 
-- default non-Ling agents are a flat roster;
-- there is no durable group concept for "Development Council";
-- there is no place to manage future built-in groups;
-- channel routing can prefer a teammate, but not a group;
-- workflows cannot resolve role slots through a selected group of actual teammate ids;
-- clients cannot show "this teammate belongs to these councils" or "this channel uses this
-  council by default" from a shared daemon contract.
+- there is no dedicated template/catalog page to manage future built-in groups;
+- routing policy, workflow-template defaults, and advanced governance settings are still
+  future Council Workspace slices;
+- clients do not yet show "this teammate belongs to these councils" across every teammate
+  surface.
+
+## Implemented Base Contract
+
+The current shipped contract is intentionally narrower than the future Council Workspace
+model. It establishes councils as reference collections and governance ceilings, not as
+new agents.
+
+Implemented invariants:
+
+- A council is a durable management collection of teammates.
+- Ling Agent remains the protected coordinator and is excluded from normal council
+  membership.
+- Channel attachment stores council ids only. It does not write
+  `teammate_channel_memberships`.
+- Effective channel specialists are a derived projection of direct teammate memberships
+  plus enabled members from attached active councils.
+- Council policy is restrict-only: it can narrow execution authority but cannot grant
+  tools, credentials, provider access, deploy rights, external-send rights, or approval
+  bypass.
+- Unknown authority-like fields in council/member policy requests return `400 bad_request`
+  and must not leak into the persisted response or mutate teammate/channel authority.
+- Workflow step source attribution is user-facing evidence. It is not an authority source.
+
+Implemented APIs:
+
+```text
+GET /ai-councils
+POST /ai-councils
+GET /ai-councils/health
+GET /ai-councils/:id
+PATCH /ai-councils/:id
+POST /ai-councils/:id/clone
+GET /ai-councils/:id/members
+PUT /ai-councils/:id/members
+
+GET /channels/:id/council-policy
+PUT /channels/:id/council-policy
+GET /channels/:id/effective-council
+```
+
+Implemented client behavior:
+
+- AI teammates management shows `AI Councils` as a read-only summary with a Council
+  Workspace entry point.
+- The selected council shows source, routing mode, enabled member count, maximum active
+  member capacity when present, Ling Agent exclusion, and restrict-only governance chips.
+- AI teammates management shows a compact council health overview, while Council
+  Workspace filters councils by health
+  state, and surfaces the first actionable health findings for the selected council.
+- Channel Settings shows attached councils, preferred council, routing mode, capacity, and
+  projected specialist source details such as `Development Council / Product design`,
+  plus council health chips for attached councils.
+- Council Workspace shows council overview, health filtering, create/clone/archive,
+  selected-council member add/remove/enable/reorder, health findings, governance chips,
+  and channel attach/open management without copying direct memberships.
+- Council Workspace lets user-owned councils edit display name, description, pinned state,
+  and active/paused status. Built-in/template councils remain read-only and must be cloned
+  before editing.
+- Web renders council state from daemon/core contracts so future desktop clients can reuse
+  the same ids and read models.
+
+Implemented health read model:
+
+- `GET /ai-councils/health` returns `summary` and `findings`.
+- The report is read-only and client-neutral.
+- First-slice findings cover deterministic membership state: inactive/empty council,
+  no available members, disabled member, missing teammate, non-active teammate, hidden
+  teammate, and system teammate exclusion.
+- Provider readiness and Effective Skill deep checks can be added as additional finding
+  kinds without changing the report shape.
 
 ## Core Model
 
@@ -180,14 +263,10 @@ interface AiCouncil {
   readonly workspaceId: string;
   readonly templateId?: string;
   readonly source: AiCouncilSource;
-  readonly slug: string;
   readonly displayName: string;
   readonly description: string;
   readonly status: AiCouncilStatus;
   readonly pinned: boolean;
-  readonly hidden: boolean;
-  readonly coordinatorTeammateId: "ling_agent";
-  readonly defaultWorkflowTemplateIds: readonly string[];
   readonly routingPolicy: AiCouncilRoutingPolicy;
   readonly governanceProfile: AiCouncilGovernanceProfile;
   readonly createdAt: string;
@@ -195,32 +274,28 @@ interface AiCouncil {
 }
 
 interface AiCouncilRoutingPolicy {
-  readonly defaultMode: "ling_agent_only" | "prefer_council" | "explicit_mentions";
-  readonly preferredWorkflowTemplateIds: readonly string[];
-  readonly allowVisibleMultiReply: boolean;
-  readonly selectorMode: "deterministic" | "model_assisted";
+  readonly defaultMode: "advisory" | "handoff" | "parallel_review";
+  readonly maxActiveMembers?: number;
+  readonly notes: readonly string[];
 }
 ```
 
-`coordinatorTeammateId` is explicit because future product variants may add more system
-coordinators, but v1 should hard-code and validate `ling_agent`.
+Deferred fields such as `hidden`, `defaultWorkflowTemplateIds`, and explicit coordinator
+ids can be added later. The current base contract keeps Ling Agent as an invariant rather
+than making coordinator selection editable.
 
 ### Council Membership
 
 Membership maps council slots to durable teammates.
 
 ```ts
-type AiCouncilMemberSource = "template" | "user";
-
 interface AiCouncilMember {
   readonly councilId: string;
   readonly teammateId: string;
-  readonly slotKey: string;
-  readonly roleLabel?: string;
-  readonly source: AiCouncilMemberSource;
-  readonly required: boolean;
+  readonly slotKey?: string;
+  readonly label?: string;
+  readonly position: number;
   readonly enabled: boolean;
-  readonly sortOrder: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -243,17 +318,20 @@ Channels should choose a preferred council independently from direct teammate me
 
 ```ts
 interface ChannelCouncilPolicy {
+  readonly workspaceId: string;
   readonly channelId: string;
-  readonly preferredCouncilId?: string;
   readonly attachedCouncilIds: readonly string[];
-  readonly allowedCouncilIds: readonly string[];
-  readonly defaultRoutingMode: "ling_agent_only" | "prefer_council" | "explicit_mentions";
-  readonly visibleMultiReplyMaxParticipants: number;
+  readonly preferredCouncilId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 ```
 
 This should live beside the existing channel collaboration protocol. Do not overload
 `Channel.defaultTeammateId`; that field is already a legacy preferred specialist hint.
+Allowed-council lists, channel-specific routing modes, and visible multi-reply caps remain
+future extensions. The current policy is only a reference attachment and preferred-council
+pointer.
 
 ### Channel Attachments
 
@@ -392,12 +470,49 @@ Compilation:
 ```text
 WorkflowTemplate + selected Council
   -> resolve each councilSlotKey to an enabled AiCouncilMember
-  -> write resolved teammateId into ChannelWorkflowStep metadata
+  -> write resolved teammateId and council source evidence into ChannelWorkflowStep metadata
   -> run through existing task/run/approval path
 ```
 
-If a required slot is missing or blocked, workflow creation should fail with a clear
-blocked reason before any step starts.
+Implemented behavior:
+
+- built-in workflow templates can carry both `councilSlotKey` and
+  `teammateTemplateId`; the compiler resolves the slot first and falls back to the
+  legacy template teammate when no attached council member matches;
+- custom workflow templates and workflow graphs accept `councilSlotKey` as the participant
+  selector; if the effective channel council cannot resolve the slot, workflow creation
+  fails with a clear `400` before any step starts;
+- resolved steps persist `metadata.councilSlotKey` and `metadata.proposalStepSources`
+  so Web, desktop, and future clients can render the exact council source without
+  reverse-engineering current membership state.
+
+### Proposal And Workflow Source Attribution
+
+When a channel proposal selects a teammate from an effective council projection, the
+proposal step records source evidence:
+
+```ts
+interface ChannelExecutionProposalStepSource {
+  readonly kind: "direct" | "council";
+  readonly councilId?: string;
+  readonly councilDisplayName?: string;
+  readonly slotKey?: string;
+  readonly label?: string;
+}
+```
+
+On proposal confirmation, `proposalStepSources` are copied into workflow step metadata.
+The UI can then render a step as `Development Council / Engineer` or `Direct teammate`
+without reverse-engineering membership state after the fact.
+
+Rules:
+
+- source attribution is immutable evidence for that proposal/workflow step;
+- source attribution does not grant authority;
+- editing a proposal step teammate clears stale source evidence unless the edit also
+  chooses a new effective source;
+- missing source evidence should degrade to ordinary teammate display, not block the
+  workflow.
 
 ## Persistence Sketch
 
@@ -482,8 +597,8 @@ Default behavior:
 - if a built-in teammate was tombstoned, the corresponding council slot is created as
   disabled/missing rather than resurrecting the teammate;
 - deleting a custom council does not delete member teammates;
-- archiving a built-in council hides it but records a retention tombstone, matching
-  existing built-in teammate behavior.
+- built-in/template councils cannot be archived or patched directly in the current API;
+  users clone them into user councils before lifecycle edits.
 
 ## Client Compatibility
 
@@ -501,7 +616,7 @@ Core/storage:
   council health resolver
 
 Daemon API:
-  list/get/update councils
+  list/get/create/clone/update councils
   list/update members
   get effective council for channel/task/workflow
   get/update channel council policy
@@ -601,7 +716,7 @@ Governance:
   approval ceilings, denied actions, external-send/deploy posture
 
 Settings:
-  rename, pin, hide, archive, clone as custom
+  rename, description, pin, pause/resume, archive, clone as custom
 ```
 
 The page should show actionable health:
@@ -640,7 +755,7 @@ GET    /ai-councils?cwd=...
 POST   /ai-councils?cwd=...
 GET    /ai-councils/:id?cwd=...
 PATCH  /ai-councils/:id?cwd=...
-DELETE /ai-councils/:id?cwd=...
+POST   /ai-councils/:id/clone?cwd=...
 
 GET    /ai-councils/:id/members?cwd=...
 PUT    /ai-councils/:id/members?cwd=...
@@ -764,11 +879,42 @@ Protected rules:
    `teammateTemplateId` as migration fallback.
 
 10. Custom councils.
-   Create, clone, edit, archive, and member management.
+   Create, clone, edit, archive, and member management. First slice supports create,
+   clone, custom display settings, pause/resume, pinning, and archive for user-owned
+   councils; member management works by reference.
 
 11. Runtime routing.
    Let Ling Agent use effective council evidence when selecting a specialist, visible
    multi-reply, or workflow.
+
+Implemented base slices:
+
+- [x] storage for councils, members, and channel council policies;
+- [x] bootstrap built-in Development Council;
+- [x] daemon APIs for list/get, member replacement, channel policy, and effective channel
+  projection;
+- [x] channel attach-by-reference behavior without teammate membership copying;
+- [x] restrict-only governance boundary in contracts, UI labels, and daemon tests;
+- [x] council health read model for deterministic member availability findings;
+- [x] Web council/member management surface in AI teammates;
+- [x] Web channel council attach surface and projected specialist display;
+- [x] Web council health overview, filters, findings, and attached-council health chips;
+- [x] custom council create/clone/archive API and UI;
+- [x] proposal-to-workflow source attribution;
+- [x] workflow `councilSlotKey` resolution for built-in templates, custom templates,
+  and workflow graphs.
+- [x] desktop/client compatibility pass over shared contracts and `packages/api-client`
+  council endpoints.
+- [x] Council Workspace page with overview, create/clone/archive, member editing,
+  custom settings, health, and channel attach/open management.
+- [x] client-neutral `@ling-stack/core/ai-council-view` council health view model for Web
+  and future Desktop chips.
+
+Next implementation slices:
+
+- [ ] render council health chips in actual Desktop surfaces once Desktop renderer exists;
+- [ ] Council Workspace template catalog, routing policy, workflow-template defaults, and
+  advanced governance settings;
 
 ## Test Plan
 
@@ -797,6 +943,8 @@ Client contract:
 
 - council list, effective council, health, and channel policy APIs contain enough stable
   data for both Web and desktop clients;
+- `@ling-stack/core/ai-council-view` owns severity counts, clear/unknown state, badge
+  ordering, overview aggregation, and health-state filtering for client renderers;
 - client-neutral audit/activity events do not require browser URLs;
 - effective council views are derived and refreshable, not independently writable.
 
@@ -812,6 +960,8 @@ Desktop:
 
 - desktop can attach or detach a council from a channel through the same daemon API;
 - desktop can render projected council members without copying direct memberships;
+- desktop can render council health chips from `@ling-stack/core/ai-council-view` without
+  copying Web health calculation logic;
 - desktop can open council workspace and member private chat from stable ids;
 - desktop can cache effective council views and refresh them after daemon events.
 
@@ -829,8 +979,9 @@ Runtime:
   `Councils`, or add `Councils` above it while keeping `AI Teammates` as management?
 - Should a channel have exactly one preferred council, multiple ordered preferred
   councils, or one preferred council plus many attached councils?
-- Should custom council creation default to reusing existing teammates or cloning template
-  teammates into new durable instances?
+- Should a future richer custom-council wizard offer teammate-instance cloning, or keep
+  the current safer model where create starts from references and clone copies member
+  references only?
 - Should built-in teammate visibility be primarily controlled from teammate settings or
   council membership settings?
 - Should visible multi-reply use a council-specific transcript surface, or keep all

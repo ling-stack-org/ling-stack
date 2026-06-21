@@ -362,13 +362,16 @@ export function parseChannelRoute(
 
 export function parseAiCouncilRoute(
   pathname: string,
-): { readonly councilId: string; readonly action?: "members" } | undefined {
+): { readonly councilId: string; readonly action?: "members" | "clone" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "ai-councils") {
     return { councilId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "ai-councils" && segments[2] === "members") {
     return { councilId: segments[1], action: "members" };
+  }
+  if (segments.length === 3 && segments[0] === "ai-councils" && segments[2] === "clone") {
+    return { councilId: segments[1], action: "clone" };
   }
   return undefined;
 }

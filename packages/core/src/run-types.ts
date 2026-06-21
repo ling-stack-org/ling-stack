@@ -38,6 +38,8 @@ import type {
 } from "./input-materialization-types.js";
 import type {
   AiCouncil,
+  AiCouncilHealthReport,
+  AiCouncilHealthReportOptions,
   AiCouncilMember,
   AiTeammate,
   AiTeammateUpdateInput,
@@ -64,6 +66,7 @@ import type {
   ChannelMessageListPage,
   ChannelCouncilPolicy,
   ChannelUpdateInput,
+  CloneAiCouncilInput,
   CreateChannelAttachmentInput,
   CreateChannelBranchInput,
   CreateChannelCollaborationProtocolDraftInput,
@@ -81,6 +84,7 @@ import type {
   CreateChannelIntentDecisionInput,
   CreateChannelLinkPreviewInput,
   CreateChannelMessageInput,
+  CreateAiCouncilInput,
   CreateAiTeammateInput,
   CreateTeammateDirectLinkPreviewInput,
   CreateTeammateDirectMessageInput,
@@ -143,6 +147,7 @@ import type {
   UpdateChannelWorkflowInput,
   UpdateChannelWorkflowStepInput,
   UpdateChannelHandoffInput,
+  UpdateAiCouncilInput,
   UpsertChannelCouncilPolicyInput,
   UpsertChannelCollaborationProtocolOverrideInput,
   WorkflowHandoffIntent,
@@ -1068,6 +1073,10 @@ export interface RunStore {
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined;
   getAiCouncil(id: string): AiCouncil | undefined;
   listAiCouncils(options?: ListAiCouncilsOptions): AiCouncil[];
+  createAiCouncil(input: CreateAiCouncilInput, now: string): AiCouncil;
+  cloneAiCouncil(sourceCouncilId: string, input: CloneAiCouncilInput, now: string): AiCouncil;
+  updateAiCouncil(id: string, input: UpdateAiCouncilInput, now: string): AiCouncil | undefined;
+  getAiCouncilHealthReport(generatedAt: string, options?: AiCouncilHealthReportOptions): AiCouncilHealthReport;
   listAiCouncilMembers(councilId: string): AiCouncilMember[];
   replaceAiCouncilMembers(
     councilId: string,
@@ -1572,6 +1581,10 @@ export type TeammateStoreFacet = RunStoreFacet<
 export type AiCouncilStoreFacet = RunStoreFacet<
   | "getAiCouncil"
   | "listAiCouncils"
+  | "createAiCouncil"
+  | "cloneAiCouncil"
+  | "updateAiCouncil"
+  | "getAiCouncilHealthReport"
   | "listAiCouncilMembers"
   | "replaceAiCouncilMembers"
   | "getChannelCouncilPolicy"

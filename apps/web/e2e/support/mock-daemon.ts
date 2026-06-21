@@ -14,6 +14,12 @@ export const defaultRuntimePolicy = {
   queueOnConflict: true,
 };
 
+const mockCreateAiCouncilRequestKeys = new Set(["displayName", "description", "routingPolicy", "members", "pinned"]);
+const mockCreateAiCouncilRoutingPolicyKeys = new Set(["defaultMode", "maxActiveMembers", "notes"]);
+const mockCloneAiCouncilRequestKeys = new Set(["displayName", "description", "pinned"]);
+const mockUpdateAiCouncilRequestKeys = new Set(["displayName", "description", "status", "pinned"]);
+const mockReplaceAiCouncilMemberKeys = new Set(["teammateId", "slotKey", "label", "position", "enabled"]);
+
 export interface MockState {
   providers: unknown[];
   providerSecrets: Record<string, string>;
@@ -3844,6 +3850,287 @@ function createMockAiCouncilMembers(councilId = "council_builtin_development"): 
   ];
 }
 
+function unsupportedMockKeyMessage(
+  record: Record<string, unknown>,
+  allowedKeys: ReadonlySet<string>,
+  path: string,
+): string | undefined {
+  for (const key of Object.keys(record)) {
+    if (!allowedKeys.has(key)) {
+      return `${path}.${key} is not supported`;
+    }
+  }
+  return undefined;
+}
+
+function readMockAiCouncilRoutingPolicy(input: unknown): Record<string, unknown> {
+  if (!isRecord(input)) {
+    return {
+      defaultMode: "advisory",
+      notes: ["Attach by reference; do not copy members into channel memberships."],
+    };
+  }
+  return {
+    defaultMode: typeof input.defaultMode === "string" ? input.defaultMode : "advisory",
+    maxActiveMembers: typeof input.maxActiveMembers === "number" ? input.maxActiveMembers : undefined,
+    notes: Array.isArray(input.notes) ? input.notes.filter((note): note is string => typeof note === "string") : ["Attach by reference; do not copy members into channel memberships."],
+  };
+}
+
+function normalizeMockAiCouncilMembers(councilId: string, input: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input.flatMap((member, index) => {
+    if (!isRecord(member) || typeof member.teammateId !== "string" || member.teammateId === "ling_agent") {
+      return [];
+    }
+    return [{
+      councilId,
+      teammateId: member.teammateId,
+      slotKey: typeof member.slotKey === "string" ? member.slotKey : undefined,
+      label: typeof member.label === "string" ? member.label : undefined,
+      position: typeof member.position === "number" ? member.position : index,
+      enabled: member.enabled !== false,
+      createdAt: "2026-06-20T00:02:00.000Z",
+      updatedAt: "2026-06-20T00:02:00.000Z",
+    }];
+  });
+}
+
+function unsupportedMockAiCouncilMemberMessage(input: unknown): string | undefined {
+  if (!Array.isArray(input)) {
+    return undefined;
+  }
+  for (const [index, member] of input.entries()) {
+    if (!isRecord(member)) {
+      continue;
+    }
+    const unsupported = unsupportedMockKeyMessage(member, mockReplaceAiCouncilMemberKeys, `members[${index}]`);
+    if (unsupported) {
+      return unsupported;
+    }
+  }
+  return undefined;
+}
+
+function detachMockCouncilFromChannels(state: MockState, councilId: string): void {
+  state.channelCouncilPolicies = state.channelCouncilPolicies.map((policy) => {
+    if (!isRecord(policy) || !Array.isArray(policy.attachedCouncilIds) || !policy.attachedCouncilIds.includes(councilId)) {
+      return policy;
+    }
+    const attachedCouncilIds = policy.attachedCouncilIds.filter((id): id is string => typeof id === "string" && id !== councilId);
+    const preferredCouncilId = policy.preferredCouncilId === councilId
+      ? attachedCouncilIds[0]
+      : typeof policy.preferredCouncilId === "string" ? policy.preferredCouncilId : undefined;
+    return {
+      ...policy,
+      attachedCouncilIds,
+      preferredCouncilId,
+      updatedAt: "2026-06-20T00:03:00.000Z",
+    };
+  });
+}
+
+function buildMockAiCouncilHealthReport(state: MockState, limit = 500): Record<string, unknown> {
+  const findings: Record<string, unknown>[] = [];
+  let totalMembers = 0;
+  let availableMembers = 0;
+  let blockedMembers = 0;
+
+  for (const council of state.aiCouncils) {
+    if (!isRecord(council) || typeof council.id !== "string") {
+      continue;
+    }
+    const councilId = council.id;
+    const members = state.aiCouncilMembers
+      .filter((item) => isRecord(item) && item.councilId === councilId)
+      .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
+    totalMembers += members.length;
+    const councilDisplayName = typeof council.displayName === "string" ? council.displayName : councilId;
+    const councilStatus = typeof council.status === "string" ? council.status : "active";
+
+    if (councilStatus !== "active") {
+      findings.push(createMockCouncilHealthFinding({
+        kind: "council_not_active",
+        severity: "warning",
+        councilId,
+        councilDisplayName,
+        title: "Council is not active",
+        message: `${councilDisplayName} is ${councilStatus} and will not project specialists into channels.`,
+      }));
+    }
+    if (members.length === 0) {
+      findings.push(createMockCouncilHealthFinding({
+        kind: "council_empty",
+        severity: councilStatus === "active" ? "critical" : "warning",
+        councilId,
+        councilDisplayName,
+        title: "Council has no members",
+        message: `${councilDisplayName} has no member projections.`,
+      }));
+    }
+
+    let availableMembersForCouncil = 0;
+    for (const member of members) {
+      const teammateId = typeof member.teammateId === "string" ? member.teammateId : "";
+      const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+      const blockedReason = mockCouncilMemberBlockedReason(member, teammate);
+      if (!blockedReason) {
+        availableMembers += 1;
+        availableMembersForCouncil += 1;
+        continue;
+      }
+      blockedMembers += 1;
+      findings.push(createMockCouncilMemberHealthFinding(councilId, councilDisplayName, member, blockedReason));
+    }
+
+    if (councilStatus === "active" && members.length > 0 && availableMembersForCouncil === 0) {
+      findings.push(createMockCouncilHealthFinding({
+        kind: "council_no_available_members",
+        severity: "critical",
+        councilId,
+        councilDisplayName,
+        title: "Council has no available members",
+        message: `${councilDisplayName} cannot project any runnable specialists.`,
+      }));
+    }
+  }
+
+  return {
+    workspaceId: "workspace_default",
+    generatedAt: "2026-06-20T00:02:00.000Z",
+    summary: {
+      totalCouncils: state.aiCouncils.filter(isRecord).length,
+      activeCouncils: state.aiCouncils.filter((item) => isRecord(item) && item.status === "active").length,
+      totalMembers,
+      availableMembers,
+      blockedMembers,
+      findings: countMockCouncilHealthFindings(findings),
+    },
+    findings: findings.slice(0, Math.max(0, Math.min(limit, 500))),
+  };
+}
+
+function mockCouncilMemberBlockedReason(member: Record<string, unknown>, teammate: unknown): string | undefined {
+  if (member.enabled === false) {
+    return "member_disabled";
+  }
+  if (!isRecord(teammate)) {
+    return "teammate_missing";
+  }
+  if (teammate.id === "ling_agent" || teammate.systemRole === "ling_agent") {
+    return "system_teammate_excluded";
+  }
+  if (teammate.status !== "active") {
+    return "teammate_not_active";
+  }
+  if (teammate.hidden === true) {
+    return "teammate_hidden";
+  }
+  return undefined;
+}
+
+function createMockCouncilHealthFinding(input: {
+  kind: string;
+  severity: "info" | "warning" | "critical";
+  councilId: string;
+  councilDisplayName: string;
+  title: string;
+  message: string;
+}): Record<string, unknown> {
+  return {
+    id: `ai-council-health:${input.kind}:${input.councilId}`,
+    kind: input.kind,
+    severity: input.severity,
+    councilId: input.councilId,
+    councilDisplayName: input.councilDisplayName,
+    title: input.title,
+    message: input.message,
+  };
+}
+
+function createMockCouncilMemberHealthFinding(
+  councilId: string,
+  councilDisplayName: string,
+  member: Record<string, unknown>,
+  blockedReason: string,
+): Record<string, unknown> {
+  const kind = mockCouncilHealthKindFromBlockedReason(blockedReason);
+  const teammateId = typeof member.teammateId === "string" ? member.teammateId : "";
+  const label = typeof member.label === "string"
+    ? member.label
+    : typeof member.slotKey === "string" ? member.slotKey : teammateId;
+  return {
+    id: `ai-council-health:${kind}:${councilId}:${teammateId}`,
+    kind,
+    severity: mockCouncilHealthSeverityFromFindingKind(kind),
+    councilId,
+    councilDisplayName,
+    teammateId,
+    slotKey: member.slotKey,
+    label: member.label,
+    title: mockCouncilHealthTitleFromFindingKind(kind),
+    message: `${label} is not available in ${councilDisplayName}: ${blockedReason}.`,
+  };
+}
+
+function mockCouncilHealthKindFromBlockedReason(blockedReason: string): string {
+  if (blockedReason === "member_disabled") {
+    return "member_disabled";
+  }
+  if (blockedReason === "teammate_missing") {
+    return "teammate_missing";
+  }
+  if (blockedReason === "teammate_hidden") {
+    return "teammate_hidden";
+  }
+  if (blockedReason === "system_teammate_excluded") {
+    return "system_teammate_excluded";
+  }
+  return "teammate_not_active";
+}
+
+function mockCouncilHealthSeverityFromFindingKind(kind: string): "info" | "warning" | "critical" {
+  if (kind === "teammate_missing" || kind === "council_no_available_members" || kind === "council_empty") {
+    return "critical";
+  }
+  if (kind === "member_disabled") {
+    return "info";
+  }
+  return "warning";
+}
+
+function mockCouncilHealthTitleFromFindingKind(kind: string): string {
+  if (kind === "member_disabled") {
+    return "Council member is disabled";
+  }
+  if (kind === "teammate_missing") {
+    return "Council member teammate is missing";
+  }
+  if (kind === "teammate_hidden") {
+    return "Council member teammate is hidden";
+  }
+  if (kind === "system_teammate_excluded") {
+    return "System teammate is excluded";
+  }
+  return "Council member teammate is not active";
+}
+
+function countMockCouncilHealthFindings(
+  findings: readonly Record<string, unknown>[],
+): Record<"info" | "warning" | "critical", number> {
+  return findings.reduce<Record<"info" | "warning" | "critical", number>>(
+    (counts, finding) => {
+      if (finding.severity === "info" || finding.severity === "warning" || finding.severity === "critical") {
+        counts[finding.severity] += 1;
+      }
+      return counts;
+    },
+    { info: 0, warning: 0, critical: 0 },
+  );
+}
+
 function createMockLingAgentTeammate(): Record<string, unknown> {
   return {
     id: "ling_agent",
@@ -5495,17 +5782,135 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, councils } });
     return;
   }
-  const aiCouncilMatch = /^\/ai-councils\/([^/]+)(?:\/members)?$/.exec(path);
+  if (request.method() === "POST" && path === "/ai-councils") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const unsupported = unsupportedMockKeyMessage(body, mockCreateAiCouncilRequestKeys, "AI council create request") ??
+      (isRecord(body.routingPolicy) ? unsupportedMockKeyMessage(body.routingPolicy, mockCreateAiCouncilRoutingPolicyKeys, "routingPolicy") : undefined) ??
+      unsupportedMockAiCouncilMemberMessage(body.members);
+    if (unsupported) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: unsupported } });
+      return;
+    }
+    const councilId = `council_custom_${state.aiCouncils.filter(isRecord).length + 1}`;
+    const council = createMockAiCouncil({
+      id: councilId,
+      source: "user",
+      templateId: undefined,
+      displayName: typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : "Custom council",
+      description: typeof body.description === "string" ? body.description.trim() : "",
+      routingPolicy: readMockAiCouncilRoutingPolicy(body.routingPolicy),
+      governanceProfile: {
+        permissionBoundary: "restrict_only",
+        approvalBoundary: "cannot_bypass",
+        toolGrantBoundary: "cannot_grant",
+        credentialBoundary: "cannot_grant",
+        notes: ["Custom councils are management collections only."],
+      },
+      status: "active",
+      pinned: body.pinned === true,
+      createdAt: "2026-06-20T00:02:00.000Z",
+      updatedAt: "2026-06-20T00:02:00.000Z",
+    });
+    state.aiCouncils = [...state.aiCouncils, council];
+    state.aiCouncilMembers = [
+      ...state.aiCouncilMembers.filter((item) => !isRecord(item) || item.councilId !== councilId),
+      ...normalizeMockAiCouncilMembers(councilId, body.members),
+    ];
+    await route.fulfill({ status: 201, json: { cwd, council } });
+    return;
+  }
+  if (path === "/ai-councils/health") {
+    if (request.method() !== "GET") {
+      await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
+      return;
+    }
+    const requestedLimit = Number(url.searchParams.get("limit"));
+    const limit = Number.isFinite(requestedLimit) ? requestedLimit : 500;
+    await route.fulfill({ json: { cwd, report: buildMockAiCouncilHealthReport(state, limit) } });
+    return;
+  }
+  const aiCouncilMatch = /^\/ai-councils\/([^/]+)(?:\/(members|clone))?$/.exec(path);
   if (aiCouncilMatch) {
     const councilId = decodeURIComponent(aiCouncilMatch[1]);
+    const action = aiCouncilMatch[2] ? decodeURIComponent(aiCouncilMatch[2]) : "";
     const council = state.aiCouncils.find((item) => isRecord(item) && item.id === councilId);
-    const isMembersRoute = path.endsWith("/members");
+    const isMembersRoute = action === "members";
     if (!isRecord(council)) {
       await route.fulfill({ status: 404, json: { error: "ai_council_not_found" } });
       return;
     }
+    if (action === "clone" && request.method() === "POST") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const unsupported = unsupportedMockKeyMessage(body, mockCloneAiCouncilRequestKeys, "AI council clone request");
+      if (unsupported) {
+        await route.fulfill({ status: 400, json: { error: "bad_request", message: unsupported } });
+        return;
+      }
+      if (council.status === "archived") {
+        await route.fulfill({ status: 400, json: { error: "bad_request", message: `Archived AI council cannot be cloned: ${councilId}` } });
+        return;
+      }
+      const clonedCouncilId = `council_clone_${state.aiCouncils.filter(isRecord).length + 1}`;
+      const clonedCouncil = createMockAiCouncil({
+        id: clonedCouncilId,
+        source: "user",
+        templateId: undefined,
+        displayName: typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : `Copy of ${String(council.displayName ?? councilId)}`,
+        description: typeof body.description === "string" ? body.description.trim() : typeof council.description === "string" ? council.description : "",
+        routingPolicy: isRecord(council.routingPolicy) ? council.routingPolicy : readMockAiCouncilRoutingPolicy(undefined),
+        governanceProfile: {
+          permissionBoundary: "restrict_only",
+          approvalBoundary: "cannot_bypass",
+          toolGrantBoundary: "cannot_grant",
+          credentialBoundary: "cannot_grant",
+          notes: ["Custom councils are management collections only."],
+        },
+        status: "active",
+        pinned: body.pinned === true,
+        createdAt: "2026-06-20T00:02:00.000Z",
+        updatedAt: "2026-06-20T00:02:00.000Z",
+      });
+      const clonedMembers = state.aiCouncilMembers
+        .filter((item) => isRecord(item) && item.councilId === councilId && item.teammateId !== "ling_agent")
+        .map((member) => ({
+          ...member,
+          councilId: clonedCouncilId,
+          createdAt: "2026-06-20T00:02:00.000Z",
+          updatedAt: "2026-06-20T00:02:00.000Z",
+        }));
+      state.aiCouncils = [...state.aiCouncils, clonedCouncil];
+      state.aiCouncilMembers = [...state.aiCouncilMembers, ...clonedMembers];
+      await route.fulfill({ status: 201, json: { cwd, council: clonedCouncil } });
+      return;
+    }
     if (!isMembersRoute && request.method() === "GET") {
       await route.fulfill({ json: { cwd, council } });
+      return;
+    }
+    if (!isMembersRoute && request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const unsupported = unsupportedMockKeyMessage(body, mockUpdateAiCouncilRequestKeys, "AI council update request");
+      if (unsupported) {
+        await route.fulfill({ status: 400, json: { error: "bad_request", message: unsupported } });
+        return;
+      }
+      if (council.source !== "user") {
+        await route.fulfill({ status: 400, json: { error: "bad_request", message: "Built-in and template councils cannot be modified; clone them first." } });
+        return;
+      }
+      const updatedCouncil = {
+        ...council,
+        displayName: typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : council.displayName,
+        description: typeof body.description === "string" ? body.description.trim() : council.description,
+        status: typeof body.status === "string" ? body.status : council.status,
+        pinned: typeof body.pinned === "boolean" ? body.pinned : council.pinned,
+        updatedAt: "2026-06-20T00:03:00.000Z",
+      };
+      state.aiCouncils = state.aiCouncils.map((item) => isRecord(item) && item.id === councilId ? updatedCouncil : item);
+      if (updatedCouncil.status === "archived") {
+        detachMockCouncilFromChannels(state, councilId);
+      }
+      await route.fulfill({ json: { cwd, council: updatedCouncil } });
       return;
     }
     if (isMembersRoute && request.method() === "GET") {
@@ -5517,23 +5922,14 @@ export async function handleDaemonRoute(
     }
     if (isMembersRoute && request.method() === "PUT") {
       const body = await request.postDataJSON() as Record<string, unknown>;
+      const unsupported = unsupportedMockAiCouncilMemberMessage(body.members);
+      if (unsupported) {
+        await route.fulfill({ status: 400, json: { error: "bad_request", message: unsupported } });
+        return;
+      }
       const inputMembers = Array.isArray(body.members) ? body.members : [];
       state.aiCouncilMembers = state.aiCouncilMembers.filter((item) => !isRecord(item) || item.councilId !== councilId);
-      inputMembers.forEach((member, index) => {
-        if (!isRecord(member) || typeof member.teammateId !== "string" || member.teammateId === "ling_agent") {
-          return;
-        }
-        state.aiCouncilMembers.push({
-          councilId,
-          teammateId: member.teammateId,
-          slotKey: typeof member.slotKey === "string" ? member.slotKey : undefined,
-          label: typeof member.label === "string" ? member.label : undefined,
-          position: typeof member.position === "number" ? member.position : index,
-          enabled: member.enabled !== false,
-          createdAt: "2026-06-20T00:02:00.000Z",
-          updatedAt: "2026-06-20T00:02:00.000Z",
-        });
-      });
+      state.aiCouncilMembers.push(...normalizeMockAiCouncilMembers(councilId, inputMembers));
       const members = state.aiCouncilMembers
         .filter((item) => isRecord(item) && item.councilId === councilId)
         .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));

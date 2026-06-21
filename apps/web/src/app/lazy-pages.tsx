@@ -42,6 +42,12 @@ export const LazyAiTeammatesPage = lazy(() =>
   })),
 );
 
+export const LazyCouncilWorkspacePage = lazy(() =>
+  import("../features/councils/CouncilWorkspacePage.js").then((module) => ({
+    default: module.CouncilWorkspacePage,
+  })),
+);
+
 export const LazyTeammateWorkspace = lazy(() =>
   import("../features/teammates/TeammateWorkspace.js").then((module) => ({
     default: module.TeammateWorkspace,

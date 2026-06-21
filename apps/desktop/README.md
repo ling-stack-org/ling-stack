@@ -6,6 +6,9 @@ The desktop app should be a shell over the local daemon and shared Web UI. It sh
 daemon lifecycle, menu/tray, notifications, file picker, keychain, and update UX, but it
 must not fork the Ling Stack product model or bypass daemon state machines.
 
+AI Council health and badge state should come from `@ling-stack/core/ai-council-view`
+plus daemon/API-client data, not from copied Web DOM labels or Web-only helpers.
+
 Design source of truth:
 
 - [Desktop Shell](../../docs/design/desktop-shell.md)

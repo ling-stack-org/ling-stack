@@ -37,6 +37,7 @@ export interface WorkflowGraphNode {
   readonly prompt: string;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
+  readonly councilSlotKey?: string;
   readonly skillId?: string;
   readonly providerPresetId?: string;
   readonly requestedRunnerId?: string;

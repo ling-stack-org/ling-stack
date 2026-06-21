@@ -13,6 +13,10 @@
       "types": "./dist/builtin-extensions.d.ts",
       "default": "./dist/builtin-extensions.js"
     },
+    "./ai-council-view": {
+      "types": "./dist/ai-council-view.d.ts",
+      "default": "./dist/ai-council-view.js"
+    },
     "./builtin-skill-packs": {
       "types": "./dist/builtin-skill-packs.d.ts",
       "default": "./dist/builtin-skill-packs.js"

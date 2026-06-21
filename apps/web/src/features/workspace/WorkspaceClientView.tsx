@@ -72,6 +72,12 @@ import {
   type ChannelActivityTriageDraft,
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
+import {
+  aiCouncilBoundaryLabels,
+  aiCouncilCapacityLabel,
+  aiCouncilHealthLabels,
+  aiCouncilRoutingModeLabel,
+} from "../../lib/ai-councils.js";
 import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { buildConversationTurnProjection, type ConversationTranscriptBlock, type ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import { buildCollaborationProgressProjection, type CollaborationProgressProjectionIcon, type CollaborationProgressProjectionItem, type CollaborationProgressProjectionTone } from "../../lib/collaboration-progress-projection.js";
@@ -162,6 +168,7 @@ import type {
   ApprovalRequest,
   ApprovalPolicy,
   AiCouncil,
+  AiCouncilHealthReport,
   Channel,
   ChannelAttachment,
   ChannelBrief,
@@ -516,6 +523,7 @@ export function WorkspaceClientView({
   channelGovernanceNotificationsLoading,
   channelGovernanceNotificationActionId,
   aiCouncils,
+  aiCouncilHealthReport,
   aiCouncilsLoading,
   channelCouncilPolicy,
   channelEffectiveCouncil,
@@ -677,6 +685,7 @@ export function WorkspaceClientView({
   readonly channelGovernanceNotificationsLoading: boolean;
   readonly channelGovernanceNotificationActionId: string;
   readonly aiCouncils: readonly AiCouncil[];
+  readonly aiCouncilHealthReport: AiCouncilHealthReport | undefined;
   readonly aiCouncilsLoading: boolean;
   readonly channelCouncilPolicy: ChannelCouncilPolicy | undefined;
   readonly channelEffectiveCouncil: EffectiveChannelCouncilProjection | undefined;
@@ -4578,6 +4587,8 @@ export function WorkspaceClientView({
             const memberCount = channelEffectiveCouncil?.councils
               .find((item) => item.council.id === council.id)
               ?.members.filter((item) => item.enabled && item.teammate && !isLingAgentTeammate(item.teammate)).length ?? 0;
+            const capacityLabel = aiCouncilCapacityLabel(council, t);
+            const healthLabels = aiCouncilHealthLabels(aiCouncilHealthReport, council.id, t);
             return (
               <article key={council.id} className={preferred ? "channel-council-card preferred" : "channel-council-card"} role="listitem">
                 <div className="channel-council-card-main">
@@ -4589,6 +4600,20 @@ export function WorkspaceClientView({
                     <small>{t("{count} projected specialist(s)", { count: memberCount })}</small>
                   </span>
                 </div>
+                <div className="context-packet muted" aria-label={t("Council boundaries")}>
+                  <span>{aiCouncilRoutingModeLabel(council.routingPolicy.defaultMode, t)}</span>
+                  {capacityLabel ? <span>{capacityLabel}</span> : null}
+                  {aiCouncilBoundaryLabels(council, t).map((label) => (
+                    <span key={label}>{label}</span>
+                  ))}
+                </div>
+                {healthLabels.length > 0 ? (
+                  <div className="context-packet muted" aria-label={t("Council health")}>
+                    {healthLabels.map((label) => (
+                      <span key={label}>{label}</span>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="channel-council-actions">
                   <button className="secondary-button compact-button" type="button" onClick={() => setPreferredChannelCouncil(council.id)} disabled={preferred || channelCouncilSaving}>
                     {preferred ? <Check size={13} /> : <Pin size={13} />}
@@ -4635,12 +4660,13 @@ export function WorkspaceClientView({
           <div className="channel-council-specialist-list" role="list">
             {projectedCouncilSpecialists.map((specialist) => {
               const councilSource = specialist.sources.find((source) => source.kind === "council");
+              const sourceDetails = [councilSource?.councilDisplayName ?? t("AI council"), councilSource?.label ?? councilSource?.slotKey].filter(Boolean).join(" · ");
               return (
                 <article key={specialist.teammateId} className="channel-council-specialist" role="listitem">
                   <TeammateAvatarView teammate={specialist.teammate} cwd={cwd} compact />
                   <span>
                     <strong>{specialist.teammate.displayName}</strong>
-                    <small>{councilSource?.councilDisplayName ?? t("AI council")}</small>
+                    <small>{sourceDetails}</small>
                   </span>
                 </article>
               );

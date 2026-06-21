@@ -7,6 +7,8 @@ import {
   getEffectiveTeammateSkill,
   GSTACK_DEFAULT_SKILL_PACK_ID,
   isRiskyRunTool,
+  type AiTeammateTemplate,
+  type ChannelExecutionProposalStepSource,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepMetadata,
@@ -25,6 +27,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { isRecord, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
+import { resolveCouncilSlotParticipant } from "./council-slot-resolver.js";
 import { compileWorkflowGraph, readOptionalWorkflowGraph } from "./workflow-graph.js";
 
 export interface CompileWorkflowTemplateInput {
@@ -58,6 +61,7 @@ export interface CustomWorkflowTemplateStep {
   readonly prompt: string;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
+  readonly councilSlotKey?: string;
   readonly skillId?: string;
   readonly providerPresetId?: string;
   readonly requestedRunnerId?: string;
@@ -150,28 +154,29 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
   const steps: ChannelWorkflowStep[] = [];
   const byTemplateStepId = new Map<string, ChannelWorkflowStep>();
   for (const [index, templateStep] of template.steps.entries()) {
-    const teammateTemplate = teammateTemplates.get(templateStep.teammateTemplateId);
-    const teammateId = createBuiltinAiTeammateId(templateStep.teammateTemplateId);
+    const resolved = resolveBuiltinTemplateStepParticipant(store, channel.id, templateStep, teammateTemplates);
     const step = store.createChannelWorkflowStep(
       {
         workflowId: workflow.id,
         position: index + 1,
         title: templateStep.name,
         prompt: renderTemplateStepPrompt(templateStep, input.objective),
-        toParticipantId: teammateId,
-        toParticipantLabel: teammateTemplate?.name ?? templateStep.teammateTemplateId,
-        metadata: {
+        toParticipantId: resolved.toParticipantId,
+        toParticipantLabel: resolved.toParticipantLabel,
+        metadata: omitUndefined({
           workflowTemplateId: template.id,
           templateVersion: skillPack.version,
           templateStepId: templateStep.id,
           teammateTemplateId: templateStep.teammateTemplateId,
+          councilSlotKey: templateStep.councilSlotKey,
           skillId: templateStep.skillId,
           requestedRunnerId: input.runnerId,
           providerPresetId: input.providerPresetId,
           autoStart: input.autoStart ?? true,
           approvalGate: templateStep.approvalGate,
           policy: defaultWorkflowStepPolicy(templateStep),
-        },
+          proposalStepSources: resolved.sources,
+        }),
       },
       now,
     );
@@ -233,7 +238,7 @@ function compileCustomWorkflowTemplate(
   const byTemplateStepId = new Map<string, ChannelWorkflowStep>();
   const templateBudget = template.maxParallelSteps;
   for (const [index, templateStep] of template.steps.entries()) {
-    const resolved = resolveCustomTemplateStepParticipant(store, templateStep);
+    const resolved = resolveCustomTemplateStepParticipant(store, channel.id, templateStep);
     const stepAutoStart = templateStep.autoStart ?? input.autoStart ?? template.autoStartDefault ?? false;
     const requestedRunnerId = templateStep.requestedRunnerId ?? input.runnerId;
     const providerPresetId = templateStep.providerPresetId ?? input.providerPresetId;
@@ -242,6 +247,7 @@ function compileCustomWorkflowTemplate(
       templateVersion: `custom:${template.schemaVersion}`,
       templateStepId: templateStep.id,
       teammateTemplateId: templateStep.teammateTemplateId,
+      councilSlotKey: templateStep.councilSlotKey,
       skillId: templateStep.skillId,
       requestedRunnerId,
       providerPresetId,
@@ -252,6 +258,7 @@ function compileCustomWorkflowTemplate(
       maxParallelSiblings: templateStep.maxParallelSiblings ?? templateBudget,
       policy: templateStep.policy ?? defaultCustomWorkflowStepPolicy(templateStep),
       gates: templateStep.gates,
+      proposalStepSources: resolved.sources,
     };
     const step = store.createChannelWorkflowStep(
       {
@@ -363,7 +370,7 @@ function validateCustomWorkflowTemplate(
     );
   }
   for (const step of template.steps) {
-    validateCustomTemplateStepParticipantAndSkill(store, step);
+    validateCustomTemplateStepParticipantAndSkill(store, channel.id, step);
     validateCustomTemplateStepRunner(store, step.requestedRunnerId ?? input.runnerId, runnerRegistry);
   }
   const unsafeAutoStartSteps = template.steps.filter((step) => {
@@ -406,8 +413,8 @@ function assertTemplateDependencyDag(template: CustomWorkflowTemplate): void {
   }
 }
 
-function validateCustomTemplateStepParticipantAndSkill(store: RunStore, step: CustomWorkflowTemplateStep): void {
-  const resolved = resolveCustomTemplateStepParticipant(store, step);
+function validateCustomTemplateStepParticipantAndSkill(store: RunStore, channelId: string, step: CustomWorkflowTemplateStep): void {
+  const resolved = resolveCustomTemplateStepParticipant(store, channelId, step);
   if (!step.skillId) {
     return;
   }
@@ -452,12 +459,45 @@ function validateCustomTemplateStepRunner(store: RunStore, requestedRunnerId: st
   });
 }
 
-function resolveCustomTemplateStepParticipant(store: RunStore, step: CustomWorkflowTemplateStep): {
+function resolveBuiltinTemplateStepParticipant(
+  store: RunStore,
+  channelId: string,
+  templateStep: WorkflowStepTemplate,
+  teammateTemplates: ReadonlyMap<string, AiTeammateTemplate>,
+): {
   readonly toParticipantId: string;
   readonly toParticipantLabel: string;
+  readonly sources?: readonly ChannelExecutionProposalStepSource[];
 } {
-  if (step.teammateId && step.teammateTemplateId) {
-    throw new HttpError(400, "custom_workflow_template_invalid", `Step ${step.id} must use teammateId or teammateTemplateId, not both`);
+  if (templateStep.councilSlotKey) {
+    const resolved = resolveCouncilSlotParticipant(store, channelId, templateStep.councilSlotKey);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  const teammateTemplate = teammateTemplates.get(templateStep.teammateTemplateId);
+  const teammateId = createBuiltinAiTeammateId(templateStep.teammateTemplateId);
+  return {
+    toParticipantId: teammateId,
+    toParticipantLabel: teammateTemplate?.name ?? templateStep.teammateTemplateId,
+  };
+}
+
+function resolveCustomTemplateStepParticipant(store: RunStore, channelId: string, step: CustomWorkflowTemplateStep): {
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly sources?: readonly ChannelExecutionProposalStepSource[];
+} {
+  const selectorCount = [step.teammateId, step.teammateTemplateId, step.councilSlotKey].filter(isString).length;
+  if (selectorCount !== 1) {
+    throw new HttpError(400, "custom_workflow_template_invalid", `Step ${step.id} must use exactly one of teammateId, teammateTemplateId, or councilSlotKey`);
+  }
+  if (step.councilSlotKey) {
+    const resolved = resolveCouncilSlotParticipant(store, channelId, step.councilSlotKey);
+    if (!resolved) {
+      throw new HttpError(400, "council_slot_not_found", `No effective AI council member found for slot ${step.councilSlotKey} in channel ${channelId}`);
+    }
+    return resolved;
   }
   if (step.teammateId) {
     const teammate = store.getAiTeammate(step.teammateId);
@@ -484,7 +524,7 @@ function resolveCustomTemplateStepParticipant(store: RunStore, step: CustomWorkf
       toParticipantLabel: teammateTemplate.name,
     };
   }
-  throw new HttpError(400, "custom_workflow_template_invalid", `Step ${step.id} must resolve to teammateId or teammateTemplateId`);
+  throw new HttpError(400, "custom_workflow_template_invalid", `Step ${step.id} must resolve to teammateId, teammateTemplateId, or councilSlotKey`);
 }
 
 function customTemplateStepHasSideEffects(store: RunStore, step: CustomWorkflowTemplateStep): boolean {
@@ -544,6 +584,7 @@ function readCustomWorkflowTemplateStep(value: unknown, location: string): Custo
     prompt: readString(value, "prompt"),
     teammateTemplateId: readOptionalString(value, "teammateTemplateId"),
     teammateId: readOptionalString(value, "teammateId"),
+    councilSlotKey: readOptionalString(value, "councilSlotKey"),
     skillId: readOptionalString(value, "skillId"),
     providerPresetId: readOptionalString(value, "providerPresetId"),
     requestedRunnerId: readOptionalString(value, "requestedRunnerId"),

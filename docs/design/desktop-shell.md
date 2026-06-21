@@ -71,6 +71,8 @@ Desktop owns:
 Desktop does not own:
 
 - task/run/channel/provider CRUD,
+- AI council CRUD, council membership projection, channel council policy, or effective
+  council resolution,
 - approval decisions outside daemon APIs,
 - state machine transitions,
 - conversation transcript projection,
@@ -106,6 +108,44 @@ Desktop may:
 - show OS notifications for transcript state changes such as approval required, blocked,
   succeeded, or failed;
 - deep-link notification clicks to the relevant transcript turn or raw/detail view.
+
+## AI Councils Boundary
+
+Desktop consumes the same AI council contract as Web:
+
+```text
+Desktop renderer
+  -> packages/api-client
+  -> local daemon
+  -> ai_councils / channel_council_policies / workflow metadata
+```
+
+Desktop must not keep a separate council roster, infer council membership from rendered
+Web labels, or resolve workflow specialists locally. It should call the shared client for:
+
+- `listAiCouncils`, `getAiCouncil`, `createAiCouncil`, `cloneAiCouncil`, and
+  `updateAiCouncil`;
+- `getAiCouncilHealth` and `listAiCouncilMembers`;
+- `getChannelCouncilPolicy`, `updateChannelCouncilPolicy`, and
+  `getChannelEffectiveCouncil`;
+- workflow APIs whose step metadata may include `councilSlotKey` and
+  `proposalStepSources`.
+
+Desktop council health chips should also use the browser-safe client-neutral helpers
+exported from `@ling-stack/core/ai-council-view`:
+
+- `buildAiCouncilHealthView` for one council row or inspector;
+- `buildAiCouncilHealthOverviewView` for navigation/sidebar counts;
+- `aiCouncilHealthViewMatchesState` for local filtering.
+
+Renderer copy, iconography, and macOS visual treatment stay client-specific. Severity
+counts, clear/unknown state, and badge ordering stay shared so Web and Desktop do not
+drift.
+
+Council endpoints remain restrict-only. Desktop native affordances such as menus,
+notifications, and future keychain integration cannot turn a council selection into tool,
+credential, provider, or approval authority. The daemon remains the source of truth for
+source attribution and effective specialist resolution.
 
 ## Visual And Theme Model
 
@@ -220,6 +260,7 @@ When implementation starts:
 
 ```bash
 corepack pnpm --filter @ling-stack/desktop typecheck
+corepack pnpm --filter @ling-stack/core test -- ai-council-view
 corepack pnpm --filter @ling-stack/web build
 git diff --check
 ```
@@ -235,6 +276,8 @@ Desktop smoke tests:
 - renderer cannot access Node filesystem or shell APIs,
 - keychain status does not expose secret value,
 - notification click opens a route only.
+- council health chips render from `@ling-stack/core/ai-council-view`, not duplicated Web
+  label parsing or the Node-heavy `@ling-stack/core` top-level entrypoint.
 
 ## Assumptions
 
