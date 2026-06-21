@@ -7,6 +7,7 @@ import {
   Hash,
   Inbox,
   Kanban,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   PlugZap,
@@ -127,6 +128,7 @@ export function SidebarNavigation({
         <NavItem icon={<Inbox />} label={t("Review Queue")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
         <NavItem icon={<Database />} label={t("Generation")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
         <NavItem icon={<Users />} label={t("AI Teammates")} active={activeSidebarTarget === "teammates"} onClick={() => onOpenView("teammates")} />
+        <NavItem icon={<Network />} label={t("AI Councils")} active={activeSidebarTarget === "councils"} onClick={() => onOpenView("councils")} />
       </nav>
 
       <SidebarSection title={t("Channels")} actionLabel={t("New channel")} onAction={onCreateChannel}>

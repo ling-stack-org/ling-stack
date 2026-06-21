@@ -5,7 +5,10 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import {
+  parseCloneAiCouncilRequest,
+  parseCreateAiCouncilRequest,
   parseReplaceAiCouncilMembersRequest,
+  parseUpdateAiCouncilRequest,
   parseUpsertChannelCouncilPolicyRequest,
 } from "./schemas.js";
 
@@ -34,8 +37,47 @@ export async function handleAiCouncilsCollection(
       });
       return;
     }
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const council = store.createAiCouncil(parseCreateAiCouncilRequest(body), new Date().toISOString());
+      writeJson(response, 201, { cwd, council });
+      return;
+    }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /ai-councils` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleAiCouncilHealth(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /ai-councils/health` });
+      return;
+    }
+    const store = storeRegistry.getStore(cwd);
+    writeJson(response, 200, {
+      cwd,
+      report: store.getAiCouncilHealthReport(new Date().toISOString(), {
+        limit: readOptionalIntegerQuery(url, "limit", 0),
+      }),
+    });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -69,8 +111,49 @@ export async function handleAiCouncilItem(
       writeJson(response, 200, { cwd, council });
       return;
     }
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const updated = store.updateAiCouncil(councilId, parseUpdateAiCouncilRequest(body), new Date().toISOString());
+      if (!updated) {
+        writeJson(response, 404, { error: "council_not_found", message: `AI council not found: ${councilId}` });
+        return;
+      }
+      writeJson(response, 200, { cwd, council: updated });
+      return;
+    }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for AI council` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleAiCouncilClone(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  councilId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for AI council clone` });
+      return;
+    }
+    const store = storeRegistry.getStore(cwd);
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const council = store.cloneAiCouncil(councilId, parseCloneAiCouncilRequest(body), new Date().toISOString());
+    writeJson(response, 201, { cwd, council });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",

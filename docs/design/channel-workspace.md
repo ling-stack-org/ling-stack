@@ -1953,6 +1953,16 @@ Current MVP implementation status:
   code, logs, command output, filenames, API fields, errors, and historical evidence
   remain in their original language. See
   [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md#response-language-resolution),
+- AI councils are now a daemon/core-backed channel attachment surface rather than Web-only
+  roster state. Channel Settings can attach `Development Council` by reference, choose it
+  as preferred, show restrict-only governance/capacity chips, and project enabled council
+  members into the channel specialist list without writing direct
+  `teammate_channel_memberships`. Confirmed workflow steps preserve proposal source
+  evidence so progress can show `Development Council / <slot>` or direct teammate origin
+  later. Council Workspace can also attach the selected council to a selected channel by
+  updating `channel_council_policies`, and it owns custom council create/clone/settings,
+  member management, and archive flows. Ling Agent remains the visible coordinator and
+  cannot be added as a normal council member; see [AI Councils](ai-councils.md),
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -2519,6 +2529,42 @@ Current MVP implementation status:
   including linked-work counts when available.
 - [x] Add targeted browser coverage for branch creation, branch archive, channel archive,
   restore, delete confirmation, and archived-hidden states.
+
+### Phase 38: AI Council Attachments And Source Attribution
+
+- [x] Define council grouping and future desktop compatibility in
+  `docs/design/ai-councils.md`.
+- [x] Seed the built-in Development Council from durable built-in teammates while keeping
+  Ling Agent outside normal council membership.
+- [x] Add daemon APIs for councils, council members, channel council policy, and effective
+  channel council projection.
+- [x] Attach councils to channels by reference without copying members into
+  `teammate_channel_memberships`.
+- [x] Show attached council routing mode, active-member capacity, restrict-only governance
+  chips, and projected specialist source details in channel Settings.
+- [x] Show council governance/capacity chips in the AI teammates management page.
+- [x] Add read-only AI council health report for deterministic membership availability
+  findings.
+- [x] Show council health chips in Web channel Settings and AI teammates management.
+- [x] Preserve proposal step sources into workflow step metadata so confirmed work keeps
+  direct-vs-council attribution.
+- [x] Add workflow `councilSlotKey` resolution through the selected council for built-in
+  templates, custom templates, and workflow graphs.
+- [x] Add a desktop/client compatibility pass over shared contracts and
+  `packages/api-client` council endpoints.
+- [x] Add targeted Web E2E coverage for channel council attachment and council member
+  management by reference.
+- [x] Add daemon negative coverage that council policy/member writes cannot grant tools,
+  credentials, approval bypass, or runtime authority.
+- [x] Add custom council create/clone/archive flows.
+- [x] Add Council Workspace page with overview, create/clone/archive, member editing,
+  health, and channel entry points.
+- [x] Let Council Workspace attach the selected council to a selected channel through
+  `channel_council_policies`, preserving attach-by-reference behavior instead of copying
+  members into `teammate_channel_memberships`.
+- [x] Add Council Workspace custom council settings for display name, description,
+  pinned state, and active/paused status while keeping built-in councils clone-first.
+- [ ] Add council health chips in Desktop surfaces.
 
 ## Validation Plan
 

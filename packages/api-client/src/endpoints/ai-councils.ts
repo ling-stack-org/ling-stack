@@ -1,10 +1,14 @@
 import type {
+  AiCouncilHealthResponse,
   AiCouncilListResponse,
   AiCouncilMemberListResponse,
   AiCouncilResponse,
   ChannelCouncilPolicyResponse,
+  CloneAiCouncilRequest,
+  CreateAiCouncilRequest,
   EffectiveChannelCouncilResponse,
   ReplaceAiCouncilMembersRequest,
+  UpdateAiCouncilRequest,
   UpdateChannelCouncilPolicyRequest,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
@@ -20,6 +24,40 @@ export const aiCouncilEndpoints = {
 
   async getAiCouncil(this: LingDaemonEndpointContext, cwd: string, councilId: string): Promise<AiCouncilResponse> {
     return this._get(`/ai-councils/${encodeURIComponent(councilId)}`, { cwd });
+  },
+
+  async createAiCouncil(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    input: CreateAiCouncilRequest,
+  ): Promise<AiCouncilResponse> {
+    return this._post("/ai-councils", { cwd }, input);
+  },
+
+  async cloneAiCouncil(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    councilId: string,
+    input: CloneAiCouncilRequest,
+  ): Promise<AiCouncilResponse> {
+    return this._post(`/ai-councils/${encodeURIComponent(councilId)}/clone`, { cwd }, input);
+  },
+
+  async updateAiCouncil(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    councilId: string,
+    input: UpdateAiCouncilRequest,
+  ): Promise<AiCouncilResponse> {
+    return this._patch(`/ai-councils/${encodeURIComponent(councilId)}`, { cwd }, input);
+  },
+
+  async getAiCouncilHealth(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    options: { readonly limit?: number } = {},
+  ): Promise<AiCouncilHealthResponse> {
+    return this._get("/ai-councils/health", { cwd, limit: options.limit });
   },
 
   async listAiCouncilMembers(this: LingDaemonEndpointContext, cwd: string, councilId: string): Promise<AiCouncilMemberListResponse> {

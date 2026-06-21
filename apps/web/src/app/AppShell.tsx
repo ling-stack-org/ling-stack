@@ -44,6 +44,7 @@ import {
   LazyAutomationsPage as AutomationsPage,
   LazyAiTeammatesPage as AiTeammatesPage,
   LazyApprovalsPage as ApprovalsPage,
+  LazyCouncilWorkspacePage as CouncilWorkspacePage,
   LazyGlobalWorkBoardPage as GlobalWorkBoardPage,
   LazyMediaJobsPage as MediaJobsPage,
   LazyPageErrorBoundary,
@@ -71,6 +72,10 @@ import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammat
 import { readDataString } from "../lib/data.js";
 import { getStartupStatus, refreshStartupStatus } from "../api/startup.js";
 import { getUserProfile } from "../api/profile.js";
+import {
+  getChannelCouncilPolicy,
+  updateChannelCouncilPolicy,
+} from "../api/ai-councils.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
 import {
   readRunWorkspaceCwd,
@@ -253,6 +258,7 @@ export function AppShell(): JSX.Element {
     channelGovernanceNotificationsLoading,
     channelGovernanceNotificationActionId,
     aiCouncils,
+    aiCouncilHealthReport,
     aiCouncilsLoading,
     channelCouncilPolicy,
     channelEffectiveCouncil,
@@ -1191,6 +1197,11 @@ export function AppShell(): JSX.Element {
       void refreshProviders();
       void refreshMcp();
     }
+    if (activeView === "councils") {
+      void refreshAiTeammates();
+      void refreshAiCouncils();
+      void refreshChannels();
+    }
     if (activeView === "media") {
       void refreshProviders();
       void refreshMediaJobs();
@@ -1433,6 +1444,33 @@ export function AppShell(): JSX.Element {
     void refreshChannelActivityTransitions(form.cwd.trim(), channelId, channelRunsForArtifacts);
   }
 
+  async function importAiCouncilToChannel(councilId: string, channelId: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd || !channelId) {
+      return;
+    }
+    try {
+      setErrorMessage("");
+      const policy = channelId === selectedChannelId && channelCouncilPolicy
+        ? channelCouncilPolicy
+        : (await getChannelCouncilPolicy(workspaceCwd, channelId)).policy;
+      const attachedCouncilIds = policy.attachedCouncilIds.includes(councilId)
+        ? policy.attachedCouncilIds
+        : [...policy.attachedCouncilIds, councilId];
+      await updateChannelCouncilPolicy(workspaceCwd, channelId, {
+        attachedCouncilIds,
+        preferredCouncilId: policy.preferredCouncilId ?? councilId,
+      });
+      if (channelId === selectedChannelId) {
+        await refreshSelectedChannelCouncil(channelId);
+      }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setErrorMessage(message);
+      throw caught;
+    }
+  }
+
   async function handleDomainEvent(event: DomainEvent): Promise<void> {
     const workspaceCwd = form.cwd.trim();
     switch (event.type) {
@@ -1500,7 +1538,7 @@ export function AppShell(): JSX.Element {
     openRunDiagnosticsView();
   }
 
-  const showInspector = !["workspace", "providers", "teammates", "runs", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "teammates", "councils", "runs", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -1548,6 +1586,8 @@ export function AppShell(): JSX.Element {
               ? "workspace workspace-teammate-private-surface"
             : activeView === "teammates" && !selectedAiTeammate
               ? "workspace workspace-teammates-surface"
+              : activeView === "councils"
+                ? "workspace workspace-councils-surface"
               : activeView === "providers"
                 ? "workspace workspace-provider-surface"
               : activeView === "automations"
@@ -1603,6 +1643,7 @@ export function AppShell(): JSX.Element {
             channelGovernanceNotificationsLoading={channelGovernanceNotificationsLoading}
             channelGovernanceNotificationActionId={channelGovernanceNotificationActionId}
             aiCouncils={aiCouncils}
+            aiCouncilHealthReport={aiCouncilHealthReport}
             aiCouncilsLoading={aiCouncilsLoading}
             channelCouncilPolicy={channelCouncilPolicy}
             channelEffectiveCouncil={channelEffectiveCouncil}
@@ -1741,7 +1782,7 @@ export function AppShell(): JSX.Element {
               />
             ) : (
               <>
-                {activeView === "providers" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" ? null : (
+                {activeView === "providers" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" ? null : (
                   <div className="workspace-head">
                     <div>
                       <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
@@ -1778,6 +1819,9 @@ export function AppShell(): JSX.Element {
                     localTeammates={localTeammates}
                     aiCouncils={aiCouncils}
                     aiCouncilsLoading={aiCouncilsLoading}
+                    selectedChannelId={selectedChannelId}
+                    channelCouncilPolicy={channelCouncilPolicy}
+                    channelCouncilSaving={channelCouncilSaving}
                     createRequestId={teammateCreateRequestId}
                     onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
                     onCreateTeammate={(input) => void addAiTeammate(input)}
@@ -1785,8 +1829,23 @@ export function AppShell(): JSX.Element {
                     onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
                     onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
                     onRefreshAiCouncils={() => void refreshAiCouncils()}
+                    onImportCouncilToChannel={importAiCouncilToChannel}
                     onOpenTeammate={selectAiTeammate}
+                    onOpenCouncils={() => openPlainView("councils")}
+                    onOpenChannel={selectWorkspaceChannel}
                     onOpenProviders={() => openPlainView("providers")}
+                  />
+                ) : activeView === "councils" ? (
+                  <CouncilWorkspacePage
+                    cwd={form.cwd}
+                    aiCouncils={aiCouncils}
+                    aiCouncilHealthReport={aiCouncilHealthReport}
+                    aiCouncilsLoading={aiCouncilsLoading}
+                    channels={channels}
+                    teammates={aiTeammates}
+                    onRefresh={() => refreshAiCouncils()}
+                    onOpenAiTeammates={() => openPlainView("teammates")}
+                    onOpenChannel={selectWorkspaceChannel}
                   />
                 ) : activeView === "runs" ? (
                   <RunHistory

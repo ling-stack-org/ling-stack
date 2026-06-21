@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
   Bot,
   Brain,
   CheckCircle2,
@@ -32,19 +30,14 @@ import type {
   SkillPack,
   WorkflowStepTemplate,
 } from "@ling-stack/core/skill-types";
-import {
-  listAiCouncilMembers,
-  replaceAiCouncilMembers,
-} from "../../api/ai-councils.js";
 import { useI18n } from "../../i18n.js";
 import { isMediaProvider, providerPreflightReady } from "../../lib/providers.js";
 import { MetaRow } from "../../shared/components/index.js";
 import type {
   AiCouncil,
-  AiCouncilMember,
   Channel,
+  ChannelCouncilPolicy,
   ProviderPreset,
-  ReplaceAiCouncilMembersRequest,
 } from "../../types.js";
 import {
   approvalProfileText,
@@ -64,6 +57,10 @@ const defaultMemoryScopeLabels: readonly string[] = [
   "channel-decisions",
 ];
 
+const developmentCouncilId = "council_builtin_development";
+
+type TeammateManagementView = "teammates" | "councils";
+
 export function AiTeammatesPage({
   cwd,
   skillPack,
@@ -72,6 +69,9 @@ export function AiTeammatesPage({
   localTeammates,
   aiCouncils = [],
   aiCouncilsLoading = false,
+  selectedChannelId = "",
+  channelCouncilPolicy,
+  channelCouncilSaving = false,
   createRequestId = 0,
   onCreateRequestHandled,
   onCreateTeammate,
@@ -79,7 +79,10 @@ export function AiTeammatesPage({
   onToggleTeammatePinned,
   onToggleTeammateHidden,
   onRefreshAiCouncils,
+  onImportCouncilToChannel,
   onOpenTeammate,
+  onOpenCouncils,
+  onOpenChannel,
   onOpenProviders,
 }: {
   readonly cwd: string;
@@ -89,6 +92,9 @@ export function AiTeammatesPage({
   readonly localTeammates: readonly LocalTeammateDraft[];
   readonly aiCouncils?: readonly AiCouncil[];
   readonly aiCouncilsLoading?: boolean;
+  readonly selectedChannelId?: string;
+  readonly channelCouncilPolicy?: ChannelCouncilPolicy;
+  readonly channelCouncilSaving?: boolean;
   readonly createRequestId?: number;
   readonly onCreateRequestHandled?: () => void;
   readonly onCreateTeammate: (teammate: LocalTeammateCreateInput) => void;
@@ -96,7 +102,10 @@ export function AiTeammatesPage({
   readonly onToggleTeammatePinned: (teammateId: string) => void;
   readonly onToggleTeammateHidden: (teammateId: string) => void;
   readonly onRefreshAiCouncils?: () => void;
+  readonly onImportCouncilToChannel?: (councilId: string, channelId: string) => Promise<void>;
   readonly onOpenTeammate?: (teammateId: string) => void;
+  readonly onOpenCouncils?: () => void;
+  readonly onOpenChannel?: (channelId: string) => void;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -131,16 +140,14 @@ export function AiTeammatesPage({
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [detailTemplateId, setDetailTemplateId] = useState<string>("");
   const [openTeammateMenuId, setOpenTeammateMenuId] = useState("");
-  const [selectedCouncilId, setSelectedCouncilId] = useState("");
-  const [councilMembers, setCouncilMembers] = useState<readonly AiCouncilMember[]>([]);
-  const [councilMembersLoading, setCouncilMembersLoading] = useState(false);
-  const [councilMembersSaving, setCouncilMembersSaving] = useState(false);
-  const [councilMemberError, setCouncilMemberError] = useState("");
-  const [pendingCouncilTeammateId, setPendingCouncilTeammateId] = useState("");
+  const [activeManagementView, setActiveManagementView] = useState<TeammateManagementView>("teammates");
+  const [selectedImportChannelId, setSelectedImportChannelId] = useState(() => selectedChannelId || (channels[0]?.id ?? ""));
+  const [importingCouncilId, setImportingCouncilId] = useState("");
+  const [lastImportedTarget, setLastImportedTarget] = useState<{ readonly councilId: string; readonly channelId: string } | undefined>();
   const wizardRef = useRef<HTMLElement | null>(null);
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
   const detailTemplate = templates.find((template) => template.id === detailTemplateId);
-  const selectedCouncil = activeAiCouncils.find((council) => council.id === selectedCouncilId) ?? activeAiCouncils[0];
+  const developmentCouncil = activeAiCouncils.find((council) => council.id === developmentCouncilId) ?? activeAiCouncils[0];
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
   const previewName = draftName.trim() || selectedTemplate?.name || t("Custom teammate");
   const previewDescription = draftDescription.trim() || selectedTemplate?.summary || t("Describe this teammate with a short working brief.");
@@ -148,29 +155,15 @@ export function AiTeammatesPage({
   const canCreateTeammate = Boolean(previewName.trim()) && Boolean(selectedProvider) && selectedProviderReady;
   const connectedChannelCount = new Set(activeLocalTeammates.flatMap((teammate) => teammate.channelIds)).size;
   const visibleCreateTemplates = templates.slice(0, 5);
-  const teammateById = useMemo(
-    () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
-    [activeLocalTeammates],
+  const selectedChannelAlreadyHasDevelopmentCouncil = Boolean(
+    developmentCouncil &&
+    selectedImportChannelId === selectedChannelId &&
+    channelCouncilPolicy?.attachedCouncilIds.includes(developmentCouncil.id),
   );
-  const councilMemberTeammateIds = useMemo(
-    () => new Set(councilMembers.map((member) => member.teammateId)),
-    [councilMembers],
-  );
-  const councilEligibleTeammates = useMemo(
-    () => activeLocalTeammates.filter((teammate) => !isLingAgentDraft(teammate)),
-    [activeLocalTeammates],
-  );
-  const availableCouncilTeammates = useMemo(
-    () => councilEligibleTeammates.filter((teammate) => !councilMemberTeammateIds.has(teammate.id)),
-    [councilEligibleTeammates, councilMemberTeammateIds],
-  );
-  const sortedCouncilMembers = useMemo(
-    () => [...councilMembers].sort((left, right) => left.position - right.position || left.teammateId.localeCompare(right.teammateId)),
-    [councilMembers],
-  );
-  const renderedCouncilMembers = useMemo(
-    () => sortedCouncilMembers.filter((member) => teammateById.has(member.teammateId)),
-    [sortedCouncilMembers, teammateById],
+  const developmentCouncilJustImported = Boolean(
+    developmentCouncil &&
+    lastImportedTarget?.councilId === developmentCouncil.id &&
+    lastImportedTarget.channelId === selectedImportChannelId,
   );
 
   useEffect(() => {
@@ -186,51 +179,20 @@ export function AiTeammatesPage({
   }, [channels, selectedChannelIds.length]);
 
   useEffect(() => {
+    const fallbackChannelId = selectedChannelId && channels.some((channel) => channel.id === selectedChannelId)
+      ? selectedChannelId
+      : channels[0]?.id ?? "";
+    if (!selectedImportChannelId || !channels.some((channel) => channel.id === selectedImportChannelId)) {
+      setSelectedImportChannelId(fallbackChannelId);
+    }
+  }, [channels, selectedChannelId, selectedImportChannelId]);
+
+  useEffect(() => {
     if (createRequestId > 0) {
       setCreateOpen(true);
       onCreateRequestHandled?.();
     }
   }, [createRequestId, onCreateRequestHandled]);
-
-  useEffect(() => {
-    if (!selectedCouncil || !activeAiCouncils.some((council) => council.id === selectedCouncilId)) {
-      setSelectedCouncilId(activeAiCouncils[0]?.id ?? "");
-    }
-  }, [activeAiCouncils, selectedCouncil, selectedCouncilId]);
-
-  useEffect(() => {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedCouncilId) {
-      setCouncilMembers([]);
-      setCouncilMembersLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setCouncilMembersLoading(true);
-    setCouncilMemberError("");
-    void listAiCouncilMembers(workspaceCwd, selectedCouncilId)
-      .then((response) => {
-        if (!cancelled) {
-          setCouncilMembers(response.members);
-        }
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) {
-          setCouncilMembers([]);
-          setCouncilMemberError(caught instanceof Error ? caught.message : String(caught));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setCouncilMembersLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [cwd, selectedCouncilId]);
 
   function selectTemplate(template: AiTeammateTemplate): void {
     setSelectedTemplateId(template.id);
@@ -279,68 +241,17 @@ export function AiTeammatesPage({
     setCreateOpen(true);
   }
 
-  async function saveCouncilMembers(nextMembers: readonly AiCouncilMember[]): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedCouncil || councilMembersSaving) {
+  async function importDevelopmentCouncilToChannel(): Promise<void> {
+    if (!developmentCouncil || !selectedImportChannelId || !onImportCouncilToChannel || importingCouncilId) {
       return;
     }
-
-    setCouncilMembersSaving(true);
-    setCouncilMemberError("");
+    setImportingCouncilId(developmentCouncil.id);
     try {
-      const response = await replaceAiCouncilMembers(workspaceCwd, selectedCouncil.id, {
-        members: toCouncilMemberReplaceInput(nextMembers),
-      });
-      setCouncilMembers(response.members);
-    } catch (caught) {
-      setCouncilMemberError(caught instanceof Error ? caught.message : String(caught));
+      await onImportCouncilToChannel(developmentCouncil.id, selectedImportChannelId);
+      setLastImportedTarget({ councilId: developmentCouncil.id, channelId: selectedImportChannelId });
     } finally {
-      setCouncilMembersSaving(false);
+      setImportingCouncilId("");
     }
-  }
-
-  function addCouncilMember(): void {
-    if (!selectedCouncil || !pendingCouncilTeammateId) {
-      return;
-    }
-    const teammate = councilEligibleTeammates.find((item) => item.id === pendingCouncilTeammateId);
-    if (!teammate || councilMemberTeammateIds.has(teammate.id)) {
-      return;
-    }
-    const nextMember: AiCouncilMember = {
-      councilId: selectedCouncil.id,
-      teammateId: teammate.id,
-      slotKey: teammate.roleKey,
-      label: teammate.roleKey ? roleLabel(teammate.roleKey, t) : teammate.displayName,
-      position: sortedCouncilMembers.length,
-      enabled: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setPendingCouncilTeammateId("");
-    void saveCouncilMembers([...sortedCouncilMembers, nextMember]);
-  }
-
-  function removeCouncilMember(teammateId: string): void {
-    void saveCouncilMembers(sortedCouncilMembers.filter((member) => member.teammateId !== teammateId));
-  }
-
-  function toggleCouncilMember(teammateId: string): void {
-    void saveCouncilMembers(sortedCouncilMembers.map((member) =>
-      member.teammateId === teammateId ? { ...member, enabled: !member.enabled } : member,
-    ));
-  }
-
-  function moveCouncilMember(teammateId: string, delta: -1 | 1): void {
-    const currentIndex = sortedCouncilMembers.findIndex((member) => member.teammateId === teammateId);
-    const targetIndex = currentIndex + delta;
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= sortedCouncilMembers.length) {
-      return;
-    }
-    const nextMembers = [...sortedCouncilMembers];
-    const [member] = nextMembers.splice(currentIndex, 1);
-    nextMembers.splice(targetIndex, 0, member);
-    void saveCouncilMembers(nextMembers);
   }
 
   if (!skillPack || templates.length === 0) {
@@ -364,6 +275,28 @@ export function AiTeammatesPage({
               channels: connectedChannelCount,
             })}
           </p>
+        </div>
+        <div className="teammate-management-tabs" role="tablist" aria-label={t("Teammate management tabs")}>
+          <button
+            className={activeManagementView === "teammates" ? "active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={activeManagementView === "teammates"}
+            onClick={() => setActiveManagementView("teammates")}
+          >
+            <Users size={14} />
+            {t("Teammates")}
+          </button>
+          <button
+            className={activeManagementView === "councils" ? "active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={activeManagementView === "councils"}
+            onClick={() => setActiveManagementView("councils")}
+          >
+            <Brain size={14} />
+            {t("AI Councils")}
+          </button>
         </div>
         <button className="primary-button teammate-page-create-button" type="button" onClick={focusCreateFlow}>
           <Plus size={16} />
@@ -541,227 +474,105 @@ export function AiTeammatesPage({
         </div>
       ) : null}
 
-      <div className="teammate-management-grid">
-        <section className="teammate-add-panel" aria-label={t("Workspace teammates")}>
-          <div className="panel-title split teammate-panel-title">
-            <span>
-              <Users size={16} />
-              <span className="teammate-panel-heading">
-                <h2>{t("Workspace teammates")}</h2>
-                <small className="teammate-panel-meta" aria-label={t("AI teammate action summary")}>
-                  {t("Ready")} {readyLocalTeammateCount} · {t("Needs model")} {needsModelTeammateCount} · {t("No channel")} {noChannelTeammateCount} · {t("Hidden")} {hiddenTeammateCount}
-                </small>
-              </span>
-            </span>
-            <small>{t("{count} configured", { count: activeLocalTeammates.length })}</small>
-          </div>
-          {activeLocalTeammates.length === 0 ? (
-            <div className="client-empty-state teammate-empty">
-              <Bot size={18} />
-              <span>{t("No workspace teammates")}</span>
-            </div>
-          ) : (
-            <div className="teammate-draft-list">
-              {activeLocalTeammates.map((draft) => {
-                const template = draft.templateId ? templates.find((item) => item.id === draft.templateId) : undefined;
-                const draftChannels = draft.channelIds
-                  .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)
-                  .filter((name): name is string => Boolean(name));
-                const provider = draft.providerPresetId ? providers.find((item) => item.id === draft.providerPresetId) : undefined;
-                const ready = provider ? providerPreflightReady(provider) : false;
-                const modelLabel = draft.modelLabel === "No model selected" ? t("No model selected") : draft.modelLabel;
-                const channelLabel = draftChannels.length ? draftChannels.join(", ") : t("No channel");
-                const roleSummary = template ? t(template.name) : roleLabel(draft.roleKey ?? "custom", t);
-                const readinessLabel = !provider ? t("Needs model") : ready ? t("Ready teammate") : t("Model needs check");
-                return (
-                  <article key={draft.id} className={draft.hidden ? "teammate-draft-row hidden-row" : "teammate-draft-row"}>
-                    <TeammateAvatarView teammate={draft} cwd={cwd} compact />
-                    <span className="teammate-draft-copy">
-                      <strong>{draft.displayName}</strong>
-                      <small>{roleSummary}</small>
-                    </span>
-                    <span className={ready ? "teammate-model-pill ready" : "teammate-model-pill warning"}>{modelLabel}</span>
-                    <span className="teammate-channel-pill">{channelLabel}</span>
-                    <time className="teammate-updated-time">{draft.updatedAt ? formatRelativeDraftTime(draft.updatedAt, t) : t("Just now")}</time>
-                    <span className="teammate-row-actions">
-                      <span className={ready ? "teammate-row-status ready" : "teammate-row-status warning"}>{readinessLabel}</span>
-                      {ready && onOpenTeammate ? (
-                        <button className="teammate-row-primary-action" type="button" onClick={() => onOpenTeammate(draft.id)}>
-                          {t("Open")}
-                        </button>
-                      ) : !ready ? (
-                        <button className="teammate-row-primary-action" type="button" onClick={onOpenProviders}>
-                          <PlugZap size={13} />
-                          {t("Configure model")}
-                        </button>
-                      ) : null}
-                      <span
-                        className={openTeammateMenuId === draft.id ? "teammate-row-menu hover-action-menu open" : "teammate-row-menu hover-action-menu"}
-                        onMouseEnter={() => setOpenTeammateMenuId(draft.id)}
-                        onMouseLeave={() => setOpenTeammateMenuId("")}
-                        onFocus={() => setOpenTeammateMenuId(draft.id)}
-                        onBlur={(event) => {
-                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                            setOpenTeammateMenuId("");
-                          }
-                        }}
-                      >
-                        <button
-                          className="teammate-row-menu-trigger hover-action-menu-trigger"
-                          type="button"
-                          aria-label={t("Teammate actions")}
-                          title={t("Teammate actions")}
-                          aria-haspopup="menu"
-                          onMouseDown={(event) => event.preventDefault()}
-                        >
-                          <MoreHorizontal size={16} />
-                        </button>
-                        <span
-                          className="teammate-row-menu-popover hover-action-menu-popover"
-                          role="menu"
-                          hidden={openTeammateMenuId !== draft.id}
-                        >
-                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammatePinned(draft.id); }} role="menuitem">
-                            {draft.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-                            {draft.pinned ? t("Unpin") : t("Pin")}
-                          </button>
-                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammateHidden(draft.id); }} role="menuitem">
-                            <EyeOff size={14} />
-                            {draft.hidden ? t("Show") : t("Hide")}
-                          </button>
-                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onRemoveTeammate(draft.id); }} role="menuitem">
-                            <Trash2 size={14} />
-                            {t("Delete")}
-                          </button>
-                        </span>
-                      </span>
-                    </span>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <div className="teammate-side-stack">
-          <section className="teammate-council-panel" aria-label={t("AI Councils")}>
-            <div className="panel-title split">
+      {activeManagementView === "teammates" ? (
+        <div className="teammate-management-grid">
+          <section className="teammate-add-panel" aria-label={t("Workspace teammates")}>
+            <div className="panel-title split teammate-panel-title">
               <span>
                 <Users size={16} />
-                <h2>{t("AI Councils")}</h2>
+                <span className="teammate-panel-heading">
+                  <h2>{t("Workspace teammates")}</h2>
+                  <small className="teammate-panel-meta" aria-label={t("AI teammate action summary")}>
+                    {t("Ready")} {readyLocalTeammateCount} · {t("Needs model")} {needsModelTeammateCount} · {t("No channel")} {noChannelTeammateCount} · {t("Hidden")} {hiddenTeammateCount}
+                  </small>
+                </span>
               </span>
-              <button className="icon-button compact-icon-button" type="button" onClick={onRefreshAiCouncils} disabled={aiCouncilsLoading} aria-label={t("Refresh AI councils")} title={t("Refresh AI councils")}>
-                <RefreshCw className={aiCouncilsLoading ? "spin" : undefined} size={14} />
-              </button>
+              <small>{t("{count} configured", { count: activeLocalTeammates.length })}</small>
             </div>
-
-            {activeAiCouncils.length === 0 ? (
+            {activeLocalTeammates.length === 0 ? (
               <div className="client-empty-state teammate-empty">
-                <Users size={18} />
-                <span>{aiCouncilsLoading ? t("Loading councils...") : t("No AI councils available")}</span>
+                <Bot size={18} />
+                <span>{t("No workspace teammates")}</span>
               </div>
             ) : (
-              <div className="teammate-council-manager">
-                <label className="field teammate-council-selector">
-                  <span>{t("Council")}</span>
-                  <select
-                    aria-label={t("Select AI council")}
-                    value={selectedCouncil?.id ?? ""}
-                    onChange={(event) => setSelectedCouncilId(event.target.value)}
-                    disabled={aiCouncilsLoading || councilMembersSaving}
-                  >
-                    {activeAiCouncils.map((council) => (
-                      <option key={council.id} value={council.id}>{council.displayName}</option>
-                    ))}
-                  </select>
-                </label>
-
-                {selectedCouncil ? (
-                  <div className="teammate-council-summary">
-                    <strong>{selectedCouncil.displayName}</strong>
-                    <small>{selectedCouncil.description}</small>
-                    <span className="teammate-council-meta">
-                      <span>{councilSourceLabel(selectedCouncil.source, t)}</span>
-                      <span>{councilRoutingModeLabel(selectedCouncil.routingPolicy.defaultMode, t)}</span>
-                      <span>{selectedCouncil.status}</span>
-                    </span>
-                  </div>
-                ) : null}
-
-                {councilMemberError ? (
-                  <div className="provider-run-notice warning">
-                    <ShieldCheck size={15} />
-                    <span>{councilMemberError}</span>
-                  </div>
-                ) : null}
-
-                <div className="teammate-council-add-row">
-                  <select
-                    aria-label={t("Add teammate to council")}
-                    value={pendingCouncilTeammateId}
-                    onChange={(event) => setPendingCouncilTeammateId(event.target.value)}
-                    disabled={availableCouncilTeammates.length === 0 || councilMembersLoading || councilMembersSaving}
-                  >
-                    <option value="">{availableCouncilTeammates.length === 0 ? t("No teammates available") : t("Select teammate")}</option>
-                    {availableCouncilTeammates.map((teammate) => (
-                      <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
-                    ))}
-                  </select>
-                  <button className="secondary-button compact-button" type="button" onClick={addCouncilMember} disabled={!pendingCouncilTeammateId || councilMembersLoading || councilMembersSaving}>
-                    <Plus size={14} />
-                    {t("Add member")}
-                  </button>
-                </div>
-
-                {councilMembersLoading ? (
-                  <div className="client-empty-state teammate-empty compact">
-                    <RefreshCw className="spin" size={16} />
-                    <span>{t("Loading council members...")}</span>
-                  </div>
-                ) : renderedCouncilMembers.length === 0 ? (
-                  <div className="client-empty-state teammate-empty compact">
-                    <Users size={16} />
-                    <span>{t("No council members")}</span>
-                  </div>
-                ) : (
-                  <div className="teammate-council-member-list" role="list" aria-label={t("Council members")}>
-                    {renderedCouncilMembers.map((member) => {
-                      const teammate = teammateById.get(member.teammateId);
-                      if (!teammate) {
-                        return null;
-                      }
-                      const memberIndex = sortedCouncilMembers.findIndex((item) => item.teammateId === member.teammateId);
-                      return (
-                        <article key={member.teammateId} className={member.enabled ? "teammate-council-member-row" : "teammate-council-member-row disabled"} role="listitem">
-                          <div className="teammate-council-member-head">
-                            <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-                            <span className="teammate-council-member-copy">
-                              <strong>{teammate.displayName}</strong>
-                              <small>{member.label ?? member.slotKey ?? t("Council member")}</small>
-                            </span>
-                            <span className={member.enabled ? "teammate-council-status enabled" : "teammate-council-status disabled"}>
-                              {member.enabled ? t("Enabled") : t("Disabled")}
-                            </span>
-                          </div>
-                          <div className="teammate-council-member-actions">
-                            <button className="icon-button compact-icon-button" type="button" aria-label={t("Move council member up")} title={t("Move council member up")} onClick={() => moveCouncilMember(member.teammateId, -1)} disabled={memberIndex <= 0 || councilMembersSaving}>
-                              <ArrowUp size={13} />
+              <div className="teammate-draft-list">
+                {activeLocalTeammates.map((draft) => {
+                  const template = draft.templateId ? templates.find((item) => item.id === draft.templateId) : undefined;
+                  const draftChannels = draft.channelIds
+                    .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)
+                    .filter((name): name is string => Boolean(name));
+                  const provider = draft.providerPresetId ? providers.find((item) => item.id === draft.providerPresetId) : undefined;
+                  const ready = provider ? providerPreflightReady(provider) : false;
+                  const modelLabel = draft.modelLabel === "No model selected" ? t("No model selected") : draft.modelLabel;
+                  const channelLabel = draftChannels.length ? draftChannels.join(", ") : t("No channel");
+                  const roleSummary = template ? t(template.name) : roleLabel(draft.roleKey ?? "custom", t);
+                  const readinessLabel = !provider ? t("Needs model") : ready ? t("Ready teammate") : t("Model needs check");
+                  return (
+                    <article key={draft.id} className={draft.hidden ? "teammate-draft-row hidden-row" : "teammate-draft-row"}>
+                      <TeammateAvatarView teammate={draft} cwd={cwd} compact />
+                      <span className="teammate-draft-copy">
+                        <strong>{draft.displayName}</strong>
+                        <small>{roleSummary}</small>
+                      </span>
+                      <span className={ready ? "teammate-model-pill ready" : "teammate-model-pill warning"}>{modelLabel}</span>
+                      <span className="teammate-channel-pill">{channelLabel}</span>
+                      <time className="teammate-updated-time">{draft.updatedAt ? formatRelativeDraftTime(draft.updatedAt, t) : t("Just now")}</time>
+                      <span className="teammate-row-actions">
+                        <span className={ready ? "teammate-row-status ready" : "teammate-row-status warning"}>{readinessLabel}</span>
+                        {ready && onOpenTeammate ? (
+                          <button className="teammate-row-primary-action" type="button" onClick={() => onOpenTeammate(draft.id)}>
+                            {t("Open")}
+                          </button>
+                        ) : !ready ? (
+                          <button className="teammate-row-primary-action" type="button" onClick={onOpenProviders}>
+                            <PlugZap size={13} />
+                            {t("Configure model")}
+                          </button>
+                        ) : null}
+                        <span
+                          className={openTeammateMenuId === draft.id ? "teammate-row-menu hover-action-menu open" : "teammate-row-menu hover-action-menu"}
+                          onMouseEnter={() => setOpenTeammateMenuId(draft.id)}
+                          onMouseLeave={() => setOpenTeammateMenuId("")}
+                          onFocus={() => setOpenTeammateMenuId(draft.id)}
+                          onBlur={(event) => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                              setOpenTeammateMenuId("");
+                            }
+                          }}
+                        >
+                          <button
+                            className="teammate-row-menu-trigger hover-action-menu-trigger"
+                            type="button"
+                            aria-label={t("Teammate actions")}
+                            title={t("Teammate actions")}
+                            aria-haspopup="menu"
+                            onMouseDown={(event) => event.preventDefault()}
+                          >
+                            <MoreHorizontal size={16} />
+                          </button>
+                          <span
+                            className="teammate-row-menu-popover hover-action-menu-popover"
+                            role="menu"
+                            hidden={openTeammateMenuId !== draft.id}
+                          >
+                            <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammatePinned(draft.id); }} role="menuitem">
+                              {draft.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                              {draft.pinned ? t("Unpin") : t("Pin")}
                             </button>
-                            <button className="icon-button compact-icon-button" type="button" aria-label={t("Move council member down")} title={t("Move council member down")} onClick={() => moveCouncilMember(member.teammateId, 1)} disabled={memberIndex < 0 || memberIndex === sortedCouncilMembers.length - 1 || councilMembersSaving}>
-                              <ArrowDown size={13} />
+                            <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammateHidden(draft.id); }} role="menuitem">
+                              <EyeOff size={14} />
+                              {draft.hidden ? t("Show") : t("Hide")}
                             </button>
-                            <button className="secondary-button compact-button" type="button" onClick={() => toggleCouncilMember(member.teammateId)} disabled={councilMembersSaving}>
-                              {member.enabled ? t("Disable") : t("Enable")}
+                            <button type="button" onClick={() => { setOpenTeammateMenuId(""); onRemoveTeammate(draft.id); }} role="menuitem">
+                              <Trash2 size={14} />
+                              {t("Delete")}
                             </button>
-                            <button className="icon-button compact-icon-button" type="button" aria-label={t("Remove council member")} title={t("Remove council member")} onClick={() => removeCouncilMember(member.teammateId)} disabled={councilMembersSaving}>
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
+                          </span>
+                        </span>
+                      </span>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -797,7 +608,100 @@ export function AiTeammatesPage({
             </div>
           </section>
         </div>
-      </div>
+      ) : (
+        <section className="teammate-council-home" aria-label={t("AI Councils")}>
+          <div className="teammate-council-home-head">
+            <div>
+              <h2>{t("AI Councils")}</h2>
+            </div>
+            <span className="teammate-council-summary-actions">
+              <button className="icon-button compact-icon-button" type="button" onClick={onRefreshAiCouncils} disabled={aiCouncilsLoading} aria-label={t("Refresh AI councils")} title={t("Refresh AI councils")}>
+                <RefreshCw className={aiCouncilsLoading ? "spin" : undefined} size={14} />
+              </button>
+              {onOpenCouncils ? (
+                <button className="secondary-button compact-button" type="button" onClick={onOpenCouncils}>
+                  <Plus size={14} />
+                  {t("Custom council")}
+                </button>
+              ) : null}
+              {onOpenCouncils ? (
+                <button className="primary-button compact-button" type="button" onClick={onOpenCouncils}>
+                  <Users size={14} />
+                  {t("Open Council Workspace")}
+                </button>
+              ) : null}
+            </span>
+          </div>
+
+          {developmentCouncil ? (
+            <div className="teammate-council-home-grid">
+              <article className="teammate-council-summary featured" aria-label={t("Default development council")}>
+                <div className="teammate-council-card-head">
+                  <span>
+                    <strong>{developmentCouncil.displayName}</strong>
+                  </span>
+                  <span className="status-badge active">{developmentCouncil.status}</span>
+                </div>
+              </article>
+
+              <section className="teammate-council-import-card" aria-label={t("Import council to channel")}>
+                <div className="panel-title split">
+                  <span>
+                    <Hash size={16} />
+                    <span className="teammate-panel-heading">
+                      <h3>{t("Import council to channel")}</h3>
+                    </span>
+                  </span>
+                </div>
+                <label className="field">
+                  <span>{t("Selected channel")}</span>
+                  <select
+                    aria-label={t("Select channel for council")}
+                    value={selectedImportChannelId}
+                    onChange={(event) => setSelectedImportChannelId(event.target.value)}
+                    disabled={channels.length === 0 || Boolean(importingCouncilId)}
+                  >
+                    <option value="">{channels.length === 0 ? t("No channels yet") : t("No channels available")}</option>
+                    {channels.map((channel) => (
+                      <option key={channel.id} value={channel.id}>{channel.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="primary-button compact-button"
+                  type="button"
+                  onClick={() => void importDevelopmentCouncilToChannel()}
+                  disabled={
+                    !onImportCouncilToChannel ||
+                    !selectedImportChannelId ||
+                    channelCouncilSaving ||
+                    Boolean(importingCouncilId) ||
+                    selectedChannelAlreadyHasDevelopmentCouncil ||
+                    developmentCouncilJustImported
+                  }
+                >
+                  <Users size={14} />
+                  {importingCouncilId === developmentCouncil.id
+                    ? t("Importing council...")
+                    : selectedChannelAlreadyHasDevelopmentCouncil || developmentCouncilJustImported
+                      ? t("Council imported")
+                      : t("Import council to channel")}
+                </button>
+                {onOpenChannel && selectedImportChannelId ? (
+                  <button className="secondary-button compact-button" type="button" onClick={() => onOpenChannel(selectedImportChannelId)}>
+                    {t("Open selected channel")}
+                  </button>
+                ) : null}
+              </section>
+            </div>
+          ) : (
+            <div className="client-empty-state teammate-empty">
+              <Users size={18} />
+              <span>{aiCouncilsLoading ? t("Loading councils...") : t("No AI councils available")}</span>
+            </div>
+          )}
+        </section>
+      )}
 
       {detailTemplate ? (
         <TemplateDetailSheet
@@ -812,40 +716,6 @@ export function AiTeammatesPage({
       ) : null}
     </div>
   );
-}
-
-function toCouncilMemberReplaceInput(members: readonly AiCouncilMember[]): ReplaceAiCouncilMembersRequest["members"] {
-  return members.map((member, index) => ({
-    teammateId: member.teammateId,
-    slotKey: member.slotKey,
-    label: member.label,
-    position: index,
-    enabled: member.enabled,
-  }));
-}
-
-function isLingAgentDraft(teammate: LocalTeammateDraft): boolean {
-  return teammate.id === "ling_agent" || teammate.id === "ling-agent" || teammate.systemRole === "ling_agent";
-}
-
-function councilSourceLabel(source: AiCouncil["source"], t: (key: string) => string): string {
-  if (source === "builtin") {
-    return t("Built-in");
-  }
-  if (source === "template") {
-    return t("Template");
-  }
-  return t("Custom");
-}
-
-function councilRoutingModeLabel(mode: AiCouncil["routingPolicy"]["defaultMode"], t: (key: string) => string): string {
-  if (mode === "parallel_review") {
-    return t("Parallel review");
-  }
-  if (mode === "handoff") {
-    return t("Handoff");
-  }
-  return t("Advisory");
 }
 
 function templateRoleIcon(template: AiTeammateTemplate): JSX.Element {

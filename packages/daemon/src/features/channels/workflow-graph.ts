@@ -6,6 +6,7 @@ import {
   getEffectiveTeammateSkill,
   GSTACK_DEFAULT_SKILL_PACK_ID,
   isRiskyRunTool,
+  type ChannelExecutionProposalStepSource,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepMetadata,
@@ -25,6 +26,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { isRecord, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
+import { resolveCouncilSlotParticipant } from "./council-slot-resolver.js";
 import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
 
 export interface CompileWorkflowGraphInput {
@@ -71,7 +73,7 @@ export function compileWorkflowGraph(
   const steps: ChannelWorkflowStep[] = [];
   const stepByNodeId = new Map<string, ChannelWorkflowStep>();
   for (const [index, node] of orderedNodes.entries()) {
-    const resolved = resolveGraphNodeParticipant(store, node);
+    const resolved = resolveGraphNodeParticipant(store, input.channelId, node);
     const dependencyMode = graphNodeDependencyMode(graph, node.id);
     const metadata: ChannelWorkflowStepMetadata = omitUndefined({
       workflowTemplateId: graph.id,
@@ -79,8 +81,9 @@ export function compileWorkflowGraph(
       templateStepId: node.id,
       graphId: graph.id,
       graphNodeId: node.id,
-      proposalStepSources: node.proposalStepSources,
+      proposalStepSources: resolved.sources ?? node.proposalStepSources,
       teammateTemplateId: node.teammateTemplateId,
+      councilSlotKey: node.councilSlotKey,
       skillId: node.skillId,
       requestedRunnerId: node.requestedRunnerId ?? input.runnerId,
       providerPresetId: node.providerPresetId ?? input.providerPresetId,
@@ -177,7 +180,7 @@ export function validateWorkflowGraph(store: RunStore, input: CompileWorkflowGra
     if (node.id !== graph.entryNodeId && graph.edges.every((edge) => edge.toNodeId !== node.id)) {
       throw new HttpError(400, "workflow_graph_invalid", `Workflow graph node has no inbound edge: ${node.id}`);
     }
-    validateGraphNodeParticipantAndSkill(store, node);
+    validateGraphNodeParticipantAndSkill(store, input.channelId, node);
     validateGraphNodeRunner(store, node.requestedRunnerId ?? input.runnerId, runnerRegistry);
     graphNodeDependencyMode(graph, node.id);
   }
@@ -247,6 +250,7 @@ function readWorkflowGraphNode(value: unknown, location: string): WorkflowGraphN
     prompt: readString(value, "prompt"),
     teammateTemplateId: readOptionalString(value, "teammateTemplateId"),
     teammateId: readOptionalString(value, "teammateId"),
+    councilSlotKey: readOptionalString(value, "councilSlotKey"),
     skillId: readOptionalString(value, "skillId"),
     providerPresetId: readOptionalString(value, "providerPresetId"),
     requestedRunnerId: readOptionalString(value, "requestedRunnerId"),
@@ -414,8 +418,8 @@ function topologicalGraphNodes(graph: WorkflowGraph): readonly WorkflowGraphNode
   return ordered;
 }
 
-function validateGraphNodeParticipantAndSkill(store: RunStore, node: WorkflowGraphNode): void {
-  const resolved = resolveGraphNodeParticipant(store, node);
+function validateGraphNodeParticipantAndSkill(store: RunStore, channelId: string, node: WorkflowGraphNode): void {
+  const resolved = resolveGraphNodeParticipant(store, channelId, node);
   if (!node.skillId) {
     return;
   }
@@ -445,18 +449,27 @@ function validateGraphNodeParticipantAndSkill(store: RunStore, node: WorkflowGra
   }
 }
 
-function resolveGraphNodeParticipant(store: RunStore, node: WorkflowGraphNode): {
+function resolveGraphNodeParticipant(store: RunStore, channelId: string, node: WorkflowGraphNode): {
   readonly toParticipantId: string;
   readonly toParticipantLabel: string;
+  readonly sources?: readonly ChannelExecutionProposalStepSource[];
 } {
-  if (node.teammateId && node.teammateTemplateId) {
-    throw new HttpError(400, "workflow_graph_invalid", `Node ${node.id} must use teammateId or teammateTemplateId, not both`);
+  const selectorCount = [node.teammateId, node.teammateTemplateId, node.councilSlotKey].filter(isString).length;
+  if (selectorCount !== 1) {
+    throw new HttpError(400, "workflow_graph_invalid", `Node ${node.id} must use exactly one of teammateId, teammateTemplateId, or councilSlotKey`);
   }
-	  if (node.teammateId) {
-	    if (isLingAgentExecutorId(node.teammateId)) {
-	      const lingAgent = store.getAiTeammate(node.teammateId) ?? createLingAgentExecutor();
-	      return { toParticipantId: lingAgent.id, toParticipantLabel: lingAgent.displayName };
-	    }
+  if (node.councilSlotKey) {
+    const resolved = resolveCouncilSlotParticipant(store, channelId, node.councilSlotKey);
+    if (!resolved) {
+      throw new HttpError(400, "council_slot_not_found", `No effective AI council member found for slot ${node.councilSlotKey} in channel ${channelId}`);
+    }
+    return resolved;
+  }
+  if (node.teammateId) {
+    if (isLingAgentExecutorId(node.teammateId)) {
+      const lingAgent = store.getAiTeammate(node.teammateId) ?? createLingAgentExecutor();
+      return { toParticipantId: lingAgent.id, toParticipantLabel: lingAgent.displayName };
+    }
     const teammate = store.getAiTeammate(node.teammateId);
     if (!teammate) {
       throw new HttpError(400, "teammate_not_found", `AI teammate not found: ${node.teammateId}`);
@@ -475,7 +488,7 @@ function resolveGraphNodeParticipant(store: RunStore, node: WorkflowGraphNode): 
     }
     return { toParticipantId: teammateId, toParticipantLabel: teammateTemplate.name };
   }
-  throw new HttpError(400, "workflow_graph_invalid", `Node ${node.id} must resolve to teammateId or teammateTemplateId`);
+  throw new HttpError(400, "workflow_graph_invalid", `Node ${node.id} must resolve to teammateId, teammateTemplateId, or councilSlotKey`);
 }
 
 function validateGraphNodeRunner(store: RunStore, requestedRunnerId: string | undefined, runnerRegistry: RunnerRegistry | undefined): void {

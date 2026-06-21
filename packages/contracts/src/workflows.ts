@@ -294,6 +294,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly dependencyMode?: "all_succeeded" | "all_terminal" | "any_succeeded";
   readonly maxParallelSiblings?: number;
   readonly teammateTemplateId?: string;
+  readonly councilSlotKey?: string;
   readonly skillId?: string;
   readonly requestedRunnerId?: string;
   readonly effectiveRunnerId?: string;
@@ -355,6 +356,7 @@ export interface WorkflowGraphNode {
   readonly prompt: string;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
+  readonly councilSlotKey?: string;
   readonly skillId?: string;
   readonly providerPresetId?: string;
   readonly requestedRunnerId?: string;
@@ -673,6 +675,7 @@ export interface CustomWorkflowTemplateStep {
   readonly prompt: string;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
+  readonly councilSlotKey?: string;
   readonly skillId?: string;
   readonly providerPresetId?: string;
   readonly requestedRunnerId?: string;

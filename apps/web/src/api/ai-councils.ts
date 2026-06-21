@@ -1,10 +1,14 @@
 import type {
+  AiCouncilHealthResponse,
   AiCouncilListResponse,
   AiCouncilMemberListResponse,
   AiCouncilResponse,
   ChannelCouncilPolicyResponse,
+  CloneAiCouncilRequest,
+  CreateAiCouncilRequest,
   EffectiveChannelCouncilResponse,
   ReplaceAiCouncilMembersRequest,
+  UpdateAiCouncilRequest,
   UpdateChannelCouncilPolicyRequest,
 } from "../types.js";
 import { daemonClient } from "./client.js";
@@ -18,6 +22,25 @@ export async function listAiCouncils(
 
 export async function getAiCouncil(cwd: string, councilId: string): Promise<AiCouncilResponse> {
   return daemonClient.getAiCouncil(cwd, councilId);
+}
+
+export async function createAiCouncil(cwd: string, input: CreateAiCouncilRequest): Promise<AiCouncilResponse> {
+  return daemonClient.createAiCouncil(cwd, input);
+}
+
+export async function cloneAiCouncil(cwd: string, councilId: string, input: CloneAiCouncilRequest): Promise<AiCouncilResponse> {
+  return daemonClient.cloneAiCouncil(cwd, councilId, input);
+}
+
+export async function updateAiCouncil(cwd: string, councilId: string, input: UpdateAiCouncilRequest): Promise<AiCouncilResponse> {
+  return daemonClient.updateAiCouncil(cwd, councilId, input);
+}
+
+export async function getAiCouncilHealth(
+  cwd: string,
+  options: { readonly limit?: number } = {},
+): Promise<AiCouncilHealthResponse> {
+  return daemonClient.getAiCouncilHealth(cwd, options);
 }
 
 export async function listAiCouncilMembers(cwd: string, councilId: string): Promise<AiCouncilMemberListResponse> {

@@ -16,6 +16,7 @@ import {
   listChannelWorkflowSteps,
   listChannelWorkflows,
   listExecutionActions,
+  getAiCouncilHealth,
   listAiCouncils,
   listChannels,
   listGovernanceNotifications,
@@ -38,6 +39,7 @@ import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
 import type {
   Channel,
   AiCouncil,
+  AiCouncilHealthReport,
   ChannelBranch,
   ChannelAttachment,
   ChannelBrief,
@@ -132,6 +134,7 @@ export interface WorkspaceState {
   readonly channelGovernanceNotificationsLoading: boolean;
   readonly channelGovernanceNotificationActionId: string;
   readonly aiCouncils: readonly AiCouncil[];
+  readonly aiCouncilHealthReport: AiCouncilHealthReport | undefined;
   readonly aiCouncilsLoading: boolean;
   readonly channelCouncilPolicy: ChannelCouncilPolicy | undefined;
   readonly channelEffectiveCouncil: EffectiveChannelCouncilProjection | undefined;
@@ -250,6 +253,7 @@ export function useWorkspaceDomain(input: {
   const [channelGovernanceNotificationsLoading, setChannelGovernanceNotificationsLoading] = useState(false);
   const [channelGovernanceNotificationActionId, setChannelGovernanceNotificationActionId] = useState("");
   const [aiCouncils, setAiCouncils] = useState<readonly AiCouncil[]>([]);
+  const [aiCouncilHealthReport, setAiCouncilHealthReport] = useState<AiCouncilHealthReport | undefined>();
   const [aiCouncilsLoading, setAiCouncilsLoading] = useState(false);
   const [channelCouncilPolicy, setChannelCouncilPolicy] = useState<ChannelCouncilPolicy | undefined>();
   const [channelEffectiveCouncil, setChannelEffectiveCouncil] = useState<EffectiveChannelCouncilProjection | undefined>();
@@ -331,6 +335,7 @@ export function useWorkspaceDomain(input: {
   async function refreshAiCouncils(cwd = input.cwd.trim()): Promise<void> {
     if (!cwd) {
       setAiCouncils([]);
+      setAiCouncilHealthReport(undefined);
       setAiCouncilsLoading(false);
       return;
     }
@@ -340,11 +345,15 @@ export function useWorkspaceDomain(input: {
     try {
       input.setErrorMessage("");
       setError(undefined);
-      const response = await listAiCouncils(cwd, { limit: 100 });
+      const [listResponse, healthResponse] = await Promise.all([
+        listAiCouncils(cwd, { limit: 100 }),
+        getAiCouncilHealth(cwd, { limit: 500 }),
+      ]);
       if (!loadGuard.isCurrent(`aiCouncils:${cwd}`, token)) {
         return;
       }
-      setAiCouncils(response.councils);
+      setAiCouncils(listResponse.councils);
+      setAiCouncilHealthReport(healthResponse.report);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "load", message });
@@ -979,6 +988,7 @@ export function useWorkspaceDomain(input: {
     setChannelGovernanceNotificationsLoading(false);
     setChannelGovernanceNotificationActionId("");
     setAiCouncils([]);
+    setAiCouncilHealthReport(undefined);
     setAiCouncilsLoading(false);
     setChannelCouncilPolicy(undefined);
     setChannelEffectiveCouncil(undefined);
@@ -1035,6 +1045,7 @@ export function useWorkspaceDomain(input: {
       channelGovernanceNotificationsLoading,
       channelGovernanceNotificationActionId,
       aiCouncils,
+      aiCouncilHealthReport,
       aiCouncilsLoading,
       channelCouncilPolicy,
       channelEffectiveCouncil,

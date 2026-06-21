@@ -18,6 +18,8 @@ import {
   parseAutomationRunRoute,
 } from "../features/automations/routes.js";
 import {
+  handleAiCouncilHealth,
+  handleAiCouncilClone,
   handleAiCouncilItem,
   handleAiCouncilMembers,
   handleAiCouncilsCollection,
@@ -371,6 +373,11 @@ export async function routeRequest(
 
   if (url.pathname === "/ai-councils") {
     await handleAiCouncilsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/ai-councils/health") {
+    await handleAiCouncilHealth(request, response, config, storeRegistry);
     return;
   }
 
@@ -1585,6 +1592,10 @@ export async function routeRequest(
   if (aiCouncilRoute) {
     if (aiCouncilRoute.action === "members") {
       await handleAiCouncilMembers(request, response, config, storeRegistry, aiCouncilRoute.councilId);
+      return;
+    }
+    if (aiCouncilRoute.action === "clone") {
+      await handleAiCouncilClone(request, response, config, storeRegistry, aiCouncilRoute.councilId);
       return;
     }
     await handleAiCouncilItem(request, response, config, storeRegistry, aiCouncilRoute.councilId);

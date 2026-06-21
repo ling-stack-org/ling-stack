@@ -1,4 +1,4 @@
-export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "automations" | "providers" | "media" | "approvals" | "work_board" | "profile" | "settings";
+export type ViewId = "workspace" | "teammates" | "councils" | "runs" | "threads" | "automations" | "providers" | "media" | "approvals" | "work_board" | "profile" | "settings";
 export type SidebarViewTarget = ViewId | "tasks";
 export type SidebarConversationKind = "teammate" | "direct";
 export type SidebarTarget = SidebarViewTarget | `channel:${string}` | `${SidebarConversationKind}:${string}`;
@@ -41,6 +41,9 @@ export function viewTitle(view: ViewId): string {
   if (view === "teammates") {
     return "AI Teammates";
   }
+  if (view === "councils") {
+    return "Council Workspace";
+  }
   if (view === "runs") {
     return "Run Diagnostics";
   }
@@ -74,6 +77,9 @@ export function viewDescription(view: ViewId): string {
   }
   if (view === "teammates") {
     return "通过分步流程创建 AI 队友，选择默认角色、模型、频道、记忆和文件范围。";
+  }
+  if (view === "councils") {
+    return "管理 AI 智囊团、成员投影、健康状态和频道接入。";
   }
   if (view === "runs") {
     return "查看 raw runs、事件、证据、shell snapshots 和线程绑定，用于开发与支持诊断。";

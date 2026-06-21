@@ -638,12 +638,26 @@ test("sqlite handoff workflows persist steps, transitions, and workflow-step lea
         prompt: "Create the patch.",
         toParticipantId: "engineer",
         toParticipantLabel: "Engineer",
+        metadata: {
+          councilSlotKey: "engineer",
+          proposalStepSources: [
+            {
+              kind: "council",
+              councilId: "council_builtin_development",
+              councilDisplayName: "Development Council",
+              slotKey: "engineer",
+              label: "Engineer",
+            },
+          ],
+        },
       },
       now,
     );
 
     assert.equal(workflow.status, "draft");
     assert.equal(step.status, "queued");
+    assert.equal(step.metadata.councilSlotKey, "engineer");
+    assert.equal(step.metadata.proposalStepSources[0].councilId, "council_builtin_development");
     assert.deepEqual(store.listChannelWorkflows({ channelId: channel.id }).map((item) => item.id), [workflow.id]);
     assert.deepEqual(store.listChannelWorkflowSteps({ workflowId: workflow.id }).map((item) => item.id), [step.id]);
 

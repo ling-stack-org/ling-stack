@@ -5568,6 +5568,102 @@ test("custom workflow template compiles deterministic steps and dependencies", a
   }
 });
 
+test("workflow councilSlotKey resolves through attached AI council specialists", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-council-slot-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Council slot workflow");
+    const developmentCouncilId = "council_builtin_development";
+    await putJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/council-policy?cwd=${encodeURIComponent(cwd)}`, {
+      attachedCouncilIds: [developmentCouncilId],
+      preferredCouncilId: developmentCouncilId,
+    });
+
+    const customCompiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      objective: "Compile a council-backed custom template.",
+      customTemplate: customTemplate({
+        id: "council-slot-template",
+        name: "Council Slot Template",
+        steps: [
+          {
+            id: "implementation",
+            name: "Implementation",
+            prompt: "Implement the slice.",
+            councilSlotKey: "engineer",
+            skillId: "implement",
+          },
+        ],
+      }),
+    });
+
+    const customStep = customCompiled.workflowSteps[0];
+    assert.equal(customStep.toParticipantId, "teammate_builtin_engineer");
+    assert.equal(customStep.metadata.councilSlotKey, "engineer");
+    assert.equal(customStep.metadata.proposalStepSources[0].kind, "council");
+    assert.equal(customStep.metadata.proposalStepSources[0].councilId, developmentCouncilId);
+    assert.equal(customStep.metadata.proposalStepSources[0].slotKey, "engineer");
+
+    const graphCompiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      objective: "Compile a council-backed workflow graph.",
+      workflowGraph: {
+        schemaVersion: 1,
+        id: "council_slot_graph",
+        name: "Council Slot Graph",
+        entryNodeId: "review",
+        nodes: [
+          {
+            id: "review",
+            kind: "step",
+            name: "Review",
+            prompt: "Review the plan.",
+            councilSlotKey: "architect",
+            skillId: "plan-eng-review",
+          },
+        ],
+        edges: [],
+        termination: {
+          success: "all_required_succeeded",
+          onFailedRequiredNode: "fail_workflow",
+          onApprovalDenied: "block_for_user",
+        },
+        maxParallelSteps: 1,
+      },
+    });
+
+    const graphStep = graphCompiled.workflowSteps[0];
+    assert.equal(graphStep.toParticipantId, "teammate_builtin_architect");
+    assert.equal(graphStep.metadata.councilSlotKey, "architect");
+    assert.equal(graphStep.metadata.proposalStepSources[0].kind, "council");
+    assert.equal(graphStep.metadata.proposalStepSources[0].councilId, developmentCouncilId);
+    assert.equal(graphStep.metadata.proposalStepSources[0].slotKey, "architect");
+
+    const missingSlot = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        objective: "Reject missing council slot.",
+        customTemplate: customTemplate({
+          id: "missing-council-slot-template",
+          name: "Missing Council Slot Template",
+          steps: [
+            {
+              id: "missing",
+              name: "Missing",
+              prompt: "Use a missing slot.",
+              councilSlotKey: "missing-slot",
+            },
+          ],
+        }),
+      }),
+    });
+    assert.equal(missingSlot.status, 400);
+    assert.match((await missingSlot.json()).message, /No effective AI council member found/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("custom workflow template rejects cycles and unknown runners at compile time", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-invalid-"));
   const daemon = await startDaemonForTest();

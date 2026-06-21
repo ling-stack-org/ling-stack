@@ -179,6 +179,12 @@ test("sqlite seeds Development Council and projects channel council members with
     assert.ok(members.length >= 8);
     assert.ok(members.some((member) => member.teammateId === engineerId));
     assert.equal(members.some((member) => member.teammateId === LING_AGENT_ID), false);
+    const initialHealth = store.getAiCouncilHealthReport(now);
+    assert.equal(initialHealth.workspaceId, "workspace_default");
+    assert.equal(initialHealth.summary.totalCouncils >= 1, true);
+    assert.equal(initialHealth.summary.activeCouncils >= 1, true);
+    assert.equal(initialHealth.summary.totalMembers >= members.length, true);
+    assert.equal(initialHealth.findings.some((finding) => finding.kind === "member_disabled" && finding.teammateId === engineerId), false);
 
     const channel = store.createChannel({ name: "Council Channel", boundPath: cwd }, now);
     const defaultPolicy = store.getChannelCouncilPolicy(channel.id);
@@ -226,6 +232,128 @@ test("sqlite seeds Development Council and projects channel council members with
     assert.ok(disabledEngineer);
     assert.equal(disabledEngineer.enabled, false);
     assert.equal(disabledEngineer.blockedReason, "member_disabled");
+
+    const healthAfterDisable = store.getAiCouncilHealthReport(updatedAt);
+    assert.ok(healthAfterDisable.findings.some((finding) =>
+      finding.kind === "member_disabled" &&
+      finding.councilId === DEVELOPMENT_COUNCIL_ID &&
+      finding.teammateId === engineerId
+    ));
+    assert.equal(healthAfterDisable.summary.blockedMembers >= 1, true);
+
+    store.replaceAiCouncilMembers(
+      DEVELOPMENT_COUNCIL_ID,
+      members.map((member) => ({
+        teammateId: member.teammateId,
+        slotKey: member.slotKey,
+        label: member.label,
+        position: member.position,
+        enabled: false,
+      })),
+      updatedAt,
+    );
+    const healthAfterAllDisabled = store.getAiCouncilHealthReport(updatedAt);
+    assert.ok(healthAfterAllDisabled.findings.some((finding) =>
+      finding.kind === "council_no_available_members" &&
+      finding.councilId === DEVELOPMENT_COUNCIL_ID &&
+      finding.severity === "critical"
+    ));
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite creates, clones, and archives user AI councils without granting authority", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-custom-council-"));
+  const now = "2026-06-20T01:00:00.000Z";
+  const updatedAt = "2026-06-20T01:01:00.000Z";
+  const engineerId = createBuiltinAiTeammateId("engineer");
+  const designerId = createBuiltinAiTeammateId("designer");
+  const store = createSqliteRunStore(cwd);
+  try {
+    const customCouncil = store.createAiCouncil(
+      {
+        displayName: "Design Systems Council",
+        description: "Custom council for design-system implementation review.",
+        routingPolicy: {
+          defaultMode: "advisory",
+          maxActiveMembers: 2,
+          notes: ["Review design-system changes without granting tools."],
+        },
+        members: [
+          {
+            teammateId: engineerId,
+            slotKey: "implementation",
+            label: "Implementation",
+            position: 0,
+            enabled: true,
+          },
+        ],
+        pinned: true,
+      },
+      now,
+    );
+    assert.equal(customCouncil.source, "user");
+    assert.equal(customCouncil.templateId, undefined);
+    assert.equal(customCouncil.displayName, "Design Systems Council");
+    assert.equal(customCouncil.routingPolicy.defaultMode, "advisory");
+    assert.equal(customCouncil.routingPolicy.maxActiveMembers, 2);
+    assert.equal(customCouncil.governanceProfile.permissionBoundary, "restrict_only");
+    assert.equal(customCouncil.governanceProfile.approvalBoundary, "cannot_bypass");
+    assert.equal(customCouncil.governanceProfile.toolGrantBoundary, "cannot_grant");
+    assert.equal(customCouncil.governanceProfile.credentialBoundary, "cannot_grant");
+    assert.deepEqual(store.listAiCouncilMembers(customCouncil.id).map((member) => member.teammateId), [engineerId]);
+
+    const clonedCouncil = store.cloneAiCouncil(
+      DEVELOPMENT_COUNCIL_ID,
+      {
+        displayName: "Frontend Review Council",
+        description: "Cloned specialist collection for frontend channels.",
+      },
+      updatedAt,
+    );
+    assert.equal(clonedCouncil.source, "user");
+    assert.equal(clonedCouncil.templateId, undefined);
+    assert.equal(clonedCouncil.displayName, "Frontend Review Council");
+    assert.equal(clonedCouncil.governanceProfile.toolGrantBoundary, "cannot_grant");
+    const clonedMembers = store.listAiCouncilMembers(clonedCouncil.id);
+    assert.ok(clonedMembers.some((member) => member.teammateId === engineerId));
+    assert.ok(clonedMembers.some((member) => member.teammateId === designerId));
+    assert.equal(clonedMembers.some((member) => member.teammateId === LING_AGENT_ID), false);
+
+    assert.throws(
+      () => store.updateAiCouncil(DEVELOPMENT_COUNCIL_ID, { status: "archived" }, updatedAt),
+      /clone them first/,
+    );
+    assert.throws(
+      () => store.createAiCouncil({ displayName: "Invalid", routingPolicy: { defaultMode: "execute_everything" } }, updatedAt),
+      /routingPolicy\.defaultMode/,
+    );
+
+    const channel = store.createChannel({ name: "Frontend", boundPath: cwd }, now);
+    store.upsertChannelCouncilPolicy(
+      channel.id,
+      {
+        attachedCouncilIds: [customCouncil.id, clonedCouncil.id],
+        preferredCouncilId: clonedCouncil.id,
+      },
+      updatedAt,
+    );
+    const archived = store.updateAiCouncil(clonedCouncil.id, { status: "archived" }, "2026-06-20T01:02:00.000Z");
+    assert.ok(archived);
+    assert.equal(archived.status, "archived");
+    const detachedPolicy = store.getChannelCouncilPolicy(channel.id);
+    assert.ok(detachedPolicy);
+    assert.deepEqual(detachedPolicy.attachedCouncilIds, [customCouncil.id]);
+    assert.equal(detachedPolicy.preferredCouncilId, customCouncil.id);
+
+    const health = store.getAiCouncilHealthReport("2026-06-20T01:03:00.000Z");
+    assert.ok(health.summary.totalCouncils >= 3);
+    assert.ok(health.findings.some((finding) =>
+      finding.kind === "council_not_active" &&
+      finding.councilId === clonedCouncil.id
+    ));
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

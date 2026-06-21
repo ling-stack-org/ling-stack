@@ -144,6 +144,77 @@ textarea:disabled {
   border-radius: var(--radius-md);
 }
 
+.teammate-council-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.teammate-council-create-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.teammate-council-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.teammate-council-action-row .compact-button {
+  flex: 1 1 136px;
+  justify-content: center;
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.teammate-council-summary-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.teammate-council-summary-actions .compact-button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.teammate-council-summary-mode {
+  display: grid;
+  gap: 10px;
+}
+
+.teammate-council-routing-note {
+  margin: 0;
+}
+
+.teammate-council-summary-list {
+  display: grid;
+  gap: 10px;
+}
+
+.teammate-council-summary {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+
+.teammate-council-summary > strong,
+.teammate-council-summary > small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .primary-button,
 .secondary-button,
 .icon-button,
@@ -4263,125 +4334,6 @@ code,
   min-width: 0;
 }
 
-.channel-more-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 30;
-  display: grid;
-  gap: 2px;
-  width: 220px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-panel);
-  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.13);
-}
-
-.channel-more-item {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 650;
-  text-align: left;
-}
-
-.channel-more-item:hover,
-.channel-more-item.active {
-  background: var(--surface-selected);
-  color: var(--text-strong);
-}
-
-.channel-activity-tools {
-  max-height: min(46vh, 420px);
-  overflow: auto;
-}
-
-.channel-activity-tools .activity-ops-panel {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.workbench-settings-panel {
-  position: relative;
-  z-index: 4;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-panel-strong) 82%, transparent);
-}
-
-.workbench-settings-panel.channel-options {
-  margin: 0;
-  display: grid;
-  gap: 12px;
-  padding: 0 14px 12px;
-}
-
-.workbench-settings-panel.channel-teammate-dock {
-  position: absolute;
-  top: 54px;
-  left: 50%;
-  z-index: 35;
-  width: min(640px, calc(100% - 108px));
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.1);
-  transform: translateX(-50%);
-}
-
-@media (min-width: 901px) {
-  .task-workbench-window:has(.channel-side-panel) > .workbench-settings-panel.channel-teammate-dock {
-    left: calc((100% - min(340px, calc(100vw - 320px))) / 2);
-    width: min(640px, calc(100% - min(340px, calc(100vw - 320px)) - 108px));
-    margin-right: 0;
-  }
-}
-
-.channel-settings-card {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-panel);
-}
-
-.channel-settings-section-head,
-.channel-settings-section-head span,
-.channel-settings-section-head div,
-.channel-teammate-row,
-.channel-teammate-actions,
-.channel-notification-option span {
-  display: flex;
-  align-items: center;
-}
-
-.channel-settings-section-head {
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-
-.channel-settings-section-head span {
-  gap: 7px;
-  min-width: 0;
-}
-
-.channel-settings-section-head div {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-}
-
 .channel-settings-section-head strong {
   color: var(--text);
   font-size: 17px;
@@ -4698,7 +4650,6 @@ code,
   height: 24px;
   font-size: 12px;
 }
-
 
 .channel-notification-options {
   display: grid;

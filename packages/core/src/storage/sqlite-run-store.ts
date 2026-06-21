@@ -37,6 +37,8 @@ import {
 import {
   DEFAULT_WORKSPACE_ID,
   type AiCouncil,
+  type AiCouncilHealthReport,
+  type AiCouncilHealthReportOptions,
   type AiCouncilMember,
   type AiTeammate,
   type AiTeammateUpdateInput,
@@ -66,6 +68,8 @@ import {
   type ChannelWorkflowStep,
   type ChannelWorkflowStepStatus,
   type ChannelWorkflowStatus,
+  type CloneAiCouncilInput,
+  type CreateAiCouncilInput,
   type CreateAiTeammateInput,
   type CreateChannelAttachmentInput,
   type CreateChannelBranchInput,
@@ -141,6 +145,7 @@ import {
   type UpdateChannelHandoffInput,
   type UpdateChannelLinkPreviewInput,
   type UpdateTeammateDirectReplyInterventionStatusInput,
+  type UpdateAiCouncilInput,
   type UpdateChannelWorkflowInput,
   type UpdateChannelWorkflowStepInput,
   type UpdateUserProfileInput,
@@ -1377,6 +1382,22 @@ export class SqliteRunStore implements RunStore {
 
   listAiCouncils(options: ListAiCouncilsOptions = {}): AiCouncil[] {
     return this.aiCouncils.listAiCouncils(options);
+  }
+
+  createAiCouncil(input: CreateAiCouncilInput, now: string): AiCouncil {
+    return this.aiCouncils.createAiCouncil(input, now);
+  }
+
+  cloneAiCouncil(sourceCouncilId: string, input: CloneAiCouncilInput, now: string): AiCouncil {
+    return this.aiCouncils.cloneAiCouncil(sourceCouncilId, input, now);
+  }
+
+  updateAiCouncil(id: string, input: UpdateAiCouncilInput, now: string): AiCouncil | undefined {
+    return this.aiCouncils.updateAiCouncil(id, input, now);
+  }
+
+  getAiCouncilHealthReport(generatedAt: string, options: AiCouncilHealthReportOptions = {}): AiCouncilHealthReport {
+    return this.aiCouncils.getAiCouncilHealthReport(generatedAt, options);
   }
 
   listAiCouncilMembers(councilId: string): AiCouncilMember[] {

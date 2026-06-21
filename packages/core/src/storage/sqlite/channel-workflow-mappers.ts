@@ -155,6 +155,7 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     dependencyMode: readOptionalWorkflowStepDependencyModeValue(record.dependencyMode),
     maxParallelSiblings: readOptionalPositiveIntegerValue(record.maxParallelSiblings),
     teammateTemplateId: readOptionalStringValue(record.teammateTemplateId),
+    councilSlotKey: readOptionalStringValue(record.councilSlotKey),
     skillId: readOptionalStringValue(record.skillId),
     requestedRunnerId: normalizeStoredRunnerId(readOptionalStringValue(record.requestedRunnerId)),
     effectiveRunnerId: normalizeStoredRunnerId(readOptionalStringValue(record.effectiveRunnerId)),

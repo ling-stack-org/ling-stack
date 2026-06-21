@@ -15,6 +15,13 @@ This design depends on:
 The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, a client-style channel workspace, compact task creation/running, channel runtime policy controls, active lease/conflict signals, state-machine timelines, contextual readiness and first-run panels, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
 
 The AI teammates page now uses the same client direction: a Helio-inspired, macOS-like wizard for choosing a default role, binding a model, filling profile details, and scoping channels/memory/files. Saving from the wizard now creates a durable daemon-backed workspace teammate.
+It also exposes `AI Councils` as a management layer over durable teammates: the built-in
+Development Council can be inspected, members can be enabled/disabled by reference, Ling
+Agent stays excluded, governance chips show that council policy can only narrow
+authority, and health overview/filter chips expose deterministic member availability
+findings without turning a council into a super-agent. The same panel can create a
+custom council, clone any non-archived council into a user-owned council, and archive
+user-owned councils.
 
 The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
 
@@ -160,6 +167,17 @@ layout. Chat stays fixed in the center; `Tasks`, `Files`, and `Context` open fro
 header `...` menu into an in-layout right details panel. The attention queue becomes a
 header popover with a collapsible progress preview, local-user chat hides name/time,
 AI chat hides timestamps, and Settings moves to the lower sidebar area.
+
+Implemented council behavior: channel Settings can attach an AI council by reference,
+choose a preferred council, and show projected specialists without copying direct
+teammate memberships. Council Workspace owns custom council create/clone/settings,
+archive, and member management without mutating teammate permissions; the AI teammates
+page shows a read-only council summary and links into that workspace. The UI shows council
+routing mode, active-member capacity, restrict-only governance boundaries, and health
+chips. Confirmed proposal workflows preserve source attribution so a specialist step can
+show whether it came from `Development Council` or direct teammate membership. This is
+backed by daemon/core contracts and a client-neutral council health view model so future
+desktop clients can render the same council state without Web-only state.
 
 ## Goal
 
@@ -1216,3 +1234,5 @@ Recommendation: direct workspace overview with embedded task composer. If provid
 Question: should the Web UI assume it will be embedded in Electron/Tauri?
 
 Recommendation: keep daemon URL configurable and avoid browser APIs that will block desktop embedding. Do not optimize for desktop shell before the web flow works.
+Council health labels should continue to derive severity counts and badge ordering from
+`@ling-stack/core/ai-council-view`, with Web owning only localized copy and styling.

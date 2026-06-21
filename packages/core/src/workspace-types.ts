@@ -686,6 +686,33 @@ export interface ReplaceAiCouncilMemberInput {
   readonly enabled?: boolean;
 }
 
+export interface CreateAiCouncilRoutingPolicyInput {
+  readonly defaultMode?: AiCouncilRoutingMode;
+  readonly maxActiveMembers?: number;
+  readonly notes?: readonly string[];
+}
+
+export interface CreateAiCouncilInput {
+  readonly displayName: string;
+  readonly description?: string;
+  readonly routingPolicy?: CreateAiCouncilRoutingPolicyInput;
+  readonly members?: readonly ReplaceAiCouncilMemberInput[];
+  readonly pinned?: boolean;
+}
+
+export interface CloneAiCouncilInput {
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly pinned?: boolean;
+}
+
+export interface UpdateAiCouncilInput {
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly status?: AiCouncilStatus;
+  readonly pinned?: boolean;
+}
+
 export interface ChannelCouncilPolicy {
   readonly workspaceId: string;
   readonly channelId: string;
@@ -733,6 +760,51 @@ export interface EffectiveChannelCouncilProjection {
   readonly policy: ChannelCouncilPolicy;
   readonly councils: readonly EffectiveChannelCouncil[];
   readonly specialists: readonly EffectiveChannelSpecialist[];
+}
+
+export type AiCouncilHealthSeverity = "info" | "warning" | "critical";
+
+export type AiCouncilHealthFindingKind =
+  | "council_not_active"
+  | "council_empty"
+  | "council_no_available_members"
+  | "member_disabled"
+  | "teammate_missing"
+  | "teammate_not_active"
+  | "teammate_hidden"
+  | "system_teammate_excluded";
+
+export interface AiCouncilHealthFinding {
+  readonly id: string;
+  readonly kind: AiCouncilHealthFindingKind;
+  readonly severity: AiCouncilHealthSeverity;
+  readonly councilId: string;
+  readonly councilDisplayName: string;
+  readonly teammateId?: string;
+  readonly slotKey?: string;
+  readonly label?: string;
+  readonly title: string;
+  readonly message: string;
+}
+
+export interface AiCouncilHealthSummary {
+  readonly totalCouncils: number;
+  readonly activeCouncils: number;
+  readonly totalMembers: number;
+  readonly availableMembers: number;
+  readonly blockedMembers: number;
+  readonly findings: Record<AiCouncilHealthSeverity, number>;
+}
+
+export interface AiCouncilHealthReport {
+  readonly workspaceId: string;
+  readonly generatedAt: string;
+  readonly summary: AiCouncilHealthSummary;
+  readonly findings: readonly AiCouncilHealthFinding[];
+}
+
+export interface AiCouncilHealthReportOptions {
+  readonly limit?: number;
 }
 
 export function createAiCouncilId(): string {
@@ -2088,6 +2160,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly dependencyMode?: "all_succeeded" | "all_terminal" | "any_succeeded";
   readonly maxParallelSiblings?: number;
   readonly teammateTemplateId?: string;
+  readonly councilSlotKey?: string;
   readonly skillId?: string;
   readonly requestedRunnerId?: string;
   readonly effectiveRunnerId?: string;

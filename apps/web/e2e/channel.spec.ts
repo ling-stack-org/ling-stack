@@ -1336,8 +1336,18 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
     return isRecord(policy) && Array.isArray(policy.attachedCouncilIds) ? policy.attachedCouncilIds.join(",") : "";
   }).toBe("council_builtin_development");
   await expect(councils).toContainText("Development Council");
+  await expect(councils.getByLabel("Council boundaries")).toContainText("Parallel review");
+  await expect(councils.getByLabel("Council boundaries")).toContainText("Max active 4");
+  await expect(councils.getByLabel("Council boundaries")).toContainText("Reference collection");
+  await expect(councils.getByLabel("Council boundaries")).toContainText("Policy narrows authority");
+  await expect(councils.getByLabel("Council boundaries")).toContainText("Cannot bypass approvals");
+  await expect(councils.getByLabel("Council boundaries")).toContainText("Cannot grant tools");
+  await expect(councils.getByLabel("Council boundaries")).toContainText("Cannot grant credentials");
+  await expect(councils.getByLabel("Council health", { exact: true })).toContainText("1 warning finding(s)");
   await expect(councils.getByLabel("Projected council specialists")).toContainText("Ling Designer");
   await expect(councils.getByLabel("Projected council specialists")).toContainText("Ling QA");
+  await expect(councils.getByLabel("Projected council specialists")).toContainText("Development Council · Product design");
+  await expect(councils.getByLabel("Projected council specialists")).toContainText("Development Council · Verification");
   await expect(councils.getByLabel("Projected council specialists")).not.toContainText("Ling Agent");
 
   const directTeammates = page.getByLabel("Channel teammates");
