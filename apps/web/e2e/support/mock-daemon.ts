@@ -3,7 +3,7 @@ import { expect, type Locator, type Page, type Request, type Route } from "@play
 import { buildEffectiveTeammateSkills, buildMemoryMarkdownExport, parseMemoryMarkdownImport } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, UserProfile, WorkflowHandoffIntent, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -114,6 +114,7 @@ export interface MockState {
   workUnits: MockWorkUnit[];
   runtimeRunners: RunnerListItem[];
   runtimeSettings: WorkspaceRuntimeSettings;
+  startupStatus: StartupStatusResponse;
   workUnitActionDelayMs?: number;
   runtimeSemaphoreSlots: MockRuntimeSemaphoreSlot[];
   runtimeEventsByWorkUnit: Record<string, MockRuntimeEvent[]>;
@@ -1037,6 +1038,27 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
       explicitRunnerFallback: "disabled",
       implicitRunnerFallback: "allow_to_default",
       updatedAt: "2026-05-25T00:00:00.000Z",
+    },
+    startupStatus: {
+      startupAttemptId: "startup_e2e_ready",
+      cwd,
+      state: "ready",
+      startedAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:05.000Z",
+      effectiveConfigLoadedAt: "2026-05-25T00:00:03.000Z",
+      phases: {
+        process_config: "ready",
+        user_config: "ready",
+        workspace_store: "ready",
+        effective_config: "ready",
+        runtime_policy: "ready",
+        secret_resolver: "ready",
+        provider_warmup: "ready",
+        automation_scheduler: "ready",
+        external_work_scheduler: "ready",
+        plugin_warmup: "ready",
+      },
+      diagnostics: [],
     },
     runtimeSemaphoreSlots: [],
     runtimeEventsByWorkUnit: {},
@@ -5368,6 +5390,21 @@ export async function handleDaemonRoute(
   if (request.method() === "GET" && path === "/workspace-settings") {
     state.workspaceSettings = normalizeWorkspaceSettings(state.workspaceSettings);
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/startup/status") {
+    const requestedCwd = url.searchParams.get("cwd") ?? cwd;
+    await route.fulfill({ json: { ...state.startupStatus, cwd: requestedCwd } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/startup/refresh") {
+    const requestedCwd = url.searchParams.get("cwd") ?? cwd;
+    state.startupStatus = {
+      ...state.startupStatus,
+      cwd: requestedCwd,
+      updatedAt: "2026-05-25T00:00:10.000Z",
+    };
+    await route.fulfill({ json: state.startupStatus });
     return;
   }
   if (request.method() === "PATCH" && path === "/workspace-settings") {
