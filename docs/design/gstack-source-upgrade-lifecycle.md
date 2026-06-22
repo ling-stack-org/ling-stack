@@ -1,6 +1,6 @@
 # GStack Source Upgrade Lifecycle
 
-Status: Design draft
+Status: P6-P10 implemented
 Date: 2026-06-22
 Scope: first-run source onboarding, upstream drift upgrades, semantic migration
 evidence, artifact-backed skill source storage, and Web/Desktop-neutral APIs
@@ -361,26 +361,43 @@ Changing those requires a separate council-management action.
 
 ## Implementation Slices
 
-P6. Upgrade policy and check route.
+P6. Upgrade policy and check route. Implemented.
    Add workspace policy storage, read-only `check-updates`, last checked evidence, and
    source upgrade summary state.
 
-P7. Semantic profile and semantic diff.
+P7. Semantic profile and semantic diff. Implemented.
    Add deterministic semantic extraction, diff severity rules, tests for approval/tool/
    external-send/destructive/secret changes, and UI rendering in sync preview.
 
-P8. Artifact-backed source storage.
+P8. Artifact-backed source storage. Implemented.
    Add source artifact contracts, storage migration, content-addressed blob writes,
    artifact list/content routes, and publish rules for reviewed referenced files.
 
-P9. First-run and upgrade UX.
-   Add first-run source state to Development Council/AI Teammates, a source upgrade
-   center in Skill Library, and rollback controls.
+P9. First-run and upgrade UX. Implemented for the shared Skill Library surface.
+   Add a source upgrade center in Skill Library and rollback controls. Future
+   Development Council, AI Teammates, and Desktop surfaces should reuse these daemon
+   APIs instead of storing source-upgrade state locally.
 
-P10. Optional guarded automation.
+P10. Optional guarded automation. Implemented.
    Add `auto-safe` workspace policy after P7 and P8 are stable. It can auto-publish only
    records with no warnings, no semantic risk, no new skills, and no artifact review
    requirement.
+
+Implementation notes:
+
+- The default Development Council remains metadata-first and source upgrades attach only
+  reviewed source snapshots to existing skill ids.
+- `check-updates` is read-only. It updates `lastCheckedAt` evidence but does not run
+  `gstack upgrade`, `git pull`, package manager commands, or source publishing.
+- Semantic summaries are deterministic and parser-first. No model-written explanation is
+  used to lower severity.
+- Source artifacts use the dedicated `skill_source_artifacts` namespace under Ling-managed
+  workspace artifact storage.
+- Source roots carry stable ids such as `local-gstack` or path-hashed configured root ids.
+  `auto-safe` publish refuses records whose root id is not approved in workspace policy.
+- Rollback re-publishes the selected archived snapshot id, preserving artifact links.
+- The current Web implementation lives in Skill Library settings. Desktop and future AI
+  Teammates surfaces should call the same daemon APIs rather than adding another store.
 
 ## Acceptance Criteria
 
@@ -445,11 +462,9 @@ Desktop:
 
 ## Open Decisions
 
-- Whether `auto-safe` should be exposed in the first UI slice or kept hidden until after
-  several manual upgrade cycles.
-- Whether semantic summaries should remain deterministic only or allow optional
-  model-written explanations.
-- Whether source artifact storage should reuse the generic run artifact store or keep a
-  dedicated source artifact namespace.
+- Whether `auto-safe` should graduate from an advanced setting to a broader first-run
+  recommendation after several manual upgrade cycles.
+- Whether optional model-written semantic explanations are useful as display-only copy on
+  top of deterministic facts.
 - How much of `references/` can be included in runtime context before a separate context
   budget manager is required.

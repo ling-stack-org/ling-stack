@@ -5,9 +5,13 @@ import {
   type SkillPackSource,
   type SkillRegistryEntry,
   type SkillRegistryReviewStatus,
+  type SkillSourceArtifact,
+  type SkillSourceArtifactReviewStatus,
   type SkillSourceKind,
   type SkillSourceSnapshot,
   type SkillSourceSnapshotReviewStatus,
+  type SkillSourceUpgradeMode,
+  type SkillSourceUpgradePolicy,
   type SkillVisibility,
 } from "../../skill-types.js";
 import { type Task, type TaskStatus } from "../../workspace-types.js";
@@ -15,7 +19,10 @@ import {
   omitUndefined,
   parseJson,
   parseJsonObject,
+  parseJsonStringArray,
+  readBoolean,
   readNullableString,
+  readNumber,
   readString,
 } from "./helpers.js";
 
@@ -82,10 +89,42 @@ export function mapSkillSourceSnapshot(row: Record<string, SQLOutputValue>): Ski
     upstreamSkillPath: readNullableString(row, "upstream_skill_path"),
     sourceChecksum: readString(row, "source_checksum"),
     rawSkillMarkdown: readString(row, "raw_skill_markdown"),
+    rawSkillMarkdownArtifactId: readNullableString(row, "raw_skill_markdown_artifact_id"),
     agentMetadata: parseOptionalSkillAgentMetadata(readString(row, "agent_metadata_json")),
     referencedFiles: parseJson(readString(row, "referenced_files_json")) as SkillSourceSnapshot["referencedFiles"],
     warnings: parseJson(readString(row, "warnings_json")) as SkillSourceSnapshot["warnings"],
     reviewStatus: readString(row, "review_status") as SkillSourceSnapshotReviewStatus,
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+export function mapSkillSourceArtifact(row: Record<string, SQLOutputValue>): SkillSourceArtifact {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    snapshotId: readString(row, "snapshot_id"),
+    path: readString(row, "path"),
+    kind: readString(row, "kind") as SkillSourceArtifact["kind"],
+    checksum: readString(row, "checksum"),
+    sizeBytes: readNumber(row, "size_bytes"),
+    storageRef: readString(row, "storage_ref"),
+    mediaType: readNullableString(row, "media_type"),
+    reviewStatus: readString(row, "review_status") as SkillSourceArtifactReviewStatus,
+    includedInRuntime: readBoolean(row, "included_in_runtime"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+export function mapSkillSourceUpgradePolicy(row: Record<string, SQLOutputValue>): SkillSourceUpgradePolicy {
+  return omitUndefined({
+    workspaceId: readString(row, "workspace_id"),
+    mode: readString(row, "mode") as SkillSourceUpgradeMode,
+    approvedRootIds: parseJsonStringArray(readString(row, "approved_root_ids_json")),
+    allowNewSkills: readBoolean(row, "allow_new_skills"),
+    allowGlobalGstackUpgrade: false as const,
+    lastCheckedAt: readNullableString(row, "last_checked_at"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });

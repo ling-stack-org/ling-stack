@@ -1,4 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
+import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import {
   analyzeSkillDuplicate,
   buildEffectiveTeammateSkills,
@@ -32,6 +35,8 @@ import {
   type SkillDuplicateAnalysis,
   type SkillImportWarning,
   type SkillRegistryEntry,
+  type SkillSourceArtifact,
+  type SkillSourceFileRef,
   type SkillSourceScanRoot,
   type SkillSourceSyncPreviewRecord,
   type SkillSourceSyncPreviewReport,
@@ -56,8 +61,10 @@ import {
   parseSkillCorrectionRequest,
   parseSkillCandidateReviewRequest,
   parseSkillImportDraftRequest,
+  parseSkillSourceSnapshotRollbackRequest,
   parseSkillSourceSyncPublishRequest,
   parseSkillSourceSyncRequest,
+  parseSkillSourceUpgradePolicyUpdateRequest,
   readOptionalCandidateGenerationDecisionActionQuery,
   readOptionalCandidateRouteKindQuery,
   readOptionalProcedureObservationClusterStatusQuery,
@@ -85,6 +92,51 @@ export async function handleSkillRoute(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    if (url.pathname === "/skills/source-upgrade-policy") {
+      if (request.method === "GET") {
+        writeJson(response, 200, { cwd, policy: store.getSkillSourceUpgradePolicy(new Date().toISOString()) });
+        return;
+      }
+      if (request.method === "PUT") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const input = parseSkillSourceUpgradePolicyUpdateRequest(body);
+        writeJson(response, 200, { cwd, policy: store.updateSkillSourceUpgradePolicy(input, new Date().toISOString()) });
+        return;
+      }
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/source-upgrade-policy` });
+      return;
+    }
+
+    if (url.pathname === "/skills/sync/gstack/check-updates") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/gstack/check-updates` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillSourceSyncRequest(body);
+      const checkedAt = new Date().toISOString();
+      const preview = await buildGstackSkillSourceSyncPreview(cwd, store, input, checkedAt);
+      const policy = store.updateSkillSourceUpgradePolicy({ lastCheckedAt: checkedAt }, checkedAt);
+      writeJson(response, 200, {
+        cwd,
+        checkedAt,
+        policy,
+        preview,
+        globalUpgrade: buildLocalGlobalUpgradeEvidence(preview.upstreamVersions),
+      });
+      return;
+    }
+
+    const sourceArtifactContentRoute = parseSkillSourceArtifactContentRoute(url.pathname);
+    if (sourceArtifactContentRoute) {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/source-artifacts/:artifactId/content` });
+        return;
+      }
+      await writeSkillSourceArtifactContent(response, store, sourceArtifactContentRoute.artifactId);
+      return;
+    }
+
     if (url.pathname === "/skills/health") {
       if (request.method !== "GET") {
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/health` });
@@ -119,7 +171,7 @@ export async function handleSkillRoute(
       writeJson(response, 200, {
         cwd,
         report,
-        snapshots: store.listSkillSourceSnapshots({ reviewStatus: "published" }),
+        snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
       });
       return;
     }
@@ -158,16 +210,17 @@ export async function handleSkillRoute(
       const input = parseSkillSourceSyncPublishRequest(body);
       const now = new Date().toISOString();
       const preview = await buildGstackSkillSourceSyncPreview(cwd, store, input, now);
-      const result = publishGstackSkillSourceSync({
+      const result = await publishGstackSkillSourceSync({
         store,
         controlPlaneEvents,
         cwd,
         preview,
         selectedSkillIds: input.selectedSkillIds,
         allowNewSkills: input.allowNewSkills,
+        publishArtifacts: input.publishArtifacts,
         now,
       });
-      writeJson(response, 200, { cwd, publishedAt: now, preview, skills: result.skills, snapshots: result.snapshots });
+      writeJson(response, 200, { cwd, publishedAt: now, preview, skills: result.skills, snapshots: result.snapshots, artifacts: result.artifacts });
       return;
     }
 
@@ -600,6 +653,45 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (route.kind === "skill" && route.action === "source-rollback") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/source/rollback` });
+        return;
+      }
+      if (!listEffectiveSkillRegistryEntries(store).some((skill) => skill.id === route.skillId)) {
+        writeJson(response, 404, { error: "skill_not_found", message: `Skill not found: ${route.skillId}` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillSourceSnapshotRollbackRequest(body);
+      const target = store.getSkillSourceSnapshotById(input.snapshotId);
+      if (!target || target.skillId !== route.skillId) {
+        writeJson(response, 404, { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${input.snapshotId}` });
+        return;
+      }
+      const now = new Date().toISOString();
+      const snapshot = store.rollbackSkillSourceSnapshot(input.snapshotId, now);
+      if (!snapshot) {
+        writeJson(response, 404, { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${input.snapshotId}` });
+        return;
+      }
+      appendSkillRegistryChangedEvent(store, controlPlaneEvents, cwd, "source_rollback", route.skillId);
+      writeJson(response, 200, { cwd, rolledBackAt: now, snapshot });
+      return;
+    }
+
+    if (route.kind === "skill" && route.action === "source-artifacts") {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/source/artifacts` });
+        return;
+      }
+      const snapshots = store.listSkillSourceSnapshots({ skillId: route.skillId, includeArchived: true });
+      const snapshotIds = new Set(snapshots.map((snapshot) => snapshot.id));
+      const artifacts = store.listSkillSourceArtifacts({ includeArchived: true }).filter((artifact) => snapshotIds.has(artifact.snapshotId));
+      writeJson(response, 200, { cwd, artifacts });
+      return;
+    }
+
     if (route.kind === "skill" && request.method === "DELETE") {
       const now = new Date().toISOString();
       const archived = store.archiveSkillRegistryEntry(route.skillId, now);
@@ -744,15 +836,16 @@ async function buildGstackSkillSourceSyncPreview(
   });
 }
 
-function publishGstackSkillSourceSync(input: {
+async function publishGstackSkillSourceSync(input: {
   readonly store: SkillRouteStore;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly cwd: string;
   readonly preview: SkillSourceSyncPreviewReport;
   readonly selectedSkillIds: readonly string[];
   readonly allowNewSkills: boolean;
+  readonly publishArtifacts: boolean;
   readonly now: string;
-}): { readonly skills: readonly SkillRegistryEntry[]; readonly snapshots: readonly SkillSourceSnapshot[] } {
+}): Promise<{ readonly skills: readonly SkillRegistryEntry[]; readonly snapshots: readonly SkillSourceSnapshot[]; readonly artifacts: readonly SkillSourceArtifact[] }> {
   const selectedSkillIds = uniqueStrings(input.selectedSkillIds);
   const recordsBySkillId = new Map(input.preview.records.map((record) => [record.skillId, record]));
   const missingSelections = selectedSkillIds.filter((skillId) => !recordsBySkillId.has(skillId));
@@ -764,9 +857,20 @@ function publishGstackSkillSourceSync(input: {
   if (nonPublishable.length > 0) {
     throw new HttpError(409, "skill_source_sync_not_publishable", `Selected records are not publishable: ${nonPublishable.map((record) => `${record.skillId}:${record.state}`).join(", ")}`);
   }
+  const semanticErrors = selectedRecords.filter((record) => record.semanticDiff.some((item) => item.severity === "error"));
+  if (semanticErrors.length > 0) {
+    throw new HttpError(409, "skill_source_sync_semantic_error", `Selected records have semantic error drift: ${semanticErrors.map((record) => record.skillId).join(", ")}`);
+  }
   const newRecords = selectedRecords.filter((record) => record.state === "new");
   if (newRecords.length > 0 && !input.allowNewSkills) {
     throw new HttpError(409, "skill_source_sync_new_skills_require_confirmation", `New skills require allowNewSkills=true: ${newRecords.map((record) => record.skillId).join(", ")}`);
+  }
+  const policy = input.store.getSkillSourceUpgradePolicy(input.now);
+  if (policy.mode === "auto-safe") {
+    const unsafe = selectedRecords.filter((record) => !isAutoSafeSkillSourceRecord(record, policy.allowNewSkills, policy.approvedRootIds));
+    if (unsafe.length > 0) {
+      throw new HttpError(409, "skill_source_sync_auto_safe_rejected", `auto-safe rejected records with unapproved roots, warnings, semantic risk, new skills, or artifact review requirements: ${unsafe.map((record) => record.skillId).join(", ")}`);
+    }
   }
 
   if (newRecords.length > 0) {
@@ -793,21 +897,243 @@ function publishGstackSkillSourceSync(input: {
   }
 
   const snapshots: SkillSourceSnapshot[] = [];
+  const artifacts: SkillSourceArtifact[] = [];
   for (const record of selectedRecords) {
     if (!record.snapshotPreview) {
       throw new HttpError(409, "skill_source_sync_missing_snapshot", `No source snapshot preview is available for ${record.skillId}.`);
     }
-    snapshots.push(input.store.upsertSkillSourceSnapshot({
+    if (record.state === "unchanged" && record.existingSnapshotId) {
+      const existing = input.store.getSkillSourceSnapshotById(record.existingSnapshotId);
+      if (existing) {
+        snapshots.push(existing);
+      }
+      continue;
+    }
+    if (record.existingSnapshotId) {
+      input.store.archiveSkillSourceSnapshot(record.skillId, input.now);
+    }
+    const snapshot = input.store.upsertSkillSourceSnapshot({
       ...record.snapshotPreview,
-      id: record.existingSnapshotId,
       reviewStatus: "published",
-    }, input.now));
+    }, input.now);
+    snapshots.push(snapshot);
+    if (input.publishArtifacts) {
+      artifacts.push(...await persistSkillSourceArtifactsForRecord(input.store, snapshot, record, input.now));
+      const updatedSnapshot = input.store.getSkillSourceSnapshotById(snapshot.id);
+      if (updatedSnapshot) {
+        snapshots[snapshots.length - 1] = updatedSnapshot;
+      }
+    }
   }
 
   const skillsById = new Map(listEffectiveSkillRegistryEntries(input.store).map((skill) => [skill.id, skill]));
   const skills = selectedSkillIds.map((skillId) => skillsById.get(skillId)).filter((skill): skill is SkillRegistryEntry => Boolean(skill));
   appendSkillRegistryChangedEvent(input.store, input.controlPlaneEvents, input.cwd, "source_publish", selectedSkillIds[0] ?? "default");
-  return { skills, snapshots };
+  return { skills, snapshots, artifacts };
+}
+
+async function persistSkillSourceArtifactsForRecord(
+  store: SkillRouteStore,
+  snapshot: SkillSourceSnapshot,
+  record: SkillSourceSyncPreviewRecord,
+  now: string,
+): Promise<SkillSourceArtifact[]> {
+  const artifacts: SkillSourceArtifact[] = [];
+  if (!record.sourcePath) {
+    return artifacts;
+  }
+  const skillDirectory = dirname(record.sourcePath);
+  const sourceStats = await stat(record.sourcePath).catch(() => undefined);
+  if (sourceStats?.isFile()) {
+    const skillArtifact = await copySkillSourceArtifact({
+      store,
+      snapshotId: snapshot.id,
+      sourceFilePath: record.sourcePath,
+      sourceRoot: skillDirectory,
+      logicalPath: "SKILL.md",
+      kind: "other",
+      checksum: record.sourceChecksum ?? snapshot.sourceChecksum,
+      sizeBytes: sourceStats.size,
+      reviewStatus: "published",
+      includedInRuntime: false,
+      now,
+    });
+    artifacts.push(skillArtifact);
+    if (record.sourceSizeBytes !== undefined && record.sourceSizeBytes > Buffer.byteLength(snapshot.rawSkillMarkdown, "utf8")) {
+      store.upsertSkillSourceSnapshot({
+        skillId: snapshot.skillId,
+        sourceKind: snapshot.sourceKind,
+        sourcePath: snapshot.sourcePath,
+        upstreamName: snapshot.upstreamName,
+        upstreamVersion: snapshot.upstreamVersion,
+        upstreamSkillPath: snapshot.upstreamSkillPath,
+        sourceChecksum: snapshot.sourceChecksum,
+        rawSkillMarkdown: snapshot.rawSkillMarkdown,
+        rawSkillMarkdownArtifactId: skillArtifact.id,
+        agentMetadata: snapshot.agentMetadata,
+        referencedFiles: snapshot.referencedFiles,
+        warnings: snapshot.warnings,
+        reviewStatus: snapshot.reviewStatus,
+        id: snapshot.id,
+      }, now);
+    }
+  }
+
+  for (const fileRef of record.referencedFiles) {
+    const sourceFilePath = resolve(skillDirectory, fileRef.path);
+    if (!isPathInside(skillDirectory, sourceFilePath)) {
+      continue;
+    }
+    const fileStats = await stat(sourceFilePath).catch(() => undefined);
+    if (!fileStats?.isFile() || !fileRef.checksum || fileRef.sizeBytes === undefined) {
+      continue;
+    }
+    artifacts.push(await copySkillSourceArtifact({
+      store,
+      snapshotId: snapshot.id,
+      sourceFilePath,
+      sourceRoot: skillDirectory,
+      logicalPath: fileRef.path,
+      kind: fileRef.kind,
+      checksum: fileRef.checksum,
+      sizeBytes: fileRef.sizeBytes,
+      reviewStatus: fileRef.kind === "reference" || fileRef.kind === "agent-metadata" ? "published" : "reviewed",
+      includedInRuntime: fileRef.kind === "reference" || fileRef.kind === "agent-metadata",
+      now,
+    }));
+  }
+  return artifacts;
+}
+
+async function copySkillSourceArtifact(input: {
+  readonly store: SkillRouteStore;
+  readonly snapshotId: string;
+  readonly sourceFilePath: string;
+  readonly sourceRoot: string;
+  readonly logicalPath: string;
+  readonly kind: SkillSourceFileRef["kind"];
+  readonly checksum: string;
+  readonly sizeBytes: number;
+  readonly reviewStatus: SkillSourceArtifact["reviewStatus"];
+  readonly includedInRuntime: boolean;
+  readonly now: string;
+}): Promise<SkillSourceArtifact> {
+  const storageRef = skillSourceStorageRef(input.snapshotId, input.logicalPath, input.checksum);
+  const destinationPath = resolve(input.store.paths.artifactsDir, storageRef);
+  if (!isPathInside(input.store.paths.artifactsDir, destinationPath)) {
+    throw new HttpError(500, "skill_source_artifact_path_escape", "Source artifact storage path escaped artifact root.");
+  }
+  if (!isPathInside(input.sourceRoot, input.sourceFilePath)) {
+    throw new HttpError(400, "skill_source_artifact_source_escape", `Source artifact path is outside skill root: ${input.logicalPath}`);
+  }
+  await mkdir(dirname(destinationPath), { recursive: true });
+  await copyFile(input.sourceFilePath, destinationPath);
+  return input.store.upsertSkillSourceArtifact({
+    snapshotId: input.snapshotId,
+    path: input.logicalPath,
+    kind: input.kind,
+    checksum: input.checksum,
+    sizeBytes: input.sizeBytes,
+    storageRef,
+    mediaType: inferSkillSourceArtifactMediaType(input.logicalPath),
+    reviewStatus: input.reviewStatus,
+    includedInRuntime: input.includedInRuntime,
+  }, input.now);
+}
+
+function skillSourceStorageRef(snapshotId: string, logicalPath: string, checksum: string): string {
+  const digest = checksum.replace(/^sha256:/, "").replace(/[^a-fA-F0-9]/g, "").slice(0, 32) || createHash("sha256").update(logicalPath).digest("hex").slice(0, 32);
+  const extension = extname(logicalPath);
+  const base = basename(logicalPath, extension).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-|-$/g, "") || "source";
+  return ["skill-source", snapshotId, `${digest}-${base}${extension}`].join("/");
+}
+
+function inferSkillSourceArtifactMediaType(path: string): string | undefined {
+  const extension = extname(path).toLowerCase();
+  if (extension === ".md" || extension === ".markdown") {
+    return "text/markdown; charset=utf-8";
+  }
+  if (extension === ".json") {
+    return "application/json; charset=utf-8";
+  }
+  if ([".yaml", ".yml"].includes(extension)) {
+    return "text/yaml; charset=utf-8";
+  }
+  if ([".txt", ".sh", ".ts", ".tsx", ".js", ".jsx", ".py"].includes(extension)) {
+    return "text/plain; charset=utf-8";
+  }
+  return undefined;
+}
+
+function parseSkillSourceArtifactContentRoute(pathname: string): { readonly artifactId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 4 && segments[0] === "skills" && segments[1] === "source-artifacts" && segments[3] === "content") {
+    return { artifactId: segments[2] };
+  }
+  return undefined;
+}
+
+async function writeSkillSourceArtifactContent(response: ServerResponse, store: SkillRouteStore, artifactId: string): Promise<void> {
+  const artifact = store.getSkillSourceArtifact(artifactId);
+  if (!artifact || artifact.reviewStatus === "archived") {
+    writeJson(response, 404, { error: "skill_source_artifact_not_found", message: `Skill source artifact not found: ${artifactId}` });
+    return;
+  }
+  const artifactPath = resolve(store.paths.artifactsDir, artifact.storageRef);
+  if (!isPathInside(store.paths.artifactsDir, artifactPath)) {
+    writeJson(response, 403, { error: "skill_source_artifact_outside_root", message: "Skill source artifact path escaped artifact root." });
+    return;
+  }
+  try {
+    const content = await readFile(artifactPath);
+    response.writeHead(200, {
+      "Content-Type": artifact.mediaType ?? "application/octet-stream",
+      "Content-Length": content.byteLength,
+    });
+    response.end(content);
+  } catch {
+    writeJson(response, 404, { error: "skill_source_artifact_content_not_found", message: `Skill source artifact content not found: ${artifactId}` });
+  }
+}
+
+function buildLocalGlobalUpgradeEvidence(upstreamVersions: readonly string[]): {
+  readonly available: boolean;
+  readonly currentVersion?: string;
+  readonly latestVersion?: string;
+  readonly source: "local-only" | "unknown";
+} {
+  const currentVersion = upstreamVersions[0];
+  return {
+    available: false,
+    currentVersion,
+    latestVersion: currentVersion,
+    source: currentVersion ? "local-only" : "unknown",
+  };
+}
+
+function isAutoSafeSkillSourceRecord(record: SkillSourceSyncPreviewRecord, allowNewSkills: boolean, approvedRootIds: readonly string[]): boolean {
+  if (!record.sourceRootId || !approvedRootIds.includes(record.sourceRootId)) {
+    return false;
+  }
+  if (record.state === "new" && !allowNewSkills) {
+    return false;
+  }
+  if (!["attachable", "drifted", "unchanged"].includes(record.state)) {
+    return false;
+  }
+  if (record.warnings.length > 0 || record.semanticDiff.length > 0) {
+    return false;
+  }
+  return record.referencedFiles.every((file) => file.kind === "reference" || file.kind === "agent-metadata");
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const relativePath = relativePathFromRoot(root, candidate);
+  return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith(`..${sep}`) && !resolve(relativePath).startsWith(".."));
+}
+
+function relativePathFromRoot(root: string, candidate: string): string {
+  return resolve(root) === resolve(candidate) ? "" : relative(resolve(root), resolve(candidate));
 }
 
 function hasExplicitSourceRootInputs(input: {

@@ -15,6 +15,8 @@ import type {
   SkillSourceFileRef,
   SkillSourceFrontMatter,
   SkillSourceKind,
+  SkillSourceSemanticDiffItem,
+  SkillSourceSemanticProfile,
   SkillSourceScanRoot,
   SkillSourceSnapshot,
   SkillSourceSyncDiffItem,
@@ -60,6 +62,7 @@ interface DiscoveredSkillSource {
   readonly agentMetadata?: SkillAgentMetadata;
   readonly referencedFiles: readonly SkillSourceFileRef[];
   readonly warnings: readonly SkillSourceWarning[];
+  readonly semanticProfile: SkillSourceSemanticProfile;
 }
 
 interface ParsedFrontMatter {
@@ -86,41 +89,49 @@ export async function resolveSkillSourceRoots(input: ResolveSkillSourceRootsInpu
   const candidates: SkillSourceScanRoot[] = [];
 
   for (const rootPath of input.skillRoots ?? []) {
+    const resolvedRootPath = resolve(rootPath);
     candidates.push({
-      rootPath: resolve(rootPath),
+      id: hashedSkillSourceRootId("configured-skill-root", resolvedRootPath),
+      rootPath: resolvedRootPath,
       sourceKind: "workspace-skill-directory",
       label: "Configured skill root",
     });
   }
 
   if (input.workspaceRoot) {
+    const resolvedRootPath = resolve(input.workspaceRoot, ".agents", "skills");
     candidates.push({
-      rootPath: resolve(input.workspaceRoot, ".agents", "skills"),
+      id: hashedSkillSourceRootId("workspace-skill-root", resolvedRootPath),
+      rootPath: resolvedRootPath,
       sourceKind: "workspace-skill-directory",
       label: "Workspace skill root",
     });
   }
 
   for (const rootPath of input.gstackRepoRoots ?? []) {
-    candidates.push(await gstackRootFromRepoPath(rootPath));
+    candidates.push(await gstackRootFromRepoPath(rootPath, hashedSkillSourceRootId("configured-gstack-root", rootPath)));
   }
 
   for (const rootPath of input.codexSkillRoots ?? []) {
+    const resolvedRootPath = resolve(rootPath);
     candidates.push({
-      rootPath: resolve(rootPath),
+      id: hashedSkillSourceRootId("configured-codex-root", resolvedRootPath),
+      rootPath: resolvedRootPath,
       sourceKind: "codex-skill-directory",
       label: "Configured Codex skill root",
     });
   }
 
   if (input.includeDetectedRoots !== false) {
-    candidates.push(await gstackRootFromRepoPath(join(home, ".gstack", "repos", "gstack")));
+    candidates.push(await gstackRootFromRepoPath(join(home, ".gstack", "repos", "gstack"), "local-gstack"));
     candidates.push({
+      id: "codex-skills",
       rootPath: join(home, ".codex", "skills"),
       sourceKind: "codex-skill-directory",
       label: "Detected Codex skill root",
     });
     candidates.push({
+      id: "agent-skills",
       rootPath: join(home, ".agents", "skills"),
       sourceKind: "codex-skill-directory",
       label: "Detected agent skill root",
@@ -159,9 +170,17 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
       const definitionPreview = existingSkill?.definition ?? normalizeDefinitionFromSource(skillId, source);
       const snapshotPreview = buildSnapshotPreview(skillId, source, state);
       const diff = existingSnapshot && snapshotPreview ? buildSourceSyncDiff(existingSnapshot, source, snapshotPreview) : [];
+      const semanticDiff = existingSnapshot
+        ? diffSkillSourceSemanticProfiles(buildSkillSourceSemanticProfile({
+            markdown: existingSnapshot.rawSkillMarkdown,
+            sourceChecksum: existingSnapshot.sourceChecksum,
+            referencedFiles: existingSnapshot.referencedFiles,
+          }), source.semanticProfile)
+        : [];
       records.push({
         state,
         skillId,
+        sourceRootId: source.root.id,
         sourceKind: source.root.sourceKind,
         sourcePath: source.skillPath,
         upstreamName: source.root.upstreamName ?? source.frontMatter.name ?? source.skillDirectoryName,
@@ -177,6 +196,8 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
         snapshotPreview,
         existingSnapshotId: existingSnapshot?.id,
         diff,
+        semanticProfile: source.semanticProfile,
+        semanticDiff,
       });
     }
   }
@@ -211,6 +232,7 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
       warnings: [...snapshot.warnings, warning],
       existingSnapshotId: snapshot.id,
       diff: [],
+      semanticDiff: [],
     });
   }
 
@@ -235,15 +257,21 @@ export function normalizeGstackSkillId(input: string): string {
     .replace(/^-|-$/g, "");
 }
 
-async function gstackRootFromRepoPath(repoPath: string): Promise<SkillSourceScanRoot> {
+async function gstackRootFromRepoPath(repoPath: string, id?: string): Promise<SkillSourceScanRoot> {
   const rootPath = resolve(repoPath, ".agents", "skills");
   return {
+    id,
     rootPath,
     sourceKind: "gstack-skill-directory",
     label: "Detected gstack skill root",
     upstreamName: "gstack",
     upstreamVersion: await readGstackVersion(rootPath),
   };
+}
+
+function hashedSkillSourceRootId(prefix: string, rootPath: string): string {
+  const digest = createHash("sha256").update(resolve(rootPath)).digest("hex").slice(0, 12);
+  return `${prefix}:${digest}`;
 }
 
 async function scanSkillSourceRoot(root: SkillSourceScanRoot, maxSourceBytes: number): Promise<DiscoveredSkillSource[]> {
@@ -289,6 +317,11 @@ async function readSkillSource(
   const markdown = sourceSizeBytes > maxSourceBytes ? fullMarkdown.slice(0, maxSourceBytes) : fullMarkdown;
   const agentMetadata = await readAgentMetadata(directoryPath, warnings);
   const referencedFiles = await inventoryReferencedFiles(directoryPath);
+  const semanticProfile = buildSkillSourceSemanticProfile({
+    markdown: fullMarkdown,
+    sourceChecksum,
+    referencedFiles,
+  });
   return {
     root,
     skillDirectoryPath: directoryPath,
@@ -302,6 +335,7 @@ async function readSkillSource(
     agentMetadata,
     referencedFiles,
     warnings,
+    semanticProfile,
   };
 }
 
@@ -473,7 +507,7 @@ function classifySkillSourceWarnings(markdown: string, sourceSizeBytes: number, 
   if (sourceSizeBytes > maxSourceBytes) {
     warnings.push({
       code: "large_source",
-      severity: "error",
+      severity: "warning",
       message: `SKILL.md is ${sourceSizeBytes} bytes, above the ${maxSourceBytes} byte snapshot cap.`,
       location: "SKILL.md",
     });
@@ -588,6 +622,233 @@ function buildSourceSyncDiff(
     "info",
   );
   return diff;
+}
+
+export function buildSkillSourceSemanticProfile(input: {
+  readonly markdown: string;
+  readonly sourceChecksum: string;
+  readonly referencedFiles?: readonly SkillSourceFileRef[];
+}): SkillSourceSemanticProfile {
+  const { frontMatter, body } = splitMarkdownFrontMatter(input.markdown);
+  const parsed = frontMatter.trim() ? parseSkillFrontMatter(input.markdown).frontMatter : {};
+  const sections = extractMarkdownSections(body);
+  return removeUndefined({
+    sourceChecksum: input.sourceChecksum,
+    title: parsed.name ?? sections[0]?.heading,
+    description: parsed.description,
+    sections,
+    workflowVerbs: uniqueSortedClaims(extractClaims(input.markdown, workflowVerbPatterns)),
+    stopGateCount: countPattern(input.markdown, /\b(STOP|approval gate|ask for approval|ask the user|confirm before|requires confirmation)\b/gi),
+    approvalGateClaims: uniqueSortedClaims(extractClaims(input.markdown, approvalGatePatterns)),
+    toolClaims: uniqueSortedClaims(extractClaims(input.markdown, toolClaimPatterns)),
+    hostClaims: uniqueSortedClaims(extractClaims(input.markdown, hostClaimPatterns)),
+    externalActionClaims: uniqueSortedClaims(extractClaims(input.markdown, externalActionPatterns)),
+    destructiveClaims: uniqueSortedClaims(extractClaims(input.markdown, destructiveClaimPatterns)),
+    secretClaims: uniqueSortedClaims(extractClaims(input.markdown, secretClaimPatterns)),
+    referencedFileKinds: countReferencedFileKinds(input.referencedFiles ?? []),
+  });
+}
+
+export function diffSkillSourceSemanticProfiles(
+  before: SkillSourceSemanticProfile,
+  after: SkillSourceSemanticProfile,
+): SkillSourceSemanticDiffItem[] {
+  const diff: SkillSourceSemanticDiffItem[] = [];
+  addSemanticDiff(diff, {
+    kind: "copy_change",
+    severity: "info",
+    before: summarizeOptional(before.title),
+    after: summarizeOptional(after.title),
+    message: "Skill title changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "copy_change",
+    severity: "info",
+    before: summarizeOptional(firstLine(before.description ?? "")),
+    after: summarizeOptional(firstLine(after.description ?? "")),
+    message: "Skill description changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "workflow_change",
+    severity: "warning",
+    before: summarizeSections(before.sections),
+    after: summarizeSections(after.sections),
+    message: "Workflow headings changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "workflow_change",
+    severity: "warning",
+    before: before.workflowVerbs.join(", "),
+    after: after.workflowVerbs.join(", "),
+    message: "Workflow action vocabulary changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "gate_change",
+    severity: "warning",
+    before: String(before.stopGateCount),
+    after: String(after.stopGateCount),
+    message: "STOP or approval gate count changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "gate_change",
+    severity: "warning",
+    before: before.approvalGateClaims.join(", "),
+    after: after.approvalGateClaims.join(", "),
+    message: "Approval gate claims changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "tool_claim_change",
+    severity: "warning",
+    before: before.toolClaims.join(", "),
+    after: after.toolClaims.join(", "),
+    message: "Tool claims changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "host_claim_change",
+    severity: "warning",
+    before: before.hostClaims.join(", "),
+    after: after.hostClaims.join(", "),
+    message: "Host/runtime claims changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "external_action_change",
+    severity: "warning",
+    before: before.externalActionClaims.join(", "),
+    after: after.externalActionClaims.join(", "),
+    message: "External action claims changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "destructive_claim_change",
+    severity: "error",
+    before: before.destructiveClaims.join(", "),
+    after: after.destructiveClaims.join(", "),
+    message: "Destructive command claims changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "secret_claim_change",
+    severity: "error",
+    before: before.secretClaims.join(", "),
+    after: after.secretClaims.join(", "),
+    message: "Secret or credential claims changed.",
+  });
+  addSemanticDiff(diff, {
+    kind: "referenced_file_change",
+    severity: "warning",
+    before: summarizeReferencedFileKinds(before.referencedFileKinds),
+    after: summarizeReferencedFileKinds(after.referencedFileKinds),
+    message: "Referenced file inventory changed.",
+  });
+  return diff;
+}
+
+const workflowVerbPatterns = [
+  /\b(plan|design|implement|review|test|ship|deploy|document|investigate|benchmark|monitor|rollback|upgrade|sync|publish)\b/gi,
+] as const;
+
+const approvalGatePatterns = [
+  /\b(STOP|approval gate|ask for approval|ask the user|confirm before|requires confirmation|manual review)\b/gi,
+] as const;
+
+const toolClaimPatterns = [
+  /\b(bash|shell|filesystem|computer-use|browser|playwright|apply_patch|mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+|git|gh)\b/gi,
+] as const;
+
+const hostClaimPatterns = [
+  /\b(CLAUDE|CONDUCTOR|Codex|gstack|AskUserQuestion|ExitPlanMode|GSTACK_BIN|MCP)\b/g,
+] as const;
+
+const externalActionPatterns = [
+  /\b(send email|post (?:a )?(?:comment|reply)|create (?:a )?(?:pull request|PR)|submit form|checkout flow|deploy|release|publish)\b/gi,
+] as const;
+
+const destructiveClaimPatterns = [
+  /\b(rm\s+-rf|git\s+reset\s+--hard|git\s+push\s+--force|drop\s+database|truncate\s+table|sudo\s+rm|chmod\s+777)\b/gi,
+] as const;
+
+const secretClaimPatterns = [
+  /\b(secret|token|api[_ -]?key|credential|password|bearer|keychain|\.env)\b/gi,
+  /sk-[A-Za-z0-9_-]{20,}/g,
+  /ghp_[A-Za-z0-9_]{20,}/g,
+] as const;
+
+function extractMarkdownSections(markdown: string): SkillSourceSemanticProfile["sections"] {
+  return markdown.split(/\r?\n/).flatMap((line, index) => {
+    const match = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    if (!match) {
+      return [];
+    }
+    return [{
+      heading: match[2].trim(),
+      level: match[1].length,
+      line: index + 1,
+    }];
+  });
+}
+
+function extractClaims(markdown: string, patterns: readonly RegExp[]): string[] {
+  const claims: string[] = [];
+  for (const pattern of patterns) {
+    for (const match of markdown.matchAll(pattern)) {
+      const value = match[0]?.trim();
+      if (value) {
+        claims.push(value.toLowerCase());
+      }
+    }
+  }
+  return claims;
+}
+
+function uniqueSortedClaims(values: readonly string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort();
+}
+
+function countPattern(markdown: string, pattern: RegExp): number {
+  return [...markdown.matchAll(pattern)].length;
+}
+
+function countReferencedFileKinds(files: readonly SkillSourceFileRef[]): Record<SkillSourceFileKind, number> {
+  const counts: Record<SkillSourceFileKind, number> = {
+    script: 0,
+    asset: 0,
+    reference: 0,
+    "agent-metadata": 0,
+    other: 0,
+  };
+  for (const file of files) {
+    counts[file.kind] += 1;
+  }
+  return counts;
+}
+
+function addSemanticDiff(diff: SkillSourceSemanticDiffItem[], item: SkillSourceSemanticDiffItem): void {
+  const before = normalizeDiffValue(item.before);
+  const after = normalizeDiffValue(item.after);
+  if (before === after) {
+    return;
+  }
+  diff.push(removeUndefined({
+    ...item,
+    before,
+    after,
+  }));
+}
+
+function summarizeSections(sections: readonly SkillSourceSemanticProfile["sections"][number][]): string {
+  if (sections.length === 0) {
+    return "0 headings";
+  }
+  const headings = sections.map((section) => `${section.level}:${section.heading}`).join("|");
+  return `${sections.length} headings · ${checksumBytes(Buffer.from(headings)).slice(0, 19)}`;
+}
+
+function summarizeReferencedFileKinds(counts: Readonly<Record<SkillSourceFileKind, number>>): string {
+  return (["script", "asset", "reference", "agent-metadata", "other"] as const)
+    .map((kind) => `${kind}:${counts[kind] ?? 0}`)
+    .join(", ");
+}
+
+function summarizeOptional(value: string | undefined): string | undefined {
+  return value?.trim() || undefined;
 }
 
 function addDiffItem(

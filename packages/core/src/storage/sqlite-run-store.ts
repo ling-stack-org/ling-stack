@@ -162,12 +162,17 @@ import {
 } from "../workspace-types.js";
 import {
   type CreateSkillImportDraftInput,
+  type CreateSkillSourceArtifactInput,
   type CreateSkillSourceSnapshotInput,
+  type ListSkillSourceArtifactOptions,
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
   type SkillImportDraft,
   type SkillRegistryEntry,
+  type SkillSourceArtifact,
   type SkillSourceSnapshot,
+  type SkillSourceUpgradePolicy,
+  type UpdateSkillSourceUpgradePolicyInput,
 } from "../skill-types.js";
 import {
   type ApplySkillCandidateReviewActionInput,
@@ -1471,12 +1476,40 @@ export class SqliteRunStore implements RunStore {
     return this.skillRegistry.getSkillSourceSnapshot(skillId, options);
   }
 
+  getSkillSourceSnapshotById(id: string): SkillSourceSnapshot | undefined {
+    return this.skillRegistry.getSkillSourceSnapshotById(id);
+  }
+
   upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot {
     return this.skillRegistry.upsertSkillSourceSnapshot(input, now);
   }
 
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined {
     return this.skillRegistry.archiveSkillSourceSnapshot(skillId, now);
+  }
+
+  rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined {
+    return this.skillRegistry.rollbackSkillSourceSnapshot(snapshotId, now);
+  }
+
+  getSkillSourceUpgradePolicy(now?: string): SkillSourceUpgradePolicy {
+    return this.skillRegistry.getSkillSourceUpgradePolicy(now);
+  }
+
+  updateSkillSourceUpgradePolicy(input: UpdateSkillSourceUpgradePolicyInput, now: string): SkillSourceUpgradePolicy {
+    return this.skillRegistry.updateSkillSourceUpgradePolicy(input, now);
+  }
+
+  upsertSkillSourceArtifact(input: CreateSkillSourceArtifactInput, now: string): SkillSourceArtifact {
+    return this.skillRegistry.upsertSkillSourceArtifact(input, now);
+  }
+
+  getSkillSourceArtifact(id: string): SkillSourceArtifact | undefined {
+    return this.skillRegistry.getSkillSourceArtifact(id);
+  }
+
+  listSkillSourceArtifacts(options: ListSkillSourceArtifactOptions = {}): SkillSourceArtifact[] {
+    return this.skillRegistry.listSkillSourceArtifacts(options);
   }
 
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft {
