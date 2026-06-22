@@ -15,12 +15,15 @@ import {
 import {
   archiveSkill,
   archiveSkillSourceSnapshot,
+  checkGstackSkillSourceUpdates,
   createChannelPlaybookCandidateFromCluster,
   createChannelProtocolCandidateFromCluster,
   createSkillCandidateDraft,
   createSkillImportDraft,
   getSkillHealth,
   getSkillSourceHealth,
+  getSkillSourceUpgradePolicy,
+  listSkillSourceArtifacts,
   listChannelPlaybookCandidates,
   listChannels,
   listAiTeammates,
@@ -34,6 +37,9 @@ import {
   refreshGstackSkillSourceSync,
   reviewChannelPlaybookCandidate,
   reviewSkillCandidate,
+  rollbackSkillSourceSnapshot,
+  skillSourceArtifactContentUrl,
+  updateSkillSourceUpgradePolicy,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -51,13 +57,16 @@ import type {
   SkillImportDraft,
   SkillPackSource,
   SkillRegistryEntry,
+  SkillSourceArtifact,
   SkillSourceHealthReport,
   SkillSourceSnapshot,
+  SkillSourceSemanticDiffItem,
   SkillSourceSyncDiffItem,
   SkillSourceSyncPreviewRecord,
   SkillSourceSyncPreviewReport,
   SkillSourceSyncRecordState,
   SkillSourceSyncRequest,
+  SkillSourceUpgradePolicy,
   TeammateSkillBinding,
 } from "../../types.js";
 import { approvalProfileText, workflowPhaseLabel } from "../teammates/helpers.js";
@@ -91,6 +100,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [skillHealth, setSkillHealth] = useState<SkillHealthReport | undefined>();
   const [skillSourceHealth, setSkillSourceHealth] = useState<SkillSourceHealthReport | undefined>();
   const [skillSourceSnapshots, setSkillSourceSnapshots] = useState<readonly SkillSourceSnapshot[]>([]);
+  const [skillSourceUpgradePolicy, setSkillSourceUpgradePolicy] = useState<SkillSourceUpgradePolicy | undefined>();
+  const [skillSourceArtifacts, setSkillSourceArtifacts] = useState<readonly SkillSourceArtifact[]>([]);
   const [skillCandidates, setSkillCandidates] = useState<readonly SkillCandidate[]>([]);
   const [playbookCandidates, setPlaybookCandidates] = useState<readonly ChannelPlaybookCandidate[]>([]);
   const [channels, setChannels] = useState<readonly Channel[]>([]);
@@ -110,6 +121,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [syncPreview, setSyncPreview] = useState<SkillSourceSyncPreviewReport | undefined>();
   const [selectedSyncSkillIds, setSelectedSyncSkillIds] = useState<readonly string[]>([]);
   const [syncing, setSyncing] = useState(false);
+  const [checkingSourceUpdates, setCheckingSourceUpdates] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -120,7 +132,15 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   }, [cwd, refreshToken]);
 
   const sourceSnapshotBySkillId = useMemo(() => {
-    return new Map(skillSourceSnapshots.map((snapshot) => [snapshot.skillId, snapshot]));
+    return new Map(skillSourceSnapshots.filter((snapshot) => snapshot.reviewStatus === "published").map((snapshot) => [snapshot.skillId, snapshot]));
+  }, [skillSourceSnapshots]);
+
+  const sourceSnapshotHistoryBySkillId = useMemo(() => {
+    const history = new Map<string, SkillSourceSnapshot[]>();
+    for (const snapshot of skillSourceSnapshots.filter((item) => item.reviewStatus === "archived")) {
+      history.set(snapshot.skillId, [...(history.get(snapshot.skillId) ?? []), snapshot]);
+    }
+    return history;
   }, [skillSourceSnapshots]);
 
   const stats = useMemo(() => {
@@ -192,6 +212,10 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }, [selectedSkill, selectedSkillId]);
 
+  useEffect(() => {
+    void loadSelectedSkillSourceArtifacts();
+  }, [cwd, selectedSkill?.id, skillSourceSnapshots]);
+
   async function refresh(): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
@@ -201,10 +225,11 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setLoading(true);
     try {
       setError("");
-      const [skillsResponse, skillHealthResponse, skillSourceHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
+      const [skillsResponse, skillHealthResponse, skillSourceHealthResponse, skillSourcePolicyResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
         listSkills(workspaceCwd),
         getSkillHealth(workspaceCwd, { limit: 6 }),
         getSkillSourceHealth(workspaceCwd, { limit: 6 }),
+        getSkillSourceUpgradePolicy(workspaceCwd),
         listProcedureObservationClusters(workspaceCwd, { limit: 8 }),
         listSkillCandidates(workspaceCwd, { limit: 8 }),
         listChannels(workspaceCwd),
@@ -224,6 +249,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setSkillHealth(skillHealthResponse.report);
       setSkillSourceHealth(skillSourceHealthResponse.report);
       setSkillSourceSnapshots(skillSourceHealthResponse.snapshots);
+      setSkillSourceUpgradePolicy(skillSourcePolicyResponse.policy);
       setObservationClusters(clustersResponse.clusters);
       setSkillCandidates(candidatesResponse.candidates);
       setPlaybookCandidates(playbookCandidateResponses.flatMap((response) => response.candidates));
@@ -234,6 +260,20 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadSelectedSkillSourceArtifacts(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedSkill?.id) {
+      setSkillSourceArtifacts([]);
+      return;
+    }
+    try {
+      const response = await listSkillSourceArtifacts(workspaceCwd, selectedSkill.id);
+      setSkillSourceArtifacts(response.artifacts);
+    } catch {
+      setSkillSourceArtifacts([]);
     }
   }
 
@@ -322,6 +362,53 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
+  async function checkSkillSourceUpdates(): Promise<void> {
+    if (checkingSourceUpdates || syncing) {
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setCheckingSourceUpdates(true);
+    try {
+      setError("");
+      const response = await checkGstackSkillSourceUpdates(workspaceCwd, buildSkillSourceSyncRequest());
+      setSkillSourceUpgradePolicy(response.policy);
+      setSyncPreview(response.preview);
+      setSelectedSyncSkillIds(defaultSelectedSyncSkillIds(response.preview.records, syncAllowNewSkills));
+      setSyncOpen(true);
+      setMessage(t("Source update check complete"));
+    } catch (checkError) {
+      setError(checkError instanceof Error ? checkError.message : String(checkError));
+    } finally {
+      setCheckingSourceUpdates(false);
+    }
+  }
+
+  async function changeSkillSourceUpgradeMode(mode: SkillSourceUpgradePolicy["mode"]): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !skillSourceUpgradePolicy) {
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      const response = await updateSkillSourceUpgradePolicy(workspaceCwd, {
+        mode,
+        approvedRootIds: skillSourceUpgradePolicy.approvedRootIds,
+        allowNewSkills: skillSourceUpgradePolicy.allowNewSkills,
+      });
+      setSkillSourceUpgradePolicy(response.policy);
+      setMessage(t("Source upgrade policy updated"));
+    } catch (policyError) {
+      setError(policyError instanceof Error ? policyError.message : String(policyError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function publishSkillSourceSync(): Promise<void> {
     if (syncing || selectedSyncSkillIds.length === 0) {
       setMessage(t("Select skill source records first"));
@@ -339,6 +426,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         ...buildSkillSourceSyncRequest(),
         selectedSkillIds: selectedSyncSkillIds,
         allowNewSkills: syncAllowNewSkills,
+        publishArtifacts: true,
       });
       setSyncPreview(response.preview);
       setSelectedSyncSkillIds([]);
@@ -349,6 +437,28 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setError(syncError instanceof Error ? syncError.message : String(syncError));
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function rollbackSelectedSkillSource(snapshotId: string): Promise<void> {
+    if (!selectedSkill?.id || saving) {
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      await rollbackSkillSourceSnapshot(workspaceCwd, selectedSkill.id, { snapshotId });
+      await refresh();
+      setMessage(t("Source snapshot rolled back"));
+    } catch (rollbackError) {
+      setError(rollbackError instanceof Error ? rollbackError.message : String(rollbackError));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -572,12 +682,13 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       {syncOpen ? (
         <SkillSourceSyncPanel
           preview={syncPreview}
+          policy={skillSourceUpgradePolicy}
           rootPath={syncRootPath}
           includeDetectedRoots={syncIncludeDetectedRoots}
           allowNewSkills={syncAllowNewSkills}
           selectedSkillIds={selectedSyncSkillIds}
           loading={loading}
-          syncing={syncing}
+          syncing={syncing || checkingSourceUpdates}
           onRootPathChange={setSyncRootPath}
           onIncludeDetectedRootsChange={setSyncIncludeDetectedRoots}
           onAllowNewSkillsChange={(allow) => {
@@ -589,6 +700,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
           }}
           onPreview={() => void previewSkillSourceSync("preview")}
           onRefresh={() => void previewSkillSourceSync("refresh")}
+          onCheckUpdates={() => void checkSkillSourceUpdates()}
+          onPolicyModeChange={(mode) => void changeSkillSourceUpgradeMode(mode)}
           onPublish={() => void publishSkillSourceSync()}
           onToggleRecord={toggleSyncSkillId}
           t={t}
@@ -805,8 +918,12 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
               </SkillInspectorSection>
               <SkillSourceInspector
                 snapshot={sourceSnapshotBySkillId.get(selectedSkill.id)}
+                history={sourceSnapshotHistoryBySkillId.get(selectedSkill.id) ?? []}
+                artifacts={skillSourceArtifacts}
+                cwd={cwd.trim()}
                 saving={saving}
                 onArchive={() => void archiveSourceSnapshot(selectedSkill.id)}
+                onRollback={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
                 t={t}
               />
               <small>{t("Updated {time}", { time: formatDateTime(selectedSkill.updatedAt) })}</small>
@@ -827,6 +944,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
 
 function SkillSourceSyncPanel({
   preview,
+  policy,
   rootPath,
   includeDetectedRoots,
   allowNewSkills,
@@ -838,11 +956,14 @@ function SkillSourceSyncPanel({
   onAllowNewSkillsChange,
   onPreview,
   onRefresh,
+  onCheckUpdates,
+  onPolicyModeChange,
   onPublish,
   onToggleRecord,
   t,
 }: {
   readonly preview: SkillSourceSyncPreviewReport | undefined;
+  readonly policy: SkillSourceUpgradePolicy | undefined;
   readonly rootPath: string;
   readonly includeDetectedRoots: boolean;
   readonly allowNewSkills: boolean;
@@ -854,6 +975,8 @@ function SkillSourceSyncPanel({
   readonly onAllowNewSkillsChange: (value: boolean) => void;
   readonly onPreview: () => void;
   readonly onRefresh: () => void;
+  readonly onCheckUpdates: () => void;
+  readonly onPolicyModeChange: (mode: SkillSourceUpgradePolicy["mode"]) => void;
   readonly onPublish: () => void;
   readonly onToggleRecord: (record: SkillSourceSyncPreviewRecord) => void;
   readonly t: SettingsTranslator;
@@ -868,9 +991,23 @@ function SkillSourceSyncPanel({
           <RefreshCw size={15} className={syncing ? "spin" : undefined} />
           <strong>{t("gstack source sync")}</strong>
         </span>
-        <small>{preview ? t("{count} records", { count: preview.summary.totalRecords }) : t("Preview before publishing")}</small>
+        <small>
+          {policy?.lastCheckedAt ? t("Checked {time}", { time: formatDateTime(policy.lastCheckedAt) }) : preview ? t("{count} records", { count: preview.summary.totalRecords }) : t("Preview before publishing")}
+        </small>
       </header>
       <div className="settings-skill-source-sync-controls">
+        <label className="field">
+          <span>{t("Upgrade policy")}</span>
+          <select
+            value={policy?.mode ?? "prompt"}
+            onChange={(event) => onPolicyModeChange(event.target.value as SkillSourceUpgradePolicy["mode"])}
+            disabled={disabled || !policy}
+          >
+            <option value="manual">{t("Manual")}</option>
+            <option value="prompt">{t("Prompt")}</option>
+            <option value="auto-safe">{t("Auto-safe")}</option>
+          </select>
+        </label>
         <label className="field">
           <span>{t("Skill root paths")}</span>
           <textarea
@@ -899,6 +1036,10 @@ function SkillSourceSyncPanel({
             <RefreshCw size={14} />
             {t("Refresh")}
           </button>
+          <button className="secondary-button compact-button" type="button" onClick={onCheckUpdates} disabled={disabled || (!includeDetectedRoots && !rootPath.trim())}>
+            <Gauge size={14} />
+            {t("Check updates")}
+          </button>
           <button className="primary-button compact-button" type="button" onClick={onPublish} disabled={disabled || selectedSkillIds.length === 0}>
             <CheckCircle2 size={14} />
             {t("Publish selected")}
@@ -924,6 +1065,8 @@ function SkillSourceSyncPanel({
             const title = syncRecordTitle(record);
             const path = record.upstreamSkillPath ?? record.sourcePath ?? "-";
             const diff = record.diff ?? [];
+            const semanticDiff = record.semanticDiff ?? [];
+            const artifactReviewCount = record.referencedFiles.filter((file) => file.kind === "script" || file.kind === "asset").length;
             return (
               <article key={`${record.skillId}:${record.sourcePath ?? record.upstreamSkillPath ?? record.state}`} className={`settings-skill-source-sync-record ${record.state}`}>
                 <label className="settings-skill-source-sync-select">
@@ -945,8 +1088,11 @@ function SkillSourceSyncPanel({
                   </div>
                   <div className="settings-skill-source-sync-meta">
                     <span>{record.sourceKind ?? "-"}</span>
+                    {record.sourceRootId ? <span>{t("Root")}: {record.sourceRootId}</span> : null}
                     <span>{t("Files")}: {record.referencedFiles.length}</span>
                     <span>{t("Warnings")}: {record.warnings.length}</span>
+                    <span>{t("Semantic")}: {semanticDiff.length}</span>
+                    {artifactReviewCount > 0 ? <span>{t("Artifact review")}: {artifactReviewCount}</span> : null}
                     {record.sourceChecksum ? <span>{record.sourceChecksum}</span> : null}
                   </div>
                   {record.warnings.length > 0 ? (
@@ -965,6 +1111,21 @@ function SkillSourceSyncPanel({
                         {diff.slice(0, 5).map((item) => (
                           <div key={item.field} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
                             <small>{skillSourceSyncDiffLabel(item, t)}</small>
+                            <code>{item.before ?? "-"}</code>
+                            <span>→</span>
+                            <code>{item.after ?? "-"}</code>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {semanticDiff.length > 0 ? (
+                    <div className="settings-skill-source-sync-diff" aria-label={t("Semantic diff for {skill}", { skill: record.skillId })}>
+                      <span className="settings-skill-source-sync-diff-title">{t("Semantic diff")} · {semanticDiff.length}</span>
+                      <div className="settings-skill-source-sync-diff-items">
+                        {semanticDiff.slice(0, 5).map((item, index) => (
+                          <div key={`${item.kind}:${index}`} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
+                            <small>{skillSourceSemanticDiffLabel(item, t)}</small>
                             <code>{item.before ?? "-"}</code>
                             <span>→</span>
                             <code>{item.after ?? "-"}</code>
@@ -1126,13 +1287,21 @@ function SkillSourceStatus({
 
 function SkillSourceInspector({
   snapshot,
+  history,
+  artifacts,
+  cwd,
   saving,
   onArchive,
+  onRollback,
   t,
 }: {
   readonly snapshot: SkillSourceSnapshot | undefined;
+  readonly history: readonly SkillSourceSnapshot[];
+  readonly artifacts: readonly SkillSourceArtifact[];
+  readonly cwd: string;
   readonly saving: boolean;
   readonly onArchive: () => void;
+  readonly onRollback: (snapshotId: string) => void;
   readonly t: SettingsTranslator;
 }): JSX.Element {
   if (!snapshot) {
@@ -1155,6 +1324,7 @@ function SkillSourceInspector({
         <span>{t("Files")}: {snapshot.referencedFiles.length}</span>
         <span>{t("Warnings")}: {snapshot.warnings.length}</span>
         <span>{t("Review")}: {snapshot.reviewStatus}</span>
+        <span>{t("Artifacts")}: {artifacts.length}</span>
       </div>
       <div className="settings-skill-source-actions">
         <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
@@ -1167,6 +1337,34 @@ function SkillSourceInspector({
           {snapshot.warnings.slice(0, 4).map((warning, index) => (
             <small key={`${warning.code}:${warning.location ?? index}`} className={warning.severity}>
               {warning.severity}: {warning.code} · {warning.message}
+            </small>
+          ))}
+        </div>
+      ) : null}
+      {artifacts.length > 0 ? (
+        <div className="settings-skill-source-warning-list">
+          {artifacts.slice(0, 6).map((artifact) => (
+            <small key={artifact.id} className={artifact.reviewStatus === "published" ? "info" : "warning"}>
+              {artifact.kind}: <a href={skillSourceArtifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer">{artifact.path}</a> · {artifact.reviewStatus} · {artifact.sizeBytes} bytes
+            </small>
+          ))}
+        </div>
+      ) : null}
+      {snapshot.rawSkillMarkdownArtifactId ? (
+        <p>
+          <a href={skillSourceArtifactContentUrl(snapshot.rawSkillMarkdownArtifactId, cwd)} target="_blank" rel="noreferrer">
+            {t("Open full SKILL.md artifact")}
+          </a>
+        </p>
+      ) : null}
+      {history.length > 0 ? (
+        <div className="settings-skill-source-warning-list">
+          {history.slice(0, 4).map((archived) => (
+            <small key={archived.id} className="info">
+              {formatDateTime(archived.updatedAt)} · {archived.sourceChecksum}
+              <button className="ghost-button compact-button" type="button" onClick={() => onRollback(archived.id)} disabled={saving}>
+                {t("Rollback")}
+              </button>
             </small>
           ))}
         </div>
@@ -1591,6 +1789,9 @@ function defaultSelectedSyncSkillIds(records: readonly SkillSourceSyncPreviewRec
 }
 
 function isSelectableSyncRecord(record: SkillSourceSyncPreviewRecord, allowNewSkills: boolean): boolean {
+  if (record.semanticDiff.some((item) => item.severity === "error")) {
+    return false;
+  }
   if (record.state === "new") {
     return allowNewSkills && !record.warnings.some((warning) => warning.severity === "error");
   }
@@ -1647,6 +1848,29 @@ function skillSourceSyncDiffLabel(item: SkillSourceSyncDiffItem, t: (key: string
       return t("Agent short description");
     case "agentAllowImplicitInvocation":
       return t("Implicit invocation");
+  }
+}
+
+function skillSourceSemanticDiffLabel(item: SkillSourceSemanticDiffItem, t: (key: string) => string): string {
+  switch (item.kind) {
+    case "copy_change":
+      return t("Copy");
+    case "workflow_change":
+      return t("Workflow");
+    case "gate_change":
+      return t("Gate");
+    case "tool_claim_change":
+      return t("Tool claim");
+    case "host_claim_change":
+      return t("Host claim");
+    case "external_action_change":
+      return t("External action");
+    case "destructive_claim_change":
+      return t("Destructive claim");
+    case "secret_claim_change":
+      return t("Secret claim");
+    case "referenced_file_change":
+      return t("Referenced files");
   }
 }
 

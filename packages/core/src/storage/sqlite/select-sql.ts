@@ -601,6 +601,7 @@ export function skillSourceSnapshotSelectSql(whereClause: string): string {
       upstream_skill_path,
       source_checksum,
       raw_skill_markdown,
+      raw_skill_markdown_artifact_id,
       agent_metadata_json,
       referenced_files_json,
       warnings_json,
@@ -608,6 +609,43 @@ export function skillSourceSnapshotSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM skill_source_snapshots
+    ${whereClause}
+  `;
+}
+
+export function skillSourceArtifactSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      snapshot_id,
+      path,
+      kind,
+      checksum,
+      size_bytes,
+      storage_ref,
+      media_type,
+      review_status,
+      included_in_runtime,
+      created_at,
+      updated_at
+    FROM skill_source_artifacts
+    ${whereClause}
+  `;
+}
+
+export function skillSourceUpgradePolicySelectSql(whereClause: string): string {
+  return `
+    SELECT
+      workspace_id,
+      mode,
+      approved_root_ids_json,
+      allow_new_skills,
+      allow_global_gstack_upgrade,
+      last_checked_at,
+      created_at,
+      updated_at
+    FROM skill_source_upgrade_policies
     ${whereClause}
   `;
 }

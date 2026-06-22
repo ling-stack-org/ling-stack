@@ -846,6 +846,9 @@ export async function routeRequest(
     url.pathname === "/skills/sync/gstack/preview" ||
     url.pathname === "/skills/sync/gstack/publish" ||
     url.pathname === "/skills/sync/gstack/refresh" ||
+    url.pathname === "/skills/sync/gstack/check-updates" ||
+    url.pathname === "/skills/source-upgrade-policy" ||
+    url.pathname.startsWith("/skills/source-artifacts/") ||
     url.pathname === "/skills/suggestions" ||
     url.pathname === "/skills/usage-events" ||
     url.pathname === "/skills/usage-stats" ||

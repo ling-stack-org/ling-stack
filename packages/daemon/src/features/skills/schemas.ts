@@ -30,6 +30,7 @@ import {
   type SkillRegistryEntry,
   type SkillSourceKind,
   type SkillSourceScanRoot,
+  type SkillSourceUpgradeMode,
   type SkillUsageEventKind,
 } from "@ling-stack/core";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
@@ -65,6 +66,17 @@ export interface ParsedSkillSourceSyncRequest {
 export interface ParsedSkillSourceSyncPublishRequest extends ParsedSkillSourceSyncRequest {
   readonly selectedSkillIds: readonly string[];
   readonly allowNewSkills: boolean;
+  readonly publishArtifacts: boolean;
+}
+
+export interface ParsedSkillSourceUpgradePolicyUpdateRequest {
+  readonly mode?: SkillSourceUpgradeMode;
+  readonly approvedRootIds?: readonly string[];
+  readonly allowNewSkills?: boolean;
+}
+
+export interface ParsedSkillSourceSnapshotRollbackRequest {
+  readonly snapshotId: string;
 }
 
 export function parseCreateSkillCandidateRequest(value: unknown): ParsedCreateSkillCandidateRequest {
@@ -745,7 +757,34 @@ export function parseSkillSourceSyncPublishRequest(value: unknown): ParsedSkillS
     ...parseSkillSourceSyncRequest(value),
     selectedSkillIds,
     allowNewSkills: readOptionalBoolean(value, "allowNewSkills") ?? false,
+    publishArtifacts: readOptionalBoolean(value, "publishArtifacts") ?? true,
   };
+}
+
+export function parseSkillSourceUpgradePolicyUpdateRequest(value: unknown): ParsedSkillSourceUpgradePolicyUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Skill source upgrade policy request must be a JSON object");
+  }
+  const mode = readOptionalString(value, "mode");
+  if (mode !== undefined && !["manual", "prompt", "auto-safe"].includes(mode)) {
+    throw new Error("mode must be manual, prompt, or auto-safe");
+  }
+  return {
+    mode: mode as SkillSourceUpgradeMode | undefined,
+    approvedRootIds: readOptionalStringArray(value, "approvedRootIds"),
+    allowNewSkills: readOptionalBoolean(value, "allowNewSkills"),
+  };
+}
+
+export function parseSkillSourceSnapshotRollbackRequest(value: unknown): ParsedSkillSourceSnapshotRollbackRequest {
+  if (!isRecord(value)) {
+    throw new Error("Skill source rollback request must be a JSON object");
+  }
+  const snapshotId = readString(value, "snapshotId").trim();
+  if (!snapshotId) {
+    throw new Error("snapshotId is required");
+  }
+  return { snapshotId };
 }
 
 function parseSkillImportContent(
@@ -896,6 +935,7 @@ function readOptionalSkillSourceScanRoots(value: unknown): SkillSourceScanRoot[]
       throw new Error(`roots[${index}] must be an object`);
     }
     return {
+      id: readOptionalString(item, "id"),
       rootPath: readString(item, "rootPath"),
       sourceKind: readSkillSourceKind(item, "sourceKind"),
       label: readOptionalString(item, "label"),

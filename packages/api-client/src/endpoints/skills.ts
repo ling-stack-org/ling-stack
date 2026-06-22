@@ -33,13 +33,19 @@ import type {
   SkillRegistryMutationResponse,
   SkillRegistryRefreshResponse,
   SkillSourceHealthResponse,
+  SkillSourceArtifactListResponse,
   SkillSourceSnapshotArchiveResponse,
+  SkillSourceSnapshotRollbackRequest,
+  SkillSourceSnapshotRollbackResponse,
   SkillSourceSnapshotResponse,
+  SkillSourceSyncCheckUpdatesResponse,
   SkillSourceSyncPreviewResponse,
   SkillSourceSyncPublishRequest,
   SkillSourceSyncPublishResponse,
   SkillSourceSyncRefreshResponse,
   SkillSourceSyncRequest,
+  SkillSourceUpgradePolicyResponse,
+  SkillSourceUpgradePolicyUpdateRequest,
   SkillUsageEventKind,
   SkillUsageEventListResponse,
   SkillUsageStatsListResponse,
@@ -67,8 +73,32 @@ export const skillEndpoints = {
     return this._post(`/skills/${encodeURIComponent(skillId)}/source/archive`, { cwd }, {});
   },
 
+  async rollbackSkillSourceSnapshot(this: LingDaemonEndpointContext, cwd: string, skillId: string, input: SkillSourceSnapshotRollbackRequest): Promise<SkillSourceSnapshotRollbackResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/source/rollback`, { cwd }, input);
+  },
+
+  async listSkillSourceArtifacts(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillSourceArtifactListResponse> {
+    return this._get(`/skills/${encodeURIComponent(skillId)}/source/artifacts`, { cwd });
+  },
+
+  skillSourceArtifactContentUrl(this: LingDaemonEndpointContext, artifactId: string, cwd?: string): string {
+    return this._url(`/skills/source-artifacts/${encodeURIComponent(artifactId)}/content`, { cwd });
+  },
+
+  async getSkillSourceUpgradePolicy(this: LingDaemonEndpointContext, cwd: string): Promise<SkillSourceUpgradePolicyResponse> {
+    return this._get("/skills/source-upgrade-policy", { cwd });
+  },
+
+  async updateSkillSourceUpgradePolicy(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceUpgradePolicyUpdateRequest): Promise<SkillSourceUpgradePolicyResponse> {
+    return this._put("/skills/source-upgrade-policy", { cwd }, input);
+  },
+
   async previewGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncPreviewResponse> {
     return this._post("/skills/sync/gstack/preview", { cwd }, input);
+  },
+
+  async checkGstackSkillSourceUpdates(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncCheckUpdatesResponse> {
+    return this._post("/skills/sync/gstack/check-updates", { cwd }, input);
   },
 
   async refreshGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncRefreshResponse> {

@@ -6,6 +6,8 @@ import test from "node:test";
 import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
   GSTACK_DEFAULT_UPSTREAM_VERSION,
+  buildSkillSourceSemanticProfile,
+  diffSkillSourceSemanticProfiles,
   getBuiltinSkillPack,
   previewGstackSkillSourceSync,
   resolveSkillSourceRoots,
@@ -201,7 +203,7 @@ test("gstack source preview blocks raw secret-like and over-cap source previews"
 
     assert.equal(report.records[0].state, "blocked");
     assert.equal(report.records[0].warnings.some((warning) => warning.code === "secret_reference" && warning.severity === "error"), true);
-    assert.equal(report.records[0].warnings.some((warning) => warning.code === "large_source" && warning.severity === "error"), true);
+    assert.equal(report.records[0].warnings.some((warning) => warning.code === "large_source" && warning.severity === "warning"), true);
     assert.equal(report.records[0].snapshotPreview, undefined);
   });
 });
@@ -216,8 +218,49 @@ test("configured gstack repositories resolve to local skill roots with upstream 
     });
 
     assert.equal(roots.length, 1);
+    assert.match(roots[0].id, /^configured-gstack-root:[a-f0-9]{12}$/);
     assert.equal(roots[0].rootPath, resolve(repoRoot, ".agents", "skills"));
     assert.equal(roots[0].sourceKind, "gstack-skill-directory");
     assert.equal(roots[0].upstreamVersion, "9.8.7");
   });
+});
+
+test("semantic profile flags gate, tool, external, destructive, secret, and referenced-file drift", () => {
+  const before = buildSkillSourceSemanticProfile({
+    sourceChecksum: "sha256:before",
+    markdown: [
+      "---",
+      "name: review",
+      "description: Review code.",
+      "---",
+      "# Review",
+      "Plan and review the diff.",
+    ].join("\n"),
+    referencedFiles: [],
+  });
+  const after = buildSkillSourceSemanticProfile({
+    sourceChecksum: "sha256:after",
+    markdown: [
+      "---",
+      "name: review",
+      "description: Review and publish code.",
+      "---",
+      "# Review",
+      "STOP and ask the user before using bash.",
+      "Create a PR, deploy, and never run git reset --hard.",
+      "Read token from .env.",
+    ].join("\n"),
+    referencedFiles: [
+      { path: "scripts/run.sh", kind: "script", checksum: "sha256:script", sizeBytes: 10, includedInSnapshot: false },
+    ],
+  });
+
+  const diff = diffSkillSourceSemanticProfiles(before, after);
+
+  assert.equal(diff.some((item) => item.kind === "gate_change" && item.severity === "warning"), true);
+  assert.equal(diff.some((item) => item.kind === "tool_claim_change" && item.severity === "warning"), true);
+  assert.equal(diff.some((item) => item.kind === "external_action_change" && item.severity === "warning"), true);
+  assert.equal(diff.some((item) => item.kind === "destructive_claim_change" && item.severity === "error"), true);
+  assert.equal(diff.some((item) => item.kind === "secret_claim_change" && item.severity === "error"), true);
+  assert.equal(diff.some((item) => item.kind === "referenced_file_change" && item.severity === "warning"), true);
 });

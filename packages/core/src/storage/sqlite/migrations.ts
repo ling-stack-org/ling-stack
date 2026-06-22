@@ -164,6 +164,8 @@ const CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_VERSION = 76;
 const CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_NAME = "add_channel_branch_root_thread";
 const SKILL_SOURCE_SNAPSHOTS_MIGRATION_VERSION = 77;
 const SKILL_SOURCE_SNAPSHOTS_MIGRATION_NAME = "create_skill_source_snapshots";
+const SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION = 78;
+const SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_NAME = "create_skill_source_upgrade_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3840,6 +3842,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           upstream_skill_path TEXT,
           source_checksum TEXT NOT NULL,
           raw_skill_markdown TEXT NOT NULL,
+          raw_skill_markdown_artifact_id TEXT,
           agent_metadata_json TEXT NOT NULL,
           referenced_files_json TEXT NOT NULL,
           warnings_json TEXT NOT NULL,
@@ -3857,6 +3860,57 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasSkillSourceSnapshotsMigration) {
         context.recordMigration(SKILL_SOURCE_SNAPSHOTS_MIGRATION_VERSION, SKILL_SOURCE_SNAPSHOTS_MIGRATION_NAME);
+      }
+    }
+    const hasSkillSourceUpgradeLifecycleMigration = context.hasMigration(SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION);
+    if (
+      !hasSkillSourceUpgradeLifecycleMigration ||
+      !context.hasTable("skill_source_upgrade_policies") ||
+      !context.hasTable("skill_source_artifacts") ||
+      !context.hasColumn("skill_source_snapshots", "raw_skill_markdown_artifact_id")
+    ) {
+      if (!context.hasColumn("skill_source_snapshots", "raw_skill_markdown_artifact_id")) {
+        database.exec("ALTER TABLE skill_source_snapshots ADD COLUMN raw_skill_markdown_artifact_id TEXT;");
+      }
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS skill_source_upgrade_policies (
+          workspace_id TEXT PRIMARY KEY,
+          mode TEXT NOT NULL,
+          approved_root_ids_json TEXT NOT NULL,
+          allow_new_skills INTEGER NOT NULL,
+          allow_global_gstack_upgrade INTEGER NOT NULL,
+          last_checked_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS skill_source_artifacts (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          snapshot_id TEXT NOT NULL,
+          path TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          storage_ref TEXT NOT NULL,
+          media_type TEXT,
+          review_status TEXT NOT NULL,
+          included_in_runtime INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(snapshot_id) REFERENCES skill_source_snapshots(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_source_artifacts_snapshot
+        ON skill_source_artifacts(workspace_id, snapshot_id, review_status, updated_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_source_artifacts_checksum_path
+        ON skill_source_artifacts(workspace_id, snapshot_id, path, checksum);
+      `);
+      if (!hasSkillSourceUpgradeLifecycleMigration) {
+        context.recordMigration(SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION, SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_NAME);
       }
     }
 }

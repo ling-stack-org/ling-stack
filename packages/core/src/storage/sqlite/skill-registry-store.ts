@@ -2,20 +2,26 @@ import type { SQLOutputValue } from "node:sqlite";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import {
   createSkillImportDraftId,
+  createSkillSourceArtifactId,
   createSkillSourceSnapshotId,
   createSkillPackId,
   type CreateSkillImportDraftInput,
+  type CreateSkillSourceArtifactInput,
   type CreateSkillSourceSnapshotInput,
+  type ListSkillSourceArtifactOptions,
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
   type SkillImportDraft,
   type SkillRegistryEntry,
+  type SkillSourceArtifact,
   type SkillSourceSnapshot,
+  type SkillSourceUpgradePolicy,
   type SkillVisibility,
+  type UpdateSkillSourceUpgradePolicyInput,
 } from "../../skill-types.js";
 import { omitUndefined, stringifyJson } from "./helpers.js";
-import { mapSkillImportDraft, mapSkillRegistryEntry, mapSkillSourceSnapshot } from "./task-skill-mappers.js";
-import { skillImportDraftSelectSql, skillRegistryEntrySelectSql, skillSourceSnapshotSelectSql } from "./select-sql.js";
+import { mapSkillImportDraft, mapSkillRegistryEntry, mapSkillSourceArtifact, mapSkillSourceSnapshot, mapSkillSourceUpgradePolicy } from "./task-skill-mappers.js";
+import { skillImportDraftSelectSql, skillRegistryEntrySelectSql, skillSourceArtifactSelectSql, skillSourceSnapshotSelectSql, skillSourceUpgradePolicySelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 export class SqliteSkillRegistryStore {
@@ -91,6 +97,7 @@ export class SqliteSkillRegistryStore {
       upstreamSkillPath: input.upstreamSkillPath,
       sourceChecksum: input.sourceChecksum,
       rawSkillMarkdown: input.rawSkillMarkdown,
+      rawSkillMarkdownArtifactId: input.rawSkillMarkdownArtifactId,
       agentMetadata: input.agentMetadata,
       referencedFiles: input.referencedFiles ?? [],
       warnings: input.warnings ?? [],
@@ -111,13 +118,14 @@ export class SqliteSkillRegistryStore {
           upstream_skill_path,
           source_checksum,
           raw_skill_markdown,
+          raw_skill_markdown_artifact_id,
           agent_metadata_json,
           referenced_files_json,
           warnings_json,
           review_status,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           skill_id = excluded.skill_id,
           source_kind = excluded.source_kind,
@@ -127,6 +135,7 @@ export class SqliteSkillRegistryStore {
           upstream_skill_path = excluded.upstream_skill_path,
           source_checksum = excluded.source_checksum,
           raw_skill_markdown = excluded.raw_skill_markdown,
+          raw_skill_markdown_artifact_id = excluded.raw_skill_markdown_artifact_id,
           agent_metadata_json = excluded.agent_metadata_json,
           referenced_files_json = excluded.referenced_files_json,
           warnings_json = excluded.warnings_json,
@@ -144,6 +153,7 @@ export class SqliteSkillRegistryStore {
         snapshot.upstreamSkillPath ?? null,
         snapshot.sourceChecksum,
         snapshot.rawSkillMarkdown,
+        snapshot.rawSkillMarkdownArtifactId ?? null,
         stringifyJson(snapshot.agentMetadata ?? null),
         stringifyJson(snapshot.referencedFiles),
         stringifyJson(snapshot.warnings),
@@ -163,6 +173,188 @@ export class SqliteSkillRegistryStore {
       .prepare("UPDATE skill_source_snapshots SET review_status = 'archived', updated_at = ? WHERE workspace_id = ? AND id = ?")
       .run(now, DEFAULT_WORKSPACE_ID, existing.id);
     return this.getSkillSourceSnapshotById(existing.id);
+  }
+
+  rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined {
+    const existing = this.getSkillSourceSnapshotById(snapshotId);
+    if (!existing) {
+      return undefined;
+    }
+    const current = this.getSkillSourceSnapshot(existing.skillId);
+    if (current && current.id !== existing.id) {
+      this.context.database
+        .prepare("UPDATE skill_source_snapshots SET review_status = 'archived', updated_at = ? WHERE workspace_id = ? AND id = ?")
+        .run(now, DEFAULT_WORKSPACE_ID, current.id);
+    }
+    return this.upsertSkillSourceSnapshot({
+      id: existing.id,
+      skillId: existing.skillId,
+      sourceKind: existing.sourceKind,
+      sourcePath: existing.sourcePath,
+      upstreamName: existing.upstreamName,
+      upstreamVersion: existing.upstreamVersion,
+      upstreamSkillPath: existing.upstreamSkillPath,
+      sourceChecksum: existing.sourceChecksum,
+      rawSkillMarkdown: existing.rawSkillMarkdown,
+      rawSkillMarkdownArtifactId: existing.rawSkillMarkdownArtifactId,
+      agentMetadata: existing.agentMetadata,
+      referencedFiles: existing.referencedFiles,
+      warnings: existing.warnings,
+      reviewStatus: "published",
+    }, now);
+  }
+
+  getSkillSourceUpgradePolicy(now = new Date().toISOString()): SkillSourceUpgradePolicy {
+    const row = this.context.database
+      .prepare(skillSourceUpgradePolicySelectSql("WHERE workspace_id = ?"))
+      .get(DEFAULT_WORKSPACE_ID);
+    if (row) {
+      return mapSkillSourceUpgradePolicy(row as Record<string, SQLOutputValue>);
+    }
+    return this.updateSkillSourceUpgradePolicy({}, now);
+  }
+
+  updateSkillSourceUpgradePolicy(input: UpdateSkillSourceUpgradePolicyInput, now: string): SkillSourceUpgradePolicy {
+    const existingRow = this.context.database
+      .prepare(skillSourceUpgradePolicySelectSql("WHERE workspace_id = ?"))
+      .get(DEFAULT_WORKSPACE_ID);
+    const existing = existingRow ? mapSkillSourceUpgradePolicy(existingRow as Record<string, SQLOutputValue>) : undefined;
+    const policy: SkillSourceUpgradePolicy = omitUndefined({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      mode: input.mode ?? existing?.mode ?? "prompt",
+      approvedRootIds: input.approvedRootIds ?? existing?.approvedRootIds ?? [],
+      allowNewSkills: input.allowNewSkills ?? existing?.allowNewSkills ?? false,
+      allowGlobalGstackUpgrade: false as const,
+      lastCheckedAt: input.lastCheckedAt ?? existing?.lastCheckedAt,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+    this.context.database
+      .prepare(`
+        INSERT INTO skill_source_upgrade_policies (
+          workspace_id,
+          mode,
+          approved_root_ids_json,
+          allow_new_skills,
+          allow_global_gstack_upgrade,
+          last_checked_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET
+          mode = excluded.mode,
+          approved_root_ids_json = excluded.approved_root_ids_json,
+          allow_new_skills = excluded.allow_new_skills,
+          allow_global_gstack_upgrade = excluded.allow_global_gstack_upgrade,
+          last_checked_at = excluded.last_checked_at,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        policy.workspaceId,
+        policy.mode,
+        stringifyJson(policy.approvedRootIds),
+        policy.allowNewSkills ? 1 : 0,
+        0,
+        policy.lastCheckedAt ?? null,
+        policy.createdAt,
+        policy.updatedAt,
+      );
+    return mapSkillSourceUpgradePolicy(
+      this.context.database
+        .prepare(skillSourceUpgradePolicySelectSql("WHERE workspace_id = ?"))
+        .get(DEFAULT_WORKSPACE_ID) as Record<string, SQLOutputValue>,
+    );
+  }
+
+  upsertSkillSourceArtifact(input: CreateSkillSourceArtifactInput, now: string): SkillSourceArtifact {
+    const id = input.id ?? createSkillSourceArtifactId();
+    const existing = this.getSkillSourceArtifact(id);
+    const artifact: SkillSourceArtifact = omitUndefined({
+      id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      snapshotId: input.snapshotId,
+      path: input.path,
+      kind: input.kind,
+      checksum: input.checksum,
+      sizeBytes: input.sizeBytes,
+      storageRef: input.storageRef,
+      mediaType: input.mediaType,
+      reviewStatus: input.reviewStatus ?? "draft",
+      includedInRuntime: input.includedInRuntime ?? false,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+    this.context.database
+      .prepare(`
+        INSERT INTO skill_source_artifacts (
+          id,
+          workspace_id,
+          snapshot_id,
+          path,
+          kind,
+          checksum,
+          size_bytes,
+          storage_ref,
+          media_type,
+          review_status,
+          included_in_runtime,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          snapshot_id = excluded.snapshot_id,
+          path = excluded.path,
+          kind = excluded.kind,
+          checksum = excluded.checksum,
+          size_bytes = excluded.size_bytes,
+          storage_ref = excluded.storage_ref,
+          media_type = excluded.media_type,
+          review_status = excluded.review_status,
+          included_in_runtime = excluded.included_in_runtime,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        artifact.id,
+        artifact.workspaceId,
+        artifact.snapshotId,
+        artifact.path,
+        artifact.kind,
+        artifact.checksum,
+        artifact.sizeBytes,
+        artifact.storageRef,
+        artifact.mediaType ?? null,
+        artifact.reviewStatus,
+        artifact.includedInRuntime ? 1 : 0,
+        artifact.createdAt,
+        artifact.updatedAt,
+      );
+    return this.getSkillSourceArtifact(id) ?? artifact;
+  }
+
+  getSkillSourceArtifact(id: string): SkillSourceArtifact | undefined {
+    const row = this.context.database
+      .prepare(skillSourceArtifactSelectSql("WHERE workspace_id = ? AND id = ?"))
+      .get(DEFAULT_WORKSPACE_ID, id);
+    return row ? mapSkillSourceArtifact(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listSkillSourceArtifacts(options: ListSkillSourceArtifactOptions = {}): SkillSourceArtifact[] {
+    const conditions = ["workspace_id = ?"];
+    const params: string[] = [DEFAULT_WORKSPACE_ID];
+    if (options.snapshotId) {
+      conditions.push("snapshot_id = ?");
+      params.push(options.snapshotId);
+    }
+    if (options.reviewStatus) {
+      conditions.push("review_status = ?");
+      params.push(options.reviewStatus);
+    } else if (!options.includeArchived) {
+      conditions.push("review_status != 'archived'");
+    }
+    return this.context.database
+      .prepare(`${skillSourceArtifactSelectSql(`WHERE ${conditions.join(" AND ")}`)} ORDER BY updated_at DESC, id ASC`)
+      .all(...params)
+      .map((row) => mapSkillSourceArtifact(row as Record<string, SQLOutputValue>));
   }
 
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft {

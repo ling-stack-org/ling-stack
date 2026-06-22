@@ -102,3 +102,48 @@ test("sqlite skill source snapshots archive without deleting source evidence", a
     assert.equal(store.listSkillSourceSnapshots({ includeArchived: true }).length, 1);
   });
 });
+
+test("sqlite skill source lifecycle stores policy, artifacts, and rollback snapshots", async () => {
+  await withStore("ling-stack-skill-source-lifecycle-", async (store) => {
+    const defaultPolicy = store.getSkillSourceUpgradePolicy("2026-06-22T00:00:00.000Z");
+    assert.equal(defaultPolicy.mode, "prompt");
+    assert.equal(defaultPolicy.allowNewSkills, false);
+
+    const policy = store.updateSkillSourceUpgradePolicy({
+      mode: "auto-safe",
+      approvedRootIds: ["root_1"],
+      allowNewSkills: true,
+      lastCheckedAt: "2026-06-22T00:01:00.000Z",
+    }, "2026-06-22T00:01:00.000Z");
+    assert.equal(policy.mode, "auto-safe");
+    assert.deepEqual(policy.approvedRootIds, ["root_1"]);
+    assert.equal(policy.allowGlobalGstackUpgrade, false);
+    assert.equal(policy.lastCheckedAt, "2026-06-22T00:01:00.000Z");
+
+    const first = store.upsertSkillSourceSnapshot(sourceSnapshotInput({ id: "skill_source_review_v1", sourceChecksum: "sha256-review-v1" }), "2026-06-22T00:02:00.000Z");
+    const artifact = store.upsertSkillSourceArtifact({
+      snapshotId: first.id,
+      path: "references/checklist.md",
+      kind: "reference",
+      checksum: "sha256-ref",
+      sizeBytes: 128,
+      storageRef: "skill-source/skill_source_review_v1/ref.md",
+      mediaType: "text/markdown; charset=utf-8",
+      reviewStatus: "published",
+      includedInRuntime: true,
+    }, "2026-06-22T00:02:10.000Z");
+    assert.equal(artifact.workspaceId, "workspace_default");
+    assert.equal(store.listSkillSourceArtifacts({ snapshotId: first.id }).length, 1);
+
+    store.archiveSkillSourceSnapshot("review", "2026-06-22T00:03:00.000Z");
+    store.upsertSkillSourceSnapshot(sourceSnapshotInput({ id: "skill_source_review_v2", sourceChecksum: "sha256-review-v2" }), "2026-06-22T00:04:00.000Z");
+    const rolledBack = store.rollbackSkillSourceSnapshot("skill_source_review_v1", "2026-06-22T00:05:00.000Z");
+
+    assert.equal(rolledBack.skillId, "review");
+    assert.equal(rolledBack.reviewStatus, "published");
+    assert.equal(rolledBack.sourceChecksum, "sha256-review-v1");
+    assert.equal(rolledBack.id, "skill_source_review_v1");
+    assert.equal(store.listSkillSourceArtifacts({ snapshotId: rolledBack.id }).length, 1);
+    assert.equal(store.getSkillSourceSnapshotById("skill_source_review_v2").reviewStatus, "archived");
+  });
+});

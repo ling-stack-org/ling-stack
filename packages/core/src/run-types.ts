@@ -224,12 +224,17 @@ import type {
 } from "./work-item-types.js";
 import type {
   CreateSkillImportDraftInput,
+  CreateSkillSourceArtifactInput,
   CreateSkillSourceSnapshotInput,
+  ListSkillSourceArtifactOptions,
   ListSkillRegistryOptions,
   ListSkillSourceSnapshotOptions,
   SkillImportDraft,
   SkillRegistryEntry,
+  SkillSourceArtifact,
   SkillSourceSnapshot,
+  SkillSourceUpgradePolicy,
+  UpdateSkillSourceUpgradePolicyInput,
 } from "./skill-types.js";
 import type {
   ApplySkillCandidateReviewActionInput,
@@ -1419,8 +1424,15 @@ export interface RunStore {
   getSkillRegistryEntry(id: string): SkillRegistryEntry | undefined;
   listSkillSourceSnapshots(options?: ListSkillSourceSnapshotOptions): SkillSourceSnapshot[];
   getSkillSourceSnapshot(skillId: string, options?: Pick<ListSkillSourceSnapshotOptions, "reviewStatus" | "includeArchived">): SkillSourceSnapshot | undefined;
+  getSkillSourceSnapshotById(id: string): SkillSourceSnapshot | undefined;
   upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot;
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined;
+  rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined;
+  getSkillSourceUpgradePolicy(now?: string): SkillSourceUpgradePolicy;
+  updateSkillSourceUpgradePolicy(input: UpdateSkillSourceUpgradePolicyInput, now: string): SkillSourceUpgradePolicy;
+  upsertSkillSourceArtifact(input: CreateSkillSourceArtifactInput, now: string): SkillSourceArtifact;
+  getSkillSourceArtifact(id: string): SkillSourceArtifact | undefined;
+  listSkillSourceArtifacts(options?: ListSkillSourceArtifactOptions): SkillSourceArtifact[];
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft;
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
@@ -1828,8 +1840,15 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillRegistryEntry"
   | "listSkillSourceSnapshots"
   | "getSkillSourceSnapshot"
+  | "getSkillSourceSnapshotById"
   | "upsertSkillSourceSnapshot"
   | "archiveSkillSourceSnapshot"
+  | "rollbackSkillSourceSnapshot"
+  | "getSkillSourceUpgradePolicy"
+  | "updateSkillSourceUpgradePolicy"
+  | "upsertSkillSourceArtifact"
+  | "getSkillSourceArtifact"
+  | "listSkillSourceArtifacts"
   | "createSkillImportDraft"
   | "getSkillImportDraft"
   | "publishSkillImportDraft"

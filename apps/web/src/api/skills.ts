@@ -31,13 +31,19 @@ import type {
   SkillRegistryListResponse,
   SkillRegistryMutationResponse,
   SkillSourceHealthResponse,
+  SkillSourceArtifactListResponse,
   SkillSourceSnapshotArchiveResponse,
+  SkillSourceSnapshotRollbackRequest,
+  SkillSourceSnapshotRollbackResponse,
   SkillSourceSnapshotResponse,
+  SkillSourceSyncCheckUpdatesResponse,
   SkillSourceSyncPreviewResponse,
   SkillSourceSyncPublishRequest,
   SkillSourceSyncPublishResponse,
   SkillSourceSyncRefreshResponse,
   SkillSourceSyncRequest,
+  SkillSourceUpgradePolicyResponse,
+  SkillSourceUpgradePolicyUpdateRequest,
   SkillUsageEventKind,
   SkillUsageEventListResponse,
   SkillUsageStatsListResponse,
@@ -64,8 +70,32 @@ export async function archiveSkillSourceSnapshot(cwd: string, skillId: string): 
   return daemonClient.archiveSkillSourceSnapshot(cwd, skillId);
 }
 
+export async function rollbackSkillSourceSnapshot(cwd: string, skillId: string, input: SkillSourceSnapshotRollbackRequest): Promise<SkillSourceSnapshotRollbackResponse> {
+  return daemonClient.rollbackSkillSourceSnapshot(cwd, skillId, input);
+}
+
+export async function listSkillSourceArtifacts(cwd: string, skillId: string): Promise<SkillSourceArtifactListResponse> {
+  return daemonClient.listSkillSourceArtifacts(cwd, skillId);
+}
+
+export function skillSourceArtifactContentUrl(artifactId: string, cwd?: string): string {
+  return daemonClient.skillSourceArtifactContentUrl(artifactId, cwd);
+}
+
+export async function getSkillSourceUpgradePolicy(cwd: string): Promise<SkillSourceUpgradePolicyResponse> {
+  return daemonClient.getSkillSourceUpgradePolicy(cwd);
+}
+
+export async function updateSkillSourceUpgradePolicy(cwd: string, input: SkillSourceUpgradePolicyUpdateRequest): Promise<SkillSourceUpgradePolicyResponse> {
+  return daemonClient.updateSkillSourceUpgradePolicy(cwd, input);
+}
+
 export async function previewGstackSkillSourceSync(cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncPreviewResponse> {
   return daemonClient.previewGstackSkillSourceSync(cwd, input);
+}
+
+export async function checkGstackSkillSourceUpdates(cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncCheckUpdatesResponse> {
+  return daemonClient.checkGstackSkillSourceUpdates(cwd, input);
 }
 
 export async function refreshGstackSkillSourceSync(cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncRefreshResponse> {
