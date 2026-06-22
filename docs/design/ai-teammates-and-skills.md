@@ -360,12 +360,14 @@ approval previews before any teammate can bind or run imported definitions. PATC
 draft editing and deeper custom skill editing remain follow-ups. See
 [Ling Skill Import v1](ling-skill-import-v1.md).
 
-Phase 5 should add source snapshots for Codex/gstack-style skills. `SkillDefinition`
-remains the lightweight executable registry contract, while `SkillSourceSnapshot`
-preserves raw `SKILL.md`, optional `agents/openai.yaml` metadata, source checksums,
-referenced file inventory, drift state, and warning evidence. Runtime context loads the
-source snapshot lazily only after a skill is selected and Effective Skill checks pass.
-See [GStack Skill Source Sync](gstack-skill-source-sync.md).
+Phase 5 is now specified by the implementation-ready GStack Skill Source Sync design.
+`SkillDefinition` remains the lightweight executable registry contract, while
+`SkillSourceSnapshot` preserves raw `SKILL.md`, optional `agents/openai.yaml` metadata,
+source checksums, referenced file inventory, drift state, and warning evidence. Runtime
+context loads the source snapshot lazily only after a skill is selected and Effective
+Skill checks pass. This is the missing piece for full Codex/gstack-style source
+embedding without vendoring upstream runtime files or granting permissions from source
+text. See [GStack Skill Source Sync](gstack-skill-source-sync.md).
 
 ### Failure Modes To Avoid
 

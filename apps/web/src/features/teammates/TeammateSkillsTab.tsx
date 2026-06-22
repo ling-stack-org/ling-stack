@@ -8,6 +8,7 @@ import type {
   SkillImportDraft,
   SkillPackSource,
   SkillRegistryEntry,
+  SkillSourceSnapshot,
   TeammateSkillBinding,
 } from "../../types.js";
 import { approvalProfileText, workflowPhaseLabel } from "./helpers.js";
@@ -29,6 +30,7 @@ export interface TeammateSkillRowModel {
   readonly skill: SkillDefinition | undefined;
   readonly binding: TeammateSkillBinding | undefined;
   readonly effectiveSkill: EffectiveTeammateSkill | undefined;
+  readonly sourceSnapshot: SkillSourceSnapshot | undefined;
 }
 
 interface SkillStats {
@@ -270,7 +272,7 @@ export function TeammateSkillsTab({
                     </td>
                   </tr>
                 ) : (
-                  skillTableRows.map(({ id, skill, binding, effectiveSkill }) => {
+                  skillTableRows.map(({ id, skill, binding, effectiveSkill, sourceSnapshot }) => {
                     const enabled = Boolean(binding?.enabled);
                     const sourceLabel = binding
                       ? binding.source === "template"
@@ -294,7 +296,9 @@ export function TeammateSkillsTab({
                             <small>{skill?.id ?? id}</small>
                           </button>
                         </td>
-                        <td>{sourceLabel}</td>
+                        <td>
+                          <TeammateSkillSourceStatus label={sourceLabel} snapshot={sourceSnapshot} />
+                        </td>
                         <td>
                           <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span>
                         </td>
@@ -377,6 +381,7 @@ export function TeammateSkillsTab({
                 <SkillInspectorSection title={t("Approval profile")}>
                   <p>{selectedSkillRow.skill ? approvalProfileText(selectedSkillRow.skill.approvalProfile, t) : "-"}</p>
                 </SkillInspectorSection>
+                <SkillSourceInspectorSection snapshot={selectedSkillRow.sourceSnapshot} />
                 <div className="teammate-skill-inspector-actions">
                   <button className="primary-button compact-button" type="button" onClick={() => void onToggleSkillBinding(selectedSkillRow.id)} disabled={savingSkills}>
                     {selectedSkillRow.binding?.enabled ? <X size={14} /> : <Plus size={14} />}
@@ -400,6 +405,73 @@ export function TeammateSkillsTab({
       )}
     </section>
   );
+}
+
+function TeammateSkillSourceStatus({
+  label,
+  snapshot,
+}: {
+  readonly label: string;
+  readonly snapshot: SkillSourceSnapshot | undefined;
+}): JSX.Element {
+  const { t } = useI18n();
+  const state = teammateSkillSourceState(snapshot, t);
+  return (
+    <span className="teammate-skill-source-status">
+      <span>{label}</span>
+      <small className={state.tone}>{state.label}</small>
+    </span>
+  );
+}
+
+function SkillSourceInspectorSection({ snapshot }: { readonly snapshot: SkillSourceSnapshot | undefined }): JSX.Element {
+  const { t } = useI18n();
+  const state = teammateSkillSourceState(snapshot, t);
+  if (!snapshot) {
+    return (
+      <SkillInspectorSection title={t("Source snapshot")}>
+        <p>{state.label}</p>
+      </SkillInspectorSection>
+    );
+  }
+  return (
+    <SkillInspectorSection title={t("Source snapshot")}>
+      <div className="teammate-skill-source-detail">
+        <span><small>{t("State")}</small><code className={state.tone}>{state.label}</code></span>
+        <span><small>{t("Snapshot")}</small><code>{snapshot.id}</code></span>
+        <span><small>{t("Checksum")}</small><code>{snapshot.sourceChecksum}</code></span>
+        <span><small>{t("Path")}</small><code>{snapshot.upstreamSkillPath ?? snapshot.sourcePath ?? "-"}</code></span>
+      </div>
+      <div className="teammate-skill-source-tags">
+        <span>{t("Files")}: {snapshot.referencedFiles.length}</span>
+        <span>{t("Warnings")}: {snapshot.warnings.length}</span>
+        <span>{t("Review")}: {snapshot.reviewStatus}</span>
+      </div>
+    </SkillInspectorSection>
+  );
+}
+
+function teammateSkillSourceState(
+  snapshot: SkillSourceSnapshot | undefined,
+  t: (key: string, values?: Readonly<Record<string, string | number>>) => string,
+): { readonly label: string; readonly tone: "backed" | "warning" | "missing" } {
+  if (!snapshot) {
+    return { label: t("Metadata only"), tone: "missing" };
+  }
+  const warningCodes = new Set(snapshot.warnings.map((warning) => warning.code));
+  if (warningCodes.has("drifted_upstream")) {
+    return { label: t("Drifted source"), tone: "warning" };
+  }
+  if (warningCodes.has("missing_upstream")) {
+    return { label: t("Missing upstream"), tone: "warning" };
+  }
+  if (warningCodes.has("orphaned_snapshot")) {
+    return { label: t("Orphaned source"), tone: "warning" };
+  }
+  if (snapshot.warnings.length > 0) {
+    return { label: t("{count} warnings", { count: snapshot.warnings.length }), tone: "warning" };
+  }
+  return { label: t("Source-backed"), tone: "backed" };
 }
 
 function SkillStatePill({

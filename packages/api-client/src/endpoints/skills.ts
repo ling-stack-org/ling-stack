@@ -32,6 +32,14 @@ import type {
   SkillRegistryListResponse,
   SkillRegistryMutationResponse,
   SkillRegistryRefreshResponse,
+  SkillSourceHealthResponse,
+  SkillSourceSnapshotArchiveResponse,
+  SkillSourceSnapshotResponse,
+  SkillSourceSyncPreviewResponse,
+  SkillSourceSyncPublishRequest,
+  SkillSourceSyncPublishResponse,
+  SkillSourceSyncRefreshResponse,
+  SkillSourceSyncRequest,
   SkillUsageEventKind,
   SkillUsageEventListResponse,
   SkillUsageStatsListResponse,
@@ -45,6 +53,30 @@ export const skillEndpoints = {
 
   async getSkillHealth(this: LingDaemonEndpointContext, cwd: string, options: { readonly limit?: number } = {}): Promise<SkillHealthResponse> {
     return this._get("/skills/health", { cwd, limit: options.limit });
+  },
+
+  async getSkillSourceHealth(this: LingDaemonEndpointContext, cwd: string, options: { readonly limit?: number } = {}): Promise<SkillSourceHealthResponse> {
+    return this._get("/skills/source-health", { cwd, limit: options.limit });
+  },
+
+  async getSkillSourceSnapshot(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillSourceSnapshotResponse> {
+    return this._get(`/skills/${encodeURIComponent(skillId)}/source`, { cwd });
+  },
+
+  async archiveSkillSourceSnapshot(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillSourceSnapshotArchiveResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/source/archive`, { cwd }, {});
+  },
+
+  async previewGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncPreviewResponse> {
+    return this._post("/skills/sync/gstack/preview", { cwd }, input);
+  },
+
+  async refreshGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncRefreshResponse> {
+    return this._post("/skills/sync/gstack/refresh", { cwd }, input);
+  },
+
+  async publishGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncPublishRequest): Promise<SkillSourceSyncPublishResponse> {
+    return this._post("/skills/sync/gstack/publish", { cwd }, input);
   },
 
   async listSkillUsageEvents(

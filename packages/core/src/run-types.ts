@@ -224,9 +224,12 @@ import type {
 } from "./work-item-types.js";
 import type {
   CreateSkillImportDraftInput,
+  CreateSkillSourceSnapshotInput,
   ListSkillRegistryOptions,
+  ListSkillSourceSnapshotOptions,
   SkillImportDraft,
   SkillRegistryEntry,
+  SkillSourceSnapshot,
 } from "./skill-types.js";
 import type {
   ApplySkillCandidateReviewActionInput,
@@ -1414,6 +1417,10 @@ export interface RunStore {
   getManagedPluginRuntimeSnapshotForRun(runId: string): ManagedPluginRuntimeSnapshot | undefined;
   listSkillRegistryEntries(options?: ListSkillRegistryOptions): SkillRegistryEntry[];
   getSkillRegistryEntry(id: string): SkillRegistryEntry | undefined;
+  listSkillSourceSnapshots(options?: ListSkillSourceSnapshotOptions): SkillSourceSnapshot[];
+  getSkillSourceSnapshot(skillId: string, options?: Pick<ListSkillSourceSnapshotOptions, "reviewStatus" | "includeArchived">): SkillSourceSnapshot | undefined;
+  upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot;
+  archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined;
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft;
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
@@ -1819,6 +1826,10 @@ export type ManagedPluginStoreFacet = RunStoreFacet<
 export type SkillRegistryStoreFacet = RunStoreFacet<
   | "listSkillRegistryEntries"
   | "getSkillRegistryEntry"
+  | "listSkillSourceSnapshots"
+  | "getSkillSourceSnapshot"
+  | "upsertSkillSourceSnapshot"
+  | "archiveSkillSourceSnapshot"
   | "createSkillImportDraft"
   | "getSkillImportDraft"
   | "publishSkillImportDraft"

@@ -1343,10 +1343,29 @@ test("run detail shows stored permission preset and full access confirmation evi
   const state = createBaseState({ approvalStatus: "expired" });
   state.runs = state.runs.map((run) => ({
     ...run,
+    selectedSkillId: "review",
     requestSnapshot: {
       ...(isRecord(run.requestSnapshot) ? run.requestSnapshot : {}),
       permissionPreset: "full_access",
       permissionMode: "full_access",
+      selectedSkillId: "review",
+      skillSourceContext: {
+        loaded: true,
+        snapshotId: "skill_source_review_mock",
+        skillId: "review",
+        sourceKind: "gstack-skill-directory",
+        upstreamName: "gstack",
+        upstreamVersion: "1.58.3.0",
+        upstreamSkillPath: "gstack-review/SKILL.md",
+        sourceChecksum: "sha256:review-mock",
+        sourceLengthChars: 96,
+        loadedChars: 96,
+        maxLoadedChars: 60000,
+        truncated: false,
+        warningCount: 0,
+        warningSeverities: [],
+        referencedFiles: [{ path: "references/checklist.md", kind: "reference", includedInSnapshot: false }],
+      },
       permissionConfirmation: {
         mode: "full_access",
         confirmed: true,
@@ -1375,4 +1394,9 @@ test("run detail shows stored permission preset and full access confirmation evi
   await expect(summary.getByText("Full access confirmation", { exact: true })).toBeVisible();
   await expect(detail).toContainText("user_confirmed_full_access");
   await expect(detail).toContainText("Write scope: /");
+  await expect(summary.getByText("Skill source", { exact: true })).toBeVisible();
+  await expect(detail).toContainText("Skill source context");
+  await expect(detail).toContainText("skill_source_review_mock");
+  await expect(detail).toContainText("sha256:review-mock");
+  await expect(detail).toContainText("references/checklist.md");
 });

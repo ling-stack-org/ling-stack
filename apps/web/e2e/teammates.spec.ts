@@ -545,6 +545,11 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await settingsSections.getByRole("button", { name: /Skills/ }).click();
   const skillsPanel = page.locator(".teammate-skills-panel");
   await expect(skillsPanel).toContainText("Implementation");
+  const codeReviewSkillRow = skillsPanel.getByRole("row", { name: /Code Review review/ });
+  await expect(codeReviewSkillRow).toContainText("Source-backed");
+  await codeReviewSkillRow.getByRole("button", { name: "Details" }).click();
+  await expect(skillsPanel.locator(".teammate-skill-inspector")).toContainText("skill_source_review_mock");
+  await expect(skillsPanel.locator(".teammate-skill-inspector")).toContainText("sha256:review-mock");
   const skillsDarkSurfaces = await page.evaluate(() => {
     const selectors = [".teammate-skill-add-row", ".teammate-skill-row", ".teammate-skills-panel .phase-token"];
     return selectors.flatMap((selector) =>

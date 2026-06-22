@@ -6,6 +6,47 @@ import type { ProviderCapability } from "./provider-types.js";
 export type SkillPackSource = "builtin" | "gstack" | "workspace" | "skill-directory" | "agents-md" | "custom";
 export type SkillRegistryReviewStatus = "builtin" | "draft" | "published" | "disabled" | "archived";
 export type SkillImportWarningSeverity = "info" | "warning" | "error";
+export type SkillSourceKind =
+  | "gstack-skill-directory"
+  | "codex-skill-directory"
+  | "workspace-skill-directory"
+  | "manual-markdown";
+export type SkillSourceSnapshotReviewStatus = "draft" | "reviewed" | "published" | "archived";
+export type SkillSourceFileKind = "script" | "asset" | "reference" | "agent-metadata" | "other";
+export type SkillSourceWarningSeverity = "info" | "warning" | "error";
+export type SkillSourceWarningCode =
+  | "permission_like_instruction"
+  | "secret_reference"
+  | "external_send_claim"
+  | "destructive_command"
+  | "host_specific_tool"
+  | "unsupported_tool"
+  | "large_source"
+  | "source_truncated"
+  | "missing_metadata"
+  | "drifted_upstream"
+  | "missing_upstream"
+  | "orphaned_snapshot";
+export type SkillSourceSyncRecordState =
+  | "attachable"
+  | "unchanged"
+  | "drifted"
+  | "new"
+  | "missing"
+  | "blocked"
+  | "orphaned";
+export type SkillSourceSyncDiffField =
+  | "sourceChecksum"
+  | "upstreamVersion"
+  | "upstreamSkillPath"
+  | "sourceLengthChars"
+  | "referencedFiles"
+  | "warnings"
+  | "frontMatterName"
+  | "frontMatterDescription"
+  | "agentDisplayName"
+  | "agentShortDescription"
+  | "agentAllowImplicitInvocation";
 export type SkillImportWarningCode =
   | "permission_like_instruction"
   | "secret_reference"
@@ -134,6 +175,155 @@ export interface SkillRegistryEntry {
   readonly updatedAt: string;
 }
 
+export interface SkillAgentMetadata {
+  readonly displayName?: string;
+  readonly shortDescription?: string;
+  readonly defaultPrompt?: string;
+  readonly allowImplicitInvocation?: boolean;
+}
+
+export interface SkillSourceFileRef {
+  readonly path: string;
+  readonly kind: SkillSourceFileKind;
+  readonly checksum?: string;
+  readonly sizeBytes?: number;
+  readonly includedInSnapshot: boolean;
+}
+
+export interface SkillSourceWarning {
+  readonly code: SkillSourceWarningCode;
+  readonly severity: SkillSourceWarningSeverity;
+  readonly message: string;
+  readonly location?: string;
+}
+
+export interface SkillSourceSyncDiffItem {
+  readonly field: SkillSourceSyncDiffField;
+  readonly label: string;
+  readonly before?: string;
+  readonly after?: string;
+  readonly severity: SkillSourceWarningSeverity;
+}
+
+export interface SkillSourceSnapshot {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly skillId: string;
+  readonly sourceKind: SkillSourceKind;
+  readonly sourcePath?: string;
+  readonly upstreamName?: string;
+  readonly upstreamVersion?: string;
+  readonly upstreamSkillPath?: string;
+  readonly sourceChecksum: string;
+  readonly rawSkillMarkdown: string;
+  readonly agentMetadata?: SkillAgentMetadata;
+  readonly referencedFiles: readonly SkillSourceFileRef[];
+  readonly warnings: readonly SkillSourceWarning[];
+  readonly reviewStatus: SkillSourceSnapshotReviewStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface SkillSourceScanRoot {
+  readonly rootPath: string;
+  readonly sourceKind: SkillSourceKind;
+  readonly label?: string;
+  readonly upstreamName?: string;
+  readonly upstreamVersion?: string;
+}
+
+export interface SkillSourceFrontMatter {
+  readonly name?: string;
+  readonly description?: string;
+}
+
+export interface SkillSourceSyncPreviewRecord {
+  readonly state: SkillSourceSyncRecordState;
+  readonly skillId: string;
+  readonly sourceKind?: SkillSourceKind;
+  readonly sourcePath?: string;
+  readonly upstreamName?: string;
+  readonly upstreamVersion?: string;
+  readonly upstreamSkillPath?: string;
+  readonly sourceChecksum?: string;
+  readonly sourceSizeBytes?: number;
+  readonly frontMatter?: SkillSourceFrontMatter;
+  readonly agentMetadata?: SkillAgentMetadata;
+  readonly referencedFiles: readonly SkillSourceFileRef[];
+  readonly warnings: readonly SkillSourceWarning[];
+  readonly definitionPreview?: SkillDefinition;
+  readonly snapshotPreview?: CreateSkillSourceSnapshotInput;
+  readonly existingSnapshotId?: string;
+  readonly diff: readonly SkillSourceSyncDiffItem[];
+}
+
+export interface SkillSourceSyncPreviewSummary {
+  readonly totalRecords: number;
+  readonly attachable: number;
+  readonly unchanged: number;
+  readonly drifted: number;
+  readonly new: number;
+  readonly missing: number;
+  readonly blocked: number;
+  readonly orphaned: number;
+}
+
+export interface SkillSourceSyncPreviewReport {
+  readonly generatedAt: string;
+  readonly roots: readonly SkillSourceScanRoot[];
+  readonly upstreamVersions: readonly string[];
+  readonly summary: SkillSourceSyncPreviewSummary;
+  readonly records: readonly SkillSourceSyncPreviewRecord[];
+}
+
+export interface SkillSourceRuntimeContext {
+  readonly loaded: boolean;
+  readonly snapshotId: string;
+  readonly skillId: string;
+  readonly sourceKind: SkillSourceKind;
+  readonly sourcePath?: string;
+  readonly upstreamName?: string;
+  readonly upstreamVersion?: string;
+  readonly upstreamSkillPath?: string;
+  readonly sourceChecksum: string;
+  readonly sourceLengthChars: number;
+  readonly loadedChars: number;
+  readonly maxLoadedChars: number;
+  readonly truncated: boolean;
+  readonly warningCount: number;
+  readonly warningSeverities: readonly SkillSourceWarningSeverity[];
+  readonly referencedFiles: readonly SkillSourceFileRef[];
+  readonly blockedReason?: string;
+}
+
+export interface SkillSourceRuntimePrompt {
+  readonly context: SkillSourceRuntimeContext;
+  readonly promptFragment?: string;
+}
+
+export interface CreateSkillSourceSnapshotInput {
+  readonly id?: string;
+  readonly skillId: string;
+  readonly sourceKind: SkillSourceKind;
+  readonly sourcePath?: string;
+  readonly upstreamName?: string;
+  readonly upstreamVersion?: string;
+  readonly upstreamSkillPath?: string;
+  readonly sourceChecksum: string;
+  readonly rawSkillMarkdown: string;
+  readonly agentMetadata?: SkillAgentMetadata;
+  readonly referencedFiles?: readonly SkillSourceFileRef[];
+  readonly warnings?: readonly SkillSourceWarning[];
+  readonly reviewStatus?: SkillSourceSnapshotReviewStatus;
+}
+
+export interface ListSkillSourceSnapshotOptions {
+  readonly skillId?: string;
+  readonly sourceKind?: SkillSourceKind;
+  readonly reviewStatus?: SkillSourceSnapshotReviewStatus;
+  readonly includeArchived?: boolean;
+}
+
 export interface SkillImportWarning {
   readonly code: SkillImportWarningCode;
   readonly severity: SkillImportWarningSeverity;
@@ -185,6 +375,10 @@ export function createSkillPackId(): string {
 
 export function createSkillImportDraftId(): string {
   return `skill_draft_${cryptoRandomId()}`;
+}
+
+export function createSkillSourceSnapshotId(): string {
+  return `skill_source_${cryptoRandomId()}`;
 }
 
 function cryptoRandomId(): string {

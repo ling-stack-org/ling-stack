@@ -3,9 +3,12 @@ import {
   analyzeSkillDuplicate,
   buildEffectiveTeammateSkills,
   buildSkillHealthReport,
+  buildSkillSourceHealthReport,
   createProcedureObservationJobFromRecording,
   createProcedureObservationInputFromJob,
   DEFAULT_WORKSPACE_ID,
+  previewGstackSkillSourceSync,
+  resolveSkillSourceRoots,
   isExplicitObservationJob,
   procedureObservationHasTerminalStatus,
   procedureObservationHasJobKey,
@@ -29,6 +32,10 @@ import {
   type SkillDuplicateAnalysis,
   type SkillImportWarning,
   type SkillRegistryEntry,
+  type SkillSourceScanRoot,
+  type SkillSourceSyncPreviewRecord,
+  type SkillSourceSyncPreviewReport,
+  type SkillSourceSnapshot,
   type SkillWorkflowPhase,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -37,7 +44,7 @@ import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { SkillRoute } from "../../server/routes.js";
-import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
+import { readJsonBody, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { listEffectiveSkillRegistryEntries, listExecutableSkillDefinitions, refreshEffectiveSkillRegistryEntries } from "./registry.js";
 import {
@@ -49,6 +56,8 @@ import {
   parseSkillCorrectionRequest,
   parseSkillCandidateReviewRequest,
   parseSkillImportDraftRequest,
+  parseSkillSourceSyncPublishRequest,
+  parseSkillSourceSyncRequest,
   readOptionalCandidateGenerationDecisionActionQuery,
   readOptionalCandidateRouteKindQuery,
   readOptionalProcedureObservationClusterStatusQuery,
@@ -92,6 +101,73 @@ export async function handleSkillRoute(
           limit: readOptionalIntegerQuery(url, "limit", 1),
         }),
       });
+      return;
+    }
+
+    if (url.pathname === "/skills/source-health") {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/source-health` });
+        return;
+      }
+      const report = buildSkillSourceHealthReport({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        skills: listEffectiveSkillRegistryEntries(store),
+        snapshots: store.listSkillSourceSnapshots(),
+        generatedAt: new Date().toISOString(),
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      });
+      writeJson(response, 200, {
+        cwd,
+        report,
+        snapshots: store.listSkillSourceSnapshots({ reviewStatus: "published" }),
+      });
+      return;
+    }
+
+    if (url.pathname === "/skills/sync/gstack/preview") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/gstack/preview` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillSourceSyncRequest(body);
+      const preview = await buildGstackSkillSourceSyncPreview(cwd, store, input);
+      writeJson(response, 200, { cwd, preview });
+      return;
+    }
+
+    if (url.pathname === "/skills/sync/gstack/refresh") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/gstack/refresh` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillSourceSyncRequest(body);
+      const refreshedAt = new Date().toISOString();
+      const preview = await buildGstackSkillSourceSyncPreview(cwd, store, input, refreshedAt);
+      writeJson(response, 200, { cwd, refreshedAt, preview });
+      return;
+    }
+
+    if (url.pathname === "/skills/sync/gstack/publish") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/gstack/publish` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillSourceSyncPublishRequest(body);
+      const now = new Date().toISOString();
+      const preview = await buildGstackSkillSourceSyncPreview(cwd, store, input, now);
+      const result = publishGstackSkillSourceSync({
+        store,
+        controlPlaneEvents,
+        cwd,
+        preview,
+        selectedSkillIds: input.selectedSkillIds,
+        allowNewSkills: input.allowNewSkills,
+        now,
+      });
+      writeJson(response, 200, { cwd, publishedAt: now, preview, skills: result.skills, snapshots: result.snapshots });
       return;
     }
 
@@ -487,6 +563,43 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (route.kind === "skill" && route.action === "source") {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/source` });
+        return;
+      }
+      if (!listEffectiveSkillRegistryEntries(store).some((skill) => skill.id === route.skillId)) {
+        writeJson(response, 404, { error: "skill_not_found", message: `Skill not found: ${route.skillId}` });
+        return;
+      }
+      const snapshot = store.getSkillSourceSnapshot(route.skillId);
+      if (!snapshot) {
+        writeJson(response, 404, { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${route.skillId}` });
+        return;
+      }
+      writeJson(response, 200, { cwd, snapshot });
+      return;
+    }
+
+    if (route.kind === "skill" && route.action === "source-archive") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/source/archive` });
+        return;
+      }
+      if (!listEffectiveSkillRegistryEntries(store).some((skill) => skill.id === route.skillId)) {
+        writeJson(response, 404, { error: "skill_not_found", message: `Skill not found: ${route.skillId}` });
+        return;
+      }
+      const now = new Date().toISOString();
+      const snapshot = store.archiveSkillSourceSnapshot(route.skillId, now);
+      if (!snapshot) {
+        writeJson(response, 404, { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${route.skillId}` });
+        return;
+      }
+      writeJson(response, 200, { cwd, snapshot });
+      return;
+    }
+
     if (route.kind === "skill" && request.method === "DELETE") {
       const now = new Date().toISOString();
       const archived = store.archiveSkillRegistryEntry(route.skillId, now);
@@ -595,6 +708,115 @@ function routeFromObservation(observation: ProcedureObservation): CandidateRoute
 }
 
 type SkillRouteStore = ReturnType<RunStoreRegistry["getStore"]>;
+
+async function buildGstackSkillSourceSyncPreview(
+  cwd: string,
+  store: SkillRouteStore,
+  input: {
+    readonly roots?: readonly SkillSourceScanRoot[];
+    readonly skillRoots?: readonly string[];
+    readonly gstackRepoRoots?: readonly string[];
+    readonly codexSkillRoots?: readonly string[];
+    readonly includeDetectedRoots?: boolean;
+    readonly includeSkillIds?: readonly string[];
+    readonly excludeSkillIds?: readonly string[];
+    readonly maxSourceBytes?: number;
+  },
+  generatedAt = new Date().toISOString(),
+): Promise<SkillSourceSyncPreviewReport> {
+  const roots = input.roots?.length
+    ? input.roots
+    : await resolveSkillSourceRoots({
+        workspaceRoot: hasExplicitSourceRootInputs(input) ? undefined : cwd,
+        skillRoots: input.skillRoots,
+        gstackRepoRoots: input.gstackRepoRoots,
+        codexSkillRoots: input.codexSkillRoots,
+        includeDetectedRoots: input.includeDetectedRoots ?? !hasExplicitSourceRootInputs(input),
+      });
+  return previewGstackSkillSourceSync({
+    roots,
+    registrySkills: listEffectiveSkillRegistryEntries(store),
+    snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
+    includeSkillIds: input.includeSkillIds,
+    excludeSkillIds: input.excludeSkillIds,
+    generatedAt,
+    maxSourceBytes: input.maxSourceBytes,
+  });
+}
+
+function publishGstackSkillSourceSync(input: {
+  readonly store: SkillRouteStore;
+  readonly controlPlaneEvents: ControlPlaneEventHub;
+  readonly cwd: string;
+  readonly preview: SkillSourceSyncPreviewReport;
+  readonly selectedSkillIds: readonly string[];
+  readonly allowNewSkills: boolean;
+  readonly now: string;
+}): { readonly skills: readonly SkillRegistryEntry[]; readonly snapshots: readonly SkillSourceSnapshot[] } {
+  const selectedSkillIds = uniqueStrings(input.selectedSkillIds);
+  const recordsBySkillId = new Map(input.preview.records.map((record) => [record.skillId, record]));
+  const missingSelections = selectedSkillIds.filter((skillId) => !recordsBySkillId.has(skillId));
+  if (missingSelections.length > 0) {
+    throw new HttpError(400, "skill_source_sync_selection_not_found", `Selected skill source records were not found: ${missingSelections.join(", ")}`);
+  }
+  const selectedRecords = selectedSkillIds.map((skillId) => recordsBySkillId.get(skillId)).filter((record): record is SkillSourceSyncPreviewRecord => Boolean(record));
+  const nonPublishable = selectedRecords.filter((record) => record.state === "blocked" || record.state === "missing" || record.state === "orphaned");
+  if (nonPublishable.length > 0) {
+    throw new HttpError(409, "skill_source_sync_not_publishable", `Selected records are not publishable: ${nonPublishable.map((record) => `${record.skillId}:${record.state}`).join(", ")}`);
+  }
+  const newRecords = selectedRecords.filter((record) => record.state === "new");
+  if (newRecords.length > 0 && !input.allowNewSkills) {
+    throw new HttpError(409, "skill_source_sync_new_skills_require_confirmation", `New skills require allowNewSkills=true: ${newRecords.map((record) => record.skillId).join(", ")}`);
+  }
+
+  if (newRecords.length > 0) {
+    const draft = input.store.createSkillImportDraft({
+      source: "gstack",
+      packId: "gstack-source-sync",
+      name: "GStack source sync",
+      version: input.preview.upstreamVersions[0],
+      description: "Source-backed gstack skills published through explicit source sync.",
+      definitions: newRecords.map((record) => {
+        if (!record.definitionPreview) {
+          throw new HttpError(409, "skill_source_sync_missing_definition", `No normalized skill definition preview is available for ${record.skillId}.`);
+        }
+        return {
+          definition: record.definitionPreview,
+          visibility: {
+            workspaceVisible: true,
+            promotableToWorkspace: true,
+          },
+        };
+      }),
+    }, input.now);
+    input.store.publishSkillImportDraft(draft.id, input.now);
+  }
+
+  const snapshots: SkillSourceSnapshot[] = [];
+  for (const record of selectedRecords) {
+    if (!record.snapshotPreview) {
+      throw new HttpError(409, "skill_source_sync_missing_snapshot", `No source snapshot preview is available for ${record.skillId}.`);
+    }
+    snapshots.push(input.store.upsertSkillSourceSnapshot({
+      ...record.snapshotPreview,
+      id: record.existingSnapshotId,
+      reviewStatus: "published",
+    }, input.now));
+  }
+
+  const skillsById = new Map(listEffectiveSkillRegistryEntries(input.store).map((skill) => [skill.id, skill]));
+  const skills = selectedSkillIds.map((skillId) => skillsById.get(skillId)).filter((skill): skill is SkillRegistryEntry => Boolean(skill));
+  appendSkillRegistryChangedEvent(input.store, input.controlPlaneEvents, input.cwd, "source_publish", selectedSkillIds[0] ?? "default");
+  return { skills, snapshots };
+}
+
+function hasExplicitSourceRootInputs(input: {
+  readonly skillRoots?: readonly string[];
+  readonly gstackRepoRoots?: readonly string[];
+  readonly codexSkillRoots?: readonly string[];
+}): boolean {
+  return Boolean(input.skillRoots?.length || input.gstackRepoRoots?.length || input.codexSkillRoots?.length);
+}
 
 interface ProcedureObservationJobRouteResult {
   readonly statusCode: number;

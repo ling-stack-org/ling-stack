@@ -5,6 +5,9 @@ import {
   type SkillPackSource,
   type SkillRegistryEntry,
   type SkillRegistryReviewStatus,
+  type SkillSourceKind,
+  type SkillSourceSnapshot,
+  type SkillSourceSnapshotReviewStatus,
   type SkillVisibility,
 } from "../../skill-types.js";
 import { type Task, type TaskStatus } from "../../workspace-types.js";
@@ -67,11 +70,49 @@ export function mapSkillImportDraft(row: Record<string, SQLOutputValue>): SkillI
   });
 }
 
+export function mapSkillSourceSnapshot(row: Record<string, SQLOutputValue>): SkillSourceSnapshot {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    skillId: readString(row, "skill_id"),
+    sourceKind: readString(row, "source_kind") as SkillSourceKind,
+    sourcePath: readNullableString(row, "source_path"),
+    upstreamName: readNullableString(row, "upstream_name"),
+    upstreamVersion: readNullableString(row, "upstream_version"),
+    upstreamSkillPath: readNullableString(row, "upstream_skill_path"),
+    sourceChecksum: readString(row, "source_checksum"),
+    rawSkillMarkdown: readString(row, "raw_skill_markdown"),
+    agentMetadata: parseOptionalSkillAgentMetadata(readString(row, "agent_metadata_json")),
+    referencedFiles: parseJson(readString(row, "referenced_files_json")) as SkillSourceSnapshot["referencedFiles"],
+    warnings: parseJson(readString(row, "warnings_json")) as SkillSourceSnapshot["warnings"],
+    reviewStatus: readString(row, "review_status") as SkillSourceSnapshotReviewStatus,
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
 function parseSkillVisibility(value: string): SkillVisibility {
   const parsed = parseJsonObject(value);
   return omitUndefined({
     workspaceVisible: typeof parsed.workspaceVisible === "boolean" ? parsed.workspaceVisible : true,
     ownerTeammateId: typeof parsed.ownerTeammateId === "string" ? parsed.ownerTeammateId : undefined,
     promotableToWorkspace: typeof parsed.promotableToWorkspace === "boolean" ? parsed.promotableToWorkspace : true,
+  });
+}
+
+function parseOptionalSkillAgentMetadata(value: string): SkillSourceSnapshot["agentMetadata"] {
+  const parsed = parseJson(value);
+  if (parsed === null || parsed === undefined) {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  return omitUndefined({
+    displayName: typeof record.displayName === "string" ? record.displayName : undefined,
+    shortDescription: typeof record.shortDescription === "string" ? record.shortDescription : undefined,
+    defaultPrompt: typeof record.defaultPrompt === "string" ? record.defaultPrompt : undefined,
+    allowImplicitInvocation: typeof record.allowImplicitInvocation === "boolean" ? record.allowImplicitInvocation : undefined,
   });
 }

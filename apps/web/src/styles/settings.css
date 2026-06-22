@@ -785,7 +785,7 @@
 
 .settings-skill-library-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 8px;
 }
 
@@ -1320,6 +1320,7 @@
 }
 
 .settings-skill-import-panel,
+.settings-skill-source-sync,
 .settings-skill-table-wrap,
 .settings-skill-inspector {
   border: 1px solid #e5e5e5;
@@ -1331,6 +1332,265 @@
   display: grid;
   gap: 12px;
   padding: 12px;
+}
+
+.settings-skill-source-sync {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.settings-skill-source-sync-head,
+.settings-skill-source-sync-head span,
+.settings-skill-source-sync-title,
+.settings-skill-source-sync-actions,
+.settings-skill-source-sync-switches {
+  display: flex;
+  align-items: center;
+}
+
+.settings-skill-source-sync-head,
+.settings-skill-source-sync-title {
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-skill-source-sync-head strong {
+  color: #111111;
+  font-size: 13px;
+}
+
+.settings-skill-source-sync-head small {
+  color: #6b6b6b;
+  font-size: 12px;
+}
+
+.settings-skill-source-sync-head span {
+  gap: 7px;
+  min-width: 0;
+}
+
+.settings-skill-source-sync-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.settings-skill-source-sync-controls textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
+.settings-skill-source-sync-switches,
+.settings-skill-source-sync-actions {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.settings-skill-source-sync-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-skill-source-sync-summary span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.settings-skill-source-sync-summary small {
+  overflow: hidden;
+  color: #6b6b6b;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-source-sync-summary strong {
+  color: #111111;
+  font-size: 15px;
+}
+
+.settings-skill-source-sync-records {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-skill-source-sync-record {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.settings-skill-source-sync-record.drifted {
+  border-color: var(--warning-border);
+}
+
+.settings-skill-source-sync-record.blocked,
+.settings-skill-source-sync-record.missing,
+.settings-skill-source-sync-record.orphaned {
+  background: #fafafa;
+}
+
+.settings-skill-source-sync-select {
+  display: inline-flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.settings-skill-source-sync-select input {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-skill-source-sync-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-skill-source-sync-title > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-skill-source-sync-title strong,
+.settings-skill-source-sync-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-source-sync-title strong {
+  color: #111111;
+  font-size: 12px;
+}
+
+.settings-skill-source-sync-title small {
+  color: #6b6b6b;
+  font-size: 11px;
+}
+
+.settings-skill-source-sync-meta,
+.settings-skill-source-sync-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settings-skill-source-sync-meta span,
+.settings-skill-source-sync-warnings small,
+.settings-skill-sync-state {
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.settings-skill-source-sync-meta span {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-sync-state {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.settings-skill-sync-state.attachable,
+.settings-skill-sync-state.unchanged {
+  color: #236548;
+}
+
+.settings-skill-sync-state.drifted,
+.settings-skill-sync-state.new {
+  color: var(--warning);
+}
+
+.settings-skill-sync-state.blocked,
+.settings-skill-sync-state.missing,
+.settings-skill-sync-state.orphaned,
+.settings-skill-source-sync-warnings small.error {
+  color: #b42318;
+}
+
+.settings-skill-source-sync-warnings small.warning {
+  color: var(--warning);
+}
+
+.settings-skill-source-sync-diff {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fffaf2;
+}
+
+.settings-skill-source-sync-diff-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: #8a570c;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.settings-skill-source-sync-diff-items {
+  display: grid;
+  gap: 5px;
+}
+
+.settings-skill-source-sync-diff-item {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.65fr) minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.settings-skill-source-sync-diff-item small {
+  color: #6b5b43;
+  font-weight: 700;
+}
+
+.settings-skill-source-sync-diff-item code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 5px;
+  border: 1px solid #eadfce;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #4c4336;
+  font-size: 10px;
+}
+
+.settings-skill-source-sync-diff-item span {
+  color: #a77a33;
+  font-weight: 700;
 }
 
 .settings-skill-import-grid {
@@ -1491,6 +1751,41 @@
   gap: 4px;
 }
 
+.settings-skill-source-status {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-skill-source-status > span,
+.settings-skill-source-status > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-source-status > span {
+  color: #111111;
+  font-weight: 600;
+}
+
+.settings-skill-source-status > small {
+  color: #6b6b6b;
+  font-size: 11px;
+}
+
+.settings-skill-source-status > small.backed {
+  color: #236548;
+}
+
+.settings-skill-source-status > small.warning {
+  color: var(--warning);
+}
+
+.settings-skill-source-status > small.missing {
+  color: #6b6b6b;
+}
+
 .settings-skill-token-list code,
 .settings-skill-token-list small {
   display: inline-flex;
@@ -1571,6 +1866,89 @@
   font-size: 11px;
   line-height: 16px;
   white-space: pre-wrap;
+}
+
+.settings-skill-source-detail {
+  display: grid;
+  gap: 1px;
+  border: 1px solid #e5e5e5;
+  background: #e5e5e5;
+}
+
+.settings-skill-source-detail span {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  background: #ffffff;
+}
+
+.settings-skill-source-detail small {
+  color: #6b6b6b;
+  font-size: 11px;
+}
+
+.settings-skill-source-detail code {
+  overflow: hidden;
+  color: #111111;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-source-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.settings-skill-source-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.settings-skill-source-tags span,
+.settings-skill-source-warning-list small {
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid #e5e5e5;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.settings-skill-source-warning-list {
+  display: grid;
+  gap: 5px;
+}
+
+.settings-skill-source-warning-list small.warning {
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+
+.settings-skill-source-warning-list small.error {
+  border-color: #f1b8b3;
+  color: #b42318;
+}
+
+.settings-skill-source-preview {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-skill-source-preview summary {
+  cursor: pointer;
+  color: #111111;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-skill-source-preview pre {
+  max-height: 220px;
 }
 
 .settings-skill-audit-note {
@@ -1692,18 +2070,25 @@
   .settings-skill-governance-fixed,
   .settings-skill-library-toolbar,
   .settings-skill-import-grid,
+  .settings-skill-source-sync-controls,
   .settings-skill-library-body {
     grid-template-columns: 1fr;
   }
 
   .settings-skill-library-stats,
-  .settings-skill-health-summary {
+  .settings-skill-health-summary,
+  .settings-skill-source-sync-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .settings-skill-health-finding,
   .settings-skill-candidate-card {
     grid-template-columns: 1fr;
+  }
+
+  .settings-skill-source-sync-diff-item {
+    grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .settings-skill-health-finding-meta,

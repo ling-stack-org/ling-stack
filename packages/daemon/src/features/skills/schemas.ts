@@ -28,11 +28,13 @@ import {
   type SkillImportWarning,
   type SkillPackSource,
   type SkillRegistryEntry,
+  type SkillSourceKind,
+  type SkillSourceScanRoot,
   type SkillUsageEventKind,
 } from "@ling-stack/core";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { extractMarkdownTitle, firstMarkdownParagraph, parseMarkdownFrontmatter } from "../../shared/markdown.js";
-import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
+import { isRecord, readOptionalBoolean, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 
 export type ParsedCreateSkillCandidateRequest = Omit<CreateSkillCandidateInput, "duplicateAnalysis"> & {
   readonly duplicateAnalysis?: SkillDuplicateAnalysis;
@@ -47,6 +49,22 @@ export interface ParsedSkillInvocationSuggestionRequest {
   readonly prompt?: string;
   readonly requestedSkillId?: string;
   readonly limit?: number;
+}
+
+export interface ParsedSkillSourceSyncRequest {
+  readonly roots?: readonly SkillSourceScanRoot[];
+  readonly skillRoots?: readonly string[];
+  readonly gstackRepoRoots?: readonly string[];
+  readonly codexSkillRoots?: readonly string[];
+  readonly includeDetectedRoots?: boolean;
+  readonly includeSkillIds?: readonly string[];
+  readonly excludeSkillIds?: readonly string[];
+  readonly maxSourceBytes?: number;
+}
+
+export interface ParsedSkillSourceSyncPublishRequest extends ParsedSkillSourceSyncRequest {
+  readonly selectedSkillIds: readonly string[];
+  readonly allowNewSkills: boolean;
 }
 
 export function parseCreateSkillCandidateRequest(value: unknown): ParsedCreateSkillCandidateRequest {
@@ -692,6 +710,44 @@ export function parseSkillImportDraftRequest(
   };
 }
 
+export function parseSkillSourceSyncRequest(value: unknown): ParsedSkillSourceSyncRequest {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Skill source sync request must be a JSON object");
+  }
+  const maxSourceBytes = readOptionalNumber(value, "maxSourceBytes");
+  if (maxSourceBytes !== undefined && (!Number.isInteger(maxSourceBytes) || maxSourceBytes < 1)) {
+    throw new Error("maxSourceBytes must be a positive integer");
+  }
+  return {
+    roots: readOptionalSkillSourceScanRoots(value.roots),
+    skillRoots: readOptionalStringArray(value, "skillRoots"),
+    gstackRepoRoots: readOptionalStringArray(value, "gstackRepoRoots"),
+    codexSkillRoots: readOptionalStringArray(value, "codexSkillRoots"),
+    includeDetectedRoots: readOptionalBoolean(value, "includeDetectedRoots"),
+    includeSkillIds: readOptionalStringArray(value, "includeSkillIds"),
+    excludeSkillIds: readOptionalStringArray(value, "excludeSkillIds"),
+    maxSourceBytes,
+  };
+}
+
+export function parseSkillSourceSyncPublishRequest(value: unknown): ParsedSkillSourceSyncPublishRequest {
+  if (!isRecord(value)) {
+    throw new Error("Skill source sync publish request must be a JSON object");
+  }
+  const selectedSkillIds = readRequiredStringArray(value, "selectedSkillIds");
+  if (selectedSkillIds.length === 0) {
+    throw new Error("selectedSkillIds must include at least one skill id");
+  }
+  return {
+    ...parseSkillSourceSyncRequest(value),
+    selectedSkillIds,
+    allowNewSkills: readOptionalBoolean(value, "allowNewSkills") ?? false,
+  };
+}
+
 function parseSkillImportContent(
   content: string,
   sourcePath: string | undefined,
@@ -826,6 +882,35 @@ function readOptionalSkillPackSource(record: Record<string, unknown>, key: strin
     throw new Error(`${key} must be a supported skill source`);
   }
   return value as SkillPackSource;
+}
+
+function readOptionalSkillSourceScanRoots(value: unknown): SkillSourceScanRoot[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("roots must be an array");
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`roots[${index}] must be an object`);
+    }
+    return {
+      rootPath: readString(item, "rootPath"),
+      sourceKind: readSkillSourceKind(item, "sourceKind"),
+      label: readOptionalString(item, "label"),
+      upstreamName: readOptionalString(item, "upstreamName"),
+      upstreamVersion: readOptionalString(item, "upstreamVersion"),
+    };
+  });
+}
+
+function readSkillSourceKind(record: Record<string, unknown>, key: string): SkillSourceKind {
+  const value = readString(record, key);
+  if (!["gstack-skill-directory", "codex-skill-directory", "workspace-skill-directory", "manual-markdown"].includes(value)) {
+    throw new Error(`${key} must be a supported skill source kind`);
+  }
+  return value as SkillSourceKind;
 }
 
 function inferSkillImportSource(sourcePath: string | undefined, content: string): SkillPackSource {

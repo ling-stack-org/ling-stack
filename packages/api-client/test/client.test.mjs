@@ -498,6 +498,62 @@ test("lists and refreshes skills through expected routes", async () => {
   assert.deepEqual(JSON.parse(mock.calls[1].body), {});
 });
 
+test("reads skill source snapshots and source health through expected routes", async () => {
+  const responses = [
+    { cwd: "/repo", report: { workspaceId: "workspace_default" }, snapshots: [] },
+    { cwd: "/repo", snapshot: { id: "skill_source_1", skillId: "review" } },
+    { cwd: "/repo", snapshot: { id: "skill_source_1", skillId: "review", reviewStatus: "archived" } },
+  ];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.deepEqual(await client.getSkillSourceHealth("/repo path", { limit: 7 }), responses[0]);
+  assert.deepEqual(await client.getSkillSourceSnapshot("/repo path", "review skill"), responses[1]);
+  assert.deepEqual(await client.archiveSkillSourceSnapshot("/repo path", "review skill"), responses[2]);
+
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills/source-health?cwd=%2Frepo+path&limit=7");
+  assert.equal(mock.calls[1].method, "GET");
+  assert.equal(mock.calls[1].url, "http://daemon.test/skills/review%20skill/source?cwd=%2Frepo+path");
+  assert.equal(mock.calls[2].method, "POST");
+  assert.equal(mock.calls[2].url, "http://daemon.test/skills/review%20skill/source/archive?cwd=%2Frepo+path");
+});
+
+test("syncs gstack skill sources through expected routes", async () => {
+  const responses = [
+    { cwd: "/repo", preview: { records: [] } },
+    { cwd: "/repo", refreshedAt: "2026-06-22T00:00:00.000Z", preview: { records: [] } },
+    { cwd: "/repo", publishedAt: "2026-06-22T00:01:00.000Z", preview: { records: [] }, skills: [], snapshots: [] },
+  ];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const syncInput = {
+    roots: [{ rootPath: "/repo/.agents/skills", sourceKind: "workspace-skill-directory" }],
+    includeSkillIds: ["review"],
+    includeDetectedRoots: false,
+  };
+
+  assert.deepEqual(await client.previewGstackSkillSourceSync("/repo path", syncInput), responses[0]);
+  assert.deepEqual(await client.refreshGstackSkillSourceSync("/repo path", syncInput), responses[1]);
+  assert.deepEqual(await client.publishGstackSkillSourceSync("/repo path", {
+    ...syncInput,
+    selectedSkillIds: ["review"],
+  }), responses[2]);
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills/sync/gstack/preview?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), syncInput);
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/skills/sync/gstack/refresh?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), syncInput);
+  assert.equal(mock.calls[2].method, "POST");
+  assert.equal(mock.calls[2].url, "http://daemon.test/skills/sync/gstack/publish?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[2].body), {
+    ...syncInput,
+    selectedSkillIds: ["review"],
+  });
+});
+
 test("gets external work status with channel and workflow path", async () => {
   const mock = createFetchMock({ cwd: "/repo", workflow: { valid: true } });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });

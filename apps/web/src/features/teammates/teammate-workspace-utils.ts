@@ -10,6 +10,7 @@ import type {
   MemoryObject,
   MemoryReviewAction,
   MemoryReviewMode,
+  SkillSourceSnapshot,
   TeammateDirectLinkPreview,
   TeammateDirectMessage,
   TeammateDirectReplyIntervention,
@@ -33,6 +34,7 @@ export interface TeammateSkillRowModel {
   readonly skill: import("@ling-stack/core/skill-types").SkillDefinition | undefined;
   readonly binding: TeammateSkillBinding | undefined;
   readonly effectiveSkill: EffectiveTeammateSkill | undefined;
+  readonly sourceSnapshot: SkillSourceSnapshot | undefined;
 }
 
 export type SkillBindingFilter = "all" | "bound" | "executable" | "blocked" | "available";
@@ -97,6 +99,10 @@ export function filterTeammateSkillRows(
         row.skill?.workflowPhase ?? "",
         ...(row.skill?.requiredTools ?? []),
         ...(row.skill?.requiredProviderCapabilities ?? []),
+        row.sourceSnapshot?.sourcePath ?? "",
+        row.sourceSnapshot?.upstreamSkillPath ?? "",
+        row.sourceSnapshot?.sourceChecksum ?? "",
+        ...(row.sourceSnapshot?.warnings.map((warning) => `${warning.code} ${warning.message}`) ?? []),
         ...(row.effectiveSkill?.blockedReasons.map((reason) => `${reason.code} ${reason.message} ${(reason.missing ?? []).join(" ")}`) ?? []),
       ].join(" ").toLowerCase();
       return searchable.includes(normalizedQuery);

@@ -174,7 +174,7 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" }
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "source" | "source-archive" }
   | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
@@ -196,6 +196,12 @@ export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   }
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "corrections") {
     return { kind: "skill", skillId: segments[1], action: "corrections" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "source") {
+    return { kind: "skill", skillId: segments[1], action: "source" };
+  }
+  if (segments.length === 4 && segments[0] === "skills" && segments[2] === "source" && segments[3] === "archive") {
+    return { kind: "skill", skillId: segments[1], action: "source-archive" };
   }
   if (segments.length === 2 && segments[0] === "skills") {
     return { kind: "skill", skillId: segments[1] };

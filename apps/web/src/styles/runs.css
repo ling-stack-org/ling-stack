@@ -198,6 +198,67 @@
   text-transform: uppercase;
 }
 
+.skill-source-runtime-section {
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #f7faf7;
+}
+
+.skill-source-runtime-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid #d8ded7;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #50605b;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.skill-source-runtime-state.loaded {
+  color: #236548;
+}
+
+.skill-source-runtime-state.truncated {
+  border-color: #d9bd71;
+  color: #7c5200;
+}
+
+.skill-source-runtime-state.blocked {
+  border-color: #e7b4a8;
+  color: #9a341f;
+}
+
+.skill-source-runtime-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.skill-source-runtime-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.skill-source-runtime-files code,
+.skill-source-runtime-files small {
+  max-width: 100%;
+  min-height: 22px;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid #d8ded7;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #43524e;
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-file-list {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);

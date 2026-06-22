@@ -2,6 +2,7 @@ import {
   Activity,
   Archive,
   ArchiveRestore,
+  BookOpen,
   Bot,
   CheckCircle2,
   CircleAlert,
@@ -32,6 +33,7 @@ import {
   formatEventPreview,
   readDataBoolean,
   readDataField,
+  readDataNumber,
   readDataString,
   readDeepDataPreview,
   readDeepDataScalarString,
@@ -1350,6 +1352,7 @@ function RunDetailPanel({
     : "";
   const effectivePolicySnapshot = run ? readEffectivePolicySnapshot(run.requestSnapshot) : undefined;
   const effectivePolicySummary = summarizeEffectivePolicySnapshot(effectivePolicySnapshot, t);
+  const skillSourceContext = run ? readDataField(run.requestSnapshot, "skillSourceContext") : undefined;
   const runCancellable = Boolean(run && runCanBeStopped(run));
   const runStopping = Boolean(run && cancellingRunId === run.id);
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
@@ -1407,9 +1410,14 @@ function RunDetailPanel({
             ) : null}
             <MetaRow label={t("Work unit")} value={run.workUnitId ?? "-"} compact />
             <MetaRow label={t("Selected skill")} value={run.selectedSkillId ?? "-"} compact />
+            <MetaRow label={t("Skill source")} value={skillSourceRuntimeSummary(skillSourceContext, t)} compact />
             <MetaRow label={t("Created")} value={formatDateTime(run.createdAt)} compact />
             <MetaRow label={t("Ended")} value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
           </div>
+
+          {skillSourceContext ? (
+            <SkillSourceRuntimePanel context={skillSourceContext} t={t} />
+          ) : null}
 
           {turnContext ? (
             <div className="run-detail-section work-history-turn-context">
@@ -1665,6 +1673,89 @@ function RunDetailPanel({
       )}
     </section>
   );
+}
+
+function SkillSourceRuntimePanel({
+  context,
+  t,
+}: {
+  readonly context: unknown;
+  readonly t: Translate;
+}): JSX.Element {
+  const loaded = readDataBoolean(context, "loaded");
+  const truncated = readDataBoolean(context, "truncated");
+  const snapshotId = readDataString(context, "snapshotId") || "-";
+  const skillId = readDataString(context, "skillId") || "-";
+  const sourceKind = readDataString(context, "sourceKind") || "-";
+  const sourceChecksum = readDataString(context, "sourceChecksum") || "-";
+  const upstream = [readDataString(context, "upstreamName"), readDataString(context, "upstreamVersion")].filter(Boolean).join(" ") || "-";
+  const upstreamPath = readDataString(context, "upstreamSkillPath") || readDataString(context, "sourcePath") || "-";
+  const sourceLengthChars = readDataNumber(context, "sourceLengthChars") ?? 0;
+  const loadedChars = readDataNumber(context, "loadedChars") ?? 0;
+  const maxLoadedChars = readDataNumber(context, "maxLoadedChars") ?? 0;
+  const warningCount = readDataNumber(context, "warningCount") ?? 0;
+  const blockedReason = readDataString(context, "blockedReason");
+  const referencedFiles = readDataArray(context, "referencedFiles");
+  const warningSeverities = readDataArray(context, "warningSeverities").map(String);
+
+  return (
+    <div className="run-detail-section skill-source-runtime-section">
+      <div className="panel-title tight split">
+        <span>
+          <BookOpen size={16} />
+          <h3>{t("Skill source context")}</h3>
+        </span>
+        <span className={`skill-source-runtime-state ${loaded ? truncated ? "truncated" : "loaded" : "blocked"}`}>
+          {loaded ? truncated ? t("Truncated") : t("Loaded") : t("Suppressed")}
+        </span>
+      </div>
+      <div className="run-evidence-grid skill-source-runtime-grid">
+        <MetaRow label={t("Skill")} value={skillId} compact />
+        <MetaRow label={t("Snapshot")} value={snapshotId} compact />
+        <MetaRow label={t("Checksum")} value={sourceChecksum} compact />
+        <MetaRow label={t("Source kind")} value={sourceKind} compact />
+        <MetaRow label={t("Upstream")} value={upstream} compact />
+        <MetaRow label={t("Path")} value={upstreamPath} compact />
+        <MetaRow label={t("Loaded chars")} value={`${loadedChars}/${sourceLengthChars || maxLoadedChars}`} compact />
+        <MetaRow label={t("Max chars")} value={String(maxLoadedChars || "-")} compact />
+        <MetaRow label={t("Warnings")} value={warningSeverities.length > 0 ? `${warningCount}: ${warningSeverities.join(", ")}` : String(warningCount)} compact />
+      </div>
+      {blockedReason ? (
+        <p className="run-evidence-copy error">
+          <strong>{t("Blocked reason")}</strong>
+          {blockedReason}
+        </p>
+      ) : null}
+      {referencedFiles.length > 0 ? (
+        <div className="skill-source-runtime-files" aria-label={t("Referenced files")}>
+          {referencedFiles.slice(0, 6).map((file, index) => (
+            <code key={`${readDataString(file, "path") || index}:${index}`}>
+              {readDataString(file, "path") || formatEventPreview(file)}
+            </code>
+          ))}
+          {referencedFiles.length > 6 ? <small>+{referencedFiles.length - 6}</small> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function skillSourceRuntimeSummary(context: unknown, t: Translate): string {
+  if (!context) {
+    return "-";
+  }
+  const loaded = readDataBoolean(context, "loaded");
+  const truncated = readDataBoolean(context, "truncated");
+  const snapshotId = readDataString(context, "snapshotId");
+  if (!loaded) {
+    return snapshotId ? t("Suppressed") : "-";
+  }
+  return truncated ? t("Loaded, truncated") : t("Loaded");
+}
+
+function readDataArray(data: unknown, key: string): readonly unknown[] {
+  const value = readDataField(data, key);
+  return Array.isArray(value) ? value : [];
 }
 
 function runCanBeStopped(run: RunSession): boolean {
