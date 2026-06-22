@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 import {
   type ApprovalPolicy,
   buildEffectiveTeammateSkills,
+  buildSkillSourceRuntimePrompt,
   createChannelWorkspaceSnapshot,
   createRunId,
   DEFAULT_WORKSPACE_ID,
@@ -23,6 +24,7 @@ import {
   type RuntimeInstance,
   type SecretResolver,
   type SkillApprovalProfile,
+  type SkillSourceRuntimeContext,
   type WorkspaceRuntimeSettings,
   type WorkUnit,
   type WorkUnitAttempt,
@@ -205,6 +207,8 @@ export async function executeRunRequest(
   let mcpTools: readonly PiRunnerMcpToolDefinition[] = [];
   let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
   let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
+  let selectedSkillSourceContext: SkillSourceRuntimeContext | undefined;
+  let selectedSkillSourcePrompt: string | undefined;
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
   let effectivePolicySnapshot: EffectiveRunPolicySnapshot | undefined;
   let approvalPolicy: ApprovalPolicy | undefined;
@@ -254,6 +258,14 @@ export async function executeRunRequest(
         );
       }
     }
+    if (selectedSkill) {
+      const sourceSnapshot = store.getSkillSourceSnapshot(selectedSkill.skillId);
+      if (sourceSnapshot) {
+        const sourcePrompt = buildSkillSourceRuntimePrompt({ snapshot: sourceSnapshot });
+        selectedSkillSourceContext = sourcePrompt.context;
+        selectedSkillSourcePrompt = sourcePrompt.promptFragment;
+      }
+    }
     const runStore = store;
     const mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
@@ -270,6 +282,7 @@ export async function executeRunRequest(
     const appendSystemPrompt = [
       ...(runRequest.appendSystemPrompt ?? []),
       ...(selectedSkill?.promptFragments ?? []),
+      ...(selectedSkillSourcePrompt ? [selectedSkillSourcePrompt] : []),
       ...(memoryPrompt ? [memoryPrompt] : []),
     ];
     runtimeTools = selectedSkill
@@ -381,6 +394,7 @@ export async function executeRunRequest(
         runtimeSettings,
         runtimeToolFeatures,
         selectedSkillId: selectedSkill?.skillId,
+        skillSourceContext: selectedSkillSourceContext,
         mcpToolAccess,
       },
       now: createdAt,
@@ -496,6 +510,7 @@ export async function executeRunRequest(
         runtimeSettings,
         runtimeToolFeatures,
         selectedSkillId: selectedSkill?.skillId,
+        skillSourceContext: selectedSkillSourceContext,
         mcpToolAccess,
         managedPluginRuntime,
       },
@@ -551,6 +566,7 @@ export async function executeRunRequest(
       fallbackReason: runnerResolution.fallbackReason,
       teammateId: run.teammateId,
       selectedSkillId: run.selectedSkillId,
+      skillSourceContext: selectedSkillSourceContext,
       parentRunId: run.parentRunId,
       interventionId: run.interventionId,
       continuationReason: run.continuationReason,

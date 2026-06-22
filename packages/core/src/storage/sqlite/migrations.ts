@@ -162,6 +162,8 @@ const AI_COUNCILS_MIGRATION_VERSION = 75;
 const AI_COUNCILS_MIGRATION_NAME = "create_ai_councils";
 const CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_VERSION = 76;
 const CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_NAME = "add_channel_branch_root_thread";
+const SKILL_SOURCE_SNAPSHOTS_MIGRATION_VERSION = 77;
+const SKILL_SOURCE_SNAPSHOTS_MIGRATION_NAME = "create_skill_source_snapshots";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3819,6 +3821,42 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasChannelBranchRootThreadMigration) {
         context.recordMigration(CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_VERSION, CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_NAME);
+      }
+    }
+    const hasSkillSourceSnapshotsMigration = context.hasMigration(SKILL_SOURCE_SNAPSHOTS_MIGRATION_VERSION);
+    if (
+      !hasSkillSourceSnapshotsMigration ||
+      !context.hasTable("skill_source_snapshots")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS skill_source_snapshots (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          skill_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          source_path TEXT,
+          upstream_name TEXT,
+          upstream_version TEXT,
+          upstream_skill_path TEXT,
+          source_checksum TEXT NOT NULL,
+          raw_skill_markdown TEXT NOT NULL,
+          agent_metadata_json TEXT NOT NULL,
+          referenced_files_json TEXT NOT NULL,
+          warnings_json TEXT NOT NULL,
+          review_status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_source_snapshots_skill
+        ON skill_source_snapshots(workspace_id, skill_id, review_status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_skill_source_snapshots_source
+        ON skill_source_snapshots(workspace_id, source_kind, review_status, updated_at);
+      `);
+      if (!hasSkillSourceSnapshotsMigration) {
+        context.recordMigration(SKILL_SOURCE_SNAPSHOTS_MIGRATION_VERSION, SKILL_SOURCE_SNAPSHOTS_MIGRATION_NAME);
       }
     }
 }

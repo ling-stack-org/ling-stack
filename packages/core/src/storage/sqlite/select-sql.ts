@@ -588,6 +588,30 @@ export function skillImportDraftSelectSql(whereClause: string): string {
   `;
 }
 
+export function skillSourceSnapshotSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      skill_id,
+      source_kind,
+      source_path,
+      upstream_name,
+      upstream_version,
+      upstream_skill_path,
+      source_checksum,
+      raw_skill_markdown,
+      agent_metadata_json,
+      referenced_files_json,
+      warnings_json,
+      review_status,
+      created_at,
+      updated_at
+    FROM skill_source_snapshots
+    ${whereClause}
+  `;
+}
+
 export function teammateMemoryScopeSelectSql(whereClause: string): string {
   return `
     SELECT

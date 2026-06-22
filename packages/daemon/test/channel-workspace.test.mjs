@@ -7008,7 +7008,14 @@ test("memory consolidation jobs create audited candidates without silent activat
 test("task run validates requestedSkillId and records the selected skill", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-aware-run-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
   try {
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Engineering",
@@ -7032,6 +7039,28 @@ test("task run validates requestedSkillId and records the selected skill", async
       assigneeTeammateId: "teammate_builtin_engineer",
       requestedSkillId: "implement",
     })).task;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.upsertSkillSourceSnapshot({
+      id: "skill_source_implement_runtime",
+      skillId: "implement",
+      sourceKind: "gstack-skill-directory",
+      sourcePath: "skills/gstack-implement/SKILL.md",
+      upstreamName: "gstack",
+      upstreamVersion: "1.58.3.0",
+      upstreamSkillPath: "gstack-implement/SKILL.md",
+      sourceChecksum: "sha256:implement-runtime",
+      rawSkillMarkdown: "---\nname: implement\n---\n# Full Implement Skill\nUse full source details.",
+      referencedFiles: [{
+        path: "references/plan.md",
+        kind: "reference",
+        checksum: "sha256:ref",
+        sizeBytes: 12,
+        includedInSnapshot: false,
+      }],
+      warnings: [],
+      reviewStatus: "published",
+    }, "2026-06-22T00:00:00.000Z");
     const runId = await postTaskRunAndReadReadyRunId(daemon.url, cwd, task.id, {
       providerPresetId: provider.id,
       skipProviderPreflight: true,
@@ -7040,6 +7069,14 @@ test("task run validates requestedSkillId and records the selected skill", async
     assert.equal(run.selectedSkillId, "implement");
     assert.equal(runner.runs[0].tools.includes("edit"), true);
     assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /Implement only the approved slice/.test(line)));
+    assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /Selected Skill Source Snapshot/.test(line)));
+    assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /# Full Implement Skill/.test(line)));
+    assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /does not grant tools/.test(line)));
+    assert.equal(run.requestSnapshot.skillSourceContext.snapshotId, "skill_source_implement_runtime");
+    assert.equal(run.requestSnapshot.skillSourceContext.sourceChecksum, "sha256:implement-runtime");
+    const runCreated = store.listEvents(runId).find((event) => event.type === "run_created");
+    assert.equal(runCreated?.data.skillSourceContext.snapshotId, "skill_source_implement_runtime");
+    assert.equal(runCreated?.data.skillSourceContext.sourceChecksum, "sha256:implement-runtime");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7149,6 +7186,203 @@ test("skill health API returns read-only registry findings", async () => {
       body: JSON.stringify({}),
     });
     assert.equal(postHealth.status, 405);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("skill source API returns source health and published snapshots", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-source-api-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const initialHealth = await getJson(`${daemon.url}/skills/source-health?cwd=${encodeURIComponent(cwd)}&limit=3`);
+    assert.equal(initialHealth.cwd, cwd);
+    assert.equal(initialHealth.report.workspaceId, "workspace_default");
+    assert.equal(initialHealth.report.summary.totalSkills > 0, true);
+    assert.equal(initialHealth.report.summary.missingSourceSnapshots > 0, true);
+    assert.equal(initialHealth.report.findings.length <= 3, true);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const snapshot = store.upsertSkillSourceSnapshot({
+      id: "skill_source_review_api",
+      skillId: "review",
+      sourceKind: "gstack-skill-directory",
+      sourcePath: "skills/gstack-review/SKILL.md",
+      upstreamName: "review",
+      upstreamVersion: "1.58.3.0",
+      sourceChecksum: "sha256-review-api",
+      rawSkillMarkdown: "---\nname: review\n---\n# Review\n",
+      referencedFiles: [],
+      warnings: [],
+      reviewStatus: "published",
+    }, "2026-06-22T00:00:00.000Z");
+
+    const source = await getJson(`${daemon.url}/skills/review/source?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(source.cwd, cwd);
+    assert.equal(source.snapshot.id, snapshot.id);
+    assert.equal(source.snapshot.rawSkillMarkdown.includes("# Review"), true);
+
+    const postSource = await fetch(`${daemon.url}/skills/review/source?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(postSource.status, 405);
+
+    const archivedSourceResponse = await fetch(`${daemon.url}/skills/review/source/archive?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+    });
+    assert.equal(archivedSourceResponse.status, 200);
+    const archivedSource = await archivedSourceResponse.json();
+    assert.equal(archivedSource.cwd, cwd);
+    assert.equal(archivedSource.snapshot.id, snapshot.id);
+    assert.equal(archivedSource.snapshot.reviewStatus, "archived");
+
+    const missingPublishedSource = await fetch(`${daemon.url}/skills/review/source?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(missingPublishedSource.status, 404);
+
+    const healthAfterArchive = await getJson(`${daemon.url}/skills/source-health?cwd=${encodeURIComponent(cwd)}&limit=3`);
+    assert.equal(healthAfterArchive.report.summary.sourceBackedSkills, 0);
+    assert.equal(healthAfterArchive.report.summary.missingSourceSnapshots > 0, true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("gstack skill source sync previews and publishes selected snapshots only", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-source-sync-api-"));
+  const skillRoot = resolve(cwd, "skills");
+  const reviewSkill = resolve(skillRoot, "gstack-review");
+  await mkdir(resolve(reviewSkill, "agents"), { recursive: true });
+  await mkdir(resolve(reviewSkill, "references"), { recursive: true });
+  await writeFile(resolve(reviewSkill, "SKILL.md"), [
+    "---",
+    "name: review",
+    "description: Review the current diff before landing.",
+    "---",
+    "# Review",
+    "Use AskUserQuestion for one-way decisions.",
+  ].join("\n"));
+  await writeFile(resolve(reviewSkill, "agents", "openai.yaml"), [
+    "interface:",
+    "  display_name: gstack-review",
+    "  short_description: Pre-landing review.",
+    "policy:",
+    "  allow_implicit_invocation: true",
+  ].join("\n"));
+  await writeFile(resolve(reviewSkill, "references", "checklist.md"), "# Checklist\n");
+
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const syncBody = {
+      roots: [{ rootPath: skillRoot, sourceKind: "gstack-skill-directory", upstreamName: "gstack", upstreamVersion: "1.58.3.0" }],
+      includeDetectedRoots: false,
+      includeSkillIds: ["review"],
+    };
+    const preview = await postJson(`${daemon.url}/skills/sync/gstack/preview?cwd=${encodeURIComponent(cwd)}`, syncBody);
+    assert.equal(preview.cwd, cwd);
+    assert.equal(preview.preview.summary.totalRecords, 1);
+    assert.equal(preview.preview.records[0].skillId, "review");
+    assert.equal(preview.preview.records[0].state, "attachable");
+    assert.equal(preview.preview.records[0].agentMetadata.displayName, "gstack-review");
+    assert.equal(preview.preview.records[0].referencedFiles.some((file) => file.path === "references/checklist.md"), true);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    assert.equal(store.listSkillSourceSnapshots({ includeArchived: true }).length, 0);
+    const registryBefore = store.listSkillRegistryEntries({ includeArchived: true, includeDisabled: true }).length;
+
+    const refresh = await postJson(`${daemon.url}/skills/sync/gstack/refresh?cwd=${encodeURIComponent(cwd)}`, syncBody);
+    assert.equal(refresh.cwd, cwd);
+    assert.equal(refresh.preview.summary.totalRecords, 1);
+    assert.equal(store.listSkillSourceSnapshots({ includeArchived: true }).length, 0);
+
+    const published = await postJson(`${daemon.url}/skills/sync/gstack/publish?cwd=${encodeURIComponent(cwd)}`, {
+      ...syncBody,
+      selectedSkillIds: ["review"],
+    });
+    assert.equal(published.cwd, cwd);
+    assert.equal(published.skills[0].id, "review");
+    assert.equal(published.snapshots.length, 1);
+    assert.equal(published.snapshots[0].skillId, "review");
+    assert.equal(published.snapshots[0].reviewStatus, "published");
+    assert.equal(published.snapshots[0].rawSkillMarkdown.includes("# Review"), true);
+    assert.equal(store.listSkillSourceSnapshots({ reviewStatus: "published" }).length, 1);
+    assert.equal(store.listSkillRegistryEntries({ includeArchived: true, includeDisabled: true }).length, registryBefore);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("gstack skill source sync requires confirmation before publishing new skills", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-source-sync-new-api-"));
+  const skillRoot = resolve(cwd, "skills");
+  const newSkill = resolve(skillRoot, "gstack-research-lab");
+  await mkdir(newSkill, { recursive: true });
+  await writeFile(resolve(newSkill, "SKILL.md"), [
+    "---",
+    "name: research-lab",
+    "description: Research a local implementation question before coding.",
+    "---",
+    "# Research Lab",
+  ].join("\n"));
+
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const syncBody = {
+      roots: [{ rootPath: skillRoot, sourceKind: "gstack-skill-directory", upstreamName: "gstack", upstreamVersion: "1.58.3.0" }],
+      includeDetectedRoots: false,
+      includeSkillIds: ["research-lab"],
+    };
+    const preview = await postJson(`${daemon.url}/skills/sync/gstack/preview?cwd=${encodeURIComponent(cwd)}`, syncBody);
+    assert.equal(preview.preview.records[0].skillId, "research-lab");
+    assert.equal(preview.preview.records[0].state, "new");
+
+    const rejected = await fetch(`${daemon.url}/skills/sync/gstack/publish?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...syncBody, selectedSkillIds: ["research-lab"] }),
+    });
+    assert.equal(rejected.status, 409);
+
+    const published = await postJson(`${daemon.url}/skills/sync/gstack/publish?cwd=${encodeURIComponent(cwd)}`, {
+      ...syncBody,
+      selectedSkillIds: ["research-lab"],
+      allowNewSkills: true,
+    });
+    assert.equal(published.skills[0].id, "research-lab");
+    assert.equal(published.skills[0].source, "gstack");
+    assert.equal(published.snapshots[0].skillId, "research-lab");
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    assert.equal(store.getSkillRegistryEntry("research-lab").packId, "gstack-source-sync");
+    assert.equal(store.getSkillSourceSnapshot("research-lab").reviewStatus, "published");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

@@ -843,6 +843,9 @@ export async function routeRequest(
     url.pathname === "/skills" ||
     url.pathname === "/skills/refresh" ||
     url.pathname === "/skills/import-draft" ||
+    url.pathname === "/skills/sync/gstack/preview" ||
+    url.pathname === "/skills/sync/gstack/publish" ||
+    url.pathname === "/skills/sync/gstack/refresh" ||
     url.pathname === "/skills/suggestions" ||
     url.pathname === "/skills/usage-events" ||
     url.pathname === "/skills/usage-stats" ||

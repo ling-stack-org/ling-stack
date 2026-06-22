@@ -30,6 +30,14 @@ import type {
   SkillRecordingObservationResponse,
   SkillRegistryListResponse,
   SkillRegistryMutationResponse,
+  SkillSourceHealthResponse,
+  SkillSourceSnapshotArchiveResponse,
+  SkillSourceSnapshotResponse,
+  SkillSourceSyncPreviewResponse,
+  SkillSourceSyncPublishRequest,
+  SkillSourceSyncPublishResponse,
+  SkillSourceSyncRefreshResponse,
+  SkillSourceSyncRequest,
   SkillUsageEventKind,
   SkillUsageEventListResponse,
   SkillUsageStatsListResponse,
@@ -42,6 +50,30 @@ export async function listSkills(cwd: string): Promise<SkillRegistryListResponse
 
 export async function getSkillHealth(cwd: string, options: { readonly limit?: number } = {}): Promise<SkillHealthResponse> {
   return daemonClient.getSkillHealth(cwd, options);
+}
+
+export async function getSkillSourceHealth(cwd: string, options: { readonly limit?: number } = {}): Promise<SkillSourceHealthResponse> {
+  return daemonClient.getSkillSourceHealth(cwd, options);
+}
+
+export async function getSkillSourceSnapshot(cwd: string, skillId: string): Promise<SkillSourceSnapshotResponse> {
+  return daemonClient.getSkillSourceSnapshot(cwd, skillId);
+}
+
+export async function archiveSkillSourceSnapshot(cwd: string, skillId: string): Promise<SkillSourceSnapshotArchiveResponse> {
+  return daemonClient.archiveSkillSourceSnapshot(cwd, skillId);
+}
+
+export async function previewGstackSkillSourceSync(cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncPreviewResponse> {
+  return daemonClient.previewGstackSkillSourceSync(cwd, input);
+}
+
+export async function refreshGstackSkillSourceSync(cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncRefreshResponse> {
+  return daemonClient.refreshGstackSkillSourceSync(cwd, input);
+}
+
+export async function publishGstackSkillSourceSync(cwd: string, input: SkillSourceSyncPublishRequest): Promise<SkillSourceSyncPublishResponse> {
+  return daemonClient.publishGstackSkillSourceSync(cwd, input);
 }
 
 export async function listSkillUsageEvents(

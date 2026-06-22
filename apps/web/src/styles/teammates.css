@@ -3468,6 +3468,41 @@
   font-size: 11px;
 }
 
+.teammate-skill-source-status {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.teammate-skill-source-status > span,
+.teammate-skill-source-status > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-skill-source-status > span {
+  color: #111111;
+  font-weight: 600;
+}
+
+.teammate-skill-source-status > small {
+  color: #6b6b6b;
+  font-size: 11px;
+}
+
+.teammate-skill-source-status > small.backed {
+  color: #236548;
+}
+
+.teammate-skill-source-status > small.warning {
+  color: var(--warning);
+}
+
+.teammate-skill-source-status > small.missing {
+  color: #6b6b6b;
+}
+
 .teammate-skill-state {
   display: inline-flex;
   align-items: center;
@@ -3588,6 +3623,64 @@
   font-size: 11px;
   line-height: 16px;
   white-space: pre-wrap;
+}
+
+.teammate-skill-source-detail {
+  display: grid;
+  gap: 1px;
+  border: 1px solid #e5e5e5;
+  background: #e5e5e5;
+}
+
+.teammate-skill-source-detail span {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  background: #ffffff;
+}
+
+.teammate-skill-source-detail small {
+  color: #6b6b6b;
+  font-size: 11px;
+}
+
+.teammate-skill-source-detail code {
+  overflow: hidden;
+  color: #111111;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-skill-source-detail code.backed {
+  color: #236548;
+}
+
+.teammate-skill-source-detail code.warning {
+  color: var(--warning);
+}
+
+.teammate-skill-source-detail code.missing {
+  color: #6b6b6b;
+}
+
+.teammate-skill-source-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.teammate-skill-source-tags span {
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid #e5e5e5;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .teammate-skill-reason-list {

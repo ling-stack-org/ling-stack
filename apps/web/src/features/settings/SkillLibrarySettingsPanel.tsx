@@ -14,11 +14,13 @@ import {
 } from "lucide-react";
 import {
   archiveSkill,
+  archiveSkillSourceSnapshot,
   createChannelPlaybookCandidateFromCluster,
   createChannelProtocolCandidateFromCluster,
   createSkillCandidateDraft,
   createSkillImportDraft,
   getSkillHealth,
+  getSkillSourceHealth,
   listChannelPlaybookCandidates,
   listChannels,
   listAiTeammates,
@@ -26,7 +28,10 @@ import {
   listSkillCandidates,
   listSkills,
   listTeammateSkills,
+  previewGstackSkillSourceSync,
+  publishGstackSkillSourceSync,
   publishSkillImportDraft,
+  refreshGstackSkillSourceSync,
   reviewChannelPlaybookCandidate,
   reviewSkillCandidate,
 } from "../../api.js";
@@ -46,6 +51,13 @@ import type {
   SkillImportDraft,
   SkillPackSource,
   SkillRegistryEntry,
+  SkillSourceHealthReport,
+  SkillSourceSnapshot,
+  SkillSourceSyncDiffItem,
+  SkillSourceSyncPreviewRecord,
+  SkillSourceSyncPreviewReport,
+  SkillSourceSyncRecordState,
+  SkillSourceSyncRequest,
   TeammateSkillBinding,
 } from "../../types.js";
 import { approvalProfileText, workflowPhaseLabel } from "../teammates/helpers.js";
@@ -77,6 +89,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const { t } = useI18n();
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
   const [skillHealth, setSkillHealth] = useState<SkillHealthReport | undefined>();
+  const [skillSourceHealth, setSkillSourceHealth] = useState<SkillSourceHealthReport | undefined>();
+  const [skillSourceSnapshots, setSkillSourceSnapshots] = useState<readonly SkillSourceSnapshot[]>([]);
   const [skillCandidates, setSkillCandidates] = useState<readonly SkillCandidate[]>([]);
   const [playbookCandidates, setPlaybookCandidates] = useState<readonly ChannelPlaybookCandidate[]>([]);
   const [channels, setChannels] = useState<readonly Channel[]>([]);
@@ -89,6 +103,13 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [importOpen, setImportOpen] = useState(false);
   const [importForm, setImportForm] = useState<SkillImportForm>(initialSkillImportForm);
   const [importDraft, setImportDraft] = useState<SkillImportDraft | undefined>();
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [syncRootPath, setSyncRootPath] = useState("");
+  const [syncIncludeDetectedRoots, setSyncIncludeDetectedRoots] = useState(true);
+  const [syncAllowNewSkills, setSyncAllowNewSkills] = useState(false);
+  const [syncPreview, setSyncPreview] = useState<SkillSourceSyncPreviewReport | undefined>();
+  const [selectedSyncSkillIds, setSelectedSyncSkillIds] = useState<readonly string[]>([]);
+  const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -98,12 +119,23 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     void refresh();
   }, [cwd, refreshToken]);
 
+  const sourceSnapshotBySkillId = useMemo(() => {
+    return new Map(skillSourceSnapshots.map((snapshot) => [snapshot.skillId, snapshot]));
+  }, [skillSourceSnapshots]);
+
   const stats = useMemo(() => {
     const bindable = skills.filter((entry) => entry.reviewStatus === "builtin" || entry.reviewStatus === "published").length;
     const draft = skills.filter((entry) => entry.reviewStatus === "draft").length;
     const blocked = skills.filter((entry) => entry.reviewStatus === "disabled").length;
-    return { total: skills.length, bindable, draft, blocked };
-  }, [skills]);
+    return {
+      total: skills.length,
+      bindable,
+      draft,
+      blocked,
+      sourceBacked: skillSourceHealth?.summary.sourceBackedSkills ?? skillSourceSnapshots.length,
+      missingSource: skillSourceHealth?.summary.missingSourceSnapshots ?? 0,
+    };
+  }, [skillSourceHealth, skillSourceSnapshots.length, skills]);
 
   const filteredSkills = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -129,6 +161,9 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         entry.definition.summary,
         entry.source,
         entry.sourcePath ?? "",
+        sourceSnapshotBySkillId.get(entry.id)?.sourcePath ?? "",
+        sourceSnapshotBySkillId.get(entry.id)?.upstreamSkillPath ?? "",
+        sourceSnapshotBySkillId.get(entry.id)?.sourceChecksum ?? "",
         entry.definition.workflowPhase,
         ...entry.definition.requiredTools,
         ...entry.definition.requiredProviderCapabilities,
@@ -141,7 +176,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       }
       return right.updatedAt.localeCompare(left.updatedAt);
     });
-  }, [filter, searchQuery, skills, sortMode]);
+  }, [filter, searchQuery, skills, sortMode, sourceSnapshotBySkillId]);
 
   const selectedSkill = useMemo(() => {
     return skills.find((entry) => entry.id === selectedSkillId) ?? filteredSkills[0] ?? skills[0];
@@ -166,9 +201,10 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setLoading(true);
     try {
       setError("");
-      const [skillsResponse, skillHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
+      const [skillsResponse, skillHealthResponse, skillSourceHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
         listSkills(workspaceCwd),
         getSkillHealth(workspaceCwd, { limit: 6 }),
+        getSkillSourceHealth(workspaceCwd, { limit: 6 }),
         listProcedureObservationClusters(workspaceCwd, { limit: 8 }),
         listSkillCandidates(workspaceCwd, { limit: 8 }),
         listChannels(workspaceCwd),
@@ -186,6 +222,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       ]);
       setSkills(skillsResponse.skills);
       setSkillHealth(skillHealthResponse.report);
+      setSkillSourceHealth(skillSourceHealthResponse.report);
+      setSkillSourceSnapshots(skillSourceHealthResponse.snapshots);
       setObservationClusters(clustersResponse.clusters);
       setSkillCandidates(candidatesResponse.candidates);
       setPlaybookCandidates(playbookCandidateResponses.flatMap((response) => response.candidates));
@@ -241,6 +279,86 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     } finally {
       setSaving(false);
     }
+  }
+
+  function buildSkillSourceSyncRequest(): SkillSourceSyncRequest {
+    const skillRoots = syncRootPath
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return {
+      skillRoots: skillRoots.length > 0 ? skillRoots : undefined,
+      includeDetectedRoots: syncIncludeDetectedRoots,
+    };
+  }
+
+  async function previewSkillSourceSync(mode: "preview" | "refresh"): Promise<void> {
+    if (syncing) {
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    if (!syncIncludeDetectedRoots && !syncRootPath.trim()) {
+      setMessage(t("Add a skill root path or enable detected roots"));
+      return;
+    }
+    setSyncing(true);
+    try {
+      setError("");
+      const input = buildSkillSourceSyncRequest();
+      const response = mode === "refresh"
+        ? await refreshGstackSkillSourceSync(workspaceCwd, input)
+        : await previewGstackSkillSourceSync(workspaceCwd, input);
+      setSyncPreview(response.preview);
+      setSelectedSyncSkillIds(defaultSelectedSyncSkillIds(response.preview.records, syncAllowNewSkills));
+      setMessage(mode === "refresh" ? t("Source scan refreshed") : t("Source preview ready"));
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : String(syncError));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function publishSkillSourceSync(): Promise<void> {
+    if (syncing || selectedSyncSkillIds.length === 0) {
+      setMessage(t("Select skill source records first"));
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setSyncing(true);
+    try {
+      setError("");
+      const response = await publishGstackSkillSourceSync(workspaceCwd, {
+        ...buildSkillSourceSyncRequest(),
+        selectedSkillIds: selectedSyncSkillIds,
+        allowNewSkills: syncAllowNewSkills,
+      });
+      setSyncPreview(response.preview);
+      setSelectedSyncSkillIds([]);
+      await refresh();
+      setSyncOpen(true);
+      setMessage(t("Published {count} skill sources", { count: response.snapshots.length }));
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : String(syncError));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  function toggleSyncSkillId(record: SkillSourceSyncPreviewRecord): void {
+    if (!isSelectableSyncRecord(record, syncAllowNewSkills)) {
+      return;
+    }
+    setSelectedSyncSkillIds((current) => current.includes(record.skillId)
+      ? current.filter((skillId) => skillId !== record.skillId)
+      : [...current, record.skillId]);
   }
 
   async function reviewCandidate(candidateId: string, action: SkillCandidateReviewAction): Promise<void> {
@@ -387,6 +505,23 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
+  async function archiveSourceSnapshot(skillId: string): Promise<void> {
+    if (saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      await archiveSkillSourceSnapshot(cwd.trim(), skillId);
+      await refresh();
+      setMessage(t("Source snapshot archived"));
+    } catch (archiveError) {
+      setError(archiveError instanceof Error ? archiveError.message : String(archiveError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="settings-skill-library" aria-labelledby="settings-skill-library-title">
       <header className="settings-skill-library-head">
@@ -395,6 +530,10 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
           <p>{t("Workspace Skill Library manages Skill definitions and teammate binding visibility.")}</p>
         </div>
         <div className="settings-skill-library-actions">
+          <button className="secondary-button compact-button" type="button" onClick={() => setSyncOpen((open) => !open)} aria-expanded={syncOpen}>
+            <RefreshCw size={15} />
+            {t("Sync gstack source")}
+          </button>
           <button className="primary-button compact-button" type="button" onClick={() => setImportOpen(true)}>
             <Upload size={15} />
             {t("Import skill")}
@@ -424,9 +563,37 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         <span><small>{t("Bindable")}</small><strong>{stats.bindable}</strong></span>
         <span><small>{t("Drafts")}</small><strong>{stats.draft}</strong></span>
         <span><small>{t("Blocked")}</small><strong>{stats.blocked}</strong></span>
+        <span><small>{t("Source-backed")}</small><strong>{stats.sourceBacked}</strong></span>
+        <span><small>{t("Missing source")}</small><strong>{stats.missingSource}</strong></span>
       </div>
 
       <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
+      <SkillSourceHealthPanel report={skillSourceHealth} snapshots={skillSourceSnapshots} loading={loading} t={t} />
+      {syncOpen ? (
+        <SkillSourceSyncPanel
+          preview={syncPreview}
+          rootPath={syncRootPath}
+          includeDetectedRoots={syncIncludeDetectedRoots}
+          allowNewSkills={syncAllowNewSkills}
+          selectedSkillIds={selectedSyncSkillIds}
+          loading={loading}
+          syncing={syncing}
+          onRootPathChange={setSyncRootPath}
+          onIncludeDetectedRootsChange={setSyncIncludeDetectedRoots}
+          onAllowNewSkillsChange={(allow) => {
+            setSyncAllowNewSkills(allow);
+            if (!allow && syncPreview) {
+              const newSkillIds = new Set(syncPreview.records.filter((record) => record.state === "new").map((record) => record.skillId));
+              setSelectedSyncSkillIds((current) => current.filter((skillId) => !newSkillIds.has(skillId)));
+            }
+          }}
+          onPreview={() => void previewSkillSourceSync("preview")}
+          onRefresh={() => void previewSkillSourceSync("refresh")}
+          onPublish={() => void publishSkillSourceSync()}
+          onToggleRecord={toggleSyncSkillId}
+          t={t}
+        />
+      ) : null}
 
       <SkillCandidateReviewPanel
         candidates={skillCandidates}
@@ -568,6 +735,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
                 const state = skillRegistryState(entry, t);
                 const selected = selectedSkill?.id === entry.id;
                 const canArchive = entry.source !== "builtin" && entry.reviewStatus !== "archived";
+                const sourceSnapshot = sourceSnapshotBySkillId.get(entry.id);
                 return (
                   <tr key={entry.id} className={selected ? "selected" : ""}>
                     <td><SkillStatePill label={state.label} tone={state.tone} /></td>
@@ -577,7 +745,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
                         <small>{entry.id}</small>
                       </button>
                     </td>
-                    <td>{skillSourceLabel(entry.source, t)}</td>
+                    <td><SkillSourceStatus source={entry.source} snapshot={sourceSnapshot} t={t} /></td>
                     <td><span className={`phase-token ${entry.definition.workflowPhase}`}>{workflowPhaseLabel(entry.definition.workflowPhase, t)}</span></td>
                     <td><SkillTokenList values={entry.definition.requiredTools} emptyLabel={t("No tools")} /></td>
                     <td>{approvalProfileText(entry.definition.approvalProfile, t)}</td>
@@ -635,6 +803,12 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
               <SkillInspectorSection title={t("Bound teammates")}>
                 <SkillTokenList values={boundTeammateNames(selectedSkill.id, bindingSummaries)} emptyLabel={t("Unbound")} />
               </SkillInspectorSection>
+              <SkillSourceInspector
+                snapshot={sourceSnapshotBySkillId.get(selectedSkill.id)}
+                saving={saving}
+                onArchive={() => void archiveSourceSnapshot(selectedSkill.id)}
+                t={t}
+              />
               <small>{t("Updated {time}", { time: formatDateTime(selectedSkill.updatedAt) })}</small>
             </>
           ) : (
@@ -647,6 +821,164 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         {message ? <span>{message}</span> : null}
         <span>{t("Persona cannot grant tools, approvals, or secrets; Skill permissions are enforced by binding and policy checks.")}</span>
       </footer>
+    </section>
+  );
+}
+
+function SkillSourceSyncPanel({
+  preview,
+  rootPath,
+  includeDetectedRoots,
+  allowNewSkills,
+  selectedSkillIds,
+  loading,
+  syncing,
+  onRootPathChange,
+  onIncludeDetectedRootsChange,
+  onAllowNewSkillsChange,
+  onPreview,
+  onRefresh,
+  onPublish,
+  onToggleRecord,
+  t,
+}: {
+  readonly preview: SkillSourceSyncPreviewReport | undefined;
+  readonly rootPath: string;
+  readonly includeDetectedRoots: boolean;
+  readonly allowNewSkills: boolean;
+  readonly selectedSkillIds: readonly string[];
+  readonly loading: boolean;
+  readonly syncing: boolean;
+  readonly onRootPathChange: (value: string) => void;
+  readonly onIncludeDetectedRootsChange: (value: boolean) => void;
+  readonly onAllowNewSkillsChange: (value: boolean) => void;
+  readonly onPreview: () => void;
+  readonly onRefresh: () => void;
+  readonly onPublish: () => void;
+  readonly onToggleRecord: (record: SkillSourceSyncPreviewRecord) => void;
+  readonly t: SettingsTranslator;
+}): JSX.Element {
+  const records = preview?.records ?? [];
+  const selectedSet = new Set(selectedSkillIds);
+  const disabled = loading || syncing;
+  return (
+    <section className="settings-skill-source-sync" aria-label={t("gstack source sync")}>
+      <header className="settings-skill-source-sync-head">
+        <span>
+          <RefreshCw size={15} className={syncing ? "spin" : undefined} />
+          <strong>{t("gstack source sync")}</strong>
+        </span>
+        <small>{preview ? t("{count} records", { count: preview.summary.totalRecords }) : t("Preview before publishing")}</small>
+      </header>
+      <div className="settings-skill-source-sync-controls">
+        <label className="field">
+          <span>{t("Skill root paths")}</span>
+          <textarea
+            rows={2}
+            value={rootPath}
+            onChange={(event) => onRootPathChange(event.target.value)}
+            placeholder="~/.gstack/repos/gstack/.agents/skills"
+          />
+        </label>
+        <div className="settings-skill-source-sync-switches">
+          <label className="settings-toggle">
+            <input type="checkbox" checked={includeDetectedRoots} onChange={(event) => onIncludeDetectedRootsChange(event.target.checked)} />
+            {t("Include detected roots")}
+          </label>
+          <label className="settings-toggle">
+            <input type="checkbox" checked={allowNewSkills} onChange={(event) => onAllowNewSkillsChange(event.target.checked)} />
+            {t("Allow new skills")}
+          </label>
+        </div>
+        <div className="settings-skill-source-sync-actions">
+          <button className="secondary-button compact-button" type="button" onClick={onPreview} disabled={disabled || (!includeDetectedRoots && !rootPath.trim())}>
+            <Search size={14} />
+            {t("Preview")}
+          </button>
+          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={disabled || (!includeDetectedRoots && !rootPath.trim())}>
+            <RefreshCw size={14} />
+            {t("Refresh")}
+          </button>
+          <button className="primary-button compact-button" type="button" onClick={onPublish} disabled={disabled || selectedSkillIds.length === 0}>
+            <CheckCircle2 size={14} />
+            {t("Publish selected")}
+          </button>
+        </div>
+      </div>
+      {preview ? (
+        <div className="settings-skill-source-sync-summary" aria-label={t("gstack source sync summary")}>
+          <span><small>{t("Attachable")}</small><strong>{preview.summary.attachable}</strong></span>
+          <span><small>{t("Drifted")}</small><strong>{preview.summary.drifted}</strong></span>
+          <span><small>{t("New")}</small><strong>{preview.summary.new}</strong></span>
+          <span><small>{t("Blocked")}</small><strong>{preview.summary.blocked}</strong></span>
+          <span><small>{t("Selected")}</small><strong>{selectedSkillIds.length}</strong></span>
+        </div>
+      ) : null}
+      {records.length === 0 ? (
+        <div className="compact-empty">{syncing ? t("Scanning source roots...") : t("No source preview loaded")}</div>
+      ) : (
+        <div className="settings-skill-source-sync-records">
+          {records.map((record) => {
+            const selectable = isSelectableSyncRecord(record, allowNewSkills);
+            const selected = selectedSet.has(record.skillId);
+            const title = syncRecordTitle(record);
+            const path = record.upstreamSkillPath ?? record.sourcePath ?? "-";
+            const diff = record.diff ?? [];
+            return (
+              <article key={`${record.skillId}:${record.sourcePath ?? record.upstreamSkillPath ?? record.state}`} className={`settings-skill-source-sync-record ${record.state}`}>
+                <label className="settings-skill-source-sync-select">
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    disabled={!selectable || disabled}
+                    onChange={() => onToggleRecord(record)}
+                    aria-label={t("Select {skill}", { skill: record.skillId })}
+                  />
+                </label>
+                <div className="settings-skill-source-sync-main">
+                  <div className="settings-skill-source-sync-title">
+                    <span>
+                      <strong>{title}</strong>
+                      <small>{record.skillId} · {path}</small>
+                    </span>
+                    <span className={`settings-skill-sync-state ${record.state}`}>{skillSourceSyncStateLabel(record.state, t)}</span>
+                  </div>
+                  <div className="settings-skill-source-sync-meta">
+                    <span>{record.sourceKind ?? "-"}</span>
+                    <span>{t("Files")}: {record.referencedFiles.length}</span>
+                    <span>{t("Warnings")}: {record.warnings.length}</span>
+                    {record.sourceChecksum ? <span>{record.sourceChecksum}</span> : null}
+                  </div>
+                  {record.warnings.length > 0 ? (
+                    <div className="settings-skill-source-sync-warnings">
+                      {record.warnings.slice(0, 2).map((warning, index) => (
+                        <small key={`${warning.code}:${warning.location ?? index}`} className={warning.severity}>
+                          {warning.severity}: {warning.code}
+                        </small>
+                      ))}
+                    </div>
+                  ) : null}
+                  {diff.length > 0 ? (
+                    <div className="settings-skill-source-sync-diff" aria-label={t("Drift diff for {skill}", { skill: record.skillId })}>
+                      <span className="settings-skill-source-sync-diff-title">{t("Drift diff")} · {diff.length}</span>
+                      <div className="settings-skill-source-sync-diff-items">
+                        {diff.slice(0, 5).map((item) => (
+                          <div key={item.field} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
+                            <small>{skillSourceSyncDiffLabel(item, t)}</small>
+                            <code>{item.before ?? "-"}</code>
+                            <span>→</span>
+                            <code>{item.after ?? "-"}</code>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -715,6 +1047,135 @@ function SkillHealthFindingRow({
         <SkillTokenList values={relatedIds} emptyLabel={t("No related ids")} />
       </div>
     </article>
+  );
+}
+
+function SkillSourceHealthPanel({
+  report,
+  snapshots,
+  loading,
+  t,
+}: {
+  readonly report: SkillSourceHealthReport | undefined;
+  readonly snapshots: readonly SkillSourceSnapshot[];
+  readonly loading: boolean;
+  readonly t: SettingsTranslator;
+}): JSX.Element {
+  const findings = report?.findings ?? [];
+  const summary = report?.summary;
+  return (
+    <section className="settings-skill-health settings-skill-source-health" aria-label={t("Skill Source Health")}>
+      <header className="settings-skill-health-head">
+        <span>
+          <BookOpen size={15} />
+          <strong>{t("Skill Source Health")}</strong>
+        </span>
+        <small>
+          {report ? t("Generated {time}", { time: formatDateTime(report.generatedAt) }) : loading ? t("Loading skill source health...") : t("No source health report loaded")}
+        </small>
+      </header>
+      <div className="settings-skill-health-summary" aria-label={t("Skill source summary")}>
+        <span><small>{t("Source-backed")}</small><strong>{summary?.sourceBackedSkills ?? snapshots.length}</strong></span>
+        <span><small>{t("Missing source")}</small><strong>{summary?.missingSourceSnapshots ?? 0}</strong></span>
+        <span><small>{t("Warning snapshots")}</small><strong>{summary?.warningSnapshots ?? 0}</strong></span>
+        <span><small>{t("Orphaned")}</small><strong>{summary?.orphanedSnapshots ?? 0}</strong></span>
+      </div>
+      {findings.length === 0 ? (
+        <div className="compact-empty">{loading ? t("Loading skill source health...") : t("No skill source findings")}</div>
+      ) : (
+        <div className="settings-skill-health-findings">
+          {findings.map((finding) => (
+            <article key={`${finding.kind}:${finding.skillId ?? finding.snapshotId ?? finding.title}`} className={`settings-skill-health-finding ${finding.severity}`}>
+              <div className="settings-skill-health-finding-main">
+                <span className="settings-skill-health-title">
+                  <AlertTriangle size={14} />
+                  <strong>{finding.title}</strong>
+                </span>
+                <p>{finding.message}</p>
+                <small>{sourceHealthKindLabel(finding.kind, t)}</small>
+              </div>
+              <div className="settings-skill-health-finding-meta">
+                <SkillHealthSeverityPill severity={finding.severity} t={t} />
+                <SkillTokenList values={[finding.skillId, finding.snapshotId].filter((value): value is string => Boolean(value))} emptyLabel={t("No related ids")} />
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SkillSourceStatus({
+  source,
+  snapshot,
+  t,
+}: {
+  readonly source: SkillPackSource;
+  readonly snapshot: SkillSourceSnapshot | undefined;
+  readonly t: SettingsTranslator;
+}): JSX.Element {
+  const sourceState = skillSourceSnapshotState(snapshot, t);
+  return (
+    <span className="settings-skill-source-status">
+      <span>{skillSourceLabel(source, t)}</span>
+      <small className={sourceState.tone}>{sourceState.label}</small>
+    </span>
+  );
+}
+
+function SkillSourceInspector({
+  snapshot,
+  saving,
+  onArchive,
+  t,
+}: {
+  readonly snapshot: SkillSourceSnapshot | undefined;
+  readonly saving: boolean;
+  readonly onArchive: () => void;
+  readonly t: SettingsTranslator;
+}): JSX.Element {
+  if (!snapshot) {
+    return (
+      <SkillInspectorSection title={t("Source snapshot")}>
+        <p>{t("Metadata only. No published SKILL.md snapshot is attached yet.")}</p>
+      </SkillInspectorSection>
+    );
+  }
+
+  return (
+    <SkillInspectorSection title={t("Source snapshot")}>
+      <div className="settings-skill-source-detail">
+        <span><small>{t("Snapshot")}</small><code>{snapshot.id}</code></span>
+        <span><small>{t("Checksum")}</small><code>{snapshot.sourceChecksum}</code></span>
+        <span><small>{t("Upstream")}</small><code>{[snapshot.upstreamName, snapshot.upstreamVersion].filter(Boolean).join(" ") || "-"}</code></span>
+        <span><small>{t("Path")}</small><code>{snapshot.upstreamSkillPath ?? snapshot.sourcePath ?? "-"}</code></span>
+      </div>
+      <div className="settings-skill-source-tags">
+        <span>{t("Files")}: {snapshot.referencedFiles.length}</span>
+        <span>{t("Warnings")}: {snapshot.warnings.length}</span>
+        <span>{t("Review")}: {snapshot.reviewStatus}</span>
+      </div>
+      <div className="settings-skill-source-actions">
+        <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
+          <Archive size={14} />
+          {t("Archive source snapshot")}
+        </button>
+      </div>
+      {snapshot.warnings.length > 0 ? (
+        <div className="settings-skill-source-warning-list">
+          {snapshot.warnings.slice(0, 4).map((warning, index) => (
+            <small key={`${warning.code}:${warning.location ?? index}`} className={warning.severity}>
+              {warning.severity}: {warning.code} · {warning.message}
+            </small>
+          ))}
+        </div>
+      ) : null}
+      <details className="settings-skill-source-preview">
+        <summary>{t("View SKILL.md")}</summary>
+        <pre>{snapshot.rawSkillMarkdown}</pre>
+      </details>
+    </SkillInspectorSection>
   );
 }
 
@@ -1097,6 +1558,109 @@ function skillSourceLabel(source: SkillPackSource, t: (key: string) => string): 
     return "gstack";
   }
   return t("Custom");
+}
+
+function skillSourceSnapshotState(
+  snapshot: SkillSourceSnapshot | undefined,
+  t: SettingsTranslator,
+): { readonly label: string; readonly tone: "backed" | "warning" | "missing" } {
+  if (!snapshot) {
+    return { label: t("Metadata only"), tone: "missing" };
+  }
+  const warningCodes = new Set(snapshot.warnings.map((warning) => warning.code));
+  if (warningCodes.has("drifted_upstream")) {
+    return { label: t("Drifted source"), tone: "warning" };
+  }
+  if (warningCodes.has("missing_upstream")) {
+    return { label: t("Missing upstream"), tone: "warning" };
+  }
+  if (warningCodes.has("orphaned_snapshot")) {
+    return { label: t("Orphaned source"), tone: "warning" };
+  }
+  if (snapshot.warnings.length > 0) {
+    return { label: t("{count} warnings", { count: snapshot.warnings.length }), tone: "warning" };
+  }
+  return { label: t("Source-backed"), tone: "backed" };
+}
+
+function defaultSelectedSyncSkillIds(records: readonly SkillSourceSyncPreviewRecord[], allowNewSkills: boolean): readonly string[] {
+  return records
+    .filter((record) => record.state === "attachable" || record.state === "drifted" || (allowNewSkills && record.state === "new"))
+    .filter((record) => isSelectableSyncRecord(record, allowNewSkills))
+    .map((record) => record.skillId);
+}
+
+function isSelectableSyncRecord(record: SkillSourceSyncPreviewRecord, allowNewSkills: boolean): boolean {
+  if (record.state === "new") {
+    return allowNewSkills && !record.warnings.some((warning) => warning.severity === "error");
+  }
+  if (record.state === "attachable" || record.state === "drifted" || record.state === "unchanged") {
+    return !record.warnings.some((warning) => warning.severity === "error");
+  }
+  return false;
+}
+
+function syncRecordTitle(record: SkillSourceSyncPreviewRecord): string {
+  return record.definitionPreview?.name ?? record.frontMatter?.name ?? record.agentMetadata?.displayName ?? record.skillId;
+}
+
+function skillSourceSyncStateLabel(state: SkillSourceSyncRecordState, t: (key: string) => string): string {
+  switch (state) {
+    case "attachable":
+      return t("Attachable");
+    case "unchanged":
+      return t("Unchanged");
+    case "drifted":
+      return t("Drifted");
+    case "new":
+      return t("New");
+    case "missing":
+      return t("Missing");
+    case "blocked":
+      return t("Blocked");
+    case "orphaned":
+      return t("Orphaned");
+  }
+}
+
+function skillSourceSyncDiffLabel(item: SkillSourceSyncDiffItem, t: (key: string) => string): string {
+  switch (item.field) {
+    case "sourceChecksum":
+      return t("Checksum");
+    case "upstreamVersion":
+      return t("Upstream version");
+    case "upstreamSkillPath":
+      return t("Skill path");
+    case "sourceLengthChars":
+      return t("Source length");
+    case "referencedFiles":
+      return t("Referenced files");
+    case "warnings":
+      return t("Warnings");
+    case "frontMatterName":
+      return t("Front matter name");
+    case "frontMatterDescription":
+      return t("Front matter description");
+    case "agentDisplayName":
+      return t("Agent display name");
+    case "agentShortDescription":
+      return t("Agent short description");
+    case "agentAllowImplicitInvocation":
+      return t("Implicit invocation");
+  }
+}
+
+function sourceHealthKindLabel(kind: string, t: (key: string) => string): string {
+  if (kind === "missing_source_snapshot") {
+    return t("Missing source snapshot");
+  }
+  if (kind === "source_warning") {
+    return t("Source warning");
+  }
+  if (kind === "orphaned_source_snapshot") {
+    return t("Orphaned source snapshot");
+  }
+  return kind;
 }
 
 function skillHealthSeverityLabel(severity: SkillHealthSeverity, t: (key: string) => string): string {

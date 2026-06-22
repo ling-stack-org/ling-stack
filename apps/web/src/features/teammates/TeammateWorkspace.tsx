@@ -14,6 +14,7 @@ import {
   deleteAttachment,
   deleteTeammateAvatar,
   getMemoryHealth,
+  getSkillSourceHealth,
   getTeammateDirectRuntime,
   getTeammateDirectWorkspace,
   getMemoryReviewPolicy,
@@ -79,6 +80,7 @@ import type {
   ProviderPreset,
   SkillImportDraft,
   SkillRegistryEntry,
+  SkillSourceSnapshot,
   Task,
   TeammatePersonaDraft,
   TeammateActivityItem,
@@ -213,6 +215,7 @@ export function TeammateWorkspace({
   const [skillRegistryEntries, setSkillRegistryEntries] = useState<readonly SkillRegistryEntry[]>([]);
   const [skillBindings, setSkillBindings] = useState<readonly TeammateSkillBinding[]>([]);
   const [effectiveSkills, setEffectiveSkills] = useState<readonly EffectiveTeammateSkill[]>([]);
+  const [skillSourceSnapshots, setSkillSourceSnapshots] = useState<readonly SkillSourceSnapshot[]>([]);
   const [mcpServers, setMcpServers] = useState<readonly McpServer[]>([]);
   const [mcpTools, setMcpTools] = useState<readonly McpTool[]>([]);
   const [mcpBindings, setMcpBindings] = useState<readonly TeammateMcpBinding[]>([]);
@@ -289,6 +292,7 @@ export function TeammateWorkspace({
   const registryEntryBySkillId = useMemo(() => new Map(skillRegistryEntries.map((entry) => [entry.id, entry])), [skillRegistryEntries]);
   const bindingBySkillId = useMemo(() => new Map(skillBindings.map((binding) => [binding.skillId, binding])), [skillBindings]);
   const effectiveSkillById = useMemo(() => new Map(effectiveSkills.map((skill) => [skill.skillId, skill])), [effectiveSkills]);
+  const sourceSnapshotBySkillId = useMemo(() => new Map(skillSourceSnapshots.map((snapshot) => [snapshot.skillId, snapshot])), [skillSourceSnapshots]);
   const memoryById = useMemo(() => new Map(memoryObjects.map((memory) => [memory.id, memory])), [memoryObjects]);
   const privateAttachmentById = useMemo(() => new Map(privateAttachments.map((attachment) => [attachment.id, attachment])), [privateAttachments]);
   const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
@@ -309,6 +313,7 @@ export function TeammateWorkspace({
       skill,
       binding: bindingBySkillId.get(skill.id),
       effectiveSkill: effectiveSkillById.get(skill.id),
+      sourceSnapshot: sourceSnapshotBySkillId.get(skill.id),
     }));
     const unknownRows = skillBindings
       .filter((binding) => !skillById.has(binding.skillId))
@@ -317,9 +322,10 @@ export function TeammateWorkspace({
         skill: undefined,
         binding,
         effectiveSkill: effectiveSkillById.get(binding.skillId),
+        sourceSnapshot: sourceSnapshotBySkillId.get(binding.skillId),
       }));
     return [...registryRows, ...unknownRows];
-  }, [bindingBySkillId, effectiveSkillById, skillBindings, skillById, skillDefinitions]);
+  }, [bindingBySkillId, effectiveSkillById, skillBindings, skillById, skillDefinitions, sourceSnapshotBySkillId]);
   const skillTableRows = useMemo(() => filterTeammateSkillRows(skillRows, skillSearchQuery, skillFilter), [skillFilter, skillRows, skillSearchQuery]);
   const selectedSkillRow = useMemo(
     () => skillRows.find((row) => row.id === selectedSkillId) ?? skillTableRows[0] ?? skillRows[0],
@@ -629,6 +635,7 @@ export function TeammateWorkspace({
         directLinkPreviewsResponse,
         privateAttachmentsResponse,
         skillRegistryResponse,
+        skillSourceHealthResponse,
         channelResponse,
         skillResponse,
         mcpServersResponse,
@@ -649,6 +656,7 @@ export function TeammateWorkspace({
         listTeammateDirectLinkPreviews(workspaceCwd, teammate.id),
         listTeammatePrivateAttachments(workspaceCwd, teammate.id),
         listSkills(workspaceCwd),
+        getSkillSourceHealth(workspaceCwd, { limit: 8 }),
         listTeammateChannels(workspaceCwd, teammate.id),
         listTeammateSkills(workspaceCwd, teammate.id),
         listMcpServers(workspaceCwd),
@@ -671,6 +679,7 @@ export function TeammateWorkspace({
       setDirectLinkPreviews(directLinkPreviewsResponse.linkPreviews);
       setPrivateAttachments(privateAttachmentsResponse.attachments);
       setSkillRegistryEntries(skillRegistryResponse.skills);
+      setSkillSourceSnapshots(skillSourceHealthResponse.snapshots);
       setMemberships(channelResponse.memberships);
       setSkillBindings(skillResponse.bindings);
       setEffectiveSkills(skillResponse.effectiveSkills ?? []);

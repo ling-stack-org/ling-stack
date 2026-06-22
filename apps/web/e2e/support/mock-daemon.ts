@@ -57,6 +57,7 @@ export interface MockState {
   aiCouncilMembers: unknown[];
   channelCouncilPolicies: unknown[];
   skillRegistryEntries: unknown[];
+  skillSourceSnapshots: unknown[];
   skillImportDrafts: unknown[];
   skillCandidates: unknown[];
   skillCandidateReviewRecords: unknown[];
@@ -907,6 +908,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     aiCouncilMembers: createMockAiCouncilMembers(),
     channelCouncilPolicies: [],
     skillRegistryEntries: buildMockSkillRegistryEntries(),
+    skillSourceSnapshots: createMockSkillSourceSnapshots(),
     skillImportDrafts: [],
     skillCandidates: createMockSkillCandidates(),
     skillCandidateReviewRecords: [],
@@ -1899,6 +1901,309 @@ export function buildMockSkillRegistryEntries(): unknown[] {
   }));
 }
 
+export function createMockSkillSourceSnapshots(): unknown[] {
+  const timestamp = "2026-06-22T00:00:00.000Z";
+  return [
+    {
+      id: "skill_source_review_mock",
+      workspaceId: "workspace_default",
+      skillId: "review",
+      sourceKind: "gstack-skill-directory",
+      sourcePath: "skills/gstack-review/SKILL.md",
+      upstreamName: "gstack",
+      upstreamVersion: "1.58.3.0",
+      upstreamSkillPath: "gstack-review/SKILL.md",
+      sourceChecksum: "sha256:review-mock",
+      rawSkillMarkdown: "---\nname: review\n---\n# Review\nFind concrete issues first.",
+      agentMetadata: {
+        displayName: "gstack-review",
+        shortDescription: "Pre-landing review.",
+        allowImplicitInvocation: true,
+      },
+      referencedFiles: [
+        {
+          path: "references/checklist.md",
+          kind: "reference",
+          checksum: "sha256:checklist",
+          sizeBytes: 32,
+          includedInSnapshot: false,
+        },
+      ],
+      warnings: [],
+      reviewStatus: "published",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  ];
+}
+
+function createMockSkillSourceSyncPreview(state: MockState, input: Record<string, unknown> = {}): Record<string, unknown> {
+  const timestamp = "2026-06-22T00:05:00.000Z";
+  const implementDefinition = gstackDefaultSkillPack.skills.find((definition) => definition.id === "implement");
+  const reviewDefinition = gstackDefaultSkillPack.skills.find((definition) => definition.id === "review");
+  const existingReviewSnapshot = state.skillSourceSnapshots.find((item) => isRecord(item) && item.skillId === "review" && item.reviewStatus === "published");
+  const roots = [
+    ...Array.isArray(input.roots) ? input.roots.filter(isRecord) : [],
+    ...Array.isArray(input.skillRoots)
+      ? input.skillRoots
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .map((rootPath) => ({
+          rootPath,
+          sourceKind: "gstack-skill-directory",
+          label: "Manual skill root",
+          upstreamName: "gstack",
+          upstreamVersion: "1.58.4.0",
+        }))
+      : [],
+    input.includeDetectedRoots === false
+      ? undefined
+      : {
+          rootPath: "mock-detected-gstack-skills",
+          sourceKind: "gstack-skill-directory",
+          label: "Detected gstack skills",
+          upstreamName: "gstack",
+          upstreamVersion: "1.58.4.0",
+        },
+  ].filter((item): item is Record<string, unknown> => isRecord(item));
+  const records = [
+    {
+      state: "attachable",
+      skillId: "implement",
+      sourceKind: "gstack-skill-directory",
+      sourcePath: "skills/gstack-implement/SKILL.md",
+      upstreamName: "gstack",
+      upstreamVersion: "1.58.4.0",
+      upstreamSkillPath: "gstack-implement/SKILL.md",
+      sourceChecksum: "sha256:implement-sync",
+      sourceSizeBytes: 428,
+      frontMatter: { name: "implement", description: "Implementation workflow" },
+      referencedFiles: [
+        { path: "references/implementation.md", kind: "reference", checksum: "sha256:impl-ref", sizeBytes: 64, includedInSnapshot: false },
+      ],
+      warnings: [],
+      definitionPreview: implementDefinition,
+      snapshotPreview: {
+        skillId: "implement",
+        sourceKind: "gstack-skill-directory",
+        sourcePath: "skills/gstack-implement/SKILL.md",
+        upstreamName: "gstack",
+        upstreamVersion: "1.58.4.0",
+        upstreamSkillPath: "gstack-implement/SKILL.md",
+        sourceChecksum: "sha256:implement-sync",
+        rawSkillMarkdown: "---\nname: implement\n---\n# Implement\nShip the focused code change.",
+        agentMetadata: {
+          displayName: "gstack-implement",
+          shortDescription: "Implementation workflow.",
+          allowImplicitInvocation: true,
+        },
+        referencedFiles: [
+          { path: "references/implementation.md", kind: "reference", checksum: "sha256:impl-ref", sizeBytes: 64, includedInSnapshot: false },
+        ],
+        warnings: [],
+        reviewStatus: "reviewed",
+      },
+      diff: [],
+    },
+    {
+      state: "drifted",
+      skillId: "review",
+      sourceKind: "gstack-skill-directory",
+      sourcePath: "skills/gstack-review/SKILL.md",
+      upstreamName: "gstack",
+      upstreamVersion: "1.58.4.0",
+      upstreamSkillPath: "gstack-review/SKILL.md",
+      sourceChecksum: "sha256:review-sync",
+      sourceSizeBytes: 392,
+      frontMatter: { name: "review", description: "Pre-landing review" },
+      referencedFiles: [],
+      warnings: [{ code: "drifted_upstream", severity: "warning", message: "Upstream source changed since the published snapshot." }],
+      definitionPreview: reviewDefinition,
+      snapshotPreview: {
+        skillId: "review",
+        sourceKind: "gstack-skill-directory",
+        sourcePath: "skills/gstack-review/SKILL.md",
+        upstreamName: "gstack",
+        upstreamVersion: "1.58.4.0",
+        upstreamSkillPath: "gstack-review/SKILL.md",
+        sourceChecksum: "sha256:review-sync",
+        rawSkillMarkdown: "---\nname: review\n---\n# Review\nFind concrete issues first, then summarize residual risk.",
+        agentMetadata: {
+          displayName: "gstack-review",
+          shortDescription: "Pre-landing review.",
+          allowImplicitInvocation: true,
+        },
+        referencedFiles: [],
+        warnings: [{ code: "drifted_upstream", severity: "warning", message: "Upstream source changed since the published snapshot." }],
+        reviewStatus: "reviewed",
+      },
+      existingSnapshotId: isRecord(existingReviewSnapshot) && typeof existingReviewSnapshot.id === "string" ? existingReviewSnapshot.id : undefined,
+      diff: [
+        { field: "sourceChecksum", label: "Checksum", before: "sha256:review-mock", after: "sha256:review-sync", severity: "warning" },
+        { field: "upstreamVersion", label: "Upstream version", before: "1.58.3.0", after: "1.58.4.0", severity: "info" },
+        { field: "sourceLengthChars", label: "Source length", before: "49", after: "75", severity: "info" },
+        { field: "referencedFiles", label: "Referenced files", before: "1 files · sha256:checklist", after: "0 files", severity: "info" },
+        { field: "warnings", label: "Warnings", before: "0 warnings", after: "1 warnings · drifted_upstream:warning:", severity: "warning" },
+      ],
+    },
+    {
+      state: "new",
+      skillId: "gstack-design-review",
+      sourceKind: "gstack-skill-directory",
+      sourcePath: "skills/gstack-design-review/SKILL.md",
+      upstreamName: "gstack",
+      upstreamVersion: "1.58.4.0",
+      upstreamSkillPath: "gstack-design-review/SKILL.md",
+      sourceChecksum: "sha256:design-review-sync",
+      sourceSizeBytes: 512,
+      frontMatter: { name: "design-review", description: "Designer eye QA" },
+      referencedFiles: [],
+      warnings: [],
+      definitionPreview: {
+        id: "gstack-design-review",
+        name: "Design Review",
+        summary: "Visual QA for spacing, hierarchy, and interaction polish.",
+        roleAffinity: ["designer"],
+        workflowPhase: "review",
+        promptFragments: ["Run a focused visual design review and report concrete issues."],
+        requiredTools: ["read"],
+        requiredProviderCapabilities: [],
+        approvalProfile: "standard",
+        stateEffects: ["updates_plan"],
+      },
+      snapshotPreview: {
+        skillId: "gstack-design-review",
+        sourceKind: "gstack-skill-directory",
+        sourcePath: "skills/gstack-design-review/SKILL.md",
+        upstreamName: "gstack",
+        upstreamVersion: "1.58.4.0",
+        upstreamSkillPath: "gstack-design-review/SKILL.md",
+        sourceChecksum: "sha256:design-review-sync",
+        rawSkillMarkdown: "---\nname: design-review\n---\n# Design Review\nAudit the rendered UI for concrete visual issues.",
+        agentMetadata: {
+          displayName: "gstack-design-review",
+          shortDescription: "Visual QA.",
+          allowImplicitInvocation: true,
+        },
+        referencedFiles: [],
+        warnings: [],
+        reviewStatus: "reviewed",
+      },
+      diff: [],
+    },
+    {
+      state: "blocked",
+      skillId: "gstack-danger-demo",
+      sourceKind: "gstack-skill-directory",
+      sourcePath: "skills/gstack-danger-demo/SKILL.md",
+      upstreamName: "gstack",
+      upstreamVersion: "1.58.4.0",
+      upstreamSkillPath: "gstack-danger-demo/SKILL.md",
+      sourceChecksum: "sha256:danger-demo-sync",
+      sourceSizeBytes: 256,
+      frontMatter: { name: "danger-demo", description: "Blocked sample" },
+      referencedFiles: [],
+      warnings: [{ code: "destructive_command", severity: "error", message: "Source contains destructive command guidance." }],
+      diff: [],
+    },
+  ];
+  const summary = records.reduce((current, record) => {
+    current.totalRecords += 1;
+    current[record.state as keyof typeof current] += 1;
+    return current;
+  }, {
+    totalRecords: 0,
+    attachable: 0,
+    unchanged: 0,
+    drifted: 0,
+    new: 0,
+    missing: 0,
+    blocked: 0,
+    orphaned: 0,
+  });
+  return {
+    generatedAt: timestamp,
+    roots,
+    upstreamVersions: ["gstack 1.58.4.0"],
+    summary,
+    records,
+  };
+}
+
+function publishMockSkillSourceSync(state: MockState, input: Record<string, unknown> = {}): { readonly preview: Record<string, unknown>; readonly skills: readonly unknown[]; readonly snapshots: readonly unknown[] } {
+  const timestamp = "2026-06-22T00:06:00.000Z";
+  const selectedSkillIds = new Set(Array.isArray(input.selectedSkillIds) ? input.selectedSkillIds.filter((item): item is string => typeof item === "string") : []);
+  const allowNewSkills = input.allowNewSkills === true;
+  const preview = createMockSkillSourceSyncPreview(state, input);
+  const records = Array.isArray(preview.records) ? preview.records.filter(isRecord) : [];
+  const publishedSnapshots: unknown[] = [];
+  const publishedSkills: unknown[] = [];
+  for (const record of records) {
+    const skillId = typeof record.skillId === "string" ? record.skillId : "";
+    if (!selectedSkillIds.has(skillId) || !isMockPublishableSyncRecord(record, allowNewSkills) || !isRecord(record.snapshotPreview)) {
+      continue;
+    }
+    if (record.state === "new") {
+      if (!isRecord(record.definitionPreview)) {
+        continue;
+      }
+      const existingSkillIndex = state.skillRegistryEntries.findIndex((item) => isRecord(item) && item.id === skillId);
+      const nextSkill = {
+        id: skillId,
+        workspaceId: "workspace_default",
+        packId: "skill_pack_gstack_source_sync",
+        source: "gstack",
+        sourcePath: typeof record.sourcePath === "string" ? record.sourcePath : undefined,
+        version: typeof record.upstreamVersion === "string" ? record.upstreamVersion : undefined,
+        checksum: typeof record.sourceChecksum === "string" ? record.sourceChecksum : undefined,
+        definition: record.definitionPreview,
+        visibility: {
+          workspaceVisible: true,
+          promotableToWorkspace: true,
+        },
+        reviewStatus: "published",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      if (existingSkillIndex >= 0) {
+        state.skillRegistryEntries[existingSkillIndex] = nextSkill;
+      } else {
+        state.skillRegistryEntries.unshift(nextSkill);
+      }
+      publishedSkills.push(nextSkill);
+    } else {
+      const existingSkill = state.skillRegistryEntries.find((item) => isRecord(item) && item.id === skillId);
+      if (existingSkill) {
+        publishedSkills.push(existingSkill);
+      }
+    }
+    const existingSnapshot = state.skillSourceSnapshots.find((item) => isRecord(item) && item.skillId === skillId);
+    const snapshot = {
+      ...record.snapshotPreview,
+      id: isRecord(existingSnapshot) && typeof existingSnapshot.id === "string" ? existingSnapshot.id : `skill_source_${skillId}_sync_mock`,
+      workspaceId: "workspace_default",
+      reviewStatus: "published",
+      createdAt: isRecord(existingSnapshot) && typeof existingSnapshot.createdAt === "string" ? existingSnapshot.createdAt : timestamp,
+      updatedAt: timestamp,
+    };
+    const snapshotIndex = state.skillSourceSnapshots.findIndex((item) => isRecord(item) && item.skillId === skillId);
+    if (snapshotIndex >= 0) {
+      state.skillSourceSnapshots[snapshotIndex] = snapshot;
+    } else {
+      state.skillSourceSnapshots.unshift(snapshot);
+    }
+    publishedSnapshots.push(snapshot);
+  }
+  return { preview, skills: publishedSkills, snapshots: publishedSnapshots };
+}
+
+function isMockPublishableSyncRecord(record: Record<string, unknown>, allowNewSkills: boolean): boolean {
+  const warnings = Array.isArray(record.warnings) ? record.warnings.filter(isRecord) : [];
+  if (warnings.some((warning) => warning.severity === "error")) {
+    return false;
+  }
+  return record.state === "attachable" || record.state === "drifted" || record.state === "unchanged" || (allowNewSkills && record.state === "new");
+}
+
 export function createMockSkillCandidates(): unknown[] {
   const timestamp = "2026-06-20T00:05:00.000Z";
   return [
@@ -2167,6 +2472,62 @@ export function createMockSkillHealthReport(state: MockState, limit = 100): Reco
       },
     },
     findings: limitedFindings,
+  };
+}
+
+export function createMockSkillSourceHealthReport(state: MockState, limit = 100): Record<string, unknown> {
+  const activeSkills = state.skillRegistryEntries.filter((item) =>
+    isRecord(item) &&
+    (item.reviewStatus === "builtin" || item.reviewStatus === "published")
+  );
+  const publishedSnapshots = state.skillSourceSnapshots.filter((item) =>
+    isRecord(item) &&
+    item.reviewStatus === "published"
+  );
+  const activeSkillIds = new Set(activeSkills.map((skill) => isRecord(skill) && typeof skill.id === "string" ? skill.id : "").filter(Boolean));
+  const snapshotSkillIds = new Set(publishedSnapshots.map((snapshot) => isRecord(snapshot) && typeof snapshot.skillId === "string" ? snapshot.skillId : "").filter(Boolean));
+  const missingSourceFindings = activeSkills
+    .filter((skill) => isRecord(skill) && typeof skill.id === "string" && !snapshotSkillIds.has(skill.id))
+    .slice(0, Math.max(limit, 1))
+    .map((skill) => ({
+      kind: "missing_source_snapshot",
+      severity: "info",
+      skillId: isRecord(skill) && typeof skill.id === "string" ? skill.id : undefined,
+      title: "Missing source snapshot",
+      message: "This registry skill is metadata-only until a reviewed SKILL.md snapshot is published.",
+    }));
+  const warningFindings = publishedSnapshots
+    .filter((snapshot) => isRecord(snapshot) && Array.isArray(snapshot.warnings) && snapshot.warnings.length > 0)
+    .map((snapshot) => ({
+      kind: "source_warning",
+      severity: "warning",
+      skillId: isRecord(snapshot) && typeof snapshot.skillId === "string" ? snapshot.skillId : undefined,
+      snapshotId: isRecord(snapshot) && typeof snapshot.id === "string" ? snapshot.id : undefined,
+      title: "Source warning",
+      message: "Published source snapshot has warnings.",
+    }));
+  const orphanedFindings = publishedSnapshots
+    .filter((snapshot) => isRecord(snapshot) && typeof snapshot.skillId === "string" && !activeSkillIds.has(snapshot.skillId))
+    .map((snapshot) => ({
+      kind: "orphaned_source_snapshot",
+      severity: "warning",
+      skillId: isRecord(snapshot) && typeof snapshot.skillId === "string" ? snapshot.skillId : undefined,
+      snapshotId: isRecord(snapshot) && typeof snapshot.id === "string" ? snapshot.id : undefined,
+      title: "Orphaned skill source snapshot",
+      message: "A published source snapshot points to a missing or archived skill.",
+    }));
+  const findings = [...warningFindings, ...orphanedFindings, ...missingSourceFindings].slice(0, Math.max(limit, 1));
+  return {
+    workspaceId: "workspace_default",
+    generatedAt: "2026-06-22T00:00:00.000Z",
+    summary: {
+      totalSkills: activeSkills.length,
+      sourceBackedSkills: publishedSnapshots.length,
+      missingSourceSnapshots: activeSkills.filter((skill) => isRecord(skill) && typeof skill.id === "string" && !snapshotSkillIds.has(skill.id)).length,
+      warningSnapshots: publishedSnapshots.filter((snapshot) => isRecord(snapshot) && Array.isArray(snapshot.warnings) && snapshot.warnings.length > 0).length,
+      orphanedSnapshots: publishedSnapshots.filter((snapshot) => isRecord(snapshot) && typeof snapshot.skillId === "string" && !activeSkillIds.has(snapshot.skillId)).length,
+    },
+    findings,
   };
 }
 
@@ -5366,6 +5727,95 @@ export async function handleDaemonRoute(
       json: {
         cwd,
         report: createMockSkillHealthReport(state, Number.isFinite(rawLimit) ? rawLimit : 100),
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/skills/source-health") {
+    const rawLimit = Number(url.searchParams.get("limit") ?? 100);
+    await route.fulfill({
+      json: {
+        cwd,
+        report: createMockSkillSourceHealthReport(state, Number.isFinite(rawLimit) ? rawLimit : 100),
+        snapshots: state.skillSourceSnapshots.filter((item) => isRecord(item) && item.reviewStatus === "published"),
+      },
+    });
+    return;
+  }
+  const skillSourceMatch = /^\/skills\/([^/]+)\/source(?:\/([^/]+))?$/.exec(path);
+  if (skillSourceMatch) {
+    const skillId = decodeURIComponent(skillSourceMatch[1]);
+    const action = skillSourceMatch[2];
+    const skill = state.skillRegistryEntries.find((item) =>
+      isRecord(item) && item.id === skillId && item.reviewStatus !== "archived" && item.reviewStatus !== "disabled"
+    );
+    if (!isRecord(skill)) {
+      await route.fulfill({ status: 404, json: { error: "skill_not_found", message: `Skill not found: ${skillId}` } });
+      return;
+    }
+    const snapshot = state.skillSourceSnapshots.find((item) =>
+      isRecord(item) && item.skillId === skillId && item.reviewStatus === "published"
+    );
+    if (action === undefined) {
+      if (request.method() !== "GET") {
+        await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
+        return;
+      }
+      if (!isRecord(snapshot)) {
+        await route.fulfill({ status: 404, json: { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${skillId}` } });
+        return;
+      }
+      await route.fulfill({ json: { cwd, snapshot } });
+      return;
+    }
+    if (action === "archive") {
+      if (request.method() !== "POST") {
+        await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
+        return;
+      }
+      if (!isRecord(snapshot)) {
+        await route.fulfill({ status: 404, json: { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${skillId}` } });
+        return;
+      }
+      const archived = { ...snapshot, reviewStatus: "archived", updatedAt: "2026-06-22T00:07:00.000Z" };
+      state.skillSourceSnapshots = state.skillSourceSnapshots.map((item) =>
+        isRecord(item) && item.id === snapshot.id ? archived : item
+      );
+      await route.fulfill({ json: { cwd, snapshot: archived } });
+      return;
+    }
+  }
+  if (request.method() === "POST" && path === "/skills/sync/gstack/preview") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      json: {
+        cwd,
+        preview: createMockSkillSourceSyncPreview(state, body),
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/skills/sync/gstack/refresh") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      json: {
+        cwd,
+        refreshedAt: "2026-06-22T00:05:30.000Z",
+        preview: createMockSkillSourceSyncPreview(state, body),
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/skills/sync/gstack/publish") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const result = publishMockSkillSourceSync(state, body);
+    await route.fulfill({
+      json: {
+        cwd,
+        publishedAt: "2026-06-22T00:06:00.000Z",
+        preview: result.preview,
+        skills: result.skills,
+        snapshots: result.snapshots,
       },
     });
     return;

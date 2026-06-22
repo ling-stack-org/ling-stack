@@ -1,6 +1,7 @@
 # GStack Skill Source Sync
 
-Status: Design draft
+Status: Implementation-ready design
+Date: 2026-06-22
 Scope: Codex-style skill source snapshots, gstack skill sync, lazy skill loading,
 and permission boundaries for full `SKILL.md` content
 
@@ -40,6 +41,39 @@ Runtime Permission Boundary
   authority, memory authority, or approval bypass
 ```
 
+## Definition Of Complete Embedding
+
+For Ling, "complete gstack embedding" means source-faithful and governance-safe, not
+vendoring the upstream runtime into this repository.
+
+Complete embedding requires all of the following:
+
+1. Registry coverage.
+   Every supported upstream gstack skill has a Ling `SkillDefinition` or an explicit
+   exclusion record with a reason. The existing `gstack-default` pack remains the default
+   registry seed for workflow metadata.
+2. Source preservation.
+   A reviewed `SkillSourceSnapshot` stores the complete raw `SKILL.md` body, front matter,
+   upstream name, upstream version, source checksum, warning evidence, and referenced file
+   inventory for each published source-backed skill.
+3. Drift detection.
+   Ling can rescan configured local gstack/Codex skill roots, classify unchanged, changed,
+   missing, new, dangerous, large, and orphaned sources, and show those results without
+   mutating the executable registry.
+4. Lazy runtime use.
+   Full source text is loaded only after `selectedSkillId` is resolved and Effective Skill
+   checks pass. Source text is added as bounded run context with truncation evidence.
+5. UI and API visibility.
+   Skill Library, source health, private teammate skill views, and run inspector surfaces
+   show whether a skill is metadata-only, source-backed, stale, truncated, or warning-heavy.
+6. Permission invariants.
+   Source text never grants tools, MCP servers, credentials, browser access, deploy
+   authority, external-send authority, memory authority, provider capability, or approval
+   bypass. It can only inform the model after the existing policy gates allow the run.
+
+This explicitly does not mean replaying gstack host hooks, auto-running upstream shell
+blocks, or committing a local gstack checkout into Ling source control.
+
 ## Goals
 
 - Preserve full gstack `SKILL.md` content as reviewed source snapshots.
@@ -64,7 +98,8 @@ Runtime Permission Boundary
 
 Ling has:
 
-- built-in `gstack-default` skill metadata in `packages/core`;
+- built-in `gstack-default` skill metadata in `packages/core`, currently pinned to
+  upstream taxonomy version `1.58.3.0`;
 - SQLite-backed skill registry entries and import drafts;
 - reviewed `POST /skills/import-draft` and publish routes;
 - teammate skill bindings;
@@ -79,6 +114,43 @@ The gap:
 - `agents/openai.yaml` style metadata is not modeled;
 - gstack drift cannot be detected without re-reading local files manually;
 - runtime cannot lazily attach complete source instructions to a selected skill.
+
+## MVP Decisions
+
+The first implementation should make these decisions up front so the code does not leave
+product policy to incidental parser behavior.
+
+1. Scope.
+   Source snapshots are workspace-scoped first. A user-global source cache can be added
+   later, but workspace state must remain the authority for publish, review, and drift.
+2. Source roots.
+   Ling discovers from user-configured roots and detected Codex/gstack roots. Resolved
+   absolute paths are local workspace state only, never public docs, templates, or bundled
+   defaults.
+3. Storage.
+   Store raw `SKILL.md` in SQLite up to `MAX_SKILL_SOURCE_SNAPSHOT_BYTES`. If a source body
+   is larger, block publish with `large_source` until a later artifact-backed storage slice
+   exists.
+4. Referenced files.
+   MVP inventories `scripts/`, `assets/`, `references/`, and `agents/openai.yaml` by path,
+   size, checksum, and kind. It does not execute scripts or store arbitrary referenced file
+   contents. Future artifact import can selectively copy reviewed files.
+5. `agents/openai.yaml`.
+   MVP parses it for display metadata and invocation hints only. It does not create routing
+   authority, tool grants, provider grants, or approval changes.
+6. Publish shape.
+   A source snapshot can be published only with an existing or newly normalized
+   `SkillDefinition` in MVP. Reference-only snapshots stay draft or archived.
+7. Drift review.
+   MVP uses checksum diff, front matter diff, warning diff, and raw preview. Semantic diff
+   and assisted migration can be added after the scanner and health loop are reliable.
+8. Default pack compatibility.
+   Existing `gstack-default` definitions remain stable. Source sync can attach snapshots to
+   matching ids without changing teammate defaults, council membership, or channel
+   bindings automatically.
+9. Host behavior.
+   Ling imports source instructions, not gstack host behavior. Host-specific steps become
+   warnings unless Ling has a corresponding reviewed runtime capability.
 
 ## Source Discovery
 
@@ -183,8 +255,11 @@ interface SkillSourceWarning {
     | "host_specific_tool"
     | "unsupported_tool"
     | "large_source"
+    | "source_truncated"
     | "missing_metadata"
-    | "drifted_upstream";
+    | "drifted_upstream"
+    | "missing_upstream"
+    | "orphaned_snapshot";
   severity: "info" | "warning" | "error";
   message: string;
   location?: string;
@@ -215,7 +290,7 @@ Normalization rules:
 
 ## Sync Flow
 
-Preview:
+Preview is read-only with respect to executable registry state:
 
 ```text
 POST /skills/sync/gstack/preview
@@ -229,7 +304,7 @@ POST /skills/sync/gstack/preview
     SkillSourceSnapshot previews
 ```
 
-Publish:
+Publish is the only operation that mutates source snapshot or registry state:
 
 ```text
 POST /skills/sync/gstack/publish
@@ -240,7 +315,7 @@ POST /skills/sync/gstack/publish
     control-plane invalidation events
 ```
 
-Refresh:
+Refresh recomputes source health without changing what can run:
 
 ```text
 POST /skills/sync/gstack/refresh
@@ -250,6 +325,23 @@ POST /skills/sync/gstack/refresh
 
 Existing `POST /skills/import-draft` remains valid for manual or one-off imports. The
 gstack sync flow is the bulk, provenance-aware path.
+
+### Preview Classification
+
+The preview response should classify each discovered source:
+
+| State | Meaning | Mutates registry? |
+|-------|---------|-------------------|
+| `attachable` | Matches an existing metadata skill id with no published snapshot. | No |
+| `unchanged` | Published snapshot checksum matches local source. | No |
+| `drifted` | Same skill id, different checksum or warnings. | No |
+| `new` | Source has no matching Ling skill id. | No |
+| `missing` | Published snapshot points at a source no longer present locally. | No |
+| `blocked` | Source has publish-blocking warnings such as raw secret-like content. | No |
+| `orphaned` | Snapshot exists for an archived or unknown skill id. | No |
+
+Publish can then select `attachable`, `drifted`, or `new` records explicitly. `blocked`
+records require editing the source or excluding the skill.
 
 ## Storage Sketch
 
@@ -364,6 +456,9 @@ Health:
 - `large_source_unbudgeted`: selected skill source was truncated.
 - `orphaned_source_snapshot`: source exists for a missing or archived skill.
 
+These surfaces must stay client-neutral. The web app, future desktop app, and CLI should
+share daemon APIs and source-health state instead of embedding Web-only behavior.
+
 ## API Sketch
 
 ```text
@@ -377,31 +472,83 @@ POST /skills/sync/gstack/refresh?cwd=...
 Preview and refresh are read-only with respect to active registry definitions. Publish is
 the only sync action that mutates registry/source state.
 
-## Rollout Plan
+## Implementation Slices
 
-1. Documentation and contracts.
-   Add source snapshot types, warnings, and API shape.
+P0. Contracts and migration.
+   Add `SkillSourceSnapshot`, source warnings, source health contracts, storage migration,
+   and feature flag `skillSourceSnapshots`.
 
-2. Storage and read APIs.
-   Persist snapshots, list source health, expose source preview.
+P1. Scanner and normalizer.
+   Implement configured root discovery, `SKILL.md` front matter parsing,
+   `agents/openai.yaml` display parsing, checksums, referenced file inventory, warning
+   classification, and id matching against `gstack-default`.
 
-3. GStack preview scanner.
-   Read local skill roots, parse `SKILL.md`, parse `agents/openai.yaml`, compute
-   checksums, and report drift without mutation.
+P2. Preview, publish, and refresh APIs.
+   Add read-only preview/refresh endpoints and explicit publish. Publish selected ids only,
+   rechecks source bytes before write, and invalidates relevant read models.
 
-4. Publish flow.
-   Upsert selected snapshots and normalized definitions through the reviewed registry
-   path. Do not bind teammates automatically.
+P3. Lazy run context assembly.
+   Load published source snapshots after Effective Skill passes, budget source text into
+   runner context, record truncation evidence, and preserve existing permission checks.
 
-5. Lazy runtime context.
-   Load published source for selected skills and add a bounded skill-source context
-   section to run requests.
+P4. UI and health.
+   Add Skill Library source viewer, sync preview, drift badges, source health findings,
+   private teammate source state, and run inspector source metadata.
 
-6. UI.
-   Add Skill Library source viewer, sync preview, drift badges, and run inspector links.
+P5. Backfill and release hardening.
+   Attach local gstack source snapshots to the existing built-in ids, document setup,
+   add rollback controls, and verify no teammate/council/channel bindings change unless
+   explicitly edited.
 
-7. Health and governance.
-   Add source health findings and warnings to skill health.
+### Implementation Progress
+
+- P0 foundation is implemented: contracts, SQLite source snapshot storage, source-health
+  read APIs, API client methods, and focused storage/API tests.
+- P1 scanner/normalizer is implemented in `packages/core/src/skill-source-sync.ts`:
+  configured/detected root discovery, `SKILL.md` front matter parsing,
+  `agents/openai.yaml` display metadata parsing, source checksums, referenced file
+  inventory, warning classification, gstack id matching, and read-only preview
+  classification. It does not publish snapshots or mutate teammate, council, or channel
+  bindings.
+- P2 sync APIs are implemented: `POST /skills/sync/gstack/preview`,
+  `POST /skills/sync/gstack/refresh`, and `POST /skills/sync/gstack/publish`.
+  Preview and refresh are read-only. Publish re-scans source bytes, requires explicit
+  `selectedSkillIds`, rejects blocked/missing/orphaned records, and requires
+  `allowNewSkills=true` before creating new registry skills.
+- P3 lazy runtime context is implemented: published source snapshots are loaded only
+  after the requested skill passes Effective Skill executable checks, raw `SKILL.md`
+  text is added as bounded runner context, truncation/loading evidence is recorded in
+  `skillSourceContext`, and both run snapshots and `run_created` events include the
+  selected source snapshot id/checksum. Source text remains prompt context only and does
+  not grant tools, credentials, deploy authority, provider capability, or approval bypass.
+- P4 UI evidence is implemented for the shared Skill Library and run inspector surfaces:
+  Skill Library loads source health, shows source-backed and missing-source summary counts,
+  marks table rows as source-backed or metadata-only, exposes the published `SKILL.md`
+  snapshot in the skill inspector, and provides a `Sync gstack source` panel for read-only
+  preview/refresh plus explicit selected-id publish. The sync panel keeps new skills
+  opt-in via `allowNewSkills` and leaves blocked/missing/orphaned records unselectable.
+  Private teammate Skill settings show each bound or available skill's source-backed,
+  metadata-only, drifted, missing-upstream, or warning state without exposing full source
+  bodies. Run detail now shows the loaded `skillSourceContext` snapshot id, checksum,
+  upstream path, truncation/loading state, warning count, and referenced files. Skill
+  Library can archive a published source snapshot without deleting the registry skill,
+  which makes runtime loading fall back to metadata-only until a later sync publish
+  attaches a new reviewed snapshot.
+  Drifted preview records now carry a compact field diff for checksum, upstream version,
+  source path, source length, referenced files, warnings, front matter, and agent metadata;
+  the Skill Library sync panel renders that diff inline without dumping the full source body.
+
+Dependency order:
+
+```text
+P0 -> P1 -> P2 -> P3
+       \           \
+        -> P4 ------> P5
+```
+
+P3 depends on P2 because runtime loading must use published snapshots, not preview state.
+P4 can start after P1/P2 contracts exist, but source health must not claim runtime loading
+until P3 is shipped.
 
 ## Test Plan
 
@@ -431,13 +578,42 @@ Runtime:
 - denied tools remain denied even when source text asks for them;
 - truncated source records evidence.
 
-## Open Questions
+## Acceptance Criteria
 
-- Should raw `SKILL.md` snapshots live in SQLite only, or should large source bodies be
-  stored as Ling artifacts with SQLite metadata?
-- Should gstack source sync be workspace-scoped or user-global with workspace overrides?
-- Should a source snapshot be publishable without a normalized `SkillDefinition` when it
-  is reference-only?
-- How much of `agents/openai.yaml` should influence automatic routing versus UI display?
-- Should Ling support source snapshot diff review before publish in v1, or only checksum
-  and preview?
+1. Previewing the configured local gstack source root reports the discovered upstream
+   version, which is `1.58.3.0` for the current local install and built-in pack, and
+   classifies existing built-in ids as `attachable`, `unchanged`, or `drifted`.
+2. Publishing a selected source-backed skill stores the complete raw `SKILL.md`, checksum,
+   upstream metadata, warnings, and referenced file inventory.
+3. Publishing a source snapshot does not change teammate skill bindings, Development
+   Council membership, channel council attachments, or channel member state.
+4. A run with a selected source-backed skill loads source only after Effective Skill
+   executable checks pass.
+5. A denied tool remains denied even if the loaded `SKILL.md` says to run the tool.
+6. A source with raw secret-like content is blocked or quarantined before publish.
+7. A large source over the configured byte cap is blocked with `large_source` until an
+   artifact-backed storage path exists.
+8. The sync preview shows deeper drift evidence for changed source snapshots without
+   exposing the full `SKILL.md` body in the record list.
+9. The run inspector shows source snapshot id, checksum, loaded/truncated state, and
+   warning evidence for source-backed runs.
+10. Refreshing drift health never mutates executable registry definitions.
+11. Disabling the source-loading feature flag returns runtime behavior to existing
+    prompt-fragment-only skill execution while leaving archived snapshots inert.
+
+## Rollback Plan
+
+- Disable `skillSourceSnapshots` to stop lazy source loading.
+- Keep registry definitions and existing `gstack-default` metadata active.
+- Leave stored snapshots inert for audit and future re-enable.
+- Revert only the migration/API/UI slice if stored snapshots are corrupt; do not remove
+  teammate bindings or council/channel memberships as part of rollback.
+
+## Deferred Decisions
+
+- Artifact-backed storage for large `SKILL.md` bodies and reviewed referenced-file
+  contents.
+- Assisted migration between upstream gstack versions beyond field-level drift evidence.
+- User-global source cache with workspace overrides.
+- Runtime support for specific reviewed helper scripts or assets.
+- Remote marketplace, package-manager install, or automatic upstream upgrade.

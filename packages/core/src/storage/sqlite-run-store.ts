@@ -162,9 +162,12 @@ import {
 } from "../workspace-types.js";
 import {
   type CreateSkillImportDraftInput,
+  type CreateSkillSourceSnapshotInput,
   type ListSkillRegistryOptions,
+  type ListSkillSourceSnapshotOptions,
   type SkillImportDraft,
   type SkillRegistryEntry,
+  type SkillSourceSnapshot,
 } from "../skill-types.js";
 import {
   type ApplySkillCandidateReviewActionInput,
@@ -1458,6 +1461,22 @@ export class SqliteRunStore implements RunStore {
 
   getSkillRegistryEntry(id: string): SkillRegistryEntry | undefined {
     return this.skillRegistry.getSkillRegistryEntry(id);
+  }
+
+  listSkillSourceSnapshots(options: ListSkillSourceSnapshotOptions = {}): SkillSourceSnapshot[] {
+    return this.skillRegistry.listSkillSourceSnapshots(options);
+  }
+
+  getSkillSourceSnapshot(skillId: string, options: Pick<ListSkillSourceSnapshotOptions, "reviewStatus" | "includeArchived"> = {}): SkillSourceSnapshot | undefined {
+    return this.skillRegistry.getSkillSourceSnapshot(skillId, options);
+  }
+
+  upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot {
+    return this.skillRegistry.upsertSkillSourceSnapshot(input, now);
+  }
+
+  archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined {
+    return this.skillRegistry.archiveSkillSourceSnapshot(skillId, now);
   }
 
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft {
