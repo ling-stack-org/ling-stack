@@ -55,6 +55,7 @@ export async function createSidebarChannelBranchWithState(input: {
   readonly setActiveSidebarTarget: StateSetter<SidebarTarget>;
   readonly setSelectedChannelId: StateSetter<string>;
   readonly setSelectedChannelBranchId: StateSetter<string>;
+  readonly setChannelBranches: StateSetter<readonly ChannelBranch[]>;
   readonly setErrorMessage: (message: string) => void;
   readonly refreshChannels: (cwd?: string) => Promise<void>;
 }): Promise<void> {
@@ -65,6 +66,10 @@ export async function createSidebarChannelBranchWithState(input: {
   try {
     input.setErrorMessage("");
     const response = await createChannelBranch(input.cwd, input.channelId, { name: input.name, status: "active" });
+    input.setChannelBranches((current) => [
+      response.branch,
+      ...current.filter((branch) => branch.id !== response.branch.id),
+    ]);
     input.setSelectedChannelId(input.channelId);
     input.setSelectedChannelBranchId(response.branch.id);
     input.setActiveView("workspace");

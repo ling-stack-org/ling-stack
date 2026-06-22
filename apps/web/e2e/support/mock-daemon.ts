@@ -3792,10 +3792,81 @@ export function createChannelBranchFromBody(
     channelId,
     name: typeof body.name === "string" ? body.name : typeof existing.name === "string" ? existing.name : "New branch",
     status,
+    rootThreadId: typeof existing.rootThreadId === "string"
+      ? existing.rootThreadId
+      : typeof body.rootThreadId === "string"
+        ? body.rootThreadId
+        : mockChannelBranchRootThreadId(id),
     createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-25T00:17:00.000Z",
     updatedAt: "2026-05-25T00:17:00.000Z",
     archivedAt,
   };
+}
+
+function mockChannelBranchRootThreadId(branchId: string): string {
+  return `thread_${branchId}`;
+}
+
+function ensureMockChannelBranchRootThread(
+  state: MockState,
+  channel: Record<string, unknown>,
+  branch: Record<string, unknown>,
+): Record<string, unknown> {
+  const branchId = typeof branch.id === "string" ? branch.id : `channel_branch_${state.channelBranches.length + 1}`;
+  const rootThreadId = typeof branch.rootThreadId === "string" ? branch.rootThreadId : mockChannelBranchRootThreadId(branchId);
+  const nextBranch = branch.rootThreadId === rootThreadId ? branch : { ...branch, rootThreadId };
+  if (!state.threads.some((thread) => thread.id === rootThreadId && thread.kind === "channel_discussion" && thread.channelId === branch.channelId)) {
+    state.threads.unshift(createMockChannelBranchThread(channel, nextBranch, rootThreadId));
+  }
+  syncMockChannelBranchThreadArchive(state, nextBranch);
+  return nextBranch;
+}
+
+function createMockChannelBranchThread(
+  channel: Record<string, unknown>,
+  branch: Record<string, unknown>,
+  rootThreadId: string,
+): MockLingThread {
+  const branchName = typeof branch.name === "string" && branch.name.trim() ? branch.name.trim() : "Channel branch";
+  const channelName = typeof channel.name === "string" && channel.name.trim() ? channel.name.trim() : String(branch.channelId ?? "channel");
+  const archivedAt = branch.status === "archived"
+    ? typeof branch.archivedAt === "string" ? branch.archivedAt : "2026-05-25T00:17:00.000Z"
+    : undefined;
+  return {
+    id: rootThreadId,
+    workspaceId: "workspace_default",
+    kind: "channel_discussion",
+    channelId: typeof branch.channelId === "string" ? branch.channelId : undefined,
+    title: branchName,
+    objective: `Conversation branch "${branchName}" for ${channelName}.`,
+    status: "open",
+    createdAt: typeof branch.createdAt === "string" ? branch.createdAt : "2026-05-25T00:17:00.000Z",
+    updatedAt: typeof branch.updatedAt === "string" ? branch.updatedAt : "2026-05-25T00:17:00.000Z",
+    archivedAt,
+    archivedReason: archivedAt ? "channel_branch_archived" : undefined,
+  };
+}
+
+function syncMockChannelBranchThreadArchive(state: MockState, branch: Record<string, unknown>): void {
+  const rootThreadId = typeof branch.rootThreadId === "string" ? branch.rootThreadId : undefined;
+  if (!rootThreadId) {
+    return;
+  }
+  const thread = state.threads.find((item) => item.id === rootThreadId);
+  if (!thread) {
+    return;
+  }
+  thread.updatedAt = "2026-05-25T00:18:00.000Z";
+  if (branch.status === "archived") {
+    thread.archivedAt = typeof branch.archivedAt === "string" ? branch.archivedAt : "2026-05-25T00:18:00.000Z";
+    thread.archivedReason = "channel_branch_archived";
+    return;
+  }
+  if (thread.status === "archived") {
+    thread.status = "open";
+  }
+  delete thread.archivedAt;
+  delete thread.archivedReason;
 }
 
 function readChannelAutoReplyMode(value: unknown): string {
@@ -7075,11 +7146,16 @@ export async function handleDaemonRoute(
       isRecord(channel) && (archived ? channel.status === "archived" : channel.status !== "archived")
     );
     const channelIds = new Set(channels.filter(isRecord).map((channel) => channel.id).filter((id): id is string => typeof id === "string"));
-    const branches = state.channelBranches.filter((branch) =>
-      isRecord(branch) &&
-      channelIds.has(typeof branch.channelId === "string" ? branch.channelId : "") &&
-      (archived ? branch.status === "archived" : branch.status !== "archived")
-    );
+    const branches = state.channelBranches
+      .filter((branch) =>
+        isRecord(branch) &&
+        channelIds.has(typeof branch.channelId === "string" ? branch.channelId : "") &&
+        (archived ? branch.status === "archived" : branch.status !== "archived")
+      )
+      .map((branch) => {
+        const channel = state.channels.find((item) => isRecord(item) && item.id === branch.channelId);
+        return isRecord(channel) ? ensureMockChannelBranchRootThread(state, channel, branch) : branch;
+      });
     await route.fulfill({ json: { cwd, channels, branches } });
     return;
   }
@@ -7357,17 +7433,20 @@ export async function handleDaemonRoute(
     }
     if (request.method() === "GET" && !branchId) {
       const archived = url.searchParams.get("archived") === "true";
-      const branches = state.channelBranches.filter((branch) =>
-        isRecord(branch) &&
-        branch.channelId === channelId &&
-        (archived ? branch.status === "archived" : branch.status !== "archived")
-      );
+      const branches = state.channelBranches
+        .filter((branch) =>
+          isRecord(branch) &&
+          branch.channelId === channelId &&
+          (archived ? branch.status === "archived" : branch.status !== "archived")
+        )
+        .map((branch) => ensureMockChannelBranchRootThread(state, channel, branch));
       await route.fulfill({ json: { cwd, channelId, branches } });
       return;
     }
     if (request.method() === "POST" && !branchId) {
       const body = await request.postDataJSON() as Record<string, unknown>;
       const branch = createChannelBranchFromBody(body, `channel_branch_${state.channelBranches.length + 1}`, channelId);
+      ensureMockChannelBranchRootThread(state, channel, branch);
       state.channelBranches.unshift(branch);
       await route.fulfill({ status: 201, json: { branch } });
       return;
@@ -7379,12 +7458,15 @@ export async function handleDaemonRoute(
     }
     const existingBranch = state.channelBranches[branchIndex] as Record<string, unknown>;
     if (request.method() === "GET") {
-      await route.fulfill({ json: { branch: existingBranch } });
+      const branch = ensureMockChannelBranchRootThread(state, channel, existingBranch);
+      state.channelBranches[branchIndex] = branch;
+      await route.fulfill({ json: { branch } });
       return;
     }
     if (request.method() === "PATCH") {
       const body = await request.postDataJSON() as Record<string, unknown>;
       const branch = createChannelBranchFromBody(body, branchId, channelId, existingBranch);
+      ensureMockChannelBranchRootThread(state, channel, branch);
       state.channelBranches[branchIndex] = branch;
       await route.fulfill({ json: { branch } });
       return;
@@ -7617,13 +7699,19 @@ export async function handleDaemonRoute(
     const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10);
     const limit = Math.min(Math.max(Number.isInteger(rawLimit) ? rawLimit : 200, 1), 500);
     const beforeMessageId = url.searchParams.get("beforeMessageId");
+    const threadId = url.searchParams.get("threadId");
     state.channelMessageQueries?.push({
       channelId,
       limit,
       beforeMessageId: beforeMessageId ?? undefined,
+      threadId: threadId ?? undefined,
     });
     const messages = state.channelMessages
-      .filter((message) => isRecord(message) && message.channelId === channelId)
+      .filter((message) =>
+        isRecord(message) &&
+        message.channelId === channelId &&
+        (!threadId || message.threadId === threadId)
+      )
       .sort((left, right) => {
         if (!isRecord(left) || !isRecord(right)) {
           return 0;

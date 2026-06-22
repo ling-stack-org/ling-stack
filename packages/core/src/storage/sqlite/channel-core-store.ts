@@ -180,6 +180,7 @@ export class SqliteChannelCoreStore {
       channelId: input.channelId,
       name: input.name,
       status: input.status ?? "active",
+      rootThreadId: input.rootThreadId,
       createdAt: now,
       updatedAt: now,
       archivedAt: input.status === "archived" ? input.archivedAt ?? now : input.archivedAt,
@@ -194,11 +195,12 @@ export class SqliteChannelCoreStore {
           channel_id,
           name,
           status,
+          root_thread_id,
           created_at,
           updated_at,
           archived_at,
           deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         branch.id,
@@ -206,6 +208,7 @@ export class SqliteChannelCoreStore {
         branch.channelId,
         branch.name,
         branch.status,
+        branch.rootThreadId ?? null,
         branch.createdAt,
         branch.updatedAt,
         branch.archivedAt ?? null,
@@ -262,6 +265,7 @@ export class SqliteChannelCoreStore {
       ...existing,
       name: input.name ?? existing.name,
       status,
+      rootThreadId: nullableUpdate(input.rootThreadId, existing.rootThreadId),
       archivedAt: status === "archived" ? archivedAt : undefined,
       deletedAt,
       updatedAt: now,
@@ -273,6 +277,7 @@ export class SqliteChannelCoreStore {
         SET
           name = ?,
           status = ?,
+          root_thread_id = ?,
           updated_at = ?,
           archived_at = ?,
           deleted_at = ?
@@ -281,6 +286,7 @@ export class SqliteChannelCoreStore {
       .run(
         next.name,
         next.status,
+        next.rootThreadId ?? null,
         next.updatedAt,
         next.archivedAt ?? null,
         next.deletedAt ?? null,

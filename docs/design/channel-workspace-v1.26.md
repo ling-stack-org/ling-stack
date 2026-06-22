@@ -238,6 +238,7 @@ interface ChannelBranch {
   readonly channelId: string;
   readonly name: string;
   readonly status: "active" | "archived";
+  readonly rootThreadId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt?: string;
@@ -248,6 +249,50 @@ interface ChannelBranch {
 The client should not overload `Channel.workspaceBinding.branchName` or any Git workflow
 field for this feature. Channel branches are product lanes; Git branches are repository
 state.
+
+## Branch Session Boundary
+
+Channel branches are session lanes derived from a channel. They are not configuration
+containers and they are not Git branches.
+
+Source of truth:
+
+- `Channel` owns shared configuration and governance: workspace binding, bound path,
+  default provider, default teammate, allowed tools, runtime policy, channel brief,
+  decisions, protocol, memory scopes, generated skill candidates, and playbooks.
+- `ChannelBranch` owns only the branch label, lifecycle, and `rootThreadId`.
+- `LingThread` owns the durable session transcript, turns, runs, artifacts, evidence,
+  resume state, fork lineage, archive state, and pin state.
+
+Creation contract:
+
+1. Creating a channel branch also creates an open `LingThread` with
+   `kind="channel_discussion"` and the same `channelId`.
+2. The branch stores that thread id as `rootThreadId`.
+3. Branch creation must not copy channel configuration, memory scopes, generated skills,
+   provider settings, tools, or runtime policy.
+4. Existing legacy branch rows without `rootThreadId` should be repaired lazily by
+   creating one channel discussion thread and writing the id back to the branch.
+
+Runtime contract:
+
+- Selecting a branch switches the center conversation to `rootThreadId`.
+- Sending a channel message while a branch is selected writes `threadId=rootThreadId`.
+- Listing messages for a selected branch filters by `threadId=rootThreadId`.
+- Starting work from a branch should pass the same `threadId` into the run request so
+  turns, runs, evidence, and artifacts stay inside that branch session.
+- Promoted memories and generated skills remain channel-level governance records. A
+  branch may provide source evidence for a memory or skill candidate, but the candidate
+  does not become branch-local unless a future explicit override design adds that.
+
+Archive contract:
+
+- Archiving a branch archives or hides its `rootThreadId` session from default branch
+  navigation.
+- Restoring a branch restores that thread to an open channel discussion session when the
+  thread still exists.
+- Deleting an archived branch removes the branch navigation row only; the thread and its
+  evidence remain durable unless a later retention policy explicitly deletes them.
 
 ## Acceptance Criteria
 

@@ -374,6 +374,7 @@ type MessageFeedItem =
 interface PendingChannelSendPreview {
   readonly id: string;
   readonly channelId: string;
+  readonly threadId?: string;
   readonly body: string;
   readonly mentions: readonly ChannelMention[];
   readonly attachmentIds: readonly string[];
@@ -492,6 +493,7 @@ export function WorkspaceClientView({
   userProfile,
   channels,
   selectedChannelId,
+  selectedChannelBranchRootThreadId,
   channelForm,
   channelCreateOpen,
   channelEditForm,
@@ -654,6 +656,7 @@ export function WorkspaceClientView({
   readonly userProfile?: UserProfile;
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
+  readonly selectedChannelBranchRootThreadId?: string;
   readonly channelForm: ChannelCreateFormState;
   readonly channelCreateOpen: boolean;
   readonly channelEditForm: ChannelFormState;
@@ -1706,6 +1709,7 @@ export function WorkspaceClientView({
       .reverse()
       .find((message) =>
         message.channelId === pendingChannelSendPreview.channelId &&
+        message.threadId === pendingChannelSendPreview.threadId &&
         message.kind === "message" &&
         message.authorType === "local-user"
       );
@@ -1721,6 +1725,7 @@ export function WorkspaceClientView({
     pendingChannelSendPreview &&
     !pendingChannelSendResolved &&
     pendingChannelSendPreview.channelId === selectedChannelId &&
+    pendingChannelSendPreview.threadId === selectedChannelBranchRootThreadId &&
     !activeWorkThreadId,
   );
   const messageFeedItems = useMemo<readonly MessageFeedItem[]>(
@@ -3445,6 +3450,7 @@ export function WorkspaceClientView({
       const pendingSendPreview = {
         id: createLocalComposerAssetId("message"),
         channelId: selectedChannelId,
+        threadId: selectedChannelBranchRootThreadId,
         body,
         mentions,
         attachmentIds,
@@ -3462,6 +3468,7 @@ export function WorkspaceClientView({
       setPendingLinkPreviews([]);
       autoPreviewUrlsRef.current.clear();
       await onSendMessage({
+        threadId: selectedChannelBranchRootThreadId,
         body,
         mentions,
         attachmentIds,

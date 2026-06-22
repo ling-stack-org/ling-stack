@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createChannelBranchId, createChannelId } from "@ling-stack/core";
+import { createChannelBranchId, createChannelId, type Channel, type ChannelBranch, type RunStore } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -54,6 +54,8 @@ export async function handleChannelsCollection(
     if (request.method === "GET") {
       const archived = readOptionalArchivedQuery(url);
       const channels = store.listChannels({ archived, limit: readOptionalIntegerQuery(url, "limit", 1) });
+      const channelById = new Map(channels.map((channel) => [channel.id, channel]));
+      const now = new Date().toISOString();
       writeJson(response, 200, {
         cwd,
         channels,
@@ -62,7 +64,9 @@ export async function handleChannelsCollection(
           : store.listChannelBranches({
             limit: 1000,
             archived: false,
-          }).filter((branch) => channels.some((channel) => channel.id === branch.channelId)),
+          })
+            .filter((branch) => channelById.has(branch.channelId))
+            .map((branch) => ensureChannelBranchRootThread(store, channelById.get(branch.channelId), branch, now) ?? branch),
       });
       return;
     }
@@ -191,6 +195,7 @@ export async function handleChannelBranchesCollection(
     }
 
     if (request.method === "GET") {
+      const now = new Date().toISOString();
       writeJson(response, 200, {
         cwd,
         channelId,
@@ -198,7 +203,7 @@ export async function handleChannelBranchesCollection(
           channelId,
           archived: readOptionalArchivedQuery(url),
           limit: readOptionalIntegerQuery(url, "limit", 1),
-        }),
+        }).map((branch) => ensureChannelBranchRootThread(store, channel, branch, now) ?? branch),
       });
       return;
     }
@@ -211,10 +216,12 @@ export async function handleChannelBranchesCollection(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseCreateChannelBranchInput(body);
       const now = new Date().toISOString();
+      const thread = createChannelBranchRootThread(store, channel, input.name, now, input.status ?? "active");
       const branch = store.createChannelBranch({
         ...input,
         id: createChannelBranchId(),
         channelId,
+        rootThreadId: thread.id,
       }, now);
       writeJson(response, 201, { branch });
       return;
@@ -251,7 +258,7 @@ export async function handleChannelBranchItem(
       writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
       return;
     }
-    const branch = store.getChannelBranch(branchId);
+    const branch = ensureChannelBranchRootThread(store, channel, store.getChannelBranch(branchId), new Date().toISOString());
     if (!branch || branch.channelId !== channelId) {
       writeJson(response, 404, { error: "channel_branch_not_found", message: `Channel branch not found: ${branchId}` });
       return;
@@ -270,6 +277,9 @@ export async function handleChannelBranchItem(
         ...input,
         archivedAt: input.status === "archived" ? now : input.status === "active" ? null : undefined,
       }, now);
+      if (updated) {
+        syncChannelBranchRootThreadArchive(store, updated, now);
+      }
       writeJson(response, 200, { branch: updated });
       return;
     }
@@ -366,6 +376,69 @@ function readOptionalArchivedQuery(url: URL): boolean | undefined {
     return false;
   }
   throw new Error("archived must be true or false");
+}
+
+function ensureChannelBranchRootThread(
+  store: RunStore,
+  channel: Channel | undefined,
+  branch: ChannelBranch | undefined,
+  now: string,
+): ChannelBranch | undefined {
+  if (!channel || !branch) {
+    return branch;
+  }
+  if (branch.rootThreadId) {
+    const existingThread = store.getLingThread(branch.rootThreadId);
+    if (existingThread?.kind === "channel_discussion" && existingThread.channelId === channel.id) {
+      return branch;
+    }
+  }
+  const thread = createChannelBranchRootThread(store, channel, branch.name, now, branch.status, branch.archivedAt);
+  return store.updateChannelBranch(branch.id, { rootThreadId: thread.id }, now) ?? { ...branch, rootThreadId: thread.id };
+}
+
+function createChannelBranchRootThread(
+  store: RunStore,
+  channel: Channel,
+  branchName: string,
+  now: string,
+  branchStatus: ChannelBranch["status"],
+  archivedAt?: string,
+) {
+  return store.createLingThread(
+    {
+      kind: "channel_discussion",
+      channelId: channel.id,
+      title: branchName || "Channel branch",
+      objective: `Conversation branch "${branchName || "Channel branch"}" for ${channel.name}.`,
+      status: "open",
+      archivedAt: branchStatus === "archived" ? archivedAt ?? now : undefined,
+      archivedReason: branchStatus === "archived" ? "channel_branch_archived" : undefined,
+    },
+    now,
+  );
+}
+
+function syncChannelBranchRootThreadArchive(store: RunStore, branch: ChannelBranch, now: string): void {
+  if (!branch.rootThreadId) {
+    return;
+  }
+  const thread = store.getLingThread(branch.rootThreadId);
+  if (!thread || thread.kind !== "channel_discussion" || thread.channelId !== branch.channelId) {
+    return;
+  }
+  if (branch.status === "archived") {
+    store.updateLingThread(branch.rootThreadId, {
+      archivedAt: branch.archivedAt ?? now,
+      archivedReason: "channel_branch_archived",
+    }, now);
+    return;
+  }
+  store.updateLingThread(branch.rootThreadId, {
+    archivedAt: null,
+    archivedReason: null,
+    status: thread.status === "archived" ? "open" : thread.status,
+  }, now);
 }
 
 export async function handleChannelExecutionProposalItem(

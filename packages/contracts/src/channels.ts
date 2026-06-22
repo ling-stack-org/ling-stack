@@ -102,6 +102,7 @@ export interface ChannelBranch {
   readonly channelId: string;
   readonly name: string;
   readonly status: ChannelBranchStatus;
+  readonly rootThreadId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt?: string;

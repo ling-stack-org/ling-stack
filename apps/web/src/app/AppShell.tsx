@@ -313,6 +313,18 @@ export function AppShell(): JSX.Element {
     resetSelectedChannelActivity,
     resetForCwd: resetWorkspaceForCwd,
   } = workspaceDomain.actions;
+  const selectedChannelBranch = useMemo(
+    () => channelBranches.find((branch) =>
+      branch.id === selectedChannelBranchId &&
+      branch.channelId === selectedChannelId &&
+      branch.status !== "archived"
+    ),
+    [channelBranches, selectedChannelBranchId, selectedChannelId],
+  );
+  const selectedChannelBranchRootThreadId = selectedChannelBranch?.rootThreadId;
+  const selectedChannelMessageThreadId = selectedChannelBranchId
+    ? selectedChannelBranchRootThreadId ?? `missing-channel-branch-thread:${selectedChannelBranchId}`
+    : undefined;
   const automationsDomain = useAutomationsDomain({
     cwd: form.cwd.trim(),
     channels,
@@ -1246,7 +1258,7 @@ export function AppShell(): JSX.Element {
   useEffect(() => {
     if (selectedChannelId) {
       void refreshTasks(selectedChannelId);
-      void refreshChannelMessages(selectedChannelId);
+      void refreshChannelMessages(selectedChannelId, selectedChannelMessageThreadId);
       void refreshChannelExecutionProposals(selectedChannelId);
       void refreshChannelFiles(selectedChannelId);
       void refreshChannelProtocol(selectedChannelId);
@@ -1262,7 +1274,7 @@ export function AppShell(): JSX.Element {
       resetExternalWorkSelectedChannel();
       setSelectedTaskId("");
     }
-  }, [selectedChannelId]);
+  }, [selectedChannelId, selectedChannelMessageThreadId]);
 
   useEffect(() => {
     const workspaceCwd = form.cwd.trim();
@@ -1276,10 +1288,13 @@ export function AppShell(): JSX.Element {
     if (!selectedChannelBranchId) {
       return;
     }
+    if (channelsLoading) {
+      return;
+    }
     if (!channelBranches.some((branch) => branch.id === selectedChannelBranchId && branch.status !== "archived")) {
       setSelectedChannelBranchId("");
     }
-  }, [channelBranches, selectedChannelBranchId]);
+  }, [channelBranches, channelsLoading, selectedChannelBranchId]);
 
   useEffect(() => {
     if (activeView !== "workspace") {
@@ -1451,7 +1466,7 @@ export function AppShell(): JSX.Element {
     await Promise.all([
       refreshChannels(),
       refreshTasks(channelId),
-      refreshChannelMessages(channelId),
+      refreshChannelMessages(channelId, selectedChannelMessageThreadId),
       refreshChannelExecutionProposals(channelId),
       refreshChannelFiles(channelId),
       refreshChannelRunArtifacts(form.cwd.trim(), channelId, channelRunsForArtifacts),
@@ -1646,6 +1661,7 @@ export function AppShell(): JSX.Element {
             userProfile={userProfile}
             channels={channels}
             selectedChannelId={selectedChannelId}
+            selectedChannelBranchRootThreadId={selectedChannelBranchRootThreadId}
             channelForm={channelForm}
             channelCreateOpen={channelCreateOpen}
             channelEditForm={channelEditForm}
@@ -1769,9 +1785,9 @@ export function AppShell(): JSX.Element {
             onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             onRunActivityTriageAction={runActivityTriageAction}
-            onLoadOlderChannelMessages={loadOlderChannelMessages}
+            onLoadOlderChannelMessages={() => void loadOlderChannelMessages(selectedChannelId, selectedChannelMessageThreadId)}
             onRefreshChannelMessages={() => void Promise.all([
-              refreshChannelMessages(),
+              refreshChannelMessages(selectedChannelId, selectedChannelMessageThreadId),
               refreshChannelMessageRouteDecisions(),
               refreshChannelIntentDecisions(),
               refreshChannelExecutionProposals(),

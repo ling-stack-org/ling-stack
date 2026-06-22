@@ -170,8 +170,8 @@ export interface WorkspaceActions {
   readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
   readonly refreshChannels: (cwd?: string) => Promise<void>;
   readonly refreshTasks: (channelId?: string) => Promise<void>;
-  readonly refreshChannelMessages: (channelId?: string) => Promise<void>;
-  readonly loadOlderChannelMessages: (channelId?: string) => Promise<void>;
+  readonly refreshChannelMessages: (channelId?: string, threadId?: string) => Promise<void>;
+  readonly loadOlderChannelMessages: (channelId?: string, threadId?: string) => Promise<void>;
   readonly refreshChannelExecutionProposals: (channelId?: string) => Promise<void>;
   readonly upsertChannelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly refreshChannelFiles: (channelId?: string) => Promise<void>;
@@ -425,7 +425,7 @@ export function useWorkspaceDomain(input: {
     }
   }
 
-  async function refreshChannelMessages(channelId = selectedChannelId): Promise<void> {
+  async function refreshChannelMessages(channelId = selectedChannelId, threadId?: string): Promise<void> {
     const cwd = input.cwd.trim();
     if (!cwd || !channelId) {
       setChannelMessages([]);
@@ -433,13 +433,14 @@ export function useWorkspaceDomain(input: {
       return;
     }
 
-    const token = loadGuard.next(`messages:${cwd}:${channelId}`);
+    const guardKey = `messages:${cwd}:${channelId}:${threadId ?? ""}`;
+    const token = loadGuard.next(guardKey);
     setChannelMessagesLoading(true);
     try {
       input.setErrorMessage("");
       setError(undefined);
-      const response = await listChannelMessages(cwd, channelId, { limit: channelMessageInitialLimit });
-      if (!loadGuard.isCurrent(`messages:${cwd}:${channelId}`, token)) {
+      const response = await listChannelMessages(cwd, channelId, { limit: channelMessageInitialLimit, threadId });
+      if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
       setChannelMessages(response.messages);
@@ -450,20 +451,21 @@ export function useWorkspaceDomain(input: {
       setError({ scope: "load", message });
       input.setErrorMessage(message);
     } finally {
-      if (loadGuard.isCurrent(`messages:${cwd}:${channelId}`, token)) {
+      if (loadGuard.isCurrent(guardKey, token)) {
         setChannelMessagesLoading(false);
       }
     }
   }
 
-  async function loadOlderChannelMessages(channelId = selectedChannelId): Promise<void> {
+  async function loadOlderChannelMessages(channelId = selectedChannelId, threadId?: string): Promise<void> {
     const cwd = input.cwd.trim();
     const beforeMessageId = channelMessages[0]?.id;
     if (!cwd || !channelId || !beforeMessageId || channelMessagesLoadingOlder || !channelMessagesHasOlder) {
       return;
     }
 
-    const token = loadGuard.next(`olderMessages:${cwd}:${channelId}`);
+    const guardKey = `olderMessages:${cwd}:${channelId}:${threadId ?? ""}`;
+    const token = loadGuard.next(guardKey);
     setChannelMessagesLoadingOlder(true);
     try {
       input.setErrorMessage("");
@@ -471,8 +473,9 @@ export function useWorkspaceDomain(input: {
       const response = await listChannelMessages(cwd, channelId, {
         limit: channelMessageOlderLimit,
         beforeMessageId,
+        threadId,
       });
-      if (!loadGuard.isCurrent(`olderMessages:${cwd}:${channelId}`, token)) {
+      if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
       setChannelMessages((current) => mergeChannelMessages(response.messages, current));
@@ -482,7 +485,7 @@ export function useWorkspaceDomain(input: {
       setError({ scope: "load", message });
       input.setErrorMessage(message);
     } finally {
-      if (loadGuard.isCurrent(`olderMessages:${cwd}:${channelId}`, token)) {
+      if (loadGuard.isCurrent(guardKey, token)) {
         setChannelMessagesLoadingOlder(false);
       }
     }

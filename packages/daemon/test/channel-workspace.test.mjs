@@ -53,34 +53,82 @@ test("health exposes channel auto_route capability", async () => {
 
 test("channel branches follow archive restore and delete lifecycle", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-branches-"));
-  const daemon = await startDaemonForTest();
+  const stores = [];
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.push(store);
+      return store;
+    },
+  });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const branch = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`, {
       name: "Model routing fix",
     })).branch;
+    assert.ok(branch.rootThreadId);
+    const branchThread = (await getJson(`${daemon.url}/threads/${encodeURIComponent(branch.rootThreadId)}?cwd=${encodeURIComponent(cwd)}`)).thread;
+    assert.equal(branchThread.kind, "channel_discussion");
+    assert.equal(branchThread.channelId, channel.id);
+    assert.equal(branchThread.title, "Model routing fix");
+
+    const secondBranch = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Prompt cleanup",
+    })).branch;
+    assert.ok(secondBranch.rootThreadId);
+    assert.notEqual(secondBranch.rootThreadId, branch.rootThreadId);
+    await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: branch.rootThreadId,
+      body: "Message in model routing branch",
+    });
+    await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: secondBranch.rootThreadId,
+      body: "Message in prompt cleanup branch",
+    });
+    const firstBranchMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(branch.rootThreadId)}`);
+    assert.deepEqual(firstBranchMessages.messages.map((message) => message.body), ["Message in model routing branch"]);
+    const secondBranchMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(secondBranch.rootThreadId)}`);
+    assert.deepEqual(secondBranchMessages.messages.map((message) => message.body), ["Message in prompt cleanup branch"]);
+
+    const store = stores.find((item) => item.paths.cwd === cwd);
+    assert.ok(store);
+    const legacyBranch = store.createChannelBranch({
+      channelId: channel.id,
+      name: "Legacy branch",
+    }, "2026-06-22T00:00:00.000Z");
+    assert.equal(legacyBranch.rootThreadId, undefined);
+    const repairedBranches = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`);
+    const repairedLegacy = repairedBranches.branches.find((item) => item.id === legacyBranch.id);
+    assert.ok(repairedLegacy?.rootThreadId);
+    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, repairedLegacy.rootThreadId);
 
     let listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.channels.some((item) => item.id === channel.id), true);
-    assert.deepEqual(listed.branches.map((item) => item.id), [branch.id]);
+    assert.equal(listed.branches.some((item) => item.id === branch.id), true);
 
     const archivedBranch = (await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`, {
       status: "archived",
     })).branch;
     assert.equal(archivedBranch.status, "archived");
     assert.ok(archivedBranch.archivedAt);
+    const archivedThread = (await getJson(`${daemon.url}/threads/${encodeURIComponent(branch.rootThreadId)}?cwd=${encodeURIComponent(cwd)}`)).thread;
+    assert.ok(archivedThread.archivedAt);
+    assert.equal(archivedThread.archivedReason, "channel_branch_archived");
 
     listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.branches.some((item) => item.id === branch.id), false);
 
     let archivedBranches = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}&archived=true`);
-    assert.deepEqual(archivedBranches.branches.map((item) => item.id), [branch.id]);
+    assert.equal(archivedBranches.branches.some((item) => item.id === branch.id), true);
 
     const restoredBranch = (await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`, {
       status: "active",
     })).branch;
     assert.equal(restoredBranch.status, "active");
     assert.equal(restoredBranch.archivedAt, undefined);
+    const restoredThread = (await getJson(`${daemon.url}/threads/${encodeURIComponent(branch.rootThreadId)}?cwd=${encodeURIComponent(cwd)}`)).thread;
+    assert.equal(restoredThread.archivedAt, undefined);
+    assert.equal(restoredThread.archivedReason, undefined);
 
     const activeDelete = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`, {
       method: "DELETE",
@@ -91,6 +139,9 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
       status: "archived",
     });
     await deleteJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(branch.id)}?cwd=${encodeURIComponent(cwd)}`);
+    const deletedBranchThread = (await getJson(`${daemon.url}/threads/${encodeURIComponent(branch.rootThreadId)}?cwd=${encodeURIComponent(cwd)}`)).thread;
+    assert.equal(deletedBranchThread.id, branch.rootThreadId);
+    assert.ok(deletedBranchThread.archivedAt);
     archivedBranches = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}&archived=true`);
     assert.deepEqual(archivedBranches.branches, []);
 

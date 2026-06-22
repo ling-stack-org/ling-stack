@@ -362,6 +362,7 @@ export interface ChannelBranch {
   readonly channelId: string;
   readonly name: string;
   readonly status: ChannelBranchStatus;
+  readonly rootThreadId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt?: string;
@@ -388,6 +389,7 @@ export interface CreateChannelBranchInput {
   readonly channelId: string;
   readonly name: string;
   readonly status?: ChannelBranchStatus;
+  readonly rootThreadId?: string;
   readonly archivedAt?: string;
   readonly deletedAt?: string;
 }
@@ -408,6 +410,7 @@ export interface ChannelUpdateInput {
 export interface ChannelBranchUpdateInput {
   readonly name?: string;
   readonly status?: ChannelBranchStatus;
+  readonly rootThreadId?: string | null;
   readonly archivedAt?: string | null;
   readonly deletedAt?: string | null;
 }

@@ -303,6 +303,7 @@ export function useChannelActionsController(input: {
       setActiveSidebarTarget: input.setActiveSidebarTarget,
       setSelectedChannelId: input.setSelectedChannelId,
       setSelectedChannelBranchId: input.setSelectedChannelBranchId,
+      setChannelBranches: input.setChannelBranches,
       setErrorMessage: input.setErrorMessage,
       refreshChannels: input.refreshChannels,
     });

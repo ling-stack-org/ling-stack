@@ -160,6 +160,8 @@ const GOVERNANCE_NOTIFICATIONS_MIGRATION_VERSION = 74;
 const GOVERNANCE_NOTIFICATIONS_MIGRATION_NAME = "create_governance_notifications";
 const AI_COUNCILS_MIGRATION_VERSION = 75;
 const AI_COUNCILS_MIGRATION_NAME = "create_ai_councils";
+const CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_VERSION = 76;
+const CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_NAME = "add_channel_branch_root_thread";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3290,6 +3292,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           channel_id TEXT NOT NULL,
           name TEXT NOT NULL,
           status TEXT NOT NULL,
+          root_thread_id TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           archived_at TEXT,
@@ -3800,6 +3803,22 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasAiCouncilsMigration) {
         context.recordMigration(AI_COUNCILS_MIGRATION_VERSION, AI_COUNCILS_MIGRATION_NAME);
+      }
+    }
+    const hasChannelBranchRootThreadMigration = context.hasMigration(CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_VERSION);
+    if (
+      !hasChannelBranchRootThreadMigration ||
+      (context.hasTable("channel_branches") && !context.hasColumn("channel_branches", "root_thread_id"))
+    ) {
+      if (context.hasTable("channel_branches") && !context.hasColumn("channel_branches", "root_thread_id")) {
+        database.exec("ALTER TABLE channel_branches ADD COLUMN root_thread_id TEXT;");
+      }
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_channel_branches_root_thread
+        ON channel_branches(root_thread_id);
+      `);
+      if (!hasChannelBranchRootThreadMigration) {
+        context.recordMigration(CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_VERSION, CHANNEL_BRANCH_ROOT_THREAD_MIGRATION_NAME);
       }
     }
 }

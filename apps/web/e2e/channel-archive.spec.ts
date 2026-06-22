@@ -50,6 +50,12 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect(navigation.getByRole("button", { name: "Quick split" })).toBeVisible();
   await expect(navigation.locator(".sidebar-branch-list")).toHaveCount(1);
   await expect(engineeringGroup.getByRole("button", { name: /Main branch/ })).toHaveCount(0);
+  const quickSplitBranch = state.channelBranches.find((item) => isRecord(item) && item.name === "Quick split");
+  expect(isRecord(quickSplitBranch) && typeof quickSplitBranch.rootThreadId === "string").toBe(true);
+  const quickSplitRootThreadId = isRecord(quickSplitBranch) && typeof quickSplitBranch.rootThreadId === "string" ? quickSplitBranch.rootThreadId : "";
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Branch-scoped message");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe(quickSplitRootThreadId);
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();

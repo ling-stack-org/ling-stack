@@ -49,6 +49,7 @@ export function mapChannelBranch(row: Record<string, SQLOutputValue>): ChannelBr
     channelId: readString(row, "channel_id"),
     name: readString(row, "name"),
     status: status as ChannelBranchStatus,
+    rootThreadId: readNullableString(row, "root_thread_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
     archivedAt: readNullableString(row, "archived_at"),

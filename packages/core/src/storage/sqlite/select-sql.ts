@@ -255,6 +255,7 @@ export function channelBranchSelectSql(whereClause: string): string {
       channel_id,
       name,
       status,
+      root_thread_id,
       created_at,
       updated_at,
       archived_at,
