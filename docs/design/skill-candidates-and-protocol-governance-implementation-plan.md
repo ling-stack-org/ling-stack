@@ -1574,6 +1574,7 @@ packages/core/src/workspace-types.ts
 packages/core/src/storage/sqlite/workspace-settings-store.ts
 packages/daemon/src/features/settings/effective-config.ts
 packages/daemon/src/features/skills/routes.ts
+apps/web/src/features/settings/SkillGovernanceSettingsSection.tsx
 apps/web/src/features/settings/SkillGovernanceSettingsPanel.tsx
 apps/web/src/features/settings/SkillLibrarySettingsPanel.tsx
 apps/web/src/styles/settings.css
@@ -1596,9 +1597,9 @@ Tasks:
     but still only creates pending candidates.
 - Keep `/skill-candidates`, `/skill-candidates/:id/draft`, import draft publication, and
   teammate/channel bindings on their existing manual review paths.
-- Keep the Settings UI governance controls in a dedicated submodule so candidate
-  generation, recording, and fixed review guards can evolve without expanding the
-  general skill library panel.
+- Keep the Settings UI governance controls in a dedicated Settings section so candidate
+  generation, recording, and fixed review guards can evolve without expanding or
+  reloading the general skill library panel.
 - Explain the four candidate generation options and the explicit recording flow inline:
   operators should understand that generated/recorded output is still only a pending
   candidate until draft, publish, and binding reviews pass.

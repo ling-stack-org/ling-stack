@@ -234,8 +234,8 @@ Built-in, imported, default, external, and user-managed skills are protected res
 Policy gates may propose an overlay, wrapper, supersede action, or review task; they must
 not silently rewrite those skills.
 
-The Settings UI presents this as a dedicated Skill Governance settings submodule rather
-than folding it into the general skill registry controls. The submodule has three jobs:
+The Settings UI presents this as a dedicated Skill Governance settings section, separate
+from the Skill Library registry controls. The section has three jobs:
 
 - expose the current workspace policy source and save path so reviewers can tell whether
   they are editing the workspace policy, a user default, or a built-in fallback;
