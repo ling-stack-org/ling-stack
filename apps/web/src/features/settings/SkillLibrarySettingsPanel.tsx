@@ -1250,9 +1250,9 @@ function SkillSourceHealthPanel({
               <div className="settings-skill-health-finding-main">
                 <span className="settings-skill-health-title">
                   <AlertTriangle size={14} />
-                  <strong>{finding.title}</strong>
+                  <strong>{sourceHealthTitle(finding, t)}</strong>
                 </span>
-                <p>{finding.message}</p>
+                <p>{sourceHealthMessage(finding, t)}</p>
                 <small>{sourceHealthKindLabel(finding.kind, t)}</small>
               </div>
               <div className="settings-skill-health-finding-meta">
@@ -1885,6 +1885,32 @@ function sourceHealthKindLabel(kind: string, t: (key: string) => string): string
     return t("Orphaned source snapshot");
   }
   return kind;
+}
+
+function sourceHealthTitle(finding: SkillSourceHealthReport["findings"][number], t: SettingsTranslator): string {
+  if (finding.kind === "missing_source_snapshot") {
+    return t("Skill source snapshot missing");
+  }
+  if (finding.kind === "source_warning") {
+    return t("Skill source warning");
+  }
+  if (finding.kind === "orphaned_source_snapshot") {
+    return t("Orphaned skill source snapshot");
+  }
+  return t(finding.title);
+}
+
+function sourceHealthMessage(finding: SkillSourceHealthReport["findings"][number], t: SettingsTranslator): string {
+  if (finding.kind === "missing_source_snapshot" && finding.skillId) {
+    return t("{skill} has registry metadata but no published source snapshot.", { skill: finding.skillId });
+  }
+  if (finding.kind === "source_warning" && finding.snapshotId) {
+    return t("{snapshot} has source warnings.", { snapshot: finding.snapshotId });
+  }
+  if (finding.kind === "orphaned_source_snapshot" && finding.snapshotId) {
+    return t("{snapshot} points at a missing or archived skill.", { snapshot: finding.snapshotId });
+  }
+  return t(finding.message);
 }
 
 function skillHealthSeverityLabel(severity: SkillHealthSeverity, t: (key: string) => string): string {
