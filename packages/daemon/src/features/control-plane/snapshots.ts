@@ -1,4 +1,26 @@
 import type {
+  ApprovalSummary,
+  ApprovalsDomainSnapshot,
+  ArtifactSummary,
+  ArtifactsDomainSnapshot,
+  McpDomainSnapshot,
+  McpServerSummary,
+  MemoryCandidateSummary,
+  MemoryDomainSnapshot,
+  ProviderSummary,
+  ProvidersDomainSnapshot,
+  RunnerSummary,
+  RunnersDomainSnapshot,
+  RunsDomainSnapshot,
+  RunSummary,
+  SkillRegistrySummary,
+  SkillsDomainSnapshot,
+  TeammateSummary,
+  TeammatesDomainSnapshot,
+  WorkUnitsDomainSnapshot,
+  WorkUnitSummary,
+} from "@ling-stack/contracts";
+import type {
   ApprovalPolicy,
   ApprovalRequest,
   ControlPlaneDomain,
@@ -27,7 +49,7 @@ export function readControlPlaneDomainSnapshot(
     readonly context: DaemonContext;
     readonly now: string;
   },
-): unknown {
+): ControlPlaneSnapshotData {
   switch (domain) {
     case "runs":
       return readRunsSnapshot(input.cwd, input.store);
@@ -52,7 +74,19 @@ export function readControlPlaneDomainSnapshot(
   }
 }
 
-function readRunsSnapshot(cwd: string, store: RunStore): unknown {
+type ControlPlaneSnapshotData =
+  | RunsDomainSnapshot
+  | WorkUnitsDomainSnapshot
+  | SkillsDomainSnapshot
+  | TeammatesDomainSnapshot
+  | ApprovalsDomainSnapshot
+  | ProvidersDomainSnapshot
+  | MemoryDomainSnapshot
+  | McpDomainSnapshot
+  | RunnersDomainSnapshot
+  | ArtifactsDomainSnapshot;
+
+function readRunsSnapshot(cwd: string, store: RunStore): RunsDomainSnapshot {
   const recentRuns = store.listRuns({ limit: 20 });
   const activeRuns = recentRuns.filter((run) => ["queued", "running", "waiting_for_approval"].includes(run.status));
   const stuckWorkUnits = listActiveWorkUnits(store).filter((unit) => isStuckWorkUnit(unit, new Date()));
@@ -76,7 +110,7 @@ function readRunsSnapshot(cwd: string, store: RunStore): unknown {
   };
 }
 
-function toRunSummary(run: RunSession): Record<string, unknown> {
+function toRunSummary(run: RunSession): RunSummary {
   return compact({
     id: run.id,
     status: run.status,
@@ -90,10 +124,10 @@ function toRunSummary(run: RunSession): Record<string, unknown> {
     updatedAt: run.updatedAt,
     terminalAt: run.endedAt,
     errorCode: run.errorMessage ? "run_error" : undefined,
-  });
+  }) as RunSummary;
 }
 
-function readWorkUnitsSnapshot(store: RunStore): unknown {
+function readWorkUnitsSnapshot(store: RunStore): WorkUnitsDomainSnapshot {
   const workUnits = store.listWorkUnits({ limit: 200 });
   const active = workUnits.filter((unit) => ["claimed", "running", "waiting_for_approval", "cancelling"].includes(unit.status));
   const queued = workUnits.filter((unit) => unit.status === "queued");
@@ -112,7 +146,7 @@ function readWorkUnitsSnapshot(store: RunStore): unknown {
   };
 }
 
-function toWorkUnitSummary(unit: WorkUnit): Record<string, unknown> {
+function toWorkUnitSummary(unit: WorkUnit): WorkUnitSummary {
   return compact({
     id: unit.id,
     kind: unit.kind,
@@ -124,10 +158,10 @@ function toWorkUnitSummary(unit: WorkUnit): Record<string, unknown> {
     updatedAt: unit.updatedAt,
     lastHeartbeatAt: unit.lastHeartbeatAt,
     blockedReason: unit.errorCode,
-  });
+  }) as WorkUnitSummary;
 }
 
-function readSkillsSnapshot(store: RunStore): unknown {
+function readSkillsSnapshot(store: RunStore): SkillsDomainSnapshot {
   const skills = listEffectiveSkillRegistryEntries(store);
   const countByStatus = (status: string): number => skills.filter((skill) => skill.reviewStatus === status).length;
   return {
@@ -139,7 +173,7 @@ function readSkillsSnapshot(store: RunStore): unknown {
       draft: countByStatus("draft"),
       archived: countByStatus("archived"),
     },
-    skills: skills.map((entry) => ({
+    skills: skills.map((entry): SkillRegistrySummary => ({
       id: entry.id,
       packId: entry.packId,
       source: entry.source,
@@ -152,7 +186,7 @@ function readSkillsSnapshot(store: RunStore): unknown {
   };
 }
 
-function readTeammatesSnapshot(store: RunStore): unknown {
+function readTeammatesSnapshot(store: RunStore): TeammatesDomainSnapshot {
   const teammates = store.listAiTeammates({ includeDisabled: true, limit: 200 });
   return {
     counts: {
@@ -165,7 +199,7 @@ function readTeammatesSnapshot(store: RunStore): unknown {
       return compact({
         id: teammate.id,
         displayName: teammate.displayName,
-        source: teammate.templateId ? "builtin" : "user",
+        source: teammate.templateId ? "builtin" as const : "user" as const,
         status: teammate.status,
         defaultProviderPresetId: teammate.providerPresetId,
         effectiveSkillCount: skillBindings.filter((binding) => binding.enabled).length,
@@ -173,12 +207,12 @@ function readTeammatesSnapshot(store: RunStore): unknown {
         memoryScopeCount: store.listTeammateMemoryScopes(teammate.id).filter((scope) => scope.enabled).length,
         mcpServerCount: store.listTeammateMcpBindings(teammate.id).filter((binding) => binding.enabled).length,
         updatedAt: teammate.updatedAt,
-      });
+      }) as TeammateSummary;
     }),
   };
 }
 
-function readApprovalsSnapshot(store: RunStore, now: string): unknown {
+function readApprovalsSnapshot(store: RunStore, now: string): ApprovalsDomainSnapshot {
   const policy = store.getApprovalPolicy();
   const pending = store.listApprovalRequests({ status: "pending", limit: 100 });
   return {
@@ -215,7 +249,7 @@ function countPolicyDecisions(policy: ApprovalPolicy): Record<string, number> {
   return counts;
 }
 
-function toApprovalSummary(approval: ApprovalRequest): Record<string, unknown> {
+function toApprovalSummary(approval: ApprovalRequest): ApprovalSummary {
   const owner = approvalOwner(approval);
   return compact({
     id: approval.id,
@@ -227,7 +261,7 @@ function toApprovalSummary(approval: ApprovalRequest): Record<string, unknown> {
     createdAt: approval.createdAt,
     expiresAt: approval.expiresAt,
     previewArtifactId: approvalPreviewArtifactId(approval),
-  });
+  }) as ApprovalSummary;
 }
 
 function approvalOwner(approval: ApprovalRequest): { readonly type: string; readonly id: string } {
@@ -257,7 +291,7 @@ function approvalPreviewArtifactId(approval: ApprovalRequest): string | undefine
   return undefined;
 }
 
-function readProvidersSnapshot(store: RunStore, secretResolver: SecretResolver): unknown {
+function readProvidersSnapshot(store: RunStore, secretResolver: SecretResolver): ProvidersDomainSnapshot {
   const providers = store.listProviderPresets();
   const summaries = providers.map((provider) => toProviderSummary(store, secretResolver, provider));
   return {
@@ -272,26 +306,7 @@ function readProvidersSnapshot(store: RunStore, secretResolver: SecretResolver):
   };
 }
 
-interface ProviderControlPlaneSummary {
-  readonly id: string;
-  readonly displayName: string;
-  readonly kind: string;
-  readonly api: string;
-  readonly enabled: boolean;
-  readonly capabilities: readonly string[];
-  readonly input: readonly string[];
-  readonly runnable: boolean;
-  readonly blocker?: string;
-  readonly secretStatus: "configured" | "missing" | "unavailable" | "not_required";
-  readonly secretRefKind?: "env" | "keychain";
-  readonly lastCheck?: {
-    readonly ok: boolean;
-    readonly code: string;
-    readonly checkedAt: string;
-  };
-}
-
-function toProviderSummary(store: RunStore, secretResolver: SecretResolver, provider: ProviderPreset): ProviderControlPlaneSummary {
+function toProviderSummary(store: RunStore, secretResolver: SecretResolver, provider: ProviderPreset): ProviderSummary {
   const blocker = providerRunBlocker(provider);
   const status = provider.apiKeyRef ? providerSecretStatus(store, provider, secretResolver) : undefined;
   const secretStatus = !provider.apiKeyRef
@@ -318,7 +333,7 @@ function toProviderSummary(store: RunStore, secretResolver: SecretResolver, prov
       code: provider.lastCheck.code ?? (provider.lastCheck.ok ? "ok" : "failed"),
       checkedAt: provider.lastCheck.checkedAt,
     } : undefined,
-  }) as ProviderControlPlaneSummary;
+  }) as ProviderSummary;
 }
 
 function providerRunBlocker(provider: ProviderPreset): string | undefined {
@@ -346,7 +361,7 @@ function secretRefKind(ref: string | undefined): "env" | "keychain" | undefined 
   }
 }
 
-function readMemorySnapshot(store: RunStore): unknown {
+function readMemorySnapshot(store: RunStore): MemoryDomainSnapshot {
   const policy = store.getMemoryReviewPolicy();
   const promotionInbox = store.listMemoryPromotionInbox({ limit: 200 });
   const recentMemories = store.listMemoryObjects({ limit: 20 });
@@ -370,7 +385,7 @@ function readMemorySnapshot(store: RunStore): unknown {
   };
 }
 
-function toMemoryCandidateSummary(store: RunStore, memory: MemoryObject): Record<string, unknown> {
+function toMemoryCandidateSummary(store: RunStore, memory: MemoryObject): MemoryCandidateSummary {
   const decision = store.getLatestMemoryReviewDecision(memory.id);
   return compact({
     id: memory.id,
@@ -381,10 +396,10 @@ function toMemoryCandidateSummary(store: RunStore, memory: MemoryObject): Record
     confidence: decision?.confidence ?? "unknown",
     reasonCode: decision?.reasonCode,
     createdAt: memory.createdAt,
-  });
+  }) as MemoryCandidateSummary;
 }
 
-function readMcpSnapshot(store: RunStore, secretResolver: SecretResolver, now: string): unknown {
+function readMcpSnapshot(store: RunStore, secretResolver: SecretResolver, now: string): McpDomainSnapshot {
   const servers = store.listMcpServers({ limit: 200 });
   const tools = store.listMcpTools({ limit: 1000 });
   const summaries = servers.map((server) => {
@@ -401,7 +416,7 @@ function readMcpSnapshot(store: RunStore, secretResolver: SecretResolver, now: s
       missingSecretCount,
       legacySecretMigrationRequired: store.countLegacyMcpServerSecrets(server.id) > 0,
       updatedAt: server.updatedAt,
-    };
+    } satisfies McpServerSummary;
   });
   return {
     counts: {
@@ -415,14 +430,14 @@ function readMcpSnapshot(store: RunStore, secretResolver: SecretResolver, now: s
   };
 }
 
-function readRunnersSnapshot(store: RunStore, context: DaemonContext): unknown {
+function readRunnersSnapshot(store: RunStore, context: DaemonContext): RunnersDomainSnapshot {
   const settings = loadWorkspaceRuntimeSettings(store, context.runnerRegistry);
   return {
     defaultRunnerId: settings.defaultRunnerId,
     allowedRunnerIds: settings.allowedRunnerIds,
     runners: listRunnerItems(context.runnerRegistry, {
       readinessByRunnerId: listRunnerReadinessSummaries(context.runnerRegistry, context.config),
-    }).map((runner) => ({
+    }).map((runner): RunnerSummary => ({
       id: runner.id,
       displayName: runner.displayName,
       enabled: runner.status === "enabled",
@@ -436,8 +451,12 @@ function readRunnersSnapshot(store: RunStore, context: DaemonContext): unknown {
   };
 }
 
-function readArtifactsSnapshot(store: RunStore, cwd: string): unknown {
-  const artifacts = store.listRuns({ limit: 50 }).flatMap((run) => store.listArtifacts(run.id));
+function readArtifactsSnapshot(store: RunStore, cwd: string): ArtifactsDomainSnapshot {
+  const artifacts = uniqueArtifacts([
+    ...store.listRuns({ limit: 50 }).flatMap((run) => store.listArtifacts(run.id)),
+    ...store.listMediaJobs({ limit: 50 }).flatMap((job) => store.listMediaJobArtifacts(job.id)),
+    ...store.listExternalWorkRecords({ limit: 50 }).flatMap((record) => store.listExternalWorkArtifacts(record.id)),
+  ]);
   const recent = artifacts.sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 20);
   return {
     counts: {
@@ -448,6 +467,14 @@ function readArtifactsSnapshot(store: RunStore, cwd: string): unknown {
   };
 }
 
+function uniqueArtifacts(artifacts: readonly RunArtifact[]): RunArtifact[] {
+  const byId = new Map<string, RunArtifact>();
+  for (const artifact of artifacts) {
+    byId.set(artifact.id, artifact);
+  }
+  return [...byId.values()];
+}
+
 function countArtifactsByKind(artifacts: readonly RunArtifact[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const artifact of artifacts) {
@@ -456,17 +483,19 @@ function countArtifactsByKind(artifacts: readonly RunArtifact[]): Record<string,
   return counts;
 }
 
-function toArtifactSummary(artifact: RunArtifact, cwd: string): Record<string, unknown> {
+function toArtifactSummary(artifact: RunArtifact, cwd: string): ArtifactSummary {
   return compact({
     id: artifact.id,
     runId: artifact.runId,
+    mediaJobId: artifact.mediaJobId,
+    externalWorkId: artifact.externalWorkId,
     title: artifact.title ?? artifact.id,
     kind: artifact.type,
     contentType: artifact.contentType ?? "application/octet-stream",
     sizeBytes: artifact.sizeBytes ?? 0,
     createdAt: artifact.createdAt,
     contentHref: `/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}`,
-  });
+  }) as ArtifactSummary;
 }
 
 function compact<T extends Record<string, unknown>>(value: T): T {

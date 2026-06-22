@@ -105,6 +105,84 @@ test("control-plane snapshot isolates known domain reader failures", async () =>
   }
 });
 
+test("control-plane artifact snapshot exposes summaries without local artifact paths", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-artifacts-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest({ stores });
+  try {
+    const store = stores.get(cwd) ?? createStoreForCwd(stores, cwd);
+    const createdAt = "2026-06-22T00:00:00.000Z";
+    store.createRun({
+      id: "run_control_plane_artifact_snapshot",
+      cwd,
+      taskId: "task_control_plane_artifact_snapshot",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_control_plane_artifact_snapshot" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt,
+    });
+    store.createArtifact({
+      id: "artifact_control_plane_summary",
+      runId: "run_control_plane_artifact_snapshot",
+      type: "markdown",
+      path: ".ling-stack/sessions/run_control_plane_artifact_snapshot/secret-output.md",
+      title: "Control plane summary",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 128,
+      createdAt,
+    });
+    const mediaJob = store.createMediaJob({
+      providerPresetId: "provider_control_plane_media",
+      operation: "image_generate",
+      prompt: "forbidden-media-prompt sk-media-secret-value",
+      input: { size: "1024x1024" },
+    }, "2026-06-22T00:00:01.000Z");
+    store.createArtifact({
+      id: "artifact_control_plane_media_summary",
+      mediaJobId: mediaJob.id,
+      type: "image",
+      path: ".ling-stack/media/secret-render.png",
+      title: "Control plane media render",
+      contentType: "image/png",
+      sizeBytes: 256,
+      createdAt: "2026-06-22T00:00:02.000Z",
+    });
+
+    const snapshot = await getJson(`${daemon.url}/control-plane/snapshot?cwd=${encodeURIComponent(cwd)}&domains=artifacts`);
+    assert.equal(snapshot.domains.artifacts.ok, true);
+    assert.equal(snapshot.domains.artifacts.data.counts.recent, 2);
+    assert.equal(snapshot.domains.artifacts.data.counts.byKind.markdown, 1);
+    assert.equal(snapshot.domains.artifacts.data.counts.byKind.image, 1);
+    const artifact = snapshot.domains.artifacts.data.recent.find((item) => item.id === "artifact_control_plane_summary");
+    assert.equal(artifact.id, "artifact_control_plane_summary");
+    assert.equal(artifact.runId, "run_control_plane_artifact_snapshot");
+    assert.equal(artifact.title, "Control plane summary");
+    assert.equal(artifact.kind, "markdown");
+    assert.equal(artifact.contentType, "text/markdown; charset=utf-8");
+    assert.equal(artifact.sizeBytes, 128);
+    assert.equal(artifact.path, undefined);
+    assert.equal(artifact.contentHref, `/artifacts/artifact_control_plane_summary/content?cwd=${encodeURIComponent(cwd)}`);
+    const mediaArtifact = snapshot.domains.artifacts.data.recent.find((item) => item.id === "artifact_control_plane_media_summary");
+    assert.equal(mediaArtifact.mediaJobId, mediaJob.id);
+    assert.equal(mediaArtifact.runId, undefined);
+    assert.equal(mediaArtifact.kind, "image");
+    assert.equal(mediaArtifact.contentHref, `/artifacts/artifact_control_plane_media_summary/content?cwd=${encodeURIComponent(cwd)}`);
+    assertControlPlanePayloadRedacted(snapshot, [
+      ".ling-stack/sessions",
+      "secret-output.md",
+      ".ling-stack/media",
+      "secret-render.png",
+      "forbidden-media-prompt",
+      "sk-media-secret-value",
+    ]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("control-plane events endpoint validates queries and lists filtered redacted events", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-events-"));
   const stores = new Map();
@@ -148,6 +226,152 @@ test("control-plane events endpoint validates queries and lists filtered redacte
     const badAfterSeq = await requestJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&afterSeq=-1`, { method: "GET" });
     assert.equal(badAfterSeq.status, 400);
     assert.equal(badAfterSeq.json.error, "bad_request");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("work unit control APIs append compact redacted control-plane transition events", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-work-unit-controls-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const store = createSqliteRunStore(cwd);
+    try {
+      store.createWorkUnit({
+        id: "wu_control_failed_retry",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        kind: "task_run",
+        ownerType: "task",
+        ownerId: "task_control_failed_retry",
+        idempotencyKey: "control-failed-retry",
+        status: "failed",
+        createdByActor: "system",
+        request: { prompt: "forbidden-work-unit-prompt sk-workunit-secret-value" },
+        now: "2026-06-22T00:00:00.000Z",
+      });
+      const running = store.createWorkUnit({
+        id: "wu_control_running_reconcile",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        kind: "task_run",
+        ownerType: "task",
+        ownerId: "task_control_running_reconcile",
+        idempotencyKey: "control-running-reconcile",
+        status: "running",
+        createdByActor: "system",
+        request: { prompt: "forbidden-work-unit-prompt sk-workunit-secret-value" },
+        now: "2026-06-22T00:01:00.000Z",
+      });
+      store.createWorkUnitAttempt({
+        id: "attempt_control_running_reconcile",
+        workUnitId: running.id,
+        attemptNumber: 1,
+        runtimeInstanceId: "runtime_control_plane_test",
+        runnerId: "runner_pi_embedded",
+        now: "2026-06-22T00:01:01.000Z",
+      });
+      store.createWorkUnit({
+        id: "wu_control_queued_cancel",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        kind: "task_run",
+        ownerType: "task",
+        ownerId: "task_control_queued_cancel",
+        idempotencyKey: "control-queued-cancel",
+        status: "queued",
+        createdByActor: "system",
+        request: { prompt: "forbidden-work-unit-prompt sk-workunit-secret-value" },
+        now: "2026-06-22T00:02:00.000Z",
+      });
+    } finally {
+      store.close();
+    }
+
+    const retried = await postJson(`${daemon.url}/work-units/wu_control_failed_retry/retry?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(retried.workUnit.status, "queued");
+    const reconciled = await postJson(`${daemon.url}/work-units/wu_control_running_reconcile/reconcile?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(reconciled.workUnit.status, "stale");
+    const cancelled = await postJson(`${daemon.url}/work-units/wu_control_queued_cancel/cancel?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancelled.workUnit.status, "cancelled");
+
+    const listed = await getJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&afterSeq=0&limit=1000&domains=work_units`);
+    const transitions = new Map(
+      listed.events
+        .filter((event) => event.action === "work_unit.transitioned")
+        .map((event) => [event.entityId, event]),
+    );
+    assert.deepEqual(
+      {
+        previousStatus: transitions.get("wu_control_failed_retry")?.data.previousStatus,
+        status: transitions.get("wu_control_failed_retry")?.data.status,
+        reason: transitions.get("wu_control_failed_retry")?.data.reason,
+      },
+      { previousStatus: "failed", status: "queued", reason: "manual_retry" },
+    );
+    assert.deepEqual(
+      {
+        previousStatus: transitions.get("wu_control_running_reconcile")?.data.previousStatus,
+        status: transitions.get("wu_control_running_reconcile")?.data.status,
+        reason: transitions.get("wu_control_running_reconcile")?.data.reason,
+      },
+      { previousStatus: "running", status: "stale", reason: "runtime-startup-reconcile" },
+    );
+    assert.deepEqual(
+      {
+        previousStatus: transitions.get("wu_control_queued_cancel")?.data.previousStatus,
+        status: transitions.get("wu_control_queued_cancel")?.data.status,
+        reason: transitions.get("wu_control_queued_cancel")?.data.reason,
+      },
+      { previousStatus: "queued", status: "cancelled", reason: "work_unit_cancel_requested" },
+    );
+    assert.equal(transitions.get("wu_control_running_reconcile")?.data.runId, null);
+    assert.equal(transitions.get("wu_control_running_reconcile")?.data.attemptId, "attempt_control_running_reconcile");
+    assertControlPlanePayloadRedacted(listed, ["forbidden-work-unit-prompt", "sk-workunit-secret-value"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runtime startup reconcile appends work-unit control-plane events outside work-unit routes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-runtime-reconcile-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const store = createSqliteRunStore(cwd);
+    try {
+      const running = store.createWorkUnit({
+        id: "wu_control_runtime_reconcile",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        kind: "task_run",
+        ownerType: "task",
+        ownerId: "task_control_runtime_reconcile",
+        idempotencyKey: "control-runtime-reconcile",
+        status: "running",
+        createdByActor: "system",
+        request: { prompt: "forbidden-runtime-reconcile-prompt sk-runtime-secret-value" },
+        now: "2026-06-22T00:03:00.000Z",
+      });
+      store.createWorkUnitAttempt({
+        id: "attempt_control_runtime_reconcile",
+        workUnitId: running.id,
+        attemptNumber: 1,
+        runtimeInstanceId: "runtime_control_plane_test",
+        runnerId: "runner_pi_embedded",
+        now: "2026-06-22T00:03:01.000Z",
+      });
+    } finally {
+      store.close();
+    }
+
+    await getJson(`${daemon.url}/runtime?cwd=${encodeURIComponent(cwd)}`);
+
+    const listed = await getJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&afterSeq=0&limit=1000&domains=work_units`);
+    const reconciled = listed.events.find((event) => event.entityId === "wu_control_runtime_reconcile");
+    assert.equal(reconciled.action, "work_unit.transitioned");
+    assert.equal(reconciled.data.previousStatus, "running");
+    assert.equal(reconciled.data.status, "stale");
+    assert.equal(reconciled.data.reason, "runtime-startup-reconcile");
+    assert.equal(reconciled.data.attemptId, "attempt_control_runtime_reconcile");
+    assertControlPlanePayloadRedacted(listed, ["forbidden-runtime-reconcile-prompt", "sk-runtime-secret-value"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -584,6 +808,8 @@ test("run approvals append redacted control-plane created and resolved events", 
     assert.equal(resolved.data.previousStatus, "pending");
     assert.equal(resolved.data.status, "approved");
     assert.equal(resolved.data.decision, "approved");
+    assert.equal(resolved.data.ownerType, "run");
+    assert.equal(resolved.data.ownerId, "run_control_plane_approval");
     assert.equal(resolved.data.resolvedBy, "local-user");
     assertControlPlanePayloadRedacted(listed, [
       "echo sk-approval-secret-value",

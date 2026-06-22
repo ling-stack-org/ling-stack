@@ -355,6 +355,7 @@ export function handleWorkUnitRoute(
   runtimeSupervisor: RuntimeSupervisor,
   route: WorkUnitRoute,
   cancelRun: RuntimeRunCanceller,
+  controlPlaneEvents: ControlPlaneEventHub,
 ): void {
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
   if (!resolved) {
@@ -399,9 +400,10 @@ export function handleWorkUnitRoute(
   }
 
   if (route.kind === "cancel") {
+    const previousStatus = workUnit.status;
     const runId = workUnit.linkedRunId;
+    const activeRun = runId ? activeRuns.get(runId) : undefined;
     if (runId) {
-      const activeRun = activeRuns.get(runId);
       const run = resolved.store.getRun(runId);
       if (run) {
         cancelRun({
@@ -420,9 +422,19 @@ export function handleWorkUnitRoute(
     } else {
       cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
     }
+    const latest = resolved.store.getWorkUnit(workUnit.id) ?? workUnit;
+    appendWorkUnitTransitionControlPlaneEvent(
+      resolved.store,
+      controlPlaneEvents,
+      resolved.cwd,
+      workUnit,
+      previousStatus,
+      latest.status,
+      "work_unit_cancel_requested",
+    );
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      workUnit: resolved.store.getWorkUnit(workUnit.id) ?? workUnit,
+      workUnit: latest,
     });
     return;
   }
@@ -446,6 +458,16 @@ export function handleWorkUnitRoute(
       writeJson(response, 409, { error: transition.code, message: `Work unit retry failed: ${transition.code}`, workUnit: current });
       return;
     }
+    const latest = resolved.store.getWorkUnit(current.id) ?? current;
+    appendWorkUnitTransitionControlPlaneEvent(
+      resolved.store,
+      controlPlaneEvents,
+      resolved.cwd,
+      current,
+      transition.from,
+      latest.status,
+      "manual_retry",
+    );
     const event = resolved.store.appendRuntimeEvent({
       workUnitId: current.id,
       type: "work_unit_queued",
@@ -455,16 +477,26 @@ export function handleWorkUnitRoute(
     });
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      workUnit: resolved.store.getWorkUnit(current.id) ?? current,
+      workUnit: latest,
       event,
     });
     return;
   }
 
   const now = new Date().toISOString();
+  const previousStatus = workUnit.status;
   const reconciled = isActiveWorkUnitStatus(workUnit.status)
     ? markWorkUnitStale(resolved.store, workUnit, now, "manual_reconcile")
     : releaseWorkUnitRuntimeResources(resolved.store, workUnit, now, "manual_reconcile");
+  appendWorkUnitTransitionControlPlaneEvent(
+    resolved.store,
+    controlPlaneEvents,
+    resolved.cwd,
+    workUnit,
+    previousStatus,
+    reconciled.status,
+    "manual_reconcile",
+  );
   writeJson(response, 200, {
     cwd: resolved.cwd,
     workUnit: resolved.store.getWorkUnit(reconciled.id) ?? reconciled,
@@ -488,6 +520,35 @@ function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: Wor
     leases: store.listResourceLeases({ workUnitId: workUnit.id, limit: 500 }),
     semaphoreSlots: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, limit: 500 }),
     run: workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined,
+  });
+}
+
+function appendWorkUnitTransitionControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub,
+  cwd: string,
+  workUnit: WorkUnit,
+  previousStatus: WorkUnitStatus,
+  status: WorkUnitStatus,
+  reason: string,
+): void {
+  if (previousStatus === status) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: workUnit.workspaceId,
+    cwd,
+    domain: "work_units",
+    entityType: "work_unit",
+    entityId: workUnit.id,
+    action: "work_unit.transitioned",
+    data: {
+      previousStatus,
+      status,
+      reason,
+      runId: workUnit.linkedRunId ?? null,
+      attemptId: workUnit.activeAttemptId ?? null,
+    },
   });
 }
 

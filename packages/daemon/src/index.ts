@@ -24,7 +24,7 @@ import {
 import type { DaemonContext, DaemonDependencies, RunnerAdapter } from "./context.js";
 import { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
-import { ControlPlaneEventHub } from "./features/control-plane/events.js";
+import { appendControlPlaneEvent, ControlPlaneEventHub } from "./features/control-plane/events.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
@@ -97,7 +97,23 @@ export function createDaemonServer(
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
-  const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig);
+  const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig, (event) => {
+    appendControlPlaneEvent(event.store, controlPlaneEvents, {
+      workspaceId: event.workUnit.workspaceId,
+      cwd: event.cwd,
+      domain: "work_units",
+      entityType: "work_unit",
+      entityId: event.workUnit.id,
+      action: "work_unit.transitioned",
+      data: {
+        previousStatus: event.previousStatus,
+        status: event.status,
+        reason: event.reason,
+        runId: event.workUnit.linkedRunId ?? null,
+        attemptId: event.workUnit.activeAttemptId ?? null,
+      },
+    }, event.now);
+  });
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,

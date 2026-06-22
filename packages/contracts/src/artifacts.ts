@@ -72,6 +72,8 @@ export interface ArtifactsDomainSnapshot {
 export interface ArtifactSummary {
   readonly id: string;
   readonly runId?: string;
+  readonly mediaJobId?: string;
+  readonly externalWorkId?: string;
   readonly title: string;
   readonly kind: string;
   readonly contentType: string;
