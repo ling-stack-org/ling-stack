@@ -70,6 +70,7 @@ import type {
   StartupStatusResponse,
   UserProfile,
 } from "../../types.js";
+import { SkillGovernanceSettingsSection } from "./SkillGovernanceSettingsSection.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
@@ -77,7 +78,7 @@ import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 import { ProfilePage } from "../profile/ProfilePage.js";
 
-type SettingsSection = "startup" | "account-profile" | "workspace-tools" | "external-work" | "interface" | "archived-items" | "runtime" | "approval-policy" | "skill-library" | "mcp" | "plugins" | "developer";
+type SettingsSection = "startup" | "account-profile" | "workspace-tools" | "external-work" | "interface" | "archived-items" | "runtime" | "approval-policy" | "skill-governance" | "skill-library" | "mcp" | "plugins" | "developer";
 
 export function SettingsPage({
   cwd,
@@ -475,6 +476,17 @@ export function SettingsPage({
           <span>
             <strong>{t("Approval policy")}</strong>
             <small>{t("Tool permissions")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "skill-governance" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("skill-governance")}
+        >
+          <span className="settings-section-icon"><ShieldCheck size={16} /></span>
+          <span>
+            <strong>{t("Skill Governance")}</strong>
+            <small>{t("Candidate generation and recording")}</small>
           </span>
         </button>
         <button
@@ -1214,6 +1226,7 @@ export function SettingsPage({
       </div>
       </section>
       ) : null}
+      {activeSection === "skill-governance" ? <SkillGovernanceSettingsSection cwd={cwd} /> : null}
       {activeSection === "skill-library" ? <SkillLibrarySettingsPanel cwd={cwd} refreshToken={skillLibraryRefreshToken} /> : null}
       {activeSection === "mcp" ? (
         <McpToolsPage

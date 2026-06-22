@@ -119,6 +119,25 @@
   max-width: none;
 }
 
+.settings-panel-copy {
+  max-width: 720px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.settings-inline-success {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #b9dfc0;
+  border-radius: 8px;
+  background: #f0fbf2;
+  color: #1f6b32;
+  font-size: 13px;
+  line-height: 18px;
+}
+
 .settings-tool-return-row {
   display: flex;
   align-items: center;

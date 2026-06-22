@@ -392,6 +392,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   const panel = page.locator(".settings-skill-library");
   const healthPanel = panel.getByRole("region", { name: "Skill Health" });
   await expect(panel.getByRole("heading", { name: "Skill Library" })).toBeVisible();
+  await expect(panel.getByRole("region", { name: "Skill Governance Policy" })).toHaveCount(0);
   await expect(healthPanel).toContainText("Duplicate clusters");
   await expect(healthPanel).toContainText("Duplicate skill cluster");
   await expect(healthPanel).toContainText("Conflicting skill triggers");
@@ -458,7 +459,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(clusterPanel).toContainText("Append evidence");
 });
 
-test("settings skill library saves skill governance policy", async ({ page }) => {
+test("settings skill governance saves policy from a separate section", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -467,9 +468,12 @@ test("settings skill library saves skill governance policy", async ({ page }) =>
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Skill Library/ }).click();
-  const panel = page.locator(".settings-skill-library");
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Skill Governance/ }).click();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skill Governance/ })).toHaveClass(/active/);
+  const panel = page.locator(".skill-governance-settings-panel");
   const governancePanel = panel.getByRole("region", { name: "Skill Governance Policy" });
+  await expect(panel.getByRole("heading", { name: "Skill Governance" })).toBeVisible();
+  await expect(panel).toContainText("Configure candidate generation, recording, and fixed review guards.");
   await expect(governancePanel).toContainText("Semi-auto");
   await expect(governancePanel).toContainText("User initiated");
   await expect(governancePanel).toContainText("Explicit only");

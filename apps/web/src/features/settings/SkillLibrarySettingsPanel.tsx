@@ -18,7 +18,6 @@ import {
   createChannelProtocolCandidateFromCluster,
   createSkillCandidateDraft,
   createSkillImportDraft,
-  getEffectiveConfig,
   getSkillHealth,
   listChannelPlaybookCandidates,
   listChannels,
@@ -31,7 +30,6 @@ import {
   reviewChannelPlaybookCandidate,
   reviewSkillCandidate,
 } from "../../api.js";
-import { updateWorkspaceSettings } from "../../api/workspace-settings.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type {
@@ -39,11 +37,9 @@ import type {
   Channel,
   ChannelPlaybookCandidate,
   ChannelPlaybookCandidateReviewAction,
-  EffectiveConfigResponse,
   ProcedureObservationCluster,
   SkillCandidate,
   SkillCandidateReviewAction,
-  SkillGovernancePolicy,
   SkillHealthFinding,
   SkillHealthReport,
   SkillHealthSeverity,
@@ -53,7 +49,6 @@ import type {
   TeammateSkillBinding,
 } from "../../types.js";
 import { approvalProfileText, workflowPhaseLabel } from "../teammates/helpers.js";
-import { defaultSkillGovernancePolicy, SkillGovernanceSettingsPanel } from "./SkillGovernanceSettingsPanel.js";
 
 type SkillLibraryFilter = "all" | "builtin" | "custom" | "draft" | "archived";
 
@@ -87,8 +82,6 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [observationClusters, setObservationClusters] = useState<readonly ProcedureObservationCluster[]>([]);
   const [bindingSummaries, setBindingSummaries] = useState<readonly TeammateSkillBindingSummary[]>([]);
-  const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();
-  const [skillGovernanceDraft, setSkillGovernanceDraft] = useState<SkillGovernancePolicy>(defaultSkillGovernancePolicy);
   const [selectedSkillId, setSelectedSkillId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<SkillLibraryFilter>("all");
@@ -173,14 +166,13 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setLoading(true);
     try {
       setError("");
-      const [skillsResponse, skillHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse, effectiveConfigResponse] = await Promise.all([
+      const [skillsResponse, skillHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
         listSkills(workspaceCwd),
         getSkillHealth(workspaceCwd, { limit: 6 }),
         listProcedureObservationClusters(workspaceCwd, { limit: 8 }),
         listSkillCandidates(workspaceCwd, { limit: 8 }),
         listChannels(workspaceCwd),
         listAiTeammates(workspaceCwd),
-        getEffectiveConfig(workspaceCwd),
       ]);
       const visibleTeammates = teammatesResponse.teammates.filter((teammate) => teammate.status !== "disabled" && !teammate.hidden);
       const [teammateSkillResponses, playbookCandidateResponses] = await Promise.all([
@@ -199,38 +191,11 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setPlaybookCandidates(playbookCandidateResponses.flatMap((response) => response.candidates));
       setChannels(channelsResponse.channels);
       setBindingSummaries(teammateSkillResponses);
-      setEffectiveConfig(effectiveConfigResponse);
-      setSkillGovernanceDraft(effectiveConfigResponse.values.skillGovernancePolicy?.value ?? defaultSkillGovernancePolicy);
       setMessage(t("Skill library refreshed"));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function saveSkillGovernancePolicy(): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || saving) {
-      return;
-    }
-    setSaving(true);
-    try {
-      setError("");
-      setMessage("");
-      if (effectiveConfig && !effectiveConfig.values.skillGovernancePolicy) {
-        setError(t("Skill governance policy is not supported by this daemon."));
-        return;
-      }
-      await updateWorkspaceSettings(workspaceCwd, { skillGovernancePolicy: skillGovernanceDraft });
-      const nextConfig = await getEffectiveConfig(workspaceCwd);
-      setEffectiveConfig(nextConfig);
-      setSkillGovernanceDraft(nextConfig.values.skillGovernancePolicy?.value ?? defaultSkillGovernancePolicy);
-      setMessage(t("Skill governance policy saved"));
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : String(saveError));
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -460,17 +425,6 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         <span><small>{t("Drafts")}</small><strong>{stats.draft}</strong></span>
         <span><small>{t("Blocked")}</small><strong>{stats.blocked}</strong></span>
       </div>
-
-      <SkillGovernanceSettingsPanel
-        policy={skillGovernanceDraft}
-        source={effectiveConfig?.values.skillGovernancePolicy?.source}
-        path={effectiveConfig?.values.skillGovernancePolicy?.path}
-        supported={effectiveConfig === undefined || effectiveConfig.values.skillGovernancePolicy !== undefined}
-        saving={saving}
-        onChange={setSkillGovernanceDraft}
-        onSave={() => void saveSkillGovernancePolicy()}
-        t={t}
-      />
 
       <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
 
