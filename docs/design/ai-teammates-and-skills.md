@@ -24,7 +24,9 @@ grouping model for built-in and user-defined specialist rosters is covered by
 The broader daemon and registry evolution is covered by
 [Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md). Full Codex/gstack-style
 `SKILL.md` preservation and lazy loading is covered by
-[GStack Skill Source Sync](gstack-skill-source-sync.md).
+[GStack Skill Source Sync](gstack-skill-source-sync.md). First-run source onboarding,
+upstream drift upgrades, semantic migration evidence, and artifact-backed source storage
+are covered by [GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md).
 
 ## Model
 
@@ -368,6 +370,14 @@ context loads the source snapshot lazily only after a skill is selected and Effe
 Skill checks pass. This is the missing piece for full Codex/gstack-style source
 embedding without vendoring upstream runtime files or granting permissions from source
 text. See [GStack Skill Source Sync](gstack-skill-source-sync.md).
+
+Phase 6+ is the source upgrade lifecycle. A fresh Ling install must keep the default
+Development Council usable from metadata-only skills. If local gstack source exists,
+Ling may detect and preview it, but publishing source snapshots into runtime remains
+explicit unless a later guarded workspace policy allows safe records. Source upgrades
+attach richer prompt context to existing skill ids; they do not change council
+membership, teammate bindings, channel attachments, or workflow permissions. See
+[GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md).
 
 ### Failure Modes To Avoid
 
