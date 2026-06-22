@@ -25,7 +25,17 @@ import {
 
 const RUNTIME_SCHEMA_VERSION = 22;
 
-type RuntimeSupervisorRuntimeStore = RunStorePathsFacet & RuntimeSupervisorStoreFacet & RunExecutionStoreFacet;
+export type RuntimeSupervisorRuntimeStore = RunStorePathsFacet & RuntimeSupervisorStoreFacet & RunExecutionStoreFacet;
+
+export type RuntimeSupervisorWorkUnitTransitionObserver = (input: {
+  readonly store: RuntimeSupervisorRuntimeStore;
+  readonly cwd: string;
+  readonly workUnit: WorkUnit;
+  readonly previousStatus: WorkUnit["status"];
+  readonly status: WorkUnit["status"];
+  readonly reason: string;
+  readonly now: string;
+}) => void;
 
 export class RuntimeSupervisor {
   private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
@@ -33,7 +43,10 @@ export class RuntimeSupervisor {
   private readonly runtimeLockPathsByCwd = new Map<string, string>();
   private readonly reconciledCwds = new Set<string>();
 
-  constructor(private readonly config: ResolvedDaemonConfig) {}
+  constructor(
+    private readonly config: ResolvedDaemonConfig,
+    private readonly onWorkUnitTransition?: RuntimeSupervisorWorkUnitTransitionObserver,
+  ) {}
 
   getRuntimeToolFeatures(): ResolvedDaemonConfig["runtimeTools"] {
     return this.config.runtimeTools;
@@ -194,26 +207,48 @@ export class RuntimeSupervisor {
       ...store.listWorkUnits({ status: "cancelling", limit: 500 }),
     ];
     for (const workUnit of candidates) {
-      if (reconcileActiveWorkUnitFromLinkedTerminalRun(store, workUnit, now)) {
-        continue;
-      }
-      markWorkUnitStale(store, workUnit, now, "runtime-startup-reconcile");
+      const reason = "runtime-startup-reconcile";
+      const reconciled = reconcileActiveWorkUnitFromLinkedTerminalRun(store, workUnit, now) ??
+        markWorkUnitStale(store, workUnit, now, reason);
+      this.notifyWorkUnitTransition(store, cwd, workUnit, reconciled, reason, now);
     }
+  }
+
+  private notifyWorkUnitTransition(
+    store: RuntimeSupervisorRuntimeStore,
+    cwd: string,
+    before: WorkUnit,
+    after: WorkUnit,
+    reason: string,
+    now: string,
+  ): void {
+    if (before.status === after.status) {
+      return;
+    }
+    this.onWorkUnitTransition?.({
+      store,
+      cwd,
+      workUnit: before,
+      previousStatus: before.status,
+      status: after.status,
+      reason,
+      now,
+    });
   }
 }
 
-function reconcileActiveWorkUnitFromLinkedTerminalRun(store: RuntimeSupervisorRuntimeStore, workUnit: WorkUnit, now: string): boolean {
+function reconcileActiveWorkUnitFromLinkedTerminalRun(store: RuntimeSupervisorRuntimeStore, workUnit: WorkUnit, now: string): WorkUnit | undefined {
   if (!workUnit.linkedRunId) {
-    return false;
+    return undefined;
   }
   const run = store.getRun(workUnit.linkedRunId);
   const terminal = run ? terminalWorkUnitTransitionForRun(run) : undefined;
   if (!terminal) {
-    return false;
+    return undefined;
   }
   const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
   if (!attemptId) {
-    return false;
+    return undefined;
   }
 
   transitionWorkUnitTerminal(store, {
@@ -229,10 +264,10 @@ function reconcileActiveWorkUnitFromLinkedTerminalRun(store: RuntimeSupervisorRu
   });
   const reconciled = store.getWorkUnit(workUnit.id);
   if (reconciled?.status !== terminal.workUnitStatus) {
-    return false;
+    return undefined;
   }
   releaseWorkUnitRuntimeResources(store, reconciled, now, "linked-terminal-run-reconcile");
-  return true;
+  return store.getWorkUnit(workUnit.id) ?? reconciled;
 }
 
 function terminalWorkUnitTransitionForRun(run: RunSession):

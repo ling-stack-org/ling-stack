@@ -1119,7 +1119,7 @@ export async function routeRequest(
 
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
-    handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled);
+    handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled, controlPlaneEvents);
     return;
   }
 

@@ -15,6 +15,10 @@ The control plane should emerge from concrete Ling pressure:
 - background jobs such as memory consolidation and reflection;
 - future adapter support for Codex app-server or other external execution backends.
 
+The implementation-level object model, API contract, event payload rules, and first
+contract-tightening slices live in
+[Runtime Control Plane Detailed Design](runtime-control-plane-detailed-design.md).
+
 ## Current Position
 
 The daemon remains Ling's product control plane. It owns workspace state, run

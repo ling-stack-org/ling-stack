@@ -547,6 +547,7 @@ export function appendApprovalResolvedControlPlaneEvent(
   if (!hub) {
     return;
   }
+  const owner = resolveApprovalOwner(approval);
   appendControlPlaneEvent(store, hub, {
     workspaceId: DEFAULT_WORKSPACE_ID,
     cwd,
@@ -555,6 +556,8 @@ export function appendApprovalResolvedControlPlaneEvent(
     entityId: approval.id,
     action: "approval.resolved",
     data: {
+      ownerType: owner.type,
+      ownerId: owner.id,
       previousStatus,
       status: approval.status,
       decision,
@@ -574,6 +577,7 @@ export function appendApprovalExpiredControlPlaneEvent(
   if (!hub) {
     return;
   }
+  const owner = resolveApprovalOwner(approval);
   appendControlPlaneEvent(store, hub, {
     workspaceId: DEFAULT_WORKSPACE_ID,
     cwd,
@@ -582,6 +586,8 @@ export function appendApprovalExpiredControlPlaneEvent(
     entityId: approval.id,
     action: "approval.expired",
     data: {
+      ownerType: owner.type,
+      ownerId: owner.id,
       previousStatus,
       status: approval.status,
       decision: "expired",

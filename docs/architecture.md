@@ -170,7 +170,8 @@ Multi-channel concurrency does not mean one adapter or state machine per channel
 Web, desktop, CLI, and future clients must share one daemon-owned runtime supervisor per
 workspace. The supervisor owns active work units, runner attempts, heartbeats, leases,
 semaphores, cancellation, retry, and startup recovery. The detailed target design lives
-in [Runtime Supervisor](design/runtime-supervisor.md).
+in [Runtime Supervisor](design/runtime-supervisor.md). The implementation-level control
+plane contract lives in [Runtime Control Plane Detailed Design](design/runtime-control-plane-detailed-design.md).
 
 Daemon process lifecycle is a separate local operator concern. `daemon start`, `status`,
 `stop`, `restart`, `logs`, and doctor checks may observe or signal the process, but they
@@ -212,6 +213,7 @@ The next implementation slices are documented separately so the platform archite
 - [Contracts and API Client](design/contracts-api-client.md): extract shared daemon DTOs and one reusable client for Web, CLI, desktop, and future mobile/PWA.
 - [Internal Registry and Plugin SDK](design/internal-registry-plugin-sdk.md): introduce internal extension registries before external plugin loading.
 - [Runner Registry](design/runner-registry.md): introduce multi-runner resolution while keeping Pi as the default execution backend.
+- [Runtime Control Plane Detailed Design](design/runtime-control-plane-detailed-design.md): pin the work-unit, attempt, heartbeat, approval, artifact, audit, and runner-registry contract that clients share.
 - [Multi-Agent Orchestrator](design/multi-agent-orchestrator.md): compile workflow templates into durable multi-teammate workflow steps that execute through normal task/run state machines.
 - [Codex-like Execution](design/codex-like-execution.md): complete approval action auditing, evidence replay, long-lived threads, and resume/redirect behavior.
 - [OpenAI Agents SDK Runtime Patterns](design/openai-agents-sdk-runtime-patterns.md): borrow trace/span, approval/resume, handoff, tool namespace, and sandbox patterns without replacing Ling's daemon-owned runtime.
