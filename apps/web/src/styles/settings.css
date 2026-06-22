@@ -119,6 +119,24 @@
   max-width: none;
 }
 
+.developer-settings-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.developer-settings-stack .external-work-secret-box {
+  margin: 0;
+}
+
+.developer-settings-subsection {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
 .settings-panel-copy {
   max-width: 720px;
   margin: 0;

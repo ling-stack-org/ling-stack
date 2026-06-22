@@ -78,7 +78,7 @@ import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 import { ProfilePage } from "../profile/ProfilePage.js";
 
-type SettingsSection = "startup" | "account-profile" | "workspace-tools" | "external-work" | "interface" | "archived-items" | "runtime" | "approval-policy" | "skill-governance" | "skill-library" | "mcp" | "plugins" | "developer";
+type SettingsSection = "account-profile" | "workspace-tools" | "external-work" | "interface" | "archived-items" | "runtime" | "approval-policy" | "skill-governance" | "skill-library" | "mcp" | "plugins" | "developer";
 
 export function SettingsPage({
   cwd,
@@ -402,17 +402,6 @@ export function SettingsPage({
           </span>
         </button>
         <button
-          className={activeSection === "startup" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("startup")}
-        >
-          <span className="settings-section-icon"><Power size={16} /></span>
-          <span>
-            <strong>{t("Startup readiness")}</strong>
-            <small>{startupStatus ? startupStatusLabel(startupStatus, t) : startupStatusLoading ? t("Loading") : t("not loaded")}</small>
-          </span>
-        </button>
-        <button
           className={activeSection === "account-profile" ? "settings-section-item active" : "settings-section-item"}
           type="button"
           onClick={() => setActiveSection("account-profile")}
@@ -536,66 +525,6 @@ export function SettingsPage({
       </nav>
 
       <div className="settings-content-stack">
-      {activeSection === "startup" ? (
-      <section className="panel settings-panel startup-settings-panel" aria-labelledby="startup-settings-title">
-        <div className="panel-title split">
-          <span>
-            <Power size={18} />
-            <h2 id="startup-settings-title">{t("Startup readiness")}</h2>
-          </span>
-          <button className="secondary-button compact-button" type="button" onClick={onRefreshStartup} disabled={startupStatusLoading}>
-            {startupStatusAction === "refresh" || startupStatusLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            {t("Refresh")}
-          </button>
-        </div>
-
-        {startupStatusError ? (
-          <div className="inline-error">
-            <CircleAlert size={17} />
-            {startupStatusError}
-          </div>
-        ) : null}
-
-        <div className="startup-summary-grid">
-          <MetaRow label={t("Workspace")} value={startupStatus?.cwd ?? cwd} compact />
-          <MetaRow label={t("State")} value={startupStatus ? startupStatusLabel(startupStatus, t) : startupStatusLoading ? t("Loading") : t("not loaded")} compact />
-          <MetaRow label={t("Attempt")} value={startupStatus?.startupAttemptId ?? "-"} compact />
-          <MetaRow label={t("Effective config")} value={startupStatus?.effectiveConfigLoadedAt ? formatDateTime(startupStatus.effectiveConfigLoadedAt) : "-"} compact />
-        </div>
-
-        <div className="startup-phase-grid" aria-label={t("Startup phases")}>
-          {STARTUP_REQUIRED_PHASES.map((phase) => (
-            <StartupPhaseRow key={phase} phase={phase} status={startupStatus?.phases[phase] ?? "not_started"} required t={t} />
-          ))}
-        </div>
-
-        <div className="startup-warmup-list" aria-label={t("Warmup phases")}>
-          {STARTUP_OPTIONAL_PHASES.map((phase) => (
-            <StartupPhaseRow key={phase} phase={phase} status={startupStatus?.phases[phase] ?? "not_started"} t={t} />
-          ))}
-        </div>
-
-        {startupStatus?.diagnostics.length ? (
-          <div className="startup-diagnostic-list">
-            {startupStatus.diagnostics.slice(0, 8).map((diagnostic) => (
-              <div key={`${diagnostic.phase}:${diagnostic.code}:${diagnostic.message}`} className={`startup-diagnostic ${diagnostic.level}`}>
-                <div>
-                  <strong>{diagnostic.phase} / {diagnostic.code}{diagnostic.count && diagnostic.count > 1 ? ` x${diagnostic.count}` : ""}</strong>
-                  <span>{diagnostic.message}</span>
-                </div>
-                {diagnostic.nextAction ? <small>{diagnostic.nextAction}</small> : null}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="empty-state compact-empty startup-empty">
-            {startupStatusLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
-            <span>{startupStatusLoading ? t("Loading startup status...") : t("No startup diagnostics")}</span>
-          </div>
-        )}
-      </section>
-      ) : null}
-
       {activeSection === "interface" ? (
       <section className="panel settings-panel interface-settings-panel" aria-labelledby="interface-settings-title">
         <div className="panel-title">
@@ -1277,15 +1206,26 @@ export function SettingsPage({
             <Database size={18} />
             <h2 id="developer-settings-title">{t("Developer")}</h2>
           </div>
-          <div className="external-work-secret-box">
-            <div>
-              <strong>{t("Run Diagnostics")}</strong>
-              <small>{t("Inspect raw runs, events, artifacts, approvals, shell snapshots, and thread bindings for support debugging.")}</small>
+          <div className="developer-settings-stack">
+            <StartupReadinessSection
+              cwd={cwd}
+              startupStatus={startupStatus}
+              startupStatusLoading={startupStatusLoading}
+              startupStatusAction={startupStatusAction}
+              startupStatusError={startupStatusError}
+              onRefreshStartup={onRefreshStartup}
+              t={t}
+            />
+            <div className="external-work-secret-box">
+              <div>
+                <strong>{t("Run Diagnostics")}</strong>
+                <small>{t("Inspect raw runs, events, artifacts, approvals, shell snapshots, and thread bindings for support debugging.")}</small>
+              </div>
+              <button className="secondary-button" type="button" onClick={onOpenRunDiagnostics}>
+                <Database size={16} />
+                {t("Open Run Diagnostics")}
+              </button>
             </div>
-            <button className="secondary-button" type="button" onClick={onOpenRunDiagnostics}>
-              <Database size={16} />
-              {t("Open Run Diagnostics")}
-            </button>
           </div>
         </section>
       ) : null}
@@ -1309,6 +1249,84 @@ const STARTUP_OPTIONAL_PHASES = [
   "external_work_scheduler",
   "plugin_warmup",
 ] as const;
+
+function StartupReadinessSection({
+  cwd,
+  startupStatus,
+  startupStatusLoading,
+  startupStatusAction,
+  startupStatusError,
+  onRefreshStartup,
+  t,
+}: {
+  readonly cwd: string;
+  readonly startupStatus: StartupStatusResponse | undefined;
+  readonly startupStatusLoading: boolean;
+  readonly startupStatusAction: "refresh" | undefined;
+  readonly startupStatusError: string;
+  readonly onRefreshStartup: () => void;
+  readonly t: Translate;
+}): JSX.Element {
+  return (
+    <section className="developer-settings-subsection startup-settings-panel" aria-labelledby="startup-settings-title">
+      <div className="panel-title split">
+        <span>
+          <Power size={18} />
+          <h2 id="startup-settings-title">{t("Startup readiness")}</h2>
+        </span>
+        <button className="secondary-button compact-button" type="button" onClick={onRefreshStartup} disabled={startupStatusLoading}>
+          {startupStatusAction === "refresh" || startupStatusLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+          {t("Refresh")}
+        </button>
+      </div>
+
+      {startupStatusError ? (
+        <div className="inline-error">
+          <CircleAlert size={17} />
+          {startupStatusError}
+        </div>
+      ) : null}
+
+      <div className="startup-summary-grid">
+        <MetaRow label={t("Workspace")} value={startupStatus?.cwd ?? cwd} compact />
+        <MetaRow label={t("State")} value={startupStatus ? startupStatusLabel(startupStatus, t) : startupStatusLoading ? t("Loading") : t("not loaded")} compact />
+        <MetaRow label={t("Attempt")} value={startupStatus?.startupAttemptId ?? "-"} compact />
+        <MetaRow label={t("Effective config")} value={startupStatus?.effectiveConfigLoadedAt ? formatDateTime(startupStatus.effectiveConfigLoadedAt) : "-"} compact />
+      </div>
+
+      <div className="startup-phase-grid" aria-label={t("Startup phases")}>
+        {STARTUP_REQUIRED_PHASES.map((phase) => (
+          <StartupPhaseRow key={phase} phase={phase} status={startupStatus?.phases[phase] ?? "not_started"} required t={t} />
+        ))}
+      </div>
+
+      <div className="startup-warmup-list" aria-label={t("Warmup phases")}>
+        {STARTUP_OPTIONAL_PHASES.map((phase) => (
+          <StartupPhaseRow key={phase} phase={phase} status={startupStatus?.phases[phase] ?? "not_started"} t={t} />
+        ))}
+      </div>
+
+      {startupStatus?.diagnostics.length ? (
+        <div className="startup-diagnostic-list">
+          {startupStatus.diagnostics.slice(0, 8).map((diagnostic) => (
+            <div key={`${diagnostic.phase}:${diagnostic.code}:${diagnostic.message}`} className={`startup-diagnostic ${diagnostic.level}`}>
+              <div>
+                <strong>{diagnostic.phase} / {diagnostic.code}{diagnostic.count && diagnostic.count > 1 ? ` x${diagnostic.count}` : ""}</strong>
+                <span>{diagnostic.message}</span>
+              </div>
+              {diagnostic.nextAction ? <small>{diagnostic.nextAction}</small> : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state compact-empty startup-empty">
+          {startupStatusLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
+          <span>{startupStatusLoading ? t("Loading startup status...") : t("No startup diagnostics")}</span>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function StartupPhaseRow({
   phase,

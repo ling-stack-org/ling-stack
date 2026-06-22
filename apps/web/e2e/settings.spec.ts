@@ -212,6 +212,26 @@ test("settings runtime runners show daemon readiness blockers", async ({ page })
   await expect(settingsPanel).not.toContainText("sandbox_backend_unverified");
 });
 
+test("settings developer section contains startup readiness", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  const settingsSections = page.getByLabel("Settings sections");
+  await expect(settingsSections.getByRole("button", { name: /Startup readiness/ })).toHaveCount(0);
+
+  await settingsSections.getByRole("button", { name: /Developer/ }).click();
+  const developerPanel = page.locator(".developer-settings-panel");
+  await expect(developerPanel.getByRole("heading", { name: "Developer" })).toBeVisible();
+  await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
+  await expect(developerPanel).toContainText("ready");
+  await expect(developerPanel.getByRole("button", { name: "Refresh" })).toBeVisible();
+  await expect(developerPanel.getByRole("button", { name: "Open Run Diagnostics" })).toBeVisible();
+});
+
 test("settings approval policy loads, edits, and saves tool decisions and write paths", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
