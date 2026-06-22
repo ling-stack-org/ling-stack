@@ -5,6 +5,10 @@ Date: 2026-06-22
 Scope: Codex-style skill source snapshots, gstack skill sync, lazy skill loading,
 and permission boundaries for full `SKILL.md` content
 
+Follow-up lifecycle design for first-run onboarding, upstream upgrades, semantic
+migration evidence, and artifact-backed storage lives in
+[GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md).
+
 ## Summary
 
 Ling already has a durable skill registry and Effective Skill checks. The current
@@ -500,6 +504,11 @@ P5. Backfill and release hardening.
    add rollback controls, and verify no teammate/council/channel bindings change unless
    explicitly edited.
 
+P6+. Upgrade lifecycle.
+   Continue in [GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md) for
+   first-run source onboarding, automatic read-only update checks, semantic drift evidence,
+   artifact-backed source storage, rollback, and guarded auto-safe policy.
+
 ### Implementation Progress
 
 - P0 foundation is implemented: contracts, SQLite source snapshot storage, source-health
@@ -612,8 +621,11 @@ Runtime:
 ## Deferred Decisions
 
 - Artifact-backed storage for large `SKILL.md` bodies and reviewed referenced-file
-  contents.
-- Assisted migration between upstream gstack versions beyond field-level drift evidence.
+  contents is specified in
+  [GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md).
+- Assisted migration between upstream gstack versions beyond field-level drift evidence
+  is specified as semantic diff and guarded upgrade policy in
+  [GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md).
 - User-global source cache with workspace overrides.
 - Runtime support for specific reviewed helper scripts or assets.
 - Remote marketplace, package-manager install, or automatic upstream upgrade.
