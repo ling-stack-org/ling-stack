@@ -14,6 +14,7 @@ const commands = [
 const teammateMentions = [
   { id: "engineer", label: "Engineer" },
   { id: "design-lead", label: "Design Lead" },
+  { id: "ling_agent", label: "Ling Agent" },
 ];
 
 test("parses a registered global slash command", () => {
@@ -50,6 +51,18 @@ test("matches command labels and normalized teammate labels", () => {
   });
 });
 
+test("parses agent-scoped slash commands for teammate labels with spaces", () => {
+  assert.deepEqual(parseComposerSlashIntent("@Ling Agent /review docs", { commands, teammateMentions }), {
+    kind: "agent_command",
+    teammateId: "ling_agent",
+    teammateLabel: "Ling Agent",
+    commandId: "review",
+    commandLabel: "Code Review",
+    args: "docs",
+    raw: "@Ling Agent /review docs",
+  });
+});
+
 test("does not parse unknown commands or unresolved teammates", () => {
   assert.deepEqual(parseComposerSlashIntent("/unknown arg", { commands, teammateMentions }), { kind: "none" });
   assert.deepEqual(parseComposerSlashIntent("@Unknown /review arg", { commands, teammateMentions }), { kind: "none" });
@@ -69,7 +82,7 @@ test("does not parse local paths or slash-like prose as commands", () => {
 });
 
 test("parses a registered multi-agent slash command", () => {
-  assert.deepEqual(parseComposerSlashIntent("@Engineer @Design-Lead /review apps/web", { commands, teammateMentions }), {
+  assert.deepEqual(parseComposerSlashIntent("@Engineer @Design Lead /review apps/web", { commands, teammateMentions }), {
     kind: "multi_agent_command",
     teammates: [
       { id: "engineer", label: "Engineer" },
@@ -78,7 +91,7 @@ test("parses a registered multi-agent slash command", () => {
     commandId: "review",
     commandLabel: "Code Review",
     args: "apps/web",
-    raw: "@Engineer @Design-Lead /review apps/web",
+    raw: "@Engineer @Design Lead /review apps/web",
   });
 });
 

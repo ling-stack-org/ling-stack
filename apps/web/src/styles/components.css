@@ -7899,6 +7899,10 @@ code,
   background: var(--surface-selected);
 }
 
+.composer-structured-token.command.executable {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 .composer-structured-token button {
   display: inline-grid;
   width: 20px;

@@ -1511,10 +1511,77 @@ test("channel composer does not render multi-agent slash command tokens as file 
   await composerInput.fill("@Engineer @Designer /review apps/web");
 
   const pendingAssets = page.getByLabel("Pending message assets");
-  await expect(pendingAssets.locator(".composer-structured-token.command")).toContainText("@Engineer @Designer /review");
+  const commandToken = pendingAssets.locator(".composer-structured-token.command").filter({ hasText: "Code Review" });
+  await expect(commandToken).toContainText("@Engineer @Designer");
+  await expect(commandToken).toContainText("/review");
   await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
   await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "apps/web" })).toHaveCount(1);
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Create task" })).toBeEnabled();
+});
+
+test("channel composer supports spaced teammate names before slash commands", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent" })];
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("@Ling Agent /rev");
+  await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
+  await page.getByRole("option", { name: /^\/review\b/ }).click();
+  await expect(composerInput).toHaveValue("@Ling Agent /review ");
+  await composerInput.type("apps/web");
+
+  const pendingAssets = page.getByLabel("Pending message assets");
+  const commandToken = pendingAssets.locator(".composer-structured-token.command").filter({ hasText: "Code Review" });
+  await expect(commandToken).toContainText("@Ling Agent");
+  await expect(commandToken).toContainText("/review");
+  await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
+  await page.locator(".channel-composer").getByRole("button", { name: "Create task" }).click();
+
+  await expect.poll(() => state.tasks[0]).toMatchObject({
+    assigneeTeammateId: "ling_agent",
+    requestedSkillId: "review",
+    prompt: "apps/web",
+  });
+});
+
+test("channel composer opens slash picker for later slash tokens without multi-dispatch", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("/office-hours summarize this channel /rev");
+  await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
+  await page.getByRole("option", { name: /^\/review\b/ }).click();
+  await expect(composerInput).toHaveValue("/office-hours summarize this channel /review ");
+
+  const pendingAssets = page.getByLabel("Pending message assets");
+  const commandTokens = pendingAssets.locator(".composer-structured-token.command");
+  await expect(commandTokens).toHaveCount(2);
+  await expect(commandTokens.nth(0)).toContainText("Office Hours");
+  await expect(commandTokens.nth(1)).toContainText("Code Review");
+  await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
+
+  await page.locator(".channel-composer").getByRole("button", { name: "Create task" }).click();
+  await expect.poll(() => state.tasks).toHaveLength(1);
+  await expect.poll(() => state.tasks[0]).toMatchObject({
+    requestedSkillId: "office-hours",
+    prompt: "summarize this channel /review",
+  });
 });
 
 test("channel screenshot request shows materialization clarify reply instead of hidden routing", async ({ page }) => {
