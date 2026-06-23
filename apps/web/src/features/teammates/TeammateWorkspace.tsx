@@ -206,7 +206,7 @@ export function TeammateWorkspace({
   const [directGuidancePromotingId, setDirectGuidancePromotingId] = useState("");
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
-  const [chatContextPanelOpen, setChatContextPanelOpen] = useState(true);
+  const [chatContextPanelOpen, setChatContextPanelOpen] = useState(false);
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<TeammatePrivateAttachment>[]>([]);
   const [directLinkPreviews, setDirectLinkPreviews] = useState<readonly TeammateDirectLinkPreview[]>([]);
@@ -506,7 +506,7 @@ export function TeammateWorkspace({
     setSkillImportOpen(false);
     setMessageSearchOpen(false);
     setMessageSearchQuery("");
-    setChatContextPanelOpen(true);
+    setChatContextPanelOpen(false);
     setMessages([]);
     setHasMoreDirectMessages(false);
     setNextDirectBeforeMessageId(undefined);

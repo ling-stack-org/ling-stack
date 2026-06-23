@@ -104,6 +104,7 @@ import { defaultTools } from "../lib/tools.js";
 import {
   customOpenAICompatibleForm,
   providerFormToTemplate,
+  providerPreflightReady,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
 import { inferPermissionPreset } from "../lib/session-permissions.js";
@@ -456,7 +457,6 @@ export function AppShell(): JSX.Element {
     upsertAiTeammate,
     toggleAiTeammatePinned,
     toggleAiTeammateHidden,
-    archiveAllVisibleTeammateChats,
     addChannelTeammate,
     removeChannelTeammate,
     setDefaultChannelTeammate,
@@ -605,6 +605,11 @@ export function AppShell(): JSX.Element {
     routeExternalWorkToChannel,
     resetForCwd: resetDurableWorkItemsForCwd,
   } = durableWorkItemsDomain.actions;
+  const workspaceToolCounts = useMemo(() => ({
+    readyProviderCount: providers.filter(providerPreflightReady).length,
+    visibleTeammateCount: aiTeammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled").length,
+    openWorkItemCount: durableWorkItems.filter((item) => item.status !== "done" && item.status !== "archived").length,
+  }), [aiTeammates, durableWorkItems, providers]);
   const runtimeDomain = useRuntimeDomain({
     cwd: form.cwd.trim(),
     setErrorMessage,
@@ -1063,7 +1068,6 @@ export function AppShell(): JSX.Element {
     saveChannelEdit,
     saveChannelBranch,
     archiveSidebarChannel,
-    archiveAllSidebarChannels,
     archiveSidebarChannelBranch,
     removeChannel,
     saveTask,
@@ -1608,8 +1612,6 @@ export function AppShell(): JSX.Element {
         onCreateTeammate={openTeammateCreatePanel}
         onCreateChannelBranch={(channelId, name) => void saveChannelBranch(channelId, name)}
         onArchiveChannel={(channelId) => void archiveSidebarChannel(channelId)}
-        onArchiveAllChannels={() => void archiveAllSidebarChannels()}
-        onArchiveAllTeammateChats={() => void archiveAllVisibleTeammateChats()}
         onArchiveChannelBranch={(channelId, branchId) => void archiveSidebarChannelBranch(channelId, branchId)}
         onSelectChannel={(channelId) => {
           setSettingsReturnSection("");
@@ -1835,15 +1837,13 @@ export function AppShell(): JSX.Element {
               />
             ) : (
               <>
-                {activeView === "providers" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" ? null : (
+                {activeView === "providers" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" || activeView === "settings" ? null : (
                   <div className="workspace-head">
                     <div>
                       <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
                       <p>{selectedAiTeammate ? selectedAiTeammate.description : t(viewDescription(activeView))}</p>
                     </div>
-                    {activeView === "settings" ? null : (
-                      <StatusBadge status={latestStatus} />
-                    )}
+                    <StatusBadge status={latestStatus} />
                   </div>
                 )}
                 {activeView === "teammates" && selectedAiTeammate ? (
@@ -2125,6 +2125,7 @@ export function AppShell(): JSX.Element {
                     workspaceResponseLanguage={workspaceSettings?.responseLanguage ?? effectiveConfig?.values.responseLanguage.value ?? "follow_user"}
                     selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
                     externalWorkStatus={externalWorkStatus}
+                    workspaceToolCounts={workspaceToolCounts}
                     mcpServers={mcpServers}
                     mcpTools={mcpTools}
                     mcpLoading={mcpLoading}

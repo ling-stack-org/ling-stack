@@ -94,7 +94,7 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect(archivedPanel.getByRole("button", { name: "Delete" })).toBeVisible();
 });
 
-test("channel sidebar menu archives all active channels", async ({ page }) => {
+test("channel sidebar menu keeps create action without bulk archive", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -118,17 +118,12 @@ test("channel sidebar menu archives all active channels", async ({ page }) => {
   await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Design" })).toBeVisible();
   await navigation.getByRole("button", { name: "Channel actions" }).hover();
-  await expect(navigation.getByRole("menuitem", { name: "Archive all channels" })).toBeVisible();
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("Archive all channels?");
-    await dialog.accept();
-  });
-  await navigation.getByRole("menuitem", { name: "Archive all channels" }).click();
-
-  await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("archived");
-  await expect.poll(() => mockChannelStatus(state, "Design")).toBe("archived");
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Design" })).toHaveCount(0);
+  await expect(navigation.getByRole("menuitem", { name: "New channel" })).toBeVisible();
+  await expect(navigation.getByRole("menuitem", { name: "Archive all channels" })).toHaveCount(0);
+  await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("active");
+  await expect.poll(() => mockChannelStatus(state, "Design")).toBe("active");
+  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Design" })).toBeVisible();
 });
 
 function mockChannelStatus(state: ReturnType<typeof createBaseState>, name: string): string | undefined {

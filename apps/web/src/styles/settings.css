@@ -41,78 +41,99 @@
 
 .settings-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  align-items: start;
-  gap: 18px;
-  width: 100%;
+  grid-template-columns: 306px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+  width: calc(100% + 40px);
   max-width: none;
-  min-height: 0;
+  min-height: calc(100vh - 40px);
+  margin: -20px;
+  background: var(--surface-panel);
 }
 
 .settings-section-nav {
   position: sticky;
   top: 0;
   display: grid;
-  gap: 4px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-panel);
+  align-content: start;
+  gap: 24px;
+  min-height: calc(100vh - 40px);
+  padding: 22px 14px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-sidebar);
+}
+
+.settings-section-group {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-section-group-label {
+  display: block;
+  min-width: 0;
+  padding: 0 10px;
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 20px;
 }
 
 .settings-section-item {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  position: relative;
+  display: flex;
   align-items: center;
-  gap: 9px;
   min-width: 0;
-  min-height: 46px;
-  padding: 7px 8px;
+  min-height: 42px;
+  padding: 0 14px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
+  font-size: 16px;
+  font-weight: 520;
+  line-height: 20px;
   text-align: left;
 }
 
-.settings-section-item:hover,
-.settings-section-item.active {
+.settings-section-item:hover {
   background: var(--surface-selected);
   color: var(--text-strong);
 }
 
-.settings-section-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-panel-strong);
+.settings-section-item.active {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+  font-weight: 650;
 }
 
-.settings-section-item strong,
-.settings-section-item small {
-  display: block;
+.settings-section-item.active::before {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
+}
+
+.settings-section-icon {
+  display: none;
+}
+
+.settings-section-item {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.settings-section-item strong {
-  font-size: 13px;
-}
-
-.settings-section-item small {
-  margin-top: 2px;
-  color: var(--text-soft);
-  font-size: 11px;
-}
-
 .settings-content-stack {
   max-width: none;
+  min-width: 0;
+  padding: 40px;
 }
 
 .settings-panel {
@@ -184,6 +205,123 @@
 
 .account-profile-settings-panel .profile-avatar-button {
   background: var(--text-strong);
+}
+
+.settings-workspace-tools {
+  display: grid;
+  align-content: start;
+  gap: 30px;
+  width: 100%;
+  max-width: 856px;
+}
+
+.settings-workspace-tools h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 28px;
+  font-weight: 760;
+  line-height: 34px;
+  letter-spacing: 0;
+}
+
+.settings-tool-row-list {
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.settings-tool-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  min-height: 86px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
+.settings-tool-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-tool-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-panel-strong);
+  color: var(--text);
+}
+
+.settings-tool-row-copy {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.settings-tool-row-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-tool-row-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 17px;
+  font-weight: 740;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-tool-row-heading small {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-selected);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.settings-tool-row-copy > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 480;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-tool-row-action {
+  justify-self: end;
+  min-width: 132px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-color: var(--border);
+  border-radius: 3px;
+  background: var(--surface-panel);
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .settings-tool-shortcut-list {
@@ -2067,10 +2205,61 @@
 @media (max-width: 760px) {
   .settings-layout {
     grid-template-columns: 1fr;
+    width: calc(100% + 40px);
+    min-height: 0;
   }
 
   .settings-section-nav {
     position: static;
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-content-stack {
+    padding: 24px 18px 28px;
+  }
+
+  .settings-workspace-tools {
+    gap: 18px;
+    max-width: none;
+  }
+
+  .settings-workspace-tools h2 {
+    font-size: 24px;
+    line-height: 30px;
+  }
+
+  .settings-tool-row {
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 14px;
+    min-height: 0;
+    padding: 14px;
+  }
+
+  .settings-tool-row-icon {
+    width: 42px;
+    height: 42px;
+  }
+
+  .settings-tool-row-heading {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+  }
+
+  .settings-tool-row-heading small {
+    max-width: 100%;
+  }
+
+  .settings-tool-row-copy > span:last-child {
+    white-space: normal;
+  }
+
+  .settings-tool-row-action {
+    grid-column: 2;
+    justify-self: start;
+    width: 100%;
+    min-width: 0;
   }
 
   .external-work-status-grid,

@@ -5,24 +5,19 @@ import {
   CircleAlert,
   Database,
   GitBranch,
-  Kanban,
   KeyRound,
   Languages,
-  Library,
   Loader2,
   Palette,
   Play,
   Power,
   PowerOff,
-  Plug,
-  PlugZap,
   RefreshCw,
   Save,
   Settings,
   ShieldCheck,
   Trash2,
   UserRound,
-  Wrench,
 } from "lucide-react";
 import {
   deleteChannel,
@@ -73,12 +68,45 @@ import type {
 import { SkillGovernanceSettingsSection } from "./SkillGovernanceSettingsSection.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
+import { SettingsWorkspaceToolsPanel, type WorkspaceToolCounts } from "./SettingsWorkspaceToolsPanel.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 import { ProfilePage } from "../profile/ProfilePage.js";
 
 type SettingsSection = "account-profile" | "workspace-tools" | "external-work" | "interface" | "archived-items" | "runtime" | "approval-policy" | "skill-governance" | "skill-library" | "mcp" | "plugins" | "developer";
+
+const settingsSectionGroups: readonly {
+  readonly heading?: string;
+  readonly items: readonly { readonly id: SettingsSection; readonly label: string }[];
+}[] = [
+  {
+    items: [
+      { id: "workspace-tools", label: "Workspace tools" },
+      { id: "account-profile", label: "Account and profile" },
+      { id: "external-work", label: "External work" },
+      { id: "interface", label: "Interface preferences" },
+    ],
+  },
+  {
+    heading: "System",
+    items: [
+      { id: "archived-items", label: "Archived items" },
+      { id: "runtime", label: "Runtime runners" },
+      { id: "approval-policy", label: "Approval policy" },
+    ],
+  },
+  {
+    heading: "Extensions",
+    items: [
+      { id: "skill-governance", label: "Skill Governance" },
+      { id: "skill-library", label: "Skill Library" },
+      { id: "mcp", label: "MCP tool servers" },
+      { id: "plugins", label: "Plugins" },
+      { id: "developer", label: "Developer" },
+    ],
+  },
+];
 
 export function SettingsPage({
   cwd,
@@ -93,6 +121,7 @@ export function SettingsPage({
   workspaceResponseLanguage,
   selectedChannel,
   externalWorkStatus,
+  workspaceToolCounts,
   mcpServers,
   mcpTools,
   mcpLoading,
@@ -171,6 +200,7 @@ export function SettingsPage({
   readonly workspaceResponseLanguage: ResponseLanguagePreference;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
+  readonly workspaceToolCounts: WorkspaceToolCounts;
   readonly mcpServers: readonly McpServer[];
   readonly mcpTools: readonly McpTool[];
   readonly mcpLoading: boolean;
@@ -390,138 +420,21 @@ export function SettingsPage({
   return (
     <div className="settings-layout">
       <nav className="settings-section-nav" aria-label={t("Settings sections")}>
-        <button
-          className={activeSection === "workspace-tools" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("workspace-tools")}
-        >
-          <span className="settings-section-icon"><Kanban size={16} /></span>
-          <span>
-            <strong>{t("Workspace tools")}</strong>
-            <small>{t("Model, teammates, and board shortcuts")}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "account-profile" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("account-profile")}
-        >
-          <span className="settings-section-icon"><UserRound size={16} /></span>
-          <span>
-            <strong>{t("Account and profile")}</strong>
-            <small>{t("Profile, preferences, and identity")}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "external-work" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("external-work")}
-        >
-          <span className="settings-section-icon"><GitBranch size={16} /></span>
-          <span>
-            <strong>{t("External work")}</strong>
-            <small>{workflowStatusLabel(externalWorkStatus)}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "interface" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("interface")}
-        >
-          <span className="settings-section-icon"><Palette size={16} /></span>
-          <span>
-            <strong>{t("Interface preferences")}</strong>
-            <small>{t("Theme and language")}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "archived-items" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("archived-items")}
-        >
-          <span className="settings-section-icon"><Archive size={16} /></span>
-          <span>
-            <strong>{t("Archived items")}</strong>
-            <small>{t("{count} recoverable", { count: archivedChannels.length + archivedBranches.length })}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "runtime" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("runtime")}
-        >
-          <span className="settings-section-icon"><Bot size={16} /></span>
-          <span>
-            <strong>{t("Runtime runners")}</strong>
-            <small>{runtimeSettings?.defaultRunnerId ?? t("Runner policy")}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "approval-policy" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("approval-policy")}
-        >
-          <span className="settings-section-icon"><ShieldCheck size={16} /></span>
-          <span>
-            <strong>{t("Approval policy")}</strong>
-            <small>{t("Tool permissions")}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "skill-governance" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("skill-governance")}
-        >
-          <span className="settings-section-icon"><ShieldCheck size={16} /></span>
-          <span>
-            <strong>{t("Skill Governance")}</strong>
-            <small>{t("Candidate generation and recording")}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "skill-library" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("skill-library")}
-        >
-          <span className="settings-section-icon"><Library size={16} /></span>
-          <span>
-            <strong>{t("Skill Library")}</strong>
-            <small>{t("Skill definitions and imports")}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "mcp" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("mcp")}
-        >
-          <span className="settings-section-icon"><Wrench size={16} /></span>
-          <span>
-            <strong>{t("MCP tool servers")}</strong>
-            <small>{t("{count} servers", { count: mcpServers.length })}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "plugins" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("plugins")}
-        >
-          <span className="settings-section-icon"><Plug size={16} /></span>
-          <span>
-            <strong>{t("Plugins")}</strong>
-            <small>{t("Managed capabilities")}</small>
-          </span>
-        </button>
-        <button
-          className={activeSection === "developer" ? "settings-section-item active" : "settings-section-item"}
-          type="button"
-          onClick={() => setActiveSection("developer")}
-        >
-          <span className="settings-section-icon"><Database size={16} /></span>
-          <span>
-            <strong>{t("Developer")}</strong>
-            <small>{t("Diagnostics and raw records")}</small>
-          </span>
-        </button>
+        {settingsSectionGroups.map((group, groupIndex) => (
+          <div key={group.heading ?? `primary-${groupIndex}`} className="settings-section-group">
+            {group.heading ? <span className="settings-section-group-label">{t(group.heading)}</span> : null}
+            {group.items.map((item) => (
+              <button
+                key={item.id}
+                className={activeSection === item.id ? "settings-section-item active" : "settings-section-item"}
+                type="button"
+                onClick={() => setActiveSection(item.id)}
+              >
+                {t(item.label)}
+              </button>
+            ))}
+          </div>
+        ))}
       </nav>
 
       <div className="settings-content-stack">
@@ -579,44 +492,12 @@ export function SettingsPage({
       ) : null}
 
       {activeSection === "workspace-tools" ? (
-        <section className="panel settings-panel workspace-tools-settings-panel" aria-labelledby="workspace-tools-settings-title">
-          <div className="panel-title">
-            <Kanban size={18} />
-            <h2 id="workspace-tools-settings-title">{t("Workspace tools")}</h2>
-          </div>
-          <div className="settings-tool-shortcut-list">
-            <div className="external-work-secret-box">
-              <div>
-                <strong>{t("Model Workbench")}</strong>
-                <small>{t("Configure providers, models, and checks.")}</small>
-              </div>
-              <button className="secondary-button" type="button" onClick={onOpenProviders}>
-                <PlugZap size={16} />
-                {t("Open Model Workbench")}
-              </button>
-            </div>
-            <div className="external-work-secret-box">
-              <div>
-                <strong>{t("AI Teammates")}</strong>
-                <small>{t("Manage teammate roster, models, and private chats.")}</small>
-              </div>
-              <button className="secondary-button" type="button" onClick={onOpenTeammates}>
-                <Bot size={16} />
-                {t("Open AI Teammates")}
-              </button>
-            </div>
-            <div className="external-work-secret-box">
-              <div>
-                <strong>{t("Work Board")}</strong>
-                <small>{t("Review actionable work across channels and runs.")}</small>
-              </div>
-              <button className="secondary-button" type="button" onClick={onOpenWorkBoard}>
-                <Kanban size={16} />
-                {t("Open Work Board")}
-              </button>
-            </div>
-          </div>
-        </section>
+        <SettingsWorkspaceToolsPanel
+          counts={workspaceToolCounts}
+          onOpenProviders={onOpenProviders}
+          onOpenTeammates={onOpenTeammates}
+          onOpenWorkBoard={onOpenWorkBoard}
+        />
       ) : null}
 
       {activeSection === "archived-items" ? (
