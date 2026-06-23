@@ -21,7 +21,10 @@ test("automations page uses Codex-style inbox, manual composer, templates, and a
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "自动化" }).click();
   const automationsPage = page.locator(".automations-inbox-page");
   await expect(automationsPage.getByRole("heading", { name: "自动化", level: 1 })).toBeVisible();
-  await expect(automationsPage.getByRole("heading", { name: "当前", level: 2 })).toBeVisible();
+  await expect(automationsPage.getByRole("tab", { name: /运行中/ })).toHaveAttribute("aria-selected", "true");
+  await expect(automationsPage.getByRole("heading", { name: "当前", level: 2 })).toHaveCount(0);
+  const tabOverflow = await automationsPage.locator(".automation-tab-list").evaluate((element) => getComputedStyle(element).overflowX);
+  expect(tabOverflow).toBe("visible");
   await expect(automationsPage.getByText("本地服务会自动恢复计划任务。")).toBeVisible();
   await expect(automationsPage.getByRole("button", { name: /通过聊天创建/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Start" })).toHaveCount(0);

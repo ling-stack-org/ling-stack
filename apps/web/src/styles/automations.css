@@ -27,13 +27,13 @@
 
 .automations-inbox-header {
   width: 100%;
-  min-height: 96px;
+  min-height: 92px;
   margin: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 24px 32px 22px;
+  padding: 22px 32px 20px;
   border-bottom: 1px solid #e5e5e5;
   background: #ffffff;
 }
@@ -41,9 +41,9 @@
 .automations-inbox-header h1 {
   margin: 0;
   color: #111111;
-  font-size: 28px;
-  font-weight: 700;
-  line-height: 34px;
+  font-size: 26px;
+  font-weight: 720;
+  line-height: 32px;
   letter-spacing: 0;
 }
 
@@ -86,6 +86,18 @@
 
 .automation-header-meta .danger {
   color: var(--danger);
+}
+
+.automation-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.automation-refresh-button {
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
 }
 
 .automation-create-dropdown {
@@ -169,7 +181,7 @@
   width: 100%;
   margin: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.32fr);
+  grid-template-columns: minmax(0, 1fr) 320px;
   align-items: stretch;
   gap: 0;
   height: 100%;
@@ -185,7 +197,7 @@
   align-items: center;
   gap: 10px;
   min-height: 64px;
-  margin: 32px 48px 0;
+  margin: 16px 24px 0;
   padding: 0 20px;
   border: 1px solid #f3c7c1;
   border-radius: 8px;
@@ -228,45 +240,110 @@
   height: 100%;
   max-height: none;
   overflow: auto;
-  padding: 32px 48px;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: #ffffff;
-  box-shadow: inset 0 1px 0 var(--hairline);
+  box-shadow: none;
 }
 
 .automation-current-pane {
-  gap: 10px;
+  gap: 0;
 }
 
 .automations-inbox-main .automation-attention-banner + .automation-current-pane {
-  padding-top: 28px;
+  padding-top: 0;
 }
 
 .automation-history-lite {
   border-left: 1px solid #e5e5e5;
-  padding-inline: 44px;
+  padding: 28px 24px;
 }
 
 .automation-secondary-section {
   display: grid;
   gap: 2px;
-  margin-top: 8px;
+  margin-top: 0;
+  padding: 6px 24px 24px;
 }
 
 .automation-current-pane > h2,
 .automation-secondary-section h2,
 .automation-history-lite h2 {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 6px 0;
+  padding: 0;
   background: #ffffff;
+}
+
+.automation-pane-tabs {
+  display: block;
+  padding: 10px 24px 0;
+  border-bottom: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.automation-tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 24px;
+  min-width: 0;
+  overflow: visible;
+}
+
+.automation-tab-list button {
+  position: relative;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: #6f6f6f;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.automation-tab-list button::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 999px 999px 0 0;
+  background: transparent;
+}
+
+.automation-tab-list button.active {
+  color: #111111;
+}
+
+.automation-tab-list button.active::after {
+  background: #111111;
+}
+
+.automation-tab-list button span {
+  min-width: 20px;
+  min-height: 20px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.automation-current-pane > .automation-inbox-list {
+  padding: 14px 24px 24px;
 }
 
 .automation-inbox-row {
   width: 100%;
-  min-height: 76px;
+  min-height: 74px;
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
@@ -275,14 +352,14 @@
   border-bottom: 1px solid #e5e5e5;
   background: transparent;
   color: var(--text-primary);
-  padding: 16px 4px;
+  padding: 14px 12px 14px 8px;
   text-align: left;
   cursor: pointer;
 }
 
 .automation-inbox-row.selected {
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  box-shadow: inset 3px 0 0 var(--text-primary);
+  background: #f1f5f9;
+  box-shadow: inset 3px 0 0 #111111;
 }
 
 .automation-row-dot {
@@ -314,16 +391,16 @@
 
 .automation-inbox-row-main strong {
   color: #171717;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 650;
-  line-height: 22px;
+  line-height: 21px;
 }
 
 .automation-inbox-row-main small,
 .automation-row-schedule {
   color: #707070;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 13px;
+  line-height: 19px;
 }
 
 .automation-row-actions {
@@ -334,13 +411,13 @@
 }
 
 .automation-row-primary-action {
-  min-height: 34px;
+  min-height: 32px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 0 10px;
   border: 1px solid var(--border-subtle);
-  border-radius: 7px;
+  border-radius: 6px;
   background: var(--surface-panel-strong);
   color: var(--text-primary);
   font: inherit;
@@ -364,6 +441,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  padding: 0 24px;
   color: var(--text-secondary);
   border-top: 1px solid var(--border-subtle);
 }
@@ -372,6 +450,132 @@
   min-height: 54px;
   border-top: 0;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.automation-execution-inspector {
+  align-content: start;
+  gap: 18px;
+}
+
+.automation-inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.automation-inspector-header h2 {
+  margin: 0;
+  color: #171717;
+  font-size: 18px;
+  font-weight: 720;
+  line-height: 24px;
+}
+
+.automation-inspector-title {
+  display: grid;
+  gap: 5px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.automation-inspector-title strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #171717;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 23px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-inspector-title span {
+  color: #707070;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.automation-inspector-section {
+  display: grid;
+  gap: 10px;
+}
+
+.automation-inspector-section h3 {
+  margin: 0;
+  color: #171717;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.automation-inspector-grid {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #e5e5e5;
+  border-radius: 7px;
+  background: #e5e5e5;
+}
+
+.automation-inspector-grid span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #707070;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.automation-inspector-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #171717;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-inspector-section pre {
+  min-height: 144px;
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid #e5e5e5;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #334155;
+  padding: 12px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 19px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.automation-inspector-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.automation-inspector-empty {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: #707070;
+  text-align: center;
+}
+
+.automation-inspector-empty strong {
+  color: #171717;
 }
 
 .automation-modal-header-actions {
@@ -982,6 +1186,47 @@
 @media (max-width: 980px) {
   .automations-layout {
     grid-template-columns: 1fr;
+  }
+
+  .automations-inbox-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .automation-header-actions {
+    justify-content: flex-start;
+  }
+
+  .automations-inbox-main {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .automation-current-pane,
+  .automation-history-lite {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .automation-pane-tabs {
+    padding-top: 12px;
+  }
+
+  .automation-history-lite {
+    border-top: 1px solid #e5e5e5;
+    border-left: 0;
+  }
+
+  .automation-row-actions {
+    justify-content: flex-start;
+    grid-column: 2;
+    flex-wrap: wrap;
+  }
+
+  .automation-inbox-row {
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: start;
   }
 
   .automation-detail-grid,
