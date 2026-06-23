@@ -4,6 +4,16 @@ export type ComposerInputPart =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "attachment"; readonly attachmentId: string }
   | { readonly type: "workspace_file"; readonly path: string; readonly raw: string; readonly line?: number }
+  | {
+      readonly type: "url_ref";
+      readonly url: string;
+      readonly raw: string;
+      readonly label: string;
+      readonly title?: string;
+      readonly host?: string;
+      readonly state?: "uploading" | "ready" | "blocked" | "failed";
+      readonly error?: string;
+    }
   | { readonly type: "teammate_mention"; readonly teammateId: string; readonly label: string; readonly raw: string }
   | { readonly type: "skill_mention"; readonly skillId: string; readonly label: string; readonly raw: string }
   | { readonly type: "slash_command"; readonly commandId: string; readonly label: string; readonly raw: string };
@@ -23,6 +33,14 @@ export interface ComposerInputSlashCommandOption {
   readonly label: string;
 }
 
+export interface ComposerInputLinkPreviewOption {
+  readonly url: string;
+  readonly normalizedUrl?: string;
+  readonly title?: string;
+  readonly state?: "uploading" | "ready" | "blocked" | "failed";
+  readonly error?: string;
+}
+
 export interface ComposerInputAttachmentOption {
   readonly attachmentId: string;
 }
@@ -33,6 +51,7 @@ export interface ParseComposerInputPartsOptions {
   readonly teammateMentions?: readonly ComposerInputMentionOption[];
   readonly skills?: readonly ComposerInputSkillOption[];
   readonly slashCommands?: readonly ComposerInputSlashCommandOption[];
+  readonly linkPreviews?: readonly ComposerInputLinkPreviewOption[];
 }
 
 interface KnownMentionRead {
@@ -44,6 +63,7 @@ interface KnownMentionRead {
 
 const pathPattern = /^(?:~\/|\.{1,2}\/|\/|(?:[A-Za-z0-9_.-]+\/))[^\s<>"'`]+/;
 const slashCommandTokenPattern = /^\/([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
+const urlPattern = /^(?:https?:\/\/[^\s<>"'`]+|github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+[^\s<>"'`]*)/i;
 
 export function parseComposerInputParts(text: string, options: ParseComposerInputPartsOptions = {}): readonly ComposerInputPart[] {
   const parts: ComposerInputPart[] = [
@@ -82,7 +102,16 @@ export function parseComposerInputParts(text: string, options: ParseComposerInpu
     }
 
     const previousChar = index > 0 ? text[index - 1] ?? "" : "";
-    const pathCanStart = index === 0 || /\s/u.test(previousChar) || previousChar === "(" || previousChar === "[" || previousChar === "{";
+    const tokenCanStart = index === 0 || /\s/u.test(previousChar) || previousChar === "(" || previousChar === "[" || previousChar === "{";
+    const url = tokenCanStart ? readUrlAtStart(remaining, options.linkPreviews ?? []) : undefined;
+    if (url) {
+      flushText();
+      parts.push(url);
+      index += url.raw.length;
+      continue;
+    }
+
+    const pathCanStart = tokenCanStart;
     const path = pathCanStart ? pathPattern.exec(remaining) : null;
     if (path && path[0].includes("/")) {
       const command = readRegisteredSlashCommandToken(path[0], options.slashCommands ?? []);
@@ -130,7 +159,7 @@ export function serializeComposerInputParts(parts: readonly ComposerInputPart[])
       body += part.text;
     } else if (part.type === "teammate_mention" || part.type === "skill_mention") {
       body += part.raw;
-    } else if (part.type === "workspace_file" || part.type === "slash_command") {
+    } else if (part.type === "workspace_file" || part.type === "slash_command" || part.type === "url_ref") {
       body += part.raw;
     }
   }
@@ -143,6 +172,10 @@ export function composerWorkspaceFileParts(parts: readonly ComposerInputPart[]):
 
 export function composerSlashCommandParts(parts: readonly ComposerInputPart[]): readonly Extract<ComposerInputPart, { readonly type: "slash_command" }>[] {
   return parts.filter((part): part is Extract<ComposerInputPart, { readonly type: "slash_command" }> => part.type === "slash_command");
+}
+
+export function composerUrlReferenceParts(parts: readonly ComposerInputPart[]): readonly Extract<ComposerInputPart, { readonly type: "url_ref" }>[] {
+  return parts.filter((part): part is Extract<ComposerInputPart, { readonly type: "url_ref" }> => part.type === "url_ref");
 }
 
 export function removeComposerInputRawToken(text: string, raw: string, occurrenceIndex = 0): string {
@@ -219,6 +252,115 @@ function readRegisteredSlashCommandToken(
   }
   const token = normalizeLabel(match[1] ?? "");
   return commands.find((command) => normalizeLabel(command.id) === token || normalizeLabel(command.label) === token);
+}
+
+function readUrlAtStart(
+  text: string,
+  previews: readonly ComposerInputLinkPreviewOption[],
+): Extract<ComposerInputPart, { readonly type: "url_ref" }> | undefined {
+  const match = urlPattern.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  const raw = trimUrlToken(match[0]);
+  if (!raw) {
+    return undefined;
+  }
+  const url = normalizeUrlForDisplay(raw);
+  const preview = findLinkPreview(raw, url, previews);
+  const host = readUrlHost(url);
+  return {
+    type: "url_ref",
+    url,
+    raw,
+    label: labelUrlReference(url, preview),
+    ...(preview?.title ? { title: preview.title } : {}),
+    ...(host ? { host } : {}),
+    ...(preview?.state ? { state: preview.state } : {}),
+    ...(preview?.error ? { error: preview.error } : {}),
+  };
+}
+
+function trimUrlToken(value: string): string {
+  let next = value.replace(/[.,;!?]+$/u, "");
+  while (next.endsWith(")") || next.endsWith("]")) {
+    const opener = next.endsWith(")") ? "(" : "[";
+    const closer = next.endsWith(")") ? ")" : "]";
+    const openCount = countCharacters(next, opener);
+    const closeCount = countCharacters(next, closer);
+    if (closeCount <= openCount) {
+      break;
+    }
+    next = next.slice(0, -1);
+  }
+  return next;
+}
+
+function findLinkPreview(
+  raw: string,
+  normalizedUrl: string,
+  previews: readonly ComposerInputLinkPreviewOption[],
+): ComposerInputLinkPreviewOption | undefined {
+  const candidates = new Set([
+    raw,
+    normalizedUrl,
+    normalizeUrlForDisplay(raw),
+    stripTrailingSlash(normalizedUrl),
+  ]);
+  return previews.find((preview) => [
+    preview.url,
+    preview.normalizedUrl,
+    preview.url ? normalizeUrlForDisplay(preview.url) : "",
+    preview.normalizedUrl ? stripTrailingSlash(preview.normalizedUrl) : "",
+  ].some((candidate) => candidate && candidates.has(candidate)));
+}
+
+function labelUrlReference(url: string, preview: ComposerInputLinkPreviewOption | undefined): string {
+  const githubRepo = githubRepositoryLabel(url);
+  if (githubRepo) {
+    return githubRepo;
+  }
+  if (preview?.title?.trim()) {
+    return preview.title.trim();
+  }
+  return readUrlHost(url) || url;
+}
+
+function githubRepositoryLabel(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.replace(/^www\./i, "").toLowerCase() !== "github.com") {
+      return undefined;
+    }
+    const [owner, repo] = parsed.pathname.split("/").filter(Boolean);
+    if (!owner || !repo) {
+      return undefined;
+    }
+    return `${owner}/${repo.replace(/\.git$/i, "")}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeUrlForDisplay(raw: string): string {
+  const trimmed = raw.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function readUrlHost(url: string): string | undefined {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "");
+  } catch {
+    return undefined;
+  }
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+function countCharacters(value: string, character: string): number {
+  return [...value].filter((item) => item === character).length;
 }
 
 function readLineSuffix(location: string | undefined): number | undefined {

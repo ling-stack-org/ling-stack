@@ -1324,7 +1324,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await composerInput.type("Eng");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await page.getByRole("option", { name: /@Engineer/ }).click();
-  await expect(page.getByLabel("Pending message assets")).toContainText("@Engineer");
+  await expect(page.locator(".channel-composer .composer-inline-token.mention").filter({ hasText: "Engineer" })).toBeVisible();
   await expect(composerInput).toHaveValue("@Engineer ");
   await composerInput.fill("please refine without mention");
   await composerInput.fill("@Engineer please refine the channel requirements https://example.com");
@@ -1482,7 +1482,7 @@ test("channel composer sends workspace file refs as native message payload", asy
 
   const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
   await composerInput.fill("Please inspect apps/web/src/features/workspace/WorkspaceClientView.tsx");
-  await expect(page.getByLabel("Pending message assets")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
+  await expect(page.locator(".channel-composer .composer-inline-token.file-reference").filter({ hasText: "apps/web/src/features/workspace/WorkspaceClientView.tsx" })).toHaveCount(1);
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   await expect.poll(() => state.lastChannelMessageRequest?.fileRefs).toEqual([
@@ -1493,7 +1493,7 @@ test("channel composer sends workspace file refs as native message payload", asy
     },
   ]);
   await expect(page.getByLabel("Workspace file references").getByText("apps/web/src/features/workspace/WorkspaceClientView.tsx")).toBeVisible();
-  await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
+  await expect(page.locator(".channel-composer .composer-inline-token.file-reference")).toHaveCount(0);
 });
 
 test("channel composer does not render multi-agent slash command tokens as file refs", async ({ page }) => {
@@ -1510,12 +1510,12 @@ test("channel composer does not render multi-agent slash command tokens as file 
   const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
   await composerInput.fill("@Engineer @Designer /review apps/web");
 
-  const pendingAssets = page.getByLabel("Pending message assets");
-  const commandToken = pendingAssets.locator(".composer-structured-token.command").filter({ hasText: "Code Review" });
+  const composer = page.locator(".channel-composer");
+  const commandToken = composer.locator(".composer-inline-token.command").filter({ hasText: "Code Review" });
   await expect(commandToken).toContainText("@Engineer @Designer");
   await expect(commandToken).toContainText("/review");
-  await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
-  await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "apps/web" })).toHaveCount(1);
+  await expect(composer.locator(".composer-inline-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
+  await expect(composer.locator(".composer-inline-token.file-reference").filter({ hasText: "apps/web" })).toHaveCount(1);
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Create task" })).toBeEnabled();
 });
 
@@ -1538,11 +1538,11 @@ test("channel composer supports spaced teammate names before slash commands", as
   await expect(composerInput).toHaveValue("@Ling Agent /review ");
   await composerInput.type("apps/web");
 
-  const pendingAssets = page.getByLabel("Pending message assets");
-  const commandToken = pendingAssets.locator(".composer-structured-token.command").filter({ hasText: "Code Review" });
+  const composer = page.locator(".channel-composer");
+  const commandToken = composer.locator(".composer-inline-token.command").filter({ hasText: "Code Review" });
   await expect(commandToken).toContainText("@Ling Agent");
   await expect(commandToken).toContainText("/review");
-  await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
+  await expect(composer.locator(".composer-inline-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
   await page.locator(".channel-composer").getByRole("button", { name: "Create task" }).click();
 
   await expect.poll(() => state.tasks[0]).toMatchObject({
@@ -1569,12 +1569,12 @@ test("channel composer opens slash picker for later slash tokens without multi-d
   await page.getByRole("option", { name: /^\/review\b/ }).click();
   await expect(composerInput).toHaveValue("/office-hours summarize this channel /review ");
 
-  const pendingAssets = page.getByLabel("Pending message assets");
-  const commandTokens = pendingAssets.locator(".composer-structured-token.command");
+  const composer = page.locator(".channel-composer");
+  const commandTokens = composer.locator(".composer-inline-token.command");
   await expect(commandTokens).toHaveCount(2);
   await expect(commandTokens.nth(0)).toContainText("Office Hours");
   await expect(commandTokens.nth(1)).toContainText("Code Review");
-  await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
+  await expect(composer.locator(".composer-inline-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
 
   await page.locator(".channel-composer").getByRole("button", { name: "Create task" }).click();
   await expect.poll(() => state.tasks).toHaveLength(1);
@@ -1582,6 +1582,26 @@ test("channel composer opens slash picker for later slash tokens without multi-d
     requestedSkillId: "office-hours",
     prompt: "summarize this channel /review",
   });
+});
+
+test("channel composer renders GitHub URLs as inline repo tokens", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("Compare https://github.com/openai/openai-agents-python with our agent design");
+
+  const composer = page.locator(".channel-composer");
+  await expect(composer.locator(".composer-inline-token.url-reference").filter({ hasText: "openai/openai-agents-python" })).toBeVisible();
+  await expect(composer.getByLabel("Pending message assets")).toHaveCount(0);
+  await expect(composer.locator(".composer-preview-card.link")).toHaveCount(0);
 });
 
 test("channel screenshot request shows materialization clarify reply instead of hidden routing", async ({ page }) => {
@@ -5639,7 +5659,7 @@ test("channel activity derives task run approval transition and workflow events"
   await composer.getByPlaceholder("Message this channel or @ an AI teammate").fill("@Eng");
   await expect(composer.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await composer.getByRole("option", { name: /@Engineer/ }).click();
-  await expect(composer.getByLabel("Pending message assets")).toContainText("@Engineer");
+  await expect(composer.locator(".composer-inline-token.mention").filter({ hasText: "Engineer" })).toBeVisible();
 
   await openDetailsFrom(taskEventBubble, "Inspect workspace");
   await openDetailsFrom(runEventBubble, "Run run_failed");

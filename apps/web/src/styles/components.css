@@ -7578,6 +7578,146 @@ code,
   background: var(--accent-soft);
 }
 
+.tokenized-composer-input {
+  position: relative;
+  min-height: 76px;
+  border-radius: 8px;
+}
+
+.tokenized-composer-input-overlay {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  min-height: 76px;
+  padding: 7px 8px 2px;
+  overflow: hidden;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
+.tokenized-composer-input textarea {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  caret-color: var(--text);
+}
+
+.tokenized-composer-input.has-value textarea {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.tokenized-composer-input.has-value textarea::placeholder {
+  color: var(--text-soft);
+  -webkit-text-fill-color: var(--text-soft);
+}
+
+.composer-drop-zone.active .tokenized-composer-input {
+  background: var(--accent-soft);
+}
+
+.composer-drop-zone.active .tokenized-composer-input textarea {
+  background: transparent;
+}
+
+.composer-inline-text {
+  white-space: pre-wrap;
+}
+
+.composer-inline-token {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(100%, 340px);
+  min-height: 22px;
+  margin: 0 1px;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-panel);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 720;
+  gap: 4px;
+  line-height: 1.2;
+  vertical-align: baseline;
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.composer-inline-token svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.composer-inline-token strong,
+.composer-inline-token small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-inline-token strong {
+  font-weight: 760;
+}
+
+.composer-inline-token small {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.composer-inline-token.mention {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.composer-inline-token.command {
+  border-color: var(--accent-border);
+  background: var(--surface-selected);
+}
+
+.composer-inline-token.command.executable {
+  box-shadow:
+    inset 0 -2px 0 var(--accent),
+    inset 0 1px 0 var(--hairline);
+}
+
+.composer-inline-token.file-reference {
+  background: var(--surface-panel-strong);
+}
+
+.composer-inline-token.url-reference {
+  border-color: #b8d7c3;
+  background: #f4fbf6;
+  color: #123c2a;
+}
+
+.composer-inline-token.url-reference.uploading {
+  border-color: #d9bd71;
+  background: #fffaf0;
+  color: #7a4d00;
+}
+
+.composer-inline-token.url-reference.failed,
+.composer-inline-token.url-reference.blocked {
+  border-color: #e7b4a8;
+  background: #fff7f4;
+  color: #9a341f;
+}
+
+.composer-inline-token.url-reference.uploading svg,
+.composer-inline-token.url-reference.failed svg,
+.composer-inline-token.url-reference.blocked svg,
+.composer-inline-token.url-reference.uploading small,
+.composer-inline-token.url-reference.failed small,
+.composer-inline-token.url-reference.blocked small {
+  color: currentColor;
+}
+
 .mention-picker-popover {
   position: absolute;
   right: 8px;
