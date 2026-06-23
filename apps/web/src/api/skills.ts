@@ -26,6 +26,7 @@ import type {
   SkillImportDraftResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
+  SkillRecordingEligibilityResponse,
   SkillRecordingObservationRequest,
   SkillRecordingObservationResponse,
   SkillRegistryListResponse,
@@ -184,6 +185,10 @@ export async function createProcedureObservationJob(cwd: string, input: Procedur
 
 export async function recordSkillRecording(cwd: string, input: SkillRecordingObservationRequest): Promise<SkillRecordingObservationResponse> {
   return daemonClient.recordSkillRecording(cwd, input);
+}
+
+export async function getSkillRecordingEligibility(cwd: string, runId: string): Promise<SkillRecordingEligibilityResponse> {
+  return daemonClient.getSkillRecordingEligibility(cwd, runId);
 }
 
 export async function listSkillCandidates(

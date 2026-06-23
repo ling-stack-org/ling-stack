@@ -7982,6 +7982,58 @@ test("procedure observation job API records explicit jobs idempotently before ca
   }
 });
 
+test("skill recording eligibility previews run evidence without creating candidates", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-recording-eligibility-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Skill Recording",
+      status: "active",
+      boundPath: cwd,
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.createRun({
+      id: "run_skill_recording_eligibility",
+      cwd,
+      taskId: "task_skill_recording_eligibility",
+      channelId: channel.id,
+      teammateId: "ling_agent",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_skill_recording_eligibility", title: "Verify release checklist" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:01:00.000Z",
+    });
+    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
+    store.appendEvent(run.id, "tool_start", { toolName: "bash" });
+    store.appendEvent(run.id, "tool_end", { toolName: "bash" });
+    store.markRunSucceeded(run.id, "2026-06-11T00:03:00.000Z");
+
+    const eligibility = await getJson(`${daemon.url}/skill-recordings/eligibility?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(run.id)}`);
+    assert.equal(eligibility.visible, true);
+    assert.equal(eligibility.recommended, true);
+    assert.equal(eligibility.reasonCode, "available");
+    assert.equal(eligibility.actionHint, "create_candidate");
+    assert.equal(eligibility.recordingMode, "user_initiated");
+    assert.equal(eligibility.route.kind, "skill");
+    assert.equal(eligibility.duplicateAnalysis.decision, "no_overlap");
+    assert.equal((await getJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}&origin=recording&limit=10`)).candidates.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("skill import draft publishes registry skills and teammate bindings use effective model", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-import-api-"));
   const daemon = await startDaemonForTest();

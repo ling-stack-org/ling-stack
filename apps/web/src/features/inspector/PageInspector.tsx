@@ -38,6 +38,7 @@ export function PageInspector({
   activeRunId,
   lookupRunId,
   events,
+  artifacts,
   assistantText,
   errorMessage,
   isRunning,
@@ -76,6 +77,7 @@ export function PageInspector({
   readonly activeRunId: string;
   readonly lookupRunId: string;
   readonly events: readonly RunEventEnvelope[];
+  readonly artifacts: readonly RunArtifact[];
   readonly assistantText: string;
   readonly errorMessage: string;
   readonly isRunning: boolean;
@@ -115,6 +117,7 @@ export function PageInspector({
         lookupRunId={lookupRunId}
         run={selectedRun}
         events={events}
+        artifacts={artifacts}
         onLookupRunIdChange={onLookupRunIdChange}
         onLoadRun={onLoadRun}
       />

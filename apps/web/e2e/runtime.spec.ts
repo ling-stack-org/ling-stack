@@ -6,6 +6,7 @@ import {
   createVerboseRunEvents,
   cwd,
   isRecord,
+  type MockArtifact,
   type MockRun,
 } from "./support/mock-state";
 import {
@@ -413,6 +414,55 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   const downloadLink = imageRow.getByRole("link", { name: "Download" });
   await expect(downloadLink).toHaveAttribute("href", /\/artifacts\/artifact_image\/content/);
   await expect(downloadLink).toHaveAttribute("download", "003-seedream-image.png");
+});
+
+test("run diagnostics records artifact evidence as a skill candidate", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const artifact: MockArtifact = {
+    id: "artifact_skill_evidence",
+    runId: "run_failed",
+    type: "markdown",
+    path: "run_failed/skill-evidence.md",
+    title: "Skill evidence report",
+    contentType: "text/markdown; charset=utf-8",
+    sizeBytes: 512,
+    createdAt: "2026-05-22T00:01:33.000Z",
+  };
+  state.artifactsByRun.run_failed = [artifact];
+  state.eventsByRun.run_failed = createVerboseRunEvents("run_failed");
+  await mockDaemon(page, state);
+
+  const recordingRequests: Array<Record<string, unknown>> = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (request.method() === "POST" && url.pathname === "/skill-recordings") {
+      const body = request.postData();
+      recordingRequests.push(body ? JSON.parse(body) as Record<string, unknown> : {});
+    }
+  });
+
+  await page.goto("/");
+  await openRunDiagnostics(page);
+  await page.getByRole("button", { name: /Inspect workspace/ }).click();
+
+  const detail = page.getByLabel("Run detail");
+  const artifactRow = detail.locator(".artifact-row").filter({ hasText: "Skill evidence report" });
+  const skillEvidenceButton = artifactRow.getByRole("button", { name: /^Use as skill evidence/ });
+  await expect(skillEvidenceButton).toBeVisible();
+  await skillEvidenceButton.click();
+  const recordingDialog = detail.getByRole("dialog", { name: "Review recording" });
+  await expect(recordingDialog).toBeVisible();
+  await expect(recordingDialog).toContainText("No model call is used for this precheck.");
+  await expect(recordingDialog).toContainText("Source: Skill evidence report");
+  await recordingDialog.getByRole("button", { name: "Create candidate" }).click();
+  await expect(recordingDialog).toContainText("Skill candidate created");
+
+  await expect.poll(() => recordingRequests.length).toBe(1);
+  expect(recordingRequests[0].artifactRefs).toEqual(["artifact_skill_evidence"]);
+  expect(JSON.stringify(recordingRequests[0])).not.toContain("Skill evidence report\\n");
 });
 
 test("run history opens a thread-first detail with evidence and resume preview", async ({ page }) => {

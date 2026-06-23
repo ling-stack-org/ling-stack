@@ -853,6 +853,7 @@ export async function routeRequest(
     url.pathname === "/skills/usage-events" ||
     url.pathname === "/skills/usage-stats" ||
     url.pathname === "/candidate-generation-decisions" ||
+    url.pathname === "/skill-recordings/eligibility" ||
     url.pathname === "/skill-recordings" ||
     url.pathname === "/skill-candidates" ||
     url.pathname === "/skill-candidates/observe" ||

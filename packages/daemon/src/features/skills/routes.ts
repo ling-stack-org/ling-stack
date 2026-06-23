@@ -17,10 +17,12 @@ import {
   procedureObservationHasJobKey,
   providerCapabilities,
   readOnlyRunTools,
+  routeProcedureObservation,
   riskyRunTools,
   suggestSkillInvocations,
   type CreateSkillCandidateInput,
   type CreateSkillImportDraftInput,
+  type CreateProcedureObservationInput,
   type CandidateGenerationDecision,
   type CandidateGenerationDecisionAction,
   type CandidateGenerationDecisionSource,
@@ -28,6 +30,8 @@ import {
   type ProviderCapability,
   type ProcedureObservation,
   type ProcedureObservationJobInput,
+  type RunEventEnvelope,
+  type RunSession,
   type RunTool,
   type SkillCandidate,
   type SkillCandidateHealthInput,
@@ -43,6 +47,11 @@ import {
   type SkillSourceSnapshot,
   type SkillWorkflowPhase,
 } from "@ling-stack/core";
+import type {
+  SkillRecordingEligibilityActionHint,
+  SkillRecordingEligibilityReasonCode,
+  SkillRecordingEligibilityResponse,
+} from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
@@ -424,6 +433,30 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (url.pathname === "/skill-recordings/eligibility") {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skill-recordings/eligibility` });
+        return;
+      }
+      const runId = url.searchParams.get("runId")?.trim();
+      if (!runId) {
+        writeJson(response, 400, { error: "bad_request", message: "runId query parameter is required" });
+        return;
+      }
+      const runStore = storeRegistry.findStoreForRun(runId, cwd);
+      const run = runStore?.getRun(runId);
+      if (!runStore || !run) {
+        writeJson(response, 404, {
+          error: "run_not_found",
+          message: "Run was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
+        });
+        return;
+      }
+      const events = runStore.listEvents(runId, { limit: 1000 });
+      writeJson(response, 200, buildSkillRecordingEligibility({ cwd, store: runStore, run, events }));
+      return;
+    }
+
     if (url.pathname === "/skill-recordings") {
       if (request.method !== "POST") {
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skill-recordings` });
@@ -800,6 +833,305 @@ function routeFromObservation(observation: ProcedureObservation): CandidateRoute
 }
 
 type SkillRouteStore = ReturnType<RunStoreRegistry["getStore"]>;
+
+function buildSkillRecordingEligibility(input: {
+  readonly cwd: string;
+  readonly store: SkillRouteStore;
+  readonly run: RunSession;
+  readonly events: readonly RunEventEnvelope[];
+}): SkillRecordingEligibilityResponse {
+  const { cwd, store, run, events } = input;
+  const policy = store.getWorkspaceSettings().skillGovernancePolicy;
+  if (policy.recordingMode !== "user_initiated") {
+    return skillRecordingEligibilityResult({
+      cwd,
+      runId: run.id,
+      visible: false,
+      recommended: false,
+      reasonCode: "recording_disabled",
+      actionHint: "disabled",
+      generationMode: policy.generationMode,
+      recordingMode: policy.recordingMode,
+    });
+  }
+  if (!isTerminalRunStatus(run.status)) {
+    return skillRecordingEligibilityResult({
+      cwd,
+      runId: run.id,
+      visible: false,
+      recommended: false,
+      reasonCode: "not_terminal",
+      actionHint: "wait_for_terminal",
+      generationMode: policy.generationMode,
+      recordingMode: policy.recordingMode,
+    });
+  }
+
+  const job = skillRecordingJobFromRun(run, events);
+  const hasEvidence = Boolean(
+    job.title ||
+    job.summary ||
+    job.normalizedGoal ||
+    job.selectedSkillId ||
+    run.summaryPath ||
+    run.eventLogPath ||
+    (job.toolLabels?.length ?? 0) > 0 ||
+    (job.validationLabels?.length ?? 0) > 0,
+  );
+  if (!hasEvidence) {
+    return skillRecordingEligibilityResult({
+      cwd,
+      runId: run.id,
+      visible: false,
+      recommended: false,
+      reasonCode: "missing_evidence",
+      actionHint: "record_evidence_only",
+      generationMode: policy.generationMode,
+      recordingMode: policy.recordingMode,
+    });
+  }
+
+  const built = createProcedureObservationInputFromJob(job);
+  const route = routeFromObservationInput(built.observationInput);
+  const routeBlocked = route.blockers.length > 0 || route.kind === "reject";
+  if (route.kind === "approval_policy_review" || route.blockers.includes("permission_expansion")) {
+    return skillRecordingEligibilityResult({
+      cwd,
+      runId: run.id,
+      visible: true,
+      recommended: false,
+      reasonCode: "permission_expansion",
+      actionHint: "policy_review",
+      generationMode: policy.generationMode,
+      recordingMode: policy.recordingMode,
+      jobKey: built.jobKey,
+      route,
+      selectedSkillId: run.selectedSkillId,
+    });
+  }
+  if (route.blockers.includes("missing_validation")) {
+    return skillRecordingEligibilityResult({
+      cwd,
+      runId: run.id,
+      visible: true,
+      recommended: false,
+      reasonCode: "missing_validation",
+      actionHint: "record_evidence_only",
+      generationMode: policy.generationMode,
+      recordingMode: policy.recordingMode,
+      jobKey: built.jobKey,
+      route,
+      selectedSkillId: run.selectedSkillId,
+    });
+  }
+  if (route.kind !== "skill") {
+    return skillRecordingEligibilityResult({
+      cwd,
+      runId: run.id,
+      visible: true,
+      recommended: false,
+      reasonCode: "routed_elsewhere",
+      actionHint: actionHintForRoute(route),
+      generationMode: policy.generationMode,
+      recordingMode: policy.recordingMode,
+      jobKey: built.jobKey,
+      route,
+      selectedSkillId: run.selectedSkillId,
+    });
+  }
+
+  const observation = previewObservationFromInput(built.observationInput, route);
+  const duplicateAnalysis = routeBlocked
+    ? undefined
+    : withDuplicateAnalysis(skillCandidateInputFromObservation(observation), store).duplicateAnalysis;
+  if (run.selectedSkillId) {
+    return skillRecordingEligibilityResult({
+      cwd,
+      runId: run.id,
+      visible: true,
+      recommended: false,
+      reasonCode: "duplicate_existing",
+      actionHint: "append_evidence",
+      generationMode: policy.generationMode,
+      recordingMode: policy.recordingMode,
+      jobKey: built.jobKey,
+      route,
+      duplicateAnalysis,
+      selectedSkillId: run.selectedSkillId,
+    });
+  }
+  if (duplicateAnalysis && duplicateAnalysis.decision !== "no_overlap") {
+    return skillRecordingEligibilityResult({
+      cwd,
+      runId: run.id,
+      visible: true,
+      recommended: false,
+      reasonCode: "duplicate_analysis",
+      actionHint: "append_evidence",
+      generationMode: policy.generationMode,
+      recordingMode: policy.recordingMode,
+      jobKey: built.jobKey,
+      route,
+      duplicateAnalysis,
+      selectedSkillId: run.selectedSkillId,
+    });
+  }
+
+  return skillRecordingEligibilityResult({
+    cwd,
+    runId: run.id,
+    visible: true,
+    recommended: run.status === "succeeded" && !routeBlocked,
+    reasonCode: "available",
+    actionHint: routeBlocked ? "record_evidence_only" : "create_candidate",
+    generationMode: policy.generationMode,
+    recordingMode: policy.recordingMode,
+    jobKey: built.jobKey,
+    route,
+    duplicateAnalysis,
+    selectedSkillId: run.selectedSkillId,
+  });
+}
+
+function skillRecordingEligibilityResult(input: SkillRecordingEligibilityResponse): SkillRecordingEligibilityResponse {
+  return input;
+}
+
+function skillRecordingJobFromRun(run: RunSession, events: readonly RunEventEnvelope[]): ProcedureObservationJobInput {
+  const taskTitle = readDataString(run.taskSnapshot, "title") || readDataString(run.taskSnapshot, "name");
+  const taskPrompt = readDataString(run.taskSnapshot, "prompt") || readDataString(run.taskSnapshot, "description");
+  const title = taskTitle || titleFromPrompt(taskPrompt) || `Recorded run ${shortId(run.id)}`;
+  const toolLabels = toolLabelsFromRunEvents(events);
+  const validationLabels = validationLabelsFromRun(run, events);
+  const normalizedGoal = normalizeGoal(taskTitle || taskPrompt || title);
+  return createProcedureObservationJobFromRecording({
+    runId: run.id,
+    channelId: run.channelId,
+    teammateId: run.teammateId,
+    taskId: run.taskId,
+    selectedSkillId: run.selectedSkillId,
+    terminalStatus: isTerminalRunStatus(run.status) ? run.status : undefined,
+    toolLabels,
+    validationLabels,
+    artifactRefs: [],
+    destinationHint: run.workflowStepId ? "channel_protocol" : "skill",
+    title,
+    summary: buildRunRecordingSummary(run, toolLabels),
+    normalizedGoal,
+    positiveTriggers: uniqueStrings([normalizedGoal, run.selectedSkillId ? `runs that use ${run.selectedSkillId}` : ""]),
+    negativeTriggers: ["one-off chat", "sensitive access changes"],
+    confidence: run.status === "succeeded" ? "high" : "medium",
+    reusableScore: run.status === "succeeded" ? 80 : 65,
+  });
+}
+
+function routeFromObservationInput(input: CreateProcedureObservationInput): CandidateRoute {
+  const route = input.route ?? routeProcedureObservation(previewObservationFromInput(input, undefined));
+  return route;
+}
+
+function previewObservationFromInput(input: CreateProcedureObservationInput, route: CandidateRoute | undefined): ProcedureObservation {
+  const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+  return {
+    id: input.id ?? "procedure_observation_preview",
+    workspaceId,
+    clusterId: input.clusterId ?? "procedure_observation_cluster_preview",
+    channelId: input.channelId,
+    teammateId: input.teammateId,
+    taskId: input.taskId,
+    runId: input.runId,
+    source: input.source,
+    signals: input.signals,
+    title: input.title,
+    summary: input.summary,
+    normalizedGoal: input.normalizedGoal,
+    positiveTriggers: input.positiveTriggers ?? [],
+    negativeTriggers: input.negativeTriggers ?? [],
+    procedureSteps: input.procedureSteps ?? [],
+    validationSteps: input.validationSteps ?? [],
+    sourceRefs: input.sourceRefs,
+    confidence: input.confidence ?? "medium",
+    reusableScore: input.reusableScore ?? 0,
+    routeKind: route?.kind ?? input.route?.kind,
+    routeReasonCode: route?.reasonCode ?? input.route?.reasonCode,
+    routeBlockers: route?.blockers ?? input.route?.blockers ?? [],
+    createdAt: new Date(0).toISOString(),
+  };
+}
+
+function actionHintForRoute(route: CandidateRoute): SkillRecordingEligibilityActionHint {
+  if (route.kind === "approval_policy_review") {
+    return "policy_review";
+  }
+  if (route.blockers.length > 0 || route.kind === "reject") {
+    return "record_evidence_only";
+  }
+  return "record_evidence_only";
+}
+
+function isTerminalRunStatus(status: RunSession["status"]): status is "succeeded" | "failed" | "cancelled" {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function toolLabelsFromRunEvents(events: readonly RunEventEnvelope[]): readonly string[] {
+  return uniqueStrings(events
+    .filter((event) => event.type.startsWith("tool_"))
+    .map((event) => readDataString(event.data, "toolName") || readDataString(event.data, "tool"))
+    .filter(Boolean));
+}
+
+function validationLabelsFromRun(run: RunSession, events: readonly RunEventEnvelope[]): readonly string[] {
+  const labels = events
+    .filter((event) => event.type === "result" || event.type === "run_end" || event.type === "run_error" || event.type === "run_cancelled")
+    .map((event) => {
+      const label = readDataString(event.data, "message") || readDataString(event.data, "reason") || readDataString(event.data, "status");
+      return label || event.type.replace(/_/g, " ");
+    });
+  if (run.status === "succeeded") {
+    labels.push("Run completed successfully");
+  }
+  if (run.status === "failed") {
+    labels.push("Run failure captured for troubleshooting review");
+  }
+  if (run.status === "cancelled") {
+    labels.push("Run cancellation captured for review");
+  }
+  return uniqueStrings(labels);
+}
+
+function buildRunRecordingSummary(run: RunSession, toolLabels: readonly string[]): string {
+  return [
+    `Record terminal run ${shortId(run.id)} as reusable workflow evidence.`,
+    `Status: ${run.status}.`,
+    run.selectedSkillId ? `Selected skill: ${run.selectedSkillId}.` : "",
+    toolLabels.length > 0 ? `Tools: ${toolLabels.join(", ")}.` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function titleFromPrompt(prompt: string): string {
+  return prompt.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 80) ?? "";
+}
+
+function normalizeGoal(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 96) || "record reusable run workflow";
+}
+
+function readDataString(data: unknown, key: string): string {
+  if (typeof data !== "object" || data === null || !(key in data)) {
+    return "";
+  }
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
+}
+
+function shortId(value: string): string {
+  return value.length > 10 ? value.slice(0, 10) : value;
+}
 
 async function buildGstackSkillSourceSyncPreview(
   cwd: string,

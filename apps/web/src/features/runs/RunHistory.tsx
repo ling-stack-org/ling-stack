@@ -23,10 +23,10 @@ import {
   Workflow,
 } from "lucide-react";
 import { LingDaemonError } from "@ling-stack/api-client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
-import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, forkRunLingThread, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, pinLingThread, previewLingThreadResume, resumeLingThread, unarchiveLingThread, unpinLingThread } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, forkRunLingThread, getLingThreadEvidence, getSkillRecordingEligibility, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, pinLingThread, previewLingThreadResume, recordSkillRecording, resumeLingThread, unarchiveLingThread, unpinLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import {
   formatEventData,
@@ -64,6 +64,14 @@ import {
   summarizeToolEvents,
 } from "../../lib/run-evidence.js";
 import {
+  buildArtifactSkillRecordingDraft,
+  buildRunSkillRecordingEligibility,
+  buildSkillRecordingRequestFromDraft,
+  mergeRunSkillRecordingEligibility,
+  splitLines,
+  type RunSkillRecordingDraft,
+} from "../../lib/skill-recording.js";
+import {
   ArtifactRow,
   MetaRow,
   RunRepairHintBanner,
@@ -74,6 +82,7 @@ import {
 import { ConversationEvidenceBundlePanel, ConversationSummaryRow, FileChangeEvidencePanel, MessageBodyRenderer } from "../../shared/conversation/index.js";
 import { fileChangeStatusFromRun } from "../../lib/file-change-evidence.js";
 import { EventRow } from "./EventRow.js";
+import { SkillRecordingReviewSheet } from "./SkillRecordingReviewSheet.js";
 import type {
   ApprovalRequest,
   LingThread,
@@ -89,6 +98,8 @@ import type {
   RunEventEnvelope,
   RunIntervention,
   RunSession,
+  SkillRecordingEligibilityResponse,
+  SkillRecordingObservationResponse,
   ShellSnapshotListItem,
   StateTransitionEvent,
   UsedMemoryEvent,
@@ -1558,6 +1569,7 @@ function RunDetailPanel({
           <RunEvidencePanel
             cwd={cwd}
             run={run}
+            events={events}
             turnContext={turnContext}
             terminalEvent={terminalEvent}
             toolEvents={toolEvents}
@@ -2574,6 +2586,7 @@ function RuntimeAuditBlock({
 function RunEvidencePanel({
   cwd,
   run,
+  events,
   turnContext,
   terminalEvent,
   toolEvents,
@@ -2584,6 +2597,7 @@ function RunEvidencePanel({
 }: {
   readonly cwd: string;
   readonly run: RunSession;
+  readonly events: readonly RunEventEnvelope[];
   readonly turnContext: WorkHistoryTurnContext | undefined;
   readonly terminalEvent: RunEventEnvelope | undefined;
   readonly toolEvents: readonly RunEventEnvelope[];
@@ -2601,6 +2615,13 @@ function RunEvidencePanel({
   const [resumedRunId, setResumedRunId] = useState("");
   const [resumePreview, setResumePreview] = useState<LingThreadResumePreviewResponse | undefined>(undefined);
   const [resumeInstruction, setResumeInstruction] = useState("");
+  const [recordingDraft, setRecordingDraft] = useState<RunSkillRecordingDraft | undefined>();
+  const [recordingSubmitting, setRecordingSubmitting] = useState(false);
+  const [recordingResult, setRecordingResult] = useState<SkillRecordingObservationResponse | undefined>();
+  const [recordingPrecheck, setRecordingPrecheck] = useState<SkillRecordingEligibilityResponse | undefined>();
+  const [recordingPrecheckError, setRecordingPrecheckError] = useState("");
+  const [recordingError, setRecordingError] = useState("");
+  const recordingPrecheckRunIdRef = useRef("");
   const taskLabel = readTaskTitle(run.taskSnapshot) || run.taskId;
   const providerLabel = `${run.providerName}/${run.providerModel}`;
   const terminalLabel = terminalEvent ? `#${terminalEvent.seq} ${terminalEvent.type}` : "-";
@@ -2611,6 +2632,9 @@ function RunEvidencePanel({
   const canResumeThread = Boolean(run.threadId && (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled"));
   const resumeTurnId = turnContext?.turn.id;
   const threadArtifactById = buildThreadArtifactMap(threadEvidence);
+  const localRecordingEligibility = useMemo(() => buildRunSkillRecordingEligibility(run, events), [events, run]);
+  const recordingEligibility = mergeRunSkillRecordingEligibility(localRecordingEligibility, recordingPrecheck);
+  const artifactRecordingAvailable = localRecordingEligibility.visible;
 
   useEffect(() => {
     setThreadEvidence(undefined);
@@ -2618,6 +2642,12 @@ function RunEvidencePanel({
     setResumedRunId("");
     setResumePreview(undefined);
     setResumeInstruction("");
+    setRecordingDraft(undefined);
+    setRecordingResult(undefined);
+    setRecordingPrecheck(undefined);
+    setRecordingPrecheckError("");
+    setRecordingError("");
+    recordingPrecheckRunIdRef.current = "";
   }, [run.id, run.threadId]);
 
   useEffect(() => {
@@ -2681,6 +2711,57 @@ function RunEvidencePanel({
       setThreadError(error instanceof Error ? error.message : String(error));
     } finally {
       setThreadPreviewLoading(false);
+    }
+  }
+
+  function openArtifactRecordingDraft(artifact: RunArtifact): void {
+    if (!artifactRecordingAvailable) {
+      return;
+    }
+    const draft = buildArtifactSkillRecordingDraft(run, events, artifact);
+    setRecordingDraft({ ...draft, duplicateHint: recordingEligibility.duplicateHint ?? draft.duplicateHint });
+    setRecordingResult(undefined);
+    setRecordingError("");
+    setRecordingPrecheckError("");
+    recordingPrecheckRunIdRef.current = run.id;
+    void getSkillRecordingEligibility(artifactCwd, run.id)
+      .then((response) => {
+        if (recordingPrecheckRunIdRef.current !== run.id) {
+          return;
+        }
+        const serverEligibility = mergeRunSkillRecordingEligibility(localRecordingEligibility, response);
+        setRecordingPrecheck(response);
+        setRecordingPrecheckError("");
+        setRecordingDraft((current) => current && current.runId === run.id
+          ? { ...current, duplicateHint: serverEligibility.duplicateHint ?? current.duplicateHint }
+          : current);
+      })
+      .catch((error) => {
+        if (recordingPrecheckRunIdRef.current !== run.id) {
+          return;
+        }
+        setRecordingPrecheck(undefined);
+        setRecordingPrecheckError(error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  function updateRecordingDraft(patch: Partial<RunSkillRecordingDraft>): void {
+    setRecordingDraft((current) => current ? { ...current, ...patch } : current);
+  }
+
+  async function submitRecordingDraft(): Promise<void> {
+    if (!recordingDraft || recordingSubmitting || splitLines(recordingDraft.validationStepsText).length === 0) {
+      return;
+    }
+    setRecordingSubmitting(true);
+    try {
+      setRecordingError("");
+      const request = buildSkillRecordingRequestFromDraft(recordingDraft, run);
+      setRecordingResult(await recordSkillRecording(recordingDraft.workspaceCwd, request));
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRecordingSubmitting(false);
     }
   }
 
@@ -2902,10 +2983,31 @@ function RunEvidencePanel({
         ) : (
           <div className="artifact-list">
             {artifacts.map((artifact) => (
-              <ArtifactRow artifact={artifact} cwd={artifactCwd} key={artifact.id} />
+              <ArtifactRow
+                artifact={artifact}
+                cwd={artifactCwd}
+                key={artifact.id}
+                onUseAsSkillEvidence={artifactRecordingAvailable ? openArtifactRecordingDraft : undefined}
+              />
             ))}
           </div>
         )}
+        {recordingPrecheckError ? (
+          <p className="muted">{t("Using local recording precheck because daemon eligibility is unavailable.")}</p>
+        ) : recordingPrecheck ? (
+          <p className="muted">{t("Daemon duplicate precheck completed without using a model call.")}</p>
+        ) : null}
+        {recordingDraft ? (
+          <SkillRecordingReviewSheet
+            draft={recordingDraft}
+            submitting={recordingSubmitting}
+            error={recordingError}
+            result={recordingResult}
+            onChange={updateRecordingDraft}
+            onClose={() => setRecordingDraft(undefined)}
+            onSubmit={() => void submitRecordingDraft()}
+          />
+        ) : null}
       </div>
     </div>
   );

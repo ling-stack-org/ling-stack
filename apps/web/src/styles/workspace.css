@@ -486,6 +486,101 @@ textarea:disabled {
   font-size: 12px;
 }
 
+.run-recording-block {
+  display: grid;
+  gap: 10px;
+}
+
+.run-recording-head,
+.run-recording-sheet-head,
+.run-recording-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-recording-head h3 {
+  margin: 0;
+}
+
+.run-recording-sheet {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+}
+
+.run-recording-sheet-head > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.run-recording-sheet-head small,
+.run-recording-token-row,
+.run-recording-warning span,
+.run-recording-success span {
+  color: #64736d;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.run-recording-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.run-recording-grid .field {
+  margin-bottom: 0;
+}
+
+.run-recording-grid textarea {
+  min-height: 74px;
+}
+
+.run-recording-grid .field.wide input {
+  min-width: 0;
+}
+
+.run-recording-token-row {
+  display: grid;
+  gap: 5px;
+}
+
+.run-recording-token-row code,
+.run-recording-success code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.run-recording-warning,
+.run-recording-error,
+.run-recording-success {
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid #ead7a2;
+  background: #fff9e9;
+  color: #6b4d08;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.run-recording-error {
+  border-color: #e7b4a8;
+  background: #fff1ee;
+  color: #9a341f;
+}
+
+.run-recording-success {
+  border-color: #b9ddcd;
+  background: #edf8f2;
+  color: #0f5f4e;
+}
+
 .timeline {
   display: grid;
   gap: 12px;
