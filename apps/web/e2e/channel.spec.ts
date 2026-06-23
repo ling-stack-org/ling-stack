@@ -19,6 +19,14 @@ import {
   readScrollState,
 } from "./support/test-helpers";
 
+async function expectComposerValue(composer: Locator, value: string): Promise<void> {
+  await expect.poll(() => composer.getAttribute("data-value")).toBe(value);
+}
+
+function channelComposerTextbox(scope: Page | Locator): Locator {
+  return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
+}
+
 test("channel governance notifications stay in the header review queue", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.governanceNotifications = [
@@ -667,7 +675,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
+  await channelComposerTextbox(page).fill("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
@@ -800,7 +808,7 @@ test("Ling Agent session acceptance matrix auto-starts executable messages", asy
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("在 /tmp/example 下创建 README.md");
+  await channelComposerTextbox(page).fill("在 /tmp/example 下创建 README.md");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
@@ -820,7 +828,7 @@ test("Ling Agent session acceptance matrix auto-starts executable messages", asy
   );
   await expect(feed.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
 
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("在 README.md 中添加一句测试语句");
+  await channelComposerTextbox(page).fill("在 README.md 中添加一句测试语句");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   await expect.poll(() => state.channelExecutionProposals.length).toBe(2);
@@ -851,7 +859,7 @@ test("Ling Agent session keeps ordinary questions on chat routing", async ({ pag
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("这个 workspace 里面都有谁？");
+  await channelComposerTextbox(page).fill("这个 workspace 里面都有谁？");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   await expect.poll(() => state.channelExecutionProposals.length).toBe(0);
@@ -1314,18 +1322,18 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Task" })).toHaveCount(0);
   await expect(page.locator(".channel-composer").getByText("Discuss")).toHaveCount(0);
   await expect(page.locator(".channel-composer").getByText("@ teammates, drop files, or paste links")).toHaveCount(0);
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await expect(page.getByLabel("Message tools").getByLabel("Attach files")).toBeVisible();
   await expect(page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" })).toBeVisible();
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Send" })).toBeVisible();
   await page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" }).click();
-  await expect(composerInput).toHaveValue("@");
+  await expectComposerValue(composerInput, "@");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await composerInput.type("Eng");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await page.getByRole("option", { name: /@Engineer/ }).click();
   await expect(page.locator(".channel-composer .composer-inline-token.mention").filter({ hasText: "Engineer" })).toBeVisible();
-  await expect(composerInput).toHaveValue("@Engineer ");
+  await expectComposerValue(composerInput, "@Engineer ");
   await composerInput.fill("please refine without mention");
   await composerInput.fill("@Engineer please refine the channel requirements https://example.com");
   await expect(page.getByText("Example Domain").first()).toBeVisible({ timeout: 3_000 });
@@ -1343,19 +1351,19 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(pendingAssets).toContainText("brief.txt");
   const previewLayout = await page.locator(".channel-composer").evaluate((element) => {
     const preview = element.querySelector(".composer-preview-strip");
-    const textarea = element.querySelector("textarea");
-    if (!preview || !textarea) {
+    const input = element.querySelector(".tokenized-composer-input");
+    if (!preview || !input) {
       return null;
     }
     return {
       previewTop: preview.getBoundingClientRect().top,
-      textareaTop: textarea.getBoundingClientRect().top,
+      inputTop: input.getBoundingClientRect().top,
     };
   });
   if (!previewLayout) {
-    throw new Error("Expected composer pending assets to render before the textarea.");
+    throw new Error("Expected composer pending assets to render before the composer input.");
   }
-  expect(previewLayout.previewTop).toBeLessThan(previewLayout.textareaTop);
+  expect(previewLayout.previewTop).toBeLessThan(previewLayout.inputTop);
   const imageTransfer = await page.evaluateHandle(() => {
     const transfer = new DataTransfer();
     const binary = atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=");
@@ -1480,7 +1488,7 @@ test("channel composer sends workspace file refs as native message payload", asy
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Please inspect apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await expect(page.locator(".channel-composer .composer-inline-token.file-reference").filter({ hasText: "apps/web/src/features/workspace/WorkspaceClientView.tsx" })).toHaveCount(1);
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
@@ -1507,7 +1515,7 @@ test("channel composer does not render multi-agent slash command tokens as file 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("@Engineer @Designer /review apps/web");
 
   const composer = page.locator(".channel-composer");
@@ -1531,16 +1539,16 @@ test("channel composer supports spaced teammate names before slash commands", as
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("@Ling Agent /rev");
   await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
   await page.getByRole("option", { name: /^\/review\b/ }).click();
-  await expect(composerInput).toHaveValue("@Ling Agent /review ");
+  await expectComposerValue(composerInput, "@Ling Agent /review ");
   await composerInput.type("apps/web");
 
   const composer = page.locator(".channel-composer");
+  await expect(composer.locator(".composer-inline-token.mention").filter({ hasText: "Ling Agent" })).toBeVisible();
   const commandToken = composer.locator(".composer-inline-token.command").filter({ hasText: "Code Review" });
-  await expect(commandToken).toContainText("@Ling Agent");
   await expect(commandToken).toContainText("/review");
   await expect(composer.locator(".composer-inline-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
   await page.locator(".channel-composer").getByRole("button", { name: "Create task" }).click();
@@ -1563,11 +1571,11 @@ test("channel composer opens slash picker for later slash tokens without multi-d
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("/office-hours summarize this channel /rev");
   await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
   await page.getByRole("option", { name: /^\/review\b/ }).click();
-  await expect(composerInput).toHaveValue("/office-hours summarize this channel /review ");
+  await expectComposerValue(composerInput, "/office-hours summarize this channel /review ");
 
   const composer = page.locator(".channel-composer");
   const commandTokens = composer.locator(".composer-inline-token.command");
@@ -1595,7 +1603,7 @@ test("channel composer renders GitHub URLs as inline repo tokens", async ({ page
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Compare https://github.com/openai/openai-agents-python with our agent design");
 
   const composer = page.locator(".channel-composer");
@@ -1620,7 +1628,7 @@ test("channel screenshot request shows materialization clarify reply instead of 
     mimeType: "image/png",
     buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
   });
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Please fix the UI from this screenshot");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
@@ -1650,7 +1658,7 @@ test("channel local link request shows natural clarify copy without debug vocabu
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Please summarize this link http://127.0.0.1/private");
   await expect(page.getByText("Private network previews are blocked.")).toBeVisible({ timeout: 3_000 });
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
@@ -1718,7 +1726,7 @@ test("channel short follow-up uses recent context without visible routing diagno
   await mockDaemon(page, state, { channelAutoRouteEnabled: true });
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("继续");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
@@ -1776,7 +1784,7 @@ test("channel materialized PDF and DOCX inputs show simple chips and a natural L
     }
   }
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Summarize these attachments?");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
@@ -4401,7 +4409,7 @@ test("channel message feed stays pinned while AI reply text streams", async ({ p
 
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
 
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Who owns the streaming scroll follow-up?");
+  await channelComposerTextbox(page).fill("Who owns the streaming scroll follow-up?");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   await expect.poll(() =>
@@ -4473,15 +4481,15 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Retryable channel message");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Message failed")).toBeVisible();
-  await expect(composerInput).toHaveValue("Retryable channel message");
+  await expectComposerValue(composerInput, "Retryable channel message");
 
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByLabel("Channel message feed").getByText("Retryable channel message")).toBeVisible();
-  await expect(composerInput).toHaveValue("");
+  await expectComposerValue(composerInput, "");
   await expect(page.getByText("Message failed")).toHaveCount(0);
 });
 
@@ -4498,12 +4506,12 @@ test("channel composer moves sent messages into the feed while routing is pendin
   await mockDaemon(page, state, { channelAutoRouteEnabled: true });
   await page.goto("/");
 
-  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(page);
   const channelFeed = page.getByLabel("Channel message feed");
   await composerInput.fill("Who owns the release checklist?");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
-  await expect(composerInput).toHaveValue("");
+  await expectComposerValue(composerInput, "");
   await expect(channelFeed.getByText("Who owns the release checklist?")).toBeVisible();
   await expect(channelFeed.getByText("Thinking...")).toBeVisible();
   await expect(channelFeed.getByText("收到，我会按频道上下文推进。")).toBeVisible({ timeout: 3_000 });
@@ -4519,7 +4527,7 @@ test("channel URL preview blocked state stays in Activity and still allows sendi
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Please remember this blocked reference http://127.0.0.1/private");
+  await channelComposerTextbox(page).fill("Please remember this blocked reference http://127.0.0.1/private");
   await expect(page.getByText("Private network previews are blocked.")).toBeVisible({ timeout: 3_000 });
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
 
@@ -4537,7 +4545,7 @@ test("channel files tab supports PDF and Office uploads without AI ingestion", a
 
   const initialMessageCount = state.channelMessages.length;
   const initialTaskCount = state.tasks.length;
-  await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
+  await expect(channelComposerTextbox(page)).toBeVisible();
   await page.locator("input[type=file]").setInputFiles([
     {
       name: "requirements.pdf",
@@ -5393,7 +5401,7 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
   await expect(guidance).toBeVisible();
   await expect(guidance).toContainText("Type guidance in the message box and press Enter to queue it.");
   const composer = page.getByLabel("Channel composer");
-  const composerInput = composer.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composerInput = channelComposerTextbox(composer);
   await composerInput.fill("完成后也更新 docs");
   await composerInput.press("Enter");
 
@@ -5408,7 +5416,7 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
   expect(state.channelMessages).toHaveLength(0);
   expect(state.channelExecutionProposals).toHaveLength(0);
 
-  await expect(composerInput).toHaveValue("");
+  await expectComposerValue(composerInput, "");
   await composerInput.fill("停，改用 daemon API");
   await expect(composer.getByRole("button", { name: "Queue guidance" })).toBeEnabled();
   await composer.getByRole("button", { name: "Queue guidance" }).click();
@@ -5416,7 +5424,7 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
     "完成后也更新 docs",
     "停，改用 daemon API",
   ]);
-  await expect(composerInput).toHaveValue("");
+  await expectComposerValue(composerInput, "");
   await composer.getByRole("button", { name: "Stop run" }).click();
 
   await expect.poll(() => state.runs.find((item) => item.id === run.id)?.status).toBe("cancelled");
@@ -5656,7 +5664,7 @@ test("channel activity derives task run approval transition and workflow events"
   const composer = page.getByLabel("Channel composer");
   await expect(composer).toBeVisible();
   await expect(composer.getByRole("button", { name: "More" })).toHaveCount(0);
-  await composer.getByPlaceholder("Message this channel or @ an AI teammate").fill("@Eng");
+  await channelComposerTextbox(composer).fill("@Eng");
   await expect(composer.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await composer.getByRole("option", { name: /@Engineer/ }).click();
   await expect(composer.locator(".composer-inline-token.mention").filter({ hasText: "Engineer" })).toBeVisible();
@@ -6027,7 +6035,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await openChannelChatTools(page);
   const activityFilters = channelEventFilters(page);
   const searchInput = activityFilters.getByPlaceholder("Search activity");
-  const composer = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const composer = channelComposerTextbox(page);
   await searchInput.fill("Blocked triage");
   await composer.fill("Composer draft survives triage");
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
@@ -6040,7 +6048,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
   await activityDetails.getByLabel("Close details").click();
   await expect(searchInput).toHaveValue("Blocked triage");
-  await expect(composer).toHaveValue("Composer draft survives triage");
+  await expectComposerValue(composer, "Composer draft survives triage");
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
   const summaryBubble = page.locator(".message-bubble").filter({ hasText: "Context summary" }).filter({ hasText: "Summary from Blocked triage step" });
   await expect(summaryBubble).toBeVisible();
