@@ -143,13 +143,12 @@ import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import {
   ArtifactRow,
   AvatarInitial,
-  ComposerFileReferenceToken,
   MetaRow,
   RunRepairHintBanner,
   StatusBadge,
+  TokenizedComposerInput,
   UsedMemorySummary,
   UserProfileAvatar,
-  composerSlashCommandParts as extractComposerSlashCommandParts,
   composerWorkspaceFileParts,
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
@@ -157,8 +156,6 @@ import {
   parseComposerInputParts,
   parseComposerSlashIntent,
   pendingAssetLabel,
-  pendingPreviewLabel,
-  removeComposerInputRawToken,
   revokeObjectUrl,
   revokePendingAttachmentPreview,
   revokePendingAttachmentPreviews,
@@ -3121,14 +3118,6 @@ export function WorkspaceClientView({
     focusComposerAt(inserted.caret);
   }
 
-  function removeMessageMention(mentionId: string): void {
-    setMessageMentions((current) => current.filter((mention) => mention.id !== mentionId));
-  }
-
-  function removeComposerFileReference(raw: string, occurrenceIndex: number): void {
-    setMessageDraft((current) => removeComposerInputRawToken(current, raw, occurrenceIndex));
-  }
-
   function insertMentionTrigger(): void {
     const textarea = composerTextareaRef.current;
     const start = textarea?.selectionStart ?? messageDraft.length;
@@ -3683,18 +3672,6 @@ export function WorkspaceClientView({
     });
   }
 
-  function removePendingLinkPreview(localId: string): void {
-    const removed = pendingLinkPreviews.find((item) => item.localId === localId);
-    if (removed) {
-      autoPreviewUrlsRef.current.delete(removed.url);
-      if (removed.preview) {
-        autoPreviewUrlsRef.current.delete(removed.preview.url);
-        autoPreviewUrlsRef.current.delete(removed.preview.normalizedUrl);
-      }
-    }
-    setPendingLinkPreviews((current) => current.filter((item) => item.localId !== localId));
-  }
-
   useEffect(() => {
     if (!selectedChannelId) {
       return undefined;
@@ -3731,13 +3708,15 @@ export function WorkspaceClientView({
     attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
     teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
     slashCommands,
+    linkPreviews: pendingLinkPreviews.map((item) => ({
+      url: item.url,
+      normalizedUrl: item.preview?.normalizedUrl,
+      title: item.preview?.title,
+      state: item.state,
+      error: item.error ?? item.preview?.errorMessage,
+    })),
   });
   const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
-  const composerSlashCommandTokens = extractComposerSlashCommandParts(composerInputParts);
-  const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
-    part,
-    occurrenceIndex: composerFileReferenceParts.slice(0, index).filter((candidate) => candidate.raw === part.raw).length,
-  }));
   const composerFileRefs = composerFileReferenceParts.map((part): ChannelMessageFileRef => ({
     path: part.path,
     label: part.path,
@@ -3754,7 +3733,7 @@ export function WorkspaceClientView({
   const composerSlashTargetLabel = composerSlashCommandActive ? composerSlashCommandTargetLabel(composerSlashIntent, t) : "";
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0 || composerFileRefs.length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
-  const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0 || composerSlashCommandTokens.length > 0;
+  const pendingMessageAssetsVisible = pendingAttachments.length > 0;
   const channelComposerSubmitDisabled = activeConversationRun
     ? !selectedChannelId || isCancellingRun || Boolean(runGuidanceSubmitting) || (composerHasSendableContent && (composerBusy || assetOperationPending))
     : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent;
@@ -4529,64 +4508,21 @@ export function WorkspaceClientView({
                 </button>
               </div>
             ))}
-            {pendingLinkPreviews.map((item) => (
-              <div key={item.localId} className={`composer-preview-card link ${item.state}`}>
-                <span className="composer-preview-file-icon" aria-hidden="true">
-                  {item.state === "uploading" ? <Loader2 className="spin" size={15} /> : <Link2 size={16} />}
-                </span>
-                <span className="composer-preview-body">
-                  <strong title={item.preview?.title ?? item.url}>{item.preview?.title ?? item.url}</strong>
-                  <small>{item.error ?? t(pendingPreviewLabel(item.state))}</small>
-                </span>
-                <button className="composer-preview-remove" type="button" onClick={() => removePendingLinkPreview(item.localId)} aria-label={t("Remove pending link preview")}>
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
-            {composerSlashCommandTokens.map((part, index) => {
-              const executable = composerSlashCommandActive && index === 0 && part.commandId === composerSlashIntent.commandId;
-              return (
-                <span
-                  key={`${part.raw}-${index}`}
-                  className={executable ? "composer-structured-token command executable" : "composer-structured-token command"}
-                  aria-label={t("Skill command")}
-                >
-                  <Command size={13} />
-                  <strong title={part.label}>{part.label}</strong>
-                  <small>{executable ? `${composerSlashTargetLabel} · ${part.raw}` : part.raw}</small>
-                </span>
-              );
-            })}
-            {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
-              <ComposerFileReferenceToken
-                key={`${part.raw}-${index}`}
-                path={part.path}
-                line={part.line}
-                removeLabel={t("Remove file reference")}
-                onRemove={() => removeComposerFileReference(part.raw, occurrenceIndex)}
-              />
-            ))}
-            {messageMentions.map((mention) => (
-              <span key={mention.id} className="pending-asset composer-preview-mention ready">
-                @{mention.label}
-                <small>{t("Mention")}</small>
-                <button type="button" onClick={() => removeMessageMention(mention.id)} aria-label={t("Remove pending mention")}>
-                  <Trash2 size={12} />
-                </button>
-              </span>
-            ))}
           </div>
         ) : null}
-        <textarea
+        <TokenizedComposerInput
           ref={composerTextareaRef}
           value={messageDraft}
+          parts={composerInputParts}
           rows={3}
           onChange={handleComposerTextChange}
           onKeyDown={handleComposerKeyDown}
           onPaste={handleComposerPaste}
           onSelect={(event) => updateMentionPicker(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
           placeholder={t("Message this channel or @ an AI teammate")}
-          aria-label={t("Message this channel or @ an AI teammate")}
+          ariaLabel={t("Message this channel or @ an AI teammate")}
+          executableSlashCommandId={composerSlashCommandActive ? composerSlashIntent.commandId : undefined}
+          executableSlashTargetLabel={composerSlashTargetLabel}
         />
         {mentionPicker ? (
           <div className="mention-picker-popover" role="listbox" aria-label={t("Mention teammate")}>
