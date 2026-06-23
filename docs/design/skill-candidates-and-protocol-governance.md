@@ -283,6 +283,163 @@ review state. They may provide richer UI affordances such as start/stop capture,
 transcript snippets, or artifact pickers, but the durable object remains a
 `ProcedureObservation` plus candidate/review records.
 
+### Ling-Native Recording Surfaces
+
+The first product surface should be Ling-native "save from evidence", not global desktop
+recording. It should start from existing run, message, artifact, and workflow records that
+already carry structured evidence.
+
+P0 surfaces:
+
+| Surface | User action | Default destination | Why it belongs here |
+| --- | --- | --- | --- |
+| Run Inspector / run terminal state | `Save as Skill` | `skill` or routed destination | A completed run already has prompt, tools, artifacts, validation, files, and outcome evidence. |
+| Channel message overflow menu | `Save instruction as skill` | draft recording, often `needs_edit` | User language such as "next time" or "always do this" is a strong explicit signal. |
+| Artifact / evidence panel | `Use as skill evidence` | append to an open recording draft | Artifacts are supporting source refs, not usually enough to create a new candidate alone. |
+| Settings > Skill Library | `New skill recording` | manual structured recording | Governance back-office path for advanced users and repair flows. |
+
+Run Inspector is the primary entry. The button should be visible when:
+
+```text
+run has reached a terminal state
+  + workspace skillGovernancePolicy.recordingMode != "disabled"
+  + at least one bounded source exists:
+      prompt, tool labels, validation labels, artifacts, changed file evidence,
+      approval records, or terminal status evidence
+```
+
+This is intentionally broader than automatic recommendation. A user click is an explicit
+recording signal, so Ling should allow a first occurrence to become a reviewable draft.
+The recording sheet should still explain missing validation, missing negative triggers,
+and duplicate matches before submission.
+
+Automatic "this looks reusable" prompts must be stricter:
+
+```text
+run.status == succeeded
+  + no sensitive content warning
+  + no approval or permission expansion request
+  + at least two extractable procedure steps
+  + stable validation evidence is present
+  + cheap duplicate precheck does not strongly match an active skill or open candidate
+  + normalized goal is not obviously one-off chat or explanation
+```
+
+Single-agent versus multi-agent is a routing signal, not an eligibility gate:
+
+| Evidence shape | Default route |
+| --- | --- |
+| Single-agent repo operation with reusable tools and validation | `skill` |
+| Multi-agent handoff, reviewer signoff, or team coordination rule | `channel_protocol` |
+| Channel/project-local operating procedure | `playbook` |
+| Preference, durable fact, or long-term lesson without procedure steps | `memory` |
+| Time/event-triggered future work | `automation` |
+
+The review sheet should require the user to confirm or edit:
+
+```text
+destinationHint
+title
+normalizedGoal
+positiveTriggers
+negativeTriggers
+procedureSteps
+validationSteps
+sourceRefs
+duplicate precheck result
+```
+
+The sheet must submit only bounded metadata to `POST /skill-recordings`. It must not send
+raw full transcripts, full artifact bodies, secret values, or hidden prompt text.
+
+### Recommendation And Duplicate Precheck
+
+The UI should not spend model tokens just to decide whether to show the recording affordance.
+Before prompting or extracting a new candidate, the client or daemon should run a cheap local
+precheck built from already-materialized metadata:
+
+```text
+recording eligibility fingerprint =
+  normalized run title or task title
+  + requestedSkillId / selectedSkillId
+  + tool label set
+  + validation label set
+  + changed file category set
+  + artifact type set
+  + channel / teammate scope
+```
+
+The precheck compares this fingerprint against active skills and open candidates using the
+same duplicate analysis thresholds as candidate creation. It should be cached per run so
+list views can render stable badges without recomputing:
+
+P1 exposes the deterministic daemon precheck as:
+
+```http
+GET /skill-recordings/eligibility?cwd=...&runId=...
+```
+
+The endpoint reads the bounded run metadata and events from the daemon store, computes the
+same route and duplicate analysis used by candidate creation, and returns visibility,
+recommendation, action hint, route, and duplicate analysis without writing observations,
+candidates, usage records, embeddings, or model outputs.
+
+```ts
+interface RunRecordingEligibility {
+  readonly runId: string;
+  readonly visible: boolean;
+  readonly recommended: boolean;
+  readonly actionHint:
+    | "create_candidate"
+    | "append_evidence"
+    | "policy_review"
+    | "record_evidence_only"
+    | "disabled"
+    | "wait_for_terminal";
+  readonly reasonCode:
+    | "available"
+    | "recording_disabled"
+    | "missing_evidence"
+    | "not_terminal"
+    | "permission_expansion"
+    | "duplicate_existing"
+    | "duplicate_analysis"
+    | "routed_elsewhere"
+    | "missing_validation";
+  readonly route?: CandidateRoute;
+  readonly duplicateAnalysis?: SkillDuplicateAnalysis;
+}
+```
+
+Prompt behavior:
+
+| Precheck result | UI behavior | Default submit action |
+| --- | --- | --- |
+| `no_overlap` and recommendation gates pass | Show non-blocking `Review as skill candidate` prompt | Create pending candidate after review sheet confirmation |
+| `append_evidence` or strong active skill match | Do not prompt a new skill | Append source refs/evidence to the existing skill or candidate path |
+| `update_existing` | Show `Improve existing skill` if user opens the sheet | Create update/wrapper draft only after review |
+| `conflict_review` | Avoid auto-prompt | Route to conflict review with matched records visible |
+| `reject_duplicate` | No prompt | Record evidence or close as duplicate |
+
+Manual user action remains available when the button is visible, but the primary action in
+the sheet must change when duplicates are found. For example, a strong match should default
+to `Append evidence to existing` rather than `Create separate candidate`; creating a
+separate candidate should require a reviewer reason.
+
+LLM extraction is allowed only after the cheap precheck and user action justify it:
+
+```text
+cheap precheck
+  -> no token usage
+user opens recording sheet or recommendation is accepted
+  -> optional bounded extraction for title/steps/triggers/validation
+user confirms
+  -> POST /skill-recordings with structured metadata
+```
+
+This keeps duplicate suppression and list rendering token-free. Model calls are reserved
+for semantic extraction, not for every completed run.
+
 ## Non-Goals
 
 - No automatic publication of generated skills.

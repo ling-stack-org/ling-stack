@@ -554,6 +554,25 @@ test("syncs gstack skill sources through expected routes", async () => {
   });
 });
 
+test("gets skill recording eligibility by run id", async () => {
+  const response = {
+    cwd: "/repo",
+    runId: "run 1",
+    visible: true,
+    recommended: true,
+    reasonCode: "available",
+    actionHint: "create_candidate",
+    generationMode: "semi_auto",
+    recordingMode: "user_initiated",
+  };
+  const mock = createFetchMock(response);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  assert.deepEqual(await client.getSkillRecordingEligibility("/repo path", "run 1"), response);
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skill-recordings/eligibility?cwd=%2Frepo+path&runId=run+1");
+});
+
 test("gets external work status with channel and workflow path", async () => {
   const mock = createFetchMock({ cwd: "/repo", workflow: { valid: true } });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });

@@ -737,6 +737,41 @@ export interface SkillRecordingObservationResponse extends ProcedureObservationJ
   readonly recordingMode: SkillGovernanceRecordingMode;
 }
 
+export type SkillRecordingEligibilityReasonCode =
+  | "available"
+  | "not_terminal"
+  | "missing_run"
+  | "missing_evidence"
+  | "recording_disabled"
+  | "permission_expansion"
+  | "duplicate_existing"
+  | "duplicate_analysis"
+  | "routed_elsewhere"
+  | "missing_validation";
+
+export type SkillRecordingEligibilityActionHint =
+  | "create_candidate"
+  | "append_evidence"
+  | "policy_review"
+  | "record_evidence_only"
+  | "disabled"
+  | "wait_for_terminal";
+
+export interface SkillRecordingEligibilityResponse {
+  readonly cwd: string;
+  readonly runId: string;
+  readonly visible: boolean;
+  readonly recommended: boolean;
+  readonly reasonCode: SkillRecordingEligibilityReasonCode;
+  readonly actionHint: SkillRecordingEligibilityActionHint;
+  readonly generationMode: SkillGovernanceGenerationMode;
+  readonly recordingMode: SkillGovernanceRecordingMode;
+  readonly jobKey?: string;
+  readonly route?: CandidateRoute;
+  readonly duplicateAnalysis?: SkillDuplicateAnalysis;
+  readonly selectedSkillId?: string;
+}
+
 export type SkillInvocationSuggestionBlocker =
   | "disabled_binding"
   | "missing_tools"

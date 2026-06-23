@@ -2280,6 +2280,7 @@ export function AppShell(): JSX.Element {
               activeRunId={activeRunId}
               lookupRunId={lookupRunId}
               events={events}
+              artifacts={artifacts}
               assistantText={assistantText}
               errorMessage={errorMessage}
               isRunning={isRunning}

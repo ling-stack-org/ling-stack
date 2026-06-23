@@ -1646,7 +1646,73 @@ Exit criteria:
 - Disabled recording returns a stable error and does not create observations.
 - Repeating the same recording request reuses the existing observation.
 
-## Phase SG.16: Policy-Gated Post-Run Candidate Generation
+## Phase SG.16: Ling-Native Recording Surface
+
+Type: Web P0 product surface over the SG.15 API.
+
+Files:
+
+```text
+apps/web/src/features/runs/RunInspector.tsx
+apps/web/src/features/workspace/WorkspaceClientView.tsx
+apps/web/src/features/settings/SkillLibrarySettingsPanel.tsx
+apps/web/src/api/skills.ts
+apps/web/src/i18n.tsx
+packages/contracts/src/skills.ts
+packages/core/src/skill-health.ts
+packages/daemon/src/features/skills/routes.ts
+apps/web/e2e/settings.spec.ts
+apps/web/e2e/runtime.spec.ts
+```
+
+Tasks:
+
+- Add a terminal-run `Save as Skill` action in Run Inspector. Keep it visible when the
+  run is terminal, recording is enabled, and at least one bounded evidence source exists.
+- Add a recording draft sheet that shows the source run, destination route, title,
+  normalized goal, triggers, procedure steps, validation steps, source refs, and duplicate
+  precheck result before any submission.
+- Add secondary entry points only as source-ref helpers: message overflow
+  `Save instruction as skill`, artifact/evidence `Use as skill evidence`, and Settings >
+  Skill Library `New skill recording`.
+- Current implementation status: Run Inspector, daemon eligibility precheck, and
+  artifact/evidence `Use as skill evidence` are implemented. Message overflow and
+  Settings entry points remain follow-ups because they need a safe existing action slot
+  and should not add hidden recording prompts to all messages.
+- Add a cheap duplicate/eligibility precheck that uses existing run metadata, selected or
+  requested skill ids, tool labels, validation labels, artifact types, changed-file
+  categories, channel, and teammate scope. Do not call a model for list rendering,
+  eligibility, duplicate suppression, or recommendation badges.
+- Add `GET /skill-recordings/eligibility?cwd=...&runId=...` as the daemon-owned
+  read-only precheck. It must compute route and duplicate analysis without creating
+  observations, candidates, embeddings, usage records, or model outputs.
+- Suppress automatic "review as skill" prompts when duplicate analysis strongly matches an
+  active skill or open candidate. If the user opens the sheet manually, make the primary
+  action `Append evidence to existing` or `Improve existing skill` instead of creating a
+  separate candidate.
+- Route multi-agent handoff evidence to channel protocol review, channel-local procedures
+  to playbook review, non-procedural lessons to memory review, and scheduled/event-shaped
+  work to automation review.
+- Submit only bounded structured metadata to `POST /skill-recordings`; do not submit full
+  raw transcripts, artifact bodies, secret values, or hidden prompts.
+- Allow optional model extraction only after the user opens or accepts the recording sheet,
+  and keep extraction bounded to title, triggers, procedure steps, validation steps, and
+  destination rationale.
+
+Exit criteria:
+
+- A completed successful single-agent run with validation can create a pending recording
+  candidate through the review sheet.
+- A duplicate run does not create a second candidate; it records evidence or proposes an
+  update/conflict path with matched records visible.
+- The daemon eligibility endpoint returns recommendation and duplicate state without
+  mutating candidate or observation stores.
+- A failed or evidence-poor run does not receive an automatic recommendation, but a user can
+  still open a draft when enough bounded source refs exist.
+- List views and automatic recommendation checks do not perform model calls.
+- The sheet renders without horizontal overflow on desktop and narrow widths.
+
+## Phase SG.17: Policy-Gated Post-Run Candidate Generation
 
 Type: conservative runtime hook.
 
@@ -1678,7 +1744,7 @@ Lane E: SG.8 after SG.6
 Lane F: SG.9 -> SG.10 -> SG.11 after SG.7
 Lane G: SG.12 after SG.9 and SG.11
 Lane H: SG.13 after SG.10 and SG.11
-Lane I: SG.14 -> SG.15 -> SG.16 after SG.12
+Lane I: SG.14 -> SG.15 -> SG.16 -> SG.17 after SG.12
 ```
 
 Dependency table:
@@ -1700,7 +1766,8 @@ Dependency table:
 | SG.13 | `packages/contracts`, `packages/core`, `packages/daemon`, `apps/web` | SG.10, SG.11 |
 | SG.14 | `packages/contracts`, `packages/core`, `packages/daemon` | SG.12 |
 | SG.15 | `packages/contracts`, `packages/core`, `packages/daemon`, `packages/api-client` | SG.14 |
-| SG.16 | `packages/daemon` run/channel hooks | SG.15 |
+| SG.16 | `apps/web`, `packages/contracts`, `packages/core`, `packages/daemon` | SG.15 |
+| SG.17 | `packages/daemon` run/channel hooks | SG.16 |
 
 Do not parallelize SG.6 and SG.8 in separate worktrees if both edit SQLite migrations.
 Keep schema-bearing phases sequential unless each phase has already landed on main.

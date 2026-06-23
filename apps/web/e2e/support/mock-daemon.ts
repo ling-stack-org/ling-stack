@@ -5895,6 +5895,84 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/skill-recordings/eligibility") {
+    const runId = url.searchParams.get("runId") ?? "";
+    const run = state.runs.find((item) => item.id === runId);
+    if (!run) {
+      await route.fulfill({
+        status: 404,
+        json: { error: "run_not_found", message: `Run not found: ${runId}` },
+      });
+      return;
+    }
+    const terminal = run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
+    await route.fulfill({
+      json: {
+        cwd,
+        runId,
+        visible: terminal,
+        recommended: run.status === "succeeded",
+        reasonCode: terminal ? "available" : "not_terminal",
+        actionHint: terminal ? "create_candidate" : "wait_for_terminal",
+        generationMode: defaultSkillGovernancePolicy.generationMode,
+        recordingMode: defaultSkillGovernancePolicy.recordingMode,
+        route: {
+          routeKind: "skill",
+          reasonCode: "manual_recording",
+          rationale: "Mock skill recording eligibility.",
+        },
+        metadata: {
+          source: "mock",
+        },
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/skill-recordings") {
+    const body = safePostDataJson(request);
+    const candidate = {
+      id: `skill_candidate_recording_${state.skillCandidates.length + 1}`,
+      workspaceId: "workspace_default",
+      title: typeof body.title === "string" ? body.title : "Recorded skill candidate",
+      summary: typeof body.summary === "string" ? body.summary : "Recorded from mock skill recording.",
+      normalizedGoal: typeof body.normalizedGoal === "string" ? body.normalizedGoal : "recorded skill candidate",
+      origin: "recording",
+      status: "pending_review",
+      sourceObservationIds: [],
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+    };
+    state.skillCandidates = [candidate, ...state.skillCandidates];
+    await route.fulfill({
+      status: 201,
+      json: {
+        cwd,
+        jobKey: `mock-recording:${String(body.runId ?? "run")}`,
+        reusedObservation: false,
+        generationMode: defaultSkillGovernancePolicy.generationMode,
+        recordingMode: defaultSkillGovernancePolicy.recordingMode,
+        observation: {
+          id: `procedure_observation_recording_${state.skillCandidates.length}`,
+          workspaceId: "workspace_default",
+          sourceKind: "recording",
+          title: candidate.title,
+          summary: candidate.summary,
+          normalizedGoal: candidate.normalizedGoal,
+          confidence: "medium",
+          reusableScore: 65,
+          createdAt: "2026-06-23T00:00:00.000Z",
+        },
+        route: {
+          routeKind: typeof body.destinationHint === "string" ? body.destinationHint : "skill",
+          reasonCode: "manual_recording",
+          rationale: "Mock recording routed to skill candidate.",
+        },
+        action: "candidate_created",
+        candidate,
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/skill-candidates") {
     const status = url.searchParams.get("status");
     const origin = url.searchParams.get("origin");

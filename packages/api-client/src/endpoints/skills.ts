@@ -25,6 +25,7 @@ import type {
   SkillImportDraftResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
+  SkillRecordingEligibilityResponse,
   SkillRecordingObservationRequest,
   SkillRecordingObservationResponse,
   SkillCorrectionRequest,
@@ -245,6 +246,14 @@ export const skillEndpoints = {
     input: SkillRecordingObservationRequest,
   ): Promise<SkillRecordingObservationResponse> {
     return this._post("/skill-recordings", { cwd }, input);
+  },
+
+  async getSkillRecordingEligibility(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    runId: string,
+  ): Promise<SkillRecordingEligibilityResponse> {
+    return this._get("/skill-recordings/eligibility", { cwd, runId });
   },
 
   async listSkillCandidates(

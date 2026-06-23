@@ -49,6 +49,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [GStack skill source sync](docs/design/gstack-skill-source-sync.md)
 - [Skill candidates and protocol governance](docs/design/skill-candidates-and-protocol-governance.md)
 - [Skill candidates and protocol governance implementation plan](docs/design/skill-candidates-and-protocol-governance-implementation-plan.md)
+- [Ling-native skill recording P0 detailed design](docs/design/ling-native-skill-recording-p0-detailed-design.md)
 - [AI teammate private workspace](docs/design/ai-teammate-private-workspace.md)
 - [Platform architecture](docs/design/platform-architecture.md)
 - [External work orchestration](docs/design/external-work-orchestration.md)
