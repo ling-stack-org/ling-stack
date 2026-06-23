@@ -166,6 +166,8 @@ const SKILL_SOURCE_SNAPSHOTS_MIGRATION_VERSION = 77;
 const SKILL_SOURCE_SNAPSHOTS_MIGRATION_NAME = "create_skill_source_snapshots";
 const SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION = 78;
 const SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_NAME = "create_skill_source_upgrade_lifecycle";
+const TASK_ATTACHMENT_IDS_MIGRATION_VERSION = 79;
+const TASK_ATTACHMENT_IDS_MIGRATION_NAME = "add_task_attachment_ids";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -334,6 +336,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           prompt TEXT NOT NULL,
           status TEXT NOT NULL,
           assignee_teammate_id TEXT,
+          attachment_ids_json TEXT NOT NULL DEFAULT '[]',
           current_run_id TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -3911,6 +3914,15 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasSkillSourceUpgradeLifecycleMigration) {
         context.recordMigration(SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION, SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_NAME);
+      }
+    }
+    const hasTaskAttachmentIdsMigration = context.hasMigration(TASK_ATTACHMENT_IDS_MIGRATION_VERSION);
+    if (!hasTaskAttachmentIdsMigration || !context.hasColumn("tasks", "attachment_ids_json")) {
+      if (!context.hasColumn("tasks", "attachment_ids_json")) {
+        database.exec("ALTER TABLE tasks ADD COLUMN attachment_ids_json TEXT NOT NULL DEFAULT '[]';");
+      }
+      if (!hasTaskAttachmentIdsMigration) {
+        context.recordMigration(TASK_ATTACHMENT_IDS_MIGRATION_VERSION, TASK_ATTACHMENT_IDS_MIGRATION_NAME);
       }
     }
 }

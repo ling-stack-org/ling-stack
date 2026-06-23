@@ -84,6 +84,7 @@ export interface ChannelActionsController {
   readonly archiveSidebarChannelBranch: (channelId: string, branchId: string) => Promise<void>;
   readonly removeChannel: (channelId: string) => Promise<void>;
   readonly saveTask: () => Promise<void>;
+  readonly createTaskFromSlashCommand: (input: CreateTaskFromSlashCommandInput) => Promise<void>;
   readonly sendChannelMessage: (input: SendChannelMessageInput) => Promise<void>;
   readonly uploadChannelFiles: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;
   readonly addChannelLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
@@ -108,6 +109,14 @@ interface SendChannelMessageInput {
   readonly linkPreviewIds: readonly string[];
   readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
+}
+
+interface CreateTaskFromSlashCommandInput {
+  readonly title: string;
+  readonly prompt: string;
+  readonly assigneeTeammateId?: string;
+  readonly requestedSkillId: string;
+  readonly attachmentIds?: readonly string[];
 }
 
 export function useChannelActionsController(input: {
@@ -391,6 +400,35 @@ export function useChannelActionsController(input: {
       await input.refreshTasks(input.selectedChannelId);
     } catch (error) {
       input.setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createTaskFromSlashCommand(commandInput: CreateTaskFromSlashCommandInput): Promise<void> {
+    if (!input.selectedChannelId) {
+      input.setErrorMessage("请先选择 channel");
+      return;
+    }
+    if (!commandInput.prompt.trim()) {
+      input.setErrorMessage("Slash command prompt 不能为空");
+      return;
+    }
+
+    try {
+      input.setErrorMessage("");
+      const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
+      const response = await createTask(input.form.cwd.trim(), input.selectedChannelId, {
+        title: commandInput.title.trim() || titleFromPrompt(commandInput.prompt),
+        prompt: commandInput.prompt,
+        assigneeTeammateId: commandInput.assigneeTeammateId || selectedChannel?.defaultTeammateId,
+        requestedSkillId: commandInput.requestedSkillId,
+        attachmentIds: commandInput.attachmentIds,
+      });
+      input.setSelectedTaskId(response.task.id);
+      await input.refreshTasks(input.selectedChannelId);
+      await input.refreshChannelActivity();
+    } catch (error) {
+      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -783,6 +821,7 @@ export function useChannelActionsController(input: {
     archiveSidebarChannelBranch,
     removeChannel,
     saveTask,
+    createTaskFromSlashCommand,
     sendChannelMessage,
     uploadChannelFiles,
     addChannelLinkPreview,

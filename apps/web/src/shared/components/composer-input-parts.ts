@@ -17,6 +17,11 @@ export interface ComposerInputSkillOption {
   readonly label: string;
 }
 
+export interface ComposerInputSlashCommandOption {
+  readonly id: string;
+  readonly label: string;
+}
+
 export interface ComposerInputAttachmentOption {
   readonly attachmentId: string;
 }
@@ -26,10 +31,12 @@ export interface ParseComposerInputPartsOptions {
   readonly attachments?: readonly ComposerInputAttachmentOption[];
   readonly teammateMentions?: readonly ComposerInputMentionOption[];
   readonly skills?: readonly ComposerInputSkillOption[];
+  readonly slashCommands?: readonly ComposerInputSlashCommandOption[];
 }
 
 const mentionPattern = /^@[A-Za-z0-9][A-Za-z0-9_.-]*/;
 const pathPattern = /^(?:~\/|\.{1,2}\/|\/|(?:[A-Za-z0-9_.-]+\/))[^\s<>"'`]+/;
+const slashCommandTokenPattern = /^\/([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
 
 export function parseComposerInputParts(text: string, options: ParseComposerInputPartsOptions = {}): readonly ComposerInputPart[] {
   const parts: ComposerInputPart[] = [
@@ -75,6 +82,11 @@ export function parseComposerInputParts(text: string, options: ParseComposerInpu
     const pathCanStart = index === 0 || /\s/u.test(previousChar) || previousChar === "(" || previousChar === "[" || previousChar === "{";
     const path = pathCanStart ? pathPattern.exec(remaining) : null;
     if (path && path[0].includes("/")) {
+      if (isRegisteredSlashCommandTokenAtPosition(text, index, path[0], options)) {
+        textBuffer += path[0];
+        index += path[0].length;
+        continue;
+      }
       flushText();
       const ref = parseLocalFileReference(path[0], options.cwd);
       parts.push({
@@ -163,6 +175,42 @@ function labelsMatch(left: string, right: string): boolean {
 
 function normalizeLabel(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function isRegisteredSlashCommandTokenAtPosition(
+  text: string,
+  index: number,
+  raw: string,
+  options: ParseComposerInputPartsOptions,
+): boolean {
+  if (!isRegisteredSlashCommandToken(raw, options.slashCommands ?? [])) {
+    return false;
+  }
+  const prefix = text.slice(0, index).trim();
+  if (!prefix) {
+    return true;
+  }
+  const mentions = prefix.split(/\s+/u).filter(Boolean);
+  if (mentions.length === 0) {
+    return false;
+  }
+  return mentions.every((mention) => {
+    const match = mentionPattern.exec(mention);
+    if (!match || match[0] !== mention) {
+      return false;
+    }
+    const teammateLabel = mention.slice(1);
+    return Boolean(options.teammateMentions?.some((candidate) => labelsMatch(candidate.label, teammateLabel)));
+  });
+}
+
+function isRegisteredSlashCommandToken(raw: string, commands: readonly ComposerInputSlashCommandOption[]): boolean {
+  const match = slashCommandTokenPattern.exec(raw);
+  if (!match) {
+    return false;
+  }
+  const token = normalizeLabel(match[1] ?? "");
+  return commands.some((command) => normalizeLabel(command.id) === token || normalizeLabel(command.label) === token);
 }
 
 function readLineSuffix(location: string | undefined): number | undefined {

@@ -36,6 +36,7 @@ export function mapTask(row: Record<string, SQLOutputValue>): Task {
     status: readString(row, "status") as TaskStatus,
     assigneeTeammateId: readNullableString(row, "assignee_teammate_id"),
     requestedSkillId: readNullableString(row, "requested_skill_id"),
+    attachmentIds: parseJsonStringArray(readString(row, "attachment_ids_json")),
     currentRunId: readNullableString(row, "current_run_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),

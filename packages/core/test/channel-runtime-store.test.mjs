@@ -79,6 +79,49 @@ test("sqlite channel creation can use a preallocated channel id", async () => {
   }
 });
 
+test("sqlite tasks persist linked channel attachment ids", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-task-attachments-"));
+  const now = "2026-06-23T00:00:00.000Z";
+  const updatedAt = "2026-06-23T00:01:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+    const firstAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "text",
+      fileName: "review-notes.md",
+      contentType: "text/markdown",
+      sizeBytes: 128,
+      path: "channel/review-notes.md",
+      createdAt: now,
+    });
+    const secondAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "text",
+      fileName: "trace.log",
+      contentType: "text/plain",
+      sizeBytes: 256,
+      path: "channel/trace.log",
+      createdAt: now,
+    });
+
+    const task = store.createTask({
+      channelId: channel.id,
+      title: "Review attachments",
+      prompt: "Use the linked files.",
+      attachmentIds: [firstAttachment.id],
+    }, now);
+    assert.deepEqual(task.attachmentIds, [firstAttachment.id]);
+    assert.deepEqual(store.getTask(task.id)?.attachmentIds, [firstAttachment.id]);
+
+    const updated = store.updateTask(task.id, { attachmentIds: [firstAttachment.id, secondAttachment.id] }, updatedAt);
+    assert.deepEqual(updated?.attachmentIds, [firstAttachment.id, secondAttachment.id]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel auto reply mode and route decisions round trip", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-reply-"));
   const now = "2026-06-09T00:00:00.000Z";

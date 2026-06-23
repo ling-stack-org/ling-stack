@@ -7630,6 +7630,11 @@ code,
   color: var(--text-muted);
 }
 
+.mention-suggestion.command span {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .composer-drop-hint {
   position: absolute;
   inset: 0;
@@ -7887,6 +7892,11 @@ code,
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 700;
+}
+
+.composer-structured-token.command {
+  border-color: var(--accent-border);
+  background: var(--surface-selected);
 }
 
 .composer-structured-token button {

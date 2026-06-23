@@ -4,6 +4,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { validateChannelMessageReferences } from "../channels/protocol.js";
 import { parseCreateTaskInput, parseTaskRunRequest, parseTaskUpdateInput, readOptionalTaskStatusQuery, type TaskRunRequest } from "./schemas.js";
 
 export type StartTaskRun = (input: {
@@ -47,6 +48,11 @@ export async function handleTasksCollection(
       const input = parseCreateTaskInput(body);
       if (!store.getChannel(input.channelId)) {
         writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+        return;
+      }
+      const referenceError = validateChannelMessageReferences(store, input.channelId, input.attachmentIds ?? [], []);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
         return;
       }
       const task = store.createTask(input, new Date().toISOString());
@@ -95,6 +101,14 @@ export async function handleTaskItem(
       const input = parseTaskUpdateInput(body);
       if (input.channelId && !store.getChannel(input.channelId)) {
         writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+        return;
+      }
+      const nextChannelId = input.channelId ?? task.channelId;
+      const referenceError = input.attachmentIds === undefined
+        ? undefined
+        : validateChannelMessageReferences(store, nextChannelId, input.attachmentIds, []);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
         return;
       }
       const updated = store.updateTask(taskId, input, new Date().toISOString());

@@ -50,6 +50,7 @@ import {
   X,
 } from "lucide-react";
 import { LingDaemonError } from "@ling-stack/api-client";
+import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, getLingTrace, listLingThreads, listLingThreadTurns, listLingTraces, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
 import { createChannelWorktree, handoffChannelWorkspace, listChannelCollaborationCards, refreshChannelWorkspace } from "../../api/channels.js";
@@ -109,7 +110,7 @@ import {
 } from "../../lib/channel-activity-views.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
-import { formatDateTime } from "../../lib/formatting.js";
+import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
 import { attachmentCanPreview } from "../../lib/previews.js";
 import {
   buildRunRepairHint,
@@ -153,6 +154,7 @@ import {
   createLocalComposerAssetId,
   filterUsedMemoryEventsByResponse,
   parseComposerInputParts,
+  parseComposerSlashIntent,
   pendingAssetLabel,
   pendingPreviewLabel,
   removeComposerInputRawToken,
@@ -307,6 +309,12 @@ interface ChannelComposerSnapshot {
 }
 
 interface ActiveMentionPicker {
+  readonly query: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+interface ActiveSlashCommandPicker {
   readonly query: string;
   readonly start: number;
   readonly end: number;
@@ -538,6 +546,7 @@ export function WorkspaceClientView({
   selectedTaskId,
   providers,
   teammateTemplates,
+  slashCommands,
   localTeammates,
   channelTeammateMemberships,
   channelTeammateMembershipsLoading,
@@ -588,6 +597,7 @@ export function WorkspaceClientView({
   onCreateChannel,
   onSaveChannel,
   onCreateTask,
+  onCreateTaskFromSlashCommand,
   onSendMessage,
   onConfirmExecutionProposal,
   onCancelExecutionProposal,
@@ -701,6 +711,7 @@ export function WorkspaceClientView({
   readonly selectedTaskId: string;
   readonly providers: readonly ProviderPreset[];
   readonly teammateTemplates: readonly AiTeammateTemplate[];
+  readonly slashCommands: readonly ComposerSlashCommandOption[];
   readonly localTeammates: readonly LocalTeammateDraft[];
   readonly channelTeammateMemberships: readonly TeammateChannelMembership[];
   readonly channelTeammateMembershipsLoading: boolean;
@@ -751,6 +762,13 @@ export function WorkspaceClientView({
   readonly onCreateChannel: () => void;
   readonly onSaveChannel: () => void;
   readonly onCreateTask: () => void;
+  readonly onCreateTaskFromSlashCommand: (input: {
+    readonly title: string;
+    readonly prompt: string;
+    readonly assigneeTeammateId?: string;
+    readonly requestedSkillId: string;
+    readonly attachmentIds?: readonly string[];
+  }) => Promise<void>;
   readonly onSendMessage: (input: {
     readonly threadId?: string;
     readonly body: string;
@@ -864,6 +882,8 @@ export function WorkspaceClientView({
   const [messageMentions, setMessageMentions] = useState<readonly ChannelMention[]>([]);
   const [mentionPicker, setMentionPicker] = useState<ActiveMentionPicker | undefined>();
   const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
+  const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
@@ -2787,8 +2807,10 @@ export function WorkspaceClientView({
     />
   ) : selectedTask ? (
     <TaskDetailPanel
+      cwd={cwd}
       task={selectedTask}
       channels={channels}
+      attachments={channelAttachments}
       runById={runById}
       activeRunId={activeRunId}
       latestStatus={latestStatus}
@@ -2822,6 +2844,7 @@ export function WorkspaceClientView({
       onRefreshRunApprovals={onRefreshRunApprovals}
       onResolveApproval={onResolveApproval}
       onOpenProviders={onOpenProviders}
+      attachmentContentUrl={attachmentContentUrl}
     />
   ) : (
     <div className="client-empty-state">
@@ -2938,6 +2961,23 @@ export function WorkspaceClientView({
     },
     [mentionPicker, teammateOptions],
   );
+  const slashCommandPickerOptions = useMemo(
+    () => {
+      if (!slashPicker) {
+        return [];
+      }
+      const query = slashPicker.query.trim().toLowerCase();
+      return slashCommands
+        .filter((option) => {
+          if (!query) {
+            return true;
+          }
+          return option.id.toLowerCase().includes(query) || option.label.toLowerCase().includes(query);
+        })
+        .slice(0, 8);
+    },
+    [slashCommands, slashPicker],
+  );
   const localTeammateById = useMemo(
     () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
     [activeLocalTeammates],
@@ -3002,6 +3042,8 @@ export function WorkspaceClientView({
     const activeMention = findActiveMention(value, caret);
     setMentionPicker(activeMention);
     setMentionActiveIndex(0);
+    setSlashPicker(activeMention ? undefined : findActiveSlashCommand(value, caret, teammateOptions));
+    setSlashActiveIndex(0);
   }
 
   function focusComposerAt(caret: number): void {
@@ -3031,6 +3073,22 @@ export function WorkspaceClientView({
     setMessageMentions((current) => current.some((mention) => mention.id === option.id) ? current : [...current, option]);
     setMentionPicker(undefined);
     setMentionActiveIndex(0);
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
+    focusComposerAt(inserted.caret);
+  }
+
+  function commitSlashCommand(option: ComposerSlashCommandOption): void {
+    const textarea = composerTextareaRef.current;
+    const liveValue = textarea?.value ?? messageDraft;
+    const liveCaret = textarea?.selectionStart ?? liveValue.length;
+    const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret, teammateOptions) ?? findActiveSlashCommand(liveValue, liveValue.length, teammateOptions);
+    const inserted = insertSlashCommandToken(liveValue, picker, option.id);
+    setMessageDraft(inserted.value);
+    setSendState("idle");
+    setSendError("");
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
     focusComposerAt(inserted.caret);
   }
 
@@ -3072,7 +3130,53 @@ export function WorkspaceClientView({
   }
 
   function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
-    if (!mentionPicker || mentionPickerOptions.length === 0) {
+    if (mentionPicker && mentionPickerOptions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setMentionActiveIndex((current) => (current + 1) % mentionPickerOptions.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setMentionActiveIndex((current) => (current - 1 + mentionPickerOptions.length) % mentionPickerOptions.length);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        commitMention(mentionPickerOptions[Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMentionPicker(undefined);
+        setMentionActiveIndex(0);
+      }
+      return;
+    }
+    if (slashPicker && slashCommandPickerOptions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSlashActiveIndex((current) => (current + 1) % slashCommandPickerOptions.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSlashActiveIndex((current) => (current - 1 + slashCommandPickerOptions.length) % slashCommandPickerOptions.length);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        commitSlashCommand(slashCommandPickerOptions[Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlashPicker(undefined);
+        setSlashActiveIndex(0);
+      }
+      return;
+    }
+    if (!mentionPicker && !slashPicker) {
       if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
         event.preventDefault();
         if (activeConversationRun) {
@@ -3086,28 +3190,16 @@ export function WorkspaceClientView({
       }
       if (event.key === "Escape") {
         setMentionPicker(undefined);
+        setSlashPicker(undefined);
       }
-      return;
-    }
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setMentionActiveIndex((current) => (current + 1) % mentionPickerOptions.length);
-      return;
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setMentionActiveIndex((current) => (current - 1 + mentionPickerOptions.length) % mentionPickerOptions.length);
-      return;
-    }
-    if (event.key === "Enter" || event.key === "Tab") {
-      event.preventDefault();
-      commitMention(mentionPickerOptions[Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)]);
       return;
     }
     if (event.key === "Escape") {
       event.preventDefault();
       setMentionPicker(undefined);
       setMentionActiveIndex(0);
+      setSlashPicker(undefined);
+      setSlashActiveIndex(0);
     }
   }
 
@@ -3414,6 +3506,10 @@ export function WorkspaceClientView({
     const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const body = serializedInput.body.trim();
+    const slashIntent = parseComposerSlashIntent(body, {
+      teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
+      commands: slashCommands,
+    });
     const fileRefs = [...composerFileRefs];
     const pastedUrls = extractUrls(body);
     const newPreviews: ChannelLinkPreview[] = [];
@@ -3430,6 +3526,33 @@ export function WorkspaceClientView({
     setSendState("sending");
     setSendError("");
     try {
+      if (slashIntent.kind === "agent_command" || slashIntent.kind === "multi_agent_command" || slashIntent.kind === "global_command") {
+        const prompt = slashIntent.args.trim() || t("Run /{command} using the current channel context.", { command: slashIntent.commandId });
+        const title = titleFromPrompt(prompt || slashIntent.commandLabel);
+        const slashTaskTargets = slashIntent.kind === "multi_agent_command"
+          ? slashIntent.teammates.map((teammate) => ({ id: teammate.id, label: teammate.label }))
+          : slashIntent.kind === "agent_command"
+            ? [{ id: slashIntent.teammateId, label: slashIntent.teammateLabel }]
+            : [undefined];
+        for (const target of slashTaskTargets) {
+          await onCreateTaskFromSlashCommand({
+            title,
+            prompt,
+            requestedSkillId: slashIntent.commandId,
+            attachmentIds,
+            ...(target ? { assigneeTeammateId: target.id } : {}),
+          });
+        }
+        setMessageDraft("");
+        setMessageMentions([]);
+        revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
+        setPendingAttachments([]);
+        setPendingLinkPreviews([]);
+        autoPreviewUrlsRef.current.clear();
+        setSendState("idle");
+        setSendError("");
+        return;
+      }
       for (const url of pastedUrls) {
         if (!pendingPreviewRecords.some((preview) => preview.normalizedUrl === url || preview.url === url)) {
           try {
@@ -3578,6 +3701,7 @@ export function WorkspaceClientView({
     cwd,
     attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
     teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
+    slashCommands,
   });
   const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
   const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
@@ -3590,9 +3714,26 @@ export function WorkspaceClientView({
     source: "composer",
     ...(part.line !== undefined ? { line: part.line } : {}),
   }));
+  const composerSlashIntent = activeConversationRun
+    ? { kind: "none" as const }
+    : parseComposerSlashIntent(messageDraft.trim(), {
+      teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
+      commands: slashCommands,
+    });
+  const composerSlashCommandActive = composerSlashIntent.kind !== "none";
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0 || composerFileRefs.length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
-  const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0;
+  const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0 || composerSlashCommandActive;
+  const channelComposerSubmitDisabled = activeConversationRun
+    ? !selectedChannelId || isCancellingRun || Boolean(runGuidanceSubmitting) || (composerHasSendableContent && (composerBusy || assetOperationPending))
+    : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent;
+  const channelComposerSubmitLabel = activeConversationRun
+    ? composerHasSendableContent
+      ? runGuidanceSubmitting === "queue_followup" ? t("Queueing guidance...") : t("Queue guidance")
+      : isCancellingRun ? t("Stopping run...") : t("Stop run")
+    : composerSlashCommandActive
+      ? sendState === "sending" ? t("Creating task...") : t("Create task")
+      : sendState === "sending" ? t("Sending...") : t("Send");
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
 
   function renderChannelMessageAvatar(message: ChannelMessage): ReactNode {
@@ -4378,6 +4519,19 @@ export function WorkspaceClientView({
                 onRemove={() => removeComposerFileReference(part.raw, occurrenceIndex)}
               />
             ))}
+            {composerSlashIntent.kind !== "none" ? (
+              <span className="composer-structured-token command">
+                <Command size={13} />
+                <strong title={composerSlashIntent.raw}>
+                  {composerSlashIntent.kind === "multi_agent_command"
+                    ? `${composerSlashIntent.teammates.map((teammate) => `@${teammate.label}`).join(" ")} /${composerSlashIntent.commandId}`
+                    : composerSlashIntent.kind === "agent_command"
+                    ? `@${composerSlashIntent.teammateLabel} /${composerSlashIntent.commandId}`
+                    : `/${composerSlashIntent.commandId}`}
+                </strong>
+                <small>{t("Skill command")}</small>
+              </span>
+            ) : null}
             {messageMentions.map((mention) => (
               <span key={mention.id} className="pending-asset composer-preview-mention ready">
                 @{mention.label}
@@ -4417,6 +4571,26 @@ export function WorkspaceClientView({
               </button>
             )) : (
               <span className="mention-suggestion empty">{t("No matching teammates")}</span>
+            )}
+          </div>
+        ) : null}
+        {!mentionPicker && slashPicker ? (
+          <div className="mention-picker-popover command-picker-popover" role="listbox" aria-label={t("Slash command")}>
+            {slashCommandPickerOptions.length > 0 ? slashCommandPickerOptions.map((option, index) => (
+              <button
+                key={option.id}
+                type="button"
+                role="option"
+                aria-selected={index === Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)}
+                className={index === Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1) ? "mention-suggestion command active" : "mention-suggestion command"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => commitSlashCommand(option)}
+              >
+                <span>/{option.id}</span>
+                <small>{option.label}</small>
+              </button>
+            )) : (
+              <span className="mention-suggestion empty">{t("No matching commands")}</span>
             )}
           </div>
         ) : null}
@@ -4462,25 +4636,15 @@ export function WorkspaceClientView({
             }
             void sendMessage();
           }}
-          disabled={activeConversationRun
-            ? !selectedChannelId || isCancellingRun || Boolean(runGuidanceSubmitting) || (composerHasSendableContent && (composerBusy || assetOperationPending))
-            : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}
-          aria-label={activeConversationRun
-            ? composerHasSendableContent
-              ? runGuidanceSubmitting === "queue_followup" ? t("Queueing guidance...") : t("Queue guidance")
-              : isCancellingRun ? t("Stopping run...") : t("Stop run")
-            : sendState === "sending" ? t("Sending...") : t("Send")}
-          title={activeConversationRun
-            ? composerHasSendableContent
-              ? runGuidanceSubmitting === "queue_followup" ? t("Queueing guidance...") : t("Queue guidance")
-              : isCancellingRun ? t("Stopping run...") : t("Stop run")
-            : sendState === "sending" ? t("Sending...") : t("Send")}
+          disabled={channelComposerSubmitDisabled}
+          aria-label={channelComposerSubmitLabel}
+          title={channelComposerSubmitLabel}
         >
           {activeConversationRun
             ? composerHasSendableContent
               ? runGuidanceSubmitting === "queue_followup" ? <Loader2 className="spin" size={15} /> : <Send size={15} />
               : isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} />
-            : sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+            : sendState === "sending" ? <Loader2 className="spin" size={15} /> : composerSlashCommandActive ? <ListChecks size={15} /> : <Send size={15} />}
         </button>
       </div>
       {sendState === "failed" ? (
@@ -8061,8 +8225,10 @@ function NewTaskPanel({
 }
 
 function TaskDetailPanel({
+  cwd,
   task,
   channels,
+  attachments,
   runById,
   activeRunId,
   latestStatus,
@@ -8096,9 +8262,12 @@ function TaskDetailPanel({
   onRefreshRunApprovals,
   onResolveApproval,
   onOpenProviders,
+  attachmentContentUrl,
 }: {
+  readonly cwd: string;
   readonly task: Task;
   readonly channels: readonly Channel[];
+  readonly attachments: readonly ChannelAttachment[];
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly activeRunId: string;
   readonly latestStatus: string;
@@ -8132,6 +8301,7 @@ function TaskDetailPanel({
   readonly onRefreshRunApprovals: () => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
+  readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
 }): JSX.Element {
   const { t } = useI18n();
   const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
@@ -8139,6 +8309,9 @@ function TaskDetailPanel({
   const linkedRunSucceeded = linkedRunStatus === "succeeded";
   const repairHint = buildRunRepairHint(linkedRun, pendingApprovalCount, linkedRunStatus, "", t);
   const taskChannel = channels.find((channel) => channel.id === task.channelId);
+  const taskAttachments = (task.attachmentIds ?? [])
+    .map((attachmentId) => attachments.find((attachment) => attachment.id === attachmentId))
+    .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
   const resolvedPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
   const effectivePolicyPreview = buildLocalEffectivePolicyPreview({
     policy: approvalPolicy,
@@ -8227,6 +8400,26 @@ function TaskDetailPanel({
           </span>
         ) : null}
       </div>
+      {taskAttachments.length > 0 ? (
+        <ConversationAttachmentStrip
+          attachments={taskAttachments.map((attachment) => ({
+            id: attachment.id,
+            label: attachment.fileName,
+            meta: formatBytes(attachment.sizeBytes),
+            href: attachmentContentUrl(attachment),
+            target: "_blank",
+            rel: "noreferrer",
+            icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
+            previewRequest: attachmentCanPreview(attachment) ? {
+              source: "attachment",
+              cwd,
+              attachmentId: attachment.id,
+              scope: "channel",
+              channelId: task.channelId,
+            } : undefined,
+          }))}
+        />
+      ) : null}
       {task.currentRunId ? (
         <div className={linkedRunSucceeded ? "task-run-link compact succeeded" : "task-run-link compact"}>
           <StatusBadge status={linkedRunStatus} />
@@ -11117,6 +11310,41 @@ function findActiveMention(value: string, caret: number): ActiveMentionPicker | 
   };
 }
 
+function findActiveSlashCommand(
+  value: string,
+  caret: number,
+  teammates: readonly ChannelMention[],
+): ActiveSlashCommandPicker | undefined {
+  const beforeCaret = value.slice(0, caret);
+  const leadingWhitespaceLength = beforeCaret.length - beforeCaret.trimStart().length;
+  const commandPrefix = beforeCaret.trimStart();
+  const globalMatch = /^\/([A-Za-z0-9_.-]{0,48})$/.exec(commandPrefix);
+  if (globalMatch) {
+    const query = globalMatch[1] ?? "";
+    return {
+      query,
+      start: leadingWhitespaceLength,
+      end: caret,
+    };
+  }
+
+  const agentMatch = /^((?:@[A-Za-z0-9][A-Za-z0-9_.-]*\s+)+)\/([A-Za-z0-9_.-]{0,48})$/.exec(commandPrefix);
+  if (!agentMatch) {
+    return undefined;
+  }
+  const teammateTokens = (agentMatch[1] ?? "").trim().split(/\s+/).map((token) => token.slice(1));
+  if (teammateTokens.length === 0 || teammateTokens.some((teammateToken) => !teammates.some((teammate) => labelsMatch(teammate.label, teammateToken)))) {
+    return undefined;
+  }
+  const query = agentMatch[2] ?? "";
+  const slashOffset = commandPrefix.lastIndexOf("/");
+  return {
+    query,
+    start: leadingWhitespaceLength + slashOffset,
+    end: caret,
+  };
+}
+
 function insertMentionToken(value: string, picker: ActiveMentionPicker | undefined, label: string): { readonly value: string; readonly caret: number } {
   const start = Math.max(0, Math.min(picker?.start ?? value.length, value.length));
   const end = Math.max(start, Math.min(picker?.end ?? value.length, value.length));
@@ -11127,6 +11355,26 @@ function insertMentionToken(value: string, picker: ActiveMentionPicker | undefin
     value: `${prefix}${mention}${suffix ? ` ${suffix}` : " "}`,
     caret: prefix.length + mention.length + 1,
   };
+}
+
+function insertSlashCommandToken(value: string, picker: ActiveSlashCommandPicker | undefined, commandId: string): { readonly value: string; readonly caret: number } {
+  const start = Math.max(0, Math.min(picker?.start ?? value.length, value.length));
+  const end = Math.max(start, Math.min(picker?.end ?? value.length, value.length));
+  const prefix = value.slice(0, start);
+  const suffix = value.slice(end).replace(/^\s+/, "");
+  const command = `/${commandId}`;
+  return {
+    value: `${prefix}${command}${suffix ? ` ${suffix}` : " "}`,
+    caret: prefix.length + command.length + 1,
+  };
+}
+
+function labelsMatch(left: string, right: string): boolean {
+  return normalizeComposerToken(left) === normalizeComposerToken(right);
+}
+
+function normalizeComposerToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPicker | undefined)[]): ActiveMentionPicker | undefined {
