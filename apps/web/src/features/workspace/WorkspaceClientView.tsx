@@ -149,6 +149,7 @@ import {
   StatusBadge,
   UsedMemorySummary,
   UserProfileAvatar,
+  composerSlashCommandParts as extractComposerSlashCommandParts,
   composerWorkspaceFileParts,
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
@@ -162,6 +163,7 @@ import {
   revokePendingAttachmentPreview,
   revokePendingAttachmentPreviews,
   serializeComposerInputParts,
+  type ComposerSlashIntent,
   type PendingAssetState,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
@@ -377,7 +379,7 @@ type MessageFeedItem =
   | { readonly id: "older-channel-messages"; readonly kind: "older-loader" }
   | { readonly id: string; readonly kind: "turn"; readonly turn: ConversationTurnViewModel }
   | { readonly id: string; readonly kind: "activity"; readonly item: ChannelActivityItem }
-  | { readonly id: string; readonly kind: "pending-send"; readonly preview: PendingChannelSendPreview };
+  | { readonly id: string; readonly kind: "pending-send"; readonly preview: PendingChannelSendPreview; readonly showSentMessage: boolean };
 
 interface PendingChannelSendPreview {
   readonly id: string;
@@ -403,6 +405,7 @@ function messageFeedItemRenderSignature(item: MessageFeedItem | undefined): stri
   if (item.kind === "pending-send") {
     return [
       item.id,
+      item.showSentMessage ? "with-message" : "status-only",
       item.preview.body,
       item.preview.createdAt,
       item.preview.requestAiReply ? "reply" : "no-reply",
@@ -430,6 +433,9 @@ function messageFeedItemIsPending(item: MessageFeedItem | undefined): boolean {
   }
   if (item.kind === "turn") {
     return turnHasPendingMessage(item.turn) || item.turn.operationCell?.mode === "active";
+  }
+  if (item.kind === "pending-send") {
+    return true;
   }
   return false;
 }
@@ -1721,26 +1727,44 @@ export function WorkspaceClientView({
   );
   const messageFeedCanLoadOlder =
     channelMessagesHasOlder && !activityFiltersActive && conversationFeedBodyItems.length > 0;
-  const pendingChannelSendResolved = useMemo(() => {
+  const pendingChannelSendState = useMemo(() => {
     if (!pendingChannelSendPreview) {
-      return false;
+      return { acknowledged: false, aiReplyStarted: false, awaitingAiReply: false };
     }
-    const latestLocalMessage = [...channelMessages]
+    const acknowledgedMessage = [...channelMessages]
       .reverse()
       .find((message) =>
         message.channelId === pendingChannelSendPreview.channelId &&
         message.threadId === pendingChannelSendPreview.threadId &&
         message.kind === "message" &&
-        message.authorType === "local-user"
+        message.authorType === "local-user" &&
+        message.body === pendingChannelSendPreview.body &&
+        sameStringList(message.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
+        sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
+        sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
       );
-    return Boolean(
-      latestLocalMessage &&
-      latestLocalMessage.body === pendingChannelSendPreview.body &&
-      sameStringList(latestLocalMessage.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
-      sameStringList(latestLocalMessage.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
-      sameFileRefList(latestLocalMessage.fileRefs ?? [], pendingChannelSendPreview.fileRefs),
-    );
+    const awaitingAiReply = pendingChannelSendPreview.requestAiReply || pendingChannelSendPreview.autoReplyMode !== "mentions_only";
+    const replyThreadId = acknowledgedMessage ? acknowledgedMessage.threadId ?? acknowledgedMessage.id : pendingChannelSendPreview.threadId;
+    const previewCreatedAt = Date.parse(pendingChannelSendPreview.createdAt);
+    const aiReplyStarted = awaitingAiReply && channelMessages.some((message) => {
+      if (message.channelId !== pendingChannelSendPreview.channelId || message.kind !== "ai_reply") {
+        return false;
+      }
+      if (replyThreadId && message.threadId !== replyThreadId) {
+        return false;
+      }
+      const messageCreatedAt = Date.parse(message.createdAt);
+      return !Number.isFinite(previewCreatedAt) || !Number.isFinite(messageCreatedAt) || messageCreatedAt >= previewCreatedAt;
+    });
+    return {
+      acknowledged: Boolean(acknowledgedMessage),
+      aiReplyStarted,
+      awaitingAiReply,
+    };
   }, [channelMessages, pendingChannelSendPreview]);
+  const pendingChannelSendResolved =
+    pendingChannelSendState.acknowledged &&
+    (!pendingChannelSendState.awaitingAiReply || pendingChannelSendState.aiReplyStarted);
   const pendingChannelSendVisible = Boolean(
     pendingChannelSendPreview &&
     !pendingChannelSendResolved &&
@@ -1753,10 +1777,15 @@ export function WorkspaceClientView({
       ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies MessageFeedItem] : []),
       ...conversationFeedBodyItems,
       ...(pendingChannelSendVisible && pendingChannelSendPreview
-        ? [{ id: `pending-send:${pendingChannelSendPreview.id}`, kind: "pending-send" as const, preview: pendingChannelSendPreview }]
+        ? [{
+          id: `pending-send:${pendingChannelSendPreview.id}`,
+          kind: "pending-send" as const,
+          preview: pendingChannelSendPreview,
+          showSentMessage: !pendingChannelSendState.acknowledged,
+        }]
         : []),
     ],
-    [conversationFeedBodyItems, messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendVisible],
+    [conversationFeedBodyItems, messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendState.acknowledged, pendingChannelSendVisible],
   );
   const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && conversationFeedBodyItems.length === 0 && !pendingChannelSendVisible;
   const messageFeedVirtualizer = useVirtualizer({
@@ -3042,7 +3071,7 @@ export function WorkspaceClientView({
     const activeMention = findActiveMention(value, caret);
     setMentionPicker(activeMention);
     setMentionActiveIndex(0);
-    setSlashPicker(activeMention ? undefined : findActiveSlashCommand(value, caret, teammateOptions));
+    setSlashPicker(activeMention ? undefined : findActiveSlashCommand(value, caret));
     setSlashActiveIndex(0);
   }
 
@@ -3082,7 +3111,7 @@ export function WorkspaceClientView({
     const textarea = composerTextareaRef.current;
     const liveValue = textarea?.value ?? messageDraft;
     const liveCaret = textarea?.selectionStart ?? liveValue.length;
-    const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret, teammateOptions) ?? findActiveSlashCommand(liveValue, liveValue.length, teammateOptions);
+    const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret) ?? findActiveSlashCommand(liveValue, liveValue.length);
     const inserted = insertSlashCommandToken(liveValue, picker, option.id);
     setMessageDraft(inserted.value);
     setSendState("idle");
@@ -3704,6 +3733,7 @@ export function WorkspaceClientView({
     slashCommands,
   });
   const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
+  const composerSlashCommandTokens = extractComposerSlashCommandParts(composerInputParts);
   const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
     part,
     occurrenceIndex: composerFileReferenceParts.slice(0, index).filter((candidate) => candidate.raw === part.raw).length,
@@ -3721,9 +3751,10 @@ export function WorkspaceClientView({
       commands: slashCommands,
     });
   const composerSlashCommandActive = composerSlashIntent.kind !== "none";
+  const composerSlashTargetLabel = composerSlashCommandActive ? composerSlashCommandTargetLabel(composerSlashIntent, t) : "";
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0 || composerFileRefs.length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
-  const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0 || composerSlashCommandActive;
+  const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0 || composerSlashCommandTokens.length > 0;
   const channelComposerSubmitDisabled = activeConversationRun
     ? !selectedChannelId || isCancellingRun || Boolean(runGuidanceSubmitting) || (composerHasSendableContent && (composerBusy || assetOperationPending))
     : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent;
@@ -4359,7 +4390,7 @@ export function WorkspaceClientView({
       );
     }
     if (feedItem.kind === "pending-send") {
-      return renderPendingChannelSendPreview(feedItem.preview);
+      return renderPendingChannelSendPreview(feedItem.preview, feedItem.showSentMessage);
     }
     if (feedItem.kind === "turn") {
       return renderConversationTurnItem(feedItem.turn);
@@ -4367,22 +4398,24 @@ export function WorkspaceClientView({
     return renderMessageFeedActivityItem(feedItem.item);
   }
 
-  function renderPendingChannelSendPreview(preview: PendingChannelSendPreview): ReactNode {
+  function renderPendingChannelSendPreview(preview: PendingChannelSendPreview, showSentMessage: boolean): ReactNode {
     return (
       <div className="message-group channel-pending-send-group">
-        <MessageRow
-          className="channel-message-row pending-send"
-          authorType="local-user"
-          avatar={<UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />}
-          authorName={localUserDisplayName}
-          createdAtLabel={formatDateTime(preview.createdAt)}
-          bodyNode={(
-            <div className="message-body-shell">
-              <MessageBodyRenderer text={preview.body} cwd={cwd} compact />
-            </div>
-          )}
-          attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.channelId)}
-        />
+        {showSentMessage ? (
+          <MessageRow
+            className="channel-message-row pending-send"
+            authorType="local-user"
+            avatar={<UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />}
+            authorName={localUserDisplayName}
+            createdAtLabel={formatDateTime(preview.createdAt)}
+            bodyNode={(
+              <div className="message-body-shell">
+                <MessageBodyRenderer text={preview.body} cwd={cwd} compact />
+              </div>
+            )}
+            attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.channelId)}
+          />
+        ) : null}
         <div className="channel-send-thinking-row" role="status" aria-live="polite">
           <Loader2 className="message-pending-spinner spin" size={13} />
           <span>{t("Thinking...")}</span>
@@ -4510,6 +4543,20 @@ export function WorkspaceClientView({
                 </button>
               </div>
             ))}
+            {composerSlashCommandTokens.map((part, index) => {
+              const executable = composerSlashCommandActive && index === 0 && part.commandId === composerSlashIntent.commandId;
+              return (
+                <span
+                  key={`${part.raw}-${index}`}
+                  className={executable ? "composer-structured-token command executable" : "composer-structured-token command"}
+                  aria-label={t("Skill command")}
+                >
+                  <Command size={13} />
+                  <strong title={part.label}>{part.label}</strong>
+                  <small>{executable ? `${composerSlashTargetLabel} · ${part.raw}` : part.raw}</small>
+                </span>
+              );
+            })}
             {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
               <ComposerFileReferenceToken
                 key={`${part.raw}-${index}`}
@@ -4519,19 +4566,6 @@ export function WorkspaceClientView({
                 onRemove={() => removeComposerFileReference(part.raw, occurrenceIndex)}
               />
             ))}
-            {composerSlashIntent.kind !== "none" ? (
-              <span className="composer-structured-token command">
-                <Command size={13} />
-                <strong title={composerSlashIntent.raw}>
-                  {composerSlashIntent.kind === "multi_agent_command"
-                    ? `${composerSlashIntent.teammates.map((teammate) => `@${teammate.label}`).join(" ")} /${composerSlashIntent.commandId}`
-                    : composerSlashIntent.kind === "agent_command"
-                    ? `@${composerSlashIntent.teammateLabel} /${composerSlashIntent.commandId}`
-                    : `/${composerSlashIntent.commandId}`}
-                </strong>
-                <small>{t("Skill command")}</small>
-              </span>
-            ) : null}
             {messageMentions.map((mention) => (
               <span key={mention.id} className="pending-asset composer-preview-mention ready">
                 @{mention.label}
@@ -10868,13 +10902,7 @@ function proposalCollaborationSummary(
 }
 
 function findMentionsInText(body: string, teammates: readonly ChannelMention[]): readonly ChannelMention[] {
-  const tokens = new Set(
-    Array.from(body.matchAll(/@([A-Za-z0-9][A-Za-z0-9_.-]*)/g), (match) => match[1].toLowerCase()),
-  );
-  if (tokens.size === 0) {
-    return [];
-  }
-  return teammates.filter((teammate) => tokens.has(teammate.label.toLowerCase()) || tokens.has(teammate.id.toLowerCase()));
+  return teammates.filter((teammate) => mentionTokenExistsInText(body, teammate));
 }
 
 function mergeMentions(
@@ -10892,7 +10920,7 @@ function mergeMentions(
 }
 
 function mentionTokenExistsInText(body: string, mention: ChannelMention): boolean {
-  return [mention.label, mention.id].some((token) => {
+  return mentionAliases(mention).some((token) => {
     const escaped = escapeRegExp(token.trim());
     if (!escaped) {
       return false;
@@ -11313,36 +11341,31 @@ function findActiveMention(value: string, caret: number): ActiveMentionPicker | 
 function findActiveSlashCommand(
   value: string,
   caret: number,
-  teammates: readonly ChannelMention[],
 ): ActiveSlashCommandPicker | undefined {
   const beforeCaret = value.slice(0, caret);
-  const leadingWhitespaceLength = beforeCaret.length - beforeCaret.trimStart().length;
-  const commandPrefix = beforeCaret.trimStart();
-  const globalMatch = /^\/([A-Za-z0-9_.-]{0,48})$/.exec(commandPrefix);
-  if (globalMatch) {
-    const query = globalMatch[1] ?? "";
-    return {
-      query,
-      start: leadingWhitespaceLength,
-      end: caret,
-    };
-  }
-
-  const agentMatch = /^((?:@[A-Za-z0-9][A-Za-z0-9_.-]*\s+)+)\/([A-Za-z0-9_.-]{0,48})$/.exec(commandPrefix);
-  if (!agentMatch) {
+  const match = /(^|[\s([{])\/([A-Za-z0-9_.-]{0,48})$/.exec(beforeCaret);
+  if (!match) {
     return undefined;
   }
-  const teammateTokens = (agentMatch[1] ?? "").trim().split(/\s+/).map((token) => token.slice(1));
-  if (teammateTokens.length === 0 || teammateTokens.some((teammateToken) => !teammates.some((teammate) => labelsMatch(teammate.label, teammateToken)))) {
+  const slashStart = beforeCaret.length - (match[2]?.length ?? 0) - 1;
+  if (!slashCommandCanOpenAt(value, slashStart)) {
     return undefined;
   }
-  const query = agentMatch[2] ?? "";
-  const slashOffset = commandPrefix.lastIndexOf("/");
   return {
-    query,
-    start: leadingWhitespaceLength + slashOffset,
+    query: match[2] ?? "",
+    start: slashStart,
     end: caret,
   };
+}
+
+function slashCommandCanOpenAt(
+  value: string,
+  slashStart: number,
+): boolean {
+  if (slashStart === 0) {
+    return true;
+  }
+  return !/[/:]/u.test(value.slice(0, slashStart).trimEnd().at(-1) ?? "");
 }
 
 function insertMentionToken(value: string, picker: ActiveMentionPicker | undefined, label: string): { readonly value: string; readonly caret: number } {
@@ -11369,12 +11392,27 @@ function insertSlashCommandToken(value: string, picker: ActiveSlashCommandPicker
   };
 }
 
-function labelsMatch(left: string, right: string): boolean {
-  return normalizeComposerToken(left) === normalizeComposerToken(right);
+function composerSlashCommandTargetLabel(intent: Exclude<ComposerSlashIntent, { readonly kind: "none" }>, t: Translate): string {
+  if (intent.kind === "multi_agent_command") {
+    return intent.teammates.map((teammate) => `@${teammate.label}`).join(" ");
+  }
+  if (intent.kind === "agent_command") {
+    return `@${intent.teammateLabel}`;
+  }
+  return t("Channel");
 }
 
 function normalizeComposerToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function mentionAliases(mention: Pick<ChannelMention, "id" | "label">): readonly string[] {
+  return uniqueStrings([
+    mention.label.trim(),
+    mention.id.trim(),
+    normalizeComposerToken(mention.label),
+    normalizeComposerToken(mention.id),
+  ]).filter(Boolean);
 }
 
 function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPicker | undefined)[]): ActiveMentionPicker | undefined {

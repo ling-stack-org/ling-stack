@@ -1756,6 +1756,13 @@ Web notes:
   shell, above the textarea. Image attachments render local thumbnails where possible;
   PDFs, Office/text files, and links render compact preview cards. The lower toolbar
   stays reserved for `+`, `@`, and send actions.
+- refined composer direction: text-like structured references should move into the
+  editable input flow as inline tokens. This includes slash commands, `@agent`
+  mentions, workspace file refs, web URLs, and GitHub repository links. Repository URLs
+  should render as compact provider tokens such as `openai/openai-agents-python`, with a
+  GitHub icon and blue link color, instead of appearing as a detached card above the
+  input. Keep the top-of-shell preview region only for binary attachments and rich
+  thumbnail uploads that cannot fit naturally in the text baseline.
 - pending mention chips must mirror the textarea content. If the corresponding `@label`
   or `@id` token is removed from the input, remove the chip immediately.
 - ordinary chat message bodies should use the same strong text color as the author name

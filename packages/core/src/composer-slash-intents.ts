@@ -61,7 +61,6 @@ export interface ParseComposerSlashIntentOptions {
   readonly commands?: readonly ComposerSlashCommandOption[];
 }
 
-const mentionPattern = /^@[A-Za-z0-9][A-Za-z0-9_.-]*/;
 const slashCommandPattern = /^\/([A-Za-z0-9][A-Za-z0-9_.-]*)(?=\s|$)/;
 
 export function buildComposerSlashCommandOptions(input: BuildComposerSlashCommandOptionsInput = {}): readonly ComposerSlashCommandOption[] {
@@ -146,23 +145,34 @@ function readLeadingMentions(
   const teammates: ComposerSlashMentionOption[] = [];
   const seenIds = new Set<string>();
   while (true) {
-    const mention = mentionPattern.exec(remaining);
+    const mention = readLeadingTeammateMention(remaining, teammateMentions, seenIds);
     if (!mention) {
       break;
     }
-    const rawMention = mention[0] ?? "";
-    const teammateLabel = rawMention.slice(1);
-    const teammate = teammateMentions.find((candidate) => labelsMatch(candidate.label, teammateLabel));
-    if (!teammate) {
-      return undefined;
-    }
-    if (!seenIds.has(teammate.id)) {
-      teammates.push(teammate);
-      seenIds.add(teammate.id);
-    }
-    remaining = remaining.slice(rawMention.length).trimStart();
+    teammates.push(mention.teammate);
+    seenIds.add(mention.teammate.id);
+    remaining = remaining.slice(mention.raw.length).trimStart();
   }
   return teammates.length > 0 ? { teammates, remaining } : undefined;
+}
+
+function readLeadingTeammateMention(
+  text: string,
+  teammateMentions: readonly ComposerSlashMentionOption[],
+  seenIds: ReadonlySet<string>,
+): { readonly teammate: ComposerSlashMentionOption; readonly raw: string } | undefined {
+  const aliases = teammateMentions
+    .filter((teammate) => !seenIds.has(teammate.id))
+    .flatMap((teammate) => teammateMentionAliases(teammate).map((alias) => ({ teammate, alias })))
+    .sort((left, right) => right.alias.length - left.alias.length);
+
+  for (const { teammate, alias } of aliases) {
+    const raw = `@${alias}`;
+    if (startsWithCaseInsensitive(text, raw) && hasMentionBoundary(text, raw.length)) {
+      return { teammate, raw: text.slice(0, raw.length) };
+    }
+  }
+  return undefined;
 }
 
 function readRegisteredCommand(
@@ -218,10 +228,36 @@ function commandMatches(command: ComposerSlashCommandOption, token: string): boo
   return normalizeLabel(command.id) === normalizedToken || normalizeLabel(command.label) === normalizedToken;
 }
 
-function labelsMatch(left: string, right: string): boolean {
-  return normalizeLabel(left) === normalizeLabel(right);
-}
-
 function normalizeLabel(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function teammateMentionAliases(teammate: ComposerSlashMentionOption): readonly string[] {
+  return uniqueStrings([
+    teammate.label.trim(),
+    teammate.id.trim(),
+    normalizeLabel(teammate.label),
+    normalizeLabel(teammate.id),
+  ]);
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const normalized = value.toLowerCase();
+    if (!value || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function startsWithCaseInsensitive(value: string, prefix: string): boolean {
+  return value.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase();
+}
+
+function hasMentionBoundary(value: string, index: number): boolean {
+  const next = value[index];
+  return next === undefined || /\s/u.test(next);
 }

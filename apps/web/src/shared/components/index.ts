@@ -11,5 +11,5 @@ export { SettingsToolReturnRow } from "./SettingsToolReturnRow.js";
 export { StatusBadge } from "./StatusBadge.js";
 export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
 export { UserProfileAvatar } from "./UserProfileAvatar.js";
-export { composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer-input-parts.js";
+export { composerSlashCommandParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer-input-parts.js";
 export { parseComposerSlashIntent, type ComposerSlashIntent } from "./composer-slash-intents.js";

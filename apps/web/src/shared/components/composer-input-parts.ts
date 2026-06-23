@@ -5,7 +5,8 @@ export type ComposerInputPart =
   | { readonly type: "attachment"; readonly attachmentId: string }
   | { readonly type: "workspace_file"; readonly path: string; readonly raw: string; readonly line?: number }
   | { readonly type: "teammate_mention"; readonly teammateId: string; readonly label: string; readonly raw: string }
-  | { readonly type: "skill_mention"; readonly skillId: string; readonly label: string; readonly raw: string };
+  | { readonly type: "skill_mention"; readonly skillId: string; readonly label: string; readonly raw: string }
+  | { readonly type: "slash_command"; readonly commandId: string; readonly label: string; readonly raw: string };
 
 export interface ComposerInputMentionOption {
   readonly id: string;
@@ -34,7 +35,13 @@ export interface ParseComposerInputPartsOptions {
   readonly slashCommands?: readonly ComposerInputSlashCommandOption[];
 }
 
-const mentionPattern = /^@[A-Za-z0-9][A-Za-z0-9_.-]*/;
+interface KnownMentionRead {
+  readonly type: "teammate_mention" | "skill_mention";
+  readonly id: string;
+  readonly label: string;
+  readonly raw: string;
+}
+
 const pathPattern = /^(?:~\/|\.{1,2}\/|\/|(?:[A-Za-z0-9_.-]+\/))[^\s<>"'`]+/;
 const slashCommandTokenPattern = /^\/([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
 
@@ -58,22 +65,18 @@ export function parseComposerInputParts(text: string, options: ParseComposerInpu
 
   while (index < text.length) {
     const remaining = text.slice(index);
-    const mention = mentionPattern.exec(remaining);
+    const mention = readKnownMentionAtStart(remaining, options);
     if (mention) {
-      const raw = mention[0];
-      const label = raw.slice(1);
-      const teammate = options.teammateMentions?.find((candidate) => labelsMatch(candidate.label, label));
-      const skill = teammate ? undefined : options.skills?.find((candidate) => labelsMatch(candidate.label, label));
-      if (teammate) {
+      if (mention.type === "teammate_mention") {
         flushText();
-        parts.push({ type: "teammate_mention", teammateId: teammate.id, label: teammate.label, raw });
-        index += raw.length;
+        parts.push({ type: "teammate_mention", teammateId: mention.id, label: mention.label, raw: mention.raw });
+        index += mention.raw.length;
         continue;
       }
-      if (skill) {
+      if (mention.type === "skill_mention") {
         flushText();
-        parts.push({ type: "skill_mention", skillId: skill.id, label: skill.label, raw });
-        index += raw.length;
+        parts.push({ type: "skill_mention", skillId: mention.id, label: mention.label, raw: mention.raw });
+        index += mention.raw.length;
         continue;
       }
     }
@@ -82,8 +85,15 @@ export function parseComposerInputParts(text: string, options: ParseComposerInpu
     const pathCanStart = index === 0 || /\s/u.test(previousChar) || previousChar === "(" || previousChar === "[" || previousChar === "{";
     const path = pathCanStart ? pathPattern.exec(remaining) : null;
     if (path && path[0].includes("/")) {
-      if (isRegisteredSlashCommandTokenAtPosition(text, index, path[0], options)) {
-        textBuffer += path[0];
+      const command = readRegisteredSlashCommandToken(path[0], options.slashCommands ?? []);
+      if (command) {
+        flushText();
+        parts.push({
+          type: "slash_command",
+          commandId: command.id,
+          label: command.label,
+          raw: path[0],
+        });
         index += path[0].length;
         continue;
       }
@@ -120,7 +130,7 @@ export function serializeComposerInputParts(parts: readonly ComposerInputPart[])
       body += part.text;
     } else if (part.type === "teammate_mention" || part.type === "skill_mention") {
       body += part.raw;
-    } else if (part.type === "workspace_file") {
+    } else if (part.type === "workspace_file" || part.type === "slash_command") {
       body += part.raw;
     }
   }
@@ -129,6 +139,10 @@ export function serializeComposerInputParts(parts: readonly ComposerInputPart[])
 
 export function composerWorkspaceFileParts(parts: readonly ComposerInputPart[]): readonly Extract<ComposerInputPart, { readonly type: "workspace_file" }>[] {
   return parts.filter((part): part is Extract<ComposerInputPart, { readonly type: "workspace_file" }> => part.type === "workspace_file");
+}
+
+export function composerSlashCommandParts(parts: readonly ComposerInputPart[]): readonly Extract<ComposerInputPart, { readonly type: "slash_command" }>[] {
+  return parts.filter((part): part is Extract<ComposerInputPart, { readonly type: "slash_command" }> => part.type === "slash_command");
 }
 
 export function removeComposerInputRawToken(text: string, raw: string, occurrenceIndex = 0): string {
@@ -169,48 +183,42 @@ function mergeAdjacentTextParts(parts: readonly ComposerInputPart[]): readonly C
   return merged;
 }
 
-function labelsMatch(left: string, right: string): boolean {
-  return normalizeLabel(left) === normalizeLabel(right);
-}
-
 function normalizeLabel(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function isRegisteredSlashCommandTokenAtPosition(
+function readKnownMentionAtStart(
   text: string,
-  index: number,
-  raw: string,
   options: ParseComposerInputPartsOptions,
-): boolean {
-  if (!isRegisteredSlashCommandToken(raw, options.slashCommands ?? [])) {
-    return false;
-  }
-  const prefix = text.slice(0, index).trim();
-  if (!prefix) {
-    return true;
-  }
-  const mentions = prefix.split(/\s+/u).filter(Boolean);
-  if (mentions.length === 0) {
-    return false;
-  }
-  return mentions.every((mention) => {
-    const match = mentionPattern.exec(mention);
-    if (!match || match[0] !== mention) {
-      return false;
+): KnownMentionRead | undefined {
+  const teammateMentions = (options.teammateMentions ?? []).flatMap((mention) =>
+    mentionAliases(mention).map((alias) => ({ type: "teammate_mention" as const, id: mention.id, label: mention.label, alias })),
+  );
+  const skillMentions = (options.skills ?? []).flatMap((skill) =>
+    mentionAliases(skill).map((alias) => ({ type: "skill_mention" as const, id: skill.id, label: skill.label, alias })),
+  );
+  const candidates = [...teammateMentions, ...skillMentions]
+    .sort((left, right) => right.alias.length - left.alias.length);
+
+  for (const candidate of candidates) {
+    const raw = `@${candidate.alias}`;
+    if (startsWithCaseInsensitive(text, raw) && hasMentionBoundary(text, raw.length)) {
+      return { type: candidate.type, id: candidate.id, label: candidate.label, raw };
     }
-    const teammateLabel = mention.slice(1);
-    return Boolean(options.teammateMentions?.some((candidate) => labelsMatch(candidate.label, teammateLabel)));
-  });
+  }
+  return undefined;
 }
 
-function isRegisteredSlashCommandToken(raw: string, commands: readonly ComposerInputSlashCommandOption[]): boolean {
+function readRegisteredSlashCommandToken(
+  raw: string,
+  commands: readonly ComposerInputSlashCommandOption[],
+): ComposerInputSlashCommandOption | undefined {
   const match = slashCommandTokenPattern.exec(raw);
   if (!match) {
-    return false;
+    return undefined;
   }
   const token = normalizeLabel(match[1] ?? "");
-  return commands.some((command) => normalizeLabel(command.id) === token || normalizeLabel(command.label) === token);
+  return commands.find((command) => normalizeLabel(command.id) === token || normalizeLabel(command.label) === token);
 }
 
 function readLineSuffix(location: string | undefined): number | undefined {
@@ -223,4 +231,34 @@ function stripDisplayLocation(displayPath: string, location: string | undefined)
     return displayPath;
   }
   return displayPath.slice(0, -location.length);
+}
+
+function mentionAliases(mention: { readonly id: string; readonly label: string }): readonly string[] {
+  return uniqueStrings([
+    mention.label.trim(),
+    mention.id.trim(),
+    normalizeLabel(mention.label),
+    normalizeLabel(mention.id),
+  ]);
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const normalized = value.toLowerCase();
+    if (!value || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function startsWithCaseInsensitive(value: string, prefix: string): boolean {
+  return value.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase();
+}
+
+function hasMentionBoundary(value: string, index: number): boolean {
+  const next = value[index];
+  return next === undefined || /\s/u.test(next);
 }

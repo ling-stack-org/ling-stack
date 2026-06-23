@@ -15,10 +15,45 @@ Supported v1 forms:
 - `@agentA @agentB /cmd args`: create the same command-backed task for each resolved teammate.
 - `@agent normal message`: unchanged; this remains a directed chat message.
 
+`@agent` is resolved against known teammate labels and ids, not by splitting on a
+single whitespace-free token. Display labels with spaces are valid, so
+`@Ling Agent /review docs` is the same grammar as `@Engineer /review docs`.
+
 Deferred forms:
 
 - `/cmd @agent args`: not a supported targeting form in v1.
+- arbitrary prose followed by ` /cmd`: not a structured command in v1; unlike Codex's
+  generic command menu, Ling's v1 slash dispatch requires the command to be at the
+  start of the composer text or immediately after resolved teammate mentions.
 - Natural-language command inference without a slash is handled by existing channel intent routing, not this parser.
+
+## Composer Token Model
+
+The composer treats slash commands as UI control tokens, not plain prompt folklore. The
+editable input remains the source of truth, and text-like structures should render as
+inline tokens inside the composer text flow rather than as a separate strip above the
+input:
+
+- `text`: ordinary text that remains part of the message or task prompt;
+- `agent_mention`: resolved `@agent` labels/ids, including display labels with spaces;
+- `slash_command`: registered `/cmd` tokens selected or typed at a token boundary;
+- `url_ref`: recognized web URLs or repository links;
+- `file_ref`: workspace paths that should become message/task file references;
+- `attachment`: uploaded channel assets.
+
+Only a resolved `ComposerSlashIntent` is executable. Extra `slash_command` tokens later
+in the draft are rendered as command references so the user can tell they are structured,
+but they do not create additional tasks in v1.
+
+The visual model follows Codex's input-box affordance: structured text appears in the
+same line-wrapping region as the user's prose. A command token such as `/review`, a
+GitHub repo URL, and an `@agent` mention should look like compact inline chips with an
+icon and label, followed by the caret and any remaining plain text. They should not
+create a large mode card or a detached preview row above the conversation input.
+
+`attachment` is the exception. Binary objects that need thumbnails, upload progress, or
+large remove controls may stay in the composer shell above the text flow. Text-like refs
+do not use that attachment strip.
 
 ## Ambiguity Rules
 
@@ -27,7 +62,8 @@ The parser only emits an intent when all of these are true:
 - the command appears at the start of the composer text after trimming whitespace;
 - the command token matches a registered command id or label;
 - the command token is followed by whitespace or end-of-input;
-- an `@agent` prefix, when present, resolves to a known teammate mention.
+- an `@agent` prefix, when present, resolves to a known teammate mention by exact
+  label/id or normalized label/id aliases.
 
 These inputs must not be treated as slash commands:
 
@@ -95,6 +131,52 @@ Slash parsing does not grant capability. It only converts known syntax into a st
 
 The durable v1 audit object is the created task: its prompt, assignee, `requestedSkillId`, and `attachmentIds` are stored in the existing task model. A future richer audit field can persist the original slash intent if we add command-specific history or UI chips.
 
+## Multi-Slash Composer Behavior
+
+Ling should borrow Codex's composer affordance that `/` opens the command picker at
+token boundaries, including after a previously selected slash command. That behavior is
+only a picker/tokenization affordance in v1:
+
+- `/cmd args` and `@agent /cmd args` remain executable slash intents;
+- `text /cmd` opens the picker and renders `/cmd` as a command chip, but sends as normal
+  text because it is not an executable intent;
+- `/cmd args /other` opens the picker for `/other` and renders both command tokens, but
+  only the first executable intent controls the submit label and task creation;
+- registered command tokens must not be parsed as workspace file references.
+
+This keeps the Codex-style feel without introducing implicit multi-task execution.
+
+## Inline Rendering Rules
+
+The composer should eventually move from a raw `<textarea>` plus preview strip to a
+tokenized input surface. The implementation can still keep an internal plain-text
+serialization for persistence and submission, but the rendered editing surface should
+display tokens inline.
+
+Token rendering rules:
+
+- `slash_command`: blue/control-accent chip, command icon, display label, raw command in
+  compact metadata when needed; executable first command can receive a subtle underline
+  or accent edge, not a separate card.
+- `agent_mention`: teammate avatar or `@` icon plus display label; labels with spaces
+  remain one token.
+- `url_ref`: favicon or domain/provider icon plus canonical label; GitHub repository
+  URLs should render like `openai/openai-agents-python`, matching Codex's compact repo
+  token instead of a full link preview card.
+- `file_ref`: file icon plus shortened path and optional line suffix.
+- `text`: normal prose with the same baseline and line height as tokens.
+
+Interaction rules:
+
+- Backspace at the right edge of a token selects/removes that whole token.
+- Arrow keys move through tokens predictably; the caret can sit before or after a token.
+- Clicking a token selects it or opens a small contextual menu; it must not send or open
+  external content by surprise.
+- Copying from the composer serializes back to the original plain text, such as
+  `https://github.com/openai/openai-agents-python` or `/review`.
+- The submit path uses the serialized plain text plus structured refs, so no daemon
+  protocol change is required for the first inline-rendering slice.
+
 ## Implementation Slice
 
 The first implementation slice is deliberately narrow:
@@ -104,7 +186,11 @@ The first implementation slice is deliberately narrow:
 3. create task(s) for `/skill args`, `@agent /skill args`, and `@agentA @agentB /skill args`;
 4. leave normal chat mention behavior untouched;
 5. persist channel attachment ids on slash-created tasks;
-6. show a composer command picker for `/` and `@agent /` prefixes, and show a structured command chip once the draft resolves to a slash intent.
+6. show a composer command picker for `/` at token boundaries, including after
+   `@agent` prefixes and after earlier slash tokens;
+7. render structured slash command chips inline in the composer text flow, not as a
+   separate command card or preview strip, and only use the executable first intent to
+   change submit behavior.
 
 Open follow-up decisions:
 

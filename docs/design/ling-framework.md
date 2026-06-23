@@ -44,6 +44,9 @@ docs:
 - [Ling Memory v1](ling-memory-v1.md)
 - [Ling Skill Import v1](ling-skill-import-v1.md)
 - [Runtime Supervisor](runtime-supervisor.md)
+- [Runtime Control Plane Detailed Design](runtime-control-plane-detailed-design.md)
+- [Runner Registry](runner-registry.md)
+- [Runner Adapters](runner-adapters.md)
 - [Two-Layer Configuration](two-layer-configuration.md)
 - [Provider Presets](provider-presets.md)
 - [Approval Policy](approval-policy.md)
@@ -53,6 +56,266 @@ docs:
 - [Daemon Modularization](daemon-modularization.md)
 - [Web Modularization](web-modularization.md)
 - [State Machines and Recovery](state-machine-recovery.md)
+
+## Visual Framework Map
+
+This section is the complete visual map for the framework. The diagrams are Mermaid
+source blocks so the Markdown stays editable and reviewable.
+
+### 1. Whole System
+
+```mermaid
+flowchart TD
+  Web["Web app"] --> ApiClient["Shared API client"]
+  CLI["CLI"] --> ApiClient
+  Desktop["Desktop shell"] --> ApiClient
+
+  ApiClient --> Daemon["Local daemon gateway"]
+  Daemon --> Kernel["Platform kernel"]
+  Daemon --> Supervisor["Runtime supervisor"]
+  Daemon --> ExtensionHost["Extension host"]
+
+  Kernel --> Workspace["Workspace"]
+  Kernel --> Channels["Channels"]
+  Kernel --> Tasks["Tasks"]
+  Kernel --> Teammates["AI teammates"]
+  Kernel --> Runs["Runs"]
+  Kernel --> Approvals["Approvals"]
+  Kernel --> Artifacts["Artifacts and audit"]
+  Kernel --> Memory["Scoped memory"]
+  Kernel --> Policy["Policy and state machines"]
+
+  Supervisor --> WorkUnits["Work units"]
+  Supervisor --> Attempts["Attempts"]
+  Supervisor --> Heartbeats["Heartbeats"]
+  Supervisor --> Leases["Resource leases"]
+  Supervisor --> Recovery["Cancel, retry, startup recovery"]
+
+  ExtensionHost --> Providers["Provider adapters"]
+  ExtensionHost --> Runners["Runner adapters"]
+  ExtensionHost --> CoreTools["Core tools"]
+  ExtensionHost --> McpTools["MCP tools"]
+  ExtensionHost --> Skills["Skill packs"]
+  ExtensionHost --> Automations["Automations"]
+  ExtensionHost --> ChannelSources["Channel sources"]
+  ExtensionHost --> MemoryProviders["Retrieval providers"]
+
+  Runners --> Pi["pi runner, default"]
+  Runners --> Codex["codex-app-server, future"]
+  Runners --> Acp["openclaw-acp, future"]
+
+  Providers --> ChatModels["GPT, Claude, domestic models, relays"]
+  Providers --> MediaModels["Image and video providers"]
+
+  Kernel --> Store[("SQLite metadata")]
+  Kernel --> Files["Session files, logs, diffs, media"]
+  Kernel --> UserConfig["User config"]
+  Kernel --> WorkspaceConfig["Workspace config"]
+```
+
+### 2. Product Object Graph
+
+```mermaid
+flowchart TD
+  Workspace["Workspace"] --> Channel["Channel"]
+  Workspace --> Teammate["AI teammate"]
+  Workspace --> ProviderPreset["Provider preset"]
+  Workspace --> ApprovalProfile["Approval profile"]
+  Workspace --> SkillRegistry["Skill registry"]
+  Workspace --> SharedMemory["Workspace memory"]
+
+  Channel --> Task["Task"]
+  Channel --> ChannelMemory["Channel memory"]
+  Channel --> ChannelPolicy["Channel runtime policy"]
+  Channel --> Attachments["Attachments and context"]
+  Channel --> Decisions["Decisions"]
+
+  Teammate --> TeammatePolicy["Allowed tools and approvals"]
+  Teammate --> TeammateSkills["Skill bindings"]
+  Teammate --> TeammateMemory["Private memory"]
+  Teammate --> TeammateProvider["Default provider or model"]
+  Teammate --> DirectThread["Private direct thread"]
+
+  Task --> Run["Run"]
+  Run --> WorkUnit["Work unit"]
+  Run --> RuntimeEvents["Runtime events"]
+  Run --> RunArtifacts["Run artifacts"]
+  Run --> UsedMemory["Used-memory audit"]
+
+  SkillRegistry --> EffectiveSkill["Effective skill read model"]
+  TeammateSkills --> EffectiveSkill
+  TeammatePolicy --> EffectiveSkill
+  ChannelPolicy --> EffectiveSkill
+  ApprovalProfile --> EffectiveSkill
+```
+
+### 3. Run Execution Path
+
+```mermaid
+flowchart LR
+  Intent["User intent, channel reply, direct chat, automation"] --> Envelope["Task or run envelope"]
+  Envelope --> Actor["Resolve actor: user, teammate, system"]
+  Actor --> Skill["Resolve skill"]
+  Skill --> Provider["Resolve provider and capability"]
+  Provider --> Memory["Resolve memory scopes"]
+  Memory --> Tools["Resolve core and MCP tools"]
+  Tools --> Approval["Evaluate approval policy"]
+  Approval -->|allow| WorkUnit["Create supervised work unit"]
+  Approval -->|ask| Pending["Approval request"]
+  Pending -->|approved| WorkUnit
+  Pending -->|denied| Blocked["Blocked run"]
+  Approval -->|deny| Blocked
+
+  WorkUnit --> Registry["Runner registry"]
+  Registry --> Runner["Effective runner"]
+  Runner --> Events["Stream normalized events"]
+  Events --> Store["Persist events and state"]
+  Events --> Artifacts["Import artifacts"]
+  Store --> Report["Final report and audit trail"]
+  Artifacts --> Report
+```
+
+### 4. Permission And Trust Gates
+
+```mermaid
+flowchart TD
+  Persona["Persona or AGENT.md"] --> Behavior["Behavior shaping only"]
+  SkillText["Skill text"] --> Behavior
+  MemoryHit["Memory hit"] --> Context["Prompt context only"]
+  Attachment["Attachment or imported doc"] --> Context
+
+  TeammatePolicy["Teammate policy"] --> Authority["Effective run authority"]
+  ChannelPolicy["Channel policy"] --> Authority
+  ProviderCapability["Provider capability"] --> Authority
+  ToolAllowlist["Allowed tools"] --> Authority
+  ApprovalPolicy["Approval policy"] --> Authority
+  StateMachine["State-machine legality"] --> Authority
+  ResourceLease["Resource lease"] --> Authority
+
+  Behavior --> RunRequest["Run request"]
+  Context --> RunRequest
+  Authority --> Gate["Allow, ask, deny, or block"]
+  RunRequest --> Gate
+
+  Gate -->|allowed| Execution["Runner execution"]
+  Gate -->|ask| HumanApproval["Human approval"]
+  Gate -->|deny or invalid| NoExecution["No side effect"]
+```
+
+Persona, skill, memory, and imported markdown can affect prompts and context. They cannot
+grant execution authority. Authority comes from policy, capability, approval, leases,
+and legal state transitions.
+
+### 5. Runtime Control Plane
+
+```mermaid
+flowchart TD
+  Clients["Web, CLI, desktop, future workers"] --> ControlPlane["Daemon control plane"]
+
+  ControlPlane --> WorkUnits["Work units"]
+  ControlPlane --> Attempts["Attempts"]
+  ControlPlane --> Heartbeats["Heartbeats"]
+  ControlPlane --> RuntimeEvents["Runtime events"]
+  ControlPlane --> Approvals["Approval ownership"]
+  ControlPlane --> ArtifactIndex["Artifact snapshots"]
+  ControlPlane --> RunnerRegistry["Runner registry"]
+  ControlPlane --> Recovery["Startup reconcile and stale recovery"]
+
+  RunnerRegistry --> PiRunner["pi, enabled default"]
+  RunnerRegistry --> CodexRunner["codex-app-server, disabled future"]
+  RunnerRegistry --> AcpRunner["openclaw-acp, disabled future"]
+
+  PiRunner --> PiKernel["@earendil-works/pi-coding-agent"]
+  CodexRunner --> ExternalKernel["External agent server"]
+  AcpRunner --> ExternalKernel
+
+  RuntimeEvents --> DurableStore[("Durable store")]
+  WorkUnits --> DurableStore
+  Attempts --> DurableStore
+  Heartbeats --> DurableStore
+  ArtifactIndex --> DurableStore
+```
+
+The default runner is `pi`. Future Codex or ACP runners are adapters behind the same
+registry and conformance contract, not replacements for Ling's control plane.
+
+### 6. Data And Evidence Ownership
+
+```mermaid
+flowchart TD
+  UserHome["User-level config"] --> UserDefaults["Provider templates, plugin cache, recent workspaces, operator prefs"]
+  WorkspaceRoot["Workspace .ling-stack"] --> Sqlite[("ling-stack.sqlite")]
+  WorkspaceRoot --> Sessions["sessions"]
+  WorkspaceRoot --> Artifacts["artifacts"]
+  WorkspaceRoot --> Logs["logs"]
+  WorkspaceRoot --> RuntimeSettings["runtime-settings.json"]
+
+  Sqlite --> DomainState["Workspace, channels, tasks, runs, approvals"]
+  Sqlite --> RuntimeState["Work units, attempts, leases, semaphores"]
+  Sqlite --> MemoryState["Memory objects and review state"]
+  Sqlite --> PluginState["Plugin, MCP, skill, provider metadata"]
+
+  Sessions --> Transcripts["Run events and summaries"]
+  Artifacts --> Evidence["Diffs, files, media, previews, external evidence"]
+  Logs --> Diagnostics["Daemon and runtime diagnostics"]
+
+  SecretRefs["Secret refs"] --> Resolver["Secret resolver"]
+  Resolver --> Env["env refs for development"]
+  Resolver --> Keychain["keychain refs for desktop"]
+  Resolver --> Redaction["Redacted logs and artifacts"]
+```
+
+Raw secrets must not be stored in JSON config, logs, artifacts, run snapshots, or renderer
+state. Secret refs are resolved only by trusted daemon paths.
+
+### 7. Current Repo Boundary
+
+```mermaid
+flowchart TD
+  Contracts["packages/contracts"] --> WebApi["apps/web API adapters"]
+  Contracts --> ApiClient["packages/api-client"]
+  Contracts --> DaemonRoutes["packages/daemon routes"]
+
+  Core["packages/core"] --> Stores["SQLite stores and domain types"]
+  Stores --> DaemonRoutes
+
+  Daemon["packages/daemon"] --> Runtime["runtime supervisor and runner registry"]
+  Daemon --> Features["feature route modules"]
+  Features --> Channels["channels"]
+  Features --> Runs["runs"]
+  Features --> Teammates["teammates"]
+  Features --> Skills["skills"]
+  Features --> Memory["memory"]
+  Features --> ProvidersFeature["providers"]
+  Features --> Plugins["plugins and MCP"]
+  Features --> ExternalWork["external work"]
+  Features --> Automations["automations"]
+  Features --> Media["media"]
+
+  RunnerPi["packages/runner-pi"] --> PiKernel["Pi coding-agent kernel"]
+  ProvidersPkg["packages/providers"] --> ProviderAdapters["model and media adapters"]
+  PluginSdk["packages/plugin-sdk"] --> PluginContracts["future plugin contribution contracts"]
+  Cli["packages/cli"] --> ApiClient
+  Web["apps/web"] --> WebApi
+
+  Runtime --> RunnerPi
+  ProvidersFeature --> ProvidersPkg
+  Plugins --> PluginSdk
+```
+
+## Framework Contracts
+
+| Contract | Owner | Rule |
+| --- | --- | --- |
+| Durable state | Platform kernel and core store | Clients and extensions never write durable state directly. |
+| Execution control | Runtime supervisor and control plane | Work enters through work units, attempts, leases, and audited transitions. |
+| Runner choice | Runner registry | `pi` is the current default; future runners pass readiness and conformance gates first. |
+| Provider choice | Provider presets and capability checks | Providers are selected by capability, readiness, secret status, and run context. |
+| Skill use | Effective skill read model | Skill text is a workflow template, not permission. |
+| Tool use | Approval policy plus tool allowlists | Read-only tools can default allow; side-effect tools ask or deny by policy. |
+| Memory use | Scoped recall policy | Memory can supply context with provenance; it cannot grant authority. |
+| Plugin use | Plugin manager and extension host | Plugins expose resources for binding; enabling a plugin is not tool authorization. |
+| Evidence | Artifacts, logs, snapshots, audit events | Every side effect should be attributable to actor, policy, approval, and state. |
 
 ## Product Positioning
 
