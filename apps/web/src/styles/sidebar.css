@@ -279,6 +279,55 @@
   background: transparent;
 }
 
+.channel-left-drawer .sidebar-channel-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.channel-left-drawer .sidebar-channel-avatar.tone-slate {
+  border-color: #d4d4d4;
+  background: #f5f5f5;
+  color: #404040;
+}
+
+.channel-left-drawer .sidebar-channel-avatar.tone-blue {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.channel-left-drawer .sidebar-channel-avatar.tone-teal {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+  color: #0f766e;
+}
+
+.channel-left-drawer .sidebar-channel-avatar.tone-amber {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.channel-left-drawer .sidebar-channel-avatar.tone-rose {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.channel-left-drawer .sidebar-channel-avatar.tone-violet {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
 .channel-left-drawer .sidebar-bottom,
 .channel-left-drawer .sidebar-config {
   display: grid;
@@ -387,7 +436,7 @@
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item span,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-title > span:first-child,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row span:not(.avatar-initial):not(.channel-mention):not(.channel-unread),
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main span:not(.channel-mention):not(.channel-unread),
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main span:not(.sidebar-channel-avatar):not(.channel-mention):not(.channel-unread),
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button-label,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-inbox-alert span:not(.status-dot) {
   display: none;
@@ -417,8 +466,17 @@
 }
 
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-hash {
-  width: auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
   font-size: 16px;
+  line-height: 20px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-channel-avatar {
+  width: 20px;
+  height: 20px;
 }
 
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .teammate-avatar-image.compact,
@@ -442,4 +500,23 @@
   position: absolute;
   right: 6px;
   top: 6px;
+}
+
+.sidebar-hover-tooltip {
+  position: fixed;
+  z-index: 500;
+  max-width: min(260px, calc(100vw - 72px));
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text-strong);
+  box-shadow: 0 12px 28px rgba(17, 17, 17, 0.14);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  transform: translateY(-50%);
+  white-space: normal;
 }

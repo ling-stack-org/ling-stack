@@ -407,6 +407,9 @@ function MediaJobDetail({
   const canRun = job.status === "queued" || job.status === "waiting_for_approval" || job.status === "failed" || job.status === "cancelled" || (job.artifactIds.length > 0 && artifacts.length === 0);
   const hasMissingResult = job.artifactIds.length > 0 && artifacts.length === 0;
   const needsRecovery = Boolean(job.errorMessage || hasMissingResult);
+  const size = mediaJobInputValue(job.input, ["size", "resolution", "image_size", "imageSize"]);
+  const seed = mediaJobInputValue(job.input, ["seed"]);
+  const steps = mediaJobInputValue(job.input, ["steps", "num_steps", "numSteps"]);
   return (
     <div className="media-job-detail-content">
       <div className="media-job-detail-head">
@@ -433,8 +436,8 @@ function MediaJobDetail({
         <MediaJobResultHero artifact={primaryArtifact} cwd={cwd} />
       ) : (
         <span className={`media-job-detail-preview empty ${job.status}`}>
-          {needsRecovery ? <CircleAlert size={22} /> : <ImageIcon size={22} />}
-          <strong>{needsRecovery ? t("Needs recovery") : t("No result yet")}</strong>
+          {isRunning ? <Loader2 className="spin" size={22} /> : needsRecovery ? <CircleAlert size={22} /> : <ImageIcon size={22} />}
+          <strong>{isRunning ? t("Running") : needsRecovery ? t("Needs recovery") : t("No result yet")}</strong>
         </span>
       )}
 
@@ -449,12 +452,19 @@ function MediaJobDetail({
         </button>
       </div>
 
+      <div className="media-job-detail-meta stitch-params" aria-label={t("Generation task parameters")}>
+        <span>{t("Model")}<strong>{providerName}</strong></span>
+        <span>{t("Size")}<strong>{size}</strong></span>
+        <span>{t("Seed")}<strong>{seed}</strong></span>
+        <span>{t("Steps")}<strong>{steps}</strong></span>
+      </div>
+
       <details className="media-job-detail-disclosure" open>
         <summary>{t("View full prompt")}</summary>
         <p>{job.prompt}</p>
       </details>
 
-      <div className="media-job-detail-meta">
+      <div className="media-job-detail-meta runtime-meta">
         <span>{t("Provider")}<strong>{providerName}</strong></span>
         <span>{t("Status")}<strong>{t(mediaJobStatusLabel(job.status))}</strong></span>
         <span>{t("Created")}<strong>{formatDateTime(job.createdAt)}</strong></span>
@@ -519,18 +529,29 @@ function MediaJobResultPreview({
   }
   if (artifact) {
     return (
-      <a className="media-job-result-preview file" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-        <ImageIcon size={20} />
-        <strong>{t("{count} generated results", { count })}</strong>
+      <a className="media-job-result-preview file" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} aria-label={t("{count} generated results", { count })}>
+        <CircleAlert size={20} />
       </a>
     );
   }
   return (
-    <span className={`media-job-result-preview empty ${status}`}>
-      {status === "failed" || status === "cancelled" ? <CircleAlert size={20} /> : <ImageIcon size={20} />}
-      <strong>{status === "failed" || status === "cancelled" ? t("Needs recovery") : t("No result yet")}</strong>
+    <span className={`media-job-result-preview empty ${status}`} aria-label={t(mediaJobStatusLabel(status))}>
+      {status === "running" ? <Loader2 className="spin" size={20} /> : <CircleAlert size={20} />}
     </span>
   );
+}
+
+function mediaJobInputValue(input: Record<string, unknown>, keys: readonly string[]): string {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return "--";
 }
 
 function mediaOperationLabel(operation: MediaOperation): string {

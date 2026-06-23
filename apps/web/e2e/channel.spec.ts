@@ -155,6 +155,10 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const brandCopy = document.querySelector(".channel-left-drawer .sidebar-brand-copy");
     const firstNavText = document.querySelector(".channel-left-drawer .primary-nav .nav-item span");
     const settingsLabel = document.querySelector(".channel-left-drawer .config-button-label");
+    const selectedChannelAvatar = document.querySelector(".channel-left-drawer .sidebar-row-shell.selected .sidebar-channel-avatar");
+    const selectedChannelHash = document.querySelectorAll(".channel-left-drawer .sidebar-row-shell.selected .sidebar-hash");
+    const selectedChannelButton = document.querySelector(".channel-left-drawer .sidebar-row-shell.selected .sidebar-row-main");
+    const teammateButton = document.querySelector('.channel-left-drawer .sidebar-row[title="Designer"]');
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
@@ -164,6 +168,12 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       brandCopyDisplay: brandCopy ? getComputedStyle(brandCopy).display : "",
       firstNavTextDisplay: firstNavText ? getComputedStyle(firstNavText).display : "",
       settingsLabelDisplay: settingsLabel ? getComputedStyle(settingsLabel).display : "",
+      selectedChannelAvatarDisplay: selectedChannelAvatar ? getComputedStyle(selectedChannelAvatar).display : "",
+      selectedChannelAvatarText: selectedChannelAvatar?.textContent?.trim() ?? "",
+      selectedChannelAvatarWidth: Math.round(selectedChannelAvatar?.getBoundingClientRect().width ?? 0),
+      selectedChannelHashCount: selectedChannelHash.length,
+      selectedChannelTitle: selectedChannelButton?.getAttribute("title") ?? "",
+      teammateTitle: teammateButton?.getAttribute("title") ?? "",
     };
   });
   expect(leftCollapsed.columns.startsWith("52px ")).toBe(true);
@@ -174,6 +184,21 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(leftCollapsed.brandCopyDisplay).toBe("none");
   expect(leftCollapsed.firstNavTextDisplay).toBe("none");
   expect(leftCollapsed.settingsLabelDisplay).toBe("none");
+  expect(leftCollapsed.selectedChannelAvatarDisplay).toBe("grid");
+  expect(leftCollapsed.selectedChannelAvatarText).toBe("EN");
+  expect(leftCollapsed.selectedChannelAvatarWidth).toBe(20);
+  expect(leftCollapsed.selectedChannelHashCount).toBe(0);
+  expect(leftCollapsed.selectedChannelTitle).toBe("Engineering");
+  expect(leftCollapsed.teammateTitle).toBe("Designer");
+
+  const sidebarTooltip = page.locator(".sidebar-hover-tooltip");
+  await navigation.locator(".sidebar-row-shell.selected .sidebar-row-main").hover();
+  await expect(sidebarTooltip).toHaveText("Engineering");
+  await expect.poll(async () => sidebarTooltip.evaluate((node) => Math.round(node.getBoundingClientRect().left))).toBeGreaterThan(45);
+  await navigation.locator('.sidebar-row[title="Designer"]').hover();
+  await expect(sidebarTooltip).toHaveText("Designer");
+  await navigation.getByRole("button", { name: "Settings" }).focus();
+  await expect(sidebarTooltip).toHaveText("Settings");
 
   await navigation.getByRole("button", { name: "Image Generation" }).click();
   await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
