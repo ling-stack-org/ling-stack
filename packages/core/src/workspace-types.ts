@@ -486,6 +486,7 @@ export interface Task {
   readonly status: TaskStatus;
   readonly assigneeTeammateId?: string;
   readonly requestedSkillId?: string;
+  readonly attachmentIds: readonly string[];
   readonly currentRunId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -498,6 +499,7 @@ export interface CreateTaskInput {
   readonly status?: TaskStatus;
   readonly assigneeTeammateId?: string;
   readonly requestedSkillId?: string;
+  readonly attachmentIds?: readonly string[];
 }
 
 export interface TaskUpdateInput {
@@ -507,6 +509,7 @@ export interface TaskUpdateInput {
   readonly status?: TaskStatus;
   readonly assigneeTeammateId?: string | null;
   readonly requestedSkillId?: string | null;
+  readonly attachmentIds?: readonly string[];
   readonly currentRunId?: string | null;
 }
 

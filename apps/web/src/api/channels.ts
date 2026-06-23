@@ -61,6 +61,7 @@ import type {
   CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
+  CreateTaskRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
@@ -68,7 +69,6 @@ import type {
   StartChannelWorkflowStepRequest,
   Task,
   TaskEditFormState,
-  TaskFormState,
   TaskListResponse,
   TaskMutationResponse,
   UpdateChannelBriefRequest,
@@ -521,13 +521,14 @@ export async function listTasks(cwd: string, channelId?: string): Promise<TaskLi
   return daemonClient.listTasks(cwd, { channelId });
 }
 
-export async function createTask(cwd: string, channelId: string, form: TaskFormState): Promise<TaskMutationResponse> {
+export async function createTask(cwd: string, channelId: string, form: Omit<CreateTaskRequest, "channelId">): Promise<TaskMutationResponse> {
   return daemonClient.createTask(cwd, {
     channelId,
     title: form.title,
     prompt: form.prompt,
     assigneeTeammateId: form.assigneeTeammateId,
     requestedSkillId: form.requestedSkillId,
+    attachmentIds: form.attachmentIds,
   });
 }
 

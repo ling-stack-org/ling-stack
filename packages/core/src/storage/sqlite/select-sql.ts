@@ -440,6 +440,7 @@ export function taskSelectSql(whereClause: string): string {
       status,
       assignee_teammate_id,
       requested_skill_id,
+      attachment_ids_json,
       current_run_id,
       created_at,
       updated_at

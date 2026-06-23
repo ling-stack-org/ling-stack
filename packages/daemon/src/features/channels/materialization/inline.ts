@@ -31,9 +31,16 @@ export interface MaterializeInlineChannelInputsInput {
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }
 
-export async function materializeInlineChannelInputs(input: MaterializeInlineChannelInputsInput): Promise<void> {
-  const materializeLinkBodies = referencesLinkBody(input.sourceMessage.body);
-  for (const attachmentId of input.sourceMessage.attachmentIds) {
+export interface MaterializeChannelAttachmentIdsInput {
+  readonly store: ChannelStoreFacet & RunStorePathsFacet;
+  readonly channel: Channel;
+  readonly attachmentIds: readonly string[];
+  readonly now: string;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
+}
+
+export async function materializeChannelAttachmentIds(input: MaterializeChannelAttachmentIdsInput): Promise<void> {
+  for (const attachmentId of input.attachmentIds) {
     const attachment = input.store.getChannelAttachment(attachmentId);
     if (!attachment || attachment.channelId !== input.channel.id) {
       continue;
@@ -78,6 +85,17 @@ export async function materializeInlineChannelInputs(input: MaterializeInlineCha
       });
     }
   }
+}
+
+export async function materializeInlineChannelInputs(input: MaterializeInlineChannelInputsInput): Promise<void> {
+  const materializeLinkBodies = referencesLinkBody(input.sourceMessage.body);
+  await materializeChannelAttachmentIds({
+    store: input.store,
+    channel: input.channel,
+    attachmentIds: input.sourceMessage.attachmentIds,
+    now: input.now,
+    imageVisionSummarizer: input.imageVisionSummarizer,
+  });
   if (!materializeLinkBodies) {
     return;
   }
@@ -130,7 +148,7 @@ export async function materializeInlineChannelInputs(input: MaterializeInlineCha
   }
 }
 
-interface MaterializeAttachmentWithExtractorInput extends MaterializeInlineChannelInputsInput {
+interface MaterializeAttachmentWithExtractorInput extends MaterializeChannelAttachmentIdsInput {
   readonly attachment: ChannelAttachment;
   readonly extractor: LingInputExtractor;
   readonly maxBytes: number;

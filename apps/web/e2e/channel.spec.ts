@@ -1496,6 +1496,27 @@ test("channel composer sends workspace file refs as native message payload", asy
   await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
 });
 
+test("channel composer does not render multi-agent slash command tokens as file refs", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("@Engineer @Designer /review apps/web");
+
+  const pendingAssets = page.getByLabel("Pending message assets");
+  await expect(pendingAssets.locator(".composer-structured-token.command")).toContainText("@Engineer @Designer /review");
+  await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
+  await expect(pendingAssets.locator(".composer-structured-token.file-reference").filter({ hasText: "apps/web" })).toHaveCount(1);
+  await expect(page.locator(".channel-composer").getByRole("button", { name: "Create task" })).toBeEnabled();
+});
+
 test("channel screenshot request shows materialization clarify reply instead of hidden routing", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

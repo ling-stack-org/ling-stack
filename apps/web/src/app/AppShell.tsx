@@ -121,11 +121,13 @@ import { useChannelActionsController } from "./use-channel-actions-controller.js
 import { useChannelWorkflowController } from "./use-channel-workflow-controller.js";
 import { useControlPlaneInvalidation } from "./use-control-plane-invalidation.js";
 import { useProviderUsageController } from "./use-provider-usage-controller.js";
+import { useSlashCommandRegistry } from "./use-slash-command-registry.js";
 import { useTaskRunController } from "./use-task-run-controller.js";
 import { useWorkspaceSettingsController } from "./use-workspace-settings-controller.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
+const builtinSlashCommandSkills = builtinSkillPack?.skills ?? [];
 
 const defaultForm: RunFormState = {
   cwd: "",
@@ -192,6 +194,11 @@ export function AppShell(): JSX.Element {
     daemonBaseUrl,
   } = useRunCommandController();
   const { getDaemonHealth } = useSettingsCommandController();
+  const slashCommands = useSlashCommandRegistry({
+    workspaceCwd: form.cwd.trim(),
+    refreshToken: skillLibraryRefreshToken,
+    fallbackSkills: builtinSlashCommandSkills,
+  });
   const {
     cancelChannelWorkflow,
     channelAttachmentContentUrl,
@@ -1071,6 +1078,7 @@ export function AppShell(): JSX.Element {
     archiveSidebarChannelBranch,
     removeChannel,
     saveTask,
+    createTaskFromSlashCommand,
     sendChannelMessage,
     uploadChannelFiles,
     addChannelLinkPreview,
@@ -1708,6 +1716,7 @@ export function AppShell(): JSX.Element {
             selectedTaskId={selectedTaskId}
             providers={providers}
             teammateTemplates={aiTeammates.length > 0 ? [] : builtinTeammateTemplates}
+            slashCommands={slashCommands}
             localTeammates={localTeammates}
             channelTeammateMemberships={selectedChannelTeammateMemberships}
             channelTeammateMembershipsLoading={teammateChannelMembershipsLoading}
@@ -1764,6 +1773,7 @@ export function AppShell(): JSX.Element {
             onCreateChannel={() => void saveChannel()}
             onSaveChannel={() => selectedChannelId ? void saveChannelEdit(selectedChannelId) : undefined}
             onCreateTask={() => void saveTask()}
+            onCreateTaskFromSlashCommand={createTaskFromSlashCommand}
             onSendMessage={sendChannelMessage}
             onConfirmExecutionProposal={(proposal) => void confirmChannelExecutionProposal(proposal)}
             onCancelExecutionProposal={(proposal) => void cancelChannelExecutionProposal(proposal)}

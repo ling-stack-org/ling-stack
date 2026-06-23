@@ -947,6 +947,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
         title: "Inspect workspace",
         prompt: "Inspect the repo and report next steps.",
         status: "failed",
+        attachmentIds: [],
         currentRunId: run.id,
         createdAt: "2026-05-22T00:00:00.000Z",
         updatedAt: "2026-05-22T00:01:00.000Z",
@@ -9724,6 +9725,7 @@ export async function handleDaemonRoute(
       status: "todo",
       assigneeTeammateId: typeof body.assigneeTeammateId === "string" ? body.assigneeTeammateId : undefined,
       requestedSkillId: typeof body.requestedSkillId === "string" ? body.requestedSkillId : undefined,
+      attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds.filter((item): item is string => typeof item === "string") : [],
       createdAt: "2026-05-25T00:19:00.000Z",
       updatedAt: "2026-05-25T00:19:00.000Z",
     };

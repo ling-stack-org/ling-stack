@@ -7,7 +7,7 @@ import {
   type Task,
   type TaskUpdateInput,
 } from "../../workspace-types.js";
-import { nullableUpdate } from "./helpers.js";
+import { nullableUpdate, stringifyJson } from "./helpers.js";
 import { taskSelectSql } from "./select-sql.js";
 import { mapTask } from "./task-skill-mappers.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -25,6 +25,7 @@ export class SqliteTaskStore {
       status: input.status ?? "todo",
       assigneeTeammateId: input.assigneeTeammateId,
       requestedSkillId: input.requestedSkillId,
+      attachmentIds: input.attachmentIds ?? [],
       createdAt: now,
       updatedAt: now,
     };
@@ -40,10 +41,11 @@ export class SqliteTaskStore {
           status,
           assignee_teammate_id,
           requested_skill_id,
+          attachment_ids_json,
           current_run_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         task.id,
@@ -54,6 +56,7 @@ export class SqliteTaskStore {
         task.status,
         task.assigneeTeammateId ?? null,
         task.requestedSkillId ?? null,
+        stringifyJson(task.attachmentIds),
         task.currentRunId ?? null,
         task.createdAt,
         task.updatedAt,
@@ -108,6 +111,7 @@ export class SqliteTaskStore {
       status: input.status ?? existing.status,
       assigneeTeammateId: nullableUpdate(input.assigneeTeammateId, existing.assigneeTeammateId),
       requestedSkillId: nullableUpdate(input.requestedSkillId, existing.requestedSkillId),
+      attachmentIds: input.attachmentIds ?? existing.attachmentIds,
       currentRunId: nullableUpdate(input.currentRunId, existing.currentRunId),
       updatedAt: now,
     };
@@ -122,6 +126,7 @@ export class SqliteTaskStore {
           status = ?,
           assignee_teammate_id = ?,
           requested_skill_id = ?,
+          attachment_ids_json = ?,
           current_run_id = ?,
           updated_at = ?
         WHERE id = ?
@@ -133,6 +138,7 @@ export class SqliteTaskStore {
         next.status,
         next.assigneeTeammateId ?? null,
         next.requestedSkillId ?? null,
+        stringifyJson(next.attachmentIds),
         next.currentRunId ?? null,
         next.updatedAt,
         id,

@@ -9,6 +9,7 @@ export interface Task {
   readonly status: TaskStatus;
   readonly assigneeTeammateId?: string;
   readonly requestedSkillId?: string;
+  readonly attachmentIds: readonly string[];
   readonly currentRunId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -29,6 +30,7 @@ export interface CreateTaskRequest {
   readonly prompt: string;
   readonly assigneeTeammateId?: string;
   readonly requestedSkillId?: string;
+  readonly attachmentIds?: readonly string[];
 }
 
 export interface UpdateTaskRequest {
@@ -38,6 +40,7 @@ export interface UpdateTaskRequest {
   readonly status?: TaskStatus;
   readonly assigneeTeammateId?: string | null;
   readonly requestedSkillId?: string | null;
+  readonly attachmentIds?: readonly string[];
 }
 
 export interface ListTasksRequest {

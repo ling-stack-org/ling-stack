@@ -7083,6 +7083,47 @@ test("task run validates requestedSkillId and records the selected skill", async
   }
 });
 
+test("task run materializes linked channel attachments into runner prompt", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-task-attachment-run-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "brief.txt",
+      contentType: "text/plain",
+      contentBase64: Buffer.from("Slash task attachment body", "utf8").toString("base64"),
+    })).attachment;
+    const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      title: "Review attached brief",
+      prompt: "Review the attached brief.",
+      attachmentIds: [attachment.id],
+    })).task;
+    assert.deepEqual(task.attachmentIds, [attachment.id]);
+
+    await postTaskRunAndReadReadyRunId(daemon.url, cwd, task.id, {
+      providerPresetId: provider.id,
+      skipProviderPreflight: true,
+    });
+
+    assert.equal(runner.runs.length, 1);
+    const prompt = runner.runs[0].task.prompt;
+    assert.match(prompt, /Review the attached brief\./);
+    assert.match(prompt, /Task attachments:/);
+    assert.match(prompt, /brief\.txt/);
+    assert.match(prompt, /Slash task attachment body/);
+
+    const durableTask = (await getJson(`${daemon.url}/tasks/${encodeURIComponent(task.id)}?cwd=${encodeURIComponent(cwd)}`)).task;
+    assert.equal(durableTask.prompt, "Review the attached brief.");
+    assert.deepEqual(durableTask.attachmentIds, [attachment.id]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("skill suggestions are visible recommendations and do not mutate run selection", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-suggestions-"));
   const runner = new RecordingRunner();

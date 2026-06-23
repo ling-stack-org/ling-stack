@@ -44,6 +44,7 @@ export function parseCreateTaskInput(value: unknown): CreateTaskInput {
     status: readOptionalTaskStatus(value, "status"),
     assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
     requestedSkillId: readOptionalString(value, "requestedSkillId"),
+    attachmentIds: readOptionalStringArray(value, "attachmentIds"),
   };
   validateTaskInput(input);
   return input;
@@ -60,6 +61,7 @@ export function parseTaskUpdateInput(value: unknown): TaskUpdateInput {
     status: readOptionalTaskStatus(value, "status"),
     assigneeTeammateId: readNullableString(value, "assigneeTeammateId"),
     requestedSkillId: readNullableString(value, "requestedSkillId"),
+    attachmentIds: readOptionalStringArray(value, "attachmentIds"),
     currentRunId: readNullableString(value, "currentRunId"),
   };
   validateTaskInput(input);
@@ -184,6 +186,9 @@ function validateTaskInput(input: TaskUpdateInput): void {
   }
   if (input.requestedSkillId !== undefined && input.requestedSkillId !== null && input.requestedSkillId.trim().length === 0) {
     throw new Error("requestedSkillId must be a non-empty string");
+  }
+  if (input.attachmentIds !== undefined && input.attachmentIds.length > 10) {
+    throw new Error("A task can reference at most 10 attachments");
   }
 }
 

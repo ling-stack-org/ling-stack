@@ -183,6 +183,7 @@ import { resolveProviderForRun } from "../features/runs/providers.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
+import { materializeTaskAttachmentsForPrompt } from "../features/tasks/task-attachments.js";
 import {
   DirectReplyControlService,
   handleTeammateDirectInterventionCancel,
@@ -1816,6 +1817,15 @@ export async function routeRequest(
             writeJson(response, 409, { error: "channel_workspace_unavailable", message: workspace.message });
             return;
           }
+          const store = storeRegistry.getStore(workspaceCwd);
+          const taskAttachmentPrompt = await materializeTaskAttachmentsForPrompt({
+            store,
+            channel,
+            task,
+            now: new Date().toISOString(),
+            imageVisionSummarizer,
+          });
+          const taskPrompt = taskAttachmentPrompt ? `${task.prompt}\n\n${taskAttachmentPrompt}` : task.prompt;
           await executeRunRequest(
             {
               workspaceCwd,
@@ -1829,7 +1839,7 @@ export async function routeRequest(
               task: {
                 id: task.id,
                 title: task.title,
-                prompt: task.prompt,
+                prompt: taskPrompt,
                 channelId: task.channelId,
               },
               tools: runRequest.tools ?? channel.allowedTools,
