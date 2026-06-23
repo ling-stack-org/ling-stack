@@ -67,8 +67,6 @@ export function SidebarNavigation({
   onCreateTeammate,
   onCreateChannelBranch,
   onArchiveChannel,
-  onArchiveAllChannels,
-  onArchiveAllTeammateChats,
   onArchiveChannelBranch,
   onSelectChannel,
   onSelectChannelBranch,
@@ -91,8 +89,6 @@ export function SidebarNavigation({
   readonly onCreateTeammate?: () => void;
   readonly onCreateChannelBranch?: (channelId: string, name: string) => void | Promise<void>;
   readonly onArchiveChannel?: (channelId: string) => void | Promise<void>;
-  readonly onArchiveAllChannels?: () => void | Promise<void>;
-  readonly onArchiveAllTeammateChats?: () => void | Promise<void>;
   readonly onArchiveChannelBranch?: (channelId: string, branchId: string) => void | Promise<void>;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onSelectChannelBranch?: (channelId: string, branchId: string) => void;
@@ -212,15 +208,6 @@ export function SidebarNavigation({
             label: t("New channel"),
             icon: <Plus size={14} />,
             onSelect: onCreateChannel,
-          },
-          {
-            id: "archive-all-channels",
-            label: t("Archive all channels"),
-            icon: <Archive size={14} />,
-            disabled: channels.length === 0 || !onArchiveAllChannels,
-            disabledLabel: t("No channels to archive"),
-            danger: true,
-            onSelect: () => void onArchiveAllChannels?.(),
           },
         ]}
       >
@@ -363,15 +350,6 @@ export function SidebarNavigation({
             icon: <Plus size={14} />,
             disabled: !onCreateTeammate,
             onSelect: () => onCreateTeammate?.(),
-          },
-          {
-            id: "archive-all-chats",
-            label: t("Archive all chats"),
-            icon: <Archive size={14} />,
-            disabled: visibleTeammates.length === 0 || !onArchiveAllTeammateChats,
-            disabledLabel: t("No chats to archive"),
-            danger: true,
-            onSelect: () => void onArchiveAllTeammateChats?.(),
           },
         ]}
       >

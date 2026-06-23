@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
+  createChatProvider,
   createExternalWorkStatus,
   createMockTeammate,
   isRecord,
@@ -230,6 +231,66 @@ test("settings developer section contains startup readiness", async ({ page }) =
   await expect(developerPanel).toContainText("ready");
   await expect(developerPanel.getByRole("button", { name: "Refresh" })).toBeVisible();
   await expect(developerPanel.getByRole("button", { name: "Open Run Diagnostics" })).toBeVisible();
+});
+
+test("settings workspace tools use compact rows and live counts", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready_settings",
+      displayName: "Ready Relay",
+      lastCheck: { ok: true, message: "ok", checkedAt: "2026-06-23T00:00:00.000Z" },
+    }),
+  ];
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_settings_engineer", displayName: "Engineer" }),
+    createMockTeammate({ id: "teammate_settings_designer", displayName: "Designer" }),
+  ];
+  state.workItems = [
+    {
+      id: "work_item_settings_review",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceType: "channel_task",
+      sourceId: "task_settings_review",
+      title: "Review settings screenshot",
+      description: "Verify the compact workspace tools page.",
+      status: "ready",
+      priority: "normal",
+      labels: [],
+      taskId: "task_settings_review",
+      artifactIds: [],
+      proofArtifactIds: [],
+      dependencyIds: [],
+      attemptCount: 0,
+      retryBudget: 1,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  const settingsSections = page.getByLabel("Settings sections");
+  await expect(settingsSections.getByText("System", { exact: true })).toBeVisible();
+  await expect(settingsSections.getByText("Extensions", { exact: true })).toBeVisible();
+  await expect(settingsSections).not.toContainText("Model, teammates, and board shortcuts");
+  await expect(settingsSections).not.toContainText("Profile, preferences, and identity");
+
+  const workspaceTools = page.locator(".settings-workspace-tools");
+  await expect(workspaceTools.getByRole("heading", { name: "Workspace tools" })).toBeVisible();
+  await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(3);
+  await expect(workspaceTools.locator(".settings-tool-row.selected")).toHaveCount(0);
+  await expect(workspaceTools).toContainText("1 available model");
+  await expect(workspaceTools).toContainText("2 teammates");
+  await expect(workspaceTools).toContainText("1 pending work items");
+  await expect(workspaceTools.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
+  await expect(workspaceTools.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
+  await expect(workspaceTools.getByRole("button", { name: "Open Work Board" })).toBeVisible();
 });
 
 test("settings approval policy loads, edits, and saves tool decisions and write paths", async ({ page }) => {

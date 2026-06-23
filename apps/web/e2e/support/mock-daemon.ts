@@ -22,6 +22,16 @@ const defaultSkillGovernancePolicy = {
   bindMode: "manual_review",
 };
 
+const defaultSkillSourceUpgradePolicy = {
+  workspaceId: "workspace_default",
+  mode: "prompt",
+  approvedRootIds: [],
+  allowNewSkills: false,
+  allowGlobalGstackUpgrade: false,
+  createdAt: "2026-06-22T00:00:00.000Z",
+  updatedAt: "2026-06-22T00:00:00.000Z",
+};
+
 const mockCreateAiCouncilRequestKeys = new Set(["displayName", "description", "routingPolicy", "members", "pinned"]);
 const mockCreateAiCouncilRoutingPolicyKeys = new Set(["defaultMode", "maxActiveMembers", "notes"]);
 const mockCloneAiCouncilRequestKeys = new Set(["displayName", "description", "pinned"]);
@@ -58,6 +68,7 @@ export interface MockState {
   channelCouncilPolicies: unknown[];
   skillRegistryEntries: unknown[];
   skillSourceSnapshots: unknown[];
+  skillSourceUpgradePolicy: Record<string, unknown>;
   skillImportDrafts: unknown[];
   skillCandidates: unknown[];
   skillCandidateReviewRecords: unknown[];
@@ -910,6 +921,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelCouncilPolicies: [],
     skillRegistryEntries: buildMockSkillRegistryEntries(),
     skillSourceSnapshots: createMockSkillSourceSnapshots(),
+    skillSourceUpgradePolicy: { ...defaultSkillSourceUpgradePolicy },
     skillImportDrafts: [],
     skillCandidates: createMockSkillCandidates(),
     skillCandidateReviewRecords: [],
@@ -2025,6 +2037,7 @@ function createMockSkillSourceSyncPreview(state: MockState, input: Record<string
         reviewStatus: "reviewed",
       },
       diff: [],
+      semanticDiff: [],
     },
     {
       state: "drifted",
@@ -2066,6 +2079,7 @@ function createMockSkillSourceSyncPreview(state: MockState, input: Record<string
         { field: "referencedFiles", label: "Referenced files", before: "1 files · sha256:checklist", after: "0 files", severity: "info" },
         { field: "warnings", label: "Warnings", before: "0 warnings", after: "1 warnings · drifted_upstream:warning:", severity: "warning" },
       ],
+      semanticDiff: [],
     },
     {
       state: "new",
@@ -2111,6 +2125,7 @@ function createMockSkillSourceSyncPreview(state: MockState, input: Record<string
         reviewStatus: "reviewed",
       },
       diff: [],
+      semanticDiff: [],
     },
     {
       state: "blocked",
@@ -2126,6 +2141,7 @@ function createMockSkillSourceSyncPreview(state: MockState, input: Record<string
       referencedFiles: [],
       warnings: [{ code: "destructive_command", severity: "error", message: "Source contains destructive command guidance." }],
       diff: [],
+      semanticDiff: [],
     },
   ];
   const summary = records.reduce((current, record) => {
@@ -5777,6 +5793,27 @@ export async function handleDaemonRoute(
         snapshots: state.skillSourceSnapshots.filter((item) => isRecord(item) && item.reviewStatus === "published"),
       },
     });
+    return;
+  }
+  if (path === "/skills/source-upgrade-policy") {
+    if (request.method() === "GET") {
+      await route.fulfill({ json: { cwd, policy: state.skillSourceUpgradePolicy } });
+      return;
+    }
+    if (request.method() === "PUT") {
+      const body = safePostDataJson(request);
+      state.skillSourceUpgradePolicy = {
+        ...state.skillSourceUpgradePolicy,
+        mode: typeof body.mode === "string" ? body.mode : state.skillSourceUpgradePolicy.mode,
+        approvedRootIds: Array.isArray(body.approvedRootIds) ? body.approvedRootIds.map(String) : state.skillSourceUpgradePolicy.approvedRootIds,
+        allowNewSkills: typeof body.allowNewSkills === "boolean" ? body.allowNewSkills : state.skillSourceUpgradePolicy.allowNewSkills,
+        allowGlobalGstackUpgrade: false,
+        updatedAt: "2026-06-22T00:05:00.000Z",
+      };
+      await route.fulfill({ json: { cwd, policy: state.skillSourceUpgradePolicy } });
+      return;
+    }
+    await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
     return;
   }
   const skillSourceMatch = /^\/skills\/([^/]+)\/source(?:\/([^/]+))?$/.exec(path);

@@ -256,7 +256,7 @@ test("AI teammates page links council management to Council Workspace", async ({
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
 });
 
-test("AI teammate sidebar menu archives all visible chats without deleting teammates", async ({ page }) => {
+test("AI teammate sidebar menu keeps create action without bulk archive", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -272,16 +272,10 @@ test("AI teammate sidebar menu archives all visible chats without deleting teamm
   await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Ling Designer" })).toBeVisible();
   await navigation.getByRole("button", { name: "Teammate actions" }).hover();
-  await expect(navigation.getByRole("menuitem", { name: "Archive all chats" })).toBeVisible();
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("Archive all chats?");
-    await dialog.accept();
-  });
-  await navigation.getByRole("menuitem", { name: "Archive all chats" }).click();
-
-  await expect.poll(() => state.aiTeammates.every((item) => isRecord(item) && item.hidden === true)).toBe(true);
-  await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Ling Designer" })).toHaveCount(0);
+  await expect(navigation.getByRole("menuitem", { name: "New teammate" })).toBeVisible();
+  await expect(navigation.getByRole("menuitem", { name: "Archive all chats" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Ling Designer" })).toBeVisible();
   await expect.poll(() => state.aiTeammates.length).toBe(2);
 });
 
@@ -466,9 +460,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const privateFeed = page.getByLabel("Private message feed", { exact: true });
   await expect(privateFeed).toBeVisible();
   await expect(privateFeed.locator(".message-feed-virtualizer")).toBeVisible();
-  await expect(page.getByLabel("Conversation context")).toBeVisible();
-  await page.getByRole("button", { name: "Hide details" }).click();
   await expect(page.getByLabel("Conversation context")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show details" })).toBeVisible();
   await page.getByRole("button", { name: "Show details" }).click();
   await expect(page.getByLabel("Conversation context")).toBeVisible();
   const pendingPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "AI teammate is replying..." });
