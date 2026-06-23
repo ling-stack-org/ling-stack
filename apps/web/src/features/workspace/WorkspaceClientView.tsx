@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -161,6 +161,7 @@ import {
   revokePendingAttachmentPreviews,
   serializeComposerInputParts,
   type ComposerSlashIntent,
+  type TokenizedComposerInputHandle,
   type PendingAssetState,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
@@ -926,7 +927,7 @@ export function WorkspaceClientView({
     readonly cards: readonly CollaborationTaskCardModel[];
   }>({ channelId: "", signature: "", status: "idle", cards: [] });
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
-  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
   const messageFeedPinnedToLatestRef = useRef(true);
   const messageFeedAutoFollowUntilRef = useRef(0);
@@ -3074,10 +3075,9 @@ export function WorkspaceClientView({
 
   function focusComposerAt(caret: number): void {
     const focus = (): void => {
-      const textarea = composerTextareaRef.current;
-      textarea?.focus();
-      textarea?.setSelectionRange(caret, caret);
+      composerInputRef.current?.focusAt(caret);
     };
+    focus();
     if (typeof globalThis.requestAnimationFrame === "function") {
       globalThis.requestAnimationFrame(focus);
       return;
@@ -3086,9 +3086,9 @@ export function WorkspaceClientView({
   }
 
   function commitMention(option: ChannelMention): void {
-    const textarea = composerTextareaRef.current;
-    const liveValue = textarea?.value ?? messageDraft;
-    const liveCaret = textarea?.selectionStart ?? liveValue.length;
+    const composer = composerInputRef.current;
+    const liveValue = messageDraft;
+    const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
     const livePicker = findActiveMention(liveValue, liveCaret);
     const endOfDraftPicker = findActiveMention(liveValue, liveValue.length);
     const picker = chooseMostSpecificMentionPicker([mentionPicker, livePicker, endOfDraftPicker]);
@@ -3105,9 +3105,9 @@ export function WorkspaceClientView({
   }
 
   function commitSlashCommand(option: ComposerSlashCommandOption): void {
-    const textarea = composerTextareaRef.current;
-    const liveValue = textarea?.value ?? messageDraft;
-    const liveCaret = textarea?.selectionStart ?? liveValue.length;
+    const composer = composerInputRef.current;
+    const liveValue = messageDraft;
+    const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
     const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret) ?? findActiveSlashCommand(liveValue, liveValue.length);
     const inserted = insertSlashCommandToken(liveValue, picker, option.id);
     setMessageDraft(inserted.value);
@@ -3119,9 +3119,9 @@ export function WorkspaceClientView({
   }
 
   function insertMentionTrigger(): void {
-    const textarea = composerTextareaRef.current;
-    const start = textarea?.selectionStart ?? messageDraft.length;
-    const end = textarea?.selectionEnd ?? start;
+    const composer = composerInputRef.current;
+    const start = composer?.readSelectionStart() ?? messageDraft.length;
+    const end = composer?.readSelectionEnd() ?? start;
     const before = messageDraft.slice(0, start);
     const after = messageDraft.slice(end);
     const insert = before.endsWith("@") ? "" : before.length === 0 || /\s$/.test(before) ? "@" : " @";
@@ -3130,13 +3130,11 @@ export function WorkspaceClientView({
     setMessageDraft(nextDraft);
     updateMentionPicker(nextDraft, nextCursor);
     globalThis.requestAnimationFrame(() => {
-      textarea?.focus();
-      textarea?.setSelectionRange(nextCursor, nextCursor);
+      composerInputRef.current?.focusAt(nextCursor);
     });
   }
 
-  function handleComposerTextChange(event: ChangeEvent<HTMLTextAreaElement>): void {
-    const value = event.currentTarget.value;
+  function handleComposerTextChange(value: string, caret: number): void {
     setMessageDraft(value);
     setMessageMentions((current) => mergeMentions(
       current.filter((mention) => mentionTokenExistsInText(value, mention)),
@@ -3144,10 +3142,10 @@ export function WorkspaceClientView({
     ));
     setSendState("idle");
     setSendError("");
-    updateMentionPicker(value, event.currentTarget.selectionStart ?? value.length);
+    updateMentionPicker(value, caret);
   }
 
-  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
     if (mentionPicker && mentionPickerOptions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -3221,7 +3219,7 @@ export function WorkspaceClientView({
     }
   }
 
-  function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+  function handleComposerPaste(event: ClipboardEvent<HTMLDivElement>): void {
     if (event.clipboardData.files.length === 0) {
       return;
     }
@@ -4511,14 +4509,13 @@ export function WorkspaceClientView({
           </div>
         ) : null}
         <TokenizedComposerInput
-          ref={composerTextareaRef}
+          ref={composerInputRef}
           value={messageDraft}
           parts={composerInputParts}
-          rows={3}
           onChange={handleComposerTextChange}
           onKeyDown={handleComposerKeyDown}
           onPaste={handleComposerPaste}
-          onSelect={(event) => updateMentionPicker(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
+          onSelect={updateMentionPicker}
           placeholder={t("Message this channel or @ an AI teammate")}
           ariaLabel={t("Message this channel or @ an AI teammate")}
           executableSlashCommandId={composerSlashCommandActive ? composerSlashIntent.commandId : undefined}

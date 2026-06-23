@@ -1,6 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, cwd, defaultRuntimePolicy } from "./support/mock-state";
+
+function channelComposerTextbox(scope: Page | Locator): Locator {
+  return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
+}
 
 test("channel branch list shows real branches without default branch chrome", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
@@ -53,7 +57,7 @@ test("channel branch list shows real branches without default branch chrome", as
   const quickSplitBranch = state.channelBranches.find((item) => isRecord(item) && item.name === "Quick split");
   expect(isRecord(quickSplitBranch) && typeof quickSplitBranch.rootThreadId === "string").toBe(true);
   const quickSplitRootThreadId = isRecord(quickSplitBranch) && typeof quickSplitBranch.rootThreadId === "string" ? quickSplitBranch.rootThreadId : "";
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Branch-scoped message");
+  await channelComposerTextbox(page).fill("Branch-scoped message");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
   await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe(quickSplitRootThreadId);
 

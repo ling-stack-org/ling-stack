@@ -9,7 +9,7 @@ export { createAttachmentPreviewUrl, createLocalComposerAssetId, pendingAssetLab
 export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
 export { SettingsToolReturnRow } from "./SettingsToolReturnRow.js";
 export { StatusBadge } from "./StatusBadge.js";
-export { TokenizedComposerInput, type TokenizedComposerInputProps } from "./TokenizedComposerInput.js";
+export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "./TokenizedComposerInput.js";
 export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
 export { UserProfileAvatar } from "./UserProfileAvatar.js";
 export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer-input-parts.js";
