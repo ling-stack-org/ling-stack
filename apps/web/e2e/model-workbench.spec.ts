@@ -32,6 +32,57 @@ async function openModelWorkbench(page: Page): Promise<void> {
   await page.getByRole("button", { name: /^(Open Model Workbench|打开模型工作台)$/ }).click();
 }
 
+async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
+  const discovery = page.locator(".provider-model-discovery");
+  await expect(discovery.locator(".provider-model-discovery-header .provider-model-actions button")).toHaveCount(1);
+  await expect(discovery.locator(".provider-model-discovery-header").getByRole("button", {
+    name: /^(Select visible|选择当前可见|Clear selection|清空选择)$/,
+  })).toHaveCount(0);
+  await expect(discovery.locator(".provider-model-search-row .provider-model-bulk-actions")).toBeVisible();
+  const layout = await discovery.evaluate((element) => {
+    const grid = element.querySelector(".provider-model-grid");
+    const cards = Array.from(element.querySelectorAll(".provider-model-card")).slice(0, 2);
+    const firstCard = cards[0];
+    const secondCard = cards[1];
+    const title = firstCard?.querySelector("strong");
+    const owner = firstCard?.querySelector("small");
+    const capability = firstCard?.querySelector("em");
+    const gridRect = grid?.getBoundingClientRect();
+    const firstRect = firstCard?.getBoundingClientRect();
+    const secondRect = secondCard?.getBoundingClientRect();
+    const titleRect = title?.getBoundingClientRect();
+    const ownerRect = owner?.getBoundingClientRect();
+    const capabilityRect = capability?.getBoundingClientRect();
+    return {
+      columnCount: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length : 0,
+      gridOverflowsX: grid ? grid.scrollWidth > grid.clientWidth + 1 : true,
+      firstLeft: firstRect?.left ?? 0,
+      firstRight: firstRect?.right ?? 0,
+      secondLeft: secondRect?.left ?? 0,
+      secondTop: secondRect?.top ?? 0,
+      firstTop: firstRect?.top ?? 0,
+      firstBottom: firstRect?.bottom ?? 0,
+      gridLeft: gridRect?.left ?? 0,
+      gridRight: gridRect?.right ?? 0,
+      titleBottom: titleRect?.bottom ?? 0,
+      ownerTop: ownerRect?.top ?? 0,
+      ownerBottom: ownerRect?.bottom ?? 0,
+      capabilityTop: capabilityRect?.top ?? 0,
+      cardCount: cards.length,
+    };
+  });
+  expect(layout.columnCount).toBe(1);
+  expect(layout.gridOverflowsX).toBe(false);
+  expect(layout.firstLeft).toBeGreaterThanOrEqual(layout.gridLeft - 1);
+  expect(layout.firstRight).toBeLessThanOrEqual(layout.gridRight + 1);
+  expect(layout.titleBottom).toBeLessThanOrEqual(layout.ownerTop + 1);
+  expect(layout.ownerBottom).toBeLessThanOrEqual(layout.capabilityTop + 1);
+  if (layout.cardCount > 1) {
+    expect(Math.abs(layout.firstLeft - layout.secondLeft)).toBeLessThanOrEqual(1);
+    expect(layout.secondTop).toBeGreaterThan(layout.firstBottom - 1);
+  }
+}
+
 test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
@@ -347,6 +398,7 @@ test("model workbench imports Doubao supplier models without hiding media-lookin
   await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toBeVisible();
   await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
   await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toBeVisible();
+  await expectProviderModelDiscoveryLayout(page);
   await modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" }).click();
   await modelCards.filter({ hasText: "doubao-seedream-5-0-260128" }).click();
   await expect(page.getByText("已选 2 个")).toBeVisible();
@@ -413,9 +465,9 @@ test("model workbench media suppliers stay in the unified supplier picker", asyn
   const refetchedModels = page.getByRole("button", { name: "获取模型" });
   await expect(refetchedModels).toBeEnabled();
   await refetchedModels.click();
-  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toBeVisible();
-  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
-  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toHaveCount(1);
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toHaveCount(1);
+  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toHaveCount(1);
 });
 
 test("model workbench edits media presets from the unified supplier picker", async ({ page }) => {
@@ -490,6 +542,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
     createChatProvider({
       id: "provider_ready",
       displayName: "Ready Local Relay",
+      updatedAt: "2026-05-25T00:05:00.000Z",
       lastCheck: {
         ok: true,
         code: "ready",
@@ -514,6 +567,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
       model: "gpt-5.5",
       api: "openai-completions",
       baseUrl: "http://192.168.80.114:8317/v1",
+      updatedAt: "2026-05-25T00:30:00.000Z",
       lastCheck: {
         ok: true,
         code: "ready",
@@ -569,6 +623,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(page.locator(".provider-page-meta")).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator(".provider-row").first()).toContainText("Ready Local Relay");
 
   const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
   await expect(missingKeyGatewayRow).toContainText("key missing");
@@ -588,6 +643,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect.poll(() =>
     state.channels.every((channel) => !isRecord(channel) || channel.defaultProviderPresetId === undefined)
   ).toBe(true);
+  await expect(page.locator(".provider-row").first()).toContainText("OpenAI Proxy Custom Endpoint");
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(readyLocalRelayRow.locator(".provider-state.disabled")).toHaveCount(0);
   const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
@@ -685,6 +741,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(modelCards.filter({ hasText: "cliproxy-gpt-4o" })).toBeVisible();
   await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
   await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toBeVisible();
+  await expectProviderModelDiscoveryLayout(page);
   await expect(page.getByText("media models are hidden", { exact: false })).toHaveCount(0);
   await modelCards.filter({ hasText: "cliproxy-gpt-4o" }).click();
   await modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" }).click();

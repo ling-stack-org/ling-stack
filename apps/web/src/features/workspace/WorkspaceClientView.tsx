@@ -8397,11 +8397,12 @@ function TaskDetailPanel({
         <div className={linkedRunSucceeded ? "task-run-link compact succeeded" : "task-run-link compact"}>
           <StatusBadge status={linkedRunStatus} />
           <span className="task-run-summary">
+            {linkedRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
             <span>{t("Run linked")}</span>
           </span>
-          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
-            <History size={14} />
-            {t("Open run")}
+          <button className={linkedRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
+            {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
+            {linkedRunSucceeded ? t("View result") : t("Open run")}
           </button>
           {linkedRunCancellable ? (
             <button className="secondary-button danger compact-button" type="button" onClick={stopLinkedRun} disabled={isCancellingRun}>

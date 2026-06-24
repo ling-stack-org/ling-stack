@@ -196,6 +196,20 @@ export function AiTeammatesPage({
     }
   }, [createRequestId, onCreateRequestHandled]);
 
+  useEffect(() => {
+    if (!isCreateOpen || typeof document === "undefined") {
+      return;
+    }
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [isCreateOpen]);
+
   function selectTemplate(template: AiTeammateTemplate): void {
     setSelectedTemplateId(template.id);
     setDraftName(t(template.name));

@@ -489,36 +489,3 @@
 .mcp-advanced-settings[open] summary {
   margin-bottom: 12px;
 }
-
-@media (max-width: 760px) {
-  .mcp-toolbar,
-  .mcp-toolbar-actions,
-  .mcp-server-summary-row,
-  .mcp-server-actions,
-  .mcp-server-meta {
-    align-items: stretch;
-    grid-template-columns: 1fr;
-    flex-direction: column;
-  }
-
-  .mcp-form-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .mcp-section-title-with-control {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
-  .mcp-switch-control {
-    justify-content: space-between;
-  }
-
-  .mcp-switch-copy {
-    text-align: left;
-  }
-
-  .mcp-sheet {
-    width: 100vw;
-  }
-}

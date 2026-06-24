@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -9,7 +9,14 @@ import {
   readSidebarSelection,
 } from "./support/test-helpers";
 
+async function useEnglishLocale(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+}
+
 test("sidebar selection is exclusive and conversation lists no longer live in global navigation", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
   await mockDaemon(page, state);
@@ -40,6 +47,7 @@ test("sidebar selection is exclusive and conversation lists no longer live in gl
 });
 
 test("sidebar text entries route to context-aware inspectors", async ({ page }) => {
+  await useEnglishLocale(page);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
@@ -79,6 +87,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
 });
 
 test("settings workspace tools provide a clear return path from nested tool pages", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
     id: "provider_ready",

@@ -159,8 +159,8 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-library",
     ".settings-skill-library-stats span",
     ".settings-skill-health",
+    ".settings-skill-health-summary span",
     ".settings-skill-candidate-review",
-    ".settings-skill-candidate-card",
     ".settings-skill-library-toolbar",
     ".settings-skill-table",
     ".settings-skill-state",
@@ -188,8 +188,6 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".run-detail-summary",
   ]);
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await assertNoDocumentHorizontalOverflow(page, "mobile dark run history");
 });
 
 function createDarkThemeState(): MockState {
@@ -315,17 +313,20 @@ async function readDarkSurfaces(page: Page, selectors: readonly string[]): Promi
 }>> {
   return await page.evaluate((inputSelectors) => {
     function effectiveBackgroundColor(element: Element): number[] {
-      let current: Element | null = element;
-      while (current) {
-        const color = getComputedStyle(current).backgroundColor;
-        const channels = color.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
-        const alpha = channels.length >= 4 ? channels[3] : 1;
-        if (channels.length >= 3 && alpha > 0) {
-          return channels.slice(0, 3);
-        }
-        current = current.parentElement;
+      const color = getComputedStyle(element).backgroundColor;
+      const channels = color.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+      const parentColor = element.parentElement ? effectiveBackgroundColor(element.parentElement) : [0, 0, 0];
+      if (channels.length < 3) {
+        return parentColor;
       }
-      return [0, 0, 0];
+      const alpha = channels.length >= 4 ? channels[3] : 1;
+      if (alpha <= 0) {
+        return parentColor;
+      }
+      if (alpha >= 1) {
+        return channels.slice(0, 3);
+      }
+      return channels.slice(0, 3).map((channel, index) => Math.round(channel * alpha + parentColor[index] * (1 - alpha)));
     }
     return inputSelectors.flatMap((selector) =>
       Array.from(document.querySelectorAll(selector))

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { expect, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { buildEffectiveTeammateSkills, buildMemoryMarkdownExport, parseMemoryMarkdownImport } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
@@ -733,9 +733,9 @@ export async function readSidebarSelection(page: Page): Promise<{ readonly activ
   return await page.evaluate(() => {
     const navLabel = (element: Element): string => element.querySelector("span")?.textContent?.trim() ?? "";
     const rowLabel = (element: Element): string =>
-      element.querySelector("span:not(.avatar-initial):not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
+      element.querySelector("span:not(.avatar-initial):not(.sidebar-channel-avatar):not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
     const channelRowLabel = (element: Element): string =>
-      element.querySelector(".sidebar-row-main span:not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
+      element.querySelector(".sidebar-row-main span:not(.sidebar-channel-avatar):not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
 
     return {
       activeNav: [...document.querySelectorAll(".nav-item.active")].map(navLabel),
@@ -755,10 +755,24 @@ export async function openTaskFromAttentionQueue(page: Page, title: string): Pro
   }
   await openChannelChatTools(page);
   const workItem = page.getByRole("article", { name: title });
-  await expect(workItem).toBeVisible();
+  if ((await workItem.count()) === 0 || !(await workItem.isVisible().catch(() => false))) {
+    const taskEvent = page.locator("article").filter({ hasText: `Task ${title}` });
+    await expect(taskEvent).toHaveCount(1);
+    await taskEvent.getByRole("button", { name: "Details" }).click();
+    const activityDetails = page.getByRole("complementary", { name: "Activity details" });
+    await expect(activityDetails).toBeVisible();
+    const showTaskInTranscript = activityDetails.getByRole("button", { name: "Show task in transcript" });
+    if (await showTaskInTranscript.count() > 0) {
+      await showTaskInTranscript.click();
+    }
+    await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
+    return;
+  }
   const openTask = workItem.getByRole("button", { name: "Open task" });
   if (await openTask.count() > 0) {
     await openTask.click();
+  } else if (await workItem.getByRole("button", { name: "View failure" }).count() > 0) {
+    await workItem.getByRole("button", { name: "View failure" }).click();
   } else {
     const handleApproval = workItem.getByRole("button", { name: "Handle approval" });
     await expect(handleApproval).toBeVisible();
@@ -783,11 +797,18 @@ export async function openChannelContextPanel(page: Page): Promise<void> {
   const panel = page.locator(".channel-side-panel");
   const panelVisible = (await panel.count()) > 0 && await panel.isVisible().catch(() => false);
   const panelLabel = panelVisible ? await panel.getAttribute("aria-label") : "";
-  if (panelVisible && panelLabel === "Context") {
+  if (panelVisible && (panelLabel === "Context" || panelLabel === "Task detail")) {
     await panel.hover();
     return;
   }
   await openChannelChatTools(page);
+  const showDetailsButton = page.getByRole("button", { name: "Show details" });
+  if (await showDetailsButton.count() > 0 && await showDetailsButton.isVisible().catch(() => false)) {
+    await showDetailsButton.click();
+    await expect(panel).toBeVisible();
+    await panel.hover();
+    return;
+  }
   const openContextButton = page.getByRole("button", { name: "Open context" }).first();
   await expect(openContextButton).toBeVisible();
   await openContextButton.click();
@@ -5366,6 +5387,10 @@ export async function mockDaemon(
     readonly collaborationCardsUnsupported?: boolean;
   } = {},
 ): Promise<void> {
+  await mkdir(cwd, { recursive: true });
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "WebSocket", { value: undefined, configurable: true });
+  });
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     await handleDaemonRoute(route, state, options);
   });

@@ -44,6 +44,7 @@ import {
   providerEffectiveBaseUrl,
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
+  sortProvidersForWorkbench,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
 import { SettingsToolReturnRow } from "../../shared/components/index.js";
@@ -202,7 +203,7 @@ export function ProviderSettings({
   const repairProvider = repairProviderId ? providers.find((provider) => provider.id === repairProviderId) : undefined;
   const filteredProviders = useMemo(
     () =>
-      providers.filter((provider) => {
+      sortProvidersForWorkbench(providers.filter((provider) => {
         const query = providerSearch.trim().toLowerCase();
         const matchesQuery =
           !query ||
@@ -215,8 +216,8 @@ export function ProviderSettings({
           (providerStatusFilter === "needsAttention" && isWorkbenchNeedsConfigProvider(provider)) ||
           (providerStatusFilter === "disabled" && !provider.enabled);
         return matchesQuery && matchesStatus;
-      }),
-    [providerSearch, providerStatusFilter, providers],
+      }), selectedProviderId),
+    [providerSearch, providerStatusFilter, providers, selectedProviderId],
   );
   const visibleModelOptions = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
@@ -914,16 +915,6 @@ export function ProviderSettings({
               <small>{modelOptionsSource ? t("Loaded from {source}", { source: modelOptionsSource }) : t("Fetch models from the configured supplier endpoint.")}</small>
             </span>
             <span className="provider-model-actions">
-              {modelOptions.length > 0 && !editingProviderId ? (
-                <>
-                  <button className="secondary-button compact-button" type="button" onClick={selectAllVisibleModels}>
-                    {t("Select visible")}
-                  </button>
-                  <button className="secondary-button compact-button" type="button" onClick={clearSelectedModels} disabled={selectedModelIds.length === 0}>
-                    {t("Clear selection")}
-                  </button>
-                </>
-              ) : null}
               <button
                 className="secondary-button compact-button"
                 type="button"
@@ -936,16 +927,28 @@ export function ProviderSettings({
             </span>
           </div>
           {modelOptions.length > 0 ? (
-            <label className="provider-model-search">
-              <Search size={14} />
-              <input
-                aria-label={t("Search provider models")}
-                value={modelSearch}
-                placeholder={t("Search provider models")}
-                onChange={(event) => setModelSearch(event.target.value)}
-              />
-              {!editingProviderId ? <small>{t("{count} selected", { count: selectedModelIds.length })}</small> : null}
-            </label>
+            <div className="provider-model-search-row">
+              <label className="provider-model-search">
+                <Search size={14} />
+                <input
+                  aria-label={t("Search provider models")}
+                  value={modelSearch}
+                  placeholder={t("Search provider models")}
+                  onChange={(event) => setModelSearch(event.target.value)}
+                />
+              </label>
+              {!editingProviderId ? (
+                <span className="provider-model-bulk-actions">
+                  <small className="provider-model-selection-count">{t("{count} selected", { count: selectedModelIds.length })}</small>
+                  <button className="secondary-button compact-button" type="button" onClick={selectAllVisibleModels}>
+                    {t("Select visible")}
+                  </button>
+                  <button className="secondary-button compact-button" type="button" onClick={clearSelectedModels} disabled={selectedModelIds.length === 0}>
+                    {t("Clear selection")}
+                  </button>
+                </span>
+              ) : null}
+            </div>
           ) : null}
           {modelOptions.length > 0 ? (
             <div className="provider-model-grid" aria-label={t("Available models")}>
