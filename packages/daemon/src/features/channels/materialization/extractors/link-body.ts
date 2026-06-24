@@ -80,7 +80,7 @@ export const linkBodyExtractorV1: LingInputExtractor = {
   },
 };
 
-interface FetchPublicLinkBodyOptions {
+export interface FetchPublicLinkBodyOptions {
   readonly fetch: typeof globalThis.fetch;
   readonly resolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly maxBytes: number;
@@ -88,7 +88,7 @@ interface FetchPublicLinkBodyOptions {
   readonly redirectLimit: number;
 }
 
-type FetchPublicLinkBodyResult =
+export type FetchPublicLinkBodyResult =
   | {
       readonly allowed: true;
       readonly finalUrl: string;
@@ -106,7 +106,7 @@ type FetchPublicLinkBodyResult =
       readonly policyDecision?: Record<string, unknown>;
     };
 
-async function fetchPublicLinkBody(
+export async function fetchPublicLinkBody(
   initialUrl: string,
   options: FetchPublicLinkBodyOptions,
 ): Promise<FetchPublicLinkBodyResult> {
@@ -291,7 +291,7 @@ function isSupportedLinkBodyContentType(contentType: string): boolean {
     contentType.includes("application/json");
 }
 
-function extractReadableHtmlText(html: string): string {
+export function extractReadableHtmlText(html: string): string {
   const body = /<body\b[^>]*>([\s\S]*?)<\/body>/iu.exec(html)?.[1] ?? html;
   return normalizeExtractedText(
     body
@@ -306,7 +306,7 @@ function extractReadableHtmlText(html: string): string {
   );
 }
 
-function normalizeExtractedText(value: string): string {
+export function normalizeExtractedText(value: string): string {
   return decodeHtmlEntities(value)
     .split(/\r?\n/gu)
     .map((line) => line.replace(/[ \t\f\v]+/gu, " ").trim())

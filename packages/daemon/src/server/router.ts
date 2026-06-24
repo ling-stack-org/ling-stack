@@ -1506,6 +1506,8 @@ export async function routeRequest(
           runnerRegistry,
           runtimeSupervisor,
           secretResolver,
+          webFetch: context.channelWebFetch,
+          webResolveHostAddresses: context.channelWebResolveHostAddresses,
           ...input,
         }),
         (input) => confirmAndOrchestrateChannelProposal({
@@ -1529,6 +1531,8 @@ export async function routeRequest(
           runnerRegistry,
           runtimeSupervisor,
           secretResolver,
+          webFetch: context.channelWebFetch,
+          webResolveHostAddresses: context.channelWebResolveHostAddresses,
           ...input,
         }),
         (input) => confirmAndOrchestrateChannelProposal({

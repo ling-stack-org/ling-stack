@@ -43,6 +43,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Ling Agent Session Control Plane](docs/design/ling-agent-session.md)
 - [Ling Agent Session implementation plan](docs/design/ling-agent-session-implementation-plan.md)
 - [Input Materialization Detailed Design](docs/design/input-materialization-detailed-design.md)
+- [Ling Web Tools](docs/design/ling-web-tools.md)
 - [Web E2E Acceptance Matrix](docs/design/web-e2e-acceptance-matrix.md)
 - [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
 - [AI councils](docs/design/ai-councils.md)

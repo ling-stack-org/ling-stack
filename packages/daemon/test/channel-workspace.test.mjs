@@ -1915,6 +1915,66 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
   }
 });
 
+test("channel discussion injects web search context before runner reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-web-search-context-"));
+  const runner = new RecordingRunner();
+  const webSearchCalls = [];
+  const daemon = await startDaemonForTest(runner, {
+    secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
+    channelWebFetch: async (url, init) => {
+      webSearchCalls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        output_text: "Fresh web evidence summary.",
+        output: [
+          {
+            type: "web_search_call",
+            action: {
+              type: "search",
+              sources: [
+                { type: "url", url: "https://example.com/fresh", title: "Fresh source" },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Designer 查一下 Ling Stack 最新消息",
+      mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "Designer reply");
+    assert.equal(webSearchCalls.length, 1);
+    assert.equal(webSearchCalls[0].url, "https://api.openai.com/v1/responses");
+    const requestBody = JSON.parse(webSearchCalls[0].init.body);
+    assert.deepEqual(requestBody.tools, [{ type: "web_search", search_context_size: "low" }]);
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Ling web context:/);
+    assert.match(runner.runs[0].task.prompt, /Fresh web evidence summary/);
+    assert.match(runner.runs[0].task.prompt, /https:\/\/example\.com\/fresh/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /sk-test-secret-value/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel discussion blocks runner prompt envelope echoes", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-prompt-echo-"));
   const runner = new PromptEchoRunner();
