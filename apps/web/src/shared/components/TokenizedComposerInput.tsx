@@ -45,6 +45,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
   ref,
 ) {
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const composingRef = useRef(false);
   const currentValueRef = useRef(value);
   const pendingCaretRef = useRef<number | undefined>(undefined);
   const placeholderAttributes = { placeholder } as Record<string, string>;
@@ -76,6 +77,9 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
       return;
     }
     currentValueRef.current = value;
+    if (composingRef.current) {
+      return;
+    }
     const active = document.activeElement === editor;
     const caret = pendingCaretRef.current ?? (active ? readSelectionOffset(editor, "end", value.length) : undefined);
     pendingCaretRef.current = undefined;
@@ -91,6 +95,21 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
     currentValueRef.current = nextValue;
     pendingCaretRef.current = caret;
     onChange(nextValue, caret);
+  }
+
+  function scheduleCompositionCommit(): void {
+    const commit = (): void => {
+      if (composingRef.current) {
+        return;
+      }
+      const nextValue = serializeComposerDom(editorRef.current);
+      emitChange(readSelectionOffset(editorRef.current, "end", nextValue.length));
+    };
+    if (typeof globalThis.queueMicrotask === "function") {
+      globalThis.queueMicrotask(commit);
+      return;
+    }
+    globalThis.setTimeout(commit, 0);
   }
 
   function applyTextEdit(insertedText: string, start = readCurrentSelectionOffset("start"), end = readCurrentSelectionOffset("end")): void {
@@ -117,7 +136,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
 
   const handleBeforeInput: FormEventHandler<HTMLDivElement> = (event) => {
     const nativeEvent = event.nativeEvent as InputEvent;
-    if (nativeEvent.isComposing) {
+    if (nativeEvent.isComposing || composingRef.current || nativeEvent.inputType === "insertCompositionText") {
       return;
     }
     const selectionStart = readCurrentSelectionOffset("start");
@@ -174,7 +193,20 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
       spellCheck
       tabIndex={0}
       onBeforeInput={handleBeforeInput}
-      onInput={() => emitChange()}
+      onCompositionStart={() => {
+        composingRef.current = true;
+        pendingCaretRef.current = undefined;
+      }}
+      onCompositionEnd={() => {
+        composingRef.current = false;
+        scheduleCompositionCommit();
+      }}
+      onInput={() => {
+        if (composingRef.current) {
+          return;
+        }
+        emitChange();
+      }}
       onKeyDown={(event) => {
         onKeyDown(event);
         if (event.defaultPrevented) {
