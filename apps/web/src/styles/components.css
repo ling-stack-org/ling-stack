@@ -2790,14 +2790,15 @@ button.message-local-file-link {
 }
 
 .conversation-work-cell.active .conversation-work-cell-row.running .conversation-work-cell-row-copy strong,
-.conversation-work-cell-agent-span.running .conversation-work-cell-agent-span-copy small,
+.conversation-work-cell.active .conversation-work-cell-agent-span.running .conversation-work-cell-agent-span-copy small,
 .conversation-work-cell.active .conversation-work-cell-evidence-summary span {
-  background: linear-gradient(90deg, #111111 0%, #111111 34%, #8f8f8f 46%, #111111 58%, #111111 100%);
-  background-size: 220% 100%;
+  background: linear-gradient(90deg, #111111 0%, #111111 45%, #8f8f8f 50%, #111111 55%, #111111 100%);
+  background-size: 300% 100%;
   -webkit-background-clip: text;
   background-clip: text;
+  background-position: 100% 0;
   color: transparent;
-  animation: conversation-active-shimmer 3000ms ease-in-out infinite;
+  animation: conversation-active-shimmer 4600ms linear infinite;
 }
 
 .conversation-work-cell-locate-pulse {
@@ -2955,15 +2956,19 @@ button.message-local-file-link {
 
 @keyframes conversation-active-shimmer {
   0% {
-    background-position: 120% 0;
+    background-position: 100% 0;
   }
 
-  26% {
-    background-position: -120% 0;
+  10% {
+    background-position: 100% 0;
+  }
+
+  76% {
+    background-position: 0 0;
   }
 
   100% {
-    background-position: -120% 0;
+    background-position: 0 0;
   }
 }
 
@@ -2979,7 +2984,7 @@ button.message-local-file-link {
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-work-cell.active .conversation-work-cell-row.running .conversation-work-cell-row-copy strong,
-  .conversation-work-cell-agent-span.running .conversation-work-cell-agent-span-copy small,
+  .conversation-work-cell.active .conversation-work-cell-agent-span.running .conversation-work-cell-agent-span-copy small,
   .conversation-work-cell.active .conversation-work-cell-evidence-summary span {
     animation: none;
     background: none;
