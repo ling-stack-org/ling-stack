@@ -27,7 +27,14 @@ function channelComposerTextbox(scope: Page | Locator): Locator {
   return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
 }
 
+async function useEnglishLocale(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+}
+
 test("channel governance notifications stay in the header review queue", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.governanceNotifications = [
     {
@@ -89,6 +96,7 @@ test("channel header hides empty governance review queue while notifications loa
 });
 
 test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];
   for (let index = 0; index < 28; index += 1) {
@@ -494,6 +502,7 @@ test("channel composer does not render the resource lease active work strip", as
 });
 
 test("wide channel progress popover keeps the accepted HTML spacing", async ({ page }) => {
+  await useEnglishLocale(page);
   await page.setViewportSize({ width: 2048, height: 1140 });
   const state = createBaseState({ approvalStatus: "pending" });
   state.channelMessages = [
@@ -553,6 +562,7 @@ test("wide channel progress popover keeps the accepted HTML spacing", async ({ p
 });
 
 test("channel runtime policy is visible while preferred specialist controls stay hidden", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
@@ -631,6 +641,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
 });
 
 test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
@@ -1204,6 +1215,7 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
 });
 
 test("channel message feed renders AI teammate avatar images", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [
     createMockTeammate({
@@ -1306,6 +1318,7 @@ test("channel settings manage workspace binding and header badge", async ({ page
 });
 
 test("paused channels disable task run actions", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.channels = state.channels.map((channel) => isRecord(channel) ? { ...channel, status: "paused" } : channel);
   await mockDaemon(page, state);
@@ -1603,7 +1616,7 @@ test("channel composer supports spaced teammate names before slash commands", as
   await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
   await page.getByRole("option", { name: /^\/review\b/ }).click();
   await expectComposerValue(composerInput, "@Ling Agent /review ");
-  await composerInput.type("apps/web");
+  await composerInput.fill("@Ling Agent /review apps/web");
 
   const composer = page.locator(".channel-composer");
   await expect(composer.locator(".composer-inline-token.mention").filter({ hasText: "Ling Agent" })).toBeVisible();
@@ -4284,7 +4297,7 @@ test("progress popover falls back to local collaboration card derivation", async
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 
-test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {
+test("channel files tab follows dark theme surfaces", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
@@ -4313,7 +4326,7 @@ test("channel files tab keeps daylight surfaces even when the app theme is dark"
     throw new Error("Files tab layout was not rendered");
   }
   expect(fileTabLayout.filesHeight).toBeGreaterThan(fileTabLayout.panelHeight - 96);
-  const fileTabDaylightSurfaces = await page.evaluate(() => {
+  const fileTabDarkSurfaces = await page.evaluate(() => {
     function effectiveBackgroundColor(element: Element): number[] {
       let current: Element | null = element;
       while (current) {
@@ -4338,13 +4351,13 @@ test("channel files tab keeps daylight surfaces even when the app theme is dark"
       }),
     );
   });
-  expect(fileTabDaylightSurfaces).toHaveLength(6);
-  for (const surface of fileTabDaylightSurfaces) {
-    expect(surface.maxChannel, `${surface.selector} should stay on the accepted daylight channel surface`).toBeGreaterThanOrEqual(245);
+  expect(fileTabDarkSurfaces).toHaveLength(6);
+  for (const surface of fileTabDarkSurfaces) {
+    expect(surface.maxChannel, `${surface.selector} should follow dark theme tokens`).toBeLessThanOrEqual(45);
   }
 });
 
-test("channel activity filter chips keep daylight channel tokens", async ({ page }) => {
+test("channel activity filter chips follow dark theme tokens", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
@@ -4372,7 +4385,7 @@ test("channel activity filter chips keep daylight channel tokens", async ({ page
   });
   expect(filterChipSurfaces.length).toBeGreaterThan(0);
   for (const surface of filterChipSurfaces) {
-    expect(surface.maxChannel, `${surface.selector} should stay on daylight channel tokens`).toBeGreaterThanOrEqual(245);
+    expect(surface.maxChannel, `${surface.selector} should follow dark theme tokens`).toBeLessThanOrEqual(60);
   }
 });
 

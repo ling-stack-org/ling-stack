@@ -3739,7 +3739,7 @@
   min-height: 0;
   overflow: hidden;
   padding: 0;
-  background: #ffffff;
+  background: var(--app-bg);
 }
 
 .teammate-workspace.chat-mode {
@@ -3752,7 +3752,7 @@
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: #ffffff;
+  background: var(--surface-panel);
 }
 
 .teammate-workspace.chat-mode.context-collapsed {
@@ -3769,7 +3769,7 @@
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: #ffffff;
+  background: var(--surface-panel);
 }
 
 .teammate-workspace.chat-mode.settings-return-mode,
@@ -3780,7 +3780,7 @@
 .teammate-workspace > .settings-tool-return-row {
   grid-column: 1 / -1;
   padding: 8px 18px 0;
-  background: #ffffff;
+  background: var(--surface-panel);
 }
 
 .teammate-chat-header,
@@ -3793,8 +3793,8 @@
   min-width: 0;
   padding: 0 18px;
   overflow: hidden;
-  border-bottom: 1px solid #e5e5e5;
-  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .teammate-chat-header {
@@ -3878,7 +3878,7 @@
 .teammate-settings-header h2 {
   margin: 0;
   overflow: hidden;
-  color: #111111;
+  color: var(--text-strong);
   font-size: 12px;
   font-weight: 700;
   line-height: 15px;
@@ -3890,7 +3890,7 @@
 .teammate-settings-header p {
   margin: 1px 0 0;
   overflow: hidden;
-  color: #6b6b6b;
+  color: var(--text-muted);
   font-size: 10px;
   line-height: 13px;
   text-overflow: ellipsis;
@@ -3920,8 +3920,8 @@
 }
 
 .teammate-chat-actions .secondary-button.active {
-  background: #f5f5f5;
-  color: #111111;
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 
 .teammate-chat-status-row {
@@ -3968,9 +3968,9 @@
 .teammate-chat-status-row .conversation-status-meta > span {
   min-height: 18px;
   padding: 0 6px;
-  border-color: #e5e5e5;
+  border-color: var(--border);
   border-radius: 5px;
-  background: #ffffff;
+  background: var(--surface-panel);
 }
 
 .teammate-context-chip {
@@ -3982,10 +3982,10 @@
   max-width: 160px;
   padding: 0 6px;
   overflow: hidden;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 5px;
-  background: #ffffff;
-  color: #6b6b6b;
+  background: var(--surface-panel);
+  color: var(--text-muted);
   font-size: 10px;
   font-weight: 600;
   line-height: 16px;
@@ -4002,10 +4002,10 @@
   gap: 7px;
   min-height: 30px;
   padding: 0 8px;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #ffffff;
-  color: #6b6b6b;
+  background: var(--surface-panel);
+  color: var(--text-muted);
 }
 
 .teammate-chat-header.has-toolbar-start .teammate-chat-search {
@@ -4032,7 +4032,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #6b6b6b;
+  color: var(--text-muted);
 }
 
 .teammate-workspace.chat-mode > .inline-error,
@@ -4051,7 +4051,7 @@
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: #ffffff;
+  background: var(--surface-panel);
   box-shadow: none;
 }
 
@@ -4069,7 +4069,7 @@
   min-height: 0;
   overflow-y: auto;
   padding: 16px 18px 14px;
-  background: #ffffff;
+  background: var(--surface-panel);
 }
 
 .teammate-workspace.chat-mode .teammate-message-list.message-feed-empty {
@@ -4078,7 +4078,7 @@
 
 .teammate-chat-day-separator {
   justify-self: center;
-  color: #8a8a8a;
+  color: var(--text-soft);
   font-size: 11px;
   line-height: 16px;
 }
@@ -4093,7 +4093,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #6b6b6b;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -4116,8 +4116,8 @@
   align-items: end;
   gap: 8px;
   padding: 8px 10px;
-  border-top: 1px solid #e5e5e5;
-  background: #ffffff;
+  border-top: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .teammate-workspace.chat-mode .teammate-pending-attachments {
@@ -4154,9 +4154,9 @@
   align-self: end;
   margin: 10px 10px 12px;
   padding: 9px;
-  border-color: #e5e5e5;
+  border-color: var(--border);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--surface-panel);
   box-shadow: none;
 }
 
@@ -4167,7 +4167,7 @@
 .teammate-workspace.chat-mode .teammate-direct-composer .composer-drop-zone textarea {
   min-height: 96px;
   padding: 8px 9px 2px;
-  color: #111111;
+  color: var(--text-strong);
   font-size: 13px;
 }
 
@@ -4192,8 +4192,8 @@
   min-height: 0;
   overflow-y: auto;
   padding: 11px;
-  border-left: 1px solid #e5e5e5;
-  background: #ffffff;
+  border-left: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .teammate-workspace.chat-mode.settings-return-mode > .teammate-context-panel {
@@ -4209,7 +4209,7 @@
 .teammate-context-panel h3,
 .teammate-settings-summary-panel h3 {
   margin: 0;
-  color: #111111;
+  color: var(--text-strong);
   font-size: 12px;
   font-weight: 700;
   line-height: 18px;
@@ -4218,7 +4218,7 @@
 .teammate-context-panel p,
 .teammate-settings-summary-panel p {
   margin: 0;
-  color: #6b6b6b;
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 18px;
 }
@@ -4234,10 +4234,10 @@
   gap: 7px;
   min-width: 0;
   padding: 8px;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #ffffff;
-  color: #111111;
+  background: var(--surface-panel-strong);
+  color: var(--text-strong);
   text-decoration: none;
 }
 
@@ -4255,12 +4255,12 @@
 }
 
 .teammate-context-row strong {
-  color: #111111;
+  color: var(--text-strong);
   font-size: 12px;
 }
 
 .teammate-context-row small {
-  color: #6b6b6b;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -4273,8 +4273,8 @@
   min-height: 0;
   overflow-y: auto;
   padding: 10px 8px;
-  border-right: 1px solid #e5e5e5;
-  background: #ffffff;
+  border-right: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .teammate-workspace.settings-mode.settings-return-mode > .teammate-settings-nav {
@@ -4291,7 +4291,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #6b6b6b;
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
   text-align: left;
@@ -4299,13 +4299,13 @@
 
 .teammate-settings-nav button.active,
 .teammate-settings-nav button:hover {
-  background: #f5f5f5;
-  color: #111111;
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 
 .teammate-settings-nav button.danger {
   margin-top: 12px;
-  color: #b42318;
+  color: var(--danger);
 }
 
 .teammate-settings-nav small {
@@ -4322,7 +4322,7 @@
   overflow-y: auto;
   border: 0;
   border-radius: 0;
-  background: #ffffff;
+  background: var(--surface-panel);
   box-shadow: none;
 }
 
@@ -4342,9 +4342,9 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #e5e5e5;
+  background: var(--border);
 }
 
 .teammate-danger-panel {
@@ -4353,9 +4353,9 @@
 
 .teammate-danger-card {
   grid-template-columns: minmax(0, 1fr) minmax(160px, auto) auto;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface-panel);
 }
 
 .teammate-danger-card:first-of-type {
@@ -4371,8 +4371,8 @@
   min-height: 0;
   overflow-y: auto;
   padding: 14px;
-  border-left: 1px solid #e5e5e5;
-  background: #ffffff;
+  border-left: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .teammate-workspace.settings-mode.settings-return-mode > .teammate-settings-summary-panel {
@@ -4383,9 +4383,9 @@
   display: grid;
   gap: 1px;
   overflow: hidden;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #e5e5e5;
+  background: var(--border);
 }
 
 .teammates-page > .teammate-management-grid {
@@ -4518,7 +4518,7 @@
     display: flex;
     overflow-x: auto;
     border-right: 0;
-    border-bottom: 1px solid #e5e5e5;
+    border-bottom: 1px solid var(--border);
   }
 
   .teammate-settings-nav button {
@@ -4528,7 +4528,7 @@
   .teammate-context-panel,
   .teammate-settings-summary-panel {
     border-left: 0;
-    border-top: 1px solid #e5e5e5;
+    border-top: 1px solid var(--border);
   }
 }
 

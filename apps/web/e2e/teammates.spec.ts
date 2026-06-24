@@ -436,23 +436,25 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByText("Model needs setup")).toBeVisible();
   const privateChatDarkSurfaces = await page.evaluate(() => {
     const selectors = [
-      ".teammate-workspace-hero",
-      ".teammate-chat-composer",
-      ".teammate-chat-composer .primary-button:disabled",
+      ".workspace-teammate-private-surface",
+      ".teammate-workspace.chat-mode",
+      ".teammate-chat-header",
+      ".teammate-private-chat",
+      ".teammate-message-list",
+      ".teammate-direct-composer",
     ];
-    return selectors.flatMap((selector) => {
+    return selectors.map((selector) => {
       const element = document.querySelector(selector);
-      if (!element) {
-        return [];
-      }
       const color = element ? getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [] : [];
-      return [{
+      return {
         selector,
+        exists: Boolean(element),
         maxChannel: color.length > 0 ? Math.max(...color) : 255,
-      }];
+      };
     });
   });
   for (const surface of privateChatDarkSurfaces) {
+    expect(surface.exists, `${surface.selector} should render`).toBe(true);
     expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
   }
 
@@ -464,6 +466,22 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByRole("button", { name: "Show details" })).toBeVisible();
   await page.getByRole("button", { name: "Show details" }).click();
   await expect(page.getByLabel("Conversation context")).toBeVisible();
+  const privateContextDarkSurfaces = await page.evaluate(() => {
+    const selectors = [".teammate-context-panel", ".teammate-context-row"];
+    return selectors.flatMap((selector) =>
+      Array.from(document.querySelectorAll(selector)).map((element) => {
+        const color = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
+        return {
+          selector,
+          maxChannel: color.length > 0 ? Math.max(...color) : 255,
+        };
+      }),
+    );
+  });
+  expect(privateContextDarkSurfaces.length).toBeGreaterThan(0);
+  for (const surface of privateContextDarkSurfaces) {
+    expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
+  }
   const pendingPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "AI teammate is replying..." });
   await expect(pendingPrivateRow).toBeVisible();
   await expect(pendingPrivateRow).toHaveClass(/message-bubble/);

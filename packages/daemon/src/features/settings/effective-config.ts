@@ -111,7 +111,7 @@ export async function buildEffectiveConfigResponse(input: {
         userSettings?.locale,
         "user",
         paths.user.settingsPath,
-        "system",
+        "zh-CN",
       ),
       responseLanguage: effectiveValue(
         workspaceSettings.responseLanguage,

@@ -509,9 +509,9 @@
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--surface-panel);
   color: var(--text-strong);
-  box-shadow: 0 12px 28px rgba(17, 17, 17, 0.14);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--app-bg) 72%, transparent);
   font-size: 12px;
   font-weight: 650;
   line-height: 16px;

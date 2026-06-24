@@ -4,6 +4,12 @@ import {
   createBaseState,
 } from "./support/mock-state";
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+});
+
 test("generation tasks page lists, runs, and creates generation tasks", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
