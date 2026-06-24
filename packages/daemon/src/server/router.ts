@@ -1506,8 +1506,8 @@ export async function routeRequest(
           runnerRegistry,
           runtimeSupervisor,
           secretResolver,
-          webFetch: context.channelWebFetch,
-          webResolveHostAddresses: context.channelWebResolveHostAddresses,
+          webFetch: context.webFetch,
+          webResolveHostAddresses: context.webResolveHostAddresses,
           ...input,
         }),
         (input) => confirmAndOrchestrateChannelProposal({
@@ -1531,8 +1531,8 @@ export async function routeRequest(
           runnerRegistry,
           runtimeSupervisor,
           secretResolver,
-          webFetch: context.channelWebFetch,
-          webResolveHostAddresses: context.channelWebResolveHostAddresses,
+          webFetch: context.webFetch,
+          webResolveHostAddresses: context.webResolveHostAddresses,
           ...input,
         }),
         (input) => confirmAndOrchestrateChannelProposal({
@@ -1735,6 +1735,8 @@ export async function routeRequest(
             runtimeSupervisor,
             secretResolver,
             imageVisionSummarizer,
+            webFetch: context.webFetch,
+            webResolveHostAddresses: context.webResolveHostAddresses,
             onWorkUnitStarted: (handle) => {
               sourceWorkUnitId = handle.workUnitId;
               onWorkUnitStarted?.(handle);
@@ -1789,6 +1791,8 @@ export async function routeRequest(
             runtimeSupervisor,
             secretResolver,
             imageVisionSummarizer,
+            webFetch: context.webFetch,
+            webResolveHostAddresses: context.webResolveHostAddresses,
             signal,
             onWorkUnitStarted: (handle) => {
               sourceWorkUnitId = handle.workUnitId;

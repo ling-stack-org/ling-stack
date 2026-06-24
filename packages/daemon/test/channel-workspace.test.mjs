@@ -8859,6 +8859,128 @@ test("teammate direct message stream emits ready delta and done events", async (
   }
 });
 
+test("teammate direct reply injects web search context before runner reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-web-search-context-"));
+  await ensureGitRepo(cwd);
+  const runner = new RecordingRunner();
+  const webSearchCalls = [];
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+    secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
+    webFetch: async (url, init) => {
+      webSearchCalls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        output_text: "Private fresh web evidence summary.",
+        output: [
+          {
+            type: "web_search_call",
+            action: {
+              type: "search",
+              sources: [
+                { type: "url", url: "https://example.com/private-fresh", title: "Private fresh source" },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      kind: "openai",
+      displayName: "OpenAI Responses + Web Search",
+      providerId: "openai",
+      model: "gpt-5.5",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+      authHeader: true,
+      capabilities: ["chat", "tool_call", "reasoning", "web_search"],
+    })).provider;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.recordProviderCheckResult(provider.id, {
+      ok: true,
+      code: "static_check",
+      message: "Provider ready for private web search context test.",
+      checkedAt: "2026-06-24T00:00:00.000Z",
+    });
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "查一下 Ling Stack 最新消息", providerPresetId: provider.id }),
+    });
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+
+    assert.equal(webSearchCalls.length, 1);
+    assert.equal(webSearchCalls[0].url, "https://api.openai.com/v1/responses");
+    const requestBody = JSON.parse(webSearchCalls[0].init.body);
+    assert.deepEqual(requestBody.tools, [{ type: "web_search", search_context_size: "low" }]);
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Ling web context:/);
+    assert.match(runner.runs[0].task.prompt, /Private fresh web evidence summary/);
+    assert.match(runner.runs[0].task.prompt, /https:\/\/example\.com\/private-fresh/);
+    assert.match(runner.runs[0].systemPrompt, /If Ling web context is included/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /sk-test-secret-value/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate direct web search context blocks unsupported providers without fetching", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-web-search-unsupported-"));
+  await ensureGitRepo(cwd);
+  const runner = new RecordingRunner();
+  let fetched = false;
+  const daemon = await startDaemonForTest(runner, {
+    secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
+    webFetch: async () => {
+      fetched = true;
+      return new Response("should not fetch", { status: 200 });
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "查一下 Ling Stack 最新消息", providerPresetId: provider.id }),
+    });
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+
+    assert.equal(fetched, false);
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Web search status: blocked/);
+    assert.match(runner.runs[0].task.prompt, /Current selected Ling provider does not support realtime web search/);
+    assert.match(runner.runs[0].task.prompt, /will not bypass model settings/);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /sk-test-secret-value/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("teammate direct message rejects workspace file refs outside private workspace", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-file-ref-boundary-"));
   await ensureGitRepo(cwd);

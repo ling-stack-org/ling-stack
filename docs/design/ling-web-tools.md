@@ -2,7 +2,7 @@
 
 ## Goal
 
-Ling Agent should answer channel questions that require current public web evidence without pretending that Codex-only tools are part of the Ling runtime. Ling exposes one global web capability contract and lets provider adapters translate vendor-specific protocols into that contract. The first slice adds daemon-owned web context before channel reply generation:
+Ling Agent should answer questions that require current public web evidence without pretending that Codex-only tools are part of the Ling runtime. Ling exposes one global web capability contract and lets provider adapters translate vendor-specific protocols into that contract. The current implementation builds daemon-owned web evidence before channel and private teammate reply generation:
 
 - `web_search`: provider-backed hosted web search, currently implemented for a selected official OpenAI Responses provider that explicitly declares the `web_search` capability.
 - `open_url` / `read_url`: public URL body extraction for explicit URL-reading requests.
@@ -10,28 +10,39 @@ Ling Agent should answer channel questions that require current public web evide
 
 ## Current Slice
 
-The daemon builds web context before calling the channel reply runner. This keeps web access out of the local `RunTool` permission enum (`read`, `grep`, `find`, `ls`, `bash`, `edit`, `write`) and avoids treating internet lookup as a workspace filesystem or shell permission.
+The daemon builds web evidence before calling no-tool reply runners. This keeps web access out of the local `RunTool` permission enum (`read`, `grep`, `find`, `ls`, `bash`, `edit`, `write`) and avoids treating internet lookup as a workspace filesystem or shell permission.
 
 ```mermaid
 flowchart LR
-  User["User channel message"] --> Materialize["Inline materialization"]
-  Materialize --> Envelope["Ling turn envelope"]
+  User["User message"] --> Surface["Channel or private teammate surface"]
+  Surface --> Materialize["Inline materialization"]
+  Materialize --> Envelope["Surface context view"]
   Envelope --> WebIntent["Web intent detector"]
-  WebIntent -->|search intent| Registry["Web search adapter registry"]
+  WebIntent -->|search intent| Evidence["Daemon web evidence service"]
+  Evidence --> Registry["Web search adapter registry"]
   Registry --> Search["Provider hosted search"]
-  WebIntent -->|URL read intent| ReadUrl["Public URL reader"]
+  WebIntent -->|URL read intent| Evidence
+  Evidence --> ReadUrl["Public URL reader"]
   Search --> Context["Ling web context"]
   ReadUrl --> Context
-  Context --> Prompt["Channel reply prompt"]
+  Context --> Prompt["Reply prompt"]
   Prompt --> Runner["Configured Ling runner"]
-  Runner --> Reply["AI channel reply with visible source URLs"]
+  Runner --> Reply["AI reply with visible source URLs"]
 ```
+
+The shared implementation lives under `packages/daemon/src/features/web/`:
+
+- `web-search-adapters.ts`: provider protocol adapters and normalized `WebSearchResult`.
+- `web-search-service.ts`: selected-provider resolution, secret lookup, adapter dispatch, and sanitized failures.
+- `web-evidence-service.ts`: global intent detection, URL reading, evidence prompt rendering, and normalized metadata for `search` and `readUrls`.
+
+Channel code keeps a small compatibility wrapper in `features/channels/web-tools.ts`. Private teammate replies call the same evidence service directly.
 
 ## Tool Semantics
 
 ### web_search
 
-`web_search` is a daemon-side context enrichment, not a runner tool. It triggers on explicit web/search language or freshness queries such as latest/current/today/news combined with search or verification intent.
+`web_search` is a daemon-side evidence enrichment, not a runner tool. It triggers on explicit web/search language or freshness queries such as latest/current/today/news combined with search or verification intent.
 
 Global result contract:
 
@@ -129,7 +140,7 @@ Until that exists, Ling supports current public lookup and public URL reading, n
 
 ## Prompt Boundary
 
-The channel reply system prompt remains side-effect free:
+The channel and private reply system prompts remain side-effect free:
 
 - the runner still receives `tools: []`;
 - web context is explicitly labeled as evidence;
@@ -164,7 +175,7 @@ The slice intentionally reuses the existing provider secret system:
 ## Next Slice
 
 1. Add UI evidence rows for web search calls, opened URLs, and cited sources.
-2. Move channel-only context injection behind a daemon global evidence service so direct runs, workflow steps, automations, and multi-agent orchestration can call the same `web_search` surface.
+2. Wire workflow steps, automations, and multi-agent orchestration into the same web evidence service where the surface can preserve source URLs and blocked reasons.
 3. Add configurable search controls: allowed/blocked domains, live-access toggle, and context size.
 4. Add provider adapters one at a time: xAI/Grok, Google grounding, Perplexity/search-model providers, Anthropic, then domestic providers where official protocols and citation evidence are available.
 5. Add a browser-session design with approvals, artifacts, and replayable interaction events.

@@ -10,6 +10,7 @@ import type { LingImageVisionSummarizer } from "../channels/materialization/regi
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
+import { buildWebEvidenceContext, prependWebEvidenceContext } from "../web/web-evidence-service.js";
 import { materializeInlineTeammateDirectInputs } from "./direct-materialization.js";
 import type { DirectWorkspaceReady } from "./direct-workspace.js";
 
@@ -24,6 +25,8 @@ export async function createAiTeammateDirectReply(input: {
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
+  readonly webFetch?: typeof globalThis.fetch;
+  readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly signal?: AbortSignal;
   readonly onWorkUnitStarted?: (handle: {
     readonly workUnitId: string;
@@ -162,10 +165,19 @@ export async function createAiTeammateDirectReply(input: {
       memoryDropped: renderedMemory.dropped,
       now,
     });
+    const webContext = await buildWebEvidenceContext({
+      providerPreset: input.store.getProviderPreset(providerPresetId),
+      sourceText: input.sourceMessage.body,
+      secretResolver: input.secretResolver,
+      fetch: input.webFetch,
+      resolveHostAddresses: input.webResolveHostAddresses,
+      promptHeader: "Ling web context:",
+      promptInstruction: "Use this web context only as cited evidence for the current private reply. Do not claim access to web pages beyond the included results.",
+    });
     const task = {
       id: input.sourceMessage.id,
       title: `Private chat with ${input.teammate.displayName}`,
-      prompt: renderChannelContextView(privateChatView),
+      prompt: prependWebEvidenceContext(renderChannelContextView(privateChatView), webContext),
       channelId: "private",
     };
     const memoryPrompt = renderedMemory.prompt;
@@ -175,7 +187,8 @@ export async function createAiTeammateDirectReply(input: {
       "Reply concisely to the private conversation.",
       "This private chat uses its own isolated workspace context. Treat attachments, link previews, and workspace file references as explicit private-chat context only.",
       "This private chat has no tool access and cannot mutate files or send external messages.",
-      "Do not claim to see channel history, attachments, web pages, or memory beyond the explicit Used memory section unless the user pasted or attached that content in this chat.",
+      "Do not claim to see channel history, attachments, web pages, or memory beyond the explicit Used memory and Ling web context sections unless the user pasted or attached that content in this chat.",
+      "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
       memoryPrompt,
     ].filter((line): line is string => Boolean(line)).join("\n");
     const provider = resolveProviderForRun(
