@@ -3847,12 +3847,20 @@ export function WorkspaceClientView({
     onLoadDetails: ((id: string) => void) | undefined,
   ): ReactNode {
     if (block.kind === "coordinator_text") {
+      const pendingCoordinatorMessage = block.message.status === "pending";
       const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
       if (!body) {
         return null;
       }
       return (
-        <div className={block.phase === "terminal" ? "conversation-turn-assistant-copy terminal" : "conversation-turn-assistant-copy"} key={block.id}>
+        <div
+          className={[
+            block.phase === "terminal" ? "conversation-turn-assistant-copy terminal" : "conversation-turn-assistant-copy",
+            pendingCoordinatorMessage ? "message-body-with-spinner" : "",
+          ].filter(Boolean).join(" ")}
+          key={block.id}
+        >
+          {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
           <MessageBodyRenderer text={body} cwd={cwd} compact />
           {block.memoryCitationEvents.length > 0 ? (
             <UsedMemorySummary
@@ -6889,6 +6897,9 @@ function conversationCoordinatorDisplayBody(
   phase: "start" | "terminal",
   t: Translate,
 ): string {
+  if (message.status === "pending" && !message.body.trim()) {
+    return t("Thinking...");
+  }
   if (!turn.operationCell || !shouldSanitizeGeneratedCoordinatorBody(message.body)) {
     return message.body;
   }

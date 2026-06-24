@@ -4601,6 +4601,31 @@ test("channel composer keeps thinking visible for acknowledged sends before comp
   await expect(channelFeed.getByText("正在思考...")).toHaveCount(0, { timeout: 3_000 });
 });
 
+test("channel conversation turn shows thinking for empty pending ai replies", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+  if (isRecord(channel)) {
+    channel.autoReplyMode = "default_teammate";
+    channel.defaultTeammateId = "ling_agent";
+  }
+  state.keepChannelAiReplyPending = true;
+  await mockDaemon(page, state, { channelAutoRouteEnabled: true });
+  await page.goto("/");
+
+  const body = "你现在可以帮我写在本地里面了吗？";
+  const composerInput = page.getByRole("textbox", { name: "给频道发消息，或 @ 一个 AI 队友", exact: true });
+  const channelFeed = page.getByLabel("频道消息列表");
+  await composerInput.fill(body);
+  await page.locator(".channel-composer").getByRole("button", { name: "发送" }).click();
+
+  await expect(channelFeed.getByText(body)).toBeVisible();
+  await expect(channelFeed.locator(".channel-send-thinking-row")).toHaveCount(0);
+  await expect(channelFeed.locator(".conversation-turn-assistant-copy").getByText("正在思考...")).toBeVisible();
+});
+
 test("channel URL preview blocked state stays in Activity and still allows sending text", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

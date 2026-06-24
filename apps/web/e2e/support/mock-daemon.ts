@@ -95,6 +95,7 @@ export interface MockState {
   runResponseDelayMs?: number;
   channelMessageDelayMs?: number;
   channelAiReplyBody?: string;
+  keepChannelAiReplyPending?: boolean;
   failNextChannelMessage?: boolean;
   lastChannelMessageRequest?: Record<string, unknown>;
   channelMessageQueries?: Record<string, unknown>[];
@@ -8274,19 +8275,20 @@ export async function handleDaemonRoute(
           updatedAt: "2026-05-25T00:18:01.000Z",
         }
       : undefined;
-    if (aiReply) {
-      state.channelMessages.push(aiReply);
+    const pendingReply = aiReply ? { ...aiReply, body: "", status: "pending", errorMessage: undefined } : undefined;
+    const storedAiReply = aiReply && state.keepChannelAiReplyPending ? pendingReply ?? aiReply : aiReply;
+    if (storedAiReply) {
+      state.channelMessages.push(storedAiReply);
       const index = state.channelMessageRouteDecisions.findIndex((decision) => isRecord(decision) && decision.id === routeDecision.id);
       if (index !== -1) {
-        state.channelMessageRouteDecisions[index] = { ...routeDecision, replyMessageId: aiReply.id, updatedAt: "2026-05-25T00:18:01.000Z" };
+        state.channelMessageRouteDecisions[index] = { ...routeDecision, replyMessageId: storedAiReply.id, updatedAt: "2026-05-25T00:18:01.000Z" };
       }
     }
-    const pendingReply = aiReply ? { ...aiReply, body: "", status: "pending", errorMessage: undefined } : undefined;
     const events = [
       { event: "ready", data: { message } },
       ...(pendingReply ? [{ event: "ready", data: { message, aiReply: pendingReply, aiReplies: [pendingReply] } }] : []),
-      ...(aiReply ? [{ event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } }] : []),
-      { event: "done", data: aiReply ? { message, aiReply, aiReplies: [aiReply] } : { message } },
+      ...(aiReply && !state.keepChannelAiReplyPending ? [{ event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } }] : []),
+      { event: "done", data: storedAiReply ? { message, aiReply: storedAiReply, aiReplies: [storedAiReply] } : { message } },
     ];
     await route.fulfill({
       status: 200,
