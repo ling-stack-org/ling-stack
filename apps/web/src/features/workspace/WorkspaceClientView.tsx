@@ -5235,7 +5235,7 @@ export function WorkspaceClientView({
 	          </div>
         </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
-          {governanceNotificationCount > 0 || channelGovernanceNotificationsLoading ? (
+          {governanceNotificationCount > 0 ? (
             <div className="channel-governance-wrap" ref={governanceNotificationsRef}>
               <button
                 className={governanceNotificationsOpen ? "channel-governance-button active" : "channel-governance-button"}
@@ -5243,9 +5243,6 @@ export function WorkspaceClientView({
                 aria-expanded={governanceNotificationsOpen}
                 title={t("Review queue")}
                 onClick={() => {
-                  if (governanceNotificationCount === 0 && !channelGovernanceNotificationsLoading) {
-                    return;
-                  }
                   const nextOpen = !governanceNotificationsOpen;
                   setGovernanceNotificationsOpen(nextOpen);
                   if (nextOpen) {
@@ -5257,7 +5254,7 @@ export function WorkspaceClientView({
                     onChannelCreateOpenChange(false);
                   }
                 }}
-                disabled={governanceNotificationCount === 0 && channelGovernanceNotificationsLoading}
+                disabled={channelGovernanceNotificationsLoading}
               >
                 {channelGovernanceNotificationsLoading ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />}
                 <span>{t("Review")}</span>

@@ -69,6 +69,25 @@ test("channel governance notifications stay in the header review queue", async (
   expect(isRecord(state.governanceNotifications[0]) ? state.governanceNotifications[0].status : undefined).toBe("dismissed");
 });
 
+test("channel header hides empty governance review queue while notifications load", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.governanceNotifications = [];
+  state.governanceNotificationDelayMs = 1_000;
+  let requestStarted = false;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/governance-notifications") {
+      requestStarted = true;
+    }
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect.poll(() => requestStarted).toBe(true);
+  await page.waitForTimeout(100);
+  await expect(page.locator(".channel-governance-button")).toHaveCount(0, { timeout: 250 });
+  await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
+});
+
 test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];

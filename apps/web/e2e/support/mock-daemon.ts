@@ -94,6 +94,7 @@ export interface MockState {
   providerCheckDelayMs?: number;
   runResponseDelayMs?: number;
   channelMessageDelayMs?: number;
+  governanceNotificationDelayMs?: number;
   channelAiReplyBody?: string;
   keepChannelAiReplyPending?: boolean;
   failNextChannelMessage?: boolean;
@@ -5473,6 +5474,9 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/governance-notifications") {
+    if (state.governanceNotificationDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.governanceNotificationDelayMs));
+    }
     const notifications = state.governanceNotifications
       .filter(isGovernanceNotification)
       .filter((notification) => governanceNotificationMatchesQuery(notification, url.searchParams))
