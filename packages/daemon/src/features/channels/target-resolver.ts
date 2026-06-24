@@ -116,11 +116,7 @@ function recentChannelFileTargetCandidates(input: ResolveExecutableFileTargetInp
 }
 
 function resolveRecentChannelMessageFileTarget(input: ResolveExecutableFileTargetInput): ResolvedExecutableFileTarget {
-  const recentMessages = input.store
-    .listChannelMessages({ channelId: input.channel.id, limit: 30 })
-    .filter((message) => message.id !== input.sourceMessage.id && message.createdAt <= input.sourceMessage.createdAt && message.status !== "failed")
-    .slice()
-    .reverse();
+  const recentMessages = recentMessageTargetScope(input);
   for (const message of recentMessages) {
     const candidates = extractFileTargetCandidates(message.body);
     if (candidates.length === 1) {
@@ -142,6 +138,43 @@ function resolveRecentChannelMessageFileTarget(input: ResolveExecutableFileTarge
     status: "missing",
     reason: "No recent single file target was found.",
   };
+}
+
+function recentMessageTargetScope(input: ResolveExecutableFileTargetInput): readonly ChannelMessage[] {
+  const scopedMessages = input.sourceMessage.threadId
+    ? recentThreadMessageTargetScope(input)
+    : input.store.listChannelMessages({ channelId: input.channel.id, limit: 30 });
+  return scopedMessages
+    .filter((message) => message.id !== input.sourceMessage.id && message.createdAt <= input.sourceMessage.createdAt && message.status !== "failed")
+    .slice()
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .reverse();
+}
+
+function recentThreadMessageTargetScope(input: ResolveExecutableFileTargetInput): readonly ChannelMessage[] {
+  const threadId = input.sourceMessage.threadId;
+  if (!threadId) {
+    return [];
+  }
+  const messages = input.store.listChannelMessages({ channelId: input.channel.id, threadId, limit: 30 });
+  const rootMessage = input.store.getChannelMessage(threadId);
+  if (rootMessage && rootMessage.channelId === input.channel.id) {
+    return uniqueMessages([...messages, rootMessage]);
+  }
+  return messages;
+}
+
+function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {
+  const seen = new Set<string>();
+  const unique: ChannelMessage[] = [];
+  for (const message of messages) {
+    if (seen.has(message.id)) {
+      continue;
+    }
+    seen.add(message.id);
+    unique.push(message);
+  }
+  return unique;
 }
 
 function extractFileTargetCandidates(text: string): readonly string[] {

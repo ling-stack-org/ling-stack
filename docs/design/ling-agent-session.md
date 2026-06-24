@@ -157,6 +157,12 @@ Ling Agent Coordinator is the only first-class channel turn entry point. "Ordina
 is not an entry mode. It is the `answer` outcome after higher-priority session, target,
 execution, approval, and clarification paths decline the turn.
 
+Channel thread shape is not an execution boundary. A `ChannelMessage.threadId` only
+identifies the discussion thread used for rendering, context lookup, and reply placement.
+It may narrow ambient auto-reply and auto-start policy, but it must not prevent the
+coordinator from evaluating active-session follow-ups, approval responses, target
+resolution, clarification, or direct executable work.
+
 ```ts
 type TurnDecision =
   | { kind: "answer"; responderHint?: string }
@@ -187,6 +193,11 @@ Target resolution runs before answer routing. It may resolve targets from:
   "落到工作区", "按刚才那个改", or "帮我保存";
 - recent workflow/proposal evidence when the user gives a filename-only follow-up such
   as "在 README.md 里加一句".
+
+When the source turn is inside a channel thread, same-thread messages and the thread root
+are searched before broader channel history. This keeps follow-ups such as "写到里面"
+bound to the file target established in that discussion instead of drifting to unrelated
+recent channel work.
 
 TargetResolver must be conservative:
 
