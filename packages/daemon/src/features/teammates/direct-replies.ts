@@ -10,6 +10,7 @@ import type { LingImageVisionSummarizer } from "../channels/materialization/regi
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
+import { recordMessageWebEvidenceEvent } from "../web/message-web-evidence.js";
 import { buildWebEvidenceContext, prependWebEvidenceContext } from "../web/web-evidence-service.js";
 import { materializeInlineTeammateDirectInputs } from "./direct-materialization.js";
 import type { DirectWorkspaceReady } from "./direct-workspace.js";
@@ -173,6 +174,15 @@ export async function createAiTeammateDirectReply(input: {
       resolveHostAddresses: input.webResolveHostAddresses,
       promptHeader: "Ling web context:",
       promptInstruction: "Use this web context only as cited evidence for the current private reply. Do not claim access to web pages beyond the included results.",
+    });
+    recordMessageWebEvidenceEvent({
+      store: input.store,
+      workUnitId: supervised.workUnit.id,
+      attemptId: supervised.attempt.id,
+      sourceMessageId: input.sourceMessage.id,
+      linkedMessageId: pending.id,
+      context: webContext,
+      ts: new Date().toISOString(),
     });
     const task = {
       id: input.sourceMessage.id,

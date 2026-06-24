@@ -1278,6 +1278,100 @@ test("channel message feed renders AI teammate avatar images", async ({ page }) 
   await expect(designerReply.locator(".teammate-avatar-image")).toHaveAttribute("src", /\/attachments\/tpatt_designer_avatar\/content/);
 });
 
+test("channel message feed renders web evidence inline with sources and blocked reasons", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
+  state.channelMessages = [
+    {
+      id: "msg_web_evidence_available",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "engineer",
+      body: "Web-backed reply with source.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      webEvidence: {
+        status: "available",
+        query: "latest Ling Stack release",
+        provider: {
+          adapterId: "openai-responses-web-search",
+          providerPresetId: "provider_openai_responses",
+          displayName: "OpenAI Responses + Web Search",
+        },
+        sources: [
+          {
+            url: "https://example.com/ling-release",
+            title: "Ling release note",
+            snippet: "Release evidence snippet.",
+          },
+        ],
+        readUrls: [
+          {
+            url: "https://example.com/ling-release",
+            status: "available",
+            finalUrl: "https://example.com/ling-release",
+          },
+        ],
+        updatedAt: "2026-06-24T00:20:00.000Z",
+      },
+      createdAt: "2026-06-24T00:20:00.000Z",
+      updatedAt: "2026-06-24T00:20:00.000Z",
+    },
+    {
+      id: "msg_web_evidence_blocked",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "engineer",
+      body: "Blocked web reply.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      webEvidence: {
+        status: "blocked",
+        query: "latest Ling Stack release",
+        reason: "Current selected Ling provider does not support realtime web search.",
+        sources: [],
+        readUrls: [],
+        updatedAt: "2026-06-24T00:21:00.000Z",
+      },
+      createdAt: "2026-06-24T00:21:00.000Z",
+      updatedAt: "2026-06-24T00:21:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  const sourcedReply = feed.locator(".channel-message-row").filter({ hasText: "Web-backed reply with source." });
+  const sourcedEvidence = sourcedReply.getByLabel("Message evidence");
+  await expect(sourcedEvidence.getByRole("button", { name: /web_search 1 sources/ })).toBeVisible();
+  await sourcedEvidence.getByRole("button").click();
+  await expect(sourcedEvidence).toContainText("web_search");
+  await expect(sourcedEvidence).toContainText("latest Ling Stack release");
+  await expect(sourcedEvidence).toContainText("Ling release note");
+  await expect(sourcedEvidence).toContainText("example.com");
+  await expect(sourcedEvidence).toContainText("open_url");
+
+  const blockedReply = feed.locator(".channel-message-row").filter({ hasText: "Blocked web reply." });
+  const blockedEvidence = blockedReply.getByLabel("Message evidence");
+  await expect(blockedEvidence.getByRole("button", { name: /web_search blocked/ })).toBeVisible();
+  await blockedEvidence.getByRole("button").click();
+  await expect(blockedEvidence).toContainText("Blocked reason");
+  await expect(blockedEvidence).toContainText("Current selected Ling provider does not support realtime web search.");
+});
+
 test("channel settings manage workspace binding and header badge", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

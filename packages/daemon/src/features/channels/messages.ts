@@ -20,6 +20,10 @@ import { createProviderBackedImageVisionSummarizer } from "./materialization/pro
 import type { LingImageVisionSummarizer } from "./materialization/registry.js";
 import { validateChannelMessageReferences } from "./protocol.js";
 import { parseChannelMessageRequest } from "./schemas.js";
+import {
+  enrichChannelMessageWithWebEvidence,
+  enrichChannelMessagesWithWebEvidence,
+} from "../web/message-web-evidence.js";
 
 export type CreateChannelAiReply = (input: {
   readonly store: RunStore;
@@ -166,10 +170,10 @@ export async function handleChannelMessageStream(
                 safeWriteSse("delta", { messageId: aiReply.id, delta, body: aiReply.body });
               },
               onDone: (aiReply) => {
-                upsertAiReply(aiReply);
+                upsertAiReply(enrichChannelMessageWithWebEvidence(store, aiReply));
               },
               onBlocked: (aiReply) => {
-                upsertAiReply(aiReply);
+                upsertAiReply(enrichChannelMessageWithWebEvidence(store, aiReply));
               },
             },
           }),
@@ -185,17 +189,21 @@ export async function handleChannelMessageStream(
         }, new Date().toISOString());
       }
 
-      const aiReplies = result.aiReplies?.length
+      const rawAiReplies = result.aiReplies?.length
         ? result.aiReplies
         : result.aiReply
           ? [result.aiReply]
           : Array.from(aiRepliesById.values());
+      const aiReplies = enrichChannelMessagesWithWebEvidence(store, rawAiReplies);
       for (const aiReply of aiReplies) {
         upsertAiReply(aiReply);
       }
+      const aiReply = result.aiReply
+        ? aiReplies.find((reply) => reply.id === result.aiReply?.id) ?? enrichChannelMessageWithWebEvidence(store, result.aiReply)
+        : undefined;
       const streamPayload = {
         message,
-        ...(result.aiReply ? { aiReply: result.aiReply } : {}),
+        ...(aiReply ? { aiReply } : {}),
         ...(aiReplies.length > 0 ? { aiReplies } : {}),
         ...(result.autoStartedWorkflow ? { autoStartedWorkflow: result.autoStartedWorkflow } : {}),
       };
@@ -283,10 +291,11 @@ export async function handleChannelMessagesCollection(
         beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       });
+      const messages = enrichChannelMessagesWithWebEvidence(store, page.messages);
       writeJson(response, 200, {
         cwd,
         channelId,
-        messages: page.messages,
+        messages,
         hasMore: page.hasMore,
         nextBeforeMessageId: page.nextBeforeMessageId,
       });
@@ -343,11 +352,13 @@ export async function handleChannelMessagesCollection(
           replyMessageId: result.aiReply.id,
         }, new Date().toISOString());
       }
+      const aiReply = result.aiReply ? enrichChannelMessageWithWebEvidence(store, result.aiReply) : undefined;
+      const aiReplies = result.aiReplies ? enrichChannelMessagesWithWebEvidence(store, result.aiReplies) : undefined;
 
       writeJson(response, 201, {
         message,
-        ...(result.aiReply ? { aiReply: result.aiReply } : {}),
-        ...(result.aiReplies ? { aiReplies: result.aiReplies } : {}),
+        ...(aiReply ? { aiReply } : {}),
+        ...(aiReplies ? { aiReplies } : {}),
         ...(result.intervention ? { intervention: result.intervention } : {}),
         ...(result.activeSessionAction ? { activeSessionAction: result.activeSessionAction } : {}),
         ...(result.autoStartedWorkflow ? { autoStartedWorkflow: result.autoStartedWorkflow } : {}),

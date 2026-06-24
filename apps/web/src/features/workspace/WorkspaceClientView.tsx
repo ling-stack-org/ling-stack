@@ -165,7 +165,7 @@ import {
   type PendingAssetState,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationGuidanceStrip, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, FileRefChip, MessageBodyRenderer, MessageBubble, MessageFooterActions, MessageRow, RightDrawer, type ConversationGuidanceItem, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationGuidanceStrip, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, FileRefChip, MessageBodyRenderer, MessageBubble, MessageEvidencePanel, MessageFooterActions, MessageRow, RightDrawer, type ConversationGuidanceItem, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -3945,20 +3945,11 @@ export function WorkspaceClientView({
                 </div>
               )}
               attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.channelId)}
-              evidenceNode={messageUsedMemoryEvents.length > 0 ? (
-                <ConversationEvidenceBundlePanel
-                  label={t("Message evidence")}
-                  bundle={{
-                    summary: t("Used memory"),
-                    sections: [
-                      {
-                        id: "memory",
-                        label: t("Memory"),
-                        summary: t("Used memory"),
-                        content: usedMemorySummary,
-                      },
-                    ],
-                  }}
+              evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
+                <MessageEvidencePanel
+                  memoryContent={usedMemorySummary}
+                  memorySummary={messageUsedMemoryEvents.length > 0 ? t("Used memory") : undefined}
+                  webEvidence={message.webEvidence}
                 />
               ) : null}
               actionsNode={(

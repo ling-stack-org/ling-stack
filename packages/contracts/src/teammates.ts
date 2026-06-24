@@ -4,6 +4,7 @@ import type {
   ChannelAttachmentKind,
   ChannelLinkPreviewStatus,
   ChannelMessageFileRef,
+  MessageWebEvidence,
   ChannelWorkspaceBinding,
   ChannelWorkspaceMode,
   ChannelWorkspaceSnapshot,
@@ -276,6 +277,7 @@ export interface TeammateDirectMessage {
   readonly linkedRunId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly webEvidence?: MessageWebEvidence;
 }
 
 export interface CreateTeammateDirectMessageRequest {

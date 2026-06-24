@@ -12,6 +12,10 @@ import {
   flushLingAgentGovernanceNotificationDigests,
   flushTeammateDirectGovernanceNotifications,
 } from "../governance-notifications/private-delivery.js";
+import {
+  enrichTeammateDirectMessageWithWebEvidence,
+  enrichTeammateDirectMessagesWithWebEvidence,
+} from "../web/message-web-evidence.js";
 
 export type CreateTeammateDirectAiReply = (input: {
   readonly store: RunStore;
@@ -124,11 +128,12 @@ export async function handleTeammateDirectMessagesCollection(
         beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       });
+      const messages = enrichTeammateDirectMessagesWithWebEvidence(store, page.messages);
       writeJson(response, 200, {
         cwd,
         teammateId,
         thread,
-        messages: page.messages,
+        messages,
         hasMore: page.hasMore,
         nextBeforeMessageId: page.nextBeforeMessageId,
       });
@@ -168,7 +173,7 @@ export async function handleTeammateDirectMessagesCollection(
             workspace: undefined,
           })
         : undefined;
-      writeJson(response, 201, aiReply ? { message, aiReply } : { message });
+      writeJson(response, 201, aiReply ? { message, aiReply: enrichTeammateDirectMessageWithWebEvidence(store, aiReply) } : { message });
       return;
     }
 
@@ -260,8 +265,11 @@ export async function handleTeammateDirectMessageStream(
         stream: {
           onReady: (aiReply) => safeWriteSse("ready", { message, aiReply }),
           onDelta: (aiReply, delta) => safeWriteSse("delta", { messageId: aiReply.id, delta, body: aiReply.body }),
-          onDone: (aiReply) => safeWriteSse("done", { message, aiReply }),
-          onBlocked: (aiReply) => safeWriteSse(aiReply.status === "failed" ? "error" : "blocked", { message, aiReply, error: aiReply.errorMessage }),
+          onDone: (aiReply) => safeWriteSse("done", { message, aiReply: enrichTeammateDirectMessageWithWebEvidence(store, aiReply) }),
+          onBlocked: (aiReply) => {
+            const enrichedReply = enrichTeammateDirectMessageWithWebEvidence(store, aiReply);
+            safeWriteSse(aiReply.status === "failed" ? "error" : "blocked", { message, aiReply: enrichedReply, error: aiReply.errorMessage });
+          },
         },
       });
     } catch (error) {

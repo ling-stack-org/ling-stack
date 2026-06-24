@@ -2573,14 +2573,74 @@ function RuntimeAuditBlock({
           {workUnitDetail.events.slice(0, 8).map((event) => (
             <div key={event.id} className="runtime-list-row">
               <StatusBadge status={event.type} />
-              <span>#{event.seq} {event.type}</span>
-              <small>{formatDateTime(event.ts)}</small>
+              <span>{runtimeEventTimelineLabel(event, t)}</span>
+              <small>{runtimeEventTimelineMeta(event, t)}</small>
             </div>
           ))}
         </div>
       ) : null}
     </div>
   );
+}
+
+function runtimeEventTimelineLabel(event: WorkUnitDetailResponse["events"][number], t: Translate): string {
+  if (event.type !== "web_evidence_recorded") {
+    return `#${event.seq} ${event.type}`;
+  }
+  const query = readDataString(event.data, "query");
+  const reason = readDataString(event.data, "reason");
+  const status = readDataString(event.data, "status");
+  const toolName = query || runtimeEventSources(event).length > 0 ? "web_search" : "open_url";
+  if (status === "blocked" && reason) {
+    return `#${event.seq} ${toolName} ${t("blocked")}: ${truncatePreview(reason, 86)}`;
+  }
+  if (query) {
+    return `#${event.seq} web_search: ${truncatePreview(query, 86)}`;
+  }
+  return `#${event.seq} ${toolName}: ${status || "recorded"}`;
+}
+
+function runtimeEventTimelineMeta(event: WorkUnitDetailResponse["events"][number], t: Translate): string {
+  if (event.type !== "web_evidence_recorded") {
+    return formatDateTime(event.ts);
+  }
+  const sourceHosts = runtimeEventSources(event).map((source) => sourceHost(source.url)).filter(Boolean);
+  const openUrls = runtimeEventReadUrls(event).map((item) => `${item.status}:${sourceHost(item.finalUrl ?? item.url)}`).filter(Boolean);
+  const details = [
+    sourceHosts.length > 0 ? `${t("Sources")}: ${sourceHosts.slice(0, 3).join(", ")}` : undefined,
+    openUrls.length > 0 ? `open_url: ${openUrls.slice(0, 3).join(", ")}` : undefined,
+  ].filter((item): item is string => Boolean(item));
+  return details.length > 0 ? details.join(" · ") : formatDateTime(event.ts);
+}
+
+function runtimeEventSources(event: WorkUnitDetailResponse["events"][number]): readonly { readonly url: string }[] {
+  const value = readDataField(event.data, "sources");
+  return Array.isArray(value)
+    ? value.filter(isRecordWithUrl).map((item) => ({ url: item.url }))
+    : [];
+}
+
+function runtimeEventReadUrls(event: WorkUnitDetailResponse["events"][number]): readonly { readonly url: string; readonly finalUrl?: string; readonly status: string }[] {
+  const value = readDataField(event.data, "readUrls");
+  return Array.isArray(value)
+    ? value.filter(isRecordWithUrl).map((item) => ({
+        url: item.url,
+        ...(typeof item.finalUrl === "string" ? { finalUrl: item.finalUrl } : {}),
+        status: typeof item.status === "string" ? item.status : "recorded",
+      }))
+    : [];
+}
+
+function isRecordWithUrl(value: unknown): value is { readonly url: string; readonly finalUrl?: unknown; readonly status?: unknown } {
+  return typeof value === "object" && value !== null && "url" in value && typeof (value as { readonly url?: unknown }).url === "string";
+}
+
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
 }
 
 function RunEvidencePanel({
