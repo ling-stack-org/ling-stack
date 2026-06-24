@@ -19,6 +19,7 @@ import {
 } from "./ling-agent-turn-envelope.js";
 import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
+import { buildChannelWebContext, prependChannelWebContext } from "./web-tools.js";
 
 export async function createAiChannelReply(input: {
   readonly runnerRegistry: RunnerRegistry;
@@ -33,6 +34,8 @@ export async function createAiChannelReply(input: {
   readonly visibleParticipantTeammateIds?: readonly string[];
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
+  readonly webFetch?: typeof globalThis.fetch;
+  readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly completionMode?: "background" | "inline";
   readonly stream?: {
     readonly onReady: (message: ChannelMessage) => void;
@@ -122,6 +125,8 @@ async function completeAiChannelReply(input: {
   readonly visibleParticipantTeammateIds?: readonly string[];
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
+  readonly webFetch?: typeof globalThis.fetch;
+  readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly pending: ChannelMessage;
   readonly supervised: ReturnType<typeof startRuntimeWorkUnit>;
   readonly teammate: ReturnType<typeof resolveAiTeammateReference>;
@@ -195,12 +200,22 @@ async function completeAiChannelReply(input: {
       canonicalTeammateId: input.canonicalTeammateId,
       visibleParticipantTeammateIds: input.visibleParticipantTeammateIds,
     });
-    let discussionPrompt = renderContextPack(discussionContextPack);
+    const webContext = await buildChannelWebContext({
+      store: input.store,
+      providerPresetId: input.providerPresetId,
+      sourceMessage: input.sourceMessage,
+      turnEnvelope,
+      secretResolver: input.secretResolver,
+      fetch: input.webFetch,
+      resolveHostAddresses: input.webResolveHostAddresses,
+    });
+    let discussionPrompt = prependChannelWebContext(renderContextPack(discussionContextPack), webContext);
     const systemPrompt = [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
       responseLanguageInstruction(responseLanguage),
       "Use only attachment/link metadata and preview/extraction text that is explicitly included in the turn envelope. Do not claim to inspect unavailable attachment bodies or web page bodies.",
+      "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
       "Do not perform tool use or side effects.",
       ...(input.proposalMode === "disabled"
         ? [
@@ -341,7 +356,7 @@ async function completeAiChannelReply(input: {
         compactedChannelSummary: compaction.compactedSummary,
         minimal: true,
       });
-      discussionPrompt = renderContextPack(discussionContextPack);
+      discussionPrompt = prependChannelWebContext(renderContextPack(discussionContextPack), webContext);
       textDeltas.length = 0;
       lastVisibleStreamBody = "";
       const reset = input.store.updateChannelMessageRuntime(

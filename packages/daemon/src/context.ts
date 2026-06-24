@@ -69,6 +69,8 @@ export interface DaemonDependencies {
   readonly secretResolver?: SecretResolver;
   readonly externalSecretStore?: ExternalSecretStore;
   readonly externalWorkFetch?: typeof globalThis.fetch;
+  readonly channelWebFetch?: typeof globalThis.fetch;
+  readonly channelWebResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly mcpBroker?: McpBroker;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }
@@ -85,6 +87,8 @@ export interface DaemonContext {
   readonly externalSecretStore: ExternalSecretStore;
   readonly mcpBroker: McpBroker;
   readonly externalWorkFetch?: typeof globalThis.fetch;
+  readonly channelWebFetch?: typeof globalThis.fetch;
+  readonly channelWebResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry;
   readonly automationSchedulers: AutomationSchedulerRegistry;
