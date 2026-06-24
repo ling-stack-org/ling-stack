@@ -303,7 +303,7 @@ function AgentActivitySpans({
           const hasDetail = span.rows.length > 0;
           const expanded = hasDetail && expandedSpanIds.has(span.id);
           const latestRow = span.latestRow;
-          const currentSummary = latestRow?.title ?? span.summary;
+          const currentSummary = agentActivityCurrentSummary(latestRow, span.summary);
           const avatar = renderAgentAvatar?.(span);
           const headContent = (
             <>
@@ -480,6 +480,36 @@ function WorkCellDetails({
   );
 }
 
+function agentActivityCurrentSummary(row: ConversationWorkCellRow | undefined, fallback: string | undefined): string | undefined {
+  if (!row) {
+    return fallback;
+  }
+  const title = row.title.trim();
+  if (!isExecutionActionRow(row)) {
+    return title || fallback;
+  }
+  const detailLines = displayableRowDetailLines(row.detailLines);
+  const primaryDetail = row.kind === "run_command"
+    ? detailLines.find((line) => line.kind === "code")?.text ?? displayableRowDescription(title, row.description)
+    : displayableRowDescription(title, row.description) ?? detailLines[0]?.text;
+  if (!primaryDetail || sameVisibleRowText(title, primaryDetail)) {
+    return title || fallback;
+  }
+  return truncateVisibleSummary(`${title}: ${primaryDetail}`);
+}
+
+function isExecutionActionRow(row: ConversationWorkCellRow): boolean {
+  return /(?:^|:)action:/u.test(row.id);
+}
+
+function truncateVisibleSummary(value: string, maxLength = 180): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
 function ActiveTurnItemStream({ rows }: { readonly rows: readonly ConversationWorkCellRow[] }): JSX.Element {
   const { t } = useI18n();
   if (rows.length === 0) {
@@ -506,12 +536,71 @@ function WorkCellRow({
   readonly compact?: boolean;
   readonly showIcon?: boolean;
 }): JSX.Element {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const displayDescription = displayableRowDescription(row.title, row.description);
   const displayMeta = displayableRowMeta(row.meta);
   const detailLines = displayableRowDetailLines(row.detailLines);
   const hasDetail = Boolean(displayDescription || detailLines.length > 0);
-  const rowClassName = ["conversation-work-cell-row", row.tone ?? "neutral", compact ? "compact" : "", showIcon ? "" : "iconless", expanded ? "expanded" : ""].filter(Boolean).join(" ");
+  const rowClassName = [
+    "conversation-work-cell-row",
+    row.presentation === "shell" ? "shell" : "",
+    row.tone ?? "neutral",
+    compact ? "compact" : "",
+    showIcon ? "" : "iconless",
+    expanded ? "expanded" : "",
+  ].filter(Boolean).join(" ");
+  if (row.presentation === "shell") {
+    const shellCommand = shellCommandText(row, detailLines);
+    const shellMain = (
+      <>
+        <span className="conversation-work-cell-shell-card">
+          <span className="conversation-work-cell-shell-topline">
+            <span className="conversation-work-cell-shell-label">{t("Shell")}</span>
+            <span className={`conversation-work-cell-shell-state ${row.tone ?? "neutral"}`} aria-hidden="true" />
+            <strong className="conversation-work-cell-shell-title">{row.title}</strong>
+            {displayMeta ? <small className="conversation-work-cell-shell-status">{displayMeta}</small> : null}
+          </span>
+          {shellCommand ? <code className="conversation-work-cell-shell-command">$ {shellCommand}</code> : null}
+          {displayDescription ? <small className="conversation-work-cell-shell-output">{displayDescription}</small> : null}
+        </span>
+        {hasDetail ? (
+          <span className="conversation-work-cell-row-toggle" aria-hidden="true">
+            <ChevronDown size={13} />
+          </span>
+        ) : null}
+      </>
+    );
+    return (
+      <div className={rowClassName}>
+        {hasDetail ? (
+          <button
+            className="conversation-work-cell-row-main conversation-work-cell-shell-main"
+            type="button"
+            aria-expanded={expanded}
+            aria-label={shellCommand ? `${row.title}: $ ${shellCommand}` : row.title}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {shellMain}
+          </button>
+        ) : (
+          <div className="conversation-work-cell-row-main conversation-work-cell-shell-main static">
+            {shellMain}
+          </div>
+        )}
+        {expanded && hasDetail ? (
+          <div className="conversation-work-cell-row-detail conversation-work-cell-shell-detail">
+            {displayDescription ? <small>{displayDescription}</small> : null}
+            {detailLines.map((line, index) => (
+              line.kind === "code"
+                ? <code key={`${line.kind}:${index}`}>{line.text}</code>
+                : <small key={`${line.kind ?? "text"}:${index}`}>{line.text}</small>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
   const rowMain = (
     <>
       {showIcon ? (
@@ -558,6 +647,26 @@ function WorkCellRow({
       ) : null}
     </div>
   );
+}
+
+function shellCommandText(
+  row: ConversationWorkCellRow,
+  detailLines: readonly { readonly kind?: "text" | "code"; readonly text: string }[],
+): string | undefined {
+  const command = stripShellPrompt(row.commandText);
+  if (command) {
+    return command;
+  }
+  const detailCommand = detailLines.find((line) => line.kind === "code" && line.text.trim().startsWith("$ "))?.text;
+  return stripShellPrompt(detailCommand);
+}
+
+function stripShellPrompt(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.replace(/^\$\s*/u, "").trim() || undefined;
 }
 
 function displayableRowDetailLines(lines?: readonly { readonly kind?: "text" | "code"; readonly text: string }[]): readonly { readonly kind?: "text" | "code"; readonly text: string }[] {

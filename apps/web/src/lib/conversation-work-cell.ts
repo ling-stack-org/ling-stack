@@ -28,9 +28,11 @@ export interface ConversationWorkCellStat {
 export interface ConversationWorkCellRow {
   readonly id: string;
   readonly kind?: ConversationOperationKind;
+  readonly presentation?: "default" | "shell";
   readonly title: string;
   readonly description?: string;
   readonly meta?: string;
+  readonly commandText?: string;
   readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
   readonly tone?: ConversationWorkCellRowTone;
 }
@@ -1134,11 +1136,14 @@ function executionActionEvidenceRow(
   artifactsById: ReadonlyMap<string, RunArtifact>,
   t: Translate,
 ): ConversationWorkCellRow {
+  const commandText = executionActionCommandText(action);
   return {
     id: `action:${action.id}`,
     kind: operationKindForExecutionAction(action),
+    presentation: commandText ? "shell" : undefined,
     title: action.title,
     description: action.summary,
+    commandText,
     detailLines: executionActionDetailLines(action, artifactsById, t),
     meta: operationStatusMeta(action.status, t),
     tone: executionActionTone(action),
@@ -1208,6 +1213,22 @@ function executionActionHasUserFacingTarget(action: ExecutionAction): boolean {
   return action.targetRefs.some((ref) =>
     (ref.type === "command" || ref.type === "file" || ref.type === "mcp_tool") &&
     Boolean(userFacingTargetRefText(ref)));
+}
+
+function executionActionCommandText(action: ExecutionAction): string | undefined {
+  if (action.actionType !== "bash" && !action.targetRefs.some((ref) => ref.type === "command")) {
+    return undefined;
+  }
+  for (const ref of action.targetRefs) {
+    if (ref.type !== "command") {
+      continue;
+    }
+    const command = userFacingTargetRefText(ref);
+    if (command) {
+      return truncatePreview(command, 220);
+    }
+  }
+  return undefined;
 }
 
 function userFacingTargetRefText(ref: ExecutionAction["targetRefs"][number]): string | undefined {

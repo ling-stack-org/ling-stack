@@ -93,7 +93,15 @@ interface MaterializationClarifyReason {
 interface ChannelIntentModelOutput {
   readonly action: "no_reply" | "single_reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "direct_workflow";
   readonly reason: string;
+  readonly operationKind?: ChannelIntentModelOperationKind;
 }
+
+type ChannelIntentModelOperationKind =
+  | "file_create"
+  | "file_edit"
+  | "open_local_target"
+  | "run_command"
+  | "unknown";
 
 interface RoleMatch {
   readonly roleKey: AiTeammate["roleKey"];
@@ -130,6 +138,13 @@ interface SingleStepExecutableClarify {
   readonly reasonCode: ClarifyReasonCode;
   readonly userMessage?: string;
   readonly technicalReason: string;
+}
+
+interface FileContentResolution {
+  readonly content?: string;
+  readonly objective?: string;
+  readonly source: "current_message" | "attachment" | "recent_code_block" | "current_objective" | "recent_objective" | "none";
+  readonly sourceMessageId?: string;
 }
 
 const roleMatches: readonly RoleMatch[] = [
@@ -191,6 +206,13 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
   if (materializationClarify) {
     return createMaterializationClarifyReply(input, materializationClarify);
   }
+  const modelIntent = await maybeSelectModelAssistedIntent(input);
+  if (modelIntent) {
+    return modelIntent;
+  }
+  if (input.config?.channels.intentSelector) {
+    return { action: "continue" };
+  }
   const executableClarify = detectSingleStepExecutableClarify(input);
   if (executableClarify) {
     return createClarifyReply(
@@ -215,10 +237,6 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
   }
   if (input.sourceMessage.threadId) {
     return { action: "continue" };
-  }
-  const modelIntent = await maybeSelectModelAssistedIntent(input);
-  if (modelIntent) {
-    return modelIntent;
   }
   return selectDeterministicChannelWorkflowIntent(input);
 }
@@ -314,20 +332,96 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
     return selectVisibleMultiReply(input, "model", output.reason);
   }
   if (output.action === "direct_workflow") {
-    const executableIntent = detectSingleStepExecutableIntent(input);
-    if (executableIntent) {
-      return createSingleStepExecutableProposal(input, executableIntent, "model", output.reason);
-    }
+    return createModelAssistedDirectWorkflowResult(input, output);
   }
 
-  const reasonCode = output.action === "direct_workflow"
-    ? "explicit_workflow_start"
-    : detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
+  const reasonCode = detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
   const participants = selectProposalParticipants(input, reasonCode);
   if (participants.length === 0) {
     return undefined;
   }
   return createWorkflowProposal(input, reasonCode, output.action, "model", output.reason, participants);
+}
+
+function createModelAssistedDirectWorkflowResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
+  const operationKind = output.operationKind ?? "unknown";
+  if (operationKind === "unknown") {
+    return createClarifyReply(
+      input,
+      "missing_target",
+      "model",
+      `Model classified the turn as direct_workflow but did not provide a supported operationKind. Model reason: ${output.reason}`,
+    );
+  }
+  if (operationKind === "run_command") {
+    return createClarifyReply(
+      input,
+      "missing_target",
+      "model",
+      `Model classified the turn as direct_workflow/run_command, but the typed operation path requires a separate command materialization contract. Model reason: ${output.reason}`,
+    );
+  }
+  const text = normalizeWhitespace(input.sourceMessage.body);
+  const explicitTarget = extractFileTargetCandidate(text);
+  const targetResolution = resolveExecutableFileTarget({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    target: explicitTarget,
+    allowRecentMessageTarget: true,
+  });
+  if (targetResolution.status === "ambiguous") {
+    const responseLanguage = resolveChannelResponseLanguage({
+      store: input.store,
+      channel: input.channel,
+      sourceText: input.sourceMessage.body,
+    }).language;
+    return createClarifyReply(
+      input,
+      "ambiguous_target",
+      "model",
+      `Model classified the turn as direct_workflow/${operationKind}, but target validation found multiple candidates. ${targetResolution.reason} Model reason: ${output.reason}`,
+      buildAmbiguousFileTargetClarifyBody(targetResolution.candidates, responseLanguage),
+    );
+  }
+  if (targetResolution.status === "missing") {
+    return createClarifyReply(
+      input,
+      "missing_target",
+      "model",
+      `Model classified the turn as direct_workflow/${operationKind}, but target validation failed: ${targetResolution.reason} Model reason: ${output.reason}`,
+    );
+  }
+  if (operationKind === "open_local_target") {
+    return createSingleStepExecutableProposal(
+      input,
+      buildOpenLocalTargetExecutableIntent(targetResolution.target),
+      "model",
+      `Model-assisted direct_workflow/open_local_target validated against TargetResolver. ${output.reason}`,
+    );
+  }
+  const fileAction = operationKind === "file_edit" ? "file_edit" : "file_create";
+  const content = resolveFileContentForRequest(input, text, targetResolution.target);
+  if (fileAction === "file_create" && !hasConcreteFileWorkInput(content) && requiresConcreteFileContent(text, targetResolution.source)) {
+    const responseLanguage = resolveChannelResponseLanguage({
+      store: input.store,
+      channel: input.channel,
+      sourceText: input.sourceMessage.body,
+    }).language;
+    return createClarifyReply(
+      input,
+      "missing_acceptance",
+      "model",
+      `Model classified the turn as direct_workflow/${operationKind}, but validated target ${targetResolution.target} has no concrete content or objective source and the current turn is only a follow-up/capability check. Model reason: ${output.reason}`,
+      buildMissingFileContentClarifyBody(targetResolution.target, responseLanguage),
+    );
+  }
+  return createSingleStepExecutableProposal(
+    input,
+    buildFileExecutableIntent(input, text, targetResolution.target, fileAction, content),
+    "model",
+    `Model-assisted direct_workflow/${operationKind} validated against TargetResolver. ${output.reason}`,
+  );
 }
 
 async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<ChannelIntentModelOutput> {
@@ -470,7 +564,24 @@ function parseModelIntentOutput(text: string): ChannelIntentModelOutput {
   ) {
     throw new Error("Intent model output schema is invalid.");
   }
-  return { action, reason: reason.trim() };
+  const operationKind = parseModelOperationKind(record.operationKind);
+  return {
+    action,
+    reason: reason.trim(),
+    ...(action === "direct_workflow" ? { operationKind } : {}),
+  };
+}
+
+function parseModelOperationKind(value: unknown): ChannelIntentModelOperationKind {
+  if (
+    value === "file_create" ||
+    value === "file_edit" ||
+    value === "open_local_target" ||
+    value === "run_command"
+  ) {
+    return value;
+  }
+  return "unknown";
 }
 
 function readStrictJsonObject(text: string): string {
@@ -862,6 +973,7 @@ function detectSingleStepExecutableIntent(input: ChannelIntentSelectorInput): Si
     return undefined;
   }
   return detectFileExecutableIntent(input, text)
+    ?? detectBrowserOpenExecutableIntent(input, text)
     ?? detectReleaseExecutableIntent(text)
     ?? detectCommandExecutableIntent(text);
 }
@@ -874,6 +986,10 @@ function detectSingleStepExecutableClarify(input: ChannelIntentSelectorInput): S
   const implicitFileAction = detectImplicitRecentFileAction(text);
   const fileAction = detectFileAction(text) ?? implicitFileAction;
   if (!fileAction) {
+    const browserOpenClarify = detectBrowserOpenExecutableClarify(input, text);
+    if (browserOpenClarify) {
+      return browserOpenClarify;
+    }
     return undefined;
   }
   const explicitTarget = extractFileTargetCandidate(text);
@@ -902,6 +1018,21 @@ function detectSingleStepExecutableClarify(input: ChannelIntentSelectorInput): S
       technicalReason: targetResolution.reason,
     };
   }
+  if (targetResolution.status === "resolved" && fileAction === "file_create") {
+    const content = resolveFileContentForRequest(input, text, targetResolution.target);
+    if (!hasConcreteFileWorkInput(content) && requiresConcreteFileContent(text, targetResolution.source)) {
+      const responseLanguage = resolveChannelResponseLanguage({
+        store: input.store,
+        channel: input.channel,
+        sourceText: input.sourceMessage.body,
+      }).language;
+      return {
+        reasonCode: "missing_acceptance",
+        userMessage: buildMissingFileContentClarifyBody(targetResolution.target, responseLanguage),
+        technicalReason: `Resolved file target ${targetResolution.target}, but no concrete content or objective source was available for a follow-up/capability-style create request.`,
+      };
+    }
+  }
   return undefined;
 }
 
@@ -922,8 +1053,104 @@ function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: str
   if (targetResolution.status !== "resolved") {
     return undefined;
   }
-  const target = targetResolution.target;
-  const content = extractRequestedFileContent(text) ?? extractMaterializedAttachmentContentForFileRequest(input, text);
+  const content = resolveFileContentForRequest(input, text, targetResolution.target);
+  if (fileAction === "file_create" && !hasConcreteFileWorkInput(content) && requiresConcreteFileContent(text, targetResolution.source)) {
+    return undefined;
+  }
+  return buildFileExecutableIntent(input, text, targetResolution.target, fileAction, content);
+}
+
+function detectBrowserOpenExecutableIntent(input: ChannelIntentSelectorInput, text: string): SingleStepExecutableIntent | undefined {
+  if (!mightRequestBrowserOpen(text)) {
+    return undefined;
+  }
+  const explicitTarget = extractFileTargetCandidate(text);
+  const targetResolution = resolveExecutableFileTarget({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    target: explicitTarget,
+    allowRecentMessageTarget: true,
+  });
+  if (targetResolution.status !== "resolved") {
+    return undefined;
+  }
+  return buildBrowserOpenExecutableIntent(text, targetResolution.target);
+}
+
+function detectBrowserOpenExecutableClarify(input: ChannelIntentSelectorInput, text: string): SingleStepExecutableClarify | undefined {
+  if (!mightRequestBrowserOpen(text)) {
+    return undefined;
+  }
+  const explicitTarget = extractFileTargetCandidate(text);
+  const targetResolution = resolveExecutableFileTarget({
+    store: input.store,
+    channel: input.channel,
+    sourceMessage: input.sourceMessage,
+    target: explicitTarget,
+    allowRecentMessageTarget: true,
+  });
+  if (targetResolution.status === "ambiguous") {
+    const responseLanguage = resolveChannelResponseLanguage({
+      store: input.store,
+      channel: input.channel,
+      sourceText: input.sourceMessage.body,
+    }).language;
+    return {
+      reasonCode: "ambiguous_target",
+      userMessage: buildAmbiguousFileTargetClarifyBody(targetResolution.candidates, responseLanguage),
+      technicalReason: targetResolution.reason,
+    };
+  }
+  if (targetResolution.status === "missing" && looksBrowserOpenRequest(text)) {
+    return {
+      reasonCode: "missing_target",
+      technicalReason: targetResolution.reason,
+    };
+  }
+  return undefined;
+}
+
+function buildBrowserOpenExecutableIntent(text: string, target: string): SingleStepExecutableIntent | undefined {
+  if (!looksBrowserOpenRequest(text, target)) {
+    return undefined;
+  }
+  return buildOpenLocalTargetExecutableIntent(target);
+}
+
+function buildOpenLocalTargetExecutableIntent(target: string): SingleStepExecutableIntent {
+  const title = truncateTitle(`Open ${target}`);
+  const rolePreferences: readonly AiTeammate["roleKey"][] = ["engineer", "qa"];
+  return {
+    kind: "command_run",
+    title,
+    prompt: [
+      "Open the requested local target for the user.",
+      `Target: ${target}`,
+      "Use the narrowest local command from the workspace root. For a local HTML file on macOS, prefer opening that file in the default browser.",
+      "Do not recreate or edit the file. Do not run unrelated commands.",
+    ].join("\n"),
+    actionSummary: `Open ${target} in the local browser with the declared bash scope.`,
+    targetLabel: target,
+    requiredTools: ["bash"],
+    rolePreferences,
+    acceptanceCriteria: [
+      `The local target ${target} is opened or a clear blocker explains why it cannot be opened.`,
+      "No files are created or edited by this step.",
+      "No undeclared commands, MCP tools, browser sessions, or external actions are used without a separate runtime permission request.",
+    ],
+    riskSummary: `需要 bash 权限打开 ${target}；proposal evidence 只声明本次打开/运行范围，实际副作用仍走 runtime approval。`,
+  };
+}
+
+function buildFileExecutableIntent(
+  input: ChannelIntentSelectorInput,
+  text: string,
+  target: string,
+  fileAction: "file_create" | "file_edit",
+  resolvedContent?: FileContentResolution,
+): SingleStepExecutableIntent {
+  const contentResolution = resolvedContent ?? resolveFileContentForRequest(input, text, target);
   const requiredTools = fileAction === "file_edit" ? ["edit"] as const : ["write"] as const;
   const rolePreferences: readonly AiTeammate["roleKey"][] = target.toLowerCase().endsWith(".md")
     ? ["docs", "engineer"]
@@ -935,7 +1162,7 @@ function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: str
     prompt: [
       `${fileAction === "file_edit" ? "Edit" : "Create"} the requested file.`,
       `Target: ${target}`,
-      content ? `Requested content:\n${content}` : "The user did not provide file content; do not invent extra content beyond what is needed to satisfy file creation.",
+      fileContentPromptLine(contentResolution, fileAction),
     ].join("\n"),
     actionSummary: `${fileAction === "file_edit" ? "Edit" : "Create"} ${target} with the declared file tool scope.`,
     targetLabel: target,
@@ -943,10 +1170,205 @@ function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: str
     rolePreferences,
     acceptanceCriteria: [
       `Target file is ${fileAction === "file_edit" ? "updated" : "created"} at ${target}.`,
+      "Do not create an empty placeholder file when neither content nor a concrete current objective is available.",
       "No undeclared files, commands, MCP tools, or external actions are used without a separate runtime permission request.",
     ],
     riskSummary: `需要 ${requiredTools.join(", ")} 权限处理 ${target}；proposal evidence 只声明本次任务的文件操作范围，实际副作用仍走 runtime approval。`,
   };
+}
+
+function resolveFileContentForRequest(input: ChannelIntentSelectorInput, text: string, target: string): FileContentResolution {
+  const currentMessageContent = extractRequestedFileContent(text);
+  if (currentMessageContent) {
+    return { source: "current_message", content: currentMessageContent };
+  }
+  const attachmentContent = extractMaterializedAttachmentContentForFileRequest(input, text);
+  if (attachmentContent) {
+    return { source: "attachment", content: attachmentContent };
+  }
+  const recentCodeBlock = extractRecentThreadCodeBlockContent(input, target);
+  if (recentCodeBlock) {
+    return recentCodeBlock;
+  }
+  const currentObjective = extractCurrentFileObjective(text);
+  if (currentObjective) {
+    return { source: "current_objective", objective: currentObjective };
+  }
+  const recentObjective = extractRecentFileObjective(input);
+  if (recentObjective) {
+    return recentObjective;
+  }
+  return { source: "none" };
+}
+
+function fileContentPromptLine(content: FileContentResolution, fileAction: "file_create" | "file_edit"): string {
+  if (content.content) {
+    const sourceLabel = content.source === "recent_code_block"
+      ? `recent same-thread code block${content.sourceMessageId ? ` (${content.sourceMessageId})` : ""}`
+      : content.source === "attachment"
+        ? "materialized attachment"
+        : "current message";
+    return `Requested content from ${sourceLabel}:\n${content.content}`;
+  }
+  if (content.objective) {
+    const sourceLabel = content.source === "recent_objective"
+      ? `recent same-thread/channel objective${content.sourceMessageId ? ` (${content.sourceMessageId})` : ""}`
+      : "current message objective";
+    return [
+      `Requested objective from ${sourceLabel}:`,
+      content.objective,
+      "No literal file content was supplied. Generate the file content required by this objective; ask for clarification rather than creating an empty placeholder if the objective is not actionable.",
+    ].join("\n");
+  }
+  if (fileAction === "file_edit") {
+    return "No literal replacement content was supplied. Apply only the concrete edit requested by the current user turn; ask for clarification rather than making unrelated edits.";
+  }
+  return "No literal file content was supplied. Generate the file content required by the current user objective only; if the current turn is only asking whether local writing is possible, ask for clarification rather than creating an empty placeholder.";
+}
+
+function hasConcreteFileWorkInput(content: FileContentResolution): boolean {
+  return Boolean(content.content?.trim() || content.objective?.trim());
+}
+
+function requiresConcreteFileContent(text: string, targetSource: "explicit_path" | "explicit_name" | "recent_work" | "recent_message"): boolean {
+  if (referencesAttachmentBody(text)) {
+    return false;
+  }
+  return targetSource === "recent_message" || !hasCurrentFileCreationObjective(text);
+}
+
+function hasCurrentFileCreationObjective(text: string): boolean {
+  const normalized = normalizeWhitespace(text)
+    .replace(extractFileTargetCandidate(text) ?? "", "")
+    .trim();
+  if (!normalized) {
+    return false;
+  }
+  if (/(游戏|页面|网页|组件|脚本|文档|说明|README|配置|测试|demo|app|website|page|component|script|doc|config|test)/iu.test(normalized)) {
+    return true;
+  }
+  return normalized.length >= 18 && !/(现在可以了吗|可以了吗|能了吗|可以了没|can you now|is it possible now)/iu.test(normalized);
+}
+
+function extractCurrentFileObjective(text: string): string | undefined {
+  const normalized = normalizeWhitespace(text);
+  return hasCurrentFileCreationObjective(normalized) ? normalized : undefined;
+}
+
+function extractRecentThreadCodeBlockContent(input: ChannelIntentSelectorInput, target: string): FileContentResolution | undefined {
+  const messages = recentFileContentMessages(input);
+  for (const message of messages) {
+    const blocks = extractMarkdownCodeBlocks(message.body);
+    if (blocks.length === 0) {
+      continue;
+    }
+    const matchingBlocks = blocks.filter((block) => codeBlockMatchesTarget(block, target));
+    const selected = matchingBlocks.length === 1 ? matchingBlocks[0] : blocks.length === 1 ? blocks[0] : undefined;
+    if (!selected?.content.trim()) {
+      continue;
+    }
+    return {
+      source: "recent_code_block",
+      sourceMessageId: message.id,
+      content: selected.content.trim(),
+    };
+  }
+  return undefined;
+}
+
+function recentFileContentMessages(input: ChannelIntentSelectorInput): readonly ChannelMessage[] {
+  const scopedMessages = input.sourceMessage.threadId
+    ? input.store.listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.threadId, limit: 30 })
+    : input.store.listChannelMessages({ channelId: input.channel.id, limit: 30 });
+  const rootMessage = input.sourceMessage.threadId ? input.store.getChannelMessage(input.sourceMessage.threadId) : undefined;
+  return uniqueMessages([
+    ...scopedMessages,
+    ...(rootMessage && rootMessage.channelId === input.channel.id ? [rootMessage] : []),
+  ])
+    .filter((message) => message.id !== input.sourceMessage.id && message.createdAt <= input.sourceMessage.createdAt && message.status !== "failed")
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function extractRecentFileObjective(input: ChannelIntentSelectorInput): FileContentResolution | undefined {
+  for (const message of recentFileContentMessages(input)) {
+    if (message.authorType !== "local-user") {
+      continue;
+    }
+    const objective = extractCurrentFileObjective(message.body);
+    if (!objective) {
+      continue;
+    }
+    return {
+      source: "recent_objective",
+      sourceMessageId: message.id,
+      objective,
+    };
+  }
+  return undefined;
+}
+
+function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {
+  const seen = new Set<string>();
+  const unique: ChannelMessage[] = [];
+  for (const message of messages) {
+    if (seen.has(message.id)) {
+      continue;
+    }
+    seen.add(message.id);
+    unique.push(message);
+  }
+  return unique;
+}
+
+function extractMarkdownCodeBlocks(text: string): readonly { readonly language: string; readonly content: string }[] {
+  const blocks: Array<{ readonly language: string; readonly content: string }> = [];
+  const pattern = /```([a-z0-9_-]*)[^\n]*\n([\s\S]*?)```/giu;
+  for (const match of text.matchAll(pattern)) {
+    const content = match[2]?.trim();
+    if (!content) {
+      continue;
+    }
+    blocks.push({
+      language: (match[1] ?? "").trim().toLowerCase(),
+      content,
+    });
+  }
+  return blocks;
+}
+
+function codeBlockMatchesTarget(block: { readonly language: string; readonly content: string }, target: string): boolean {
+  const extension = target.split(".").at(-1)?.toLowerCase() ?? "";
+  if (extension && (block.language === extension || (extension === "html" && /html?/u.test(block.language)))) {
+    return true;
+  }
+  if (extension === "html" && /<!doctype html|<html[\s>]/iu.test(block.content)) {
+    return true;
+  }
+  if ((extension === "js" || extension === "jsx" || extension === "ts" || extension === "tsx") && /\b(import|export|function|const|let|var)\b/u.test(block.content)) {
+    return true;
+  }
+  return false;
+}
+
+function inferModelAssistedFileAction(text: string): "file_create" | "file_edit" {
+  return /(修改|编辑|更新|替换|改一下|改成|添加|追加|插入|补充|补一句|加上|patch|edit|update|replace|append|insert|add)/iu.test(text)
+    ? "file_edit"
+    : "file_create";
+}
+
+function mightRequestBrowserOpen(text: string): boolean {
+  return /(打开|开启|运行一下|跑一下|预览|看一下|浏览器|open|launch|preview|run it|open it)/iu.test(text);
+}
+
+function looksBrowserOpenRequest(text: string, target?: string): boolean {
+  if (/(浏览器|browser|预览|preview)/iu.test(text) && /(打开|开启|运行|跑|看|open|launch|run|view)/iu.test(text)) {
+    return true;
+  }
+  const targetExtension = target?.split(".").at(-1)?.toLowerCase();
+  if (targetExtension === "html" && /(打开|开启|运行一下|跑一下|看一下|open|launch|run it|open it)/iu.test(text)) {
+    return true;
+  }
+  return false;
 }
 
 function detectCommandExecutableIntent(text: string): SingleStepExecutableIntent | undefined {
@@ -1678,6 +2100,13 @@ function buildAmbiguousFileTargetClarifyBody(candidates: readonly string[], resp
     "I found multiple possible file targets. Specify which one I should use:",
     listedCandidates,
   ].join("\n");
+}
+
+function buildMissingFileContentClarifyBody(target: string, responseLanguage: ResponseLanguage): string {
+  if (responseLanguage === "zh-CN") {
+    return `我已经识别到目标文件是 ${target}，但当前上下文里没有明确要写入的内容。请把要写入的内容、或要生成的具体页面/功能再发一次。`;
+  }
+  return `I found the target file ${target}, but the current context does not contain clear content to write. Send the content or the concrete page/feature to generate.`;
 }
 
 function buildProposalTitle(messageBody: string, reasonCode: IntentReasonCode): string {

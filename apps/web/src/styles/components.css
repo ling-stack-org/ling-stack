@@ -2896,6 +2896,134 @@ button.message-local-file-link {
   font-size: 12px;
 }
 
+.conversation-work-cell-row.shell {
+  min-height: 0;
+}
+
+.conversation-work-cell-row.shell .conversation-work-cell-row-main {
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.conversation-work-cell-row.shell .conversation-work-cell-row-main.static {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.conversation-work-cell-shell-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #f7f7f7;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 76%);
+}
+
+.conversation-work-cell-shell-main:hover .conversation-work-cell-shell-card,
+.conversation-work-cell-shell-main:focus-visible .conversation-work-cell-shell-card {
+  border-color: #c7c7c7;
+  background: #f3f3f3;
+}
+
+.conversation-work-cell-shell-topline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #5f5f5f;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.conversation-work-cell-shell-label {
+  flex: 0 0 auto;
+  color: #4f4f4f;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.conversation-work-cell-shell-state {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #9a9a9a;
+}
+
+.conversation-work-cell-shell-state.running {
+  background: #222222;
+}
+
+.conversation-work-cell-shell-state.waiting {
+  background: #a66d00;
+}
+
+.conversation-work-cell-shell-state.success {
+  background: #2f7d32;
+}
+
+.conversation-work-cell-shell-state.failed {
+  background: #b42318;
+}
+
+.conversation-work-cell-shell-title {
+  min-width: 0;
+  overflow: hidden;
+  color: #202020;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-work-cell-shell-status {
+  flex: 0 0 auto;
+  color: #6b6b6b;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.conversation-work-cell-shell-command {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: #151515;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-work-cell-shell-output {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #626262;
+  font-size: 12px;
+  line-height: 16px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.conversation-work-cell-row.shell .conversation-work-cell-row-detail {
+  padding-left: 0;
+}
+
+.conversation-work-cell-row.shell .conversation-work-cell-row-detail code {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .conversation-work-cell-group {
   display: grid;
   gap: 4px;

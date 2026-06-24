@@ -219,6 +219,57 @@ deploy authority, external-send authority, or memory authority.
 signals. They may influence `responderHint`, participant selection, or whether an
 ordinary `answer` is expected. They must not short-circuit executable intent handling.
 
+### Model-Assisted Turn Decision Migration
+
+The implementation must treat model-assisted intent classification as part of the Ling
+Agent Session turn loop, not as a separate optional auto-reply feature. The model may
+classify a turn as `single_reply` (the ordinary `answer` outcome), `clarify`,
+`workflow_proposal`, `direct_workflow`, `visible_multi_reply`, or `no_reply`, but that
+classification is only intent evidence. It is never execution permission.
+
+The migration target is:
+
+```text
+build LingAgentTurnEnvelope
+-> active-session intake
+-> deterministic high-confidence validators
+-> model-assisted intent classification when deterministic validators do not settle it
+-> target/action validator
+-> policy gate
+-> one product outcome
+```
+
+The validator/policy split is mandatory:
+
+- model says `direct_workflow` and TargetResolver finds one safe target -> create
+  bounded proposal evidence, then let Policy Gate decide whether to auto-start;
+- model says `direct_workflow` but target/action/content/objective is ambiguous -> ask
+  one clarification question;
+- model says `direct_workflow` for a file create and TargetResolver only found a file
+  name -> require one executable input source before run creation: literal requested
+  content, materialized attachment text, a same-thread code block, the current objective,
+  or a recent same-session objective. A bare target such as `index.html` must not become
+  an empty placeholder run;
+- model says `workflow_proposal` -> create proposal evidence only after participant and
+  required-tool validation;
+- model says `single_reply` or `no_reply` -> ordinary reply routing may run, but it
+  remains the final outcome after executable paths declined;
+- model output never grants tool access, bypasses runtime approval, expands workspace
+  scope, selects secrets, or performs external/account mutations.
+
+This removes phrase matching as the execution boundary. Regex and deterministic detectors
+remain useful fast-path validators for high-confidence cases such as explicit filenames,
+commands, or release keywords. They must not be the only way for a channel/thread turn to
+be considered executable. Follow-up turns such as "can you write it locally now?" must be
+eligible for model classification and target validation against the same-thread context
+before ordinary answer mode can respond.
+
+`ChannelMessage.threadId` can narrow recent target lookup and auto-start risk policy, but
+it must not block model-assisted `direct_workflow`, `clarify`, or approval handling. A
+thread reply that asks Ling to execute against a target established in that thread should
+produce a bounded proposal or clarification, not an ordinary "I cannot write files"
+answer.
+
 ### Policy Gate
 
 Policy Gate converts a work decision into one of:
@@ -912,7 +963,7 @@ is generated:
 
 | Request class | Default outcome | Notes |
 | --- | --- | --- |
-| Create or edit a named local file | Auto-start | Runtime `write` or `edit` approval may still pause the run. |
+| Create or edit a named local file | Auto-start | Runtime `write` or `edit` approval may still pause the run. File creation also needs content, a materialized attachment/code block, or a concrete objective, not only a bare file name. |
 | Update a small known docs/code section | Auto-start | Allowed when target and acceptance are clear from the message or same-session context. |
 | Run a narrow local check command | Auto-start | Runtime `bash` approval still follows policy. |
 | Inspect/read/summarize local project state | Auto-start or ordinary answer | Auto-start when it needs tool execution; ordinary answer only when no tool work is needed. |
