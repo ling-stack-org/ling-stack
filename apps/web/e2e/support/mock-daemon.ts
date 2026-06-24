@@ -5542,7 +5542,7 @@ export async function handleDaemonRoute(
         values: {
           workspaceCwd: effectiveWorkspaceSettingValue(state.workspaceSettings.workspaceCwd, "workspaceCwd", cwd),
           theme: effectiveWorkspaceSettingValue(state.workspaceSettings.theme, "theme", "system"),
-          locale: effectiveWorkspaceSettingValue(state.workspaceSettings.locale, "locale", "system"),
+          locale: effectiveWorkspaceSettingValue(state.workspaceSettings.locale, "locale", "zh-CN"),
           responseLanguage: effectiveWorkspaceSettingValue(state.workspaceSettings.responseLanguage, "responseLanguage", "follow_user"),
           skillGovernancePolicy: effectiveWorkspaceObjectSettingValue(
             state.workspaceSettings.skillGovernancePolicy,

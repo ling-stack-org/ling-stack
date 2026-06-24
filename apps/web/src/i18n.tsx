@@ -12,7 +12,8 @@ interface I18nContextValue {
 }
 
 const storageKey = "ling-stack.locale";
-const defaultLocale: Locale = "en-US";
+const defaultLocale: Locale = "zh-CN";
+const fallbackLocale: Locale = "en-US";
 
 const dictionaries: Readonly<Record<Locale, Readonly<Record<string, string>>>> = {
   "en-US": {
@@ -4954,7 +4955,7 @@ export function I18nProvider({ children }: { readonly children: ReactNode }): JS
     () => ({
       locale,
       setLocale: setLocaleState,
-      t: (key, values) => formatTranslation(dictionaries[locale][key] ?? dictionaries[defaultLocale][key] ?? key, values),
+      t: (key, values) => formatTranslation(dictionaries[locale][key] ?? dictionaries[fallbackLocale][key] ?? key, values),
     }),
     [locale],
   );

@@ -7,6 +7,12 @@ import {
   openChannelChatTools,
 } from "./support/test-helpers";
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+});
+
 test("work board merges durable items and supports claim heartbeat", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.workItems = [

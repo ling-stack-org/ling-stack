@@ -22,7 +22,7 @@
   gap: 0;
   overflow: hidden;
   padding: 0;
-  background: #ffffff;
+  background: var(--app-bg);
 }
 
 .automations-inbox-header {
@@ -34,13 +34,13 @@
   justify-content: space-between;
   gap: 18px;
   padding: 22px 32px 20px;
-  border-bottom: 1px solid #e5e5e5;
-  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .automations-inbox-header h1 {
   margin: 0;
-  color: #111111;
+  color: var(--text-strong);
   font-size: 26px;
   font-weight: 720;
   line-height: 32px;
@@ -49,7 +49,7 @@
 
 .automations-inbox-header p {
   margin: 6px 0 0;
-  color: #707070;
+  color: var(--text-muted);
   font-size: 14px;
   line-height: 20px;
 }
@@ -81,7 +81,7 @@
 }
 
 .automation-header-meta .attention {
-  color: #8a5a0a;
+  color: var(--warning);
 }
 
 .automation-header-meta .danger {
@@ -106,7 +106,7 @@
   align-items: center;
   border: 0;
   border-radius: 7px;
-  background: #111111;
+  background: var(--accent);
   box-shadow: none;
 }
 
@@ -114,7 +114,7 @@
 .automation-create-caret {
   border: 0;
   background: transparent;
-  color: #ffffff;
+  color: var(--window-bg);
   font: inherit;
   cursor: pointer;
 }
@@ -199,19 +199,19 @@
   min-height: 64px;
   margin: 16px 24px 0;
   padding: 0 20px;
-  border: 1px solid #f3c7c1;
+  border: 1px solid var(--danger-border);
   border-radius: 8px;
-  background: #fff5f3;
-  color: #b42318;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .automation-attention-banner strong {
-  color: #b42318;
+  color: var(--danger);
   font-size: 15px;
 }
 
 .automation-attention-banner span {
-  color: #b42318;
+  color: var(--danger);
   font-size: 14px;
   justify-self: end;
 }
@@ -243,7 +243,7 @@
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: #ffffff;
+  background: var(--surface-panel);
   box-shadow: none;
 }
 
@@ -256,7 +256,7 @@
 }
 
 .automation-history-lite {
-  border-left: 1px solid #e5e5e5;
+  border-left: 1px solid var(--border);
   padding: 28px 24px;
 }
 
@@ -271,14 +271,14 @@
 .automation-secondary-section h2,
 .automation-history-lite h2 {
   padding: 0;
-  background: #ffffff;
+  background: var(--surface-panel);
 }
 
 .automation-pane-tabs {
   display: block;
   padding: 10px 24px 0;
-  border-bottom: 1px solid #e5e5e5;
-  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .automation-tab-list {
@@ -298,7 +298,7 @@
   gap: 7px;
   border: 0;
   background: transparent;
-  color: #6f6f6f;
+  color: var(--text-muted);
   font: inherit;
   font-size: 13px;
   font-weight: 650;
@@ -318,11 +318,11 @@
 }
 
 .automation-tab-list button.active {
-  color: #111111;
+  color: var(--text-strong);
 }
 
 .automation-tab-list button.active::after {
-  background: #111111;
+  background: var(--accent);
 }
 
 .automation-tab-list button span {
@@ -331,8 +331,8 @@
   display: inline-grid;
   place-items: center;
   border-radius: 999px;
-  background: #f1f5f9;
-  color: #475569;
+  background: var(--surface-selected);
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1;
 }
@@ -349,7 +349,7 @@
   align-items: center;
   gap: 14px;
   border: 0;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text-primary);
   padding: 14px 12px 14px 8px;
@@ -358,8 +358,8 @@
 }
 
 .automation-inbox-row.selected {
-  background: #f1f5f9;
-  box-shadow: inset 3px 0 0 #111111;
+  background: var(--surface-selected);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .automation-row-dot {
@@ -390,7 +390,7 @@
 }
 
 .automation-inbox-row-main strong {
-  color: #171717;
+  color: var(--text-strong);
   font-size: 15px;
   font-weight: 650;
   line-height: 21px;
@@ -398,7 +398,7 @@
 
 .automation-inbox-row-main small,
 .automation-row-schedule {
-  color: #707070;
+  color: var(--text-muted);
   font-size: 13px;
   line-height: 19px;
 }
@@ -466,7 +466,7 @@
 
 .automation-inspector-header h2 {
   margin: 0;
-  color: #171717;
+  color: var(--text-strong);
   font-size: 18px;
   font-weight: 720;
   line-height: 24px;
@@ -476,13 +476,13 @@
   display: grid;
   gap: 5px;
   padding-bottom: 16px;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--border);
 }
 
 .automation-inspector-title strong {
   min-width: 0;
   overflow: hidden;
-  color: #171717;
+  color: var(--text-strong);
   font-size: 17px;
   font-weight: 700;
   line-height: 23px;
@@ -491,7 +491,7 @@
 }
 
 .automation-inspector-title span {
-  color: #707070;
+  color: var(--text-muted);
   font-size: 13px;
   line-height: 18px;
 }
@@ -503,7 +503,7 @@
 
 .automation-inspector-section h3 {
   margin: 0;
-  color: #171717;
+  color: var(--text-strong);
   font-size: 13px;
   font-weight: 700;
   line-height: 18px;
@@ -513,9 +513,9 @@
   display: grid;
   gap: 1px;
   overflow: hidden;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #e5e5e5;
+  background: var(--border);
 }
 
 .automation-inspector-grid span {
@@ -523,8 +523,8 @@
   gap: 4px;
   min-width: 0;
   padding: 10px 12px;
-  background: #ffffff;
-  color: #707070;
+  background: var(--surface-panel);
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 16px;
 }
@@ -532,7 +532,7 @@
 .automation-inspector-grid strong {
   min-width: 0;
   overflow: hidden;
-  color: #171717;
+  color: var(--text-strong);
   font-size: 13px;
   font-weight: 600;
   line-height: 18px;
@@ -545,10 +545,10 @@
   max-height: 260px;
   margin: 0;
   overflow: auto;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #f8fafc;
-  color: #334155;
+  background: var(--surface-panel-strong);
+  color: var(--text);
   padding: 12px;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
@@ -570,12 +570,12 @@
   place-items: center;
   align-content: center;
   gap: 8px;
-  color: #707070;
+  color: var(--text-muted);
   text-align: center;
 }
 
 .automation-inspector-empty strong {
-  color: #171717;
+  color: var(--text-strong);
 }
 
 .automation-modal-header-actions {
@@ -592,7 +592,7 @@
 
 .automation-modal-title-copy p {
   margin: 0;
-  color: #707070;
+  color: var(--text-muted);
   font-size: 14px;
   font-weight: 400;
   line-height: 20px;
@@ -613,7 +613,7 @@
 
 .automation-composer-field > span,
 .automation-trigger-section > span {
-  color: #171717;
+  color: var(--text-strong);
   font-size: 13px;
   font-weight: 650;
   line-height: 18px;
@@ -622,9 +622,9 @@
 .automation-composer-title,
 .automation-composer-prompt {
   width: 100%;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--surface-panel);
   color: var(--text-primary);
   font: inherit;
   padding: 12px 14px;
@@ -654,7 +654,7 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--border);
   padding-top: 16px;
 }
 
@@ -662,18 +662,18 @@
   display: inline-flex;
   width: fit-content;
   overflow: hidden;
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface-panel);
 }
 
 .automation-trigger-segmented button {
   min-height: 42px;
   min-width: 86px;
   border: 0;
-  border-right: 1px solid #e5e5e5;
-  background: #ffffff;
-  color: #707070;
+  border-right: 1px solid var(--border);
+  background: var(--surface-panel);
+  color: var(--text-muted);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -684,8 +684,8 @@
 }
 
 .automation-trigger-segmented button.active {
-  background: #f5f5f5;
-  color: #111111;
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 
 .automation-trigger-segmented button:disabled {
@@ -1214,7 +1214,7 @@
   }
 
   .automation-history-lite {
-    border-top: 1px solid #e5e5e5;
+    border-top: 1px solid var(--border);
     border-left: 0;
   }
 
