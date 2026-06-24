@@ -1,13 +1,24 @@
 import { isRecord } from "./validation.js";
 
 export function extractAssistantText(messages: readonly unknown[]): string | undefined {
-  for (const message of [...messages].reverse()) {
+  const roleAwareMessages = messages.filter((message) => typeof readMessageRole(message) === "string");
+  const candidates = roleAwareMessages.length > 0
+    ? roleAwareMessages.filter((message) => readMessageRole(message) === "assistant")
+    : messages;
+  for (const message of [...candidates].reverse()) {
     const text = extractTextFromUnknown(message);
     if (text) {
       return text;
     }
   }
   return undefined;
+}
+
+function readMessageRole(value: unknown): string | undefined {
+  if (!isRecord(value) || typeof value.role !== "string") {
+    return undefined;
+  }
+  return value.role;
 }
 
 function extractTextFromUnknown(value: unknown): string | undefined {

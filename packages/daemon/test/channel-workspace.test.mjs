@@ -1915,6 +1915,40 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
   }
 });
 
+test("channel discussion blocks runner prompt envelope echoes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-prompt-echo-"));
+  const runner = new PromptEchoRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Designer 给我一片关于AI发展的分析报告",
+      mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.match(finalReply.body, /Runner echoed internal channel context/);
+    assert.doesNotMatch(finalReply.body, /Channel collaboration protocol:/);
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Channel collaboration protocol:/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel message stream emits visible deltas into a durable AI reply", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-stream-"));
   const runner = new ScriptedRunner(["Streamed channel reply"]);
@@ -9275,6 +9309,22 @@ class RecordingRunner {
     return {
       taskId: options.task.id,
       messages: ["Designer reply"],
+      events: [],
+    };
+  }
+}
+
+class PromptEchoRunner {
+  constructor() {
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    options.onEvent?.({ type: "assistant_text_delta", text: options.task.prompt });
+    return {
+      taskId: options.task.id,
+      messages: [options.task.prompt],
       events: [],
     };
   }
