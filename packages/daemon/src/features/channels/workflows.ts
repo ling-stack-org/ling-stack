@@ -1047,9 +1047,10 @@ function workflowTerminalCoordinatorReplyBody(
   const language = workflow.metadata?.responseLanguage === "en-US" ? "en-US" : "zh-CN";
   const title = workflow.title.trim() || (language === "en-US" ? "this task" : "这次任务");
   const blocker = workflowTerminalBlocker(workflow, steps, language);
+  const resultSummary = workflowTerminalResultSummary(steps);
   if (language === "en-US") {
     if (workflow.status === "succeeded") {
-      return `Done: "${title}".`;
+      return resultSummary ? `Done: "${title}".\nResult: ${resultSummary}` : `Done: "${title}".`;
     }
     if (workflow.status === "cancelled") {
       return `Stopped: "${title}".`;
@@ -1057,12 +1058,29 @@ function workflowTerminalCoordinatorReplyBody(
     return `Not completed: "${title}". Reason: ${blocker}.`;
   }
   if (workflow.status === "succeeded") {
-    return `完成：「${title}」。`;
+    return resultSummary ? `完成：「${title}」。\n结果：${resultSummary}` : `完成：「${title}」。`;
   }
   if (workflow.status === "cancelled") {
     return `已停止：「${title}」。`;
   }
   return `未完成：「${title}」。原因：${blocker}。`;
+}
+
+function workflowTerminalResultSummary(steps: readonly ChannelWorkflowStep[]): string | undefined {
+  const summary = [...steps]
+    .reverse()
+    .map((step) => step.resultSummary?.trim())
+    .find((candidate): candidate is string => Boolean(candidate && !isGenericRunSuccessSummary(candidate)));
+  return summary ? truncateWorkflowTerminalSummary(summary) : undefined;
+}
+
+function isGenericRunSuccessSummary(summary: string): boolean {
+  return /^(Run succeeded\.?|Task created from workflow step\.)$/iu.test(summary.trim());
+}
+
+function truncateWorkflowTerminalSummary(summary: string): string {
+  const normalized = summary.replace(/\s+/g, " ").trim();
+  return normalized.length > 360 ? `${normalized.slice(0, 357)}...` : normalized;
 }
 
 function workflowTerminalBlocker(

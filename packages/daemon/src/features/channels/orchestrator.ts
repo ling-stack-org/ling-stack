@@ -10,6 +10,7 @@ import {
   type WorkflowStepPolicy,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
+import { isRecord } from "../../shared/validation.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
 import {
   completeWorkflowIfStepsFinished,
@@ -424,7 +425,7 @@ export function finalizeOrchestratedWorkflowStepRun(
       now,
       taskId,
       runId: run.id,
-      resultSummary: "Run succeeded.",
+      resultSummary: workflowStepRunResultSummary(store, run),
     });
     completeWorkflowIfStepsFinished(store, step.workflowId, now);
   } else if (run.status === "cancelled") {
@@ -472,6 +473,39 @@ export function finalizeOrchestratedWorkflowStepRun(
   maybeCreateWorkflowTerminalCoordinatorReply(store, step.workflowId, { linkedRunId: run.id, now });
   store.releaseResourceLeasesForOwner("workflow_step", workflowStepId, now);
   return store.getChannelWorkflowStep(workflowStepId);
+}
+
+function workflowStepRunResultSummary(store: RunStore, run: RunSession): string {
+  return readRunAssistantTextSummary(store, run.id) ??
+    readRunArtifactResultSummary(store, run.id) ??
+    "Run succeeded.";
+}
+
+function readRunAssistantTextSummary(store: RunStore, runId: string): string | undefined {
+  const text = store
+    .listEvents(runId, { limit: 1000 })
+    .filter((event) => event.type === "assistant_text_delta")
+    .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? truncateResultSummary(text) : undefined;
+}
+
+function readRunArtifactResultSummary(store: RunStore, runId: string): string | undefined {
+  const artifacts = store.listArtifacts(runId).filter((artifact) => artifact.type === "file" || artifact.type === "diff");
+  if (artifacts.length === 0) {
+    return undefined;
+  }
+  const labels = artifacts
+    .map((artifact) => artifact.title?.trim() || artifact.path)
+    .filter((label) => label.trim().length > 0)
+    .slice(0, 3);
+  return labels.length > 0 ? `Run succeeded. Artifacts: ${labels.join(", ")}.` : undefined;
+}
+
+function truncateResultSummary(value: string): string {
+  return value.length > 480 ? `${value.slice(0, 477)}...` : value;
 }
 
 function attachWorkflowStepOutputArtifact(

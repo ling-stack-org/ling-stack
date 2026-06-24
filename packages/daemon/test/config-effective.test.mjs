@@ -152,7 +152,7 @@ async function startDaemonForTest(cwd) {
     defaultWorkspaceCwd: cwd,
     runners: {},
     runtimeTools: {},
-    channels: { autoRoute: false },
+    channels: { autoRoute: false, intentSelector: false },
   });
   await daemon.start();
   const address = daemon.server.address();

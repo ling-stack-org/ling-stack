@@ -1,6 +1,6 @@
 # Channel Intent To Workflow Selector
 
-Status: P0-P6 and bounded `visible_multi_reply` implemented behind deterministic-first boundaries; model-assisted selection remains feature-gated
+Status: P0-P10 and bounded `visible_multi_reply` implemented behind Ling Agent Session boundaries; model-assisted selection is enabled by default with deterministic fallback
 Date: 2026-06-10
 
 Related docs:
@@ -96,9 +96,11 @@ It is still partially text-first and should be migrated behind a TurnEnvelope bo
   `direct_workflow` intent evidence. Ling Agent Session may auto-accept/start only when
   the scope is clear, the executor/provider can run, and required tools are not denied;
   otherwise the proposal clarifies, blocks, or waits for a user Start confirmation;
-- model-assisted intent selection is available only behind
-  `channels.intentSelector` / `LING_STACK_CHANNEL_INTENT_SELECTOR`, requires strict JSON,
-  and falls back to deterministic routing on failure;
+- model-assisted intent selection is part of the default Ling Agent Session turn loop.
+  `channels.intentSelector` / `LING_STACK_CHANNEL_INTENT_SELECTOR=false` can still
+  disable it for tests or constrained deployments. It requires strict JSON, validates
+  target/action/policy before proposal creation, and falls back to deterministic routing
+  on failure;
 - no `ai_reply` is created for proposal/direct-workflow source messages;
 - Web refreshes channel proposals/workflows after sending or confirming, so visible work
   stays in the existing conversation surface and progress rows;
@@ -110,6 +112,11 @@ It is still partially text-first and should be migrated behind a TurnEnvelope bo
   the terminal workflow step `resultSummary` over internal step/evidence counts. The
   accepted proposal, workflow steps, runs, and transition records remain available in the
   audit tools/evidence surfaces, but they should not crowd the ordinary conversation path;
+- single-step file workflow prompts must include executable input, not just a file name.
+  Valid input sources are current literal content, materialized attachment text, a recent
+  same-thread code block, the current user objective, or a recent same-session objective.
+  If the selector resolves only `index.html`/`README.md` with no content or objective, it
+  asks one clarification instead of creating an empty placeholder task;
 - follow-up executable edits may refer to the prior work result by filename only, such as
   `在 README.md 中添加一句测试语句`. The selector should resolve that relative target from
   recent same-channel workflow/proposal context before ordinary auto-route gets a chance
@@ -141,8 +148,8 @@ Implemented slices:
   auto-start clear executable work after durable proposal evidence is created when
   required tools are not denied; otherwise it remains a clarification, blocking, or
   confirmation path;
-- P6 model-assisted intent selector behind feature flag, strict JSON validation, and
-  deterministic fallback.
+- P6 model-assisted intent selector enabled by default, with strict JSON validation,
+  config disablement, validator/policy gating, and deterministic fallback.
 - Bounded `visible_multi_reply` for discussion-only all-teammate requests, including
   multi-reply intent evidence and `aiReplies` message mutation response.
 
@@ -588,9 +595,10 @@ Decision rules:
   file target;
 - if a follow-up target can be resolved from exactly one recent source, keep that source
   ref in proposal evidence. If two or more targets are plausible, choose `clarify`;
-- if a file-create request has a clear target but no content, still choose
-  `direct_workflow`; the generated task must not invent content beyond the file creation
-  requested by the user;
+- if a file-create request has a clear target but no literal content, choose
+  `direct_workflow` only when the current turn or recent same-session context contains a
+  concrete objective, a materialized attachment body, or a matching code block. Otherwise
+  choose `clarify`; do not create a placeholder file task from a target name alone;
 - if the target path, command, file name, or intended action is missing, choose `clarify`
   and ask one question;
 - if the request needs multiple roles, phases, review, QA, release, or security checks,
@@ -817,11 +825,12 @@ tool-denied work still falls back to clarification, confirmation, or blocked pro
 
 ## P6 Model-Assisted Intent Selector
 
-P6 comes last because deterministic behavior must be proven first.
+P6 runs after deterministic high-confidence validators. It is enabled by default, but it
+can be disabled per deployment or test environment.
 
-Enable it only when:
+Run it only when:
 
-- daemon feature flag is enabled;
+- `channels.intentSelector` resolves true;
 - the message is eligible for channel intent selection;
 - provider preflight passes.
 
@@ -867,8 +876,10 @@ The first implementation should be deterministic and conservative:
 - explicit start command plus known safe template -> `direct_workflow`, after validation
   and user confirmation.
 
-Model-assisted intent selection is available behind policy/feature flag when deterministic
-rules produce multiple valid candidates or the channel explicitly enables selector help.
+Model-assisted intent selection is enabled by default after high-confidence deterministic
+validators decline the turn. Deployments can disable it with `channels.intentSelector`
+or `LING_STACK_CHANNEL_INTENT_SELECTOR=false`; when disabled or unavailable, deterministic
+fallback remains in force.
 
 ## Evidence
 
@@ -923,7 +934,8 @@ teammate text, selector evidence, and route metadata remain expandable.
 - `direct_workflow` must downgrade to `workflow_proposal` or `clarify` when target
   artifact, graph template, participant, provider, approval, or policy validation is
   incomplete.
-- Model-assisted decisions must be feature-gated and have deterministic fallback.
+- Model-assisted decisions must be config-gated, strictly parsed, validator/policy-gated,
+  and have deterministic fallback.
 - Selector evaluation must be idempotent for a source message.
 
 ## Implementation Slices
@@ -936,11 +948,11 @@ teammate text, selector evidence, and route metadata remain expandable.
 | P3 | `clarify` decision with one coordinator question. Implemented. | Low |
 | P4 | Independent `channel_intent_decisions` persistence and source-message idempotency. Implemented. | Medium |
 | P5 | `direct_workflow` as validated proposal evidence plus Ling Agent Session start gating. Implemented. | Medium |
-| P6 | Model-assisted intent selector behind feature flag and deterministic fallback. Implemented. | Medium |
+| P6 | Model-assisted intent selector with strict JSON, config gate, validator/policy gate, and deterministic fallback. Implemented. | Medium |
 | P7 | Bounded `visible_multi_reply` for explicit discussion-only all-teammate requests. Implemented. | Medium |
 | P8 | Compact roster/visible participants context for `visible_multi_reply`. Implemented as the P1/P2 prompt-context slice; full Context Budget Manager remains future work. | Low |
 | P9 | Single-step executable intent for file writes, code edits, command/test runs, artifact writes, bounded required-tools metadata, and blocked proposals when channel/teammate tools are missing. Implemented. | Medium |
-| P10 | Ling Agent Session auto-start policy for clear executable work, while preserving runtime approvals. Planned. | High |
+| P10 | Ling Agent Session auto-start policy for clear executable work, while preserving runtime approvals. Implemented. | High |
 
 ## Acceptance Criteria
 
@@ -972,11 +984,12 @@ teammate text, selector evidence, and route metadata remain expandable.
 ## Non-Goals
 
 - Building an autonomous shared-context multi-agent group chat.
-- Making the channel composer a Codex-like default executable agent session.
+- Replacing Ling's proposal/workflow/run/approval runtime with Codex's runtime.
 - Letting ordinary `ai_reply` directly call file, shell, MCP, deploy, or external-send
   tools.
 - Replacing `channel-auto-reply-router.md`.
 - Replacing the P5 workflow selector.
-- Adding model-assisted workflow selection before deterministic intent routing exists.
+- Letting model-assisted workflow selection bypass deterministic validators, target
+  validation, or policy gates.
 - Adding a route tuning UI or sample-set dashboard.
 - Showing confidence numbers in the channel.

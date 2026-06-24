@@ -3218,6 +3218,14 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(workCell).not.toContainText("provider_local");
   await expect(workCell).not.toContainText("tokens");
   await expect(workCell.getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
+  const engineerSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "Engineer" });
+  await expect(engineerSpan.locator(".conversation-work-cell-agent-span-head")).toContainText("Run focused workflow UI test");
+  await expect(engineerSpan.locator(".conversation-work-cell-agent-span-head")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
+  await engineerSpan.locator(".conversation-work-cell-agent-span-head").click();
+  const engineerShellCard = engineerSpan.locator(".conversation-work-cell-row.shell").filter({ hasText: "Run focused workflow UI test" });
+  await expect(engineerShellCard.locator(".conversation-work-cell-shell-card")).toContainText("Shell");
+  await expect(engineerShellCard.locator(".conversation-work-cell-shell-card")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
+  await expect(engineerShellCard.locator(".conversation-work-cell-shell-card")).toContainText("Validate workflow detail rows.");
 
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Checks")).toContainText("Engineer: Implement inspect summary");
@@ -3263,7 +3271,9 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Resume handle: verified");
   await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("runner_handle_context_secret");
   await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("raw_resume_payload");
-  const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Run focused workflow UI test" });
+  const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row.shell").filter({ hasText: "Run focused workflow UI test" });
+  await expect(commandActionRow.locator(".conversation-work-cell-shell-card")).toContainText("Shell");
+  await expect(commandActionRow.locator(".conversation-work-cell-shell-card")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
   await maybeCaptureR32Screenshot(page, "workflow-action-details-expanded");
@@ -5183,7 +5193,10 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   const defaultOperationStream = workCell.locator(".conversation-work-cell-active-stream");
   await expect(defaultOperationStream).toContainText("Render conversation work cell");
   await expect(defaultOperationStream).toContainText("Run typecheck");
-  const defaultCommandActionRow = defaultOperationStream.locator(".conversation-work-cell-row").filter({ hasText: "Run typecheck" });
+  const defaultCommandActionRow = defaultOperationStream.locator(".conversation-work-cell-row.shell").filter({ hasText: "Run typecheck" });
+  await expect(defaultCommandActionRow.locator(".conversation-work-cell-shell-card")).toContainText("Shell");
+  await expect(defaultCommandActionRow.locator(".conversation-work-cell-shell-card")).toContainText("$ pnpm typecheck");
+  await expect(defaultCommandActionRow.locator(".conversation-work-cell-shell-card")).toContainText("Validate the workspace client rendering.");
   await defaultCommandActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
@@ -5217,7 +5230,8 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("1 output recorded");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("artifact_thread_diff");
-  const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Run typecheck" });
+  const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row.shell").filter({ hasText: "Run typecheck" });
+  await expect(commandActionRow.locator(".conversation-work-cell-shell-card")).toContainText("$ pnpm typecheck");
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
   const checkpointRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Approval checkpoint: Approve typecheck" });
