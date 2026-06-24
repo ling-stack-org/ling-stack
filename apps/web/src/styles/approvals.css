@@ -743,52 +743,11 @@
   justify-content: flex-start;
 }
 
-@media (max-width: 1180px) {
-  .review-queue-layout,
-  .review-queue-layout.empty {
-    grid-template-columns: minmax(0, 1fr) 320px;
-  }
 
-  .approval-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
 
-  .approval-actions {
-    justify-content: flex-start;
-  }
-}
 
-@media (max-width: 980px) {
-  .approvals-panel {
-    height: auto;
-    overflow: visible;
-  }
 
-  .review-queue-layout,
-  .review-queue-layout.empty {
-    grid-template-columns: minmax(0, 1fr);
-  }
 
-  .review-queue-list,
-  .review-queue-detail {
-    overflow: visible;
-  }
-
-  .review-queue-detail {
-    border-top: 1px solid var(--border);
-    border-left: 0;
-  }
-}
-
-@media (max-width: 640px) {
-  .review-queue-category-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .review-queue-detail-meta {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 
 .right-panel {
   grid-area: inspector;

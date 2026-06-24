@@ -678,6 +678,22 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+.workspace-provider-surface .provider-row.selected {
+  box-shadow: none;
+}
+
+.workspace-provider-surface .provider-row.selected > td {
+  background: var(--surface-selected);
+}
+
+.workspace-provider-surface .provider-row.selected > td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.workspace-provider-surface .provider-row.selected td:nth-child(7) {
+  box-shadow: none;
+}
+
 .workspace-provider-surface .provider-workbench-header h1,
 .workspace-provider-surface .provider-name-copy strong,
 .workspace-provider-surface .provider-model-name,
@@ -936,21 +952,41 @@
 /* Approved density pass: keep create dialogs close to the Stitch white-console mocks. */
 .teammate-create-overlay .teammate-create-dialog {
   width: min(960px, calc(100vw - 40px));
+  max-height: min(820px, calc(100dvh - 40px));
+  padding: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
 }
 
 .teammate-create-overlay .teammate-create-dialog .channel-create-head {
-  min-height: 104px;
-  padding: 26px 40px 22px;
+  min-height: 72px;
+  align-items: center;
+  padding: 18px 28px 14px;
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-body {
-  gap: 20px;
-  max-height: calc(100dvh - 220px);
-  padding: 26px 40px 0;
+  gap: 14px;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 18px 28px 0;
 }
 
 .teammate-create-overlay .teammate-create-steps {
-  gap: 30px;
+  gap: 22px;
+  font-size: 13px;
+}
+
+.teammate-create-overlay .teammate-create-steps span {
+  gap: 8px;
+}
+
+.teammate-create-overlay .teammate-create-steps strong {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid {
@@ -958,8 +994,9 @@
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
-  min-height: 86px;
-  padding: 14px 16px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  min-height: 76px;
+  padding: 11px 12px;
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-template-copy small {
@@ -970,27 +1007,27 @@
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-section {
-  gap: 14px;
+  gap: 12px;
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-fields {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-fields input,
 .teammate-create-overlay .teammate-create-dialog .teammate-create-fields select {
-  min-height: 46px;
+  min-height: 40px;
   border-radius: 7px;
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-advanced summary {
-  min-height: 56px;
+  min-height: 44px;
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-actions {
-  margin: 2px -40px 0;
-  padding: 18px 40px 22px;
+  margin: 0 -28px;
+  padding: 12px 28px 16px;
 }
 
 .workspace-automations-surface .automation-modal > .panel-title {
@@ -1044,19 +1081,19 @@
 
 @media (max-height: 760px) and (min-width: 701px) {
   .teammate-create-overlay .teammate-create-dialog .channel-create-head {
-    min-height: 88px;
-    padding-block: 22px 18px;
+    min-height: 64px;
+    padding-block: 14px 12px;
   }
 
   .teammate-create-overlay .teammate-create-dialog .teammate-create-body {
-    gap: 16px;
-    max-height: calc(100dvh - 186px);
-    padding-top: 20px;
+    gap: 12px;
+    max-height: none;
+    padding-top: 14px;
   }
 
   .teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
-    min-height: 74px;
-    padding-block: 12px;
+    min-height: 64px;
+    padding-block: 10px;
   }
 
   .teammate-create-overlay .teammate-create-dialog .teammate-role-icon,
@@ -1069,72 +1106,9 @@
   }
 }
 
-@media (max-width: 900px) {
-  .teammate-create-overlay .teammate-create-dialog .teammate-create-fields {
-    grid-template-columns: 1fr;
-  }
-}
 
-@media (max-width: 520px) {
-  .workspace-automations-surface .automation-modal-backdrop {
-    align-items: start;
-    padding: 12px;
-  }
 
-  .workspace-automations-surface .automation-modal {
-    width: 100%;
-    min-height: 0;
-    max-height: calc(100dvh - 24px);
-  }
 
-  .workspace-automations-surface .automation-modal > .panel-title {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    min-height: 0;
-    padding: 22px 24px 18px;
-  }
-
-  .workspace-automations-surface .automation-modal > .panel-title > span:first-child {
-    gap: 8px;
-  }
-
-  .workspace-automations-surface .automation-modal-title-copy h2 {
-    font-size: 21px;
-    line-height: 26px;
-  }
-
-  .workspace-automations-surface .automation-modal-title-copy p {
-    font-size: 13px;
-    line-height: 18px;
-  }
-
-  .workspace-automations-surface .automation-modal-header-actions {
-    align-items: start;
-    gap: 6px;
-  }
-
-  .workspace-automations-surface .automation-modal-header-actions > svg {
-    display: none;
-  }
-
-  .workspace-automations-surface .automation-modal-header-actions .secondary-button {
-    min-height: 34px;
-    padding-inline: 8px;
-  }
-
-  .workspace-automations-surface .automation-modal-body {
-    padding: 24px;
-  }
-
-  .workspace-automations-surface .automation-composer-toolbar {
-    align-items: flex-start;
-  }
-
-  .workspace-automations-surface .automation-composer-actions {
-    width: 100%;
-    justify-content: flex-end;
-  }
-}
 
 /* Dark theme guardrail for pages that still carry white-console local CSS. */
 :root[data-theme="dark"] .workspace,

@@ -2344,20 +2344,7 @@
   gap: 4px;
 }
 
-@media (max-width: 720px) {
-  .teammate-memory-health-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 
-  .teammate-memory-import-grid,
-  .teammate-memory-import-preview {
-    grid-template-columns: 1fr;
-  }
-
-  .teammate-memory-file-button {
-    width: 100%;
-  }
-}
 
 .teammate-memory-review-head,
 .teammate-memory-review-actions {
@@ -2547,50 +2534,7 @@
   min-height: 62px;
 }
 
-@media (max-width: 980px) {
-  .teammate-workspace-hero,
-  .teammate-chat-composer,
-  .teammate-task-create-grid,
-  .teammate-channel-row,
-  .teammate-skill-add-row,
-  .teammate-skill-row,
-  .teammate-mcp-toolbar,
-  .teammate-mcp-server-header,
-  .teammate-mcp-tool-controls,
-  .teammate-settings-grid {
-    grid-template-columns: 1fr;
-  }
 
-  .teammate-task-create-footer,
-  .teammate-channel-actions,
-  .teammate-skill-actions,
-  .teammate-mcp-server-summary,
-  .teammate-mcp-filter-tabs {
-    justify-content: flex-start;
-  }
-
-  .teammate-mcp-server-summary {
-    flex-wrap: wrap;
-    white-space: normal;
-  }
-
-  .teammate-mcp-tool-tree {
-    margin-left: 22px;
-    padding-left: 14px;
-  }
-
-  .teammate-mcp-tool-row {
-    grid-template-columns: 26px minmax(0, 1fr) auto;
-  }
-
-  .teammate-mcp-tool-description {
-    grid-column: 2 / -1;
-  }
-
-  .teammate-workspace-meta {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 
 @media (max-width: 1500px) and (min-width: 901px) {
   .workspace-teammates-surface .teammate-management-grid {
@@ -2598,25 +2542,7 @@
   }
 }
 
-@media (max-width: 900px) {
-  .workspace.workspace-teammates-surface {
-    height: auto;
-    min-height: calc(100vh - 52px);
-    overflow: auto;
-    padding-bottom: 24px;
-  }
 
-  .workspace-teammates-surface .teammates-page,
-  .workspace-teammates-surface .teammate-management-grid {
-    height: auto;
-    overflow: visible;
-  }
-
-  .workspace-teammates-surface .teammate-template-list,
-  .workspace-teammates-surface .teammate-draft-list {
-    max-height: clamp(260px, 48vh, 520px);
-  }
-}
 
 /* Strict daylight AI teammate management, aligned with Stitch UX v3. */
 .workspace.workspace-teammates-surface {
@@ -3715,23 +3641,7 @@
   border-top: 1px solid #e5e5e5;
 }
 
-@media (max-width: 980px) {
-  .workspace-teammates-surface .teammate-management-grid,
-  .teammate-create-list.role-grid,
-  .teammate-skill-toolbar,
-  .teammate-skill-workbench-grid {
-    grid-template-columns: 1fr;
-  }
 
-  .teammate-skill-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .workspace.workspace-teammates-surface {
-    height: auto;
-    min-height: 100vh;
-  }
-}
 
 /* AI teammate private chat + single-agent settings split. */
 .workspace.workspace-teammate-private-surface {
@@ -4471,66 +4381,7 @@
   font-weight: 500;
 }
 
-@media (max-width: 1100px) {
-  .teammates-page > .teammate-management-grid {
-    grid-template-columns: 1fr;
-    height: auto;
-  }
 
-  .teammate-workspace.chat-mode,
-  .teammate-workspace.settings-mode {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
-  }
-
-  .teammate-workspace.settings-mode {
-    height: auto;
-    min-height: 100%;
-    overflow-y: auto;
-  }
-
-  .teammate-context-panel,
-  .teammate-settings-summary-panel,
-  .teammate-settings-nav,
-  .teammate-workspace.chat-mode > .teammate-private-chat,
-  .teammate-workspace.settings-mode > .teammate-list-panel,
-  .teammate-workspace.settings-mode > .teammate-settings-panel,
-  .teammate-workspace.settings-mode > .teammate-mcp-panel {
-    grid-column: 1;
-    grid-row: auto;
-  }
-
-  .teammate-settings-summary-panel,
-  .teammate-workspace.settings-mode > .teammate-list-panel,
-  .teammate-workspace.settings-mode > .teammate-settings-panel,
-  .teammate-workspace.settings-mode > .teammate-mcp-panel {
-    overflow: visible;
-  }
-
-  .teammate-settings-header,
-  .teammate-chat-header,
-  .teammate-danger-card,
-  .teammate-config-card {
-    grid-template-columns: 1fr;
-  }
-
-  .teammate-settings-nav {
-    display: flex;
-    overflow-x: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .teammate-settings-nav button {
-    flex: 0 0 auto;
-  }
-
-  .teammate-context-panel,
-  .teammate-settings-summary-panel {
-    border-left: 0;
-    border-top: 1px solid var(--border);
-  }
-}
 
 .workspace.workspace-teammates-surface {
   padding: 0;
@@ -5006,73 +4857,83 @@
   pointer-events: none;
 }
 
+.teammate-create-overlay {
+  overflow: hidden;
+}
+
 .teammate-create-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
   width: min(960px, calc(100vw - 48px));
-  max-height: min(860px, calc(100vh - 48px));
+  max-height: min(820px, calc(100dvh - 40px));
+  padding: 0;
   overflow: hidden;
 }
 
 .teammate-create-dialog .channel-create-head {
-  min-height: 118px;
-  align-items: flex-start;
-  padding: 30px 40px 26px;
+  min-height: 72px;
+  align-items: center;
+  padding: 18px 28px 14px;
   border-bottom: 1px solid #e5e5e5;
 }
 
 .teammate-create-title-block {
   display: grid;
-  gap: 6px;
+  gap: 3px;
 }
 
 .teammate-create-title-block strong {
   color: #111111;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
-  line-height: 28px;
+  line-height: 24px;
 }
 
 .teammate-create-title-block p {
   margin: 0;
   color: #707070;
-  font-size: 15px;
-  line-height: 22px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .teammate-create-dialog .teammate-create-body {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 28px;
+  align-content: start;
+  gap: 14px;
   min-height: 0;
-  max-height: calc(100vh - 250px);
+  max-height: none;
+  overflow-x: hidden;
   overflow-y: auto;
-  padding: 30px 40px 0;
+  padding: 18px 28px 0;
 }
 
 .teammate-create-steps {
   display: flex;
   align-items: center;
-  gap: 34px;
+  gap: 22px;
   color: #777777;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .teammate-create-steps span {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .teammate-create-steps strong {
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border: 1px solid #d9d9d9;
   border-radius: 999px;
   background: #ffffff;
   color: #777777;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .teammate-create-steps .active {
@@ -5087,13 +4948,14 @@
 
 .teammate-create-dialog .teammate-create-list.role-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   max-height: none;
 }
 
 .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
-  grid-template-columns: 28px minmax(0, 1fr);
-  min-height: 112px;
-  padding: 20px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  min-height: 76px;
+  padding: 11px 12px;
   border: 1px solid #e5e5e5;
   border-radius: 8px;
   background: #ffffff;
@@ -5117,8 +4979,8 @@
 }
 
 .teammate-create-dialog .teammate-create-fields {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 24px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .teammate-create-dialog .teammate-create-fields label:has(textarea) {
@@ -5128,12 +4990,12 @@
 .teammate-create-dialog .teammate-create-fields input,
 .teammate-create-dialog .teammate-create-fields select,
 .teammate-create-dialog .teammate-create-fields textarea {
-  min-height: 46px;
+  min-height: 40px;
   border-radius: 7px;
 }
 
 .teammate-create-dialog .teammate-create-fields textarea {
-  min-height: 74px;
+  min-height: 64px;
 }
 
 .teammate-model-choice-list {
@@ -5147,97 +5009,14 @@
 }
 
 .teammate-create-dialog .teammate-create-advanced summary {
-  min-height: 58px;
-  padding: 0 18px;
+  min-height: 44px;
+  padding: 0 14px;
 }
 
 .teammate-create-dialog .teammate-create-actions {
   position: sticky;
   bottom: 0;
-  margin: 0 -40px;
-  padding: 22px 40px 26px;
+  margin: 0 -28px;
+  padding: 12px 28px 16px;
   border-top: 1px solid #e5e5e5;
-}
-
-@media (max-width: 900px) {
-  .teammates-page > .teammate-management-grid,
-  .teammates-page .teammate-council-home-grid,
-  .teammate-side-stack,
-  .teammate-create-dialog .teammate-create-list.role-grid,
-  .teammate-create-dialog .teammate-create-fields,
-  .teammates-page .teammate-draft-row {
-    grid-template-columns: 1fr;
-  }
-
-  .teammates-page-header {
-    align-items: stretch;
-    grid-template-columns: 1fr;
-  }
-
-  .teammate-management-tabs {
-    width: 100%;
-  }
-
-  .teammate-council-home-head {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .teammate-council-summary-actions {
-    justify-content: flex-start;
-  }
-
-  .teammates-page .teammate-row-actions {
-    justify-self: stretch;
-    width: 100%;
-    grid-template-columns: minmax(0, 1fr) 32px;
-  }
-
-  .teammates-page .teammate-row-primary-action {
-    width: 100%;
-  }
-
-  .teammates-page .teammate-add-panel,
-  .teammates-page .teammate-template-panel,
-  .teammates-page .teammate-council-home,
-  .teammates-page .teammate-council-import-card,
-  .teammates-page-header,
-  .teammate-create-dialog .channel-create-head,
-  .teammate-create-dialog .teammate-create-body {
-    padding-inline: 20px;
-  }
-
-  .teammates-page .teammate-add-panel {
-    border-right: 0;
-    border-bottom: 1px solid #e5e5e5;
-  }
-
-  .teammate-side-stack {
-    border-left: 0;
-    overflow: visible;
-  }
-
-  .teammates-page .teammate-council-panel {
-    max-height: none;
-    overflow: visible;
-  }
-
-  .teammates-page .teammate-council-import-card {
-    border-left: 0;
-    border-top: 1px solid #e5e5e5;
-  }
-
-  .teammate-council-member-row {
-    grid-template-columns: 1fr;
-  }
-
-  .teammate-council-member-actions {
-    justify-self: stretch;
-    grid-template-columns: repeat(2, 32px) minmax(0, 1fr) 32px;
-  }
-
-  .teammate-create-steps {
-    flex-wrap: wrap;
-    gap: 12px;
-  }
 }

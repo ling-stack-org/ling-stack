@@ -95,13 +95,14 @@
 .work-board-settings-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
   min-height: 36px;
 }
 
 .work-board-settings-toolbar .work-board-tabs {
-  flex: 1;
+  flex: 1 1 420px;
 }
 
 .work-board-settings-summary {
@@ -128,6 +129,7 @@
 .work-board-tabs {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   min-width: 0;
 }
@@ -703,72 +705,4 @@
 
 .work-board-detail-actions .compact-button {
   justify-content: center;
-}
-
-@media (max-width: 1180px) {
-  .work-board-shell {
-    grid-template-columns: minmax(0, 1fr) 320px;
-  }
-}
-
-@media (max-width: 980px) {
-  .work-board-page {
-    overflow: auto;
-  }
-
-  .work-board-shell {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .work-board-list-pane,
-  .work-board-detail {
-    overflow: visible;
-  }
-
-  .work-board-detail {
-    border-top: 1px solid var(--border);
-    border-left: 0;
-  }
-
-  .work-board-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .work-board-filter-bar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .work-item-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .work-item-actions {
-    justify-content: flex-start;
-  }
-}
-
-@media (max-width: 640px) {
-  .work-board-page > .panel-title {
-    align-items: flex-start;
-  }
-
-  .work-board-tabs,
-  .work-board-count-line {
-    align-items: stretch;
-  }
-
-  .work-board-tabs button,
-  .work-board-count-line span,
-  .work-board-count-line button {
-    flex: 1 1 auto;
-    justify-content: center;
-  }
-
-  .work-board-filters,
-  .work-board-detail-meta,
-  .work-board-diagnostics,
-  .work-board-detail-actions {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }

@@ -6,7 +6,14 @@ function channelComposerTextbox(scope: Page | Locator): Locator {
   return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
 }
 
+async function useEnglishLocale(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+}
+
 test("channel branch list shows real branches without default branch chrome", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.channelBranches = [
     {
@@ -99,9 +106,7 @@ test("channel branch list shows real branches without default branch chrome", as
 });
 
 test("channel sidebar menu keeps create action without bulk archive", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("ling-stack.locale", "en-US");
-  });
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.channels.push({
     id: "channel_design",

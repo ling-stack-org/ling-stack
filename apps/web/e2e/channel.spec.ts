@@ -77,6 +77,7 @@ test("channel governance notifications stay in the header review queue", async (
 });
 
 test("channel header hides empty governance review queue while notifications load", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.governanceNotifications = [];
   state.governanceNotificationDelayMs = 1_000;
@@ -2179,11 +2180,11 @@ test("requirement shaping proposal persists clarifications before confirmation",
 
   await proposal.getByRole("button", { name: "Edit" }).click();
   const editForm = proposal.locator(".channel-proposal-edit-form");
-  await editForm.getByLabel("Open questions").fill("Which copy sections are in scope?\nShould QA cover mobile?");
+  await editForm.getByLabel("Open questions").fill("Which copy sections are in scope?\nShould QA cover accessibility?");
   await editForm.getByLabel("User clarifications").fill("Only workspace drawer copy is in scope.\nKeep provider checks out of this task.");
   await proposal.getByRole("button", { name: "Save" }).click();
   await expect(editForm).toHaveCount(0);
-  await expect(proposal).toContainText("Should QA cover mobile?");
+  await expect(proposal).toContainText("Should QA cover accessibility?");
   await expect(proposal).toContainText("Keep provider checks out of this task.");
   await expect.poll(() => {
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
@@ -6275,21 +6276,17 @@ async function maybeCaptureR32Screenshot(page: Page, name: string): Promise<void
   }
 
   await mkdir(outputDir, { recursive: true });
-  for (const viewport of [
-    { suffix: "desktop", width: 1440, height: 960 },
-    { suffix: "mobile", width: 390, height: 844 },
-  ] as const) {
-    await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await page.waitForTimeout(250);
-    const feedBox = await page.locator(".message-feed").boundingBox();
-    await page.screenshot({
-      path: join(outputDir, `${name}-${viewport.suffix}.png`),
-      clip: feedBox ? {
-        x: Math.max(0, feedBox.x),
-        y: Math.max(0, feedBox.y),
-        width: Math.max(1, Math.min(feedBox.width, viewport.width - Math.max(0, feedBox.x))),
-        height: Math.max(1, Math.min(feedBox.height, viewport.height - Math.max(0, feedBox.y))),
-      } : undefined,
-    });
-  }
+  const viewport = { suffix: "desktop", width: 1440, height: 960 } as const;
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  await page.waitForTimeout(250);
+  const feedBox = await page.locator(".message-feed").boundingBox();
+  await page.screenshot({
+    path: join(outputDir, `${name}-${viewport.suffix}.png`),
+    clip: feedBox ? {
+      x: Math.max(0, feedBox.x),
+      y: Math.max(0, feedBox.y),
+      width: Math.max(1, Math.min(feedBox.width, viewport.width - Math.max(0, feedBox.x))),
+      height: Math.max(1, Math.min(feedBox.height, viewport.height - Math.max(0, feedBox.y))),
+    } : undefined,
+  });
 }

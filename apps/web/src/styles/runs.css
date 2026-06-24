@@ -471,12 +471,7 @@
   grid-column: 1 / -1;
 }
 
-@media (max-width: 760px) {
-  .shell-snapshot-row,
-  .shell-snapshot-meta {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
+
 
 .tool-event-row {
   border: 1px solid #e1e6e2;

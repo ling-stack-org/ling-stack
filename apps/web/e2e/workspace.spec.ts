@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -13,7 +13,14 @@ import {
   openTaskFromAttentionQueue,
 } from "./support/test-helpers";
 
+async function useEnglishLocale(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+}
+
 test("workspace opens as a task workbench with task context in the inspector", async ({ page }) => {
+  await useEnglishLocale(page);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
@@ -27,6 +34,7 @@ test("workspace opens as a task workbench with task context in the inspector", a
 });
 
 test("workspace task detail panel stays bounded without growing the page", async ({ page }) => {
+  await useEnglishLocale(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   const state = createBaseState({ approvalStatus: "expired" });
   state.eventsByRun.run_failed = createVerboseRunEvents("run_failed");
@@ -54,6 +62,7 @@ test("workspace task detail panel stays bounded without growing the page", async
 });
 
 test("workspace path initializes from daemon default without showing the path field", async ({ page }) => {
+  await useEnglishLocale(page);
   const daemonCwd = "/tmp/daemon-default-workspace";
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), { defaultWorkspaceCwd: daemonCwd });
   await page.goto("/");
@@ -72,6 +81,7 @@ test("workspace defaults do not hardcode personal machine paths", async () => {
 });
 
 test("workspace new task panel creates and selects the new task", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -102,6 +112,7 @@ test("workspace new task panel creates and selects the new task", async ({ page 
 });
 
 test("workspace task runs only expose preflight-ready coding providers", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -138,12 +149,13 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
-  await expect(page.locator(".task-detail")).toContainText("Latest run");
+  await expect(page.locator(".task-detail")).toContainText("Run linked");
   await expect(page.locator(".task-detail")).not.toContainText("run_2");
   await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.currentRunId === "run_2")).toBe(true);
 });
 
 test("workspace task run uses the displayed ready provider fallback", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -177,11 +189,12 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
 
   await expect.poll(() => state.runs[0]?.providerPresetId).toBe("provider_ready");
-  await expect(page.locator(".task-detail")).toContainText("Latest run");
+  await expect(page.locator(".task-detail")).toContainText("Run linked");
   await expect(page.locator(".task-detail")).not.toContainText("run_1");
 });
 
 test("workspace task detail actions only show a spinner on the clicked action", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -229,6 +242,7 @@ test("workspace task detail actions only show a spinner on the clicked action", 
 });
 
 test("workspace task run sends the selected session permission mode", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -266,6 +280,7 @@ test("workspace task run sends the selected session permission mode", async ({ p
 });
 
 test("workspace full access task run requires confirmation and sends confirmation evidence", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -312,6 +327,7 @@ test("workspace full access task run requires confirmation and sends confirmatio
 
 test("saved workspace path wins over daemon default", async ({ page }) => {
   await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.workspaceCwd", "/tmp/saved-workspace");
   });
   const state = createBaseState({ approvalStatus: "expired" });
@@ -326,6 +342,7 @@ test("saved workspace path wins over daemon default", async ({ page }) => {
 });
 
 test("succeeded workspace tasks show a clear result action", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -354,6 +371,28 @@ test("succeeded workspace tasks show a clear result action", async ({ page }) =>
   state.tasks = state.tasks.map((task) =>
     isRecord(task) ? { ...task, status: "done", currentRunId: "run_failed", updatedAt: "2026-05-25T00:20:30.000Z" } : task
   );
+  state.workItems = [
+    {
+      id: "work_item_completed_task",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceType: "manual",
+      sourceId: "work_item_completed_task",
+      title: "Inspect workspace",
+      description: "Open the completed task from the work board.",
+      status: "ready",
+      priority: "normal",
+      labels: ["result"],
+      taskId: "task_inspect",
+      artifactIds: [],
+      proofArtifactIds: [],
+      dependencyIds: [],
+      attemptCount: 0,
+      retryBudget: 1,
+      createdAt: "2026-05-25T00:20:30.000Z",
+      updatedAt: "2026-05-25T00:20:30.000Z",
+    },
+  ];
   state.eventsByRun.run_failed = createVerboseRunEvents("run_failed");
   await mockDaemon(page, state);
   await page.goto("/");

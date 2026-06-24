@@ -451,6 +451,28 @@ export function providerPreflightReady(provider: ProviderPreset): boolean {
   return providerRunPreflightBlocker(provider) === undefined;
 }
 
+export function sortProvidersForWorkbench(
+  providers: readonly ProviderPreset[],
+  defaultProviderId: string,
+): readonly ProviderPreset[] {
+  return [...providers].sort((left, right) => {
+    const leftDefaultRank = left.id === defaultProviderId ? 0 : 1;
+    const rightDefaultRank = right.id === defaultProviderId ? 0 : 1;
+    if (leftDefaultRank !== rightDefaultRank) {
+      return leftDefaultRank - rightDefaultRank;
+    }
+    const timeOrder = providerSortTime(right).localeCompare(providerSortTime(left));
+    if (timeOrder !== 0) {
+      return timeOrder;
+    }
+    return left.id.localeCompare(right.id);
+  });
+}
+
+function providerSortTime(provider: Pick<ProviderPreset, "createdAt" | "updatedAt">): string {
+  return provider.updatedAt || provider.createdAt || "";
+}
+
 export function taskProviderReadinessMessage(provider: ProviderPreset | undefined, blocker: string | undefined, t?: ProviderTranslate): string {
   if (!provider) {
     return translateProviderText(t, "No provider preset is selected for this task run.");
