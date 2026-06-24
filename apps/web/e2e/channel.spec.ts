@@ -4559,6 +4559,48 @@ test("channel composer moves sent messages into the feed while routing is pendin
   await expect(channelFeed.getByText("AI teammate is replying...")).toHaveCount(0);
 });
 
+test("channel composer keeps thinking visible for acknowledged sends before completion", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+  if (isRecord(channel)) {
+    channel.autoReplyMode = "mentions_only";
+  }
+  const body = "你不可以直接帮我写到里面吗？";
+  state.channelMessages.push({
+    id: "msg_acknowledged_without_reply",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "tian",
+    body,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-05-25T00:18:00.000Z",
+    updatedAt: "2026-05-25T00:18:00.000Z",
+  });
+  state.channelMessageDelayMs = 1_000;
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByRole("textbox", { name: "给频道发消息，或 @ 一个 AI 队友", exact: true });
+  const channelFeed = page.getByLabel("频道消息列表");
+  await composerInput.fill(body);
+  await page.locator(".channel-composer").getByRole("button", { name: "发送" }).click();
+
+  await expectComposerValue(composerInput, "");
+  await expect(channelFeed.getByText(body)).toBeVisible();
+  await expect(channelFeed.getByText("正在思考...")).toBeVisible();
+  await expect(channelFeed.getByText("正在思考...")).toHaveCount(0, { timeout: 3_000 });
+});
+
 test("channel URL preview blocked state stays in Activity and still allows sending text", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
