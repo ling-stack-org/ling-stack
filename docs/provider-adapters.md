@@ -89,11 +89,36 @@ interface ProviderWebSearchAdapter {
 
 Current implementation:
 
-- `openai-responses-web-search` supports enabled official OpenAI Responses presets that declare `web_search`.
+- `openai-responses-web-search` supports enabled official OpenAI Responses presets that declare `web_search`, plus explicit Responses-compatible presets such as xAI/Grok or private relays with `compat.webSearch.protocol = "responses-web-search"`.
+- `openai-chat-completions-web-search` supports explicit Chat Completions search presets with `compat.webSearch.protocol = "openai-chat-completions-search"`.
+- `google-interactions-web-search` supports Gemini Google Search grounding presets with `compat.webSearch.protocol = "google-interactions-search"`.
 - `web-evidence-service` is the global daemon surface for web intent detection, URL reading, provider-backed search dispatch, blocked reasons, and prompt metadata.
 - Channel replies and private teammate replies both reuse the same evidence service; workflow steps and automations should use this service instead of adding surface-local web-search logic.
-- Generic OpenAI-compatible chat/completions relays do not inherit `web_search`; each relay or vendor needs a dedicated adapter if it exposes search.
-- xAI/Grok, Google grounding, Perplexity/search-model providers, Anthropic, and domestic providers should be added one adapter at a time with request/citation tests.
+- Generic OpenAI-compatible chat/completions relays do not inherit `web_search`; each relay or vendor needs either a known protocol declaration or a dedicated adapter if it exposes search.
+- Domestic providers are supported through the same protocol gate when their endpoint implements a known search protocol and returns citations/sources that Ling can normalize. If a domestic endpoint uses a vendor-specific extension, add a dedicated adapter and tests before advertising `web_search`.
+- Perplexity/search-model providers, Anthropic, and additional domestic provider-specific search extensions remain future adapters.
+
+Supported `compat.webSearch` protocols:
+
+```json
+{ "webSearch": { "protocol": "responses-web-search" } }
+```
+
+Use for OpenAI Responses-compatible hosted search, including xAI/Grok and private relays that expose `/responses` with `tools: [{ "type": "web_search" }]`.
+
+```json
+{ "webSearch": { "protocol": "openai-chat-completions-search" } }
+```
+
+Use for Chat Completions-compatible search models or gateways that accept `web_search_options` and return URL annotations.
+
+```json
+{ "webSearch": { "protocol": "google-interactions-search" } }
+```
+
+Use for Gemini Search grounding through the Gemini API Interactions endpoint.
+
+`endpointPath` may be provided for relays that mount the same protocol at a non-standard path. It must be a relative path; full URLs are ignored so provider search cannot silently send the configured provider key to an unrelated host.
 
 ## Media Execution Contract
 
@@ -179,8 +204,31 @@ Target capabilities:
 - `tool_call` when supported by the relay.
 - optional `embedding`.
 - no implicit `web_search`.
+- explicit `web_search` only when `compat.webSearch.protocol` names a supported search protocol.
 
 This adapter should support local relays like One API, New API, LiteLLM, OpenRouter-style endpoints, and private proxy services.
+
+### xAI / Grok
+
+Target capabilities:
+
+- `chat`
+- `tool_call` when model support exists.
+- `reasoning` where model support exists.
+- `web_search` through `responses-web-search`.
+
+Ling models Grok as an OpenAI-compatible Responses provider with an explicit web-search protocol declaration rather than adding a hidden xAI-only key path.
+
+### Google Gemini
+
+Target capabilities:
+
+- `chat`
+- `tool_call` where model support exists.
+- `vision` where model support exists.
+- `web_search` through `google-interactions-search`.
+
+Gemini does not use OpenAI tool-call citations. Its adapter maps Google Search grounding annotations or grounding chunks into Ling's normalized source list.
 
 ### Doubao / Volcengine Ark
 
@@ -189,6 +237,7 @@ Target capabilities:
 - `chat`
 - `tool_call` if enabled by the selected endpoint.
 - `vision` where model support exists.
+- `web_search` only if the configured Ark endpoint implements one of Ling's supported search protocols or a future Ark-specific adapter.
 
 ### DeepSeek V4 / DPV4-Compatible
 
@@ -197,6 +246,7 @@ Target capabilities:
 - `chat`
 - `reasoning`
 - `tool_call` if endpoint support is present.
+- `web_search` only if the configured endpoint implements one of Ling's supported search protocols or a future DeepSeek-specific adapter.
 
 The name `dpv4` should be treated as a configurable model alias until the exact upstream is pinned.
 
@@ -206,6 +256,7 @@ Target capabilities:
 
 - `chat`
 - future audio/video capabilities if the API key and model support them.
+- `web_search` only if the configured endpoint implements one of Ling's supported search protocols or a future MiniMax-specific adapter.
 
 ### GLM / Zhipu
 
@@ -215,6 +266,7 @@ Target capabilities:
 - `tool_call`
 - `embedding`
 - coding-specific endpoint support where available.
+- `web_search` only if the configured endpoint implements one of Ling's supported search protocols or a future GLM-specific adapter.
 
 ### Jimeng / Seedream / Seedance
 

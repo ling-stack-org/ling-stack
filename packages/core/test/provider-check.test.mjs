@@ -28,6 +28,16 @@ test("official provider templates expose fixed default base URLs", () => {
   assert.equal(byId.get("openai-codex-responses")?.providerTransport, "auto");
   assert.equal(byId.get("openai-codex-responses")?.baseUrl, "https://chatgpt.com/backend-api");
   assert.equal(byId.get("openai-codex-responses")?.apiKeyRef, "env:OPENAI_CODEX_API_KEY");
+  assert.equal(byId.get("xai-grok-web-search")?.kind, "openai-compatible");
+  assert.equal(byId.get("xai-grok-web-search")?.api, "openai-responses");
+  assert.equal(byId.get("xai-grok-web-search")?.baseUrl, "https://api.x.ai/v1");
+  assert.equal(byId.get("xai-grok-web-search")?.apiKeyRef, "env:XAI_API_KEY");
+  assert.deepEqual(byId.get("xai-grok-web-search")?.compat, { webSearch: { protocol: "responses-web-search" } });
+  assert.equal(byId.get("google-gemini-web-search")?.kind, "google");
+  assert.equal(byId.get("google-gemini-web-search")?.api, "google-generative-ai");
+  assert.equal(byId.get("google-gemini-web-search")?.baseUrl, "https://generativelanguage.googleapis.com/v1beta");
+  assert.equal(byId.get("google-gemini-web-search")?.apiKeyRef, "env:GEMINI_API_KEY");
+  assert.deepEqual(byId.get("google-gemini-web-search")?.compat, { webSearch: { protocol: "google-interactions-search" } });
   assert.equal(byId.get("anthropic-claude")?.baseUrl, "https://api.anthropic.com/v1");
   assert.equal(byId.get("doubao-ark")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
   assert.equal(byId.get("deepseek-dpv4")?.baseUrl, "https://api.deepseek.com");

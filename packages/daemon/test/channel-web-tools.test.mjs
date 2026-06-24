@@ -4,6 +4,8 @@ import { createCompositeSecretResolver } from "../../core/dist/index.js";
 import {
   buildChannelWebContext,
   extractPublicUrls,
+  runGoogleInteractionsWebSearch,
+  runOpenAiChatCompletionsWebSearch,
   runOpenAiWebSearch,
   shouldReadPublicUrlsForText,
   shouldRunWebSearchForText,
@@ -69,6 +71,103 @@ test("OpenAI web search uses Responses web_search and extracts citations", async
     "https://example.com/source",
     "https://example.com/cited",
   ]);
+});
+
+test("Responses-compatible web search uses explicit compat protocol for relays", async () => {
+  const calls = [];
+  const context = await buildChannelWebContext({
+    providerPresetId: "provider_xai_web",
+    store: { getProviderPreset: () => createResponsesCompatibleWebSearchProvider() },
+    sourceMessage: { body: "搜索一下 Grok 今天的新闻" },
+    turnEnvelope: { body: "搜索一下 Grok 今天的新闻", linkPreviews: [] },
+    secretResolver: createCompositeSecretResolver({ env: { XAI_API_KEY: "sk-test-xai-secret" } }),
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        output_text: "Grok search result.",
+        citations: ["https://example.com/grok"],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.x.ai/v1/responses");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer sk-test-xai-secret");
+  assert.equal(context.status, "available");
+  assert.equal(context.search?.provider.adapterId, "openai-responses-web-search");
+  assert.deepEqual(context.search?.sources.map((source) => source.url), ["https://example.com/grok"]);
+});
+
+test("Chat Completions web search protocol uses web_search_options and extracts citations", async () => {
+  const calls = [];
+  const result = await runOpenAiChatCompletionsWebSearch({
+    endpoint: "https://relay.example.test/v1/chat/completions",
+    apiKey: "sk-test-secret-value",
+    model: "search-model",
+    query: "latest product news",
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: "Chat search summary.",
+              annotations: [
+                { type: "url_citation", url_citation: { url: "https://example.com/chat-search", title: "Chat source" } },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(calls[0].url, "https://relay.example.test/v1/chat/completions");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer sk-test-secret-value");
+  assert.deepEqual(body.messages, [{ role: "user", content: "latest product news" }]);
+  assert.deepEqual(body.web_search_options, { search_context_size: "low" });
+  assert.equal(result.text, "Chat search summary.");
+  assert.deepEqual(result.sources.map((source) => source.url), ["https://example.com/chat-search"]);
+});
+
+test("Gemini web search protocol uses Google Search grounding and extracts sources", async () => {
+  const calls = [];
+  const result = await runGoogleInteractionsWebSearch({
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/interactions",
+    apiKey: "gemini-secret-value",
+    model: "models/gemini-3.5-flash",
+    query: "latest product news",
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        steps: [
+          {
+            type: "model_output",
+            content: [
+              {
+                text: "Gemini grounded summary.",
+                annotations: [
+                  { type: "url_citation", url: "https://example.com/gemini", title: "Gemini source" },
+                ],
+              },
+            ],
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/interactions");
+  assert.equal(calls[0].init.headers["x-goog-api-key"], "gemini-secret-value");
+  assert.equal(body.model, "gemini-3.5-flash");
+  assert.equal(body.input, "latest product news");
+  assert.deepEqual(body.tools, [{ type: "google_search" }]);
+  assert.equal(result.text, "Gemini grounded summary.");
+  assert.deepEqual(result.sources.map((source) => source.url), ["https://example.com/gemini"]);
 });
 
 test("channel web context uses selected web_search provider key without exposing it in prompt", async () => {
@@ -216,5 +315,20 @@ function createOpenAiWebSearchProvider() {
     enabled: true,
     createdAt: "2026-06-24T00:00:00.000Z",
     updatedAt: "2026-06-24T00:00:00.000Z",
+  };
+}
+
+function createResponsesCompatibleWebSearchProvider() {
+  return {
+    ...createOpenAiWebSearchProvider(),
+    id: "provider_xai_web",
+    kind: "openai-compatible",
+    displayName: "Grok Responses + Web Search",
+    providerId: "xai",
+    model: "grok-4.3",
+    api: "openai-responses",
+    baseUrl: "https://api.x.ai/v1",
+    apiKeyRef: "env:XAI_API_KEY",
+    compat: { webSearch: { protocol: "responses-web-search" } },
   };
 }

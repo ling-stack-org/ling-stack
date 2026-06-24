@@ -541,8 +541,10 @@ export function providerTemplateKindLabel(template: ProviderTemplate): string {
 export function groupProviderTemplates(templates: readonly ProviderTemplate[]): readonly ProviderTemplateGroup[] {
   const groups: ProviderTemplateGroup[] = [
     { label: "GPT", templates: templates.filter((template) => template.kind === "openai" || template.providerId === "openai") },
+    { label: "Grok", templates: templates.filter((template) => template.providerId === "xai") },
+    { label: "Gemini", templates: templates.filter((template) => template.kind === "google" || template.providerId === "google-gemini") },
     { label: "Claude", templates: templates.filter((template) => template.kind === "anthropic" || template.providerId === "anthropic") },
-    { label: "Custom access", templates: templates.filter((template) => providerTemplateKindLabel(template) === "custom") },
+    { label: "Custom access", templates: templates.filter((template) => providerTemplateKindLabel(template) === "custom" && template.providerId !== "xai") },
     { label: "Domestic AI", templates: templates.filter((template) => providerTemplateKindLabel(template) === "domestic") },
     { label: "Media", templates: templates.filter((template) => providerTemplateKindLabel(template) === "media") },
   ];

@@ -82,7 +82,7 @@ const CONSERVATIVE_CONTEXT_WINDOW_TOKENS = 8_192;
 const ESTIMATED_CONTEXT_WINDOW_TOKENS = 32_768;
 const DEFAULT_OUTPUT_TOKENS = 1_024;
 const STRUCTURED_OUTPUT_APIS = new Set<ProviderApi>(["openai-responses", "openai-completions"]);
-const ESTIMATED_PROVIDER_FAMILIES = new Set<ProviderKind>(["openai", "anthropic", "doubao", "deepseek", "minimax", "glm"]);
+const ESTIMATED_PROVIDER_FAMILIES = new Set<ProviderKind>(["openai", "anthropic", "google", "doubao", "deepseek", "minimax", "glm"]);
 
 export function resolveProviderModelCapabilitySnapshot(
   providerPreset: ProviderModelCapabilityPreset | undefined,
