@@ -43,12 +43,55 @@ export interface ProviderAdapter {
   listModels(): Promise<readonly ModelInfo[]>;
 
   chat?(request: ChatRequest): AsyncIterable<ChatChunk>;
+  webSearch?(request: WebSearchRequest): Promise<WebSearchResult>;
   embed?(request: EmbeddingRequest): Promise<EmbeddingResponse>;
   generateImage?(request: ImageRequest): Promise<MediaJob>;
   generateVideo?(request: VideoRequest): Promise<MediaJob>;
   pollJob?(jobId: string): Promise<MediaJobStatus>;
 }
 ```
+
+## Web Search Adapter Contract
+
+`web_search` is a provider capability only when Ling has an adapter that can translate a specific provider protocol into normalized evidence:
+
+```ts
+interface WebSearchRequest {
+  providerPreset: ProviderPreset;
+  apiKey: string;
+  query: string;
+  timeoutMs?: number;
+}
+
+interface WebSearchResult {
+  query: string;
+  text: string;
+  sources: Array<{
+    title?: string;
+    url: string;
+    snippet?: string;
+  }>;
+  provider: {
+    adapterId: string;
+    providerPresetId: string;
+    displayName: string;
+  };
+}
+
+interface ProviderWebSearchAdapter {
+  id: string;
+  displayName: string;
+  protocol: string;
+  supportsProvider(provider: ProviderPreset): boolean;
+  search(request: WebSearchRequest): Promise<WebSearchResult>;
+}
+```
+
+Current implementation:
+
+- `openai-responses-web-search` supports enabled official OpenAI Responses presets that declare `web_search`.
+- Generic OpenAI-compatible chat/completions relays do not inherit `web_search`; each relay or vendor needs a dedicated adapter if it exposes search.
+- xAI/Grok, Google grounding, Perplexity/search-model providers, Anthropic, and domestic providers should be added one adapter at a time with request/citation tests.
 
 ## Media Execution Contract
 
@@ -115,6 +158,7 @@ Target capabilities:
 - `reasoning`
 - `vision`
 - `embedding`
+- `web_search` only for official Responses presets with the OpenAI web-search adapter.
 
 ### Anthropic Claude
 
@@ -132,6 +176,7 @@ Target capabilities:
 - `chat`
 - `tool_call` when supported by the relay.
 - optional `embedding`.
+- no implicit `web_search`.
 
 This adapter should support local relays like One API, New API, LiteLLM, OpenRouter-style endpoints, and private proxy services.
 

@@ -130,6 +130,35 @@ test("channel web context does not bypass provider settings with env OPENAI_API_
   assert.doesNotMatch(context.prompt, /sk-test-secret-value/);
 });
 
+test("channel web context blocks declared web_search providers without an adapter", async () => {
+  let fetched = false;
+  const context = await buildChannelWebContext({
+    providerPresetId: "provider_compatible_web",
+    store: {
+      getProviderPreset: () => ({
+        ...createOpenAiWebSearchProvider(),
+        id: "provider_compatible_web",
+        kind: "openai-compatible",
+        displayName: "Compatible Relay With Search Claim",
+        providerId: "compatible-relay",
+        api: "openai-completions",
+        baseUrl: "https://relay.example.test/v1",
+      }),
+    },
+    sourceMessage: { body: "查一下 Ling Stack 最新消息" },
+    turnEnvelope: { body: "查一下 Ling Stack 最新消息", linkPreviews: [] },
+    secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
+    fetch: async () => {
+      fetched = true;
+      return new Response("should not fetch", { status: 200 });
+    },
+  });
+
+  assert.equal(fetched, false);
+  assert.equal(context.status, "blocked");
+  assert.match(context.prompt, /no web-search adapter for this provider protocol/);
+});
+
 test("OpenAI web search redacts masked API keys from provider errors", async () => {
   await assert.rejects(
     runOpenAiWebSearch({
