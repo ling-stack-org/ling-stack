@@ -1504,6 +1504,46 @@ test("channel composer sends workspace file refs as native message payload", asy
   await expect(page.locator(".channel-composer .composer-inline-token.file-reference")).toHaveCount(0);
 });
 
+test("channel composer preserves IME composition until committed", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = channelComposerTextbox(page);
+  await composerInput.evaluate((node) => {
+    const editor = node as HTMLElement;
+    editor.focus();
+    editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+    editor.textContent = "k";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, data: "k", inputType: "insertCompositionText", isComposing: true }));
+  });
+  await expectComposerValue(composerInput, "");
+  await expect.poll(() => composerInput.evaluate((node) => node.textContent)).toBe("k");
+
+  await composerInput.evaluate((node) => {
+    const editor = node as HTMLElement;
+    editor.textContent = "ke";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, data: "ke", inputType: "insertCompositionText", isComposing: true }));
+  });
+  await expectComposerValue(composerInput, "");
+  await expect.poll(() => composerInput.evaluate((node) => node.textContent)).toBe("ke");
+
+  await composerInput.evaluate((node) => {
+    const editor = node as HTMLElement;
+    editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "可" }));
+    editor.textContent = "可";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, data: "可", inputType: "insertCompositionText", isComposing: false }));
+  });
+  await expectComposerValue(composerInput, "可");
+  await expect.poll(() => composerInput.evaluate((node) => node.textContent)).toBe("可");
+});
+
 test("channel composer does not render multi-agent slash command tokens as file refs", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
