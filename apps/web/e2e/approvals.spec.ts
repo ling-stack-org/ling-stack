@@ -4,6 +4,12 @@ import {
   createBaseState,
 } from "./support/mock-state";
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+});
+
 test("approval inbox shows expired approvals without decision buttons", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");

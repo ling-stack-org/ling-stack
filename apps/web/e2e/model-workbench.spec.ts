@@ -8,6 +8,12 @@ import {
   isRecord,
 } from "./support/mock-state";
 
+async function useEnglishLocale(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+}
+
 async function openProviderRowMenu(row: Locator): Promise<Locator> {
   await row.locator(".provider-row-menu-trigger").hover();
   const menu = row.locator(".provider-row-menu-popover");
@@ -247,6 +253,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
 });
 
 test("model workbench hides capability state row while keeping advanced overrides", async ({ page }) => {
+  await useEnglishLocale(page);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), {
     templates: createDefaultProviderTemplates(),
   });
@@ -454,6 +461,7 @@ test("model workbench edits media presets from the unified supplier picker", asy
 });
 
 test("model workbench creates custom OpenAI-compatible presets and surfaces readiness", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -727,6 +735,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
 });
 
 test("model workbench status counts align with saved chat and media presets", async ({ page }) => {
+  await useEnglishLocale(page);
   const readyCheck = {
     ok: true,
     code: "ready",
@@ -774,6 +783,7 @@ test("model workbench status counts align with saved chat and media presets", as
 });
 
 test("model workbench row checks show inline feedback without spinning batch check", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providerCheckDelayMs = 800;
   state.providers = [
@@ -836,6 +846,7 @@ test("model workbench row checks show inline feedback without spinning batch che
 });
 
 test("save and check enables a disabled provider before checking", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -864,6 +875,7 @@ test("save and check enables a disabled provider before checking", async ({ page
 });
 
 test("row check enables a configured disabled chat provider before checking", async ({ page }) => {
+  await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({

@@ -395,33 +395,38 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #ffffff;
-  color: #111111;
+  background: var(--window-bg);
+  color: var(--text);
 }
 
-.workspace.workspace-automations-surface,
 .workspace.workspace-generation-surface {
   display: grid;
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #ffffff;
-  color: #111111;
+  background: var(--window-bg);
+  color: var(--text);
 }
 
 .workspace.workspace-automations-surface {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--app-bg);
+  color: var(--text);
   padding: 0;
 }
 
 .workspace-provider-surface .provider-sheet-backdrop {
-  background: rgba(17, 17, 17, 0.08);
+  background: color-mix(in srgb, var(--app-bg) 62%, transparent);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 .workspace-provider-surface .provider-sheet-header.panel-title,
 .workspace-provider-surface .provider-sheet-footer {
-  background: #ffffff;
+  background: var(--surface-panel-strong);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -438,81 +443,55 @@
 .workspace-provider-surface .provider-repair-queue,
 .workspace-provider-surface .provider-repair-item,
 .workspace-provider-surface .inline-error {
-  border-color: #e5e5e5;
-  background: #ffffff;
-  color: #111111;
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
 }
 
 .workspace-provider-surface .provider-batch-result.bad,
 .workspace-provider-surface .provider-run-notice:not(.ok),
 .workspace-provider-surface .provider-repair-item.warning {
-  color: #b42318;
+  color: var(--danger);
 }
 
 .workspace-provider-surface .provider-next-action code,
 .workspace-provider-surface .provider-env-hint code,
 .workspace-provider-surface .provider-run-repair-copy code {
-  background: #f5f5f5;
-  color: #111111;
-}
-
-:root[data-theme="dark"] .workspace.workspace-provider-surface,
-:root[data-theme="dark"] .workspace-provider-surface .provider-next-action,
-:root[data-theme="dark"] .workspace-provider-surface .provider-batch-result,
-:root[data-theme="dark"] .workspace-provider-surface .provider-run-repair,
-:root[data-theme="dark"] .workspace-provider-surface .provider-run-notice,
-:root[data-theme="dark"] .workspace-provider-surface .provider-repair-queue,
-:root[data-theme="dark"] .workspace-provider-surface .provider-repair-item,
-:root[data-theme="dark"] .workspace-provider-surface .inline-error {
-  border-color: #e5e5e5;
-  background: #ffffff;
-  color: #111111;
-}
-
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet-header.panel-title,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet-footer {
-  background: #ffffff;
+  background: var(--surface-subtle);
+  color: var(--text);
 }
 
 .workspace-provider-surface .provider-sheet input,
 .workspace-provider-surface .provider-sheet select,
-.workspace-provider-surface .provider-sheet textarea,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet input,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet select,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet textarea {
-  border-color: #e5e5e5;
-  background: #ffffff;
-  color: #111111;
+.workspace-provider-surface .provider-sheet textarea {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
 }
 
 .workspace-provider-surface .provider-sheet input:disabled,
-.workspace-provider-surface .provider-sheet select:disabled,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet input:disabled,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet select:disabled {
-  background: #f5f5f5;
-  color: #6b6b6b;
+.workspace-provider-surface .provider-sheet select:disabled {
+  background: var(--surface-pressed);
+  color: var(--text-muted);
   opacity: 1;
 }
 
-.workspace-provider-surface .provider-sheet .secondary-button,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet .secondary-button {
-  border-color: #e5e5e5;
-  background: #ffffff;
-  color: #111111;
+.workspace-provider-surface .provider-sheet .secondary-button {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
 }
 
-.workspace-provider-surface .provider-sheet .primary-button,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet .primary-button {
-  border-color: #111111;
-  background: #111111;
-  color: #ffffff;
+.workspace-provider-surface .provider-sheet .primary-button {
+  border-color: var(--accent-border);
+  background: var(--accent);
+  color: var(--window-bg);
 }
 
-.workspace-provider-surface .provider-sheet .settings-toggle,
-:root[data-theme="dark"] .workspace-provider-surface .provider-sheet .settings-toggle {
-  border-color: #e5e5e5;
-  background: #ffffff;
-  color: #111111;
+.workspace-provider-surface .provider-sheet .settings-toggle {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
 }
 
 .teammate-workspace-identity h2,
@@ -611,17 +590,6 @@
 
 :root[data-theme="dark"] .teammate-chat-composer .primary-button:disabled {
   color: var(--text-muted);
-}
-
-:root[data-theme="dark"] .channel-daylight-shell .task-workbench-window .primary-button {
-  border-color: #111111;
-  background: #111111;
-  color: #ffffff;
-}
-
-:root[data-theme="dark"] .channel-daylight-shell .task-workbench-window .primary-button:disabled {
-  color: #ffffff;
-  opacity: 0.48;
 }
 
 /* Daylight product tone recovery for the top work pages.
@@ -911,58 +879,58 @@
 
 .workspace-generation-surface .media-job-row.selected,
 .workspace-generation-surface .media-job-row.selected:hover {
-  border-color: #e5e5e5;
-  background: #f7f7f7;
-  color: #171717;
-  box-shadow: inset 3px 0 0 #111111;
+  border-color: var(--border);
+  background: var(--surface-selected);
+  color: var(--text-strong);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .workspace-generation-surface .primary-button,
 .media-create-overlay .primary-button,
 .workspace-teammates-surface .primary-button,
 .teammate-create-overlay .primary-button {
-  border-color: #111111;
-  background: #111111;
-  color: #ffffff;
+  border-color: var(--accent-border);
+  background: var(--accent);
+  color: var(--window-bg);
 }
 
 .workspace-generation-surface .primary-button:hover:not(:disabled),
 .media-create-overlay .primary-button:hover:not(:disabled),
 .workspace-teammates-surface .primary-button:hover:not(:disabled),
 .teammate-create-overlay .primary-button:hover:not(:disabled) {
-  border-color: #262626;
-  background: #262626;
-  color: #ffffff;
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--window-bg);
 }
 
 .workspace-generation-surface .primary-button:disabled,
 .media-create-overlay .primary-button:disabled,
 .workspace-teammates-surface .primary-button:disabled,
 .teammate-create-overlay .primary-button:disabled {
-  border-color: #d7d7d7;
-  background: #f1f1f1;
-  color: #8a8a8a;
+  border-color: var(--border);
+  background: var(--surface-pressed);
+  color: var(--text-muted);
 }
 
 .workspace-teammates-surface .teammates-page .teammate-add-panel,
 .workspace-teammates-surface .teammates-page .teammate-template-panel,
 .workspace-teammates-surface .teammates-page .teammate-draft-row {
-  border-color: #e5e5e5;
-  background: #ffffff;
+  border-color: var(--border);
+  background: var(--surface-panel);
 }
 
 .workspace-teammates-surface .teammates-page .teammate-draft-row:hover {
-  background: #fafafa;
+  background: var(--surface-hover);
 }
 
 .workspace-teammates-surface .teammates-page .teammate-row-primary-action {
-  border-color: #dcdcdc;
-  background: #ffffff;
-  color: #111111;
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text-strong);
 }
 
 .workspace-teammates-surface .teammates-page .teammate-row-primary-action:hover {
-  background: #f5f5f5;
+  background: var(--surface-hover);
 }
 
 /* Approved density pass: keep create dialogs close to the Stitch white-console mocks. */
@@ -1044,7 +1012,7 @@
 
 .workspace-automations-surface .automation-modal-title-copy h2 {
   margin: 0;
-  color: #111111;
+  color: var(--text-strong);
   font-size: 24px;
   font-weight: 700;
   line-height: 30px;
@@ -1053,7 +1021,7 @@
 
 .workspace-automations-surface .automation-modal-title-copy p {
   margin: 4px 0 0;
-  color: #707070;
+  color: var(--text-muted);
   font-size: 15px;
   line-height: 22px;
 }
@@ -1166,4 +1134,274 @@
     width: 100%;
     justify-content: flex-end;
   }
+}
+
+/* Dark theme guardrail for pages that still carry white-console local CSS. */
+:root[data-theme="dark"] .workspace,
+:root[data-theme="dark"] .client-window,
+:root[data-theme="dark"] .workspace-client-surface,
+:root[data-theme="dark"] .workspace-provider-surface,
+:root[data-theme="dark"] .workspace-generation-surface,
+:root[data-theme="dark"] .workspace-automations-surface,
+:root[data-theme="dark"] .workspace-teammates-surface,
+:root[data-theme="dark"] .workspace-teammate-private-surface,
+:root[data-theme="dark"] .workspace-councils-surface,
+:root[data-theme="dark"] .profile-page,
+:root[data-theme="dark"] .settings-page,
+:root[data-theme="dark"] .run-history-layout,
+:root[data-theme="dark"] .work-board-page,
+:root[data-theme="dark"] .media-jobs-page,
+:root[data-theme="dark"] .automations-inbox-page,
+:root[data-theme="dark"] .provider-workbench-surface,
+:root[data-theme="dark"] .teammates-page,
+:root[data-theme="dark"] .council-workspace-page {
+  background: var(--window-bg);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .workspace :is(
+  [class*="panel"],
+  [class*="card"],
+  [class*="row"],
+  [class*="section"],
+  [class*="surface"],
+  [class*="sheet"],
+  [class*="modal"],
+  [class*="dialog"],
+  [class*="popover"],
+  [class*="menu"],
+  [class*="empty"],
+  [class*="list"],
+  [class*="grid"],
+  [class*="composer"],
+  [class*="inspector"],
+  [class*="preview"],
+  [class*="summary"],
+  [class*="item"],
+  [class*="tile"],
+  [class*="toolbar"],
+  [class*="header"],
+  [class*="body"],
+  [class*="footer"],
+  [class*="timeline"],
+  [class*="table"],
+  [class*="field"],
+  [class*="filter"],
+  [class*="search"]
+):not([class*="backdrop"]):not([class*="overlay"]):not([class*="spinner"]) {
+  border-color: var(--border);
+  background-color: var(--surface-panel);
+  color: var(--text);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-theme="dark"] .workspace :is(
+  [class*="head"],
+  [class*="title"],
+  [class*="copy"],
+  [class*="meta"],
+  [class*="detail"],
+  [class*="content"],
+  [class*="message"],
+  [class*="feed"],
+  [class*="conversation"]
+):not([class*="backdrop"]):not([class*="overlay"]):not([class*="avatar"]) {
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .workspace :is(
+  h1,
+  h2,
+  h3,
+  h4,
+  strong,
+  summary,
+  label,
+  th,
+  .panel-title,
+  .panel-title span,
+  .panel-title strong
+) {
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .workspace :is(
+  p,
+  small,
+  time,
+  caption,
+  td,
+  .muted,
+  [class*="description"],
+  [class*="subtitle"],
+  [class*="hint"],
+  [class*="note"],
+  [class*="meta"],
+  [class*="copy"] small
+) {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .workspace :is(input, select, textarea, [contenteditable="true"]) {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+:root[data-theme="dark"] .workspace :is(input, textarea)::placeholder {
+  color: var(--text-soft);
+}
+
+:root[data-theme="dark"] .workspace :is(input, select, textarea):disabled {
+  border-color: var(--border);
+  background: var(--surface-pressed);
+  color: var(--text-soft);
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .workspace :is(button, .secondary-button, .icon-button, .compact-button, [role="button"]) {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .workspace :is(.secondary-button, .icon-button, .compact-button):not(.primary-button) {
+  background: var(--surface-panel);
+}
+
+:root[data-theme="dark"] .workspace :is(button, .secondary-button, .icon-button, .compact-button, [role="button"]):hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .workspace :is(.primary-button, button.primary-button) {
+  border-color: var(--accent-border);
+  background: var(--accent);
+  color: var(--app-bg);
+}
+
+:root[data-theme="dark"] .workspace :is(.primary-button, button.primary-button):hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--app-bg);
+}
+
+:root[data-theme="dark"] .workspace :is(.primary-button, .secondary-button, .icon-button, .compact-button):disabled {
+  border-color: var(--border);
+  background: var(--surface-pressed);
+  color: var(--text-soft);
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .workspace :is(.selected, .active, [aria-selected="true"]):not(.status-badge):not(.approval-state):not(.approval-risk):not(.provider-state):not(.phase-token) {
+  border-color: var(--border-strong);
+  background-color: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .workspace :is(pre, code, kbd, samp, .mono, [class*="code"], [class*="payload"], [class*="json"]) {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .workspace :is(table, thead, tbody, tr, th, td) {
+  border-color: var(--border);
+}
+
+:root[data-theme="dark"] .workspace :is(
+  .status-badge,
+  .provider-state,
+  .approval-state,
+  .approval-risk,
+  .phase-token,
+  .check-result-status,
+  .media-job-status,
+  .settings-plugin-token,
+  .settings-skill-state,
+  .settings-skill-sync-state,
+  .settings-skill-candidate-status,
+  .settings-skill-health-severity,
+  .teammate-council-status,
+  .automation-row-status,
+  .automation-run-status
+) {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .workspace :is(
+  .ok,
+  .ready,
+  .succeeded,
+  .success,
+  .enabled,
+  .approved,
+  .run-ready,
+  .check-ok,
+  .key-ok,
+  .active.status-badge
+) {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+:root[data-theme="dark"] .workspace :is(
+  .warning,
+  .pending,
+  .attention,
+  .needs-review,
+  .needs_edit,
+  .waiting,
+  .queued,
+  .draft,
+  .media-only,
+  .check-unknown
+) {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+:root[data-theme="dark"] .workspace :is(
+  .bad,
+  .failed,
+  .failure,
+  .danger,
+  .disabled,
+  .denied,
+  .expired,
+  .cancelled,
+  .critical,
+  .high,
+  .blocked,
+  .run-blocked,
+  .key-missing,
+  .check-bad,
+  .error
+) {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+:root[data-theme="dark"] .workspace :is(.info, .processing, .running, .collecting) {
+  border-color: var(--info-border);
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+:root[data-theme="dark"] .workspace :is(
+  .provider-sheet-backdrop,
+  .teammate-sheet-backdrop,
+  .automation-modal-backdrop,
+  .media-create-overlay,
+  .teammate-create-overlay
+) {
+  background: color-mix(in srgb, var(--app-bg) 68%, transparent);
 }
