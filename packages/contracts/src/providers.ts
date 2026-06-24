@@ -17,6 +17,7 @@ export type ProviderCapability =
   | "tool_call"
   | "reasoning"
   | "vision"
+  | "web_search"
   | "embedding"
   | "image_generate"
   | "image_edit"

@@ -1919,7 +1919,13 @@ test("channel discussion injects web search context before runner reply", async 
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-web-search-context-"));
   const runner = new RecordingRunner();
   const webSearchCalls = [];
+  const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
     secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
     channelWebFetch: async (url, init) => {
       webSearchCalls.push({ url: String(url), init });
@@ -1941,8 +1947,25 @@ test("channel discussion injects web search context before runner reply", async 
   });
   try {
     const channel = await createChannel(daemon.url, cwd);
-    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
-    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      kind: "openai",
+      displayName: "OpenAI Responses + Web Search",
+      providerId: "openai",
+      model: "gpt-5.5",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+      authHeader: true,
+      capabilities: ["chat", "tool_call", "reasoning", "web_search"],
+    })).provider;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.recordProviderCheckResult(provider.id, {
+      ok: true,
+      code: "static_check",
+      message: "Provider ready for web search context test.",
+      checkedAt: "2026-06-24T00:00:00.000Z",
+    });
     const teammateId = "teammate_builtin_designer";
     await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
       providerPresetId: provider.id,

@@ -19,6 +19,18 @@ export function defaultProviderTemplates(): readonly ProviderTemplate[] {
       apiKeyRef: "env:OPENAI_API_KEY",
     }),
     chatProviderTemplate({
+      templateId: "openai-responses-web-search",
+      kind: "openai",
+      displayName: "OpenAI Responses + Web Search",
+      description: "Official OpenAI Responses API endpoint with hosted web_search capability. Uses the provider key configured in Ling model settings.",
+      providerId: "openai",
+      model: "gpt-5.5",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+      capabilities: ["chat", "tool_call", "reasoning", "web_search"],
+    }),
+    chatProviderTemplate({
       templateId: "openai-codex-responses",
       kind: "openai",
       displayName: "OpenAI Codex Responses",
@@ -143,10 +155,11 @@ function chatProviderTemplate(input: {
   readonly providerTransport?: ProviderPresetInput["providerTransport"];
   readonly baseUrl?: string;
   readonly apiKeyRef: string;
+  readonly capabilities?: ProviderPresetInput["capabilities"];
 }): ProviderTemplate {
   return {
     ...input,
-    capabilities: ["chat", "tool_call", "reasoning"],
+    capabilities: input.capabilities ?? ["chat", "tool_call", "reasoning"],
     input: ["text"],
     enabled: false,
     authHeader: true,

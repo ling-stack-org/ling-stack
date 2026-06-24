@@ -4,7 +4,7 @@
 
 Ling Agent should answer channel questions that require current public web evidence without pretending that Codex-only tools are part of the Ling runtime. The first slice adds daemon-owned web context before channel reply generation:
 
-- `web_search`: OpenAI Responses API hosted web search, powered by an existing `OPENAI_API_KEY`.
+- `web_search`: provider-backed hosted web search, currently implemented for a selected official OpenAI Responses provider that explicitly declares the `web_search` capability.
 - `open_url` / `read_url`: public URL body extraction for explicit URL-reading requests.
 - `browser`: deferred; interactive browser control requires a separate session, approval, and audit model.
 
@@ -36,10 +36,10 @@ Implementation contract:
 
 - Call the OpenAI Responses API with `tools: [{ "type": "web_search", "search_context_size": "low" }]`.
 - Request `include: ["web_search_call.action.sources"]` so the prompt can carry source URLs beyond inline citations.
-- Prefer a selected official OpenAI Responses preset when it is enabled and has a configured key.
-- Otherwise reuse `env:OPENAI_API_KEY`.
+- Use only the selected official OpenAI Responses preset when it is enabled, has `capabilities` containing `web_search`, and has a configured provider key.
+- Do not fall back to a standalone `env:OPENAI_API_KEY` outside the selected provider. Real-time search must be explained as a provider capability in model settings, not as a separate daemon key.
 - Never log or render the plaintext key.
-- If search fails or the key is missing, continue the reply with a web-context blocked reason instead of fabricating current facts.
+- If search fails, the provider lacks `web_search`, or the provider key is missing, continue the reply with a web-context blocked reason instead of fabricating current facts.
 
 ### open_url / read_url
 
@@ -79,17 +79,19 @@ The channel reply system prompt remains side-effect free:
 
 The slice intentionally reuses the existing provider secret system:
 
-- Selected official OpenAI Responses preset: use its configured `apiKeyRef`.
-- Otherwise: resolve `env:OPENAI_API_KEY`.
+- Selected official OpenAI Responses preset with `web_search`: use its configured `apiKeyRef`.
+- OpenAI-compatible chat/completions providers are not assumed to support hosted web search.
+- Ling does not read a separate daemon-level `OPENAI_API_KEY` as a hidden fallback.
 - No new key is created.
 - No secret is persisted by this feature.
-- Compatible gateways are not assumed to support hosted OpenAI web search.
+- A future provider adapter may map Ling's generic `web_search` capability to another vendor-specific search or grounding API, but each adapter must define its request and citation contract explicitly.
 
 ## Failure Modes
 
 | Failure | Behavior |
 | --- | --- |
-| Missing `OPENAI_API_KEY` | Inject blocked web-search status; reply should say it cannot verify current web facts. |
+| Selected provider lacks `web_search` | Inject blocked web-search status; reply should say the current model configuration does not support real-time search. |
+| Selected web-search provider key is missing | Inject blocked web-search status; reply should say the configured provider key is missing. |
 | OpenAI request fails | Inject sanitized HTTP/network error; continue ordinary reply. |
 | Model returns no citations | Include summary and mark sources as none returned. |
 | URL points to private/local network | Block before fetch or after DNS/redirect check. |

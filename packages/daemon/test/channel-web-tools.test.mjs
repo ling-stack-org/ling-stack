@@ -71,34 +71,62 @@ test("OpenAI web search uses Responses web_search and extracts citations", async
   ]);
 });
 
-test("channel web context reuses env OPENAI_API_KEY without exposing it in prompt", async () => {
+test("channel web context uses selected web_search provider key without exposing it in prompt", async () => {
+  const calls = [];
+  const context = await buildChannelWebContext({
+    providerPresetId: "provider_openai_web",
+    store: { getProviderPreset: () => createOpenAiWebSearchProvider() },
+    sourceMessage: { body: "查一下 Ling Stack 最新消息" },
+    turnEnvelope: { body: "查一下 Ling Stack 最新消息", linkPreviews: [] },
+    secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        output_text: "Ling Stack result.",
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: "Ling Stack result.",
+                annotations: [
+                  { type: "url_citation", url: "https://example.com/ling", title: "Ling source" },
+                ],
+              },
+            ],
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.openai.com/v1/responses");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer sk-test-secret-value");
+  assert.equal(context.status, "available");
+  assert.match(context.prompt, /Ling Stack result/);
+  assert.match(context.prompt, /https:\/\/example\.com\/ling/);
+  assert.doesNotMatch(context.prompt, /sk-test-secret-value/);
+});
+
+test("channel web context does not bypass provider settings with env OPENAI_API_KEY", async () => {
+  let fetched = false;
   const context = await buildChannelWebContext({
     store: { getProviderPreset: () => undefined },
     sourceMessage: { body: "查一下 Ling Stack 最新消息" },
     turnEnvelope: { body: "查一下 Ling Stack 最新消息", linkPreviews: [] },
     secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
-    fetch: async () => new Response(JSON.stringify({
-      output_text: "Ling Stack result.",
-      output: [
-        {
-          type: "message",
-          content: [
-            {
-              type: "output_text",
-              text: "Ling Stack result.",
-              annotations: [
-                { type: "url_citation", url: "https://example.com/ling", title: "Ling source" },
-              ],
-            },
-          ],
-        },
-      ],
-    }), { status: 200, headers: { "content-type": "application/json" } }),
+    fetch: async () => {
+      fetched = true;
+      return new Response("should not fetch", { status: 200 });
+    },
   });
 
-  assert.equal(context.status, "available");
-  assert.match(context.prompt, /Ling Stack result/);
-  assert.match(context.prompt, /https:\/\/example\.com\/ling/);
+  assert.equal(fetched, false);
+  assert.equal(context.status, "blocked");
+  assert.match(context.prompt, /Current selected Ling provider does not support realtime web search/);
+  assert.match(context.prompt, /will not bypass model settings/);
   assert.doesNotMatch(context.prompt, /sk-test-secret-value/);
 });
 
@@ -141,3 +169,23 @@ test("channel read URL context blocks localhost without fetching", async () => {
   assert.equal(context.status, "blocked");
   assert.match(context.prompt, /local or private network targets/i);
 });
+
+function createOpenAiWebSearchProvider() {
+  return {
+    id: "provider_openai_web",
+    kind: "openai",
+    displayName: "OpenAI Responses + Web Search",
+    providerId: "openai",
+    model: "gpt-5.5",
+    api: "openai-responses",
+    baseUrl: "https://api.openai.com/v1",
+    apiKeyRef: "env:OPENAI_API_KEY",
+    headers: {},
+    input: ["text"],
+    compat: {},
+    capabilities: ["chat", "tool_call", "reasoning", "web_search"],
+    enabled: true,
+    createdAt: "2026-06-24T00:00:00.000Z",
+    updatedAt: "2026-06-24T00:00:00.000Z",
+  };
+}
