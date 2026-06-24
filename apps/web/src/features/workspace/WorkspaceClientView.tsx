@@ -1727,7 +1727,7 @@ export function WorkspaceClientView({
     channelMessagesHasOlder && !activityFiltersActive && conversationFeedBodyItems.length > 0;
   const pendingChannelSendState = useMemo(() => {
     if (!pendingChannelSendPreview) {
-      return { acknowledged: false, aiReplyStarted: false, awaitingAiReply: false };
+      return { acknowledged: false, aiReplyStarted: false };
     }
     const acknowledgedMessage = [...channelMessages]
       .reverse()
@@ -1741,10 +1741,9 @@ export function WorkspaceClientView({
         sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
         sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
       );
-    const awaitingAiReply = pendingChannelSendPreview.requestAiReply || pendingChannelSendPreview.autoReplyMode !== "mentions_only";
     const replyThreadId = acknowledgedMessage ? acknowledgedMessage.threadId ?? acknowledgedMessage.id : pendingChannelSendPreview.threadId;
     const previewCreatedAt = Date.parse(pendingChannelSendPreview.createdAt);
-    const aiReplyStarted = awaitingAiReply && channelMessages.some((message) => {
+    const aiReplyStarted = channelMessages.some((message) => {
       if (message.channelId !== pendingChannelSendPreview.channelId || message.kind !== "ai_reply") {
         return false;
       }
@@ -1757,12 +1756,11 @@ export function WorkspaceClientView({
     return {
       acknowledged: Boolean(acknowledgedMessage),
       aiReplyStarted,
-      awaitingAiReply,
     };
   }, [channelMessages, pendingChannelSendPreview]);
   const pendingChannelSendResolved =
     pendingChannelSendState.acknowledged &&
-    (!pendingChannelSendState.awaitingAiReply || pendingChannelSendState.aiReplyStarted);
+    pendingChannelSendState.aiReplyStarted;
   const pendingChannelSendVisible = Boolean(
     pendingChannelSendPreview &&
     !pendingChannelSendResolved &&
