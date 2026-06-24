@@ -102,6 +102,28 @@ test("channel web context reuses env OPENAI_API_KEY without exposing it in promp
   assert.doesNotMatch(context.prompt, /sk-test-secret-value/);
 });
 
+test("OpenAI web search redacts masked API keys from provider errors", async () => {
+  await assert.rejects(
+    runOpenAiWebSearch({
+      endpoint: "https://api.openai.test/v1/responses",
+      apiKey: "sk-test-secret-value",
+      model: "gpt-5.5",
+      query: "latest product news",
+      fetch: async () => new Response(JSON.stringify({
+        error: {
+          message: "Incorrect API key provided: sk-pulsa*************-001.",
+        },
+      }), { status: 401, headers: { "content-type": "application/json" } }),
+    }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Incorrect API key provided: \[redacted\]/);
+      assert.doesNotMatch(error.message, /sk-pulsa/);
+      return true;
+    },
+  );
+});
+
 test("channel read URL context blocks localhost without fetching", async () => {
   let fetched = false;
   const context = await buildChannelWebContext({
