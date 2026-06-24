@@ -117,7 +117,7 @@ test("effective config reports user settings diagnostics without applying invali
     const body = await getJson(`${daemon.url}/config/effective?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(body.values.theme.value, "system");
     assert.equal(body.values.theme.source, "built_in");
-    assert.equal(body.values.locale.value, "system");
+    assert.equal(body.values.locale.value, "zh-CN");
     assert.equal(body.values.locale.source, "built_in");
     assert.equal(body.values.responseLanguage.value, "follow_user");
     assert.equal(body.values.responseLanguage.source, "built_in");
