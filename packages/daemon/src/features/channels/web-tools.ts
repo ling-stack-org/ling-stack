@@ -437,7 +437,7 @@ function safeErrorMessage(error: unknown): string {
 }
 
 function redactSecretLike(value: string): string {
-  return value.replace(/\bsk-[A-Za-z0-9_-]{12,}\b/gu, "[redacted]");
+  return value.replace(/\bsk-[A-Za-z0-9_.*-]{6,}\b/gu, "[redacted]");
 }
 
 function stripTrailingUrlPunctuation(value: string): string {
