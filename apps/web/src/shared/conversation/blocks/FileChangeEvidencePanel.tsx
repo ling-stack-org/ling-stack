@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleAlert, FileCode2, Loader2 } from "lucide-react";
-import { previewArtifactContent } from "../../api.js";
-import { useI18n } from "../../i18n.js";
-import { summarizeFileChanges, type ConversationFileChange, type ConversationFileChangeStatus } from "../../lib/diff-summary.js";
-import { deriveFileChangeArtifacts, parseFileChangeArtifact } from "../../lib/file-change-evidence.js";
-import type { RunArtifact } from "../../types.js";
+import { useI18n } from "../../../i18n.js";
+import { summarizeFileChanges, type ConversationFileChange, type ConversationFileChangeStatus } from "../../../lib/diff-summary.js";
+import { deriveFileChangeArtifacts, parseFileChangeArtifact } from "../../../lib/file-change-evidence.js";
+import type { PreviewContentResponse, RunArtifact } from "../../../types.js";
 import { DiffFileSummary } from "./DiffFileSummary.js";
 import { DiffViewer } from "./DiffViewer.js";
+
+export type ArtifactContentPreviewLoader = (cwd: string, artifactId: string, maxBytes?: number) => Promise<PreviewContentResponse>;
 
 export interface FileChangeEvidencePanelProps {
   readonly cwd: string;
   readonly artifacts: readonly RunArtifact[];
   readonly status: ConversationFileChangeStatus;
+  readonly loadArtifactPreview: ArtifactContentPreviewLoader;
   readonly sourceRunId?: string;
   readonly approvalId?: string;
   readonly compact?: boolean;
@@ -21,6 +23,7 @@ export function FileChangeEvidencePanel({
   cwd,
   artifacts,
   status,
+  loadArtifactPreview,
   sourceRunId,
   approvalId,
   compact = false,
@@ -50,7 +53,7 @@ export function FileChangeEvidencePanel({
     setLoading(true);
     setError("");
     void Promise.all(diffArtifacts.map(async (artifact) => {
-      const preview = await previewArtifactContent(cwd, artifact.id);
+      const preview = await loadArtifactPreview(cwd, artifact.id);
       return preview.text
         ? parseFileChangeArtifact({ artifact, diff: preview.text, status, sourceRunId, approvalId })
         : [];
@@ -74,7 +77,7 @@ export function FileChangeEvidencePanel({
     return () => {
       cancelled = true;
     };
-  }, [approvalId, changes.length, cwd, diffArtifacts, expanded, loading, sourceRunId, status]);
+  }, [approvalId, changes.length, cwd, diffArtifacts, expanded, loadArtifactPreview, loading, sourceRunId, status]);
 
   if (diffArtifacts.length === 0 || !cwd) {
     return null;

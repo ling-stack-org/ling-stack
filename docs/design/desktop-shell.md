@@ -21,6 +21,9 @@ contracts, and approval boundaries.
 - Keep Desktop downstream of daemon state machines, approvals, leases, and audit logs.
 - Render the shared `ConversationTranscript` contract from the daemon instead of copying
   Web-only conversation grouping logic.
+- Reuse the shared conversation UI packages where practical:
+  `packages/conversation-ui-core` for semantics and `packages/conversation-ui-react` for
+  React renderer primitives.
 
 ## Default Choice
 
@@ -105,6 +108,8 @@ Desktop may:
 
 - render the same `OperationCell` and `AgentActivitySpan` blocks with native macOS visual
   treatment;
+- reuse `conversation-ui-react` components in an Electron/Tauri renderer when the shared
+  components do not depend on Web route state;
 - show OS notifications for transcript state changes such as approval required, blocked,
   succeeded, or failed;
 - deep-link notification clicks to the relevant transcript turn or raw/detail view.

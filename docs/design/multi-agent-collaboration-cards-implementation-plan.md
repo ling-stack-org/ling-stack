@@ -5,6 +5,7 @@ Date: 2026-06-13
 
 Related docs:
 
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
@@ -21,6 +22,8 @@ main conversation feed. Main-feed collaboration cards have been superseded by
 The remaining valid use of this document is historical context for the original
 collaboration-card read model. Current UI must use the transcript, floating progress
 popover, and detail drawer boundaries from the active conversation UI documents.
+Historical `Requirement Shaping Card` language maps to
+`OperationCell(presentation=requirement_shaping)` in the current canonical design.
 
 This plan implements the first visible product loop from today's design work:
 

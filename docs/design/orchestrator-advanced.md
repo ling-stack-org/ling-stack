@@ -16,9 +16,13 @@ Current production boundary:
 The remaining advanced scope is:
 
 1. parallel workflow branches;
-2. user or product-defined auto-startable workflow templates.
+2. user or product-defined auto-startable workflow templates;
+3. explicit side-effect classes and safe parallel policy;
+4. future isolated worktree merge for parallel workspace writes.
 
-These should not change the default serial behavior.
+These should not change the default serial behavior for unsafe work. The canonical
+side-effect and UI rules live in
+[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md).
 
 ## Implementation Status
 
@@ -46,6 +50,9 @@ Still future:
 
 - stored `customTemplateId` registry lookup and authoring UI for custom templates;
 - graph visualization of branch groups and fan-in.
+- side-effect class and grouped parallel policy metadata on every built-in and custom
+  workflow step;
+- isolated worktree merge protocol for safe parallel `workspace_write` branches.
 
 ## Non-Goals
 
@@ -138,6 +145,65 @@ the workflow step should remain auditable:
 - queued run conflict: keep workflow step `running` only when a run was created;
 - hard conflict before run creation: mark step `blocked`;
 - transient resource conflict: keep step `queued` and return `not_started`.
+
+### Side-Effect Safety
+
+Dependency independence is necessary but not sufficient for automatic parallel work.
+Every parallel candidate must also declare a side-effect class and parallel policy.
+
+Target metadata:
+
+```ts
+type WorkflowStepSideEffectClass =
+  | "analysis_readonly"
+  | "test_artifact_only"
+  | "workspace_write"
+  | "external_mutation"
+  | "release";
+
+interface WorkflowStepParallelPolicy {
+  readonly autoParallel: boolean;
+  readonly maxParallelSiblings?: number;
+  readonly resourceKeys?: readonly string[];
+  readonly requiresArtifactOnly?: boolean;
+  readonly cancelSiblingsOnFailure?: boolean;
+}
+```
+
+Default scheduler rule:
+
+```text
+autoParallel=true
++ sideEffectClass in analysis_readonly | test_artifact_only
++ no pending approval
++ no resource key conflict
++ runtime and provider budgets available
+=> candidate may start in parallel
+```
+
+`workspace_write`, `external_mutation`, and `release` must remain serial by default even
+when dependency graph and runtime budget would allow parallel starts. This is the
+required bridge between the existing `maxParallelSiblings` implementation and the safer
+product policy described in
+[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md#step-side-effect-model).
+
+### Isolated Worktree Merge Boundary
+
+Parallel workspace writes require a separate merge protocol:
+
+```text
+integration base
+  -> isolated worktree per writing step
+  -> branch-local patch and verification artifacts
+  -> merge coordinator
+  -> conflict report or clean integration branch
+  -> approval before applying to the main workspace
+```
+
+Until that protocol exists, automatic parallel `workspace_write` is a policy violation,
+not a scheduler optimization. The advanced scheduler may reserve metadata fields for
+worktree ids, branch names, merge packets, and verification artifact refs, but it must
+not start multiple writing siblings against the same workspace.
 
 ### Output Merge
 
@@ -300,6 +366,8 @@ POST /channels/:channelId/workflows
 
 - Existing serial `autoplan-lite` tests continue passing unchanged.
 - Parallel templates cannot duplicate step starts under repeated orchestrator ticks.
-- Write-conflicting branches are blocked or queued by existing runtime policy.
+- Write-conflicting branches are blocked, queued, or kept serial by side-effect policy.
 - Every started step has context/output packet evidence.
 - Every custom template compile is deterministic and auditable.
+- Unsafe classes cannot auto-parallelize without the isolated worktree merge protocol and
+  an explicit user or policy approval path.

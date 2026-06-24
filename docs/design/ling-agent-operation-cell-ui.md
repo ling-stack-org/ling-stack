@@ -12,7 +12,9 @@ Related docs:
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
+- [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
 
 ## Summary
 
@@ -99,6 +101,634 @@ Non-goals:
 - making the floating run popover a log viewer;
 - changing storage before a projection model proves the UI contract.
 
+## Adaptive Conversation Framework
+
+The conversation UI is a framework, not a fixed template library. Different tasks produce
+different transcript structures according to the operations, actors, approvals, artifacts,
+and decisions that actually occurred.
+
+Framework rule:
+
+```text
+runtime / workflow / approval / artifact / message events
+  -> normalized semantic events
+  -> ConversationTurn
+  -> TranscriptBlock[]
+  -> block renderer registry
+  -> main conversation page
+```
+
+The projector chooses blocks from state, not from prose or a hard-coded task template.
+Examples in this document are fixtures for expected behavior; they are not parser rules,
+copy templates, or a required layout for every turn.
+
+### Block Registry
+
+`TranscriptBlock` is a discriminated union. Each block has stable identity, lifecycle
+state, render modes, source refs, and ownership.
+
+```ts
+type TranscriptBlockKind =
+  | "coordinator_message"
+  | "operation"
+  | "agent_activity"
+  | "approval"
+  | "artifact_strip"
+  | "source_summary"
+  | "requirement_shaping"
+  | "decision_needed"
+  | "final_result"
+  | "raw_debug_ref";
+
+interface TranscriptBlockBase {
+  readonly id: string;
+  readonly kind: TranscriptBlockKind;
+  readonly turnId: string;
+  readonly ownerId?: string;
+  readonly status?: OperationCellStatus;
+  readonly display: DisplayLine[];
+  readonly expanded?: ExpandedDetail;
+  readonly raw?: RawDetailRef;
+  readonly sourceRefs: readonly EvidenceSourceRefViewModel[];
+}
+```
+
+Renderer registry:
+
+```ts
+type TranscriptBlockRenderer = {
+  readonly kind: TranscriptBlockKind;
+  readonly canRender: (block: TranscriptBlockBase) => boolean;
+  readonly renderDisplay: (block: TranscriptBlockBase) => ReactNode;
+  readonly renderExpanded?: (block: TranscriptBlockBase) => ReactNode;
+  readonly renderPreview?: (block: TranscriptBlockBase, targetId: string) => ReactNode;
+};
+```
+
+Rules:
+
+- A renderer renders one semantic block kind. It must not reach into raw workflow/run
+  records to invent additional first-level UI.
+- A turn can contain any ordered subset of block kinds. For example, a simple answer may
+  render only `coordinator_message`; a coding task may render `operation`, `approval`,
+  `artifact_strip`, and `final_result`; requirement shaping may render
+  `requirement_shaping`, `decision_needed`, and `source_summary`.
+- Blocks are additive and state-driven. Do not pad missing blocks with empty headings.
+- Blocks can mutate while active, then commit once at terminal state.
+- Block order comes from the projector's semantic ordering, not component mount order or
+  raw event arrival order.
+- Component code must not check message text such as `确认需求`, `完成`, `Product:`, or
+  `QA:` to decide the layout.
+
+### Conditional Composition
+
+The projector composes a turn from normalized events:
+
+| Condition | Blocks generated |
+| --- | --- |
+| user asks a direct answer, no tools | `coordinator_message` |
+| local command/check runs | `operation` with inline `EvidenceDetail` |
+| write/edit needs permission | `approval` inside the owning operation/agent span |
+| one specialist contributes a bounded view | `agent_activity` |
+| multiple specialists shape scope | `requirement_shaping` with contribution spans |
+| user decision blocks execution | `decision_needed` |
+| files/images/diffs are produced | `artifact_strip` plus preview targets |
+| sources affect result | `source_summary` or memory citation footer |
+| support opens diagnostics | `raw_debug_ref` |
+
+The UI therefore adapts to task shape:
+
+- research can emphasize sources and synthesis;
+- coding can emphasize operations, diffs, approvals, checks, and artifacts;
+- design review can emphasize visual evidence, decisions, and screenshots;
+- multi-agent planning can emphasize participant contributions and conflicts;
+- simple chat can remain plain text.
+
+### External Framework References
+
+Ling should borrow concepts, not outsource the conversation model:
+
+| Reference | Useful idea | Ling boundary |
+| --- | --- | --- |
+| [assistant-ui](https://www.assistant-ui.com/) | thread/runtime/message primitives, streaming lifecycle, attachments, external store adapters | Do not adopt its thread store as Ling authority; Ling already has channel/workflow/task state. |
+| [Vercel AI Elements](https://elements.ai-sdk.dev/) | composable AI UI blocks, streaming/status-aware components, shadcn-style registry | Borrow component composability; do not force Ling into `useChat` message shapes. |
+| [Chainlit](https://docs.chainlit.io/) | messages, steps, elements, and actions as separate concepts attached to a conversation | Borrow Message/Step/Element/Action separation; do not expose chain-of-thought or raw steps as default UI. |
+
+The practical design is closest to a headless transcript framework:
+
+```text
+Ling-owned state and projection
+  -> headless transcript blocks
+  -> renderer registry
+  -> strict Ling visual system
+```
+
+This gives us the flexibility of open-source chat frameworks without making their message
+schemas or default component layout the product contract.
+
+### Assistant-UI Polish To Borrow
+
+assistant-ui is most useful as an interaction checklist. Ling should not adopt its state
+store, but it should borrow these UI patterns:
+
+| Pattern | Borrow | Ling adaptation |
+| --- | --- | --- |
+| Thread viewport | Stable scroll container, top turn anchor, scroll-to-bottom affordance, composer height accounting | User turn anchors near the top while the assistant/agent work grows below it; auto-scroll only when the user has not intentionally scrolled up. |
+| Message parts pipeline | Render text, image, tool, data, and attachments through typed part renderers | Map Ling `TranscriptBlock` and evidence parts through a renderer registry instead of one giant message component. |
+| Grouped parts | Group adjacent tool/reasoning/tool-output parts | Group consecutive tool/file/check rows under the owning `OperationCell` or `AgentActivitySpan`; never expose reasoning by default. |
+| Tool UI registry | Per-tool renderer plus fallback renderer | Known Ling operations get rich but compact rows; unknown tools render as safe generic operation evidence, not raw JSON. |
+| Human-in-the-loop tool rendering | Tool execution can pause for user input/confirmation | Map to Ling `ApprovalCell` with explicit action, scope, consequence, and approve/deny actions. |
+| Streaming state | Partial content can show an in-progress indicator and settle after completion | Keep `Thinking...`, shimmer, or active-row state while running; commit the same row at terminal state. |
+| Attachments | Composer attachments, message attachments, image thumbnails, remove action, preview dialog | Keep attachments in the owning conversation turn; image/file preview opens inline/lightbox, not a drawer. |
+| Hover action bar | Contextual actions appear only when useful | Add subtle copy/open/download/retry/fork/edit actions on hover/focus, with keyboard access and no visual clutter. |
+| Error primitive | Dedicated error display path | Render failed blocks as bounded error rows with recovery action; full stack/raw payload stays in raw/debug detail. |
+
+### Rich Text And Code Rendering
+
+Ling's current conversation UI is too plain for code-heavy work. The conversation
+framework needs a first-class rich text renderer:
+
+```text
+assistant/coordinator markdown
+  -> safe markdown AST
+  -> text / table / list / code / link / image renderers
+  -> Strict Daylight transcript styling
+```
+
+Code block rules:
+
+- Use a real syntax highlighter, preferably Shiki or a Shiki-backed renderer, for
+  committed code blocks and file previews.
+- Highlight by declared language when available; infer from filename only when safe.
+- Show a small language label and copy button in the code block header.
+- Disable raw HTML in markdown. Sanitize links and only allow safe protocols.
+- Stream code blocks as plain monospace while incomplete; apply expensive syntax
+  highlighting after the block is closed or the turn commits.
+- Preserve indentation exactly. Do not let proportional fonts, negative letter spacing,
+  or wrapping break code layout.
+- For long code/log blocks, cap visible height and provide inline expand. Do not push the
+  entire conversation away.
+- For unknown languages or highlighter failure, fall back to plain monospace with the
+  same header/actions.
+
+Diff and patch rules:
+
+- Render file diffs as structured `path + summary + hunk` views, not unparsed wall text.
+- Use add/remove gutter signs and subtle green/red backgrounds that work in Strict
+  Daylight.
+- Keep line numbers optional and compact; avoid turning small diffs into a full IDE pane.
+- Pair syntax highlighting with diff highlighting when cheap; fall back to plain diff
+  when parsing fails.
+- Keep generated edit diffs attached to the agent/operation that produced them.
+
+Inline action rules:
+
+- Every code block, diff, file preview, and command output section should support copy.
+- File/path rows can support open/reveal only when the action is local and safe.
+- Retry/regenerate belongs to the owning turn or operation, not to arbitrary markdown
+  text.
+- Feedback actions can exist on final answers, but not on every operation row.
+
+### Conversation Motion And Microinteractions
+
+Ling's conversation UI should feel alive because work state is changing, not because
+decorative motion is layered on top. Motion is a semantic state cue.
+
+Useful references:
+
+- assistant-ui's thread surface: auto-scroll, composer accounting, attachments, conditional
+  states, and scroll-to-bottom affordance.
+- Vercel AI Elements / Streamdown: streaming-safe markdown, code block headers, output
+  containers, and status-aware AI UI components.
+- Motion for React: layout transitions, presence transitions, gestures, and reduced-motion
+  handling.
+
+Motion principles:
+
+- Animate state transitions, not content volume. If a block grows because output streams,
+  keep the anchor stable and avoid jumping the viewport.
+- Prefer small opacity/translate/layout transitions over scale, bounce, or large motion.
+- Active work may shimmer or pulse subtly; completed content must become still.
+- New blocks should enter quietly. They should not steal focus unless they require user
+  action.
+- Collapsed/expanded detail should animate height/opacity only when the content is small
+  enough to avoid jank. Large logs, diffs, and file previews should snap or use a capped
+  container.
+- All non-essential motion respects `prefers-reduced-motion: reduce`.
+
+Recommended motion map:
+
+| UI event | Motion | Duration | Reduced motion |
+| --- | --- | --- | --- |
+| assistant/coordinator text streaming | subtle caret or inline "typing" presence; no bouncing dots | continuous while streaming | static pending text |
+| active operation starts | row fades/slides in by 4px and enters active tone | 120-180ms | immediate state change |
+| operation updates in place | content crossfade or text replacement without row remount | 100-160ms | immediate text replacement |
+| operation succeeds/fails/blocks | active shimmer stops; status tone settles | 120-200ms | immediate tone change |
+| agent span appears | compact row fades in under coordinator context | 120-180ms | immediate row |
+| agent span expands/collapses | height + opacity transition with preserved scroll anchor | 160-220ms | instant expand/collapse |
+| approval appears | blocking row enters with stronger focus ring and no decorative bounce | 120-180ms | static focus ring |
+| artifact/image thumbnail appears | placeholder crossfades into thumbnail after load | 120-200ms | immediate image |
+| code block commits | syntax color fades in after streaming completes | 100-160ms | immediate highlight |
+| diff hunk expands | opacity + slight y transition for hunk body | 120-180ms | instant |
+| scroll-to-bottom button appears | fade in/out near composer | 120-160ms | static show/hide |
+| in-turn preview/lightbox opens | focused overlay/preview fades in; background does not parallax | 120-200ms | instant open |
+
+Do not use:
+
+- decorative background orbs, bokeh, or animated gradients;
+- bouncing typing dots that run forever;
+- avatar swarms, flying cards, or large multi-agent choreography;
+- animation that hides approvals, checks, command output, or operation evidence;
+- automatic movement lasting more than a few seconds without a pause/stop/hide path.
+
+### Spatial And Interaction Polish
+
+The conversation needs a few small product-grade interactions in addition to animation:
+
+- Stable turn anchors: user message stays visually connected to the assistant work below
+  it even as blocks stream.
+- Smart auto-scroll: follow active work only when the user is already at the bottom; show
+  a scroll-to-latest affordance otherwise.
+- Hover/focus action bars: copy, open, download, retry, edit/fork, and feedback appear on
+  demand without crowding the transcript.
+- Selection-safe code blocks: selecting code should not trigger row collapse or drag.
+- Keyboard navigation: Tab reaches approvals, action bars, preview close, copy buttons,
+  and composer controls in a predictable order.
+- Optimistic feedback: copy/open/download actions show a short inline confirmation that
+  disappears without adding a transcript row.
+- Loading placeholders: use content-shaped skeletons only for attachments/images/previews,
+  not for final assistant text.
+
+### Conversation Polish Micro-Specs
+
+These details are small, but they prevent the conversation surface from feeling
+unfinished.
+
+#### Toast And Inline Feedback
+
+Use inline feedback first. Toasts are for cross-surface or background events.
+
+| Event | Feedback surface | Copy |
+| --- | --- | --- |
+| copy code/diff/output | inline label near the action | `已复制` for 1200-1800ms |
+| open local file/artifact | inline label if action succeeds | `已打开` |
+| download artifact | inline label or browser download affordance | `已开始下载` |
+| retry failed operation | owning operation row | `已重新排队` |
+| queued follow-up | active operation row and composer status | `已加入队列` |
+| background task completes while user is elsewhere | toast plus turn anchor action | `{task} 已完成` + `查看` |
+| background task fails or blocks | toast only if user is not viewing the turn | `{task} 需要处理` + `查看` |
+
+Rules:
+
+- Do not create transcript rows for copy/open/download feedback.
+- Do not show a toast for events already visible in the active turn.
+- Toasts appear bottom-right on desktop and above the composer on mobile.
+- Toast actions focus the owning conversation turn, not a drawer.
+- Error toasts include one action at most: `查看`.
+
+#### Keyboard Shortcut Discoverability
+
+Shortcuts should be discoverable without adding permanent instructional text to the
+conversation.
+
+| Shortcut | Action |
+| --- | --- |
+| `Cmd/Ctrl+Enter` | submit composer |
+| `Shift+Enter` | newline |
+| `Esc` | close preview, cancel active menu, or blur action bar |
+| `Cmd/Ctrl+K` | focus channel/search command surface when available |
+| `Cmd/Ctrl+Shift+C` | copy focused code/diff/output block |
+| `J` / `K` | move between transcript blocks when the feed has keyboard focus |
+| `E` | expand/collapse focused evidence block |
+| `R` | retry focused failed operation when allowed |
+
+Discoverability rules:
+
+- Show shortcut hints in tooltips and command palette entries, not as visible transcript
+  text.
+- The composer may show a faint submit hint only when focused and empty.
+- All shortcut-only actions must also have visible mouse/touch affordances.
+
+#### Mobile Composer Gestures
+
+Mobile should keep the composer simple and avoid hidden destructive gestures.
+
+Rules:
+
+- Swipe down on an open preview closes the preview.
+- Dragging the composer handle expands/collapses composer height when multiline text
+  exists.
+- Long-press on a message/code block opens the action menu.
+- Horizontal swipe must not delete messages, cancel work, or approve actions.
+- Stop/interrupt and approvals require explicit buttons, never gesture-only actions.
+- Attachment tray opens from an icon button; drag/drop is desktop-only.
+
+#### Empty State
+
+Empty states should be quiet and task-oriented, not marketing panels.
+
+Channel with no messages:
+
+```text
+开始一个任务或问题
+```
+
+Optional compact suggestions:
+
+- `让 Ling 检查这个项目`
+- `上传文件并总结`
+- `创建一个执行计划`
+
+Rules:
+
+- Empty state uses one short title and at most three compact suggestion buttons.
+- Do not describe multi-agent internals.
+- Do not show hero art, large cards, animated backgrounds, or product-tour copy.
+- Once the first user message exists, the empty state disappears completely.
+
+#### Screenshot And Image Compare Viewer
+
+Design, QA, and visual-regression workflows need a focused compare surface.
+
+Viewer modes:
+
+- single image preview;
+- before/after side-by-side;
+- slider comparison;
+- diff overlay when generated by tooling;
+- metadata strip: filename, dimensions, source operation, timestamp.
+
+Rules:
+
+- Viewer opens from the owning artifact row or image thumbnail.
+- Default width fits the transcript column; full-screen compare is an explicit action.
+- Pan/zoom is allowed in full-screen mode only.
+- Comparison controls are icon buttons with tooltips.
+- Do not crop by default. Preserve aspect ratio and show full image first.
+- The viewer never replaces agent operation evidence; it is a preview of one artifact.
+
+#### Code Block Theme Tokens
+
+Code blocks should feel like Ling, not a pasted IDE.
+
+Token guidance:
+
+| Token | Light value guidance |
+| --- | --- |
+| background | `#F7F7F8` or near-neutral app surface |
+| border | `#E5E5E5` |
+| header background | slightly darker neutral, not blue/purple |
+| line number | muted gray |
+| token keyword | restrained blue |
+| token string | restrained green |
+| token number | muted violet or blue-gray |
+| token comment | muted gray, italic optional |
+| diff add | soft green background plus `+` gutter |
+| diff remove | soft red background plus `-` gutter |
+| focus ring | system focus token, visible against code background |
+
+Rules:
+
+- Keep line height around 1.55 for code and 1.45 for logs.
+- Font: use a readable mono stack; do not scale code with viewport width.
+- Header contains language, path when known, copy action, and optional open action.
+- Avoid high-saturation themes and dark code islands inside Strict Daylight unless the
+  whole app is in dark mode.
+
+#### Command Output Folding Threshold
+
+Command output must be useful without flooding the conversation.
+
+Default inline limits:
+
+| Output type | Default inline limit | Expansion |
+| --- | --- | --- |
+| successful command output | 5 lines or 800 chars | `展开输出` |
+| failed command output | 12 lines or 1600 chars, prioritizing error tail | `展开完整错误` |
+| build/test summary | summary lines plus failed test names | link to artifact/raw detail |
+| install logs | hidden unless failed or user asked | raw/debug detail |
+| watch/server logs | latest 5 meaningful lines while active | raw/debug detail |
+| binary/huge output | no inline body | artifact/download metadata |
+
+Rules:
+
+- Preserve the beginning and error tail for failures; collapse middle sections with
+  `...`.
+- Strip ANSI only after preserving semantic colors where safe.
+- Never append every stdout chunk as a new row.
+- Full output opens through explicit raw/debug detail from the same operation row.
+- Copy action on collapsed output copies the visible excerpt by default; full-copy is an
+  explicit secondary action.
+
+### Framework Hardening Specs
+
+These are the remaining framework-level details worth borrowing from mature design
+systems. They should be treated as non-visual product quality requirements.
+
+#### Accessibility And Focus Management
+
+Borrow from React Aria, Radix Primitives, and Primer: accessibility is a behavior layer,
+not an afterthought.
+
+Rules:
+
+- Every interactive transcript control has a visible keyboard focus state.
+- Focus returns to the triggering element after preview, menu, popover, or modal close.
+- Approvals, destructive actions, and missing-input prompts trap focus only while modal.
+- Expand/collapse controls use real buttons with `aria-expanded`.
+- Code block copy buttons, file open buttons, image preview close buttons, and action
+  menus have accessible names.
+- Live updates use polite announcements only for user-actionable changes such as
+  approval needed, blocked, failed, or completed. Do not announce every streaming token.
+- Keyboard navigation order follows transcript order, then action bar, then preview.
+- Touch, mouse, keyboard, and screen reader activation paths must trigger the same action
+  semantics.
+
+Do not:
+
+- rely on color alone for status;
+- hide approvals behind hover-only controls;
+- remove focus outlines to make the UI look cleaner;
+- make gesture-only actions on mobile.
+
+#### Internationalization And Text Resilience
+
+Ling is Chinese-first but must not assume short English labels.
+
+Rules:
+
+- Every status label, action label, tooltip, empty state, and toast is translated through
+  i18n keys, not hard-coded inside components.
+- Button text must survive long Chinese and English strings without overlap.
+- Use icons for compact actions where possible, with accessible tooltip labels.
+- Avoid fixed-width text containers for status copy; use wrapping or truncation with
+  tooltip only when the full text is non-essential.
+- Timestamps, durations, numbers, and file sizes use locale-aware formatting.
+- Do not infer logic from localized copy.
+
+#### Long Conversation Performance
+
+Long active channels must remain usable.
+
+Rules:
+
+- Virtualize or window transcript blocks once the rendered block count becomes large.
+- Preserve stable anchors so virtualization does not break "focus owning turn" actions.
+- Avoid syntax highlighting huge code blocks synchronously on the main thread.
+- Defer image decoding and large preview rendering until the preview is visible.
+- Keep active operation rows mounted while running, even if older completed rows are
+  virtualized.
+- Memoize projector output by turn/block ids and active revision.
+- Do not re-render the whole transcript for stdout chunks; update the owning block.
+
+Initial thresholds:
+
+| Case | Threshold |
+| --- | --- |
+| transcript virtualization candidate | 200 rendered blocks or 100 turns |
+| syntax highlight async/deferred | code block over 300 lines or 24KB |
+| image lazy load | all images outside the viewport |
+| raw/debug payload preview | never eager-rendered |
+
+#### Design Token Governance
+
+The transcript should not accumulate one-off colors and spacing.
+
+Token families:
+
+- `--conversation-bg`
+- `--conversation-text`
+- `--conversation-muted`
+- `--conversation-border`
+- `--conversation-focus-ring`
+- `--conversation-active-bg`
+- `--conversation-success`
+- `--conversation-warning`
+- `--conversation-danger`
+- `--conversation-code-bg`
+- `--conversation-code-border`
+- `--conversation-diff-add-bg`
+- `--conversation-diff-remove-bg`
+- `--conversation-agent-line`
+
+Rules:
+
+- Component CSS uses conversation tokens, not ad hoc hex colors.
+- Status color tokens must pass contrast checks in light and dark modes.
+- Code and diff colors are part of the conversation token set, not a separate embedded
+  IDE theme.
+- Spacing uses the app spacing scale: 4, 8, 12, 16, 24, 32.
+- Border radius stays 8px or less unless an existing shared token says otherwise.
+
+#### Component Fixtures And Visual Regression
+
+Borrow from Storybook-style component QA: complex conversation states need stable
+fixtures, not manual eyeballing.
+
+Required fixtures:
+
+- plain answer;
+- streaming answer;
+- running operation;
+- completed operation with artifacts;
+- failed command with folded output;
+- approval waiting;
+- requirement shaping with multiple participants;
+- serial multi-agent;
+- parallel multi-agent;
+- image artifact and compare viewer;
+- long code block;
+- malformed diff fallback;
+- mobile composer with attachment tray;
+- reduced-motion mode;
+- Chinese and English long-label variants.
+
+Testing rules:
+
+- Each fixture has desktop, narrow, and mobile viewport screenshots.
+- Include at least one dark-mode fixture if dark mode remains supported.
+- Run accessibility checks on component fixtures and key e2e flows.
+- Visual snapshots should cover hover/focus states for action bars and approvals.
+- Regression tests assert that conversation-owned artifacts do not appear in a right
+  drawer.
+
+### Shared Conversation UI Package Boundary
+
+Ling should build a shared conversation UI library, but not a generic app-wide UI kit in
+the first step. The shared package exists because channel chat, teammate private chat, and
+future Desktop/PC surfaces must render the same conversation semantics.
+
+Layering target:
+
+```text
+packages/contracts
+  ConversationTranscript DTOs
+
+packages/core
+  ConversationTranscript projector
+
+packages/conversation-ui-core
+  headless transcript types, renderer registry, action contracts, token names
+
+packages/conversation-ui-react
+  React components for Web and Electron/Tauri renderer
+
+apps/web
+  channel/private-chat assembly, routes, daemon API wiring
+
+apps/desktop
+  native shell, daemon lifecycle, notifications, platform menu
+  consumes the same transcript and React UI where practical
+```
+
+Package responsibilities:
+
+| Layer | Owns | Must not own |
+| --- | --- | --- |
+| `contracts` | serializable transcript DTOs, preview refs, action refs | React components, CSS, browser APIs |
+| `core` | projection from channel/workflow/task/run records into transcript | app routing or DOM state |
+| `conversation-ui-core` | headless UI model, renderer registry, design token contract, action contracts | daemon storage, API calls, app shell layout |
+| `conversation-ui-react` | transcript renderer, operation rows, agent spans, composer primitives, previews, action bars | channel-specific data fetching, private-memory policy, daemon mutation logic |
+| `apps/web` | channel/private assembly, route state, daemon/API client wiring | duplicated transcript rendering logic |
+| `apps/desktop` | native shell, OS notifications, file picker, keychain, window/menu behavior | forked conversation semantics |
+
+Initial extraction should be conservative:
+
+1. Keep existing `apps/web/src/shared/conversation` as the staging area.
+2. Split components internally by `transcript`, `blocks`, `composer`, `preview`,
+   `feedback`, `tokens`, and `fixtures`.
+3. Move pure types/helpers to shared packages only after channel and private chat both use
+   the same APIs.
+4. Extract `packages/conversation-ui-core` before `conversation-ui-react` if dependency
+   direction gets unclear.
+5. Desktop consumes the shared transcript contract first, then reuses React components if
+   the chosen shell supports it cleanly.
+
+Surface-specific adapters:
+
+| Surface | Shared | Adapter-specific |
+| --- | --- | --- |
+| Channel | transcript blocks, operation cells, artifacts, approvals, composer primitives | channel title, membership, channel route, channel context actions |
+| Private chat | message rows, attachment strip, evidence panel, composer primitives, scroll-to-latest | teammate identity, private memory scope, direct reply intervention controls |
+| Desktop | transcript DTOs, renderer registry, tokens, most React components if Electron/Tauri WebView | OS notifications, keychain, file picker, menu/tray, native window treatment |
+| CLI | transcript DTOs and display/expanded/raw modes | terminal renderer, ANSI width, keyboard bindings |
+
+Token and style sharing:
+
+- Shared package exports token names and semantic class names.
+- Web owns CSS implementation initially.
+- Desktop may provide a platform-specific theme, but it maps to the same token contract.
+- No component may depend on channel-only CSS selectors for core layout.
+
+Do not extract yet:
+
+- app shell navigation;
+- right-side workspace utility;
+- channel membership/task lists;
+- teammate settings;
+- daemon API clients;
+- policy decisions about private memory/context.
+
 ## Complete UI Layer Contract
 
 The missing layer is not another runtime abstraction. It is a Web UI projection layer
@@ -177,6 +807,110 @@ These examples are illustrative only. They must not become string templates or p
 rules. The UI structure comes from the semantic projection, not from matching phrases
 such as `确认需求` or `完成`.
 
+### Requirement Shaping Presentation
+
+Requirement shaping uses the same operation-cell framework. It must not render as a
+separate top-level collaboration card or as raw teammate messages.
+
+Target shape:
+
+```text
+ConversationTurn
+  UserMessageCell
+  LingAgentTranscript
+    OperationCell(presentation=requirement_shaping)
+      coordinator summary
+      participant contribution spans
+      decision-needed rows
+      proposed workflow preview
+      action row
+```
+
+The cell is backed by requirement contribution/shaping packets and source refs. Default
+feed rows should show only the user-facing result:
+
+```text
+Ling is shaping the request with 3 teammates
+Product clarified scope
+Architect flagged a state-boundary risk
+QA added acceptance checks
+Decision needed: choose whether QA may run artifact-only in parallel
+```
+
+Expanded detail may show each teammate's contribution packet summary, source refs,
+decision records, and workflow preview. Raw packet JSON, selector metadata, prompt text,
+and full internal discussion stay in evidence/debug detail.
+
+Conversion rule:
+
+```text
+requirement_shaping cell
+  -> user approves or edits scope
+  -> workflow proposal / ChannelWorkflow
+  -> same turn links or mutates into collaboration_task/workflow operation cell
+```
+
+This keeps the user's mental model stable: one request, one visible work object, one
+evidence trail.
+
+### Existing Agent Operation Preservation
+
+The current channel UI already shows useful per-agent operation evidence inline: agent
+label, approval request, generated diff artifact, check result, evidence section, shell
+command, and bounded command output. Multi-agent UI work must preserve that behavior.
+
+Concrete rule from the current product surface:
+
+```text
+Ling Agent
+  Docs · Approve file edit: index.html
+    artifact: Generated edit diff
+    checks: 1 passed
+    evidence: Approve file edit
+
+Ling Agent
+  QA · Approve shell command: open index.html
+    checks: 1 passed
+    evidence: shell command and bounded output
+```
+
+These rows are not optional diagnostics. They are normal user-facing operation evidence.
+
+Preservation rules:
+
+- Do not remove existing per-agent operation rows when introducing requirement shaping,
+  branch spans, or workflow progress cells.
+- Do not move command/file/check/approval evidence exclusively into the right drawer.
+  Normal audit must remain available through inline expansion in the owning conversation
+  cell.
+- Running, waiting-for-approval, and blocked agent spans default to expanded enough to
+  show the current operation, approval, command, check, or artifact row.
+- Terminal agent spans may collapse after completion, but the collapsed row must preserve
+  a count/summary and an inline expand affordance that restores the operation rows.
+- Completed operation rows may be summarized, but their generated artifacts, approvals,
+  checks, and bounded command output remain reachable inline from the same turn.
+- Agent labels and ownership must remain visible. If `Docs` requested a file edit and
+  `QA` requested a shell command, the UI must not merge both into an anonymous generic
+  workflow row.
+- Existing artifact strips and evidence groups remain attached to the agent or operation
+  that produced them.
+- Raw ids, full JSON, and unbounded logs can stay in raw/debug detail, but user-meaningful
+  operation evidence stays in the conversation path.
+
+Disclosure policy:
+
+```text
+running / waiting_for_approval / blocked
+  -> keep active agent operation detail visible inline
+
+succeeded / failed / cancelled
+  -> collapse to summary by default
+  -> preserve inline expansion for operation rows, artifacts, approvals, checks, output
+```
+
+This is different from hiding raw internal agent chatter. The UI should filter private
+reasoning and noisy event spam, but it must keep user-facing operations and evidence.
+
 ## Raw Event Normalizer
 
 The normalizer is the only layer allowed to understand raw runtime vocabulary. It consumes
@@ -194,6 +928,7 @@ type RawEventSource =
   | "approval"
   | "artifact"
   | "sub_agent"
+  | "requirement_shaping"
   | "memory"
   | "interruption";
 
@@ -244,6 +979,7 @@ Normalizer rules:
 | coordinator text delta/final | `CoordinatorMessageCell` | natural reply or final result | related operation link | raw model item when debug is enabled |
 | intent/router decision | evidence on turn | hidden | route rationale only if user asked | classifier scores, candidates, payload |
 | workflow created/updated | `OperationCell` / `plan` row | `已规划 N 步` | semantic steps | workflow JSON, ids |
+| requirement shaping started/updated | `OperationCell(presentation=requirement_shaping)` | coordinator summary, participant spans, decisions needed | contribution packet summaries, workflow preview | raw packet JSON, selector metadata |
 | run started/progress/completed | active `OperationCell` mutation | current task state | row history | run events, attempt ids |
 | tool call start/output/end | `OperationRow` | `读取文件`, `运行检查`, `搜索文档` | command/tool summary and bounded output | full stdout/stderr, tool JSON |
 | file read/context packet | `read` row or evidence ref | hidden unless it explains action | file names, snippets if useful | packet payload, context ids |
@@ -327,7 +1063,7 @@ interface ExpandedDetail {
 }
 
 interface RawDetailRef {
-  readonly drawerTarget: string;
+  readonly detailTarget: string;
   readonly rawEventIds: readonly string[];
 }
 ```
@@ -348,10 +1084,11 @@ Render-mode rules:
 
 | Surface | Owns | Must not own |
 | --- | --- | --- |
-| Main conversation feed | user messages, coordinator narrative, operation display rows, active cell, final summary, artifact strip | raw event logs, duplicate collaboration cards, workflow/run ids |
+| Main conversation feed | user messages, coordinator narrative, operation display rows, active cell, final summary, artifact strip, attachments, links, approvals, checks, source summaries, and conversation-owned artifact/file/diff preview entry points | raw event logs, duplicate collaboration cards, workflow/run ids |
 | Floating run popover | current running state, active actor, elapsed time, interrupt affordance, latest one-line action, compact source icons while active | full transcript, raw output, historical collaboration record |
-| Right drawer | completed-result review, changed/generated files, artifact preview, file preview, diff/review, source metadata, settings, explicit raw/debug support | active progress, operation process transcript, AgentActivitySpan history, a second copy of the main conversation, or the same inline evidence |
-| Inline expansion | semantic evidence needed for normal audit: operation steps, commands, bounded output, files, checks, approvals, agent process rows, source summary | unbounded logs, JSON dumps, provider metadata |
+| Inline expansion | semantic evidence needed for normal audit: operation steps, commands, bounded output, files, checks, approvals, agent process rows, source summary, packet/evidence summaries, source/link details, and preview entry points | unbounded logs, JSON dumps, provider metadata |
+| In-turn preview / lightbox | larger file, image, diff, artifact, source, or approval preview opened from the owning conversation row | conversation timeline, operation process transcript, copied coordinator text |
+| Optional right-side workspace utility | non-conversation settings, global workspace tools, non-conversation file browser, or explicit developer/support raw inspector | conversation timeline, agent operations, operation evidence, attachments, links, source lists, workflow/packet summaries, result review, file/diff/artifact previews from a conversation turn |
 | Source summary strip | compact evidence sources from tools, web, memory, files, and apps | operation history, raw events, internal helper tools |
 | Modal / blocking view | approval, missing input, permission change, destructive confirmation | passive status or historical logs |
 | Composer active-work affordance | normal send, queue follow-up, stop-and-redirect | hidden prompt injection or implicit interruption |
@@ -361,9 +1098,10 @@ Placement rules:
 - The same fact has one default surface.
 - If main feed display already says an operation completed, the floating popover hides or
   moves to idle state.
-- If inline expansion already exposes semantic evidence, the right drawer opens only for
-  completed result review, file/diff/artifact preview, source metadata, or explicit
-  raw/debug support. It must not reopen the same operation process as a second transcript.
+- If inline expansion already exposes semantic evidence, do not add a second conversation
+  drawer path for the same evidence. File/diff/artifact/source/approval detail opens from
+  the owning conversation row as an in-turn preview, lightbox, or explicit raw/debug
+  inspector.
 - If a modal is blocking, status surfaces may stay visible but should not compete with the
   blocking decision.
 - If multiple agents are active, the floating popover summarizes the coordinator view and
@@ -390,9 +1128,10 @@ Default conversation feed rules:
 - Active cells update in place; they do not append a new card or toast for every event.
 - Agent spans use small labels, avatars, and faint lane lines, not cards.
 - Artifact strips may have a very light product affordance; operation logs may not.
-- The right drawer is for completed result review, file/diff/artifact preview, settings,
-  and explicit raw/debug support. It is not where normal `OperationCell` process detail
-  lives.
+- Conversation-owned result review, file/diff/artifact preview, source metadata, checks,
+  approvals, attachments, and links stay in the main conversation through inline
+  expansion or in-turn previews. A right-side workspace utility, if present, is not a
+  conversation/evidence surface.
 - Do not show `workflow`, `run`, `work-unit`, `packet`, `attempt`, selector ids, raw
   event labels, provider metadata, token budgets, or JSON in the default feed.
 
@@ -457,14 +1196,15 @@ Default shape:
 
 Rules:
 
-- Show the compact result summary even when no drawer is opened.
+- Show the compact result summary in the conversation; it must not depend on any drawer
+  being opened.
 - Artifact rows are plain transcript rows with small type/icon affordances, not chips or
   cards.
 - Changed-file rows can show path, action, and concise diff stats.
 - Check rows can show status and command/check name.
-- The right drawer may show full file preview, diff review, generated artifact preview,
-  and audit/review details after the task completes. It must not repeat the same artifact
-  strip as the first visible drawer content.
+- Full file preview, diff review, generated artifact preview, and audit/review detail
+  open from the owning conversation row as inline expanded detail, an in-turn preview, or
+  a lightbox. They must not move the user into a right drawer to understand the result.
 
 ### Inline Image And Screenshot Preview
 
@@ -478,8 +1218,8 @@ Rules:
 - Clicking a thumbnail opens a larger preview/lightbox with filename, dimensions when
   available, close action, and optional open/download action.
 - The lightbox is a preview surface, not a second transcript or progress surface.
-- If the same image also appears in the right drawer, the drawer version is for file
-  review after completion, not for operation process reading.
+- Images should not also be listed in a conversation drawer. The inline thumbnail and
+  lightbox are the normal review path for images produced by the turn.
 
 ### Active Shimmer Motion
 
@@ -499,23 +1239,29 @@ Rules:
 - Respect `prefers-reduced-motion: reduce` by disabling the sweep and using static tone
   or spinner state instead.
 
-### Right Drawer Boundary After v4
+### Conversation-Owned Detail Boundary After v4
 
-The right drawer is a completed-result and review surface:
+The main conversation page owns all conversation artifacts and evidence:
 
-- `Files`: generated files, changed files, file preview, diff preview.
-- `Review`: completed-task audit/review details, approval decisions, checks, and artifact
-  review when needed.
-- `Settings`: channel/runtime settings.
-- Explicit raw/debug detail can be opened from developer/support affordances, but it is
-  not a normal user reading path.
+- user messages and Ling Agent narrative;
+- active and completed agent operation rows;
+- approvals, checks, shell/file edit evidence, and bounded command output;
+- attachments, links, generated artifacts, changed files, image thumbnails, and previews;
+- source summaries, packet summaries, requirement shaping notes, conflicts, and decisions.
 
-The drawer must not own:
+The normal inspection path is inline expansion from the owning transcript row. Larger
+previews open as in-turn previews or lightboxes. Explicit raw/debug detail can be opened
+from developer/support affordances, but it is not a normal user reading path.
 
-- active progress;
-- operation process transcript;
-- agent process history;
-- completed operation rows already available inline;
+A right-side workspace utility, if kept, must not own:
+
+- conversation timeline;
+- agent operations or operation process transcript;
+- attachments or links from a conversation;
+- evidence lists from a conversation;
+- workflow/packet summaries required to understand the turn;
+- result review, file preview, diff preview, artifact preview, checks, approvals, or
+  source metadata for a conversation turn;
 - copied coordinator start/final text;
 - a root `Progress` page.
 
@@ -633,7 +1379,7 @@ Surface-specific copy rules:
 | Agent span | `{agent} · {latest action}` | one line per agent | full agent transcript by default |
 | Floating run popover | `{actor} · {elapsed} · {latest action}` | one line plus optional action icon | history, logs, completed summaries |
 | Inline expanded detail | semantic evidence bullets | bounded section | unbounded logs, provider metadata |
-| Right drawer raw detail | technical labels and exact payloads | folded sections | repeated coordinator summary |
+| Explicit raw/debug detail | technical labels and exact payloads | folded sections | repeated coordinator summary |
 | Approval modal | action + scope + consequence | title plus options | vague `continue?` prompts |
 
 Approval copy must be explicit:
@@ -677,12 +1423,12 @@ Ling Agent：login.html 已创建，检查通过。协作队友：Engineer、QA�
 Copy regression rules:
 
 - Snapshot tests should pin coordinator start, active operation, blocked, approval,
-  completed, interrupted, multi-agent parallel, and drawer-open states.
+  completed, interrupted, multi-agent parallel, and inline-detail/preview-open states.
 - E2E checks should reject visible default text containing `workflow`, `run`, `work-unit`,
   `packet`, `raw event`, `attempt`, `selector`, or JSON braces in the main feed.
 - Tests should assert no visible UI-mechanism coordinator phrasing in generated UI fixtures.
-- Tests should assert the right drawer title and sections do not duplicate the coordinator
-  final summary.
+- Tests should assert inline detail, previews, and any raw/debug inspector do not duplicate
+  the coordinator final summary.
 
 ## OperationCell Model
 
@@ -1016,8 +1762,9 @@ Default shape:
 Placement:
 
 - Desktop: top-right of the channel work area, never covering the composer.
-- Drawer open: hide the popover or reduce it to a one-line header status inside the drawer
-  chrome; do not show both full popover and drawer progress.
+- Optional right-side utility open: hide the popover or reduce it to a one-line header
+  status in the channel chrome; do not show both full popover and another active-progress
+  surface.
 - Mobile: collapse into the composer status strip.
 
 State behavior:
@@ -1051,36 +1798,27 @@ Actions:
 | queue follow-up | when composer has draft during active work | queues continuation; visible in active `OperationCell` |
 | redirect | after user chooses stop-and-redirect | creates linked continuation operation |
 | view approval | `waiting_for_approval` | focuses approval surface |
-| view result/files | after terminal result when files, diffs, screenshots, or review details exist | opens right drawer result review or file preview |
+| view result/files | after terminal result when files, diffs, screenshots, or review details exist | opens inline result detail, file/diff preview, or lightbox from the owning conversation row |
 | raw/debug detail | only from explicit developer/support affordance | opens raw/debug detail |
 
 Do not put `workflow`, `run`, raw ids, stdout, or agent history in the popover.
 
-## Right Drawer Result Review Micro-Spec
+## Conversation-Owned Result Detail Micro-Spec
 
-The right drawer is a completed-result viewer and current-channel workspace. It must not
-become a second main conversation or the default way to read operation process.
+Completed result review, files, links, source metadata, approvals, checks, and artifacts
+are conversation-owned details. They must not move into a right drawer as the normal
+reading path.
 
-Root pages:
+Detail pages are opened from explicit artifact, file, approval, review, source-metadata,
+or raw/debug actions on the owning transcript row. The surface can be inline expanded
+detail, an in-turn preview, a lightbox, or an explicit developer/support inspector. It is
+not a conversation drawer, root tab, or second timeline.
 
-| Root page | Purpose | Default content |
-| --- | --- | --- |
-| Files | generated and changed files | changed files, generated files, image/file previews, diffs |
-| Review | completed-task review | checks, approval decisions, artifact review, final audit notes |
-| Settings | current-channel configuration | channel teammate/runtime/provider settings |
-
-There is intentionally no `Progress` root page. Active progress is owned by the floating
-popover; completed or durable process is owned by the main transcript. Operation process
-detail is read inline through `OperationCell` and `AgentActivitySpan` expansion.
-
-Result detail pages are drill-down pages opened from explicit artifact, file, approval,
-review, source-metadata, or raw/debug actions. They are not root tabs.
-
-Result review structure:
+Result detail structure:
 
 ```text
 结果详情
-  Files
+  Files / Links
   Diff / Preview
   Checks
   Approvals
@@ -1093,43 +1831,43 @@ Field rules:
 
 | Section | Allowed fields | Forbidden |
 | --- | --- | --- |
-| Files | path, action, diff stats, artifact link, preview availability | copied artifact strip as the whole page |
+| Files / Links | path/url, action, diff stats, artifact link, preview availability | copied artifact strip as the whole page |
 | Diff / Preview | rendered image/file preview, text diff, binary metadata | operation process transcript |
 | Checks | command/check name, status, duration, failure excerpt | full unbounded logs |
 | Approvals | action, scope, decision, actor, timestamp | vague approval labels |
 | Artifacts | name, type, size, preview availability | duplicate artifact strip copy |
 | Sources | source label, type, target URL/file/app/tool metadata, related operation refs | repeated source explanations from coordinator text |
-| Raw/debug refs | event id, source, timestamp, JSON payload | visible by default in root drawer |
+| Raw/debug refs | event id, source, timestamp, JSON payload | visible by default in normal conversation detail |
 
-Drawer copy rules:
+Copy rules:
 
-- Drawer titles use nouns: `文件变更`, `预览`, `审核`, `审批详情`, `Raw detail`.
-- The drawer may show internal ids only inside folded raw sections.
-- The drawer should not repeat the final result sentence if the main feed already has the
+- Detail titles use nouns: `文件变更`, `预览`, `审核`, `审批详情`, `Raw detail`.
+- Internal ids may appear only inside folded raw sections.
+- Detail should not repeat the final result sentence if the main feed already has the
   final summary.
-- The drawer can show exact command/output text only when the user explicitly opens
-  raw/debug detail. Normal file/review pages should not become command transcripts.
+- Exact command/output text appears in normal inline evidence only when bounded; full
+  command/output text requires explicit raw/debug detail. Normal file/review previews
+  should not become command transcripts.
 
 Navigation rules:
 
-- Opening a file, result review, source metadata, or raw/debug detail preserves the main
-  conversation scroll position.
-- Closing the drawer returns the center feed to full width.
-- Opening the drawer hides the floating run popover unless the drawer is on a non-progress
-  root page and active work needs attention.
-- Drawer back navigation returns from detail to the previous root page.
-- Mobile drawer becomes a full-screen sheet but keeps the same content contract.
+- Opening a file, result review, source metadata, or raw/debug detail preserves the
+  owning conversation turn anchor.
+- Closing an in-turn preview or lightbox returns focus to the triggering transcript row.
+- Opening preview/detail does not hide existing agent operation rows.
+- Mobile previews may become full-screen sheets, but they keep the same
+  conversation-owned content contract.
 
 Duplication guard:
 
 - If text appears in `CoordinatorMessageCell.display`, it should not appear verbatim in
-  drawer Summary.
-- If an operation row appears in the main feed, the drawer should not show a Timeline that
-  copies the same row. Use inline expansion for semantic operation history.
-- If inline expanded detail shows command output, drawer file/review pages should not
+  detail Summary.
+- If an operation row appears in the main feed, no preview/detail surface should show a
+  Timeline that copies the same row. Use inline expansion for semantic operation history.
+- If inline expanded detail shows command output, file/review previews should not
   duplicate it. Full command output is raw/debug detail only.
-- If an artifact strip lists files, drawer Files shows previews/diffs, not the same list as
-  the first visible section.
+- If an artifact strip lists files, the preview/detail path should open the selected
+  preview/diff, not repeat the same list as its first visible section.
 
 ## Event-To-Operation Mapping
 
@@ -1271,12 +2009,13 @@ Deep detail can show:
 - token budget and context trim diagnostics;
 - raw artifacts and logs.
 
-Right drawer behavior:
+Conversation detail behavior:
 
-- Use the drawer for completed result review, file/diff/artifact preview, settings, or
-  explicit raw/debug navigation.
-- Do not make the drawer the only way to inspect the same evidence already available in
-  inline transcript detail.
+- Use inline expansion for normal evidence and in-turn previews/lightboxes for
+  completed result review, file/diff/artifact preview, links, sources, and approval
+  detail.
+- Do not make a right drawer the only way to inspect evidence already available in inline
+  transcript detail.
 - Do not render a separate "open work evidence" button inside an operation group that
   already has expandable evidence summary.
 
@@ -1310,7 +2049,7 @@ Filtering rules:
 - Deduplicate by stable semantic key: tool server/app id, normalized URL, memory id,
   workspace file path, or artifact id.
 - Prefer user-facing names from plugin/app metadata. If no metadata exists, use a short
-  sanitized server or host label. Raw ids appear only in drawer raw detail.
+  sanitized server or host label. Raw ids appear only in explicit raw/debug detail.
 - Keep failed or cancelled source attempts only when they affected the user-visible result
   or blocker.
 
@@ -1336,9 +2075,10 @@ Placement:
   helps normal audit.
 - The right floating popover may show compact icons because it is already an active status
   surface.
-- Source metadata detail may live in the right drawer, but only as metadata/review. It
-  must not repeat the main transcript, OperationCell rows, AgentActivitySpan history, or
-  final coordinator result.
+- Source metadata detail opens from the owning transcript row as inline detail or an
+  in-turn preview. It must not live in a conversation drawer, and it must not repeat the
+  main transcript, OperationCell rows, AgentActivitySpan history, or final coordinator
+  result.
 - Used-memory detail belongs to the owning message's memory citation footer first. Source
   summary may count memory as a source group, but must not duplicate the footer contents.
 
@@ -1485,7 +2225,7 @@ Acceptance:
   `attempt`, `selector`, or `raw event` labels;
 - coordinator fixtures contain no UI-mechanism phrasing such as `主会话会同步状态` or
   `查看右侧抽屉了解完整细节`;
-- right drawer result-review fixtures do not repeat the coordinator final summary.
+- conversation detail/preview fixtures do not repeat the coordinator final summary.
 
 ### P7. OperationCell Microstructure
 
@@ -1518,8 +2258,8 @@ Expanded detail v1 acceptance:
 - evidence links render as plain transcript links; they must not become chips, cards, or
   a second report surface;
 - the same fact should not be repeated across coordinator text, operation row, expanded
-  row, and drawer. When duplication is unavoidable in legacy data, prefer the most useful
-  semantic surface and hide raw/internal variants.
+  row, preview, and raw/debug detail. When duplication is unavoidable in legacy data,
+  prefer the most useful semantic surface and hide raw/internal variants.
 
 Command/tool/file detail row v1:
 
@@ -1571,30 +2311,31 @@ Acceptance:
 - hides after final coordinator summary and artifact strip commit;
 - shows one actor, elapsed time, one latest-action phrase, and a small action control;
 - never shows command output, raw ids, workflow/run labels, or branch history;
-- when the right drawer is open, the popover either hides or reduces to a drawer header
-  status, but does not duplicate drawer progress.
+- when an optional right-side utility is open, the popover either hides or reduces to a
+  channel-header status, but does not duplicate active progress.
 
-### P10. Right Drawer Detail Boundary
+### P10. Conversation Detail Boundary
 
 Later surface, not Phase 1.
 
-Keep the right drawer as a completed-result review/workspace surface, not a duplicate
-transcript.
+Keep completed-result review, file/diff/artifact previews, source metadata, checks,
+approvals, and packet/evidence summaries attached to the main conversation. A right-side
+workspace utility may exist for non-conversation settings/tools, but it is not the
+conversation detail surface.
 
 Acceptance:
 
-- drawer root pages are `Files`, `Review`, and `Settings`; active progress remains in the
-  floating popover and durable process remains in the main transcript;
-- operation process detail does not open as a drawer page; it expands inline in the
+- active progress remains in the floating popover and durable process remains in the main
   transcript;
-- drawer file/review pages do not repeat the coordinator final message;
-- drawer does not provide a copied operation timeline; semantic operation history belongs
-  to inline expansion;
-- drawer `Files`, `Diff / Preview`, `Checks`, `Approvals`, `Artifacts`, `Sources`, and
+- operation process detail expands inline in the transcript;
+- file/review previews do not repeat the coordinator final message;
+- no detail surface provides a copied operation timeline; semantic operation history
+  belongs to inline expansion;
+- `Files / Links`, `Diff / Preview`, `Checks`, `Approvals`, `Artifacts`, `Sources`, and
   `Raw/debug refs` follow the field rules above;
-- raw ids and JSON are folded by default and never appear in the drawer root page;
-- opening the drawer preserves main feed scroll position and hides conflicting popover
-  progress.
+- raw ids and JSON are folded by default and never appear in normal conversation detail;
+- opening an in-turn preview preserves the owning turn anchor and does not hide agent
+  operation rows.
 
 ### P11. State Fixture Matrix
 
@@ -1612,9 +2353,9 @@ Required fixtures:
 | waiting approval | approval row and blocking affordance | vague `continue?` copy |
 | blocked | human-readable blocker and next action | raw exception as default row |
 | interrupted redirect | cancelled source plus linked continuation | hidden prompt injection |
-| drawer open | detail/raw sections only | copied main transcript |
+| detail preview open | detail/raw sections only | copied main transcript |
 | popover active | one-line active status | command output or branch history |
-| artifact result | artifact strip and file detail path | duplicate artifact list in drawer root |
+| artifact result | artifact strip and selected file/detail path | duplicate artifact list in a drawer root |
 
 No unresolved product decisions remain for this design patch. Exact component names,
 React file placement, and pixel tuning can be decided during implementation as long as the

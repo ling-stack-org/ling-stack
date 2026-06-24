@@ -32,19 +32,19 @@ export function RightDrawer({
 }: RightDrawerProps): JSX.Element {
   return (
     <aside className={className} aria-label={ariaLabel}>
-      <div className="channel-side-panel-head right-drawer-head">
-        <span className="channel-side-panel-title right-drawer-title">
+      <div className="right-drawer-head">
+        <span className="right-drawer-title">
           {icon}
           <strong>{title}</strong>
         </span>
-        {actions ? <div className="channel-side-panel-actions right-drawer-actions">{actions}</div> : null}
+        {actions ? <div className="right-drawer-actions">{actions}</div> : null}
       </div>
       {navItems.length > 0 ? (
-        <div className="channel-side-panel-nav right-drawer-nav" aria-label={navLabel ?? title}>
+        <div className="right-drawer-nav" aria-label={navLabel ?? title}>
           {navItems.map((item) => (
             <button
               key={item.id}
-              className={item.active ? "channel-side-panel-nav-item right-drawer-nav-item active" : "channel-side-panel-nav-item right-drawer-nav-item"}
+              className={item.active ? "right-drawer-nav-item active" : "right-drawer-nav-item"}
               type="button"
               onClick={item.onSelect}
               disabled={item.disabled}
@@ -56,7 +56,7 @@ export function RightDrawer({
           ))}
         </div>
       ) : null}
-      <div className="channel-side-panel-body right-drawer-body">{children}</div>
+      <div className="right-drawer-body">{children}</div>
     </aside>
   );
 }

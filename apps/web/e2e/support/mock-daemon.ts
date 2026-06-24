@@ -367,6 +367,10 @@ export interface MockArtifact {
   title?: string;
   contentType?: string;
   sizeBytes?: number;
+  compareBeforeImageUrl?: string;
+  compareAfterImageUrl?: string;
+  compareBeforeLabel?: string;
+  compareAfterLabel?: string;
   createdAt: string;
 }
 
@@ -10692,6 +10696,19 @@ export async function handleDaemonRoute(
       return;
     }
     const image = artifact.type === "image" || artifact.contentType?.startsWith("image/");
+    const compare = image && artifact.compareBeforeImageUrl && artifact.compareAfterImageUrl
+      ? {
+          before: {
+            label: artifact.compareBeforeLabel ?? "Before",
+            imageUrl: artifact.compareBeforeImageUrl,
+          },
+          after: {
+            label: artifact.compareAfterLabel ?? "After",
+            imageUrl: artifact.compareAfterImageUrl,
+          },
+          defaultMode: "single",
+        }
+      : undefined;
     await route.fulfill({
       json: {
         ref: {
@@ -10707,6 +10724,7 @@ export async function handleDaemonRoute(
         kind: image ? "image" : artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : "plain_text",
         text: image ? undefined : `${artifact.title ?? artifact.path ?? artifact.id}\n`,
         imageUrl: image ? `/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}` : undefined,
+        compare,
         truncated: false,
         sizeBytes: artifact.sizeBytes,
         redactionNotes: [],

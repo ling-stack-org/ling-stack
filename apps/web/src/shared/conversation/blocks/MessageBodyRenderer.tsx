@@ -1,13 +1,15 @@
 import type { ReactNode } from "react";
 import { CodeBlock } from "./CodeBlock.js";
+import { DiffCodeBlock, isDiffLanguage } from "./DiffCodeBlock.js";
 import { LocalFileLink } from "./LocalFileLink.js";
-import { parseMessageBody, type LocalFileReference, type MessageBodyBlock, type MessageInlineToken } from "./message-body.js";
+import { parseMessageBody, type LocalFileReference, type MessageBodyBlock, type MessageInlineToken } from "../tokens/message-body.js";
 
 export interface MessageBodyRendererProps {
   readonly text: string;
   readonly cwd?: string;
   readonly compact?: boolean;
   readonly allowMarkdown?: boolean;
+  readonly streaming?: boolean;
   readonly className?: string;
   readonly onOpenLocalFile?: (reference: LocalFileReference) => void;
 }
@@ -17,6 +19,7 @@ export function MessageBodyRenderer({
   cwd,
   compact = false,
   allowMarkdown = true,
+  streaming = false,
   className,
   onOpenLocalFile,
 }: MessageBodyRendererProps): JSX.Element {
@@ -33,7 +36,7 @@ export function MessageBodyRenderer({
 
   return (
     <div className={rootClassName}>
-      {blocks.map((block, index) => renderBlock(block, index, onOpenLocalFile))}
+      {blocks.map((block, index) => renderBlock(block, index, onOpenLocalFile, streaming))}
     </div>
   );
 }
@@ -42,10 +45,13 @@ function renderBlock(
   block: MessageBodyBlock,
   index: number,
   onOpenLocalFile: ((reference: LocalFileReference) => void) | undefined,
+  streaming: boolean,
 ): ReactNode {
   switch (block.kind) {
     case "code":
-      return <CodeBlock key={`code-${index}`} code={block.code} language={block.language} />;
+      return isDiffLanguage(block.language)
+        ? <DiffCodeBlock key={`diff-${index}`} diff={block.code} language={block.language} highlight={!streaming} />
+        : <CodeBlock key={`code-${index}`} code={block.code} language={block.language} highlight={!streaming} />;
     case "list": {
       const ListTag = block.ordered ? "ol" : "ul";
       return (

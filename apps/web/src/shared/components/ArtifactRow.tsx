@@ -3,8 +3,8 @@ import { Download, ExternalLink, Eye, Image as ImageIcon, Save } from "lucide-re
 import { artifactContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { artifactDownloadName, formatArtifactSize, isImageArtifact } from "../../lib/artifacts.js";
-import { artifactCanPreview, type PreviewRequest } from "../../lib/previews.js";
-import { ArtifactPreviewDrawer } from "../conversation/ArtifactPreviewDrawer.js";
+import { artifactCanPreview, loadPreviewContent, type PreviewRequest } from "../../lib/previews.js";
+import { ArtifactPreviewDrawer } from "../conversation/index.js";
 import type { RunArtifact } from "../../types.js";
 
 export function ArtifactRow({
@@ -72,6 +72,7 @@ export function ArtifactRow({
       </span>
       <ArtifactPreviewDrawer
         request={previewRequest}
+        loadPreview={loadPreviewContent}
         openHref={contentUrl}
         downloadHref={contentUrl}
         downloadName={downloadName}

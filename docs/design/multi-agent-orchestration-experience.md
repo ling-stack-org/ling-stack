@@ -6,6 +6,7 @@ Design baseline for the next multi-agent orchestration slices.
 
 Related docs:
 
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
 - [Multi-Agent Collaboration Cards Implementation Plan](multi-agent-collaboration-cards-implementation-plan.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
@@ -20,9 +21,9 @@ P0-P3 implementation status as of 2026-06-09:
   `ChannelWorkflowStep` rows.
 - P2 workflow step context/output packets carry graph, teammate, skill, source-ref,
   blocker, and changed-path fields as evidence artifacts.
-- P3 Web live progress reuses `ConversationWorkCell`, attention progress rows, and the
-  existing right-drawer/runtime surfaces instead of introducing a separate multi-agent
-  transcript UI.
+- P3 Web live progress reuses `ConversationWorkCell`, attention progress rows, inline
+  evidence, and runtime surfaces instead of introducing a separate multi-agent transcript
+  UI.
 
 P4-P7 implementation status as of 2026-06-09:
 
@@ -32,8 +33,8 @@ P4-P7 implementation status as of 2026-06-09:
   surfaces as the compatibility boundary: default feed stays compact, active progress
   stays visible, and coordination evidence stays expandable.
 - Structured handoff intents, deterministic selector decisions, fan-in summary artifacts,
-  candidate-only memory output, workflow evidence APIs, and right-drawer work-cell
-  drilldown are implemented.
+  candidate-only memory output, workflow evidence APIs, and work-cell inline drilldown
+  are implemented.
 - Model-assisted selector decisions remain a follow-up behind an explicit policy/feature
   flag; the current selector records deterministic routing evidence and alternatives.
 - Ordinary channel messages use a separate intent entry before they can propose or start
@@ -47,6 +48,12 @@ P4-P7 implementation status as of 2026-06-09:
 This document connects the implemented channel conversation work with the existing
 durable orchestrator. It should guide future implementation without turning the
 Codex-inspired conversation model into a rewrite.
+
+For implementation conflicts, prefer
+[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md). This document
+explains the user-facing experience; the detailed design owns packet placement,
+safe-parallel policy, requirement-shaping packets, and isolated worktree merge
+boundaries.
 
 ## Summary
 
@@ -72,6 +79,7 @@ Live progress is visible.
 Internal chatter is not default content.
 Evidence is ambient and inspectable.
 Completed work collapses into summaries.
+Conversation layout follows task flow, not a fixed template.
 ```
 
 The product surface should follow
@@ -84,6 +92,12 @@ For the default channel feed, those cards are projections inside the unified ope
 cell model in [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md). They should
 not render as a second first-level surface next to a run summary or Ling Agent completion
 message.
+
+Current UI framing should be read as a semantic block framework, not literal fixed cards:
+each turn renders the `TranscriptBlock[]` produced by the projector. A task that only
+answers a question should not receive empty progress, artifact, or teammate sections; a
+task with approvals or artifacts should render those blocks inline because they actually
+occurred.
 
 ## Existing Boundaries
 
@@ -99,7 +113,7 @@ Current Ling behavior already has the important production shape:
 - Ling owns workflow state, approval policy, resource leases, state machines, artifacts,
   memory candidates, and audit evidence.
 - The Web channel surface already borrows Codex-style active mutable cells, compact run
-  summaries, folded evidence, attention/progress popovers, and right-drawer drilldown.
+  summaries, folded evidence, attention/progress popovers, and inline evidence drilldown.
 
 Future multi-agent work must extend this shape. It must not replace it with shared group
 chat, a new runtime, or a broad conversation UI refactor.
@@ -128,9 +142,27 @@ QA added acceptance criteria.
 ```
 
 When shaping requires more than one teammate, the default UI should prefer a
-`Requirement Shaping Card` over a sequence of visible teammate chat messages. The card can
-show compact contribution state and a Ling Agent summary, with detailed teammate
-contributions available on expansion.
+`Requirement Shaping` operation cell over a sequence of visible teammate chat messages.
+The cell can show compact contribution state and a Ling Agent summary, with detailed
+teammate contributions available on expansion.
+
+Canonical shape:
+
+```text
+ConversationTurn
+  UserMessageCell
+  OperationCell(presentation=requirement_shaping)
+    coordinator summary
+    participant contribution spans
+    decision-needed block
+    proposed workflow preview
+    actions: approve workflow / edit scope / ask follow-up / start workflow
+```
+
+The shaping cell is not executable workflow state by itself. It becomes executable only
+when the coordinator converts the resolved shaping packet into a proposal or
+`ChannelWorkflow`. Raw specialist discussion remains evidence, not default transcript
+content.
 
 ### 2. Live Execution Stage
 
@@ -163,8 +195,10 @@ The live surface should reuse the existing Codex-inspired conversation model:
 - collaboration task fields rendered inside that operation cell rather than as a
   duplicate first-level card,
 - the channel progress or attention popover for compact operational state,
-- the right drawer only for smart detail and raw/deep evidence,
-- folded evidence for runtime, memory, tools, files, lineage, approvals, and raw events.
+- folded inline evidence for runtime, memory, tools, files, lineage, approvals, and raw
+  events,
+- in-turn previews/lightboxes for larger file, diff, artifact, source, and approval
+  detail.
 
 Step streams should fold when a step reaches terminal state. Serial workflows may show
 the current step stream in the card; parallel workflows should show branch summaries by
@@ -432,11 +466,12 @@ not a full workflow inspector. It can show:
 - one next action.
 
 It should not show workflow ids, context packet ids, selector metadata, token budgets, or
-raw logs. It should not become a second workflow detail drawer.
+raw logs. It should not become a second workflow detail surface.
 
-### Right Drawer And Evidence
+### Conversation Evidence And Detail
 
-The right drawer remains the smart detail surface. It should expose:
+The main conversation remains the smart detail surface. Inline expansion, agent-span
+disclosure, and in-turn previews should expose:
 
 - workflow graph/step list,
 - active step detail,
@@ -446,10 +481,10 @@ The right drawer remains the smart detail surface. It should expose:
 - approvals,
 - raw runtime evidence when opened.
 
-Raw audit/debug data should stay one level deeper than the default right drawer summary.
-If inline evidence on the operation cell already exposes the same smart detail, the main
-feed should not also show a separate button whose only purpose is to open the duplicate
-drawer view.
+Raw audit/debug data should stay one level deeper than the default inline detail. If
+inline evidence on the operation cell already exposes the same smart detail, the main
+feed should not also show a separate button whose only purpose is to open a duplicate
+side-panel view.
 
 ## Implementation Slices
 
@@ -474,7 +509,7 @@ drawer view.
 - Make step output and dependency context packet shapes explicit across backend and UI.
 - Ensure fan-in and memory-candidate flows read packets instead of free-form hidden
   transcript summaries.
-- Expose packet evidence through the right drawer.
+- Expose packet evidence through inline operation-cell evidence and in-turn previews.
 - Implementation plan:
   [P2 Packet Standardization](multi-agent-orchestration-p2-packets-implementation-plan.md).
 
@@ -483,7 +518,7 @@ drawer view.
 - Extend existing active run/work summary presentation into operation cells for
   multi-step workflows.
 - Show current teammate, current phase, completed step count, blockers, and artifacts.
-- Reuse the existing conversation row, attention/progress popover, and right drawer
+- Reuse the existing conversation row, attention/progress popover, and inline detail
   patterns.
 - Do not rebuild the conversation feed or replace the Codex-inspired component model.
 - Implementation plan:
@@ -514,8 +549,13 @@ drawer view.
 - Keep branch evidence expandable.
 - Fan-in may create reviewable memory candidates, but must not activate memory or inject
   unreviewed candidates into later steps.
+- Apply safe-parallel side-effect policy: `analysis_readonly` and verified
+  `test_artifact_only` may auto-parallelize; `workspace_write`, `external_mutation`, and
+  `release` stay serial until isolated worktree merge exists.
 - Implementation detail:
   [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p6-fan-out-fan-in-and-memory-candidates).
+- Canonical safe-parallel rule:
+  [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md#safe-parallel-scheduler).
 
 ### P7: Timeline And Audit Polish
 

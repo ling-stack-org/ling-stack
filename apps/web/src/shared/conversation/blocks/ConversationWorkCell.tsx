@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronDown, CircleAlert, Clock3, Eye, FileText, History, Image as ImageIcon, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
-import { useI18n, type Translate } from "../../i18n.js";
-import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../lib/conversation-work-cell.js";
-import { ArtifactPreviewDrawer } from "./ArtifactPreviewDrawer.js";
+import { useI18n, type Translate } from "../../../i18n.js";
+import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
+import { ArtifactPreviewDrawer, type ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
+import { CopyActionButton } from "../feedback/CopyActionButton.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -19,6 +20,7 @@ export interface ConversationWorkCellProps {
   readonly detailsState?: ConversationWorkCellDetailsState;
   readonly onOpenRun?: (runId: string) => void;
   readonly onLoadDetails?: (threadId: string) => void;
+  readonly loadPreview: ArtifactPreviewLoader;
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }
 
@@ -28,6 +30,7 @@ export function ConversationWorkCell({
   detailsState,
   onOpenRun,
   onLoadDetails,
+  loadPreview,
   renderAgentAvatar,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
@@ -82,6 +85,7 @@ export function ConversationWorkCell({
 
   return (
     <article className={rootClassName} data-thread-id={model.threadId} data-operation-source={model.sourceKind} aria-label={statusLabel}>
+      <span className="visually-hidden" role="status" aria-live="polite" aria-label={statusLabel} />
       <div className="conversation-work-cell-body">
         {agentSpans.length > 0 ? (
           <AgentActivitySpans spans={agentSpans} renderAgentAvatar={renderAgentAvatar} />
@@ -137,6 +141,7 @@ export function ConversationWorkCell({
             cwd,
             artifactId: previewItem.artifactId,
           } : undefined}
+          loadPreview={loadPreview}
           openHref={previewItem?.href}
           downloadHref={previewItem?.href}
           downloadName={previewItem?.label}
@@ -184,7 +189,7 @@ function ConversationArtifactStrip({
     <div className="conversation-work-cell-artifacts" aria-label={t("Artifacts")}>
       {items.map((item) => {
         const previewable = Boolean(item.previewable && item.artifactId && cwd);
-        const meta = artifactItemMeta(item);
+        const meta = artifactItemMeta(item, t);
         const icon = item.previewKind === "image" ? <ImageIcon size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />;
         const content = (
           <>
@@ -229,16 +234,16 @@ function ConversationArtifactStrip({
   );
 }
 
-function artifactItemMeta(item: ConversationArtifactStripItem): string | undefined {
+function artifactItemMeta(item: ConversationArtifactStripItem, t: Translate): string | undefined {
   return [
-    artifactTypeLabel(item),
+    artifactTypeLabel(item, t),
     item.sizeBytes !== undefined ? formatArtifactSize(item.sizeBytes) : undefined,
   ].filter(Boolean).join(" · ") || undefined;
 }
 
-function artifactTypeLabel(item: ConversationArtifactStripItem): string | undefined {
+function artifactTypeLabel(item: ConversationArtifactStripItem, t: Translate): string | undefined {
   if (item.previewKind === "image") {
-    return "Image";
+    return t("Image");
   }
   if (item.artifactType) {
     return item.artifactType.toUpperCase();
@@ -295,7 +300,35 @@ function AgentActivitySpans({
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
-  const [expandedSpanIds, setExpandedSpanIds] = useState<ReadonlySet<string>>(() => new Set());
+  const autoExpandedSpanIds = useMemo(
+    () => new Set(spans.filter(shouldAutoExpandAgentActivitySpan).map((span) => span.id)),
+    [spans],
+  );
+  const autoExpandedSpanKey = useMemo(
+    () => [...autoExpandedSpanIds].sort().join("\n"),
+    [autoExpandedSpanIds],
+  );
+  const [expandedSpanIds, setExpandedSpanIds] = useState<ReadonlySet<string>>(() => autoExpandedSpanIds);
+  const [manuallyCollapsedSpanIds, setManuallyCollapsedSpanIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  useEffect(() => {
+    if (autoExpandedSpanIds.size === 0) {
+      return;
+    }
+    setExpandedSpanIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      for (const spanId of autoExpandedSpanIds) {
+        if (manuallyCollapsedSpanIds.has(spanId) || next.has(spanId)) {
+          continue;
+        }
+        next.add(spanId);
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [autoExpandedSpanIds, autoExpandedSpanKey, manuallyCollapsedSpanIds]);
+
   return (
     <section className="conversation-work-cell-agent-spans" aria-label={t("Agent activity")}>
       <div className="conversation-work-cell-agent-span-list">
@@ -344,6 +377,15 @@ function AgentActivitySpans({
                       }
                       return next;
                     });
+                    setManuallyCollapsedSpanIds((current) => {
+                      const next = new Set(current);
+                      if (expanded) {
+                        next.add(span.id);
+                      } else {
+                        next.delete(span.id);
+                      }
+                      return next;
+                    });
                   }}
                 >
                   {headContent}
@@ -366,6 +408,14 @@ function AgentActivitySpans({
       </div>
     </section>
   );
+}
+
+function shouldAutoExpandAgentActivitySpan(span: ConversationAgentActivitySpan): boolean {
+  return span.tone === "waiting" ||
+    span.tone === "failed" ||
+    span.latestRow?.tone === "waiting" ||
+    span.latestRow?.tone === "failed" ||
+    span.rows.some((row) => row.tone === "waiting" || row.tone === "failed");
 }
 
 function workCellStatusLabel(
@@ -542,6 +592,10 @@ function WorkCellRow({
   const displayMeta = displayableRowMeta(row.meta);
   const detailLines = displayableRowDetailLines(row.detailLines);
   const hasDetail = Boolean(displayDescription || detailLines.length > 0);
+  const detailCopyText = [
+    displayDescription,
+    ...detailLines.map((line) => line.text),
+  ].filter((line): line is string => Boolean(line)).join("\n");
   const rowClassName = [
     "conversation-work-cell-row",
     row.presentation === "shell" ? "shell" : "",
@@ -590,6 +644,9 @@ function WorkCellRow({
         )}
         {expanded && hasDetail ? (
           <div className="conversation-work-cell-row-detail conversation-work-cell-shell-detail">
+            {detailCopyText ? (
+              <CopyActionButton text={detailCopyText} label={t("Copy output")} className="conversation-work-cell-detail-copy" iconSize={12} />
+            ) : null}
             {displayDescription ? <small>{displayDescription}</small> : null}
             {detailLines.map((line, index) => (
               line.kind === "code"
@@ -637,6 +694,9 @@ function WorkCellRow({
       )}
       {expanded && hasDetail ? (
         <div className="conversation-work-cell-row-detail">
+          {detailCopyText ? (
+            <CopyActionButton text={detailCopyText} label={t("Copy details")} className="conversation-work-cell-detail-copy" iconSize={12} />
+          ) : null}
           {displayDescription ? <small>{displayDescription}</small> : null}
           {detailLines.map((line, index) => (
             line.kind === "code"

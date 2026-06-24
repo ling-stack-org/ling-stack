@@ -8,6 +8,7 @@ Date: 2026-06-09
 
 Source design:
 
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
@@ -575,16 +576,19 @@ packet `selectorDecisionIds`.
 
 ### Selector Modes
 
-First implementation should support two modes:
+First implementation should support deterministic selector only. Model-assisted selector
+is a later feature-flagged mode after deterministic filtering, validation, UI evidence,
+and user-confirmation behavior are stable.
 
 | Mode | Use case | Behavior |
 | --- | --- | --- |
 | Deterministic selector | graph has one eligible next step | produce decision with `createdBy: "deterministic"` |
-| Model selector | graph has multiple valid next branches or teammate candidates | call model for structured JSON, then validate output |
+| Model selector | future: graph has multiple valid next branches or teammate candidates | call model for structured JSON, then validate output behind feature flag |
 
 The deterministic selector should be the default and should cover the existing serial
-workflow path. The model selector is only necessary when several policy-valid options
-remain after deterministic filtering.
+workflow path. If several policy-valid options remain after deterministic filtering in
+the first phase, require user confirmation or block with alternatives instead of calling a
+model.
 
 ### Daemon Flow
 
@@ -600,8 +604,9 @@ Tick integration:
 2. Build eligible candidate set from graph and step state.
 3. If zero candidates, succeed/block/fail according to termination policy.
 4. If one candidate, persist deterministic selector decision.
-5. If multiple candidates and graph policy allows selection, invoke structured model
-   selector or require user confirmation.
+5. If multiple candidates remain, require user confirmation or block with alternatives.
+   A future feature flag may invoke a structured model selector here, but the selected
+   target must still pass deterministic validation.
 6. Validate selected target is still eligible.
 7. Attach decision id to selected step metadata.
 8. Start the selected step only through the existing workflow-step start path.
@@ -693,7 +698,7 @@ parallel branch steps
 ### Non-Goals
 
 - No uncontrolled parallel execution.
-- No parallel side-effectful writes without leases and approval gates.
+- No parallel side-effectful writes through the default scheduler.
 - No raw branch transcript merge into hidden context.
 - No automatic memory authority changes.
 - No cross-scope memory promotion.
@@ -707,7 +712,11 @@ Parallel execution is allowed only when all of the following are true:
 - channel runtime policy permits the concurrency;
 - runner registry and semaphores permit the concurrency;
 - resource leases do not conflict;
-- side-effectful steps remain approval-gated;
+- side-effect class is `analysis_readonly`, or `test_artifact_only` with verified
+  artifact-only behavior;
+- `workspace_write`, `external_mutation`, and `release` steps remain serial unless a
+  future isolated worktree merge protocol explicitly owns the branch merge;
+- side-effectful steps remain approval-gated even when serial;
 - each branch has a terminal output packet or a blocked/failure policy outcome.
 
 The scheduler should fail closed:
@@ -719,7 +728,27 @@ if unsure whether branches conflict, run serially or block for user
 ### Contract Extensions
 
 P1 already added `branchGroupId`, `joinGroupId`, `dependencyMode`, and
-`maxParallelSiblings` to step metadata. P6 should add explicit fan-in metadata:
+`maxParallelSiblings` to step metadata. The next hardening slice should add side-effect
+and parallel policy metadata:
+
+```ts
+type WorkflowStepSideEffectClass =
+  | "analysis_readonly"
+  | "test_artifact_only"
+  | "workspace_write"
+  | "external_mutation"
+  | "release";
+
+interface WorkflowStepParallelPolicy {
+  readonly autoParallel: boolean;
+  readonly maxParallelSiblings?: number;
+  readonly resourceKeys?: readonly string[];
+  readonly requiresArtifactOnly?: boolean;
+  readonly cancelSiblingsOnFailure?: boolean;
+}
+```
+
+P6 should also add explicit fan-in metadata:
 
 ```ts
 export type WorkflowFanInMode =
@@ -831,6 +860,8 @@ P6.1 scheduler:
 
 - start multiple eligible safe steps within channel runtime limits;
 - respect resource leases and approval gates;
+- filter auto-parallel candidates by `sideEffectClass` and `parallelPolicy`;
+- keep write, external mutation, and release steps serial by default;
 - add tests for serial fallback on conflict.
 
 P6.2 fan-in packet reader:
@@ -859,6 +890,10 @@ P6.6 tests:
 
 - two read-only branches run in parallel when policy permits;
 - write-conflicting branches do not run together;
+- write branches without isolated worktree merge stay serial even with
+  `maxParallelSiblings > 1`;
+- QA artifact-only branches can run with code review, but QA branches that write
+  workspace files cannot;
 - join waits for required terminal dependencies;
 - missing output packet blocks fan-in with evidence;
 - fan-in creates candidates but no active memory;

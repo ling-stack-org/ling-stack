@@ -42,9 +42,23 @@ export interface PreviewContentResponse {
   readonly kind: PreviewContentKind;
   readonly text?: string;
   readonly imageUrl?: string;
+  readonly compare?: PreviewImageCompare;
   readonly truncated: boolean;
   readonly sizeBytes?: number;
   readonly redactionNotes: readonly string[];
+}
+
+export type PreviewImageCompareMode = "single" | "side_by_side" | "slider" | "diff_overlay";
+
+export interface PreviewImageCompareSource {
+  readonly label: string;
+  readonly imageUrl: string;
+}
+
+export interface PreviewImageCompare {
+  readonly before: PreviewImageCompareSource;
+  readonly after: PreviewImageCompareSource;
+  readonly defaultMode?: PreviewImageCompareMode;
 }
 
 export interface RunArtifactListResponse {

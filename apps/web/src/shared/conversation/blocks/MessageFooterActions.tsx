@@ -1,4 +1,7 @@
 import type { ReactNode } from "react";
+import { Check } from "lucide-react";
+import { useI18n } from "../../../i18n.js";
+import { CopyActionButton } from "../feedback/CopyActionButton.js";
 
 export interface MessageFooterAction {
   readonly id: string;
@@ -10,6 +13,7 @@ export interface MessageFooterAction {
   readonly href?: string;
   readonly target?: string;
   readonly rel?: string;
+  readonly copyText?: string;
   readonly onClick?: () => void;
 }
 
@@ -22,7 +26,8 @@ export function MessageFooterActions({
   className,
   actions,
 }: MessageFooterActionsProps): JSX.Element | null {
-  const visibleActions = actions.filter((action) => action.href || action.onClick);
+  const { t } = useI18n();
+  const visibleActions = actions.filter((action) => action.href || action.onClick || action.copyText);
   if (visibleActions.length === 0) {
     return null;
   }
@@ -57,6 +62,25 @@ export function MessageFooterActions({
             >
               {content}
             </a>
+          );
+        }
+        if (action.copyText !== undefined) {
+          return (
+            <CopyActionButton
+              key={action.id}
+              className={actionClassName}
+              text={action.copyText}
+              label={action.label}
+              copiedLabel={t("Copied")}
+              iconSize={11}
+              idleContent={content}
+              copiedContent={(
+                <>
+                  <Check size={11} />
+                  <span>{t("Copied")}</span>
+                </>
+              )}
+            />
           );
         }
         return (

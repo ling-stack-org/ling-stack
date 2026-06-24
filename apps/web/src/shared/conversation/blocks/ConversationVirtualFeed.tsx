@@ -1,4 +1,4 @@
-import type { RefObject, ReactNode, UIEventHandler } from "react";
+import type { KeyboardEventHandler, MouseEventHandler, PointerEventHandler, RefObject, ReactNode, UIEventHandler } from "react";
 import type { VirtualItem } from "@tanstack/react-virtual";
 import { ConversationEmptyState } from "./ConversationEmptyState.js";
 
@@ -22,6 +22,13 @@ export interface ConversationVirtualFeedProps<TItem> {
   readonly measureElement: (node: HTMLDivElement | null) => void;
   readonly onScroll?: UIEventHandler<HTMLDivElement>;
   readonly onUserScrollIntent?: () => void;
+  readonly onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
+  readonly onPointerDown?: PointerEventHandler<HTMLDivElement>;
+  readonly onPointerMove?: PointerEventHandler<HTMLDivElement>;
+  readonly onPointerUp?: PointerEventHandler<HTMLDivElement>;
+  readonly onPointerCancel?: PointerEventHandler<HTMLDivElement>;
+  readonly onContextMenu?: MouseEventHandler<HTMLDivElement>;
+  readonly title?: string;
   readonly statusNode?: ReactNode;
   readonly latestButtonNode?: ReactNode;
 }
@@ -46,6 +53,13 @@ export function ConversationVirtualFeed<TItem>({
   measureElement,
   onScroll,
   onUserScrollIntent,
+  onKeyDown,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onContextMenu,
+  title,
   statusNode,
   latestButtonNode,
 }: ConversationVirtualFeedProps<TItem>): JSX.Element {
@@ -58,7 +72,15 @@ export function ConversationVirtualFeed<TItem>({
         ref={scrollRef}
         className={resolvedFeedClassName}
         aria-label={ariaLabel}
+        title={title}
+        tabIndex={0}
         onScroll={onScroll}
+        onKeyDown={onKeyDown}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onContextMenu={onContextMenu}
         onWheel={onUserScrollIntent ? () => onUserScrollIntent() : undefined}
         onTouchMove={onUserScrollIntent ? () => onUserScrollIntent() : undefined}
       >
@@ -75,6 +97,8 @@ export function ConversationVirtualFeed<TItem>({
                   key={virtualRow.key}
                   ref={measureElement}
                   className="message-feed-virtual-row"
+                  tabIndex={-1}
+                  data-conversation-focus-block={item ? "true" : undefined}
                   data-feed-item-id={item ? getItemId(item) : undefined}
                   data-feed-item-kind={item ? getItemKind(item) : undefined}
                   data-index={virtualRow.index}

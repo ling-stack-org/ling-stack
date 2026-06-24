@@ -8,32 +8,47 @@ import type {
   UsedMemoryEvent,
 } from "../types.js";
 import type { ConversationWorkCellViewModel } from "./conversation-work-cell.js";
+import type { ConversationTurn, TranscriptBlockBase, TranscriptBlockKind, TranscriptBlockStatus } from "../shared/conversation/transcript/index.js";
 
 export type ConversationTurnOperationRef =
   | { readonly kind: "workflow"; readonly workflowId: string }
   | { readonly kind: "run_thread"; readonly threadId: string };
 
-export type ConversationTranscriptBlock =
-  | ConversationCoordinatorTextBlock
-  | ConversationOperationCellBlock;
+type ConversationGenericTranscriptBlockKind = Exclude<TranscriptBlockKind, "coordinator_message" | "operation">;
+type ConversationGenericTranscriptBlock = {
+  readonly [Kind in ConversationGenericTranscriptBlockKind]: TranscriptBlockBase<Kind>;
+}[ConversationGenericTranscriptBlockKind];
 
-export interface ConversationCoordinatorTextBlock {
+type WorkflowPacketTarget = {
+  readonly artifactId: string;
+  readonly packetRole: "context" | "output" | "summary";
+  readonly stepTitle: string;
+  readonly label: string;
+};
+
+export type ConversationTranscriptBlock =
+  | ConversationCoordinatorMessageBlock
+  | ConversationOperationBlock
+  | ConversationGenericTranscriptBlock;
+
+export interface ConversationCoordinatorMessageBlock extends TranscriptBlockBase<"coordinator_message"> {
   readonly id: string;
-  readonly kind: "coordinator_text";
+  readonly kind: "coordinator_message";
   readonly phase: "start" | "terminal";
   readonly message: ChannelMessage;
   readonly memoryCitationEvents: readonly UsedMemoryEvent[];
 }
 
-export interface ConversationOperationCellBlock {
+export interface ConversationOperationBlock extends TranscriptBlockBase<"operation"> {
   readonly id: string;
-  readonly kind: "operation_cell";
+  readonly kind: "operation";
   readonly operationCell: ConversationWorkCellViewModel;
   readonly operationRef: ConversationTurnOperationRef;
 }
 
-export interface ConversationTurnViewModel {
+export interface ConversationTurnViewModel extends ConversationTurn<ConversationTranscriptBlock> {
   readonly id: string;
+  readonly sourceMessageId: string;
   readonly sourceMessage: ChannelMessage;
   readonly blocks: readonly ConversationTranscriptBlock[];
   readonly coordinatorStartMessages: readonly ChannelMessage[];
@@ -103,9 +118,22 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
     const childMessages = (childMessagesByThreadId.get(sourceMessage.id) ?? []).sort(compareByCreatedAtThenId);
     const coordinatorMessages = childMessages.filter((message) => isLingAgentMessage(message, input.lingAgentAuthorId));
     const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell);
-    const blocks = buildTranscriptBlocks({ startMessages, terminalMessages, operation, usedMemoryEventsByResponseId });
+    const turnId = `conversation-turn:${sourceMessage.id}`;
+    const blocks = buildTranscriptBlocks({
+      turnId,
+      proposals,
+      workflowSteps: input.workflowSteps,
+      startMessages,
+      terminalMessages,
+      operation,
+      usedMemoryEventsByResponseId,
+    });
     const updatedAt = maxIsoString([
       sourceMessage.updatedAt,
+      ...proposals.map((proposal) => proposal.updatedAt),
+      ...input.workflowSteps
+        .filter((step) => operation?.ref.kind === "workflow" && step.workflowId === operation.ref.workflowId)
+        .map((step) => step.updatedAt),
       ...coordinatorMessages.map((message) => message.updatedAt),
       ...coordinatorMessages.flatMap((message) => (usedMemoryEventsByResponseId.get(message.id) ?? []).map((event) => event.createdAt)),
       operation?.cell.updatedAt,
@@ -130,7 +158,8 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
     }
 
     return {
-      id: `conversation-turn:${sourceMessage.id}`,
+      id: turnId,
+      sourceMessageId: sourceMessage.id,
       sourceMessage,
       blocks,
       coordinatorStartMessages: startMessages,
@@ -228,17 +257,27 @@ function splitCoordinatorMessages(
 }
 
 function buildTranscriptBlocks(input: {
+  readonly turnId: string;
+  readonly proposals: readonly ChannelExecutionProposal[];
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
   readonly startMessages: readonly ChannelMessage[];
   readonly terminalMessages: readonly ChannelMessage[];
   readonly operation: { readonly cell: ConversationWorkCellViewModel; readonly ref: ConversationTurnOperationRef } | undefined;
   readonly usedMemoryEventsByResponseId: ReadonlyMap<string, readonly UsedMemoryEvent[]>;
 }): readonly ConversationTranscriptBlock[] {
   const blocks: ConversationTranscriptBlock[] = [];
+  blocks.push(...buildRequirementShapingBlocks(input.turnId, input.proposals));
   for (const message of input.startMessages) {
     blocks.push({
       id: `coordinator-start:${message.id}`,
-      kind: "coordinator_text",
+      turnId: input.turnId,
+      kind: "coordinator_message",
       phase: "start",
+      status: transcriptStatusFromMessage(message),
+      revision: 1,
+      updatedAt: message.updatedAt,
+      ownerId: message.authorId,
+      display: [{ id: `display:${message.id}`, text: message.body }],
       message,
       memoryCitationEvents: input.usedMemoryEventsByResponseId.get(message.id) ?? [],
     });
@@ -246,21 +285,328 @@ function buildTranscriptBlocks(input: {
   if (input.operation) {
     blocks.push({
       id: `operation:${input.operation.cell.id}`,
-      kind: "operation_cell",
+      turnId: input.turnId,
+      kind: "operation",
+      status: transcriptStatusFromOperation(input.operation.cell.status),
+      revision: 1,
+      updatedAt: input.operation.cell.updatedAt,
+      display: [
+        {
+          id: `display:${input.operation.cell.id}:title`,
+          text: input.operation.cell.title,
+          meta: input.operation.cell.summary,
+        },
+      ],
+      previewTargets: input.operation.cell.artifactStripItems.map((item) => ({
+        id: item.id,
+        kind: item.previewKind === "image" ? "image" : item.kind === "artifact" ? "artifact" : item.kind === "changed" ? "diff" : "file",
+        label: item.label,
+        href: item.href,
+      })),
       operationCell: input.operation.cell,
       operationRef: input.operation.ref,
     });
+    if (input.operation.ref.kind === "workflow") {
+      blocks.push(...buildWorkflowPacketSummaryBlocks({
+        turnId: input.turnId,
+        workflowId: input.operation.ref.workflowId,
+        workflowSteps: input.workflowSteps,
+      }));
+    }
   }
   for (const message of input.terminalMessages) {
     blocks.push({
       id: `coordinator-terminal:${message.id}`,
-      kind: "coordinator_text",
+      turnId: input.turnId,
+      kind: "coordinator_message",
       phase: "terminal",
+      status: transcriptStatusFromMessage(message),
+      revision: 1,
+      updatedAt: message.updatedAt,
+      ownerId: message.authorId,
+      display: [{ id: `display:${message.id}`, text: message.body }],
       message,
       memoryCitationEvents: input.usedMemoryEventsByResponseId.get(message.id) ?? [],
     });
   }
   return blocks;
+}
+
+function buildRequirementShapingBlocks(
+  turnId: string,
+  proposals: readonly ChannelExecutionProposal[],
+): readonly ConversationGenericTranscriptBlock[] {
+  const blocks: ConversationGenericTranscriptBlock[] = [];
+  for (const proposal of proposals.filter((item) => item.shaping && item.status === "draft")) {
+    const shaping = proposal.shaping;
+    if (!shaping) {
+      continue;
+    }
+    const contributionLines = [
+      ...proposal.collaborationSteps
+        .filter(requirementShapingContributionAffectsScope)
+        .map((step, index) => ({
+          id: `proposal:${proposal.id}:contribution:${index}`,
+          text: `${step.teammateId}: ${step.summary}`,
+          tone: step.action === "flagged_risk" ? "waiting" as const : "default" as const,
+          meta: step.action,
+        })),
+      ...shaping.clarifications.map((clarification) => ({
+        id: `proposal:${proposal.id}:clarification:${clarification.id}`,
+        text: `${clarification.authorType}: ${clarification.body}`,
+        tone: "muted" as const,
+        meta: "clarification",
+      })),
+    ];
+    blocks.push({
+      id: `requirement-shaping:${proposal.id}`,
+      turnId,
+      kind: "requirement_shaping",
+      status: requirementShapingTranscriptStatus(shaping.status),
+      revision: 1,
+      updatedAt: shaping.updatedAt ?? proposal.updatedAt,
+      display: [{
+        id: `display:${proposal.id}:shaping`,
+        text: shaping.summary?.trim() || proposal.title,
+        meta: requirementShapingStatusLabel(shaping.status),
+      }],
+      expanded: {
+        mode: "inline",
+        title: "Requirement shaping",
+        summary: proposal.riskSummary,
+        lines: contributionLines,
+      },
+    });
+    if (shaping.openQuestions.length > 0 && shaping.status === "needs_user_clarification") {
+      blocks.push({
+        id: `decision-needed:${proposal.id}`,
+        turnId,
+        kind: "decision_needed",
+        status: "waiting_for_approval",
+        revision: 1,
+        updatedAt: shaping.updatedAt ?? proposal.updatedAt,
+        display: [{
+          id: `display:${proposal.id}:decision`,
+          text: shaping.openQuestions[0] ?? "Decision needed",
+          meta: shaping.openQuestions.length === 1 ? "1 open question" : `${shaping.openQuestions.length} open questions`,
+        }],
+        expanded: {
+          mode: "inline",
+          title: "Decision needed",
+          lines: shaping.openQuestions.map((question, index) => ({
+            id: `proposal:${proposal.id}:question:${index}`,
+            text: question,
+            tone: "waiting",
+          })),
+        },
+      });
+    }
+  }
+  return blocks;
+}
+
+function requirementShapingContributionAffectsScope(step: ChannelExecutionProposal["collaborationSteps"][number]): boolean {
+  const summary = step.summary.trim();
+  if (!summary) {
+    return false;
+  }
+  if (step.action === "flagged_risk") {
+    return true;
+  }
+  return /\b(scope|scoped|boundary|requirement|acceptance|criteria|risk|blocker|conflict|decision|decide|approval|clarify|clarification|question|assumption|constraint|permission|security|cost|latency|handoff|owner|proposal)\b|范围|边界|需求|验收|风险|阻塞|冲突|决策|决定|审批|澄清|问题|假设|约束|权限|安全|成本|延迟|交接|负责人|提案/u.test(summary);
+}
+
+function buildWorkflowPacketSummaryBlocks(input: {
+  readonly turnId: string;
+  readonly workflowId: string;
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
+}): readonly ConversationGenericTranscriptBlock[] {
+  const steps = input.workflowSteps.filter((step) => step.workflowId === input.workflowId);
+  const packetTargets = steps.flatMap((step) => workflowPacketTargetsForStep(step));
+  if (packetTargets.length === 0) {
+    return [];
+  }
+  const contextCount = packetTargets.filter((target) => target.packetRole === "context").length;
+  const outputCount = packetTargets.filter((target) => target.packetRole === "output").length;
+  const summaryCount = packetTargets.filter((target) => target.packetRole === "summary").length;
+  const labels = [
+    contextCount > 0 ? `${contextCount} context` : undefined,
+    outputCount > 0 ? `${outputCount} output` : undefined,
+    summaryCount > 0 ? `${summaryCount} summary` : undefined,
+  ].filter(isString);
+  return [{
+    id: `workflow-packet-summary:${input.workflowId}`,
+    turnId: input.turnId,
+    kind: "workflow_packet_summary",
+    status: workflowPacketSummaryStatus(steps),
+    revision: 1,
+    updatedAt: maxIsoString(steps.map((step) => step.updatedAt)),
+    display: [{
+      id: `display:${input.workflowId}:packet-summary`,
+      text: "Workflow packet summary",
+      meta: labels.length > 0 ? labels.join(" · ") : `${packetTargets.length} packet refs`,
+    }],
+    expanded: {
+      mode: "inline",
+      title: "Workflow packet summary",
+      summary: "Packet bodies stay in artifacts; this turn only shows bounded refs and metadata.",
+      lines: packetTargets.map((target) => ({
+        id: `workflow-packet:${target.artifactId}`,
+        text: `${target.stepTitle}: ${target.label}`,
+        tone: "muted",
+        meta: target.packetRole,
+      })),
+    },
+    previewTargets: packetTargets.map((target) => ({
+      id: target.artifactId,
+      kind: "artifact",
+      label: target.label,
+      metadata: [
+        { id: `${target.artifactId}:step`, text: target.stepTitle },
+        { id: `${target.artifactId}:role`, text: target.packetRole },
+      ],
+    })),
+  }];
+}
+
+function requirementShapingTranscriptStatus(
+  status: NonNullable<ChannelExecutionProposal["shaping"]>["status"],
+): TranscriptBlockStatus {
+  if (status === "needs_user_clarification" || status === "ready_for_confirmation") {
+    return "waiting_for_approval";
+  }
+  if (status === "converted_to_task") {
+    return "succeeded";
+  }
+  if (status === "dismissed") {
+    return "cancelled";
+  }
+  return "running";
+}
+
+function requirementShapingStatusLabel(
+  status: NonNullable<ChannelExecutionProposal["shaping"]>["status"],
+): string {
+  if (status === "collecting_context") {
+    return "Collecting context";
+  }
+  if (status === "collecting_teammate_input") {
+    return "Collecting teammate input";
+  }
+  if (status === "needs_user_clarification") {
+    return "Needs user clarification";
+  }
+  if (status === "ready_for_confirmation") {
+    return "Ready for confirmation";
+  }
+  if (status === "converted_to_task") {
+    return "Converted to task";
+  }
+  return "Dismissed";
+}
+
+function workflowPacketSummaryStatus(steps: readonly ChannelWorkflowStep[]): TranscriptBlockStatus {
+  if (steps.some((step) => step.status === "failed")) {
+    return "failed";
+  }
+  if (steps.some((step) => step.status === "blocked")) {
+    return "blocked";
+  }
+  if (steps.some((step) => step.status === "waiting_for_approval")) {
+    return "waiting_for_approval";
+  }
+  if (steps.some((step) => step.status === "running" || step.status === "claimed")) {
+    return "running";
+  }
+  if (steps.some((step) => step.status === "queued")) {
+    return "queued";
+  }
+  if (steps.length > 0 && steps.every((step) => step.status === "cancelled")) {
+    return "cancelled";
+  }
+  return "succeeded";
+}
+
+function workflowPacketTargetsForStep(step: ChannelWorkflowStep): readonly WorkflowPacketTarget[] {
+  const targets: WorkflowPacketTarget[] = [];
+  if (step.metadata?.contextArtifactId) {
+    targets.push({
+      artifactId: step.metadata.contextArtifactId,
+      packetRole: "context",
+      stepTitle: step.title,
+      label: "Context packet",
+    });
+  }
+  if (step.metadata?.outputArtifactId) {
+    targets.push({
+      artifactId: step.metadata.outputArtifactId,
+      packetRole: "output",
+      stepTitle: step.title,
+      label: "Output packet",
+    });
+  }
+  for (const artifactId of step.metadata?.outputArtifactIds ?? []) {
+    targets.push({
+      artifactId,
+      packetRole: "output",
+      stepTitle: step.title,
+      label: "Output packet",
+    });
+  }
+  if (step.metadata?.fanInSummaryArtifactId) {
+    targets.push({
+      artifactId: step.metadata.fanInSummaryArtifactId,
+      packetRole: "summary",
+      stepTitle: step.title,
+      label: "Fan-in summary",
+    });
+  }
+  return uniquePacketTargets(targets);
+}
+
+function uniquePacketTargets(targets: readonly WorkflowPacketTarget[]): readonly WorkflowPacketTarget[] {
+  const seenArtifactIds = new Set<string>();
+  const uniqueTargets: WorkflowPacketTarget[] = [];
+  for (const target of targets) {
+    if (seenArtifactIds.has(target.artifactId)) {
+      continue;
+    }
+    seenArtifactIds.add(target.artifactId);
+    uniqueTargets.push(target);
+  }
+  return uniqueTargets;
+}
+
+function transcriptStatusFromMessage(message: ChannelMessage): TranscriptBlockStatus {
+  if (message.status === "pending") {
+    return "running";
+  }
+  if (message.status === "failed") {
+    return "failed";
+  }
+  if (message.status === "blocked") {
+    return "blocked";
+  }
+  return "succeeded";
+}
+
+function transcriptStatusFromOperation(status: ConversationWorkCellViewModel["status"]): TranscriptBlockStatus {
+  if (status === "waiting_for_approval") {
+    return "waiting_for_approval";
+  }
+  if (status === "blocked") {
+    return "blocked";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  if (status === "cancelled" || status === "superseded") {
+    return "cancelled";
+  }
+  if (status === "succeeded") {
+    return "succeeded";
+  }
+  return "running";
 }
 
 function isTerminalOperationStatus(status: ConversationWorkCellViewModel["status"]): boolean {

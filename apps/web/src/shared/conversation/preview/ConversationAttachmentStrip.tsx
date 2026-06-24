@@ -1,8 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Eye } from "lucide-react";
-import { useI18n } from "../../i18n.js";
-import type { PreviewRequest } from "../../lib/previews.js";
-import { ArtifactPreviewDrawer } from "./ArtifactPreviewDrawer.js";
+import { useI18n } from "../../../i18n.js";
+import { ArtifactPreviewDrawer, type ArtifactPreviewLoader, type ArtifactPreviewRequest } from "./ArtifactPreviewDrawer.js";
 
 export interface ConversationAttachmentChip {
   readonly id: string;
@@ -14,19 +13,21 @@ export interface ConversationAttachmentChip {
   readonly rel?: string;
   readonly title?: string;
   readonly onClick?: () => void;
-  readonly previewRequest?: PreviewRequest;
+  readonly previewRequest?: ArtifactPreviewRequest;
 }
 
 export interface ConversationAttachmentStripProps {
   readonly className?: string;
   readonly chipClassName?: string;
   readonly attachments: readonly ConversationAttachmentChip[];
+  readonly loadPreview: ArtifactPreviewLoader;
 }
 
 export function ConversationAttachmentStrip({
   className,
   chipClassName,
   attachments,
+  loadPreview,
 }: ConversationAttachmentStripProps): JSX.Element | null {
   const { t } = useI18n();
   const [activePreview, setActivePreview] = useState<ConversationAttachmentChip | undefined>();
@@ -87,6 +88,7 @@ export function ConversationAttachmentStrip({
       })}
       <ArtifactPreviewDrawer
         request={activePreview?.previewRequest}
+        loadPreview={loadPreview}
         openHref={activePreview?.href}
         downloadHref={activePreview?.href}
         downloadName={activePreview?.label}

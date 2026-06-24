@@ -8,6 +8,7 @@ import {
   Send,
   Tags,
 } from "lucide-react";
+import { previewArtifactContent } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import {
   approvalOwnerLabels,
@@ -280,6 +281,7 @@ function ExternalActionAuditPanel({
               cwd={cwd}
               artifacts={artifacts}
               status={fileChangeStatusFromApproval(approval)}
+              loadArtifactPreview={previewArtifactContent}
               approvalId={approval.id}
               compact
             />

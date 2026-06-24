@@ -5,6 +5,12 @@ Date: 2026-06-06
 Scope: conversation text rendering, local file references, attachments, artifacts,
 diff/file-change previews, and evidence drawer drill-downs
 
+2026-06-24 update: any reference in this document to an evidence drawer or drawer preview
+is superseded for conversation-owned content. File, text, markdown, diff, image,
+attachment, and artifact previews now open from the owning conversation row through
+inline expansion, in-turn preview, or lightbox. A right drawer must not become the default
+conversation evidence surface.
+
 ## Summary
 
 Ling Stack should borrow Codex's file and text display model at the product and data

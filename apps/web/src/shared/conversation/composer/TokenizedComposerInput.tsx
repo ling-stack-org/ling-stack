@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   type ClipboardEventHandler,
+  type CSSProperties,
   type FormEventHandler,
   type KeyboardEventHandler,
 } from "react";
@@ -21,6 +22,8 @@ export interface TokenizedComposerInputProps {
   readonly parts: readonly ComposerInputPart[];
   readonly placeholder: string;
   readonly ariaLabel: string;
+  readonly title?: string;
+  readonly style?: CSSProperties;
   readonly executableSlashCommandId?: string;
   readonly executableSlashTargetLabel?: string;
   readonly onChange: (value: string, caret: number) => void;
@@ -40,6 +43,8 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
     onSelect,
     parts,
     placeholder,
+    style,
+    title,
     value,
   },
   ref,
@@ -188,6 +193,8 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
       aria-placeholder={placeholder}
       data-placeholder={placeholder}
       data-value={value}
+      title={title}
+      style={style}
       {...placeholderAttributes}
       suppressContentEditableWarning
       spellCheck
