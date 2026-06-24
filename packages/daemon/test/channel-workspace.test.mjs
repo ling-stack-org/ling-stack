@@ -2819,6 +2819,84 @@ test("workspace follow-up can create the single file named by the previous Ling 
   }
 });
 
+test("thread follow-up can create the single file named by the previous Ling Agent reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-followup-file-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Thread follow-up execution",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const previousUser = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        kind: "message",
+        intent: "discuss",
+        authorType: "local-user",
+        body: "帮我做一个打飞机小游戏",
+      },
+      "2026-06-12T09:00:00.000Z",
+    );
+    store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: previousUser.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: "ling_agent",
+        body: "如果确认，可以在工作区创建 `index.html`。",
+        status: "ready",
+      },
+      "2026-06-12T09:01:00.000Z",
+    );
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: previousUser.id,
+      body: "你不可以直接帮我写到里面吗？",
+      mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    assertCoordinatorWorkflowStartReply(created, previousUser.id);
+    assert.equal(created.message.threadId, previousUser.id);
+    assert.equal(created.aiReply.threadId, previousUser.id);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    assert.doesNotMatch(created.aiReply.body, /不能直接修改工作区|cannot directly modify|没有被授权执行工作区写入/i);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
+    assert.match(proposals.proposals[0].prompt, /Target: index\.html/);
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "direct_workflow" && /Bounded executable request/.test(decision.reason)), true);
+    assert.equal(runner.runs.length, 1);
+    assert.deepEqual(runner.runs[0].tools, ["write"]);
+    assert.match(runner.runs[0].task.prompt, /Target: index\.html/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("workspace follow-up clarifies when the previous Ling Agent reply names multiple files", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-followup-file-ambiguous-"));
   const runner = new RecordingRunner();
@@ -2875,6 +2953,80 @@ test("workspace follow-up clarifies when the previous Ling Agent reply names mul
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.status, "ready");
+    assert.match(created.aiReply.body, /多个可能的文件目标|多个可能目标/);
+    assert.match(created.aiReply.body, /login\.html/);
+    assert.match(created.aiReply.body, /README\.md/);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(proposals.proposals, []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "clarify");
+    assert.match(decisions.decisions[0].reason, /multiple file targets/i);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("thread follow-up clarifies when the previous Ling Agent reply names multiple files", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-followup-file-ambiguous-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Ambiguous thread follow-up execution",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const previousUser = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        kind: "message",
+        intent: "discuss",
+        authorType: "local-user",
+        body: "帮我做一个登录页面和说明文档",
+      },
+      "2026-06-12T09:00:00.000Z",
+    );
+    store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: previousUser.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: "ling_agent",
+        body: "可以新建 `login.html`，也可以把说明补到 `README.md`。",
+        status: "ready",
+      },
+      "2026-06-12T09:01:00.000Z",
+    );
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: previousUser.id,
+      body: "你直接帮我写到里面",
+      mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.threadId, previousUser.id);
     assert.match(created.aiReply.body, /多个可能的文件目标|多个可能目标/);
     assert.match(created.aiReply.body, /login\.html/);
     assert.match(created.aiReply.body, /README\.md/);
@@ -3448,6 +3600,68 @@ test("high-risk push merge request auto-starts when required tools are not denie
     assert.equal(workflows.workflows.length, 1);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.some((decision) => /High-risk side effect is runtime-gated: git_push_or_merge/.test(decision.reason)), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("high-risk thread follow-up creates a proposal without auto-starting", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-high-risk-push-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Release thread",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const previousUser = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        kind: "message",
+        intent: "discuss",
+        authorType: "local-user",
+        body: "这个分支后面要发版",
+      },
+      "2026-06-12T09:00:00.000Z",
+    );
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: previousUser.id,
+      body: "帮我 push 合并代码",
+      mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.runs.length, 0);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, undefined);
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
+
+    const workflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(workflows.workflows.length, 0);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => decision.action === "direct_workflow" && decision.status === "accepted"), true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -9091,10 +9305,10 @@ async function getArtifactJson(baseUrl, cwd, artifactId) {
   return await response.json();
 }
 
-function assertCoordinatorWorkflowStartReply(result) {
+function assertCoordinatorWorkflowStartReply(result, expectedThreadId = result.message.id) {
   assert.equal(result.aiReply.kind, "ai_reply");
   assert.equal(result.aiReply.status, "ready");
-  assert.equal(result.aiReply.threadId, result.message.id);
+  assert.equal(result.aiReply.threadId, expectedThreadId);
   assert.equal(result.aiReply.authorId, "ling_agent");
   assert.match(result.aiReply.body, /确认需求/);
   assert.match(result.aiReply.body, /开始处理/);

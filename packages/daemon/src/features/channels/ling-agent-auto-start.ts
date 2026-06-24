@@ -33,8 +33,8 @@ export function decideLingAgentAutoStart(input: {
   readonly proposal: ChannelExecutionProposal;
 }): LingAutoStartDecision {
   const { channel, sourceMessage, proposal, store } = input;
-  if (sourceMessage.authorType !== "local-user" || sourceMessage.kind !== "message" || sourceMessage.intent !== "discuss" || sourceMessage.threadId) {
-    return blocked("policy_requires_confirmation", "Auto-start only applies to root local-user discussion messages.");
+  if (sourceMessage.authorType !== "local-user" || sourceMessage.kind !== "message" || sourceMessage.intent !== "discuss") {
+    return blocked("policy_requires_confirmation", "Auto-start only applies to local-user discussion messages.");
   }
   if (channel.status !== "active") {
     return blocked("policy_requires_confirmation", `Channel is ${channel.status}; auto-start requires an active channel.`);
@@ -76,6 +76,12 @@ export function decideLingAgentAutoStart(input: {
     return blocked("tool_denied", `Workspace approval policy denies required tools: ${deniedTools.join(", ")}.`);
   }
 
+  const highRiskText = normalizeText([
+    sourceMessage.body,
+    proposal.title,
+  ].join("\n"));
+  const highRisk = classifyHighRiskText(highRiskText);
+
   const text = normalizeText([
     sourceMessage.body,
     proposal.title,
@@ -84,7 +90,10 @@ export function decideLingAgentAutoStart(input: {
     ...proposal.acceptanceCriteria,
     ...proposal.collaborationSteps.map((step) => step.summary),
   ].join("\n"));
-  const highRisk = classifyHighRiskText(text);
+
+  if (sourceMessage.threadId && highRisk) {
+    return blocked("policy_requires_confirmation", `Thread follow-up contains a high-risk side effect and needs confirmation before start: ${highRisk}.`);
+  }
 
   if (proposal.requiredTools.includes("bash") && !directWorkflow && !looksLikeNarrowLocalCommand(text)) {
     return blocked("policy_requires_confirmation", "Bash work is not narrow enough for auto-start.");

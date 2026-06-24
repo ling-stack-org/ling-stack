@@ -310,13 +310,18 @@ Required changes:
 - Treat `requestAiReply`, `@Ling Agent`, selected teammate chips, and explicit teammate
   mentions as `TurnSignal`s. They may influence responder, participant, or answer
   expectation, but they must not skip executable intent handling.
+- Treat `ChannelMessage.threadId` as discussion grouping, not execution eligibility.
+  Thread replies should enter Ling Agent Session for active-session, approval, target,
+  executable, and clarification checks; `threadId` may only narrow ambient auto-route or
+  auto-start policy.
 - Add a TargetResolver helper before ordinary answer routing. It should return a resolved
   target with source refs or a reason to clarify.
 - Target sources, in priority order:
   1. current-turn explicit path, file name, command, attachment, link preview, or file ref;
   2. active approval, active run, active workflow step, queued intervention, or proposal;
-  3. recent same-session Ling/user messages with exactly one file target;
-  4. recent workflow/proposal/run evidence for filename-only edits.
+  3. same-thread Ling/user messages and thread root when the turn is a thread follow-up;
+  4. recent same-session Ling/user messages with exactly one file target;
+  5. recent workflow/proposal/run evidence for filename-only edits.
 - If multiple targets are plausible, return `clarify`. If no target exists and the user
   asks "how/why", return `answer`. If no target exists but the phrasing is execution-shaped,
   return `clarify`.
@@ -329,9 +334,13 @@ Regression tests:
 - `@Ling Agent 在工作区创建 login.html` creates `direct_workflow`, not an ordinary reply.
 - After Ling mentions one file target, `可以直接在工作区帮我做好吗？` resolves that file and
   creates `direct_workflow`.
+- In a channel thread, after Ling mentions one file target, `你直接帮我写到里面` resolves
+  that same-thread target and creates `direct_workflow`.
 - `@Designer 你好` remains an ordinary explicit reply.
 - If the previous context contains two possible file targets, the same follow-up asks one
   clarifying question.
+- If a same-thread follow-up has two possible file targets, it asks one clarifying
+  question in the same thread instead of starting work.
 - A "how do I create login.html?" question remains `answer`, not `direct_workflow`.
 
 ### Turn Envelope Contract

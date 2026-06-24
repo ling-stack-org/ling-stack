@@ -184,7 +184,7 @@ const roleMatches: readonly RoleMatch[] = [
 ];
 
 export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorInput): Promise<ChannelIntentSelectorResult> {
-  if (!messageCanCreateWorkflowProposal(input)) {
+  if (!messageCanEnterLingAgentSession(input)) {
     return { action: "continue" };
   }
   const materializationClarify = detectMaterializationClarify(input);
@@ -211,6 +211,9 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
     );
   }
   if (hasNonLingExplicitAiMention(input.sourceMessage)) {
+    return { action: "continue" };
+  }
+  if (input.sourceMessage.threadId) {
     return { action: "continue" };
   }
   const modelIntent = await maybeSelectModelAssistedIntent(input);
@@ -699,6 +702,7 @@ function createClarifyReply(
   modelReason?: string,
   bodyOverride?: string,
 ): ChannelIntentSelectorResult {
+  const replyThreadId = input.sourceMessage.threadId ?? input.sourceMessage.id;
   const existingReply = input.store
     .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
     .find((message) => message.kind === "ai_reply" && message.status !== "failed");
@@ -727,7 +731,7 @@ function createClarifyReply(
   const aiReply = input.store.createChannelMessage(
     {
       channelId: input.channel.id,
-      threadId: input.sourceMessage.id,
+      threadId: replyThreadId,
       kind: "ai_reply",
       intent: "discuss",
       authorType: "ai-teammate",
@@ -753,6 +757,7 @@ function createMaterializationClarifyReply(
   clarify: MaterializationClarifyReason,
   createdBy: "deterministic" | "model" = "deterministic",
 ): ChannelIntentSelectorResult {
+  const replyThreadId = input.sourceMessage.threadId ?? input.sourceMessage.id;
   const existingReply = input.store
     .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
     .find((message) => message.kind === "ai_reply" && message.status !== "failed");
@@ -776,7 +781,7 @@ function createMaterializationClarifyReply(
   const aiReply = input.store.createChannelMessage(
     {
       channelId: input.channel.id,
-      threadId: input.sourceMessage.id,
+      threadId: replyThreadId,
       kind: "ai_reply",
       intent: "discuss",
       authorType: "ai-teammate",
@@ -797,15 +802,12 @@ function createMaterializationClarifyReply(
   return { action: "clarify", aiReply, intentDecisionId: decision.id };
 }
 
-function messageCanCreateWorkflowProposal(input: ChannelIntentSelectorInput): boolean {
+function messageCanEnterLingAgentSession(input: ChannelIntentSelectorInput): boolean {
   const message = input.sourceMessage;
   if (message.authorType !== "local-user") {
     return false;
   }
   if (message.kind !== "message" || message.intent !== "discuss") {
-    return false;
-  }
-  if (message.threadId) {
     return false;
   }
   if (input.channel.status !== "active") {
@@ -1027,16 +1029,15 @@ function detectFileAction(text: string): "file_create" | "file_edit" | undefined
 }
 
 function detectImplicitRecentFileAction(text: string): "file_create" | "file_edit" | undefined {
-  if (!/(工作区|workspace|文件|file)/iu.test(text)) {
-    return undefined;
-  }
-  if (/(修改|编辑|更新|替换|改好|改完|patch|edit|update|replace)/iu.test(text)) {
+  const mentionsFileScope = /(工作区|workspace|文件|file)/iu.test(text);
+  const refersToPriorTarget = /(刚才|上面|前面|这个|那个|里面|里边|这里|那里|this|that|it)/iu.test(text);
+  if (/(修改|编辑|更新|替换|改好|改完|patch|edit|update|replace)/iu.test(text) && (mentionsFileScope || refersToPriorTarget)) {
     return "file_edit";
   }
-  if (/(直接|现在|可以|能不能|可不可以|帮我|请|麻烦).{0,40}(做好|做完|落盘|保存|写入|写进去|创建|新建|生成|create|write|save)/iu.test(text)) {
+  if (/(直接|现在|可以|能不能|可不可以|不可以|帮我|请|麻烦).{0,50}(做好|做完|落盘|保存|写入|写进|写到|放进|存进|创建|新建|生成|create|write|save)/iu.test(text)) {
     return "file_create";
   }
-  if (/(做好|做完|落盘|保存|写入|写进去|创建|新建|生成|create|write|save).{0,40}(工作区|workspace|文件|file)/iu.test(text)) {
+  if (/(做好|做完|落盘|保存|写入|写进|写到|放进|存进|创建|新建|生成|create|write|save).{0,50}(工作区|workspace|文件|file|里面|里边|这里|那里|this|that|it)/iu.test(text)) {
     return "file_create";
   }
   return undefined;
