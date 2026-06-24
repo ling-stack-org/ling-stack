@@ -381,6 +381,9 @@ export function providerCapabilityChipLabels(
   if (capabilities.includes("reasoning")) {
     labels.push(translateProviderText(t, "reasoning capability"));
   }
+  if (capabilities.includes("web_search")) {
+    labels.push(translateProviderText(t, "web search capability"));
+  }
   if (capabilities.includes("image_generate") || capabilities.includes("image_edit")) {
     labels.push(translateProviderText(t, "image capability"));
   }

@@ -172,6 +172,7 @@ type ProviderCapability =
   | "tool_call"
   | "reasoning"
   | "vision"
+  | "web_search"
   | "embedding"
   | "image_generate"
   | "image_edit"
@@ -180,7 +181,7 @@ type ProviderCapability =
   | "asr";
 ```
 
-Capabilities are declared on the preset because model support differs even inside the same vendor.
+Capabilities are declared on the preset because model support differs even inside the same vendor. `web_search` means the selected provider adapter can perform hosted web search and return citation evidence; it is not implied by generic OpenAI-compatible chat support.
 
 Example:
 
@@ -409,7 +410,7 @@ Templates are suggested defaults. Users can edit model, base URL, API type, capa
   "model": "gpt-5.5",
   "api": "openai-responses",
   "apiKeyRef": "env:OPENAI_API_KEY",
-  "capabilities": ["chat", "tool_call", "reasoning", "vision", "embedding"],
+  "capabilities": ["chat", "tool_call", "reasoning", "vision", "embedding", "web_search"],
   "input": ["text", "image"],
   "enabled": true
 }

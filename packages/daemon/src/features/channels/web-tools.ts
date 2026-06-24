@@ -13,7 +13,6 @@ import {
 } from "./materialization/extractors/link-body.js";
 
 const DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-5.5";
-const DEFAULT_OPENAI_RESPONSES_BASE_URL = "https://api.openai.com/v1";
 const WEB_CONTEXT_TIMEOUT_MS = 12_000;
 const WEB_SEARCH_MAX_OUTPUT_TOKENS = 900;
 const WEB_SEARCH_SUMMARY_CHARS = 2_400;
@@ -78,6 +77,11 @@ interface OpenAiWebSearchConfig {
   readonly model: string;
 }
 
+interface OpenAiWebSearchConfigResolution {
+  readonly config?: OpenAiWebSearchConfig;
+  readonly blockedReason?: string;
+}
+
 export async function buildChannelWebContext(input: BuildChannelWebContextInput): Promise<ChannelWebContext> {
   const text = input.sourceMessage.body;
   const shouldSearch = shouldRunWebSearchForText(text);
@@ -98,17 +102,17 @@ export async function buildChannelWebContext(input: BuildChannelWebContextInput)
   let search: OpenAiWebSearchResult | undefined;
   let searchBlockedReason: string | undefined;
   if (shouldSearch) {
-    const config = resolveOpenAiWebSearchConfig({
+    const resolution = resolveOpenAiWebSearchConfig({
       providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
       secretResolver: input.secretResolver,
     });
-    if (!config) {
-      searchBlockedReason = "OpenAI web search was requested, but env:OPENAI_API_KEY is not configured or the selected OpenAI Responses preset has no usable key.";
+    if (!resolution.config) {
+      searchBlockedReason = resolution.blockedReason ?? "Current selected Ling provider does not support realtime web search.";
       sections.push(`Web search status: blocked\nReason: ${searchBlockedReason}`);
     } else {
       try {
         search = await runOpenAiWebSearch({
-          ...config,
+          ...resolution.config,
           query: text,
           fetch: input.fetch,
           timeoutMs: WEB_CONTEXT_TIMEOUT_MS,
@@ -228,26 +232,35 @@ export async function runOpenAiWebSearch(input: OpenAiWebSearchRequest): Promise
 function resolveOpenAiWebSearchConfig(input: {
   readonly providerPreset?: ProviderPreset;
   readonly secretResolver: SecretResolver;
-}): OpenAiWebSearchConfig | undefined {
-  const provider = isOfficialOpenAiResponsesProvider(input.providerPreset) ? input.providerPreset : undefined;
-  const providerSecret = provider?.apiKeyRef
-    ? input.secretResolver.resolve(provider.apiKeyRef, "provider_api_key")
-    : undefined;
-  if (provider && providerSecret?.value) {
+}): OpenAiWebSearchConfigResolution {
+  const unsupportedProviderReason = "Current selected Ling provider does not support realtime web search. Select an enabled official OpenAI Responses provider with the web_search capability and a configured provider key in model settings; Ling will not bypass model settings with env:OPENAI_API_KEY.";
+  const provider = input.providerPreset;
+  if (!provider) {
+    return { blockedReason: unsupportedProviderReason };
+  }
+  if (!isOfficialOpenAiResponsesProvider(provider)) {
+    return { blockedReason: unsupportedProviderReason };
+  }
+  if (!provider.capabilities.includes("web_search")) {
+    return { blockedReason: unsupportedProviderReason };
+  }
+  if (!provider.apiKeyRef) {
     return {
+      blockedReason: "Selected OpenAI Responses provider supports web_search, but it has no configured provider key.",
+    };
+  }
+  const providerSecret = input.secretResolver.resolve(provider.apiKeyRef, "provider_api_key");
+  if (!providerSecret.value) {
+    return {
+      blockedReason: "Selected OpenAI Responses provider supports web_search, but its configured provider key is missing.",
+    };
+  }
+  return {
+    config: {
       endpoint: `${normalizeProviderBaseUrlForAdapter(provider)}/responses`,
       apiKey: providerSecret.value,
       model: provider.model || DEFAULT_OPENAI_WEB_SEARCH_MODEL,
-    };
-  }
-  const envSecret = input.secretResolver.resolve("env:OPENAI_API_KEY", "provider_api_key");
-  if (!envSecret.value) {
-    return undefined;
-  }
-  return {
-    endpoint: `${DEFAULT_OPENAI_RESPONSES_BASE_URL}/responses`,
-    apiKey: envSecret.value,
-    model: DEFAULT_OPENAI_WEB_SEARCH_MODEL,
+    },
   };
 }
 
