@@ -83,8 +83,8 @@ export function createDaemonServer(
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
   const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
   const externalWorkFetch = dependencies.externalWorkFetch;
-  const channelWebFetch = dependencies.channelWebFetch;
-  const channelWebResolveHostAddresses = dependencies.channelWebResolveHostAddresses;
+  const webFetch = dependencies.webFetch ?? dependencies.channelWebFetch;
+  const webResolveHostAddresses = dependencies.webResolveHostAddresses ?? dependencies.channelWebResolveHostAddresses;
   const imageVisionSummarizer = dependencies.imageVisionSummarizer;
   const mcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
   const controlPlaneEvents = new ControlPlaneEventHub();
@@ -144,8 +144,8 @@ export function createDaemonServer(
     externalSecretStore,
     mcpBroker,
     externalWorkFetch,
-    channelWebFetch,
-    channelWebResolveHostAddresses,
+    webFetch,
+    webResolveHostAddresses,
     imageVisionSummarizer,
     backgroundSchedulers,
     automationSchedulers,

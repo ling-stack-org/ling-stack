@@ -53,7 +53,7 @@ export interface ProviderAdapter {
 
 ## Web Search Adapter Contract
 
-`web_search` is a provider capability only when Ling has an adapter that can translate a specific provider protocol into normalized evidence:
+`web_search` is a provider capability only when Ling has an adapter that can translate a specific provider protocol into normalized evidence. Surfaces do not call adapters directly; they call the daemon web evidence service, which resolves the selected provider preset, dispatches the adapter, and renders a bounded evidence prompt for channel or private replies.
 
 ```ts
 interface WebSearchRequest {
@@ -90,6 +90,8 @@ interface ProviderWebSearchAdapter {
 Current implementation:
 
 - `openai-responses-web-search` supports enabled official OpenAI Responses presets that declare `web_search`.
+- `web-evidence-service` is the global daemon surface for web intent detection, URL reading, provider-backed search dispatch, blocked reasons, and prompt metadata.
+- Channel replies and private teammate replies both reuse the same evidence service; workflow steps and automations should use this service instead of adding surface-local web-search logic.
 - Generic OpenAI-compatible chat/completions relays do not inherit `web_search`; each relay or vendor needs a dedicated adapter if it exposes search.
 - xAI/Grok, Google grounding, Perplexity/search-model providers, Anthropic, and domestic providers should be added one adapter at a time with request/citation tests.
 
