@@ -157,6 +157,7 @@ async function completeAiChannelReply(input: {
 
   const textDeltas: string[] = [];
   let lastVisibleStreamBody = "";
+  let promptLeakDetected = false;
   try {
     const turnEnvelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
       store: input.store,
@@ -268,6 +269,25 @@ async function completeAiChannelReply(input: {
           if (event.type === "assistant_text_delta") {
             textDeltas.push(event.text);
             const visibleBody = visibleReplyTextSoFar(textDeltas.join(""));
+            if (promptLeakDetected || isChannelReplyPromptLeak(visibleBody)) {
+              promptLeakDetected = true;
+              if (lastVisibleStreamBody !== PROMPT_LEAK_PENDING_BODY) {
+                lastVisibleStreamBody = PROMPT_LEAK_PENDING_BODY;
+                const updated = input.store.updateChannelMessageRuntime(
+                  input.pending.id,
+                  {
+                    body: PROMPT_LEAK_PENDING_BODY,
+                    status: "pending",
+                    errorMessage: null,
+                  },
+                  new Date().toISOString(),
+                );
+                if (updated) {
+                  input.stream?.onDelta(updated, "");
+                }
+              }
+              return;
+            }
             if (visibleBody !== lastVisibleStreamBody) {
               const delta = visibleBody.startsWith(lastVisibleStreamBody)
                 ? visibleBody.slice(lastVisibleStreamBody.length)
@@ -339,6 +359,9 @@ async function completeAiChannelReply(input: {
       result = await runDiscussionTask(discussionPrompt);
     }
     const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
+    if (isChannelReplyPromptLeak(rawReplyText)) {
+      throw new Error(PROMPT_LEAK_ERROR_MESSAGE);
+    }
     const extractedProposal = input.proposalMode === "disabled"
       ? undefined
       : extractChannelExecutionProposal(rawReplyText, input.canonicalTeammateId, isRunTool);
@@ -395,6 +418,55 @@ async function completeAiChannelReply(input: {
   } finally {
     input.store.releaseRuntimeSemaphoreSlotsForOwner(input.supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
+}
+
+const PROMPT_LEAK_PENDING_BODY = "AI teammate response was blocked because the runner echoed internal channel context.";
+const PROMPT_LEAK_ERROR_MESSAGE = "Runner echoed internal channel context instead of an assistant reply.";
+
+function isChannelReplyPromptLeak(raw: string): boolean {
+  const text = raw.trim();
+  const blockedPrefixes = [
+    "Channel collaboration protocol:",
+    "Recent channel context before the latest turn:",
+    "Reply as the channel AI teammate. Keep the response actionable and brief.",
+  ];
+  if (blockedPrefixes.some((prefix) => text.startsWith(prefix))) {
+    return true;
+  }
+  if (/^Attachments:\s*(?:none)?/u.test(text) && text.includes("Link previews:")) {
+    return true;
+  }
+  if (text.length < 80) {
+    return false;
+  }
+  const markers = [
+    "Channel collaboration protocol:",
+    "Response language:",
+    "Auto reply mode:",
+    "Default workflow preference:",
+    "Private teammate chat, hidden prompts, provider secrets",
+    "Recent channel context before the latest turn:",
+    "Use this context to resolve short follow-ups",
+    "Reply as the channel AI teammate. Keep the response actionable and brief.",
+    "Current teammate:",
+    "User message:",
+    "Attachments:",
+    "Link previews:",
+    "Workspace file refs:",
+  ];
+  const matchedMarkers = markers.filter((marker) => text.includes(marker));
+  const hasProtocol = text.includes("Channel collaboration protocol:");
+  const hasReplyInstruction = text.includes("Reply as the channel AI teammate. Keep the response actionable and brief.");
+  const hasRecentContext = text.includes("Recent channel context before the latest turn:");
+  const hasEnvelopeCluster =
+    (text.includes("Attachments:") || text.includes("Attachments: none")) &&
+    (text.includes("Link previews:") || text.includes("Link previews: none")) &&
+    (text.includes("Workspace file refs:") || text.includes("Workspace file refs: none"));
+  return (
+    (hasReplyInstruction && (hasProtocol || hasEnvelopeCluster || hasRecentContext)) ||
+    (hasProtocol && matchedMarkers.length >= 4) ||
+    (hasEnvelopeCluster && matchedMarkers.length >= 5)
+  );
 }
 
 function visibleReplyTextSoFar(raw: string): string {
