@@ -13,6 +13,7 @@ const endpointSuffixes = [
   "/chat/completions",
   "/contents/generations/tasks",
   "/images/generations",
+  "/interactions",
   "/responses",
   "/messages",
   "/models",
@@ -125,6 +126,9 @@ function defaultProviderBaseUrl(input: Pick<ProviderAdapterInput, "api" | "kind"
   }
   if (input.api === "anthropic-messages" || input.kind === "anthropic") {
     return "https://api.anthropic.com/v1";
+  }
+  if (input.api === "google-generative-ai" || input.kind === "google") {
+    return "https://generativelanguage.googleapis.com/v1beta";
   }
   return "https://api.openai.com/v1";
 }

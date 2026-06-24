@@ -43,6 +43,32 @@ export function defaultProviderTemplates(): readonly ProviderTemplate[] {
       apiKeyRef: "env:OPENAI_CODEX_API_KEY",
     }),
     chatProviderTemplate({
+      templateId: "xai-grok-web-search",
+      kind: "openai-compatible",
+      displayName: "Grok Responses + Web Search",
+      description: "xAI/Grok endpoint using the Responses-compatible web_search tool. Uses the provider key configured in Ling model settings.",
+      providerId: "xai",
+      model: "grok-4.3",
+      api: "openai-responses",
+      baseUrl: "https://api.x.ai/v1",
+      apiKeyRef: "env:XAI_API_KEY",
+      compat: { webSearch: { protocol: "responses-web-search" } },
+      capabilities: ["chat", "tool_call", "reasoning", "web_search"],
+    }),
+    chatProviderTemplate({
+      templateId: "google-gemini-web-search",
+      kind: "google",
+      displayName: "Gemini + Google Search",
+      description: "Google Gemini endpoint using Google Search grounding through the Gemini API. Uses the provider key configured in Ling model settings.",
+      providerId: "google-gemini",
+      model: "gemini-3.5-flash",
+      api: "google-generative-ai",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      apiKeyRef: "env:GEMINI_API_KEY",
+      compat: { webSearch: { protocol: "google-interactions-search" } },
+      capabilities: ["chat", "tool_call", "vision", "web_search"],
+    }),
+    chatProviderTemplate({
       templateId: "anthropic-claude",
       kind: "anthropic",
       displayName: "Claude",
@@ -155,6 +181,7 @@ function chatProviderTemplate(input: {
   readonly providerTransport?: ProviderPresetInput["providerTransport"];
   readonly baseUrl?: string;
   readonly apiKeyRef: string;
+  readonly compat?: ProviderPresetInput["compat"];
   readonly capabilities?: ProviderPresetInput["capabilities"];
 }): ProviderTemplate {
   return {
@@ -164,6 +191,7 @@ function chatProviderTemplate(input: {
     enabled: false,
     authHeader: true,
     reasoning: true,
+    compat: input.compat ?? {},
     contextWindow: 128000,
     maxTokens: 16384,
   };

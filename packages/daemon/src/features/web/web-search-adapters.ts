@@ -8,6 +8,16 @@ const WEB_SEARCH_MAX_OUTPUT_TOKENS = 900;
 const WEB_SEARCH_SUMMARY_CHARS = 2_400;
 const WEB_SEARCH_MAX_SOURCES = 8;
 
+type ProviderWebSearchProtocol =
+  | "responses-web-search"
+  | "openai-chat-completions-search"
+  | "google-interactions-search";
+
+interface ProviderWebSearchCompat {
+  readonly protocol?: ProviderWebSearchProtocol;
+  readonly endpointPath?: string;
+}
+
 export interface WebSearchRequest {
   readonly providerPreset: ProviderPreset;
   readonly apiKey: string;
@@ -21,6 +31,20 @@ export interface OpenAiWebSearchRequest {
   readonly apiKey: string;
   readonly model: string;
   readonly query: string;
+  readonly headers?: Record<string, string>;
+  readonly authHeader?: boolean;
+  readonly fetch?: typeof globalThis.fetch;
+  readonly timeoutMs?: number;
+}
+
+export interface OpenAiChatCompletionsWebSearchRequest extends OpenAiWebSearchRequest {}
+
+export interface GoogleInteractionsWebSearchRequest {
+  readonly endpoint: string;
+  readonly apiKey: string;
+  readonly model: string;
+  readonly query: string;
+  readonly headers?: Record<string, string>;
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
 }
@@ -52,17 +76,19 @@ export interface ProviderWebSearchAdapter {
 
 export const openAiResponsesWebSearchAdapter: ProviderWebSearchAdapter = {
   id: "openai-responses-web-search",
-  displayName: "OpenAI Responses web_search",
-  protocol: "openai-responses",
+  displayName: "Responses-compatible web_search",
+  protocol: "responses-web-search",
   supportsProvider(provider) {
-    return isOfficialOpenAiResponsesProvider(provider) && provider.capabilities.includes("web_search");
+    return providerSupportsWebSearchProtocol(provider, "responses-web-search") && provider.api === "openai-responses";
   },
   async search(input) {
     const result = await runOpenAiWebSearch({
-      endpoint: `${normalizeProviderBaseUrlForAdapter(input.providerPreset)}/responses`,
+      endpoint: buildProviderProtocolEndpoint(input.providerPreset, "/responses"),
       apiKey: input.apiKey,
       model: input.providerPreset.model || DEFAULT_OPENAI_WEB_SEARCH_MODEL,
       query: input.query,
+      headers: input.providerPreset.headers,
+      authHeader: input.providerPreset.authHeader,
       fetch: input.fetch,
       timeoutMs: input.timeoutMs,
     });
@@ -77,8 +103,67 @@ export const openAiResponsesWebSearchAdapter: ProviderWebSearchAdapter = {
   },
 };
 
+export const openAiChatCompletionsWebSearchAdapter: ProviderWebSearchAdapter = {
+  id: "openai-chat-completions-web-search",
+  displayName: "OpenAI-compatible Chat Completions web search",
+  protocol: "openai-chat-completions-search",
+  supportsProvider(provider) {
+    return providerSupportsWebSearchProtocol(provider, "openai-chat-completions-search") && provider.api === "openai-completions";
+  },
+  async search(input) {
+    const result = await runOpenAiChatCompletionsWebSearch({
+      endpoint: buildProviderProtocolEndpoint(input.providerPreset, "/chat/completions"),
+      apiKey: input.apiKey,
+      model: input.providerPreset.model || DEFAULT_OPENAI_WEB_SEARCH_MODEL,
+      query: input.query,
+      headers: input.providerPreset.headers,
+      authHeader: input.providerPreset.authHeader,
+      fetch: input.fetch,
+      timeoutMs: input.timeoutMs,
+    });
+    return {
+      ...result,
+      provider: {
+        adapterId: "openai-chat-completions-web-search",
+        providerPresetId: input.providerPreset.id,
+        displayName: input.providerPreset.displayName,
+      },
+    };
+  },
+};
+
+export const googleInteractionsWebSearchAdapter: ProviderWebSearchAdapter = {
+  id: "google-interactions-web-search",
+  displayName: "Google Gemini Search grounding",
+  protocol: "google-interactions-search",
+  supportsProvider(provider) {
+    return providerSupportsWebSearchProtocol(provider, "google-interactions-search") && provider.api === "google-generative-ai";
+  },
+  async search(input) {
+    const result = await runGoogleInteractionsWebSearch({
+      endpoint: buildProviderProtocolEndpoint(input.providerPreset, "/interactions"),
+      apiKey: input.apiKey,
+      model: input.providerPreset.model,
+      query: input.query,
+      headers: input.providerPreset.headers,
+      fetch: input.fetch,
+      timeoutMs: input.timeoutMs,
+    });
+    return {
+      ...result,
+      provider: {
+        adapterId: "google-interactions-web-search",
+        providerPresetId: input.providerPreset.id,
+        displayName: input.providerPreset.displayName,
+      },
+    };
+  },
+};
+
 const providerWebSearchAdapters: readonly ProviderWebSearchAdapter[] = [
   openAiResponsesWebSearchAdapter,
+  openAiChatCompletionsWebSearchAdapter,
+  googleInteractionsWebSearchAdapter,
 ];
 
 export function listProviderWebSearchAdapters(): readonly ProviderWebSearchAdapter[] {
@@ -101,7 +186,8 @@ export async function runOpenAiWebSearch(input: OpenAiWebSearchRequest): Promise
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${input.apiKey}`,
+      ...input.headers,
+      ...(input.authHeader === false ? {} : { Authorization: `Bearer ${input.apiKey}` }),
     },
     body: JSON.stringify({
       model: input.model,
@@ -128,6 +214,72 @@ export async function runOpenAiWebSearch(input: OpenAiWebSearchRequest): Promise
   };
 }
 
+export async function runOpenAiChatCompletionsWebSearch(input: OpenAiChatCompletionsWebSearchRequest): Promise<Omit<WebSearchResult, "provider">> {
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  if (!fetchImpl) {
+    throw new Error("fetch is not available in this runtime.");
+  }
+  const response = await fetchImpl(input.endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...input.headers,
+      ...(input.authHeader === false ? {} : { Authorization: `Bearer ${input.apiKey}` }),
+    },
+    body: JSON.stringify({
+      model: input.model,
+      messages: [{ role: "user", content: input.query }],
+      web_search_options: { search_context_size: "low" },
+      max_tokens: WEB_SEARCH_MAX_OUTPUT_TOKENS,
+      stream: false,
+    }),
+    signal: AbortSignal.timeout(input.timeoutMs ?? 12_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Chat Completions API returned HTTP ${response.status}${await safeReadErrorBody(response)}`);
+  }
+
+  const payload = await response.json() as unknown;
+  return {
+    query: input.query,
+    text: extractChatCompletionsText(payload).slice(0, WEB_SEARCH_SUMMARY_CHARS),
+    sources: extractChatCompletionsSources(payload).slice(0, WEB_SEARCH_MAX_SOURCES),
+  };
+}
+
+export async function runGoogleInteractionsWebSearch(input: GoogleInteractionsWebSearchRequest): Promise<Omit<WebSearchResult, "provider">> {
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  if (!fetchImpl) {
+    throw new Error("fetch is not available in this runtime.");
+  }
+  const response = await fetchImpl(input.endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": input.apiKey,
+      ...input.headers,
+    },
+    body: JSON.stringify({
+      model: normalizeGoogleModelName(input.model),
+      input: input.query,
+      tools: [{ type: "google_search" }],
+    }),
+    signal: AbortSignal.timeout(input.timeoutMs ?? 12_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gemini API returned HTTP ${response.status}${await safeReadErrorBody(response)}`);
+  }
+
+  const payload = await response.json() as unknown;
+  return {
+    query: input.query,
+    text: extractGoogleInteractionsText(payload).slice(0, WEB_SEARCH_SUMMARY_CHARS),
+    sources: extractGoogleSources(payload).slice(0, WEB_SEARCH_MAX_SOURCES),
+  };
+}
+
 function isOfficialOpenAiResponsesProvider(provider: ProviderPreset): boolean {
   if (provider.api !== "openai-responses" || !provider.enabled) {
     return false;
@@ -146,6 +298,83 @@ function isOfficialOpenAiResponsesProvider(provider: ProviderPreset): boolean {
   }
 }
 
+function providerSupportsWebSearchProtocol(provider: ProviderPreset, protocol: ProviderWebSearchProtocol): boolean {
+  if (!provider.enabled || !provider.capabilities.includes("web_search")) {
+    return false;
+  }
+  return resolveProviderWebSearchProtocol(provider) === protocol;
+}
+
+function resolveProviderWebSearchProtocol(provider: ProviderPreset): ProviderWebSearchProtocol | undefined {
+  const compatProtocol = readProviderWebSearchCompat(provider)?.protocol;
+  if (compatProtocol) {
+    return compatProtocol;
+  }
+  if (isOfficialOpenAiResponsesProvider(provider)) {
+    return "responses-web-search";
+  }
+  return undefined;
+}
+
+function readProviderWebSearchCompat(provider: ProviderPreset): ProviderWebSearchCompat | undefined {
+  const compat = isRecord(provider.compat.webSearch)
+    ? provider.compat.webSearch
+    : isRecord(provider.compat.web_search)
+      ? provider.compat.web_search
+      : undefined;
+  if (!compat) {
+    return undefined;
+  }
+  return {
+    protocol: normalizeWebSearchProtocol(compat.protocol),
+    endpointPath: typeof compat.endpointPath === "string"
+      ? compat.endpointPath
+      : typeof compat.endpoint_path === "string"
+        ? compat.endpoint_path
+        : undefined,
+  };
+}
+
+function normalizeWebSearchProtocol(value: unknown): ProviderWebSearchProtocol | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  switch (value) {
+    case "responses":
+    case "openai-responses":
+    case "responses-web-search":
+    case "xai-responses-web-search":
+      return "responses-web-search";
+    case "chat-completions":
+    case "openai-chat":
+    case "openai-chat-completions":
+    case "openai-chat-completions-search":
+      return "openai-chat-completions-search";
+    case "google":
+    case "gemini":
+    case "google-search":
+    case "google-interactions":
+    case "google-interactions-search":
+      return "google-interactions-search";
+    default:
+      return undefined;
+  }
+}
+
+function buildProviderProtocolEndpoint(provider: ProviderPreset, defaultPath: string): string {
+  const compatEndpointPath = readProviderWebSearchCompat(provider)?.endpointPath;
+  const endpointPath = normalizeEndpointPath(compatEndpointPath) ?? defaultPath;
+  return `${normalizeProviderBaseUrlForAdapter(provider)}${endpointPath}`;
+}
+
+function normalizeEndpointPath(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || /^[a-z][a-z0-9+.-]*:/iu.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
 function extractResponseText(payload: unknown): string {
   if (isRecord(payload) && typeof payload.output_text === "string") {
     return payload.output_text.trim();
@@ -158,6 +387,61 @@ function extractResponseText(payload: unknown): string {
     for (const content of item.content) {
       if (isRecord(content) && typeof content.text === "string") {
         textParts.push(content.text);
+      }
+    }
+  }
+  return textParts.join("\n").trim();
+}
+
+function extractChatCompletionsText(payload: unknown): string {
+  const textParts: string[] = [];
+  for (const choice of readChoiceItems(payload)) {
+    if (!isRecord(choice) || !isRecord(choice.message)) {
+      continue;
+    }
+    const content = choice.message.content;
+    if (typeof content === "string") {
+      textParts.push(content);
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
+        if (isRecord(part) && typeof part.text === "string") {
+          textParts.push(part.text);
+        }
+      }
+    }
+  }
+  return textParts.join("\n").trim();
+}
+
+function extractGoogleInteractionsText(payload: unknown): string {
+  if (isRecord(payload) && typeof payload.output_text === "string") {
+    return payload.output_text.trim();
+  }
+  const textParts: string[] = [];
+  if (isRecord(payload) && Array.isArray(payload.steps)) {
+    for (const step of payload.steps) {
+      if (!isRecord(step)) {
+        continue;
+      }
+      if (isRecord(step.output) && typeof step.output.text === "string") {
+        textParts.push(step.output.text);
+      }
+      if (Array.isArray(step.content)) {
+        for (const content of step.content) {
+          if (isRecord(content) && typeof content.text === "string") {
+            textParts.push(content.text);
+          }
+        }
+      }
+    }
+  }
+  for (const candidate of readCandidateItems(payload)) {
+    if (!isRecord(candidate) || !isRecord(candidate.content) || !Array.isArray(candidate.content.parts)) {
+      continue;
+    }
+    for (const part of candidate.content.parts) {
+      if (isRecord(part) && typeof part.text === "string") {
+        textParts.push(part.text);
       }
     }
   }
@@ -192,19 +476,123 @@ function extractWebSources(payload: unknown): WebSource[] {
       }
     }
   }
+  sources.push(...extractTopLevelSources(payload));
   return uniqueSources(sources);
+}
+
+function extractChatCompletionsSources(payload: unknown): WebSource[] {
+  const sources: WebSource[] = [];
+  for (const choice of readChoiceItems(payload)) {
+    if (!isRecord(choice) || !isRecord(choice.message)) {
+      continue;
+    }
+    if (Array.isArray(choice.message.annotations)) {
+      for (const annotation of choice.message.annotations) {
+        const parsed = parseWebSource(annotation);
+        if (parsed) {
+          sources.push(parsed);
+        }
+      }
+    }
+  }
+  sources.push(...extractTopLevelSources(payload));
+  return uniqueSources(sources);
+}
+
+function extractGoogleSources(payload: unknown): WebSource[] {
+  const sources: WebSource[] = [];
+  if (isRecord(payload) && Array.isArray(payload.steps)) {
+    for (const step of payload.steps) {
+      if (!isRecord(step)) {
+        continue;
+      }
+      if (isRecord(step.output) && Array.isArray(step.output.annotations)) {
+        for (const annotation of step.output.annotations) {
+          const parsed = parseWebSource(annotation);
+          if (parsed) {
+            sources.push(parsed);
+          }
+        }
+      }
+      if (Array.isArray(step.content)) {
+        for (const content of step.content) {
+          if (!isRecord(content) || !Array.isArray(content.annotations)) {
+            continue;
+          }
+          for (const annotation of content.annotations) {
+            const parsed = parseWebSource(annotation);
+            if (parsed) {
+              sources.push(parsed);
+            }
+          }
+        }
+      }
+    }
+  }
+  for (const candidate of readCandidateItems(payload)) {
+    if (!isRecord(candidate) || !isRecord(candidate.groundingMetadata)) {
+      continue;
+    }
+    const groundingMetadata = candidate.groundingMetadata;
+    if (Array.isArray(groundingMetadata.groundingChunks)) {
+      for (const chunk of groundingMetadata.groundingChunks) {
+        const parsed = parseWebSource(chunk);
+        if (parsed) {
+          sources.push(parsed);
+        }
+      }
+    }
+  }
+  sources.push(...extractTopLevelSources(payload));
+  return uniqueSources(sources);
+}
+
+function extractTopLevelSources(payload: unknown): WebSource[] {
+  if (!isRecord(payload)) {
+    return [];
+  }
+  const candidates = [
+    Array.isArray(payload.sources) ? payload.sources : undefined,
+    Array.isArray(payload.citations) ? payload.citations : undefined,
+  ].filter((value): value is unknown[] => Boolean(value));
+  const sources: WebSource[] = [];
+  for (const list of candidates) {
+    for (const item of list) {
+      if (typeof item === "string" && item.trim()) {
+        sources.push({ url: item.trim() });
+        continue;
+      }
+      const parsed = parseWebSource(item);
+      if (parsed) {
+        sources.push(parsed);
+      }
+    }
+  }
+  return sources;
 }
 
 function parseWebSource(value: unknown): WebSource | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
-  const nested = isRecord(value.url_citation) ? value.url_citation : value;
-  if (!isRecord(nested) || typeof nested.url !== "string" || !nested.url.trim()) {
+  const nested = isRecord(value.url_citation)
+    ? value.url_citation
+    : isRecord(value.web)
+      ? value.web
+      : value;
+  if (!isRecord(nested)) {
+    return undefined;
+  }
+  const url = typeof nested.url === "string"
+    ? nested.url
+    : typeof nested.uri === "string"
+      ? nested.uri
+      : undefined;
+  if (!url?.trim()) {
     return undefined;
   }
   return {
-    url: nested.url,
+    url: url.trim(),
     title: typeof nested.title === "string" ? nested.title : undefined,
     snippet: typeof nested.snippet === "string" ? nested.snippet : undefined,
   };
@@ -212,6 +600,19 @@ function parseWebSource(value: unknown): WebSource | undefined {
 
 function readOutputItems(payload: unknown): readonly unknown[] {
   return isRecord(payload) && Array.isArray(payload.output) ? payload.output : [];
+}
+
+function readChoiceItems(payload: unknown): readonly unknown[] {
+  return isRecord(payload) && Array.isArray(payload.choices) ? payload.choices : [];
+}
+
+function readCandidateItems(payload: unknown): readonly unknown[] {
+  return isRecord(payload) && Array.isArray(payload.candidates) ? payload.candidates : [];
+}
+
+function normalizeGoogleModelName(model: string): string {
+  const trimmed = model.trim();
+  return trimmed.startsWith("models/") ? trimmed.slice("models/".length) : trimmed;
 }
 
 function uniqueSources(sources: readonly WebSource[]): WebSource[] {

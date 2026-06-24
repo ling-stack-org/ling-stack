@@ -4,7 +4,7 @@
 
 Ling Agent should answer questions that require current public web evidence without pretending that Codex-only tools are part of the Ling runtime. Ling exposes one global web capability contract and lets provider adapters translate vendor-specific protocols into that contract. The current implementation builds daemon-owned web evidence before channel and private teammate reply generation:
 
-- `web_search`: provider-backed hosted web search, currently implemented for a selected official OpenAI Responses provider that explicitly declares the `web_search` capability.
+- `web_search`: provider-backed hosted web search, implemented for selected providers that explicitly declare the `web_search` capability and match a Ling web-search protocol adapter.
 - `open_url` / `read_url`: public URL body extraction for explicit URL-reading requests.
 - `browser`: deferred; interactive browser control requires a separate session, approval, and audit model.
 
@@ -69,7 +69,9 @@ Provider adapter contract:
 
 Current adapter:
 
-- `openai-responses-web-search`: calls the OpenAI Responses API with `tools: [{ "type": "web_search", "search_context_size": "low" }]` and requests `include: ["web_search_call.action.sources"]`.
+- `openai-responses-web-search`: calls a Responses-compatible API with `tools: [{ "type": "web_search", "search_context_size": "low" }]` and requests `include: ["web_search_call.action.sources"]`. Official OpenAI Responses providers are recognized automatically; compatible providers such as xAI/Grok or private relays must set `compat.webSearch.protocol = "responses-web-search"`.
+- `openai-chat-completions-web-search`: calls a Chat Completions-compatible API with `web_search_options`. Providers must explicitly set `compat.webSearch.protocol = "openai-chat-completions-search"` because normal chat compatibility does not guarantee hosted search or citation annotations.
+- `google-interactions-web-search`: calls Gemini's Google Search grounding through the Gemini API Interactions endpoint. Providers must set `compat.webSearch.protocol = "google-interactions-search"`.
 
 ## Global Tool vs Provider Capability
 
@@ -83,10 +85,10 @@ flowchart LR
   GlobalTool --> Policy["Policy and evidence budget"]
   Policy --> Adapter["Provider adapter"]
   Adapter --> OpenAI["OpenAI Responses web_search"]
-  Adapter --> Grok["xAI/Grok live search (planned)"]
-  Adapter --> Google["Google grounding (planned)"]
+  Adapter --> Grok["xAI/Grok Responses web_search"]
+  Adapter --> Google["Gemini Google Search grounding"]
   Adapter --> Perplexity["Search-model provider (planned)"]
-  Adapter --> Domestic["Domestic provider adapters (planned)"]
+  Adapter --> Domestic["Domestic compatible protocol or adapter"]
   OpenAI --> Evidence["Normalized WebSearchResult"]
   Grok --> Evidence
   Google --> Evidence
@@ -99,12 +101,13 @@ flowchart LR
 | Provider family | Ling adapter status | Why not implicit |
 | --- | --- | --- |
 | OpenAI Responses | Implemented: `openai-responses-web-search` | Uses Responses `web_search` tool and source include shape. |
-| OpenAI-compatible chat/completions relay | Not implicit | Compatibility usually covers chat completions, not hosted search tools or citation shape. |
-| xAI/Grok | Planned | Live search/DeepSearch is provider-specific and needs a dedicated request and citation mapper. |
-| Google Gemini | Planned | Search grounding uses Google-specific grounding metadata, not OpenAI tool calls. |
+| OpenAI-compatible Responses relay | Implemented when `compat.webSearch.protocol = "responses-web-search"` | The relay must expose `/responses` with OpenAI/xAI-style `web_search` and citations. |
+| OpenAI-compatible chat/completions relay | Implemented when `compat.webSearch.protocol = "openai-chat-completions-search"` | Normal chat compatibility does not guarantee `web_search_options` or URL annotations. |
+| xAI/Grok | Implemented through the Responses-compatible protocol template | Grok uses the configured xAI provider key, not a separate daemon key. |
+| Google Gemini | Implemented: `google-interactions-web-search` | Search grounding uses Google-specific Interactions annotations or grounding metadata, not OpenAI tool calls. |
 | Perplexity/search-model providers | Planned | Often returns citations as model/provider response metadata rather than a hosted tool call. |
 | Anthropic | Planned | Web/search tool semantics and result blocks differ from OpenAI Responses. |
-| Domestic providers: Doubao, DeepSeek, Qwen, GLM, MiniMax | Planned per provider | Some expose search through platform extensions, some only expose chat. Ling must not mark them searchable without an adapter and live verification. |
+| Domestic providers: Doubao, DeepSeek, Qwen, GLM, MiniMax | Supported when configured to a known protocol; provider-specific extensions remain planned | Some expose search through platform extensions, some only expose chat. Ling must not mark them searchable without a protocol adapter and citation tests. |
 
 Do not batch-enable every market provider by capability name alone. Add adapters incrementally behind tests that prove:
 
@@ -113,6 +116,51 @@ Do not batch-enable every market provider by capability name alone. Add adapters
 - blocked/error behavior;
 - no plaintext secret in prompts/logs;
 - provider check or model metadata can safely advertise `web_search`.
+
+### Provider `compat.webSearch`
+
+`capabilities` and `compat` carry different meanings:
+
+- `capabilities: ["web_search"]` says the provider is allowed to be selected for real-time search.
+- `compat.webSearch.protocol` says which wire protocol Ling can call and how citations will be normalized.
+
+Supported protocol declarations:
+
+```json
+{ "webSearch": { "protocol": "responses-web-search" } }
+```
+
+Use this for OpenAI/xAI-compatible Responses endpoints with hosted `web_search`.
+
+```json
+{ "webSearch": { "protocol": "openai-chat-completions-search" } }
+```
+
+Use this for compatible Chat Completions endpoints that accept `web_search_options` and return URL annotations.
+
+```json
+{ "webSearch": { "protocol": "google-interactions-search" } }
+```
+
+Use this for Gemini Google Search grounding.
+
+Optional `endpointPath` can override the default relative path for relays that mount the same protocol somewhere else. Ling ignores absolute endpoint overrides so a provider key cannot be silently sent to a different host than the configured provider base URL.
+
+Examples:
+
+```bash
+ling-stack provider update provider_... \
+  --api openai-responses \
+  --capability chat,tool_call,reasoning,web_search \
+  --compat-json '{"webSearch":{"protocol":"responses-web-search"}}'
+```
+
+```bash
+ling-stack provider update provider_... \
+  --api openai-completions \
+  --capability chat,tool_call,reasoning,web_search \
+  --compat-json '{"webSearch":{"protocol":"openai-chat-completions-search"}}'
+```
 
 ### open_url / read_url
 
@@ -165,7 +213,7 @@ The channel and private reply system prompts remain side-effect free:
 The slice intentionally reuses the existing provider secret system:
 
 - Selected provider with `web_search` and a matching Ling web-search adapter: use its configured `apiKeyRef`.
-- OpenAI-compatible chat/completions providers are not assumed to support hosted web search.
+- OpenAI-compatible chat/completions providers are not assumed to support hosted web search unless `compat.webSearch.protocol` names a supported search protocol.
 - Ling does not read a separate daemon-level `OPENAI_API_KEY` as a hidden fallback.
 - No new key is created.
 - No secret is persisted by this feature.

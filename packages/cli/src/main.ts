@@ -66,7 +66,7 @@ const DEFAULT_TOOLS = ["read", "grep", "find", "ls"] as const;
 const VALID_TOOLS: ReadonlySet<string> = new Set(Object.keys(defaultApprovalToolDecisions) as RunTool[]);
 const VALID_POLICY_DECISIONS: ReadonlySet<string> = new Set(approvalToolDecisions);
 const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
-const VALID_PROVIDER_KINDS = new Set(["openai", "anthropic", "openai-compatible", "doubao", "deepseek", "minimax", "glm", "jimeng", "seedream", "seedance"]);
+const VALID_PROVIDER_KINDS = new Set(["openai", "anthropic", "google", "openai-compatible", "doubao", "deepseek", "minimax", "glm", "jimeng", "seedream", "seedance"]);
 const VALID_PROVIDER_APIS = new Set(["openai-completions", "openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai", "mistral-conversations", "media-job"]);
 const VALID_PROVIDER_TRANSPORTS = new Set(["auto", "websocket", "websocket-cached", "sse"]);
 const VALID_PROVIDER_CAPABILITIES = new Set(["chat", "tool_call", "reasoning", "vision", "embedding", "image_generate", "image_edit", "video_generate", "tts", "asr"]);
@@ -5789,6 +5789,9 @@ function defaultProviderApi(kind: string): string {
   if (kind === "anthropic") {
     return "anthropic-messages";
   }
+  if (kind === "google") {
+    return "google-generative-ai";
+  }
   return "openai-completions";
 }
 
@@ -7702,10 +7705,10 @@ function printProviderHelp(): void {
   ling-stack provider remove <id>
 
 Kinds:
-  openai, anthropic, openai-compatible, doubao, deepseek, minimax, glm, jimeng, seedream, seedance
+  openai, anthropic, google, openai-compatible, doubao, deepseek, minimax, glm, jimeng, seedream, seedance
 
 Common options:
-  --api <api>                  Default: openai-completions, anthropic-messages for anthropic
+  --api <api>                  Default: openai-completions, anthropic-messages for anthropic, google-generative-ai for google
   --provider-transport <mode>  auto|websocket|websocket-cached|sse for openai-codex-responses
   --base-url <url>             Required for openai-compatible
   --api-key-ref env:NAME|keychain:NAME
@@ -7719,7 +7722,7 @@ Common options:
   --enabled <true|false> | --disabled
   --header KEY=VALUE           Repeatable custom header
   --headers-json <object>      Custom headers as JSON object with string values
-  --compat-json <object>       OpenAI-compatible adapter options
+  --compat-json <object>       Provider adapter options, including {"webSearch":{"protocol":"responses-web-search"}}
 
 Update-only clear flags:
   --clear-provider-transport --clear-base-url --clear-api-key-ref --clear-auth-header --clear-reasoning --clear-context-window --clear-max-tokens

@@ -13,7 +13,11 @@ import {
 } from "../web/web-evidence-service.js";
 import type { LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 
-export { runOpenAiWebSearch } from "../web/web-search-adapters.js";
+export {
+  runGoogleInteractionsWebSearch,
+  runOpenAiChatCompletionsWebSearch,
+  runOpenAiWebSearch,
+} from "../web/web-search-adapters.js";
 export {
   extractPublicUrls,
   shouldReadPublicUrlsForText,

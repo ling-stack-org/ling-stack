@@ -148,6 +148,7 @@ a nested settings panel around the provider table.
 type ProviderKind =
   | "openai"
   | "anthropic"
+  | "google"
   | "openai-compatible"
   | "doubao"
   | "deepseek"
@@ -159,6 +160,8 @@ type ProviderKind =
 ```
 
 `openai-compatible` covers local relays and proxy services such as One API, New API, LiteLLM, OpenRouter-style services, and private compatible gateways.
+
+`google` covers Gemini API providers. Gemini web search uses Google Search grounding through an explicit `compat.webSearch.protocol` declaration rather than OpenAI tool-call compatibility.
 
 `deepseek` should cover DeepSeek and DPV4-compatible endpoints as a configurable provider family. Do not hardcode `dpv4` as a fixed upstream model.
 

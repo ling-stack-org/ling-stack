@@ -4,6 +4,7 @@ import type { SecretStatus } from "./secrets.js";
 export type ProviderKind =
   | "openai"
   | "anthropic"
+  | "google"
   | "openai-compatible"
   | "doubao"
   | "deepseek"
@@ -179,6 +180,7 @@ export function createProviderPresetId(): string {
 export const providerKinds: readonly ProviderKind[] = [
   "openai",
   "anthropic",
+  "google",
   "openai-compatible",
   "doubao",
   "deepseek",

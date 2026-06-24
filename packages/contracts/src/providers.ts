@@ -3,6 +3,7 @@ import type { SecretStatus } from "./shared.js";
 export type ProviderKind =
   | "openai"
   | "anthropic"
+  | "google"
   | "openai-compatible"
   | "doubao"
   | "deepseek"
