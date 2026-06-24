@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -111,7 +111,7 @@ import {
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
-import { attachmentCanPreview } from "../../lib/previews.js";
+import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
   buildRunRepairHint,
   displayLinkedRunStatus,
@@ -165,7 +165,25 @@ import {
   type PendingAssetState,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationGuidanceStrip, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, FileRefChip, MessageBodyRenderer, MessageBubble, MessageEvidencePanel, MessageFooterActions, MessageRow, RightDrawer, type ConversationGuidanceItem, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
+import {
+  ConversationAttachmentStrip,
+  ConversationGuidanceStrip,
+  ConversationStatusStrip,
+  ConversationVirtualFeed,
+  ConversationWorkCell,
+  FileRefChip,
+  MessageBodyRenderer,
+  MessageBubble,
+  MessageEvidencePanel,
+  MessageFooterActions,
+  MessageRow,
+  RightDrawer,
+  TranscriptBlockView,
+  createTranscriptBlockRendererRegistry,
+  renderTranscriptBlockFromRegistry,
+  type ConversationGuidanceItem,
+  type ConversationWorkCellDetailsState,
+} from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -238,11 +256,35 @@ import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
-type ChannelSidePanelView = "files" | "review" | "context" | "settings" | "task" | "approval" | "sources";
-type ChannelDrawerRootView = Extract<ChannelSidePanelView, "files" | "review" | "settings">;
+type ChannelSidePanelView = "context" | "settings" | "task";
+type ChannelDrawerRootView = Extract<ChannelSidePanelView, "settings">;
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
+type ComposerInlineFeedbackTone = "success" | "info" | "error";
+
+interface ComposerInlineFeedback {
+  readonly id: number;
+  readonly tone: ComposerInlineFeedbackTone;
+  readonly message: string;
+}
+
+interface ConversationBlockActionMenuState {
+  readonly blockId: string;
+  readonly label: string;
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly feedback?: string;
+}
+
+interface ConversationBlockLongPressState {
+  readonly pointerId: number;
+  readonly startX: number;
+  readonly startY: number;
+  readonly timeoutId: number;
+  readonly block: HTMLElement;
+}
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
 type AttentionProgressTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
 type ChannelProposalStepDraft = {
@@ -288,6 +330,10 @@ interface SelectedSourceDetailState {
   readonly groupId?: string;
 }
 
+type ConversationDetailOverlayState =
+  | { readonly kind: "approval" }
+  | { readonly kind: "sources" };
+
 interface PendingLinkPreviewItem {
   readonly localId: string;
   readonly url: string;
@@ -320,29 +366,45 @@ interface ActiveSlashCommandPicker {
   readonly end: number;
 }
 
-const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["files", "review", "settings"];
+interface MessageFeedShortcutEvent {
+  readonly defaultPrevented: boolean;
+  readonly key: string;
+  readonly altKey: boolean;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly shiftKey: boolean;
+  readonly target: EventTarget | null;
+  preventDefault(): void;
+}
+
+const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["settings"];
 const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
 const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "blocked", "failed", "pending"];
 const channelNotificationLevels: readonly ChannelNotificationLevel[] = ["all", "mentions", "muted"];
+const conversationExpandableSelectors = [
+  ".conversation-work-cell-evidence-summary[aria-expanded='false']",
+  ".conversation-work-cell-row-main[aria-expanded='false']",
+  ".conversation-work-cell-agent-span-head[aria-expanded='false']",
+  ".transcript-block-view-head[aria-expanded='false']",
+] as const;
+const conversationExpandableSelector = conversationExpandableSelectors.join(",");
+
+function findConversationExpandable(container: ParentNode | null | undefined): HTMLElement | undefined {
+  for (const selector of conversationExpandableSelectors) {
+    const expandable = container?.querySelector<HTMLElement>(selector);
+    if (expandable) {
+      return expandable;
+    }
+  }
+  return undefined;
+}
 
 function channelSidePanelLabel(view: ChannelSidePanelView): string {
-  if (view === "files") {
-    return "Files";
-  }
-  if (view === "sources") {
-    return "Context sources";
-  }
-  if (view === "review") {
-    return "Review";
-  }
   if (view === "context") {
     return "Context";
   }
   if (view === "settings") {
     return "Settings";
-  }
-  if (view === "approval") {
-    return "Approval details";
   }
   return "Task detail";
 }
@@ -350,18 +412,6 @@ function channelSidePanelLabel(view: ChannelSidePanelView): string {
 function channelSidePanelIcon(view: ChannelSidePanelView, size: number): JSX.Element {
   if (view === "task") {
     return <SquareTerminal size={size} />;
-  }
-  if (view === "files") {
-    return <FileText size={size} />;
-  }
-  if (view === "approval") {
-    return <ShieldCheck size={size} />;
-  }
-  if (view === "review") {
-    return <CheckCircle2 size={size} />;
-  }
-  if (view === "sources") {
-    return <FileCheck2 size={size} />;
   }
   if (view === "settings") {
     return <SlidersHorizontal size={size} />;
@@ -391,6 +441,16 @@ interface PendingChannelSendPreview {
   readonly requestAiReply: boolean;
   readonly autoReplyMode: Channel["autoReplyMode"];
   readonly createdAt: string;
+}
+
+interface MessageFeedAnchorSnapshot {
+  readonly itemId: string;
+  readonly offsetTop: number;
+}
+
+interface WorkspaceTranscriptRenderContext {
+  readonly detailsState: ConversationWorkCellDetailsState;
+  readonly onLoadDetails?: (id: string) => void;
 }
 
 function messageFeedItemRenderSignature(item: MessageFeedItem | undefined): string {
@@ -438,10 +498,86 @@ function messageFeedItemIsPending(item: MessageFeedItem | undefined): boolean {
   return false;
 }
 
+function messageFeedItemBackgroundToast(item: MessageFeedItem | undefined, t: Translate): ComposerInlineFeedback | undefined {
+  if (!item || item.kind === "older-loader" || item.kind === "pending-send") {
+    return undefined;
+  }
+  const status = item.kind === "turn"
+    ? item.turn.operationCell?.status ?? readRecordStatus(item.turn.blocks.at(-1))
+    : readRecordStatus(item.item.record);
+  if (!status) {
+    return undefined;
+  }
+  if (["failed", "cancelled", "blocked"].includes(status)) {
+    return { id: Date.now(), tone: "error", message: t("Background work needs attention") };
+  }
+  if (["succeeded", "done", "completed", "approved", "skipped"].includes(status)) {
+    return { id: Date.now(), tone: "success", message: t("Background work completed") };
+  }
+  return undefined;
+}
+
+function readRecordStatus(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || !("status" in value)) {
+    return undefined;
+  }
+  const status = (value as { readonly status?: unknown }).status;
+  return typeof status === "string" ? status : undefined;
+}
+
+function conversationBlockFromEventTarget(target: EventTarget | null): HTMLElement | undefined {
+  if (!(target instanceof Element)) {
+    return undefined;
+  }
+  return target.closest<HTMLElement>("[data-conversation-focus-block='true']") ?? undefined;
+}
+
+function conversationBlockText(block: HTMLElement): string {
+  return (block.innerText ?? "")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
+function conversationBlockLabel(block: HTMLElement, t: Translate): string {
+  const itemKind = block.dataset.feedItemKind;
+  if (itemKind === "turn") {
+    return t("Conversation turn");
+  }
+  if (itemKind === "activity") {
+    return t("Activity block");
+  }
+  if (itemKind === "pending-send") {
+    return t("Pending message");
+  }
+  return t("Conversation block");
+}
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']"));
+}
+
+function isInteractiveEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return Boolean(target.closest("button, a, input, textarea, select, summary, [role='button'], [role='menuitem'], [contenteditable='true'], [role='textbox']"));
+}
+
+function cssEscape(value: string): string {
+  if (typeof globalThis.CSS?.escape === "function") {
+    return globalThis.CSS.escape(value);
+  }
+  return value.replace(/["\\\]]/gu, "\\$&");
+}
+
 function turnHasPendingMessage(turn: ConversationTurnViewModel): boolean {
   return turn.sourceMessage.status === "pending" ||
     turn.coordinatorStartMessages.some((message) => message.status === "pending") ||
-    turn.coordinatorTerminalMessages.some((message) => message.status === "pending");
+    turn.coordinatorTerminalMessages.some((message) => message.status === "pending") ||
+    turn.blocks.some((block) => block.status === "queued" || block.status === "running" || block.status === "waiting_for_approval");
 }
 
 function conversationTurnRenderSignature(turn: ConversationTurnViewModel): string {
@@ -453,6 +589,14 @@ function conversationTurnRenderSignature(turn: ConversationTurnViewModel): strin
     turn.sourceMessage.body,
     ...turn.coordinatorStartMessages.map((message) => `${message.id}:${message.status}:${message.updatedAt}:${message.body}`),
     turn.operationCell ? `${turn.operationCell.id}:${turn.operationCell.status}:${turn.operationCell.updatedAt}:${turn.operationCell.summary}` : "",
+    ...turn.blocks.map((block) => [
+      block.id,
+      block.kind,
+      block.status ?? "",
+      block.revision ?? "",
+      block.updatedAt ?? "",
+      block.display.map((line) => `${line.id}:${line.text}:${line.meta ?? ""}`).join("~"),
+    ].join(":")),
     ...turn.coordinatorTerminalMessages.map((message) => `${message.id}:${message.status}:${message.updatedAt}:${message.body}`),
   ].join("|");
 }
@@ -851,7 +995,7 @@ export function WorkspaceClientView({
   const selectedChannelWorkspace = selectedChannel ? resolveChannelWorkspaceBinding(selectedChannel, cwd) : undefined;
   const selectedChannelExecutionPath = selectedChannel && selectedChannelWorkspace ? resolveChannelWorkspaceExecutionPath(selectedChannelWorkspace, selectedChannel, cwd) : "";
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
-  const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "files");
+  const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "settings");
   const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
@@ -860,6 +1004,7 @@ export function WorkspaceClientView({
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
   const [governanceNotificationsOpen, setGovernanceNotificationsOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
+  const [conversationDetailOverlay, setConversationDetailOverlay] = useState<ConversationDetailOverlayState | undefined>();
   const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
   const [activityToolsOpen, setActivityToolsOpen] = useState(false);
   const [activitySearch, setActivitySearch] = useState("");
@@ -892,6 +1037,11 @@ export function WorkspaceClientView({
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
+  const [composerFeedback, setComposerFeedback] = useState<ComposerInlineFeedback | undefined>();
+  const [conversationBlockFeedback, setConversationBlockFeedback] = useState<ComposerInlineFeedback | undefined>();
+  const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ComposerInlineFeedback | undefined>();
+  const [conversationBlockActionMenu, setConversationBlockActionMenu] = useState<ConversationBlockActionMenuState | undefined>();
+  const [composerInputMinHeight, setComposerInputMinHeight] = useState(76);
   const [runGuidanceInterventions, setRunGuidanceInterventions] = useState<readonly RunIntervention[]>([]);
   const [runGuidanceLoading, setRunGuidanceLoading] = useState(false);
   const [runGuidanceSubmitting, setRunGuidanceSubmitting] = useState<RunIntervention["mode"] | "stop" | "">("");
@@ -932,6 +1082,14 @@ export function WorkspaceClientView({
   const messageFeedPinnedToLatestRef = useRef(true);
   const messageFeedAutoFollowUntilRef = useRef(0);
   const messageFeedUserScrollIntentRef = useRef(false);
+  const messageFeedVisibleAnchorRef = useRef<MessageFeedAnchorSnapshot | undefined>();
+  const composerFeedbackTimeoutRef = useRef<number | undefined>();
+  const conversationBlockFeedbackTimeoutRef = useRef<number | undefined>();
+  const conversationBackgroundToastTimeoutRef = useRef<number | undefined>();
+  const conversationBackgroundToastLatestItemRef = useRef("");
+  const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>();
+  const conversationBlockActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const composerResizeDragRef = useRef<{ readonly pointerId: number; readonly startY: number; readonly startHeight: number } | undefined>();
   const messageFeedOlderLoadArmedRef = useRef(true);
   const messageFeedOlderLoadSnapshotRef = useRef<{ readonly anchorId: string; readonly anchorOffset: number } | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
@@ -1411,7 +1569,7 @@ export function WorkspaceClientView({
           id: "open-approval",
           label: t("Open approval"),
           icon: <ShieldCheck size={14} />,
-          onClick: () => openApprovalInPanel(selectedApproval),
+          onClick: () => openApprovalDetail(selectedApproval),
         },
       ]}
     />
@@ -1526,6 +1684,39 @@ export function WorkspaceClientView({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [governanceNotificationsOpen]);
+
+  useEffect(() => {
+    if (!conversationBlockActionMenu) {
+      return undefined;
+    }
+    const returnBlockId = conversationBlockActionMenu.blockId;
+    globalThis.requestAnimationFrame(() => {
+      conversationBlockActionMenuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus({ preventScroll: true });
+    });
+    function closeActionMenu(): void {
+      setConversationBlockActionMenu(undefined);
+      globalThis.requestAnimationFrame(() => focusConversationBlockById(returnBlockId));
+    }
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".conversation-block-action-menu")) {
+        return;
+      }
+      closeActionMenu();
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeActionMenu();
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [conversationBlockActionMenu]);
 
   useEffect(() => {
     if (!teammateManagerOpen) {
@@ -1792,10 +1983,28 @@ export function WorkspaceClientView({
     getItemKey: (index) => messageFeedItems[index]?.id ?? index,
   });
   const messageFeedVirtualRows = messageFeedVirtualizer.getVirtualItems();
+  const messageFeedTotalSize = messageFeedVirtualizer.getTotalSize();
   const messageFeedTailRenderSignature = useMemo(
     () => messageFeedItemRenderSignature(messageFeedItems.at(-1)),
     [messageFeedItems],
   );
+  const messageFeedRenderSignature = useMemo(
+    () => messageFeedItems.map((item) => messageFeedItemRenderSignature(item)).join("\n"),
+    [messageFeedItems],
+  );
+  useEffect(() => {
+    const latestItem = messageFeedItems.at(-1);
+    const latestItemId = latestItem?.id ?? "";
+    const previousLatestItemId = conversationBackgroundToastLatestItemRef.current;
+    conversationBackgroundToastLatestItemRef.current = latestItemId;
+    if (!latestItem || !previousLatestItemId || previousLatestItemId === latestItemId || messageFeedPinnedToLatestRef.current) {
+      return;
+    }
+    const toast = messageFeedItemBackgroundToast(latestItem, t);
+    if (toast) {
+      showConversationBackgroundToast(toast);
+    }
+  }, [messageFeedTailRenderSignature, messageFeedItems, t]);
   const firstMessageFeedVirtualIndex = messageFeedVirtualRows[0]?.index ?? -1;
   useEffect(() => {
     if (
@@ -2021,6 +2230,9 @@ export function WorkspaceClientView({
     }
     messageFeedPinnedToLatestRef.current = true;
     messageFeedUserScrollIntentRef.current = false;
+    conversationBackgroundToastLatestItemRef.current = "";
+    setConversationBackgroundToast(undefined);
+    setConversationBlockActionMenu(undefined);
     messageFeedOlderLoadArmedRef.current = true;
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
@@ -2076,6 +2288,26 @@ export function WorkspaceClientView({
   ]);
 
   useEffect(() => {
+    if (
+      channelMessagesLoading ||
+      channelProtocolLoading ||
+      messageFeedPinnedToLatestRef.current ||
+      messageFeedOlderLoadSnapshotRef.current
+    ) {
+      return undefined;
+    }
+    const frameId = globalThis.requestAnimationFrame(() => {
+      restoreMessageFeedVisibleAnchor();
+    });
+    return () => globalThis.cancelAnimationFrame(frameId);
+  }, [
+    channelMessagesLoading,
+    channelProtocolLoading,
+    messageFeedRenderSignature,
+    messageFeedTotalSize,
+  ]);
+
+  useEffect(() => {
     if (!activityDrilldownItemId) {
       return undefined;
     }
@@ -2122,7 +2354,7 @@ export function WorkspaceClientView({
     setActivityToolsOpen(false);
     setPendingChannelSendPreview(undefined);
     setAttentionProgressExpanded(true);
-    setSidePanelView("files");
+    setSidePanelView("settings");
     setSidePanelOpen(false);
     setProgressPopoverOpen(false);
     setSelectedApprovalId("");
@@ -2147,12 +2379,6 @@ export function WorkspaceClientView({
     }, 1_000);
     return () => globalThis.clearInterval(intervalId);
   }, [channelMessages, onRefreshChannelActivity, onRefreshChannelMessages, onRefreshWorkItems, selectedChannelId]);
-
-  useEffect(() => {
-    if (sidePanelOpen && sidePanelView === "files") {
-      onRefreshChannelFiles();
-    }
-  }, [sidePanelOpen, sidePanelView]);
 
   useEffect(() => {
     if (!selectedTaskId || !selectedTask) {
@@ -2195,6 +2421,11 @@ export function WorkspaceClientView({
       return;
     }
     messageFeedPinnedToLatestRef.current = pinnedToLatest;
+    if (!pinnedToLatest) {
+      rememberMessageFeedVisibleAnchor();
+    } else {
+      messageFeedVisibleAnchorRef.current = undefined;
+    }
     setMessageFeedLatestButtonVisible((visible) => {
       const nextVisible = !pinnedToLatest && maxScrollTop > 0;
       return visible === nextVisible ? visible : nextVisible;
@@ -2204,6 +2435,7 @@ export function WorkspaceClientView({
   function cancelMessageFeedAutoFollow(): void {
     messageFeedAutoFollowUntilRef.current = 0;
     messageFeedUserScrollIntentRef.current = true;
+    rememberMessageFeedVisibleAnchor();
   }
 
   function scrollMessageFeedToLatest(): void {
@@ -2218,11 +2450,62 @@ export function WorkspaceClientView({
     }
     feed.scrollTop = feed.scrollHeight;
     messageFeedPinnedToLatestRef.current = true;
+    messageFeedVisibleAnchorRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
   }
 
-  function copyMessageText(text: string): void {
-    void navigator.clipboard.writeText(text).catch(() => undefined);
+  function readMessageFeedVisibleAnchor(): MessageFeedAnchorSnapshot | undefined {
+    const feed = messageFeedRef.current;
+    if (!feed) {
+      return undefined;
+    }
+    const feedRect = feed.getBoundingClientRect();
+    const candidateRows = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
+      .filter((element) => element.dataset.feedItemKind !== "older-loader");
+    for (const row of candidateRows) {
+      const itemId = row.dataset.feedItemId;
+      if (!itemId) {
+        continue;
+      }
+      const rowRect = row.getBoundingClientRect();
+      if (rowRect.bottom <= feedRect.top + 12 || rowRect.top >= feedRect.bottom - 12) {
+        continue;
+      }
+      return {
+        itemId,
+        offsetTop: rowRect.top - feedRect.top,
+      };
+    }
+    return undefined;
+  }
+
+  function rememberMessageFeedVisibleAnchor(): void {
+    const anchor = readMessageFeedVisibleAnchor();
+    if (anchor) {
+      messageFeedVisibleAnchorRef.current = anchor;
+    }
+  }
+
+  function restoreMessageFeedVisibleAnchor(): void {
+    const feed = messageFeedRef.current;
+    const anchor = messageFeedVisibleAnchorRef.current;
+    if (!feed || !anchor) {
+      rememberMessageFeedVisibleAnchor();
+      return;
+    }
+    const row = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
+      .find((element) => element.dataset.feedItemId === anchor.itemId);
+    if (!row) {
+      rememberMessageFeedVisibleAnchor();
+      return;
+    }
+    const feedTop = feed.getBoundingClientRect().top;
+    const rowTop = row.getBoundingClientRect().top;
+    const delta = rowTop - feedTop - anchor.offsetTop;
+    if (Math.abs(delta) > 1) {
+      feed.scrollTop += delta;
+    }
+    rememberMessageFeedVisibleAnchor();
   }
 
   function openTaskFromActivity(taskId: string): void {
@@ -2260,17 +2543,15 @@ export function WorkspaceClientView({
     }
   }
 
-  function openReviewFromActivity(): void {
+  function revealReviewInConversation(): void {
     setActivityToolsOpen(false);
     setChannelMoreOpen(false);
     onSelectTask("");
-    setSidePanelView("review");
-    setSidePanelOpen(true);
-    setProgressPopoverOpen(false);
+    setSidePanelOpen(false);
+    setProgressPopoverOpen(channelHasProgressContent);
+    setAttentionProgressExpanded(true);
+    setAttentionQueueExpanded(true);
     setCreateTaskOpen(false);
-    onRefreshRunApprovals();
-    onRefreshTasks();
-    onRefreshChannelFiles();
   }
 
   function revealConversationThreadFromActivity(threadId: string): void {
@@ -2299,7 +2580,7 @@ export function WorkspaceClientView({
       revealConversationThreadFromActivity(run.threadId);
       return;
     }
-    openReviewFromActivity();
+    revealReviewInConversation();
   }
 
   function revealTaskFromActivity(taskId: string): void {
@@ -2313,17 +2594,13 @@ export function WorkspaceClientView({
       revealConversationThreadFromActivity(run.threadId);
       return;
     }
-    openReviewFromActivity();
+    revealReviewInConversation();
   }
 
-  function openApprovalInPanel(approval: ApprovalRequest | undefined): void {
-    if (!approval) {
-      onOpenApprovals();
-      return;
-    }
-    setSelectedApprovalId(approval.id);
-    setSidePanelView("approval");
-    setSidePanelOpen(true);
+  function openApprovalDetail(approval: ApprovalRequest | undefined): void {
+    setSelectedApprovalId(approval?.id ?? "");
+    setConversationDetailOverlay({ kind: "approval" });
+    setSidePanelOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -2550,10 +2827,10 @@ export function WorkspaceClientView({
       return;
     }
     if (target.kind === "approval") {
-      openApprovalInPanel(pendingChannelApprovals.find((approval) => approval.runId === target.runId));
+      openApprovalDetail(pendingChannelApprovals.find((approval) => approval.runId === target.runId));
       return;
     }
-    openReviewFromActivity();
+    revealReviewInConversation();
   }
 
   function openActivityTriageResult(result: ChannelActivityTriageResult): void {
@@ -2562,7 +2839,7 @@ export function WorkspaceClientView({
       revealTaskFromActivity(result.task.id);
       return;
     }
-    openReviewFromActivity();
+    revealReviewInConversation();
   }
 
   function openThreadForMessage(message: ChannelMessage): void {
@@ -2892,26 +3169,15 @@ export function WorkspaceClientView({
     });
   }
 
-  const sidePanelLoading = sidePanelView === "sources"
-    ? false
-    : sidePanelView === "task"
-    ? tasksLoading
+  const sidePanelLoading = sidePanelView === "task"
+      ? tasksLoading
     : sidePanelView === "context"
       ? inspectorMode === "runtime" ? runtimeLoading : channelProtocolLoading
-      : sidePanelView === "files"
-        ? channelFilesLoading || channelRunArtifactsLoading
-        : sidePanelView === "review"
-          ? approvalsLoading || tasksLoading || channelRunArtifactsLoading
-        : sidePanelView === "settings"
+      : sidePanelView === "settings"
           ? channelsLoading || channelTeammateMembershipsLoading
-          : sidePanelView === "approval"
-            ? approvalsLoading
-            : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || durableWorkItemsLoading || tasksLoading;
+          : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || durableWorkItemsLoading || tasksLoading;
 
   function refreshSidePanel(): void {
-    if (sidePanelView === "sources") {
-      return;
-    }
     if (sidePanelView === "task") {
       onRefreshTasks();
       onRefreshChannelActivity();
@@ -2926,23 +3192,12 @@ export function WorkspaceClientView({
       }
       return;
     }
-    if (sidePanelView === "files") {
-      onRefreshChannelFiles();
-      return;
-    }
-    if (sidePanelView === "review") {
-      onRefreshRunApprovals();
-      onRefreshTasks();
-      onRefreshChannelFiles();
-      return;
-    }
     if (sidePanelView === "settings") {
       onRefreshChannels();
       onRefreshAiCouncils();
       onRefreshChannelCouncil();
       return;
     }
-    onRefreshRunApprovals();
   }
 
   const allTeammateOptions = useMemo(
@@ -3333,6 +3588,252 @@ export function WorkspaceClientView({
     }
   }
 
+  function showComposerFeedback(tone: ComposerInlineFeedbackTone, message: string): void {
+    if (composerFeedbackTimeoutRef.current !== undefined) {
+      globalThis.clearTimeout(composerFeedbackTimeoutRef.current);
+    }
+    setComposerFeedback({ id: Date.now(), tone, message });
+    composerFeedbackTimeoutRef.current = globalThis.setTimeout(() => {
+      setComposerFeedback(undefined);
+      composerFeedbackTimeoutRef.current = undefined;
+    }, 2_200);
+  }
+
+  function showConversationBlockFeedback(tone: ComposerInlineFeedbackTone, message: string): void {
+    if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
+      globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
+    }
+    setConversationBlockFeedback({ id: Date.now(), tone, message });
+    conversationBlockFeedbackTimeoutRef.current = globalThis.setTimeout(() => {
+      setConversationBlockFeedback(undefined);
+      conversationBlockFeedbackTimeoutRef.current = undefined;
+    }, 1_600);
+  }
+
+  function showConversationBackgroundToast(feedback: ComposerInlineFeedback): void {
+    if (conversationBackgroundToastTimeoutRef.current !== undefined) {
+      globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
+    }
+    setConversationBackgroundToast(feedback);
+    conversationBackgroundToastTimeoutRef.current = globalThis.setTimeout(() => {
+      setConversationBackgroundToast(undefined);
+      conversationBackgroundToastTimeoutRef.current = undefined;
+    }, 4_200);
+  }
+
+  function messageFeedFocusableBlocks(): HTMLElement[] {
+    const feed = messageFeedRef.current;
+    if (!feed) {
+      return [];
+    }
+    return Array.from(feed.querySelectorAll<HTMLElement>("[data-conversation-focus-block='true']"))
+      .filter((element) => element.offsetParent !== null);
+  }
+
+  function focusedConversationBlock(): HTMLElement | undefined {
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLElement)) {
+      return undefined;
+    }
+    const block = activeElement.closest<HTMLElement>("[data-conversation-focus-block='true']");
+    return block && messageFeedRef.current?.contains(block) ? block : undefined;
+  }
+
+  function focusConversationBlock(block: HTMLElement): void {
+    block.focus({ preventScroll: true });
+    block.scrollIntoView({ block: "nearest" });
+    setConversationBlockActionMenu(undefined);
+  }
+
+  function focusConversationBlockById(blockId: string): void {
+    if (!blockId) {
+      return;
+    }
+    const block = messageFeedRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(blockId)}"]`);
+    if (block) {
+      focusConversationBlock(block);
+    }
+  }
+
+  function focusAdjacentConversationBlock(direction: "previous" | "next"): void {
+    const blocks = messageFeedFocusableBlocks();
+    if (blocks.length === 0) {
+      return;
+    }
+    const current = focusedConversationBlock();
+    const currentIndex = current ? blocks.indexOf(current) : -1;
+    const nextIndex = direction === "next"
+      ? Math.min(blocks.length - 1, currentIndex < 0 ? 0 : currentIndex + 1)
+      : Math.max(0, currentIndex < 0 ? blocks.length - 1 : currentIndex - 1);
+    focusConversationBlock(blocks[nextIndex]);
+  }
+
+  async function copyConversationBlock(block: HTMLElement): Promise<void> {
+    const text = conversationBlockText(block);
+    if (!text) {
+      showConversationBlockFeedback("error", t("Nothing to copy"));
+      return;
+    }
+    if (!globalThis.navigator?.clipboard?.writeText) {
+      showConversationBlockFeedback("error", t("Copy unavailable"));
+      return;
+    }
+    try {
+      await globalThis.navigator.clipboard.writeText(text);
+      showConversationBlockFeedback("success", t("Copied focused block"));
+      const blockId = block.dataset.feedItemId ?? "";
+      setConversationBlockActionMenu((current) => {
+        if (!current || current.blockId !== blockId) {
+          return current;
+        }
+        return { ...current, feedback: t("Copied") };
+      });
+    } catch {
+      showConversationBlockFeedback("error", t("Copy unavailable"));
+    }
+  }
+
+  function handleMessageFeedShortcut(event: MessageFeedShortcutEvent): void {
+    if (event.defaultPrevented || isEditableEventTarget(event.target)) {
+      return;
+    }
+    if (event.key === "Escape" && conversationBlockActionMenu) {
+      event.preventDefault();
+      setConversationBlockActionMenu(undefined);
+      return;
+    }
+    if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      focusAdjacentConversationBlock(event.key === "ArrowDown" ? "next" : "previous");
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "c") {
+      const block = focusedConversationBlock();
+      if (!block) {
+        return;
+      }
+      event.preventDefault();
+      void copyConversationBlock(block);
+      return;
+    }
+    if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+      const feed = messageFeedRef.current;
+      const focusedBlock = focusedConversationBlock();
+      const block = focusedBlock ?? messageFeedFocusableBlocks().find((candidate) => candidate.querySelector(conversationExpandableSelector));
+      const expandable = findConversationExpandable(block) ?? findConversationExpandable(feed);
+      if (!expandable) {
+        return;
+      }
+      event.preventDefault();
+      expandable.click();
+      showConversationBlockFeedback("info", t("Expanded focused block"));
+    }
+  }
+
+  function handleMessageFeedKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    handleMessageFeedShortcut(event);
+  }
+
+  function handleMessageFeedPointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (event.pointerType === "mouse") {
+      return;
+    }
+    const block = conversationBlockFromEventTarget(event.target);
+    if (!block || isInteractiveEventTarget(event.target)) {
+      return;
+    }
+    const timeoutId = globalThis.setTimeout(() => {
+      conversationBlockLongPressRef.current = undefined;
+      openConversationBlockActionMenu(block, event.clientX, event.clientY);
+    }, 560);
+    conversationBlockLongPressRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      timeoutId,
+      block,
+    };
+  }
+
+  function handleMessageFeedPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
+    const pending = conversationBlockLongPressRef.current;
+    if (!pending || pending.pointerId !== event.pointerId) {
+      return;
+    }
+    if (Math.abs(event.clientX - pending.startX) > 12 || Math.abs(event.clientY - pending.startY) > 12) {
+      cancelConversationBlockLongPress();
+    }
+  }
+
+  function handleMessageFeedPointerEnd(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (conversationBlockLongPressRef.current?.pointerId === event.pointerId) {
+      cancelConversationBlockLongPress();
+    }
+  }
+
+  function handleMessageFeedContextMenu(event: ReactMouseEvent<HTMLDivElement>): void {
+    const block = conversationBlockFromEventTarget(event.target);
+    if (!block || isInteractiveEventTarget(event.target)) {
+      return;
+    }
+    event.preventDefault();
+    openConversationBlockActionMenu(block, event.clientX, event.clientY);
+  }
+
+  function cancelConversationBlockLongPress(): void {
+    const pending = conversationBlockLongPressRef.current;
+    if (!pending) {
+      return;
+    }
+    globalThis.clearTimeout(pending.timeoutId);
+    conversationBlockLongPressRef.current = undefined;
+  }
+
+  function openConversationBlockActionMenu(block: HTMLElement, x: number, y: number): void {
+    focusConversationBlock(block);
+    setConversationBlockActionMenu({
+      blockId: block.dataset.feedItemId ?? "",
+      label: conversationBlockLabel(block, t),
+      text: conversationBlockText(block),
+      x: Math.max(12, Math.min(x, globalThis.innerWidth - 220)),
+      y: Math.max(12, Math.min(y, globalThis.innerHeight - 160)),
+    });
+  }
+
+  function handleComposerResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    composerResizeDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: composerInputMinHeight,
+    };
+  }
+
+  function handleComposerResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const drag = composerResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const nextHeight = Math.max(76, Math.min(180, Math.round(drag.startHeight + drag.startY - event.clientY)));
+    setComposerInputMinHeight(nextHeight);
+  }
+
+  function handleComposerResizePointerEnd(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const drag = composerResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    composerResizeDragRef.current = undefined;
+  }
+
   function refreshChannelRunGuidanceSurfaces(): void {
     onRefreshChannelActivity();
     onRefreshTasks();
@@ -3422,6 +3923,7 @@ export function WorkspaceClientView({
       setMentionActiveIndex(0);
       setSendState("idle");
       setSendError("");
+      showComposerFeedback("success", t("Guidance queued"));
       revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
       refreshChannelRunGuidanceSurfaces();
       window.setTimeout(() => {
@@ -3451,6 +3953,7 @@ export function WorkspaceClientView({
     try {
       const response = await cancelRunIntervention(cwd, interventionId);
       setRunGuidanceInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
+      showComposerFeedback("info", t("Queued guidance removed"));
       refreshChannelRunGuidanceSurfaces();
     } catch (error) {
       setRunGuidanceError(error instanceof Error ? error.message : String(error));
@@ -3468,6 +3971,7 @@ export function WorkspaceClientView({
     try {
       const response = await promoteRunIntervention(cwd, interventionId);
       setRunGuidanceInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
+      showComposerFeedback("success", t("Queued guidance started"));
       refreshChannelRunGuidanceSurfaces();
       window.setTimeout(() => {
         void refreshChannelRunGuidance(activeConversationSourceRunId);
@@ -3514,6 +4018,7 @@ export function WorkspaceClientView({
     if (!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent) {
       return;
     }
+    const retryingFailedSend = sendState === "failed";
     const draftSnapshot = messageDraft;
     const messageMentionsSnapshot = messageMentions;
     const pendingAttachmentsSnapshot = pendingAttachments;
@@ -3617,6 +4122,9 @@ export function WorkspaceClientView({
       setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
       setSendState("idle");
       setSendError("");
+      if (retryingFailedSend) {
+        showComposerFeedback("success", t("Message sent"));
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (pendingSendPreviewId) {
@@ -3697,6 +4205,22 @@ export function WorkspaceClientView({
     attachmentPreviewUrlsRef.current.clear();
   }, []);
 
+  useEffect(() => () => {
+    if (composerFeedbackTimeoutRef.current !== undefined) {
+      globalThis.clearTimeout(composerFeedbackTimeoutRef.current);
+    }
+    if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
+      globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
+    }
+    if (conversationBackgroundToastTimeoutRef.current !== undefined) {
+      globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
+    }
+    if (conversationBlockLongPressRef.current) {
+      globalThis.clearTimeout(conversationBlockLongPressRef.current.timeoutId);
+      conversationBlockLongPressRef.current = undefined;
+    }
+  }, []);
+
   const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
   const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
   const composerInputParts = parseComposerInputParts(messageDraft, {
@@ -3740,6 +4264,15 @@ export function WorkspaceClientView({
     : composerSlashCommandActive
       ? sendState === "sending" ? t("Creating task...") : t("Create task")
       : sendState === "sending" ? t("Sending...") : t("Send");
+  const composerShortcutTitle = activeConversationRun
+    ? t("Enter queues guidance. Shift+Enter inserts a newline. Esc closes menus.")
+    : t("Enter sends. Shift+Enter inserts a newline. Esc closes menus.");
+  const channelComposerSubmitTitle = activeConversationRun && !composerHasSendableContent
+    ? channelComposerSubmitLabel
+    : t("{action} (Enter)", { action: channelComposerSubmitLabel });
+  const composerDropZoneStyle = {
+    "--composer-input-min-height": `${composerInputMinHeight}px`,
+  } as CSSProperties;
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
 
   function renderChannelMessageAvatar(message: ChannelMessage): ReactNode {
@@ -3763,6 +4296,24 @@ export function WorkspaceClientView({
       allLocalTeammateByName.get(span.label.trim().toLowerCase());
     return teammate ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact /> : undefined;
   }
+
+  const conversationTranscriptBlockRenderers = createTranscriptBlockRendererRegistry<
+    ConversationTurnViewModel,
+    ConversationTranscriptBlock,
+    WorkspaceTranscriptRenderContext
+  >({
+    coordinator_message: renderCoordinatorMessageTranscriptBlock,
+    operation: renderOperationTranscriptBlock,
+    agent_activity: renderGenericTranscriptBlock,
+    approval: renderGenericTranscriptBlock,
+    artifact_strip: renderGenericTranscriptBlock,
+    source_summary: renderGenericTranscriptBlock,
+    workflow_packet_summary: renderGenericTranscriptBlock,
+    requirement_shaping: renderGenericTranscriptBlock,
+    decision_needed: renderGenericTranscriptBlock,
+    final_result: renderGenericTranscriptBlock,
+    raw_debug_ref: renderGenericTranscriptBlock,
+  });
 
   function renderConversationTurnItem(turn: ConversationTurnViewModel): ReactNode {
     const operationCell = turn.operationCell;
@@ -3794,12 +4345,13 @@ export function WorkspaceClientView({
       return null;
     }
 
-    const anchorMessage = turn.blocks.find((block) => block.kind === "coordinator_text")?.message;
+    const anchorMessage = turn.blocks.find((block) => block.kind === "coordinator_message")?.message;
     const authorName = anchorMessage
       ? messageAuthorLabel(anchorMessage, teammateOptions, t("Deleted teammate"), localUserDisplayName, allLocalTeammateById)
       : t("Ling Agent");
     const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
     const copyText = conversationTurnAssistantCopyText(turn);
+    const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
 
     return (
       <MessageRow
@@ -3811,7 +4363,11 @@ export function WorkspaceClientView({
         statusNode={<small className="conversation-message-tag">AI</small>}
         bodyNode={(
           <div className="conversation-turn-assistant-transcript">
-            {turn.blocks.map((block) => renderConversationTranscriptBlock(turn, block, detailsState, onLoadDetails))}
+            {turn.blocks.map((block) => renderTranscriptBlockFromRegistry(conversationTranscriptBlockRenderers, {
+              turn,
+              block,
+              context: transcriptContext,
+            }))}
           </div>
         )}
         actionsNode={(
@@ -3823,7 +4379,7 @@ export function WorkspaceClientView({
                   id: "copy",
                   label: t("Copy message"),
                   icon: <Copy size={11} />,
-                  onClick: () => copyMessageText(copyText),
+                  copyText,
                 },
                 {
                   id: "reply",
@@ -3840,61 +4396,90 @@ export function WorkspaceClientView({
     );
   }
 
-  function renderConversationTranscriptBlock(
-    turn: ConversationTurnViewModel,
-    block: ConversationTranscriptBlock,
-    detailsState: ConversationWorkCellDetailsState,
-    onLoadDetails: ((id: string) => void) | undefined,
-  ): ReactNode {
-    if (block.kind === "coordinator_text") {
-      const pendingCoordinatorMessage = block.message.status === "pending";
-      const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
-      if (!body) {
-        return null;
-      }
-      return (
-        <div
-          className={[
-            block.phase === "terminal" ? "conversation-turn-assistant-copy terminal" : "conversation-turn-assistant-copy",
-            pendingCoordinatorMessage ? "message-body-with-spinner" : "",
-          ].filter(Boolean).join(" ")}
-          key={block.id}
-        >
-          {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-          <MessageBodyRenderer text={body} cwd={cwd} compact />
-          {block.memoryCitationEvents.length > 0 ? (
-            <UsedMemorySummary
-              variant="footer"
-              events={block.memoryCitationEvents}
-              memoryById={memoryById}
-            />
-          ) : null}
-        </div>
-      );
+  function renderCoordinatorMessageTranscriptBlock({
+    turn,
+    block,
+  }: {
+    readonly turn: ConversationTurnViewModel;
+    readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "coordinator_message" }>;
+    readonly context: WorkspaceTranscriptRenderContext;
+  }): ReactNode {
+    const pendingCoordinatorMessage = block.message.status === "pending";
+    const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
+    if (!body) {
+      return null;
     }
+    return (
+      <div
+        className={[
+          block.phase === "terminal" ? "conversation-turn-assistant-copy terminal" : "conversation-turn-assistant-copy",
+          pendingCoordinatorMessage ? "message-body-with-spinner" : "",
+        ].filter(Boolean).join(" ")}
+        key={block.id}
+      >
+        {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
+        <MessageBodyRenderer text={body} cwd={cwd} compact streaming={pendingCoordinatorMessage} />
+        {block.memoryCitationEvents.length > 0 ? (
+          <UsedMemorySummary
+            variant="footer"
+            events={block.memoryCitationEvents}
+            memoryById={memoryById}
+          />
+        ) : null}
+      </div>
+    );
+  }
 
+  function renderOperationTranscriptBlock({
+    block,
+    context,
+  }: {
+    readonly turn: ConversationTurnViewModel;
+    readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "operation" }>;
+    readonly context: WorkspaceTranscriptRenderContext;
+  }): ReactNode {
     return (
       <div className="conversation-turn-operation" key={block.id}>
         <ConversationWorkCell
           model={block.operationCell}
           cwd={cwd}
-          detailsState={detailsState}
+          detailsState={context.detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
-          onLoadDetails={onLoadDetails}
+          onLoadDetails={context.onLoadDetails}
+          loadPreview={loadPreviewContent}
           renderAgentAvatar={renderConversationAgentAvatar}
         />
       </div>
     );
   }
 
+  function renderGenericTranscriptBlock({
+    block,
+  }: {
+    readonly turn: ConversationTurnViewModel;
+    readonly block: Exclude<ConversationTranscriptBlock, { readonly kind: "coordinator_message" | "operation" }>;
+    readonly context: WorkspaceTranscriptRenderContext;
+  }): ReactNode {
+    return (
+      <TranscriptBlockView
+        key={block.id}
+        block={block}
+        cwd={cwd}
+      />
+    );
+  }
+
   function conversationTurnAssistantCopyText(turn: ConversationTurnViewModel): string {
     return turn.blocks
       .flatMap((block) => {
-        if (block.kind === "coordinator_text") {
+        if (block.kind === "coordinator_message") {
           const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
           return body ? [body] : [];
         }
-        return [block.operationCell.title];
+        if (block.kind === "operation") {
+          return [block.operationCell.title];
+        }
+        return block.display.map((line) => line.text);
       })
       .join("\n\n")
       .trim();
@@ -3941,7 +4526,7 @@ export function WorkspaceClientView({
               bodyNode={(
                 <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                   {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                  <MessageBodyRenderer text={pendingAiReplyBody} cwd={cwd} compact />
+                  <MessageBodyRenderer text={pendingAiReplyBody} cwd={cwd} compact streaming={pendingAiReply} />
                 </div>
               )}
               attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.channelId)}
@@ -3961,7 +4546,7 @@ export function WorkspaceClientView({
                         id: "copy",
                         label: t("Copy message"),
                         icon: <Copy size={11} />,
-                        onClick: () => copyMessageText(message.body),
+                        copyText: message.body,
                       },
                       {
                         id: "reply",
@@ -4051,7 +4636,7 @@ export function WorkspaceClientView({
                 <CircleAlert size={14} />
                 {t("Reject")}
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+              <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
                 <CheckCircle2 size={14} />
                 {t("Review source")}
               </button>
@@ -4083,7 +4668,7 @@ export function WorkspaceClientView({
               <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>
                 {t("Complete")}
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+              <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
                 <CheckCircle2 size={14} />
                 {t("Review source")}
               </button>
@@ -4109,6 +4694,7 @@ export function WorkspaceClientView({
             detailsState={conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
             onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
             onLoadDetails={loadWorkflowWorkCellDetails}
+            loadPreview={loadPreviewContent}
             renderAgentAvatar={renderConversationAgentAvatar}
           />
         );
@@ -4149,7 +4735,7 @@ export function WorkspaceClientView({
                 <Square size={14} />
                 {t("Cancel")}
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+              <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
                 <CheckCircle2 size={14} />
                 {t("Review source")}
               </button>
@@ -4179,7 +4765,7 @@ export function WorkspaceClientView({
                   {runningWorkflowStepId === step.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
                   {t("Retry")}
                 </button>
-                <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
                   <CheckCircle2 size={14} />
                   {t("Review source")}
                 </button>
@@ -4187,14 +4773,14 @@ export function WorkspaceClientView({
             ) : step.taskId ? (
               activityActionRow(item.id, <>
                 <span>{t("Task linked")}</span>
-                <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
                   <CheckCircle2 size={14} />
                   {t("Review source")}
                 </button>
               </>)
             ) : (
               activityActionRow(item.id, (
-                <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+                <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
                   <CheckCircle2 size={14} />
                   {t("Review source")}
                 </button>
@@ -4239,6 +4825,7 @@ export function WorkspaceClientView({
             detailsState={conversationWorkCellDetailsByKey[conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
             onOpenRun={openRunInPanel}
             onLoadDetails={loadConversationWorkCellDetails}
+            loadPreview={loadPreviewContent}
             renderAgentAvatar={renderConversationAgentAvatar}
           />
         );
@@ -4276,7 +4863,7 @@ export function WorkspaceClientView({
           body={t("{title} is {status}.", { title: approval.title, status: approvalStatus })}
           action={
             activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={() => openApprovalInPanel(approval)}>
+              <button className="secondary-button compact-button" type="button" onClick={() => openApprovalDetail(approval)}>
                 <CheckCircle2 size={14} />
                 {t("Open approval")}
               </button>
@@ -4312,9 +4899,9 @@ export function WorkspaceClientView({
                   } else if (transition.entityType === "run") {
                     revealRunFromActivity(transition.entityId);
                   } else if (transition.entityType === "approval") {
-                    openApprovalInPanel(approvals.find((approval) => approval.id === transition.entityId));
+                    openApprovalDetail(approvals.find((approval) => approval.id === transition.entityId));
                   } else {
-                    openReviewFromActivity();
+                    revealReviewInConversation();
                   }
                 }}
               >
@@ -4341,7 +4928,7 @@ export function WorkspaceClientView({
               <Plus size={14} />
               {t("Create task")}
             </button>
-            <button className="secondary-button compact-button" type="button" onClick={openReviewFromActivity}>
+            <button className="secondary-button compact-button" type="button" onClick={() => openContextSummaryInConversationDetail(summary)}>
               <CheckCircle2 size={14} />
               {t("Review source")}
             </button>
@@ -4412,6 +4999,7 @@ export function WorkspaceClientView({
     return (
       <>
         <ConversationAttachmentStrip
+          loadPreview={loadPreviewContent}
           attachments={attachments.map((attachment) => ({
             id: attachment.id,
             label: attachment.fileName,
@@ -4474,14 +5062,27 @@ export function WorkspaceClientView({
         approvals={inlineApprovalViews}
         resolvingApprovals={resolvingApprovals}
         onResolve={onResolveApproval}
-        onOpenApproval={(approvalId) => openApprovalInPanel(approvals.find((approval) => approval.id === approvalId))}
+        onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
       />
       <div
         className={composerDragActive ? "composer-drop-zone active" : "composer-drop-zone"}
+        style={composerDropZoneStyle}
         onDragOver={handleComposerDragOver}
         onDragLeave={handleComposerDragLeave}
         onDrop={handleComposerDrop}
       >
+        <button
+          className="composer-resize-handle"
+          type="button"
+          aria-label={t("Resize composer")}
+          title={t("Resize composer")}
+          onPointerDown={handleComposerResizePointerDown}
+          onPointerMove={handleComposerResizePointerMove}
+          onPointerUp={handleComposerResizePointerEnd}
+          onPointerCancel={handleComposerResizePointerEnd}
+        >
+          <span aria-hidden="true" />
+        </button>
         {pendingMessageAssetsVisible ? (
           <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
             {pendingAttachments.map((item) => (
@@ -4515,6 +5116,7 @@ export function WorkspaceClientView({
           onSelect={updateMentionPicker}
           placeholder={t("Message this channel or @ an AI teammate")}
           ariaLabel={t("Message this channel or @ an AI teammate")}
+          title={composerShortcutTitle}
           executableSlashCommandId={composerSlashCommandActive ? composerSlashIntent.commandId : undefined}
           executableSlashTargetLabel={composerSlashTargetLabel}
         />
@@ -4602,7 +5204,7 @@ export function WorkspaceClientView({
           }}
           disabled={channelComposerSubmitDisabled}
           aria-label={channelComposerSubmitLabel}
-          title={channelComposerSubmitLabel}
+          title={channelComposerSubmitTitle}
         >
           {activeConversationRun
             ? composerHasSendableContent
@@ -4611,6 +5213,16 @@ export function WorkspaceClientView({
             : sendState === "sending" ? <Loader2 className="spin" size={15} /> : composerSlashCommandActive ? <ListChecks size={15} /> : <Send size={15} />}
         </button>
       </div>
+      {composerFeedback ? (
+        <div key={composerFeedback.id} className={`composer-status-row ${composerFeedback.tone}`} role="status" aria-live="polite">
+          {composerFeedback.tone === "success"
+            ? <CheckCircle2 size={14} />
+            : composerFeedback.tone === "error"
+              ? <CircleAlert size={14} />
+              : <Info size={14} />}
+          <span>{composerFeedback.message}</span>
+        </div>
+      ) : null}
       {sendState === "failed" ? (
         <div className="composer-status-list" aria-live="polite">
           <div className="composer-status-row failed">
@@ -4875,7 +5487,7 @@ export function WorkspaceClientView({
       tone: "waiting",
       primary: t("Approval needed"),
       secondary: t("{count} pending approvals", { count: pendingApprovalCount }),
-      onOpen: () => openApprovalInPanel(selectedApproval),
+      onOpen: () => openApprovalDetail(selectedApproval),
     } : undefined,
   ];
   const attentionProgressRows: readonly AttentionProgressRow[] = attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined);
@@ -4907,25 +5519,18 @@ export function WorkspaceClientView({
   function openSidePanelView(view: ChannelSidePanelView): void {
     setSidePanelView(view);
     setSidePanelOpen(true);
+    setConversationDetailOverlay(undefined);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setWorkspaceSettingsOpen(false);
     setTeammateManagerOpen(false);
-    if (view === "files") {
-      onRefreshChannelFiles();
-    } else if (view === "review") {
-      onRefreshRunApprovals();
-      onRefreshTasks();
-      onRefreshChannelFiles();
-    } else if (view === "context") {
+    if (view === "context") {
       onRefreshChannelProtocol();
     } else if (view === "settings") {
       onRefreshChannels();
       onRefreshAiCouncils();
       onRefreshChannelCouncil();
-    } else if (view === "sources") {
-      return;
     } else {
       onRefreshTasks();
       onRefreshChannelActivity();
@@ -4933,10 +5538,23 @@ export function WorkspaceClientView({
     }
   }
 
-  function openSourceGroupInPanel(group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary): void {
+  function openSourceGroupInConversationDetail(group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary): void {
     setSelectedSourceDetail({ summary, groupId: group.id });
-    setSidePanelView("sources");
-    setSidePanelOpen(true);
+    setConversationDetailOverlay({ kind: "sources" });
+    setSidePanelOpen(false);
+    setProgressPopoverOpen(false);
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setTeammateManagerOpen(false);
+  }
+
+  function openContextSummaryInConversationDetail(summary: ChannelContextSummary): void {
+    setSelectedSourceDetail({
+      summary: buildConversationContextSourceSummaryFromChannelSummary(summary, t),
+    });
+    setConversationDetailOverlay({ kind: "sources" });
+    setSidePanelOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -5059,30 +5677,7 @@ export function WorkspaceClientView({
   const sidePanelTitle = createTaskOpen && sidePanelView === "task"
       ? t("New task")
       : t(channelSidePanelLabel(sidePanelView));
-  const sidePanelContent = sidePanelView === "files" ? (
-    <ChannelFiles
-      attachments={channelAttachments}
-      linkPreviews={channelLinkPreviews}
-      runs={channelRunsForFiles}
-      tasks={tasks}
-      artifactsByRun={channelArtifactsByRun}
-      artifactErrorsByRun={channelArtifactErrorsByRun}
-      loading={channelFilesLoading}
-      runArtifactsLoading={channelRunArtifactsLoading}
-      attachmentContentUrl={attachmentContentUrl}
-      onDeleteAttachment={onDeleteAttachment}
-    />
-  ) : sidePanelView === "review" ? (
-    <ChannelReviewPanel
-      approvals={approvals}
-      runs={channelRunsForFiles}
-      tasks={tasks}
-      artifactsByRun={channelArtifactsByRun}
-      executionActionError={channelExecutionActionError}
-      loading={approvalsLoading || tasksLoading || channelRunArtifactsLoading}
-      onOpenApproval={openApprovalInPanel}
-    />
-  ) : sidePanelView === "context" ? (
+  const sidePanelContent = sidePanelView === "context" ? (
     <div className="channel-protocol-tab-content">
       <ChannelInspector
         cwd={cwd}
@@ -5133,12 +5728,6 @@ export function WorkspaceClientView({
         onReconcileWorkUnit={onReconcileWorkUnit}
       />
     </div>
-  ) : sidePanelView === "sources" ? (
-    <ChannelSourceDetailPanel
-      detail={selectedSourceDetail}
-      messages={channelMessages}
-      decisions={channelDecisions}
-    />
   ) : sidePanelView === "settings" ? (
     <div className="channel-settings-stack">
       {channelNotificationPanel}
@@ -5146,19 +5735,34 @@ export function WorkspaceClientView({
       {channelTeammateManager}
       {channelManagementPanel}
     </div>
-  ) : sidePanelView === "approval" ? (
-    <ChannelApprovalDetailPanel
-      approval={selectedApproval}
-      resolvingDecision={selectedApproval ? resolvingApprovals[selectedApproval.id] : undefined}
-      onResolve={onResolveApproval}
-      onOpenTask={openTaskFromActivity}
-      onOpenRun={openRunInPanel}
-    />
   ) : (
     <section className="task-detail-panel inline-task-detail-panel" aria-label={sidePanelTitle}>
       {taskDetailContent}
     </section>
   );
+  const conversationDetailOverlayNode = conversationDetailOverlay ? (
+    <ConversationDetailOverlay
+      title={conversationDetailOverlay.kind === "approval" ? t("Approval details") : t("Context sources")}
+      icon={conversationDetailOverlay.kind === "approval" ? <ShieldCheck size={15} /> : <FileCheck2 size={15} />}
+      onClose={() => setConversationDetailOverlay(undefined)}
+    >
+      {conversationDetailOverlay.kind === "approval" ? (
+        <ChannelApprovalDetailPanel
+          approval={selectedApproval}
+          resolvingDecision={selectedApproval ? resolvingApprovals[selectedApproval.id] : undefined}
+          onResolve={onResolveApproval}
+          onOpenTask={openTaskFromActivity}
+          onOpenRun={openRunInPanel}
+        />
+      ) : (
+        <ChannelSourceDetailPanel
+          detail={selectedSourceDetail}
+          messages={channelMessages}
+          decisions={channelDecisions}
+        />
+      )}
+    </ConversationDetailOverlay>
+  ) : null;
   const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !sidePanelOpen && channelHasProgressContent;
 
   return (
@@ -5333,7 +5937,7 @@ export function WorkspaceClientView({
                 return;
               }
               if (sidePanelView === "context") {
-                setSidePanelView("files");
+                setSidePanelView("settings");
               }
               setSidePanelOpen(true);
               setProgressPopoverOpen(false);
@@ -5350,7 +5954,7 @@ export function WorkspaceClientView({
               onExpandedChange={setAttentionProgressExpanded}
               progressRows={attentionProgressRows}
               sourceSummary={activeProgressSourceSummary}
-              onOpenSourceGroup={openSourceGroupInPanel}
+              onOpenSourceGroup={openSourceGroupInConversationDetail}
             />
           </div>
         ) : null}
@@ -5509,7 +6113,7 @@ export function WorkspaceClientView({
                         loading={tasksLoading || approvalsLoading || channelActivityTransitionsLoading || durableWorkItemsLoading}
                         onOpenTask={openTaskFromActivity}
                         onOpenRun={openRunInPanel}
-                        onOpenApproval={(approvalId) => openApprovalInPanel(approvals.find((approval) => approval.id === approvalId))}
+                        onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
                         onClaimWorkItem={onClaimWorkItem}
                         onHeartbeatWorkItem={onHeartbeatWorkItem}
                         onReleaseWorkItem={onReleaseWorkItem}
@@ -5699,7 +6303,7 @@ export function WorkspaceClientView({
                           ? t("No channel messages yet")
                           : t("Create a default channel to start the workspace loop.")
                     }
-                    totalSize={messageFeedVirtualizer.getTotalSize()}
+                    totalSize={messageFeedTotalSize}
                     virtualRows={messageFeedVirtualRows}
                     items={messageFeedItems}
                     getItemId={(feedItem) => feedItem.id}
@@ -5708,6 +6312,13 @@ export function WorkspaceClientView({
                     measureElement={messageFeedVirtualizer.measureElement}
                     onScroll={handleMessageFeedScroll}
                     onUserScrollIntent={cancelMessageFeedAutoFollow}
+                    onKeyDown={handleMessageFeedKeyDown}
+                    onPointerDown={handleMessageFeedPointerDown}
+                    onPointerMove={handleMessageFeedPointerMove}
+                    onPointerUp={handleMessageFeedPointerEnd}
+                    onPointerCancel={handleMessageFeedPointerEnd}
+                    onContextMenu={handleMessageFeedContextMenu}
+                    title={t("Conversation shortcuts: Alt+Up/Down moves between blocks. Enter expands evidence. Ctrl/Cmd+Shift+C copies the focused block.")}
                     statusNode={
                       <>
                         {channelActivityTransitionsLoading ? (
@@ -5725,18 +6336,74 @@ export function WorkspaceClientView({
                       </>
                     }
                     latestButtonNode={
-                      messageFeedLatestButtonVisible ? (
-                        <button
-                          className="message-feed-latest-button"
-                          type="button"
-                          onClick={scrollMessageFeedToLatest}
-                          aria-label={t("Jump to latest message")}
-                        >
-                          <ArrowDown size={22} />
-                        </button>
-                      ) : null
+                      <>
+                        {conversationBackgroundToast ? (
+                          <button
+                            key={conversationBackgroundToast.id}
+                            className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
+                            type="button"
+                            onClick={scrollMessageFeedToLatest}
+                            aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
+                          >
+                            <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
+                            <small>{t("Jump to latest")}</small>
+                          </button>
+                        ) : null}
+                        {conversationBlockFeedback ? (
+                          <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
+                            {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
+                            <span>{conversationBlockFeedback.message}</span>
+                          </div>
+                        ) : null}
+                        {messageFeedLatestButtonVisible ? (
+                          <button
+                            className="message-feed-latest-button"
+                            type="button"
+                            onClick={scrollMessageFeedToLatest}
+                            aria-label={t("Jump to latest message")}
+                          >
+                            <ArrowDown size={22} />
+                          </button>
+                        ) : null}
+                      </>
                     }
                   />
+                  {conversationBlockActionMenu ? (
+                    <div
+                      ref={conversationBlockActionMenuRef}
+                      className="conversation-block-action-menu"
+                      role="menu"
+                      aria-label={t("Conversation block actions")}
+                      style={{ left: conversationBlockActionMenu.x, top: conversationBlockActionMenu.y }}
+                    >
+                      <strong>{conversationBlockActionMenu.label}</strong>
+                      {conversationBlockActionMenu.feedback ? <small role="status" aria-live="polite">{conversationBlockActionMenu.feedback}</small> : null}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          const block = messageFeedRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(conversationBlockActionMenu.blockId)}"]`);
+                          if (block) {
+                            void copyConversationBlock(block);
+                          }
+                        }}
+                      >
+                        <Copy size={13} />
+                        {t("Copy block")}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          focusConversationBlockById(conversationBlockActionMenu.blockId);
+                        }}
+                      >
+                        <Search size={13} />
+                        {t("Focus block")}
+                      </button>
+                    </div>
+                  ) : null}
+                  {conversationDetailOverlayNode}
                   {channelComposer}
                 </div>
                 {activeThreadRoot ? (
@@ -5783,9 +6450,9 @@ export function WorkspaceClientView({
             ariaLabel={sidePanelTitle}
             title={sidePanelTitle}
             icon={channelSidePanelIcon(sidePanelView, 16)}
-            actions={sidePanelView === "sources" ? undefined : (
+            actions={(
               <>
-                {sidePanelView !== "approval" && sidePanelView !== "review" ? (
+                {sidePanelView !== "settings" ? (
                   <button
                     className="icon-button"
                     type="button"
@@ -5802,7 +6469,7 @@ export function WorkspaceClientView({
                 </button>
               </>
             )}
-            navLabel={t("Channel drawer pages")}
+            navLabel={t("Workspace utility pages")}
             navItems={channelSidePanelRootViews.map((view) => ({
               id: view,
               label: t(channelSidePanelLabel(view)),
@@ -5950,6 +6617,36 @@ function governanceNotificationRouteLabel(page: GovernanceNotification["targetRo
 }
 
 type ChannelInspectorMode = "protocol" | "brief" | "routing" | "decisions" | "handoffs" | "runtime";
+
+function ConversationDetailOverlay({
+  title,
+  icon,
+  children,
+  onClose,
+}: {
+  readonly title: string;
+  readonly icon: ReactNode;
+  readonly children: ReactNode;
+  readonly onClose: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <section className="conversation-detail-overlay" aria-label={title}>
+      <header className="conversation-detail-overlay-head">
+        <span>
+          {icon}
+          <strong>{title}</strong>
+        </span>
+        <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close preview")} title={t("Close preview")}>
+          <X size={14} />
+        </button>
+      </header>
+      <div className="conversation-detail-overlay-body">
+        {children}
+      </div>
+    </section>
+  );
+}
 
 function ChannelSourceDetailPanel({
   detail,
@@ -8366,6 +9063,7 @@ function TaskDetailPanel({
       </div>
       {taskAttachments.length > 0 ? (
         <ConversationAttachmentStrip
+          loadPreview={loadPreviewContent}
           attachments={taskAttachments.map((attachment) => ({
             id: attachment.id,
             label: attachment.fileName,
@@ -9833,292 +10531,6 @@ function workflowCanAdvance(status: ChannelWorkflow["status"]): boolean {
 
 function workflowCanCancel(status: ChannelWorkflow["status"]): boolean {
   return status === "draft" || status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
-}
-
-function ChannelReviewPanel({
-  approvals,
-  runs,
-  tasks,
-  artifactsByRun,
-  executionActionError,
-  loading,
-  onOpenApproval,
-}: {
-  readonly approvals: readonly ApprovalRequest[];
-  readonly runs: readonly RunSession[];
-  readonly tasks: readonly Task[];
-  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-  readonly executionActionError: string;
-  readonly loading: boolean;
-  readonly onOpenApproval: (approval: ApprovalRequest | undefined) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
-  const pendingApprovals = approvals
-    .filter((approval) => effectiveApprovalStatus(approval) === "pending")
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .slice(0, 3);
-  const terminalRuns = runs
-    .filter((run) => run.status !== "queued" && run.status !== "running" && run.status !== "waiting_for_approval")
-    .sort((left, right) => compareRunActivity(right, left))
-    .slice(0, 5);
-  const terminalArtifactCount = terminalRuns.reduce((count, run) => count + (artifactsByRun[run.id]?.length ?? 0), 0);
-  const failedRunCount = terminalRuns.filter((run) => run.status === "failed" || run.status === "cancelled").length;
-
-  return (
-    <section className="channel-review-panel" aria-label={t("Review")}>
-      {loading ? (
-        <div className="channel-review-loading" role="status">
-          <Loader2 className="spin" size={14} />
-          <span>{t("Refreshing review data...")}</span>
-        </div>
-      ) : null}
-
-      <div className="channel-review-summary" aria-label={t("Review summary")}>
-        <span>
-          <strong>{pendingApprovals.length}</strong>
-          <small>{t("Pending approvals")}</small>
-        </span>
-        <span>
-          <strong>{terminalRuns.length}</strong>
-          <small>{t("Completed runs")}</small>
-        </span>
-        <span>
-          <strong>{terminalArtifactCount}</strong>
-          <small>{t("Artifacts")}</small>
-        </span>
-      </div>
-      {executionActionError ? (
-        <p className="channel-review-error danger-text">{executionActionError}</p>
-      ) : null}
-
-      <div className="channel-review-section">
-        <div className="task-strip-head">
-          <span>
-            <ShieldCheck size={16} />
-            <strong>{t("Approvals")}</strong>
-          </span>
-        </div>
-        {pendingApprovals.length === 0 ? (
-          <div className="client-empty-state compact-empty">
-            <ShieldCheck />
-            <span>{t("No pending approval")}</span>
-          </div>
-        ) : (
-          <div className="channel-review-list">
-            {pendingApprovals.map((approval) => (
-              <button key={approval.id} className="channel-review-row button-row" type="button" onClick={() => onOpenApproval(approval)}>
-                <span className="channel-review-row-main">
-                  <strong>{approval.title}</strong>
-                  <small>{approval.actionType} · {approval.risk} · {formatDateTime(approval.createdAt)}</small>
-                </span>
-                <span className={`approval-state ${effectiveApprovalStatus(approval)}`}>{effectiveApprovalStatus(approval)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="channel-review-section">
-        <div className="task-strip-head">
-          <span>
-            <CheckCircle2 size={16} />
-            <strong>{t("Run results")}</strong>
-          </span>
-          {failedRunCount > 0 ? <small>{t("{count} need review", { count: failedRunCount })}</small> : null}
-        </div>
-        {terminalRuns.length === 0 ? (
-          <div className="client-empty-state compact-empty">
-            <CheckCircle2 />
-            <span>{t("No completed run to review")}</span>
-          </div>
-        ) : (
-          <div className="channel-review-list">
-            {terminalRuns.map((run) => {
-              const task = taskById.get(run.taskId);
-              const runArtifacts = artifactsByRun[run.id] ?? [];
-              return (
-                <div key={run.id} className="channel-review-row">
-                  <span className="channel-review-row-main">
-                    <strong>{task?.title ?? readRunTitle(run)}</strong>
-                    <small>{formatDateTime(run.endedAt ?? run.updatedAt)} · {t("{count} artifacts", { count: runArtifacts.length })}</small>
-                    {run.errorMessage ? <small className="danger-text">{run.errorMessage}</small> : null}
-                  </span>
-                  <StatusBadge status={run.status} />
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ChannelFiles({
-  attachments,
-  linkPreviews,
-  runs,
-  tasks,
-  artifactsByRun,
-  artifactErrorsByRun,
-  loading,
-  runArtifactsLoading,
-  attachmentContentUrl,
-  onDeleteAttachment,
-}: {
-  readonly attachments: readonly ChannelAttachment[];
-  readonly linkPreviews: readonly ChannelLinkPreview[];
-  readonly runs: readonly RunSession[];
-  readonly tasks: readonly Task[];
-  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-  readonly artifactErrorsByRun: Readonly<Record<string, string>>;
-  readonly loading: boolean;
-  readonly runArtifactsLoading: boolean;
-  readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
-  readonly onDeleteAttachment: (attachmentId: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
-  const totalRunArtifactCount = runs.reduce((count, run) => count + (artifactsByRun[run.id]?.length ?? 0), 0);
-
-  if (loading) {
-    return (
-      <div className="client-empty-state channel-files">
-        <Loader2 className="spin" />
-        <span>{t("Loading files...")}</span>
-      </div>
-    );
-  }
-
-  return (
-    <section className="channel-files" aria-label={t("Files")}>
-      <div className="file-section">
-        <div className="task-strip-head">
-          <span>
-            <FileText size={16} />
-            <strong>{t("Attachments")}</strong>
-          </span>
-        </div>
-        {attachments.length === 0 ? (
-          <div className="client-empty-state">
-            <FileText />
-            <span>{t("No attachments in this channel")}</span>
-          </div>
-        ) : (
-          <div className="file-grid">
-            {attachments.map((attachment) => (
-              <article key={attachment.id} className="file-card">
-                <span className="file-icon">{attachment.kind === "image" ? <ImageIcon size={18} /> : <FileText size={18} />}</span>
-                <span>
-                  <strong>{attachment.fileName}</strong>
-                  <small>{attachment.kind} · {formatBytes(attachment.sizeBytes)}</small>
-                </span>
-                <a className="secondary-button compact-button" href={attachmentContentUrl(attachment)} target="_blank" rel="noreferrer">{t("Open")}</a>
-                <button className="icon-button" type="button" onClick={() => onDeleteAttachment(attachment.id)} aria-label={t("Delete attachment")}>
-                  <Trash2 size={14} />
-                </button>
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="file-section">
-        <div className="task-strip-head">
-          <span>
-            <Link2 size={16} />
-            <strong>{t("Links")}</strong>
-          </span>
-        </div>
-        {linkPreviews.length === 0 ? (
-          <div className="client-empty-state">
-            <Link2 />
-            <span>{t("No shared links in this channel")}</span>
-          </div>
-        ) : (
-          <div className="file-grid">
-            {linkPreviews.map((preview) => (
-              <a key={preview.id} className={`link-card ${preview.status}`} href={preview.normalizedUrl} target="_blank" rel="noreferrer">
-                <span>
-                  <strong>{preview.title ?? preview.normalizedUrl}</strong>
-                  <small>{preview.status === "ready" ? preview.description ?? preview.siteName ?? preview.normalizedUrl : preview.errorMessage}</small>
-                </span>
-                <span className={`task-status ${preview.status === "ready" ? "done" : "blocked"}`}>{preview.status}</span>
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="file-section run-artifact-section">
-        <div className="task-strip-head">
-          <span>
-            <FileCheck2 size={16} />
-            <strong>{t("Run artifacts")}</strong>
-          </span>
-          <small>{t("{count} artifacts", { count: totalRunArtifactCount })}</small>
-        </div>
-        {runArtifactsLoading ? (
-          <div className="client-empty-state">
-            <Loader2 className="spin" />
-            <span>{t("Loading run artifacts...")}</span>
-          </div>
-        ) : runs.length === 0 ? (
-          <div className="client-empty-state">
-            <FileCheck2 />
-            <span>{t("No run artifacts in this channel")}</span>
-          </div>
-        ) : (
-          <div className="run-artifact-groups">
-            {runs.map((run) => {
-              const runArtifacts = artifactsByRun[run.id] ?? [];
-              const task = taskById.get(run.taskId);
-              const artifactError = artifactErrorsByRun[run.id];
-              const artifactCwd = readRunWorkspaceCwd(run, run.cwd);
-              return (
-                <article key={run.id} className="run-artifact-group">
-                  <div className="run-artifact-head">
-                    <span>
-                      <strong>{task?.title ?? run.taskId}</strong>
-                      <small>{run.status} · {formatDateTime(run.updatedAt)}</small>
-                    </span>
-                    <StatusBadge status={run.status} />
-                  </div>
-                  <details className="json-details compact-json">
-                    <summary>{t("Debug details")}</summary>
-                    <div className="session-file-list compact">
-                      <span>{t("Event log")}</span>
-                      <code>{run.eventLogPath}</code>
-                      <span>{t("Summary")}</span>
-                      <code>{run.summaryPath ?? "-"}</code>
-                    </div>
-                  </details>
-                  {artifactError ? (
-                    <div className="artifact-empty-state error">
-                      <span>{t("Could not load artifacts")}</span>
-                      <small>{artifactError}</small>
-                    </div>
-                  ) : runArtifacts.length === 0 ? (
-                    <div className="artifact-empty-state">
-                      <span>{t("No artifacts recorded for this run")}</span>
-                      <small>{t("Artifacts will appear here once the daemon records files under .ling-stack/artifacts.")}</small>
-                    </div>
-                  ) : (
-                    <div className="artifact-list">
-                      {runArtifacts.map((artifact) => (
-                        <ArtifactRow artifact={artifact} cwd={artifactCwd} key={artifact.id} />
-                      ))}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </section>
-  );
 }
 
 function ChannelRouteInspectContent({

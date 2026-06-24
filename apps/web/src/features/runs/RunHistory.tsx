@@ -26,7 +26,7 @@ import { LingDaemonError } from "@ling-stack/api-client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
-import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, forkRunLingThread, getLingThreadEvidence, getSkillRecordingEligibility, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, pinLingThread, previewLingThreadResume, recordSkillRecording, resumeLingThread, unarchiveLingThread, unpinLingThread } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, forkRunLingThread, getLingThreadEvidence, getSkillRecordingEligibility, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, pinLingThread, previewArtifactContent, previewLingThreadResume, recordSkillRecording, resumeLingThread, unarchiveLingThread, unpinLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import {
   formatEventData,
@@ -3033,6 +3033,7 @@ function RunEvidencePanel({
           cwd={artifactCwd}
           artifacts={artifacts}
           status={fileChangeStatusFromRun(run)}
+          loadArtifactPreview={previewArtifactContent}
           sourceRunId={run.id}
         />
         {artifacts.length === 0 ? (

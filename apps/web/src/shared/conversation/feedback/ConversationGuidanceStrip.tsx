@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { CornerDownLeft, FileText, Link2, Loader2, MessageSquareText, MoreHorizontal, Paperclip, PauseCircle, Pencil, Send, Square, Trash2, XCircle } from "lucide-react";
+import { useI18n } from "../../../i18n.js";
 
 export interface ConversationGuidanceItem {
   readonly id: string;
@@ -63,6 +64,7 @@ export function ConversationGuidanceStrip({
   readonly onRedirect?: () => void;
   readonly onStop?: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const [openMenuItemId, setOpenMenuItemId] = useState("");
   const showCompose = Boolean(
     typeof instruction === "string" &&
@@ -77,8 +79,8 @@ export function ConversationGuidanceStrip({
   );
 
   return (
-    <section className="conversation-guidance-strip channel-run-guidance-strip" aria-label={title}>
-      <div className="channel-run-guidance-head">
+    <section className="conversation-guidance-strip" aria-label={title}>
+      <div className="conversation-guidance-head">
         <span>{title}</span>
         {description ? <small>{description}</small> : null}
       </div>
@@ -90,7 +92,7 @@ export function ConversationGuidanceStrip({
             placeholder={instructionPlaceholder ?? ""}
             onChange={(event) => onInstructionChange?.(event.target.value)}
           />
-          <div className="channel-run-guidance-actions">
+          <div className="conversation-guidance-actions">
             <button className="secondary-button compact-button" type="button" disabled={stopDisabled || submitting === "stop"} onClick={onStop}>
               {submitting === "stop" ? <Loader2 className="spin" size={14} /> : <Square size={14} />}
               {stopLabel}
@@ -107,23 +109,23 @@ export function ConversationGuidanceStrip({
         </>
       ) : null}
       {items && items.length > 0 ? (
-        <div className="channel-run-guidance-list">
+        <div className="conversation-guidance-list">
           {items.map((item) => {
             const deleteAction = item.onDelete ?? item.onCancel;
-            const deleteLabel = item.deleteLabel ?? item.cancelLabel ?? "删除排队引导";
+            const deleteLabel = item.deleteLabel ?? item.cancelLabel ?? t("Delete queued guidance");
             const deleteDisabled = item.deleteDisabled ?? item.cancelDisabled;
             const hasPromoteAction = Boolean(item.onPromote || item.promoteLabel);
             const hasMoreMenu = Boolean(item.onEdit || item.onCloseQueue);
             const menuOpen = openMenuItemId === item.id;
 
             return (
-              <div key={item.id} className="channel-run-guidance-row">
-                <span className="channel-run-guidance-row-main">
-                  <span className="channel-run-guidance-token" aria-hidden="true">
+              <div key={item.id} className="conversation-guidance-row">
+                <span className="conversation-guidance-row-main">
+                  <span className="conversation-guidance-token" aria-hidden="true">
                     <MessageSquareText size={14} />
                   </span>
-                  <span className="channel-run-guidance-copy">
-                    <span className="channel-run-guidance-instruction">{item.instruction}</span>
+                  <span className="conversation-guidance-copy">
+                    <span className="conversation-guidance-instruction">{item.instruction}</span>
                     <small>
                       <span>{item.statusLabel}</span>
                       {item.meta ? <span>{item.meta}</span> : null}
@@ -148,15 +150,15 @@ export function ConversationGuidanceStrip({
                     </small>
                   </span>
                 </span>
-                <span className="channel-run-guidance-row-actions">
+                <span className="conversation-guidance-row-actions">
                   {hasPromoteAction ? (
                     <button
                       className="ghost-button compact-button icon-button"
                       type="button"
                       disabled={!item.onPromote || item.promoteDisabled || item.promoteLoading}
                       onClick={() => item.onPromote?.()}
-                      aria-label={item.promoteLabel ?? "立即执行"}
-                      title={item.promoteLabel ?? "立即执行"}
+                      aria-label={item.promoteLabel ?? t("Run this guidance now")}
+                      title={item.promoteLabel ?? t("Run this guidance now")}
                     >
                       {item.promoteLoading ? <Loader2 className="spin" size={14} /> : <CornerDownLeft size={14} />}
                     </button>
@@ -174,20 +176,20 @@ export function ConversationGuidanceStrip({
                     </button>
                   ) : null}
                   {hasMoreMenu ? (
-                    <span className="channel-run-guidance-more">
+                    <span className="conversation-guidance-more">
                       <button
                         className="ghost-button compact-button icon-button"
                         type="button"
                         aria-expanded={menuOpen}
                         aria-haspopup="menu"
-                        aria-label={item.moreLabel ?? "更多引导操作"}
-                        title={item.moreLabel ?? "更多引导操作"}
+                        aria-label={item.moreLabel ?? t("More guidance actions")}
+                        title={item.moreLabel ?? t("More guidance actions")}
                         onClick={() => setOpenMenuItemId(menuOpen ? "" : item.id)}
                       >
                         <MoreHorizontal size={14} />
                       </button>
                       {menuOpen ? (
-                        <span className="channel-run-guidance-menu" role="menu">
+                        <span className="conversation-guidance-menu" role="menu">
                           {item.onEdit ? (
                             <button
                               type="button"
@@ -199,7 +201,7 @@ export function ConversationGuidanceStrip({
                               }}
                             >
                               <Pencil size={14} />
-                              {item.editLabel ?? "编辑消息"}
+                              {item.editLabel ?? t("Edit message")}
                             </button>
                           ) : null}
                           {item.onCloseQueue ? (
@@ -213,7 +215,7 @@ export function ConversationGuidanceStrip({
                               }}
                             >
                               {item.closeQueueLoading ? <Loader2 className="spin" size={14} /> : <XCircle size={14} />}
-                              {item.closeQueueLabel ?? "关闭排队"}
+                              {item.closeQueueLabel ?? t("Close queue")}
                             </button>
                           ) : null}
                         </span>

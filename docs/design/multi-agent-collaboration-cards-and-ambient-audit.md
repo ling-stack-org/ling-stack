@@ -7,12 +7,21 @@ Use [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md) and
 [Conversation UI Design Conformance Recovery Plan](conversation-ui-design-conformance-recovery-plan.md)
 for the channel conversation feed. This document may still explain the older
 collaboration-card read model, but not a current Progress drawer surface.
+Historical card names map to operation-cell presentations in
+[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md).
+
+2026-06-24 update: right-side drawer surfaces must not own conversation artifacts,
+links, operation evidence, workflow/packet summaries, or multi-agent process detail. Any
+old reference in this historical document to an evidence drawer or right-drawer detail
+must be read as inline operation-cell expansion, in-turn preview/lightbox, or explicit
+raw/debug inspector from the owning conversation row.
 
 Previous status: product design baseline.
 Date: 2026-06-13
 
 Related docs:
 
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Multi-Agent Collaboration Cards Implementation Plan](multi-agent-collaboration-cards-implementation-plan.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
@@ -48,7 +57,7 @@ unified `OperationCell` contract from
 [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md). `Requirement Shaping
 Card`, `Execution Task Card`, and `Step Handoff Card` are product read models and
 sections inside that operation surface. They must not become extra first-level rows that
-duplicate the Ling Agent summary, run summary, or evidence drawer.
+duplicate the Ling Agent summary, run summary, or inline evidence detail.
 
 ## Product Principle
 
@@ -69,7 +78,7 @@ conversation should show only the product meaning of that evidence:
 | Layer | User sees by default? | Contents | Examples |
 | --- | --- | --- | --- |
 | Product layer | Yes | Natural progress, collaboration cards, final summaries, permission prompts | `Ling is shaping the task`, `Engineer is implementing`, `QA is validating`. |
-| Smart details layer | On demand | Teammate contributions, step summaries, handoff packets, evidence groups, files, approvals | Expanded card detail, right drawer, evidence disclosure. |
+| Smart details layer | On demand | Teammate contributions, step summaries, handoff packets, evidence groups, files, links, approvals | Expanded operation-cell detail, in-turn preview/lightbox, evidence disclosure. |
 | Audit/debug layer | Advanced only | Raw ids, context section ids, dropped ids, token budgets, selector metadata, raw logs, route JSON | Developer diagnostics and explicit inspect routes. |
 
 Default UI must not render audit/debug data as primary conversation content. The
@@ -157,8 +166,8 @@ interface CollaborationTaskCard {
 ```
 
 Default UI should show a compact task card in the channel feed and reuse the existing
-operation cell/evidence disclosure in the channel feed. The right drawer is only for
-deeper drilldown or cross-task work-board context, not for duplicating the same expanded
+operation cell/evidence disclosure in the channel feed. Conversation details stay in the
+owning conversation row; a right-side utility must not duplicate or own the same expanded
 evidence.
 
 ## Card State Machine Boundary
@@ -357,9 +366,9 @@ only if derived views become too expensive or need user edits.
 - A newly started task takes over the Progress surface. Older completed work moves to
   final summaries, evidence, or history/detail surfaces instead of staying expanded in
   the Progress list.
-- Expand actions are explicit: `Details`, `Evidence`, `View steps`, or right drawer.
-  Do not show both an inline evidence expansion and a drawer button for the same evidence
-  bundle in the default card chrome.
+- Expand actions are explicit: `Details`, `Evidence`, or `View steps`.
+  Do not show both an inline evidence expansion and a side-panel button for the same
+  evidence bundle in the default card chrome.
 - Permission prompts stay visible because they require user action.
 - Blockers stay visible because they change the next action.
 - Raw audit/debug data is never the first thing shown.

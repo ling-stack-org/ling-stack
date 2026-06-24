@@ -5,19 +5,29 @@
 Implemented in the Web client only. This slice ports the accepted channel chat HTML
 direction into the product surface without adding daemon contracts.
 
+2026-06-24 conversation ownership update: this slice is superseded for any
+conversation-owned material. Attachments, links, agent operations, approvals, checks,
+run evidence, workflow/packet summaries, generated artifacts, and source summaries must
+render in the main conversation page through inline expansion or in-turn previews. A
+right-side details panel, if kept, is only a non-conversation workspace utility for
+settings/tools/object inspection and must not be the default place to read conversation
+content.
+
 ## Intent
 
 The selected channel should read as a quiet working chat, not a dashboard with tabs and
-always-open controls. Chat stays the center of the channel. Tasks, files, and context
-remain available, but they move into a right-side details panel that compresses the chat
-when open and lets the chat expand when hidden.
+always-open controls. Chat stays the center of the channel. Conversation-owned tasks,
+files, attachments, links, generated artifacts, checks, approvals, and context evidence
+stay in the conversation turn that produced or used them. Non-conversation settings and
+workspace utilities may remain available from secondary controls, but they must not
+compress the chat as a required reading path.
 
 ## Interaction Model
 
 The channel header is a compact toolbar:
 
 - channel name with a `#` identity marker,
-- `...` menu for `Tasks`, `Files`, and `Context`,
+- `...` menu for non-conversation utilities and settings,
 - icon-only AI teammate management,
 - icon-only channel settings,
 - icon-only attention queue,
@@ -28,20 +38,22 @@ button, and right-side action icons share the same dark icon color and 18px glyp
 The attention queue button does not show a numeric badge; counts remain inside the
 attention popover and activity surfaces.
 
-The `...` menu opens the requested channel surface in the right details panel. It closes
-on outside click, Escape, or menu item selection. The Chat surface is not listed because
-chat is the permanent center surface.
+The `...` menu must not open conversation attachments, links, operation evidence, or
+workflow/process summaries in a right details panel. Those details open from the owning
+conversation row. The Chat surface is not listed because chat is the permanent center
+surface.
 
-The right details panel:
+If a right details panel is kept, it:
 
 - is an in-layout sidebar, not an overlay,
 - is a full-height drawer aligned to the top of the channel workspace, not a panel that
   starts below the channel header,
 - compresses the chat when visible,
 - hides without losing the selected detail view,
-- reuses existing Files and Context components,
-- shows the selected task detail directly instead of a task list,
-- embeds the active run timeline inside task detail when run events exist,
+- does not reuse conversation Files/Context components for attachments, links, artifacts,
+  source summaries, or operation evidence,
+- does not show selected task/run/process detail as a conversation reading path,
+- does not embed the active run timeline,
 - keeps task/run identifiers out of the default header chrome.
 - does not duplicate the details close control inside the drawer; show/hide is controlled
   from the channel header icon.
@@ -80,7 +92,8 @@ Plain chat messages are quieter than work events.
 - Audit records remain reachable through the header `...` menu's activity tools, saved
   views, search, attention queue, and activity drilldown.
 - Execution proposal cards remain attached to their source chat message. Confirmation
-  keeps the user in the channel and updates the right task/run detail panel.
+  keeps the user in the channel and updates the owning conversation turn, operation cell,
+  and inline evidence.
 
 ## Visual Boundary
 

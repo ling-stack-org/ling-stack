@@ -1,4 +1,4 @@
-import type { ConversationFileChange } from "../../lib/diff-summary.js";
+import type { ConversationFileChange } from "../../../lib/diff-summary.js";
 
 export interface DiffViewerProps {
   readonly change: ConversationFileChange;

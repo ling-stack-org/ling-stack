@@ -14,6 +14,7 @@ export interface MessageRowProps {
   readonly body?: string;
   readonly bodyCwd?: string;
   readonly bodyCompact?: boolean;
+  readonly bodyStreaming?: boolean;
   readonly bodyNode?: ReactNode;
   readonly attachmentsNode?: ReactNode;
   readonly evidenceNode?: ReactNode;
@@ -32,6 +33,7 @@ export function MessageRow({
   body,
   bodyCwd,
   bodyCompact,
+  bodyStreaming = false,
   bodyNode,
   attachmentsNode,
   evidenceNode,
@@ -69,7 +71,7 @@ export function MessageRow({
             {statusNode}
           </header>
         )}
-        {bodyNode ?? (body ? <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} /> : null)}
+        {bodyNode ?? (body ? <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} streaming={bodyStreaming} /> : null)}
         {attachmentsNode}
         {evidenceNode}
         {errorNode}

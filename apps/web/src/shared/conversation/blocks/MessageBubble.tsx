@@ -60,7 +60,7 @@ export function MessageBubble({
     pending ? "message-bubble-pending" : "",
     className,
   ].filter(Boolean).join(" ");
-  const resolvedBodyNode = bodyNode ?? (body ? <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} /> : null);
+  const resolvedBodyNode = bodyNode ?? (body ? <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} streaming={pending} /> : null);
 
   return (
     <article className={rootClassName}>

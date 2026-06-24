@@ -1,4 +1,4 @@
-import type { LocalFileReference } from "./message-body.js";
+import type { LocalFileReference } from "../tokens/message-body.js";
 
 export interface LocalFileLinkProps {
   readonly reference: LocalFileReference;

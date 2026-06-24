@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Globe2, Link2, Search, ShieldAlert } from "lucide-react";
-import { useI18n } from "../../i18n.js";
-import type { MessageWebEvidence } from "../../types.js";
+import { useI18n } from "../../../i18n.js";
+import type { MessageWebEvidence } from "../../../types.js";
 import {
   ConversationEvidenceBundlePanel,
   type ConversationEvidenceItem,

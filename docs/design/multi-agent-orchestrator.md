@@ -27,6 +27,13 @@ The first implementation should make Ling Stack capable of running a simple
 product/design/architecture/implementation/QA/release workflow without asking the user
 to manually start every step.
 
+Canonical follow-up design:
+[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md) is the current
+source of truth for requirement shaping, workflow packet ownership, side-effect classes,
+safe parallel defaults, isolated worktree merge protocol, and the OperationCell UI
+projection. If this historical orchestrator document conflicts with that design, prefer
+the detailed design.
+
 ## Current Implementation Status
 
 Implemented in the first backend slice:
@@ -76,6 +83,11 @@ Implemented follow-up slices:
   output, workflow evidence APIs, and Web work-cell/right-drawer drilldown.
 - Model-assisted selector decisions remain a future explicit policy/feature-flag slice;
   current selector decisions are deterministic routing evidence.
+- The next hardening target is not "parallel everything." It is safe parallel scheduling
+  based on explicit step side-effect class and parallel policy. By default, only
+  `analysis_readonly` and verified `test_artifact_only` branches should auto-parallelize;
+  `workspace_write`, `external_mutation`, and `release` remain serial until the isolated
+  worktree merge protocol exists.
 
 Advanced follow-up design:
 
@@ -163,8 +175,9 @@ workflow template -> planned steps -> orchestrator starts eligible step -> task/
 - No Codex app-server dependency. Codex can become a runner backend later.
 - No distributed workflow engine.
 - No dynamic graph rewriting by the model in the first slice.
-- No parallel step execution in the first slice, even if the template has independent
-  dependencies.
+- No unsafe parallel step execution. Independent dependencies are not enough; auto
+  parallel requires explicit side-effect class, parallel policy, resource, approval, and
+  runtime-budget gates.
 
 ## Product Rule
 
@@ -272,7 +285,7 @@ The template already encodes dependencies:
 - `code-review` and `qa` depend on implementation,
 - `ship` depends on code review and QA.
 
-The first orchestrator slice should still run this serially in a deterministic order:
+The original orchestrator slice ran this serially in a deterministic order:
 
 ```text
 product-discovery
@@ -285,8 +298,21 @@ qa
 ship
 ```
 
-Parallel execution can come later after the scheduler, artifact merge, and approval UX
-are proven.
+The current target behavior keeps that order as the conservative fallback, but allows
+safe parallel branches when the workflow/runtime policy opts in:
+
+```text
+product-discovery
+-> product-review
+-> design-review + engineering-review       # analysis_readonly, safe parallel
+-> implementation                           # workspace_write, serial approval gate
+-> code-review + qa                         # qa only when artifact-only
+-> ship                                     # release, strict serial gate
+```
+
+Parallel execution must follow the side-effect and packet rules in
+[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md#safe-parallel-scheduler).
+Dependency graph shape alone is not enough to auto-parallelize a step.
 
 ## Step Execution Model
 
@@ -414,15 +440,20 @@ Tick algorithm:
 1. Load workflow and steps.
 2. If workflow is terminal, stop.
 3. Reconcile running steps with linked run/work-unit state.
-4. If any step is `blocked`, `failed`, `waiting_for_approval`, or `running`, stop.
-5. Find the first queued step whose dependencies are all terminal-success states.
-6. If no queued steps remain, transition workflow to `succeeded`.
-7. If the next step has a pre-step approval gate, create/attach approval and set
+4. If the workflow is using serial runtime policy, stop when any step is `blocked`,
+   `failed`, `waiting_for_approval`, or `running`.
+5. If the workflow is using parallel runtime policy, compute eligible queued siblings and
+   filter them through side-effect class, parallel policy, approval, resource, and budget
+   gates.
+6. Find the first serial step or the bounded set of safe parallel siblings whose
+   dependencies are satisfied.
+7. If no queued steps remain, transition workflow to `succeeded`.
+8. If a candidate step has a pre-step approval gate, create/attach approval and set
    `waiting_for_approval`.
-8. Otherwise start the step through task/run coordinator.
+9. Otherwise start the step through task/run coordinator.
 
-The first slice should run one step per tick. After a step reaches terminal state, a new
-tick can start the next step.
+Serial fallback still starts one step per tick. Safe parallel policy may start multiple
+siblings in one tick only when every candidate is safe and the runtime budget permits it.
 
 ## Approval Gates
 
@@ -532,8 +563,8 @@ Required surfaces:
   cancel, and success,
 - final summary card with links to artifacts, tasks, runs, and changed files.
 
-The channel chat should show a concise workflow card. It should not become a group chat
-transcript unless the user expands the workflow detail.
+The channel chat should show a concise operation-cell projection for the workflow. It
+should not become a group chat transcript unless the user expands the workflow detail.
 
 ## Data Ownership
 
@@ -692,20 +723,18 @@ git diff --check
 
 ## Open Questions
 
-- Should `autoplan-lite` be the only auto-startable template at first, or should users
-  be able to mark custom templates as auto-startable after review?
-- Should failed planning/review steps block for user decision instead of failing the
-  whole workflow?
-- Should design review and engineering review become parallel once the serial version is
-  stable?
-- Should post-step gates be template metadata or derived from skill state effects?
-- Should workflow summaries be model-generated, deterministic, or both with approval?
+Resolved by the detailed design:
 
-Recommended defaults:
+- Built-in `autoplan-lite` remains the default first auto-startable workflow shape.
+- Failed planning/review steps block for user decision by default; implementation,
+  external mutation, and release failures do not auto-retry without user action.
+- `design-review` and `engineering-review` may auto-parallelize as `analysis_readonly`
+  steps when runtime policy permits.
+- Post-step gates should be explicit template or graph metadata.
+- Workflow summaries start deterministic and source-linked; model-generated summaries are
+  allowed only as evidence-backed additions.
 
-- Only `autoplan-lite` is auto-startable in the first slice.
-- Failed planning/review steps block, while failed implementation/release steps fail the
-  workflow unless the user retries.
-- Keep all execution serial until recovery and UI are proven.
-- Use explicit post-step gate metadata.
-- Start with deterministic summaries plus links to run artifacts.
+Still open:
+
+- Exact type file split for grouped workflow packet refs.
+- Whether requirement-shaping packet search needs a future SQLite index.

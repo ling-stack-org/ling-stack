@@ -33,6 +33,26 @@ async function useEnglishLocale(page: Page): Promise<void> {
   });
 }
 
+async function readFirstVisibleFeedAnchor(page: Page): Promise<{ id: string; offsetTop: number; scrollTop: number } | undefined> {
+  return page.locator(".activity-shell .message-feed").evaluate((feed) => {
+    const feedRect = feed.getBoundingClientRect();
+    const row = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
+      .filter((element) => element.dataset.feedItemKind !== "older-loader")
+      .find((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.bottom > feedRect.top + 12 && rect.top < feedRect.bottom - 12;
+      });
+    if (!row?.dataset.feedItemId) {
+      return undefined;
+    }
+    return {
+      id: row.dataset.feedItemId,
+      offsetTop: Math.round(row.getBoundingClientRect().top - feedRect.top),
+      scrollTop: Math.round(feed.scrollTop),
+    };
+  });
+}
+
 test("channel governance notifications stay in the header review queue", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -377,6 +397,15 @@ test("progress popover shows active context source groups and opens source detai
 
   const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Engineer" });
   await expect(workCell).toBeVisible();
+  const activeMotion = await workCell.evaluate((element) => {
+    const runningText = element.querySelector(".conversation-work-cell-agent-span.running .conversation-work-cell-agent-span-copy small, .conversation-work-cell-row.running .conversation-work-cell-row-copy strong");
+    return {
+      cellAnimation: getComputedStyle(element).animationName,
+      runningAnimation: runningText ? getComputedStyle(runningText).animationName : "",
+    };
+  });
+  expect(activeMotion.cellAnimation).toContain("conversation-settle-in");
+  expect(activeMotion.runningAnimation).toContain("conversation-active-shimmer");
   await workCell.locator(".conversation-work-cell-agent-span-head").click();
   await expect(workCell.locator(".conversation-work-cell-agent-span-detail")).toContainText("From Development Council");
 
@@ -394,16 +423,91 @@ test("progress popover shows active context source groups and opens source detai
 
   await popover.getByRole("button", { name: "Open Messages sources" }).click();
 
-  const sidePanel = page.locator(".channel-side-panel");
-  await expect(sidePanel).toBeVisible();
-  await expect(sidePanel).toHaveAttribute("aria-label", "Context sources");
-  await expect(sidePanel).toContainText("Sources used");
-  await expect(sidePanel).toContainText("Messages");
-  await expect(sidePanel).toContainText("2 items");
-  await expect(sidePanel).toContainText("Message msg_source_1");
-  await expect(sidePanel).toContainText("Message msg_source_2");
-  await expect(sidePanel).not.toContainText("Progress");
-  await expect(sidePanel).not.toContainText("Update conversation sources");
+  const sourceOverlay = page.locator(".conversation-detail-overlay");
+  await expect(sourceOverlay).toBeVisible();
+  await expect(sourceOverlay).toHaveAttribute("aria-label", "Context sources");
+  await expect(sourceOverlay).toContainText("Sources used");
+  await expect(sourceOverlay).toContainText("Messages");
+  await expect(sourceOverlay).toContainText("2 items");
+  await expect(sourceOverlay).toContainText("Message msg_source_1");
+  await expect(sourceOverlay).toContainText("Message msg_source_2");
+  await expect(sourceOverlay).not.toContainText("Progress");
+  await expect(sourceOverlay).not.toContainText("Update conversation sources");
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+});
+
+test("conversation motion respects reduced motion preference", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelWorkflows = [
+    {
+      id: "workflow_motion",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Reduced motion workflow",
+      objective: "Verify motion preferences.",
+      status: "running",
+      createdBy: "system",
+      createdAt: "2026-05-25T01:04:00.000Z",
+      updatedAt: "2026-05-25T01:04:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_motion",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_motion",
+      position: 1,
+      title: "Render reduced motion state",
+      prompt: "Verify reduced motion.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "running",
+      createdAt: "2026-05-25T01:04:00.000Z",
+      updatedAt: "2026-05-25T01:05:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const workCell = page.locator(".conversation-work-cell.active").first();
+  await expect(workCell).toBeVisible();
+  const reducedMotion = await workCell.evaluate((element) => {
+    const runningText = element.querySelector(".conversation-work-cell-row.running .conversation-work-cell-row-copy strong, .conversation-work-cell-agent-span.running .conversation-work-cell-agent-span-copy small");
+    return {
+      cellAnimation: getComputedStyle(element).animationName,
+      runningAnimation: runningText ? getComputedStyle(runningText).animationName : "",
+      runningColor: runningText ? getComputedStyle(runningText).color : "",
+    };
+  });
+  expect(reducedMotion.cellAnimation).toBe("none");
+  expect(reducedMotion.runningAnimation).toBe("none");
+  expect(reducedMotion.runningColor).not.toBe("rgba(0, 0, 0, 0)");
+  await maybeCaptureConversationScreenshots(page, "p10-reduced-motion-active-work", [
+    { suffix: "desktop-reduced", width: 1440, height: 960 },
+  ]);
+});
+
+test("approval event opens approval detail inside the conversation page", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await openChannelChatTools(page);
+  const approvalBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  await expect(approvalBubble).toBeVisible();
+  await approvalBubble.getByRole("button", { name: "Open approval" }).click();
+
+  const approvalOverlay = page.locator(".conversation-detail-overlay");
+  await expect(approvalOverlay).toBeVisible();
+  await expect(approvalOverlay).toHaveAttribute("aria-label", "Approval details");
+  await expect(approvalOverlay.locator(".channel-approval-detail-panel")).toContainText("Approve shell command");
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 
 test("channel drawer does not flash legacy create labels in section headers", async ({ page }) => {
@@ -1604,6 +1708,190 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(topicPanel).toContainText("Thread follow-up from the topic panel");
 });
 
+test("channel message body renders safe markdown, highlighted code, folded logs, and structured diffs", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as unknown as { __lingCopiedText?: string }).__lingCopiedText = text;
+        },
+      },
+    });
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  const longJson = [
+    "{",
+    ...Array.from({ length: 32 }, (_, index) => `  "item${index + 1}": ${index + 1},`),
+    '  "done": true',
+    "}",
+  ].join("\n");
+  const longMixedLabel = "超长需求确认标签需要在移动端自然换行不压住按钮 SuperLongEnglishLabelWithoutSpacesForConversationEvidenceAndArtifactRows1234567890";
+  state.channelMessages = [{
+    id: "msg_rich_markdown",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: [
+      "Rich rendering probe <script>window.__ling_p5_xss = true</script>",
+      "",
+      `Long label probe: ${longMixedLabel}`,
+      "",
+      "```ts",
+      "const answer = 42;",
+      "function format(value: string) {",
+      "  return `Result: ${value}`;",
+      "}",
+      "```",
+      "",
+      "```diff",
+      "diff --git a/src/example.ts b/src/example.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/example.ts",
+      "+++ b/src/example.ts",
+      "@@ -1 +1 @@",
+      "-export const value = 1;",
+      "+export const value = 2;",
+      "```",
+      "",
+      "```diff",
+      "not actually a patch",
+      "```",
+      "",
+      "```weirdlang",
+      "plain fallback block",
+      "```",
+      "",
+      "```json",
+      longJson,
+      "```",
+    ].join("\n"),
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-05-25T00:18:00.000Z",
+    updatedAt: "2026-05-25T00:18:00.000Z",
+  }, {
+    id: "msg_streaming_code",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: [
+      "Streaming code stays plain while the reply is pending.",
+      "",
+      "```ts",
+      "const streaming = true;",
+      "```",
+    ].join("\n"),
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "pending",
+    createdAt: "2026-05-25T00:18:01.000Z",
+    updatedAt: "2026-05-25T00:18:01.000Z",
+  }];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  const message = feed.locator(".message-bubble").filter({ hasText: "Rich rendering probe" });
+  await expect(message).toBeVisible();
+  await expect(message).toContainText(longMixedLabel);
+  await expect(message).toContainText("<script>window.__ling_p5_xss = true</script>");
+  await expect(message.locator("script")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __ling_p5_xss?: boolean }).__ling_p5_xss === true)).toBe(false);
+  const copyMessageButton = message.getByRole("button", { name: "Copy message" });
+  await copyMessageButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(message.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __lingCopiedText?: string }).__lingCopiedText ?? "")).toContain("Rich rendering probe");
+  await expect(feed).not.toContainText("Copy message completed");
+
+  const codeBlock = message.locator(".message-code-block").filter({ hasText: "const answer = 42;" });
+  await expect(codeBlock.getByText("ts")).toBeVisible();
+  await expect(codeBlock.locator(".code-token.keyword").filter({ hasText: "const" })).toBeVisible();
+  await expect(codeBlock.getByRole("button", { name: "Copy code" })).toBeVisible();
+  await expect.poll(() => codeBlock.evaluate((element) => {
+    const resolveBackground = (tokenName: string): string => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = `var(${tokenName})`;
+      document.body.append(probe);
+      const value = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return value;
+    };
+    const styles = getComputedStyle(element);
+    return {
+      actual: styles.backgroundColor,
+      expected: resolveBackground("--conversation-code-bg"),
+    };
+  })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
+
+  const diffBlock = message.locator(".message-diff-block");
+  await expect(diffBlock).toHaveCount(1);
+  await expect(diffBlock).toContainText("src/example.ts");
+  await expect(diffBlock.locator(".diff-line.delete")).toContainText("-export const value = 1;");
+  await expect(diffBlock.locator(".diff-line.add")).toContainText("+export const value = 2;");
+  await expect(diffBlock.getByRole("button", { name: "Copy diff" })).toBeVisible();
+  await expect.poll(() => diffBlock.locator(".diff-viewer").evaluate((element) => {
+    const resolveBackground = (tokenName: string): string => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = `var(${tokenName})`;
+      document.body.append(probe);
+      const value = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return value;
+    };
+    const styles = getComputedStyle(element);
+    return {
+      actual: styles.backgroundColor,
+      expected: resolveBackground("--conversation-code-bg"),
+    };
+  })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
+  await expect(message.locator(".message-code-block").filter({ hasText: "not actually a patch" })).toBeVisible();
+  const unknownLanguageBlock = message.locator(".message-code-block").filter({ hasText: "plain fallback block" });
+  await expect(unknownLanguageBlock.getByText("weirdlang")).toBeVisible();
+  await expect(unknownLanguageBlock.locator(".code-token")).toHaveCount(0);
+
+  const foldedJson = message.locator(".message-code-block").filter({ hasText: '"item1": 1' });
+  await expect(foldedJson.getByRole("button", { name: /Show full code/ })).toBeVisible();
+  await expect(foldedJson).not.toContainText('"done": true');
+  await foldedJson.getByRole("button", { name: /Show full code/ }).click();
+  await expect(foldedJson.getByRole("button", { name: "Collapse code" })).toBeVisible();
+  await expect(foldedJson).toContainText('"done": true');
+
+  const streamingMessage = feed.locator(".message-bubble").filter({ hasText: "Streaming code stays plain" });
+  await expect(streamingMessage).toBeVisible();
+  await expect(streamingMessage.locator(".message-code-block").filter({ hasText: "const streaming = true;" }).locator(".code-token")).toHaveCount(0);
+  const richLayout = await message.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const overflowing = Array.from(element.querySelectorAll<HTMLElement>(".message-code-block, .message-diff-block, .message-body-renderer"))
+      .some((node) => node.scrollWidth > Math.ceil(node.clientWidth) + 1);
+    return { width: Math.round(bounds.width), overflowing };
+  });
+  expect(richLayout.width).toBeGreaterThan(300);
+  expect(richLayout.overflowing).toBe(false);
+  await maybeCaptureConversationScreenshots(page, "p9-long-labels", [
+    { suffix: "narrow", width: 820, height: 900 },
+    { suffix: "mobile", width: 390, height: 844 },
+  ]);
+  await maybeCaptureConversationScreenshots(page, "p10-rich-code-diff", [
+    { suffix: "desktop", width: 1440, height: 960 },
+    { suffix: "narrow", width: 820, height: 900 },
+    { suffix: "mobile", width: 390, height: 844 },
+  ]);
+});
+
 test("channel composer sends workspace file refs as native message payload", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -2233,7 +2521,10 @@ test("requirement shaping proposal persists clarifications before confirmation",
       prompt: "Refine the workspace copy after clarifying scope.",
       assigneeTeammateId: "ling_agent",
       acceptanceCriteria: ["Workspace copy changes are scoped before execution."],
-      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Clarify the task, then prepare an executable proposal." }],
+      collaborationSteps: [
+        { teammateId: "ling_agent", action: "coordinated", summary: "Clarify the task, then prepare an executable proposal." },
+        { teammateId: "observer", action: "consulted", summary: "Synced on availability only." },
+      ],
       requiredTools: ["read", "edit"],
       riskSummary: "Copy scope must be confirmed before file edits.",
       shaping: {
@@ -2261,6 +2552,21 @@ test("requirement shaping proposal persists clarifications before confirmation",
 
   await mockDaemon(page, state);
   await page.goto("/");
+
+  const transcript = page.locator(".conversation-turn-assistant-transcript");
+  const shapingBlock = transcript.locator(".transcript-block-view.kind-requirement_shaping");
+  await expect(shapingBlock).toBeVisible();
+  await expect(shapingBlock).toHaveAttribute("aria-label", "Requirement shaping");
+  await expect(shapingBlock.getByRole("button", { name: "Collapse transcript block" })).toHaveAttribute("aria-expanded", "true");
+  await expect(shapingBlock).toContainText("Clarify workspace copy scope before execution.");
+  await expect(shapingBlock).toContainText("Needs user clarification");
+  await expect(shapingBlock).toContainText("ling_agent: Clarify the task, then prepare an executable proposal.");
+  await expect(shapingBlock).not.toContainText("Synced on availability only.");
+  await expect(shapingBlock).toContainText("Only workspace drawer copy is in scope.");
+  const decisionBlock = transcript.locator(".transcript-block-view.kind-decision_needed");
+  await expect(decisionBlock).toBeVisible();
+  await expect(decisionBlock).toHaveAttribute("aria-label", "Decision needed");
+  await expect(decisionBlock).toContainText("Which copy sections are in scope?");
 
   const proposal = page.getByLabel("Task confirmation");
   await expect(proposal).toContainText("Needs user clarification");
@@ -3153,6 +3459,9 @@ test("workflow context inspect details stay out of main feed expansion", async (
       objective: "Expose context evidence only after explicit expansion.",
       status: "succeeded",
       createdBy: "local-user",
+      metadata: {
+        sourceMessageId: "msg_context_inspect",
+      },
       createdAt: "2026-05-25T00:50:00.000Z",
       updatedAt: "2026-05-25T00:52:00.000Z",
     },
@@ -3173,6 +3482,9 @@ test("workflow context inspect details stay out of main feed expansion", async (
       runId: contextRun.id,
       metadata: {
         contextArtifactId: "artifact_context_inspect",
+        outputArtifactId: "artifact_context_output",
+        outputArtifactIds: ["artifact_context_output", "artifact_context_extra_output"],
+        fanInSummaryArtifactId: "artifact_context_fanin",
         providerPresetId: "provider_local",
       },
       createdAt: "2026-05-25T00:50:00.000Z",
@@ -3318,6 +3630,14 @@ test("workflow context inspect details stay out of main feed expansion", async (
   const workCell = feed.locator(".conversation-work-cell");
   await expect(workCell).toHaveCount(1);
   await expect(workCell).toBeVisible();
+  const packetSummary = feed.locator(".transcript-block-view.kind-workflow_packet_summary");
+  await expect(packetSummary).toBeVisible();
+  await expect(packetSummary).toContainText("Workflow packet summary");
+  await expect(packetSummary).toContainText("1 context · 2 output · 1 summary");
+  await packetSummary.locator(".transcript-block-view-head").click();
+  await expect(packetSummary).toContainText("Context packet");
+  await expect(packetSummary).toContainText("Output packet");
+  await expect(packetSummary).toContainText("Fan-in summary");
   await expect(workCell).not.toContainText("Context inspect workflow");
   await expect(workCell).not.toContainText("workflow_runtime_boundary");
   await expect(workCell).not.toContainText("old_verbose_log_tail");
@@ -3599,7 +3919,7 @@ test("progress popover owns workflow status while the right drawer avoids duplic
       prompt: "Validate the right panel task card.",
       toParticipantId: "qa",
       toParticipantLabel: "QA",
-      status: "queued",
+      status: "waiting_for_approval",
       metadata: {
         branchGroupId: "branch_qa",
       },
@@ -3692,6 +4012,9 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   await expect(docsSpan.locator(".conversation-work-cell-agent-span-detail")).toHaveCount(0);
   await docsSpan.locator(".conversation-work-cell-agent-span-head").click();
   await expect(docsSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("Document release note");
+  const qaSpan = feedWorkCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "QA" });
+  await expect(qaSpan).toContainText("Waiting for approval");
+  await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("Waiting for approval: Validate progress panel");
 
   await page.locator(".task-toolbar-progress").click();
   const progressPopover = page.locator(".channel-progress-popover");
@@ -3708,23 +4031,13 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   await page.locator(".task-toolbar-panel").click();
   await expect(progressPopover).toHaveCount(0);
   const panel = page.locator(".channel-side-panel");
-  await expect(panel).toHaveAttribute("aria-label", "Files");
-  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Files" })).toBeVisible();
-  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Review" })).toBeVisible();
+  await expect(panel).toHaveAttribute("aria-label", "Settings");
+  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Files" })).toHaveCount(0);
+  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Review" })).toHaveCount(0);
   await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Progress" })).toHaveCount(0);
   await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Context" })).toHaveCount(0);
   await expect(panel.locator(".collaboration-task-card")).toHaveCount(0);
-  await expect(panel).not.toContainText("Workflow evidence");
-  await expect(panel).not.toContainText("Ship workflow UI");
-
-  await panel.locator(".right-drawer-nav").getByRole("button", { name: "Review" }).click();
-  await expect(panel).toHaveAttribute("aria-label", "Review");
-  await expect(panel).toContainText("Approvals");
-  await expect(panel).toContainText("Run results");
-  await expect(panel.locator(".channel-side-panel-actions .icon-button")).toHaveCount(1);
-  await expect(panel).not.toContainText("Progress");
-  await expect(panel).not.toContainText("Context");
   await expect(panel).not.toContainText("Workflow evidence");
   await expect(panel).not.toContainText("Ship workflow UI");
 });
@@ -4505,6 +4818,22 @@ test("channel activity keeps the composer visible while the message feed scrolls
     createdAt: new Date(Date.UTC(2026, 4, 25, 0, index, 0)).toISOString(),
     updatedAt: new Date(Date.UTC(2026, 4, 25, 0, index, 0)).toISOString(),
   }));
+  state.channelMessages.push({
+    id: "msg_scroll_pending_reply",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "ling_agent",
+    body: "Pending reply keeps background refresh active.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "pending",
+    createdAt: "2026-05-25T00:40:00.000Z",
+    updatedAt: "2026-05-25T00:40:00.000Z",
+  });
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -4549,10 +4878,126 @@ test("channel activity keeps the composer visible while the message feed scrolls
       height: Math.round(latestButtonBox?.height ?? 0),
     };
   }).toMatchObject({ width: 42, height: 42 });
-  await latestButton.click({ force: true });
+  state.channelMessages.push({
+    id: "msg_scroll_background_failed",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "ling_agent",
+    body: "Background failed update while the user is reading older messages.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "failed",
+    createdAt: "2026-05-25T01:00:00.000Z",
+    updatedAt: "2026-05-25T01:00:00.000Z",
+  });
+  const backgroundToast = page.getByRole("button", { name: /Background work needs attention/ });
+  await expect(backgroundToast).toBeVisible();
+  await expect(backgroundToast).toContainText("Jump to latest");
+  await backgroundToast.click();
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   await expect(latestButton).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
+});
+
+test("channel message feed supports focused block shortcuts and safe action menu", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as unknown as { __lingCopiedText?: string }).__lingCopiedText = text;
+        },
+      },
+    });
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    {
+      id: "msg_focus_1",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Focused block alpha.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T01:10:00.000Z",
+      updatedAt: "2026-05-25T01:10:00.000Z",
+    },
+    {
+      id: "msg_focus_2",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "engineer",
+      body: "Focused block beta with **markdown**.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T01:11:00.000Z",
+      updatedAt: "2026-05-25T01:11:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed).toHaveAttribute("title", /Alt\+Up\/Down/);
+  await feed.focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-feed-item-id") ?? "")).toBe("conversation-turn:msg_focus_1");
+  await page.keyboard.press("Control+Shift+C");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __lingCopiedText?: string }).__lingCopiedText ?? "")).toContain("Focused block alpha.");
+  await expect(page.locator(".conversation-block-feedback")).toContainText("Copied focused block");
+
+  const firstRow = page.locator('[data-feed-item-id="conversation-turn:msg_focus_1"]');
+  await firstRow.click({ button: "right" });
+  const menu = page.getByRole("menu", { name: "Conversation block actions" });
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText("Conversation turn");
+  await expect(menu.getByRole("menuitem", { name: "Copy block" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Focus block" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Copy block" })).toBeFocused();
+  await expect(menu).not.toContainText("Approve");
+  await expect(menu).not.toContainText("Cancel");
+  await expect(menu).not.toContainText("Delete");
+  await expect(menu).not.toContainText("Stop");
+  await menu.getByRole("menuitem", { name: "Copy block" }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __lingCopiedText?: string }).__lingCopiedText ?? "")).toContain("Focused block alpha.");
+
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(firstRow).toBeFocused();
+  const secondRow = page.locator("[data-conversation-focus-block='true']").filter({ hasText: "Focused block beta" });
+  const secondBox = await secondRow.boundingBox();
+  await secondRow.dispatchEvent("pointerdown", {
+    pointerId: 42,
+    pointerType: "touch",
+    clientX: Math.round((secondBox?.x ?? 80) + 20),
+    clientY: Math.round((secondBox?.y ?? 120) + 20),
+    bubbles: true,
+  });
+  await page.waitForTimeout(620);
+  await expect(page.getByRole("menu", { name: "Conversation block actions" })).toBeVisible();
+  await secondRow.dispatchEvent("pointerup", {
+    pointerId: 42,
+    pointerType: "touch",
+    clientX: Math.round((secondBox?.x ?? 80) + 20),
+    clientY: Math.round((secondBox?.y ?? 120) + 20),
+    bubbles: true,
+  });
 });
 
 test("channel message feed stays pinned while AI reply text streams", async ({ page }) => {
@@ -4595,6 +5040,77 @@ test("channel message feed stays pinned while AI reply text streams", async ({ p
     )
   ).toBe(true);
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+});
+
+test("channel message feed preserves the visible anchor while active content grows above it", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    ...Array.from({ length: 36 }, (_, index) => ({
+      id: `msg_anchor_${index + 1}`,
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: `Anchor seed message ${index + 1}.`,
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: new Date(Date.UTC(2026, 4, 25, 2, index, 0)).toISOString(),
+      updatedAt: new Date(Date.UTC(2026, 4, 25, 2, index, 0)).toISOString(),
+    })),
+    {
+      id: "msg_anchor_pending",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "Pending reply keeps the feed refreshing.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "pending",
+      createdAt: "2026-05-25T02:40:00.000Z",
+      updatedAt: "2026-05-25T02:40:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.locator(".activity-shell .message-feed");
+  await feed.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+    element.scrollTop = 520;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect(page.getByRole("button", { name: "Jump to latest message" })).toBeVisible();
+  await expect.poll(async () => (await readFirstVisibleFeedAnchor(page))?.id ?? "").not.toBe("");
+  const anchorBefore = await readFirstVisibleFeedAnchor(page);
+  if (!anchorBefore) {
+    throw new Error("Visible feed anchor missing before content growth");
+  }
+  const expandedMessage = state.channelMessages.find((message) => isRecord(message) && message.id === "msg_anchor_1");
+  if (!isRecord(expandedMessage)) {
+    throw new Error("Anchor fixture message missing");
+  }
+  expandedMessage.body = Array.from({ length: 18 }, (_, index) => `Expanded history line ${index + 1}.`).join("\n\n");
+  expandedMessage.updatedAt = "2026-05-25T02:41:00.000Z";
+
+  await expect.poll(async () => {
+    const anchorAfter = await readFirstVisibleFeedAnchor(page);
+    return Boolean(
+      anchorAfter &&
+      anchorAfter.id === anchorBefore.id &&
+      Math.abs(anchorAfter.offsetTop - anchorBefore.offsetTop) <= 4
+    );
+  }).toBe(true);
 });
 
 test("channel activity paginates long message history and virtualizes visible rows", async ({ page }) => {
@@ -4659,6 +5175,9 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   await page.goto("/");
 
   const composerInput = channelComposerTextbox(page);
+  const composer = page.getByLabel("Channel composer");
+  await expect(composerInput).toHaveAttribute("title", "Enter sends. Shift+Enter inserts a newline. Esc closes menus.");
+  await expect(composer.getByRole("button", { name: "Send" })).toHaveAttribute("title", "Send (Enter)");
   await composerInput.fill("Retryable channel message");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Message failed")).toBeVisible();
@@ -4667,6 +5186,8 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByLabel("Channel message feed").getByText("Retryable channel message")).toBeVisible();
   await expectComposerValue(composerInput, "");
+  await expect(composer.locator(".composer-status-row.success")).toContainText("Message sent");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("Message sent");
   await expect(page.getByText("Message failed")).toHaveCount(0);
 });
 
@@ -5098,6 +5619,8 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  const compareBeforeImageUrl = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='320' height='180' fill='%23f5f5f5'/%3E%3Ctext x='160' y='92' text-anchor='middle' font-size='18'%3EBefore%3C/text%3E%3C/svg%3E";
+  const compareAfterImageUrl = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='320' height='180' fill='%23e8f4ff'/%3E%3Ctext x='160' y='92' text-anchor='middle' font-size='18'%3EAfter%3C/text%3E%3C/svg%3E";
   const run = state.runs[0];
   run.threadId = "thread_inspect";
   run.status = "succeeded";
@@ -5126,6 +5649,10 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
       title: "channel-transcript.png",
       contentType: "image/png",
       sizeBytes: 4096,
+      compareBeforeImageUrl,
+      compareAfterImageUrl,
+      compareBeforeLabel: "Previous screenshot",
+      compareAfterLabel: "Current screenshot",
       createdAt: "2026-05-25T00:21:05.000Z",
     },
     {
@@ -5316,7 +5843,11 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   expect(traceListRequests).toHaveLength(0);
   expect(traceDetailRequests).toHaveLength(0);
 
-  await workCell.locator(".conversation-work-cell-evidence-summary").click();
+  await expect(workCell.locator(".conversation-work-cell-evidence-summary")).toHaveAttribute("aria-expanded", "false");
+  const workBlock = page.locator("[data-conversation-focus-block='true']:has(.conversation-work-cell)").first();
+  await workBlock.focus();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-conversation-focus-block") ?? "")).toBe("true");
+  await page.keyboard.press("Enter");
   await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
   await expect(workCell.getByLabel("Checks")).toContainText("Inspect workspace");
   await expect(workCell.getByLabel("Checks")).not.toContainText("succeeded");
@@ -5362,13 +5893,37 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(workCell).not.toContainText("output.json");
   await expect(workCell).not.toContainText("provider_local");
   await expect(workCell).not.toContainText("tokens");
-  await workCell.getByRole("button", { name: /Preview: channel-transcript\.png/ }).click();
+  const screenshotPreviewButton = workCell.getByRole("button", { name: /Preview: channel-transcript\.png/ });
+  await screenshotPreviewButton.click();
   const lightbox = page.locator(".artifact-preview-lightbox");
   await expect(lightbox).toBeVisible();
+  await expect(lightbox.getByRole("button", { name: "Close preview" })).toBeFocused();
   await expect(lightbox).toContainText("channel-transcript.png");
-  await expect(lightbox.locator(".artifact-preview-image-frame img")).toHaveAttribute("src", /\/artifacts\/artifact_thread_screenshot\/content/);
+  await expect(lightbox.locator(".image-compare-frame img")).toHaveAttribute("src", /\/artifacts\/artifact_thread_screenshot\/content/);
+  await expect(lightbox.getByRole("button", { name: "Single" })).toHaveAttribute("aria-pressed", "true");
+  await lightbox.getByRole("button", { name: "Side by side" }).click();
+  await expect(lightbox.locator(".image-compare-side-by-side")).toContainText("Before");
+  await expect(lightbox.locator(".image-compare-side-by-side")).toContainText("After");
+  await expect(lightbox.locator(".image-compare-side-by-side img")).toHaveCount(2);
+  await lightbox.getByRole("button", { name: "Slider" }).click();
+  await expect(lightbox.locator(".image-compare-slider-stage img")).toHaveCount(2);
+  await expect(lightbox.locator(".image-compare-slider input[type='range']")).toHaveValue("50");
+  await lightbox.getByRole("button", { name: "Diff overlay" }).click();
+  await expect(lightbox.locator(".image-compare-diff-overlay img")).toHaveCount(2);
+  const openedPagePromise = page.context().waitForEvent("page");
+  await lightbox.getByRole("link", { name: "Open" }).click();
+  const openedPage = await openedPagePromise;
+  await expect(lightbox.locator(".artifact-preview-action-feedback")).toContainText("Opened");
+  await openedPage.close();
+  await lightbox.getByRole("link", { name: "Download file" }).evaluate((element) => {
+    element.addEventListener("click", (event) => event.preventDefault(), { capture: true, once: true });
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  });
+  await expect(lightbox.locator(".artifact-preview-action-feedback")).toContainText("Download started");
+  await expect(workCell).toContainText("Run typecheck");
   await lightbox.getByRole("button", { name: "Close preview" }).click();
   await expect(lightbox).toHaveCount(0);
+  await expect(screenshotPreviewButton).toBeFocused();
   expect(threadEvidenceRequests).toHaveLength(1);
   expect(traceListRequests).toHaveLength(1);
   expect(traceDetailRequests).toHaveLength(1);
@@ -5650,10 +6205,12 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
   await expect(guidance).toContainText("Type guidance in the message box and press Enter to queue it.");
   const composer = page.getByLabel("Channel composer");
   const composerInput = channelComposerTextbox(composer);
+  await expect(composerInput).toHaveAttribute("title", "Enter queues guidance. Shift+Enter inserts a newline. Esc closes menus.");
   await composerInput.fill("完成后也更新 docs");
   await composerInput.press("Enter");
 
   await expect.poll(() => state.runInterventions.length).toBe(1);
+  await expect(composer.locator(".composer-status-row.success")).toContainText("Guidance queued");
   await expect(guidance).toContainText("完成后也更新 docs");
   expect(state.runInterventions[0]).toMatchObject({
     sourceRunId: run.id,
@@ -5667,6 +6224,7 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
   await expectComposerValue(composerInput, "");
   await composerInput.fill("停，改用 daemon API");
   await expect(composer.getByRole("button", { name: "Queue guidance" })).toBeEnabled();
+  await expect(composer.getByRole("button", { name: "Queue guidance" })).toHaveAttribute("title", "Queue guidance (Enter)");
   await composer.getByRole("button", { name: "Queue guidance" }).click();
   await expect.poll(() => state.runInterventions.map((item) => item.instruction)).toEqual([
     "完成后也更新 docs",
@@ -6363,24 +6921,41 @@ async function expectPhase1MainFeedClean(feed: Locator): Promise<void> {
   await expect(feed).not.toContainText("branch_engineer");
 }
 
+interface ConversationScreenshotViewport {
+  readonly suffix: string;
+  readonly width: number;
+  readonly height: number;
+}
+
 async function maybeCaptureR32Screenshot(page: Page, name: string): Promise<void> {
+  await maybeCaptureConversationScreenshots(page, name, [
+    { suffix: "desktop", width: 1440, height: 960 },
+  ]);
+}
+
+async function maybeCaptureConversationScreenshots(
+  page: Page,
+  name: string,
+  viewports: readonly ConversationScreenshotViewport[],
+): Promise<void> {
   const outputDir = process.env.LING_R32_SCREENSHOTS_DIR;
   if (!outputDir) {
     return;
   }
 
   await mkdir(outputDir, { recursive: true });
-  const viewport = { suffix: "desktop", width: 1440, height: 960 } as const;
-  await page.setViewportSize({ width: viewport.width, height: viewport.height });
-  await page.waitForTimeout(250);
-  const feedBox = await page.locator(".message-feed").boundingBox();
-  await page.screenshot({
-    path: join(outputDir, `${name}-${viewport.suffix}.png`),
-    clip: feedBox ? {
-      x: Math.max(0, feedBox.x),
-      y: Math.max(0, feedBox.y),
-      width: Math.max(1, Math.min(feedBox.width, viewport.width - Math.max(0, feedBox.x))),
-      height: Math.max(1, Math.min(feedBox.height, viewport.height - Math.max(0, feedBox.y))),
-    } : undefined,
-  });
+  for (const viewport of viewports) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.waitForTimeout(250);
+    const feedBox = await page.locator(".message-feed").boundingBox();
+    await page.screenshot({
+      path: join(outputDir, `${name}-${viewport.suffix}.png`),
+      clip: feedBox ? {
+        x: Math.max(0, feedBox.x),
+        y: Math.max(0, feedBox.y),
+        width: Math.max(1, Math.min(feedBox.width, viewport.width - Math.max(0, feedBox.x))),
+        height: Math.max(1, Math.min(feedBox.height, viewport.height - Math.max(0, feedBox.y))),
+      } : undefined,
+    });
+  }
 }

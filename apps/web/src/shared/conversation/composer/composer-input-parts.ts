@@ -1,4 +1,4 @@
-import { parseLocalFileReference } from "../conversation/message-body.js";
+import { parseLocalFileReference } from "../tokens/message-body.js";
 
 export type ComposerInputPart =
   | { readonly type: "text"; readonly text: string }

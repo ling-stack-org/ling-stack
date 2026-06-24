@@ -4,7 +4,7 @@ import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Plus, 
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { attachmentCanPreview } from "../../lib/previews.js";
+import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
   AvatarInitial,
   ComposerFileReferenceToken,
@@ -225,6 +225,7 @@ export function TeammatePrivateChatSurface({
                   <ConversationAttachmentStrip
                     className="teammate-message-attachments"
                     chipClassName="teammate-attachment-chip"
+                    loadPreview={loadPreviewContent}
                     attachments={message.attachmentIds
                       .map((id) => privateAttachmentById.get(id))
                       .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))

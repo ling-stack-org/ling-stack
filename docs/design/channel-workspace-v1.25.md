@@ -7,6 +7,12 @@ for drawer ownership: the floating popover remains, but the right drawer `Progre
 root page is retired. This remains a frontend-only refinement: no daemon API, database
 table, or browser-side Git probe was added.
 
+2026-06-24 conversation ownership update: this slice is also superseded for conversation
+detail ownership. The right drawer must not own conversation artifacts, attachments,
+links, operation evidence, task/run process, approvals, checks, source summaries, or
+workflow/packet summaries. Those details belong in the main conversation page through
+inline expansion, in-turn previews, or explicit raw/debug detail.
+
 ## Summary
 
 v1.25 refines the channel progress popover by borrowing the strongest part of the Codex
@@ -35,8 +41,9 @@ The popover should answer three questions immediately:
 3. Is there current progress worth keeping in view?
 
 If the user needs raw audit detail, task detail, approval detail, CI triage, or run
-evidence, the Activity log and right drawer own that detail. The popover should not
-become the detail surface itself.
+evidence for a conversation turn, the owning conversation row owns that detail through
+inline expansion or in-turn previews. The popover should not become the detail surface
+itself, and neither should the right drawer.
 
 ## Reference Boundary
 
@@ -67,9 +74,10 @@ header progress icon
     -> progress rows
 ```
 
-The right drawer remains the durable detail surface. Opening a task, run, approval,
-context item, or CI triage record from the popover should close or leave the popover
-behind and move the user into the drawer.
+The main conversation remains the durable detail surface for task, run, approval, context,
+or CI triage records related to a turn. Opening one from the popover should close or leave
+the popover behind and focus the owning conversation row or its in-turn preview, not move
+the user into a drawer.
 
 ## Layout Spec
 
@@ -262,13 +270,13 @@ Rendering rules:
 | No channel selected | hidden | hidden | existing empty state |
 | Channel has no chat/work content | available rows only | hidden | no progress surface |
 | Channel has chat but no work | provider/permission rows | hidden | no progress surface |
-| Latest run succeeded | context rows | `Last run · Succeeded` with success icon | open linked task/run drawer |
-| Latest run running | context rows | running row with spinner/clock | open linked task/run drawer |
+| Latest run succeeded | context rows | `Last run · Succeeded` with success icon | focus linked conversation turn or in-turn task/run detail |
+| Latest run running | context rows | running row with spinner/clock | focus linked conversation turn or active operation cell |
 | Pending approval exists | context rows | approval-needed row | open approval detail |
 | Workflow blocked | context rows | blocked workflow row | open task/context detail |
 | New workflow starts after completion | context rows | new workflow row replaces prior completion rows | open workflow detail |
 | Failed work exists | context rows | latest failed row if it is current | open task/run detail |
-| Right drawer open | no popover | drawer owns Files/Context/Settings detail only | header icon does not route progress into the drawer |
+| Non-conversation side utility open | no popover | utility owns only settings/tools not conversation evidence | header icon does not route progress into the utility |
 | Teammate manager open | no popover | hidden | teammate manager owns focus |
 | Mobile viewport | same section order | compact rows | fixed bottom sheet |
 | Chinese locale | same section order | labels may wrap | no horizontal overflow |
@@ -306,13 +314,13 @@ exist. Attention row ordering remains an Activity/audit-log concern.
 ## Interaction Rules
 
 - The header progress icon remains icon-only and does not show a numeric badge.
-- If the right drawer is open, the progress icon does not open or focus a Progress
-  drawer page.
-- If the drawer is hidden and progress exists, the icon opens the popover.
-- Opening the right drawer hides the popover.
+- If a non-conversation side utility is open, the progress icon does not open or focus a
+  Progress drawer page.
+- If no conflicting utility is open and progress exists, the icon opens the popover.
+- Opening a non-conversation side utility hides the popover.
 - Opening teammate management hides the popover.
 - Escape and outside click close the popover.
-- Clicking a progress row opens the most specific drawer target available.
+- Clicking a progress row focuses the most specific owning conversation target available.
 - Attention/audit rows open from Activity, not from the popover.
 - The progress section may collapse; the popover does not reveal hidden attention rows
   when collapsed.
@@ -361,7 +369,7 @@ from paths.
 | UI field | Current source | Rule |
 | --- | --- | --- |
 | Provider | selected/default provider preset state | Show display name; omit if no selected/default provider exists |
-| Runtime policy | existing permission/runtime policy state | Show short label only; full policy remains in Settings drawer |
+| Runtime policy | existing permission/runtime policy state | Show short label only; full policy remains in settings utility |
 | Branch | future workspace status source | Do not implement from browser inference or shell probes |
 | Change count | future workspace status source | Do not implement until workspace status exists |
 | Commit/push readiness | future workspace status source | Do not implement until a real git action status model exists |
@@ -382,7 +390,7 @@ from paths.
    Activity/audit surfaces.
 4. Add missing English and Chinese labels for `Run settings`, row labels, and source
    labels.
-5. Keep the right drawer navigation behavior unchanged.
+5. Keep unrelated non-conversation side-utility behavior unchanged.
 6. Add focused Web checks for desktop and mobile popover geometry.
 
 Recommended file sequence:
@@ -418,8 +426,8 @@ Implementation guardrails:
 
 - No new database tables.
 - No new daemon endpoints.
-- No global redesign of the right drawer.
-- No replacement of the activity drilldown drawer.
+- No global redesign of unrelated workspace utilities.
+- No replacement of Activity history surfaces beyond the conversation-ownership rule.
 - No Git probing from the browser client.
 - No dark-mode-only restyle of the channel workspace.
 - No removal of existing audit surfaces.
@@ -448,8 +456,8 @@ git diff --check
 
 Focused browser checks:
 
-- desktop channel with right drawer hidden and current progress present,
-- desktop channel with right drawer open,
+- desktop channel with side utility hidden and current progress present,
+- desktop channel with non-conversation side utility open,
 - desktop channel with no current-channel work,
 - mobile viewport with progress popover open,
 - Chinese locale with the longest blocked/pending labels.
@@ -458,8 +466,8 @@ Detailed QA matrix:
 
 | Scenario | Expected result |
 | --- | --- |
-| Drawer hidden, progress present | Header icon opens popover with Run settings and Progress |
-| Drawer open | Header icon does not overlay the popover or expose a Progress drawer page |
+| Side utility hidden, progress present | Header icon opens popover with Run settings and Progress |
+| Side utility open | Header icon does not overlay the popover or expose a Progress detail page |
 | Teammate manager open | Progress popover is hidden and does not stack under the teammate manager |
 | No current work | Popover does not invent latest run/current task rows from another channel |
 | Pending approval | Progress row opens approval detail |

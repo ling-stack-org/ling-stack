@@ -18,6 +18,7 @@ Deferred:
 
 Source design:
 
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Execution And Orchestration Hardening Implementation Plan](execution-orchestration-hardening-implementation-plan.md)
 - [Memory Health And Multi-Agent Memory Fan-In](memory-health-and-fanin.md)
@@ -49,12 +50,17 @@ workflow step
 - Packet creation failure must not overwrite terminal workflow state.
 - Do not inline large packet JSON into list endpoints.
 - Do not summarize raw transcript text into hidden downstream context in this slice.
+- Do not add a `workflow_step_packets` table in this phase. Packet bodies remain JSON
+  artifacts; workflow and step metadata carry packet refs and summaries.
+- Keep domain packet types in core and exported DTO packet types in contracts so daemon,
+  Web, Desktop, and CLI do not invent parallel packet schemas.
 
 ## Existing Anchors
 
 | Concern | Current code |
 | --- | --- |
-| Packet types | `packages/core/src/workspace-types.ts` |
+| Packet domain types | `packages/core/src/workspace-types.ts` today; move grouped packet refs and packet bodies to `packages/core/src/workflow-packet-types.ts` |
+| Packet API DTOs | `packages/contracts/src/workflows.ts` today; move exported packet DTOs to `packages/contracts/src/workflow-packets.ts` |
 | Packet artifacts | `packages/daemon/src/features/channels/workflow-step-packets.ts` |
 | Orchestrator output write | `packages/daemon/src/features/channels/orchestrator.ts` |
 | Workflow-step metadata ids | `packages/core/src/workspace-types.ts` |
@@ -72,6 +78,26 @@ Current packet fields:
   artifacts, runner audit, and generated time.
 - `ChannelWorkflowStepMetadata` stores `contextArtifactId`, `outputArtifactId`, and
   `outputArtifactIds`.
+
+Target ownership:
+
+```text
+core/contracts types
+  -> artifact JSON packet body
+  -> ChannelWorkflowStep.metadata packet refs
+  -> right drawer / evidence projection
+```
+
+Metadata may keep legacy fields such as `contextArtifactId` and `outputArtifactId`, but
+new code should prefer a grouped packet-ref helper so packet provenance is not scattered
+across unrelated metadata fields.
+
+Migration rule:
+
+- dedicated packet files are the target location for new packet types;
+- existing `workspace-types.ts` and `workflows.ts` may re-export during migration;
+- avoid adding new packet contracts to the already-large workflow type files unless the
+  type is a narrow compatibility alias.
 
 ## Phase PK0: Baseline Verification
 

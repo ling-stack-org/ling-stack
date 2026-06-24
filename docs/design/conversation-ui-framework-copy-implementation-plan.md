@@ -3,7 +3,7 @@
 Status: active implementation plan; Slice 1 and Slice 2 require conformance recovery
 Date: 2026-06-14
 Scope: channel conversation feed, semantic operation projection, Ling Agent copy,
-multi-agent activity spans, floating run popover, right drawer result review, artifact
+multi-agent activity spans, floating run popover, conversation-owned result/detail
 preview, active motion, and regression fixtures
 
 Related docs:
@@ -16,6 +16,7 @@ Related docs:
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent Collaboration Cards Implementation Plan](multi-agent-collaboration-cards-implementation-plan.md)
+- [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
 
 ## Summary
 
@@ -40,9 +41,10 @@ Target pipeline:
 ```text
 existing daemon/channel/runtime records
   -> shared semantic projection
-  -> ConversationTurn / OperationCell / AgentActivitySpan view models
+  -> ConversationTurn / TranscriptBlock[] view models
+  -> block renderer registry
   -> Display / Expanded / Raw render modes
-  -> main feed / floating popover / right drawer / blocking surfaces
+  -> main feed / floating popover / inline previews / blocking surfaces
 ```
 
 The default user experience should be:
@@ -81,9 +83,15 @@ Hard product rules:
 - Raw runtime records are evidence, not first-level conversation concepts.
 - The main feed owns narrative and semantic operation rows.
 - The floating popover owns only current active status.
-- The right drawer owns completed result review, file/artifact preview, source metadata,
-  raw/debug access, and settings. It does not own operation process detail.
+- The main conversation owns completed result review, file/artifact preview, source
+  metadata, approvals, checks, attachments, links, and operation evidence through inline
+  expansion or in-turn previews.
+- A right-side workspace utility, if present, owns only non-conversation settings/tools or
+  an explicit developer/support raw inspector. It does not own conversation artifacts,
+  links, operation evidence, or process detail.
 - Ling Agent copy describes task state and outcome, not the UI mechanism.
+- Conversation UI is adaptive. It renders the blocks produced by the projector for the
+  current task and must not force every turn through a fixed report/card template.
 
 Hard copy rules:
 
@@ -120,6 +128,356 @@ Guardrail: any implementation that uses message body regexes to infer the conver
 cell structure is out of conformance unless it is explicitly marked as a temporary legacy
 fallback and covered by a migration issue.
 
+## Adaptive Framework Implementation Contract
+
+The implementation target is a headless conversation framework:
+
+```text
+normalized semantic event
+  -> TranscriptBlock
+  -> TranscriptBlockRenderer
+  -> display / expanded / preview / raw modes
+```
+
+Required model pieces:
+
+```ts
+type TranscriptBlockKind =
+  | "coordinator_message"
+  | "operation"
+  | "agent_activity"
+  | "approval"
+  | "artifact_strip"
+  | "source_summary"
+  | "requirement_shaping"
+  | "decision_needed"
+  | "final_result"
+  | "raw_debug_ref";
+
+interface TranscriptBlock {
+  readonly id: string;
+  readonly turnId: string;
+  readonly kind: TranscriptBlockKind;
+  readonly ownerId?: string;
+  readonly status?:
+    | "queued"
+    | "running"
+    | "waiting_for_approval"
+    | "blocked"
+    | "failed"
+    | "cancelled"
+    | "succeeded";
+  readonly display: readonly DisplayLine[];
+  readonly expanded?: ExpandedDetail;
+  readonly previewTargets?: readonly ConversationPreviewTarget[];
+  readonly raw?: RawDetailRef;
+}
+```
+
+Renderer rules:
+
+- Register renderers by `TranscriptBlock.kind`.
+- Keep renderer input headless and semantic. React components should not import raw
+  workflow/run packet types to decide first-level layout.
+- A turn renders the exact ordered block list supplied by the projector; it does not add
+  placeholder headings for missing sections.
+- Do not infer block kinds from coordinator copy, teammate labels, markdown headings, or
+  message text regexes.
+- Add fixture tests for varied turn shapes: plain answer, command-only task, approval
+  task, artifact-producing task, requirement shaping, serial multi-agent, parallel
+  multi-agent, blocked task, and interrupted redirect.
+
+Open-source references are directional only:
+
+- assistant-ui: borrow runtime/thread/message separation and external store thinking.
+- Vercel AI Elements: borrow composable block/component registry style.
+- Chainlit: borrow separation between message, step, element, and action.
+
+Do not adopt any external framework as Ling's source of truth. Ling's source of truth is
+daemon/core projection over channel, workflow, task, approval, artifact, and evidence
+records.
+
+## Assistant-UI Borrowing Plan
+
+assistant-ui should influence interaction polish, not data ownership.
+
+Borrow these implementation ideas:
+
+- typed message/block parts rendered through a registry;
+- thread viewport behavior: scroll-to-bottom, stable anchors, composer height accounting;
+- message/action bars for copy, retry, edit/fork, feedback, open/download;
+- tool UI registry with known renderers and a safe fallback;
+- human-in-the-loop tool states mapped to Ling approvals;
+- attachment rendering in composer and message turns;
+- error boundaries for failed message/tool parts;
+- grouped tool/output parts that expand while active and collapse after completion.
+
+Do not borrow:
+
+- assistant-ui's runtime/store as Ling's source of truth;
+- default component layout when it conflicts with Strict Daylight transcript design;
+- branch picker semantics for multi-agent workflow branches. Ling workflow branches are
+  execution state, not alternative assistant responses.
+
+## Rich Text And Code Rendering Slice
+
+Type: Web renderer polish and safety.
+
+Goal: make code, markdown, diffs, logs, and artifacts readable without making the main
+conversation a raw file viewer.
+
+Suggested files:
+
+```text
+apps/web/src/shared/conversation/MarkdownBlock.tsx
+apps/web/src/shared/conversation/CodeBlock.tsx
+apps/web/src/shared/conversation/DiffPreview.tsx
+apps/web/src/shared/conversation/MessageActionBar.tsx
+apps/web/src/shared/conversation/AttachmentPreview.tsx
+apps/web/src/styles/components.css
+apps/web/e2e/channel.spec.ts
+```
+
+Work:
+
+- Add a safe markdown renderer with raw HTML disabled and safe-link handling.
+- Add syntax-highlighted code blocks with language label, copy action, wrapping rules,
+  fallback plain text, and streaming-safe delayed highlighting.
+- Add structured diff preview with path summary, hunk rendering, add/remove gutter, and
+  plain-text fallback.
+- Add message/action bar affordances for copy, open, download, retry/fork/edit, and
+  feedback where appropriate.
+- Add attachment/image thumbnails that open in-turn preview/lightbox from the owning
+  message or artifact row.
+- Add renderer tests for markdown, fenced code, unknown language, long code, malicious
+  HTML, malformed diff, image preview, and copy action.
+
+Acceptance:
+
+- Code blocks are visibly syntax highlighted after commit and remain readable while
+  streaming.
+- Long code/log blocks do not resize the whole conversation uncontrollably.
+- Diff preview distinguishes additions/removals and degrades safely on malformed input.
+- Copy action exists for code, diff, command output, and file preview.
+- Attachments and previews stay in the main conversation path, not the right drawer.
+- No raw HTML executes from assistant markdown.
+
+## Motion And Interaction Polish Slice
+
+Type: Web interaction polish.
+
+Goal: make conversation state changes legible without turning the transcript into an
+animated dashboard.
+
+Suggested files:
+
+```text
+apps/web/src/shared/conversation/ConversationTurn.tsx
+apps/web/src/shared/conversation/TranscriptBlockRenderer.tsx
+apps/web/src/shared/conversation/OperationCell.tsx
+apps/web/src/shared/conversation/AgentActivitySpan.tsx
+apps/web/src/shared/conversation/MessageActionBar.tsx
+apps/web/src/shared/conversation/ScrollToLatestButton.tsx
+apps/web/src/shared/conversation/InTurnPreview.tsx
+apps/web/src/styles/components.css
+apps/web/e2e/channel.spec.ts
+```
+
+Work:
+
+- Add stable turn anchors and smart auto-scroll: follow active work only when the user is
+  already near the bottom.
+- Add a scroll-to-latest affordance when new work arrives while the user is scrolled up.
+- Add small enter/settle transitions for operation rows, agent spans, approvals,
+  artifacts, and in-turn previews.
+- Add active-only shimmer or scanning highlight for running rows. Stop it immediately on
+  terminal states.
+- Add collapse/expand transitions for small evidence sections, with instant fallback for
+  large logs, diffs, and previews.
+- Add hover/focus action bars for copy/open/download/retry/edit/fork/feedback where the
+  owning block supports the action.
+- Add `prefers-reduced-motion` handling for all non-essential motion.
+- Add e2e or component tests for scroll anchoring, reduced motion, action bar focus, and
+  active-to-terminal animation cleanup.
+
+Acceptance:
+
+- Running rows feel active, but completed transcript content is still.
+- Active updates do not cause viewport jumps when the user is reading older content.
+- Approvals remain visually obvious and keyboard reachable.
+- Expanding/collapsing evidence does not hide command/file/check/approval rows.
+- Reduced-motion mode removes shimmer and layout animation while preserving state changes.
+- Motion never introduces a duplicate transcript, hidden evidence, or drawer dependency.
+
+## Conversation Polish Micro-Spec Slice
+
+Type: Web interaction and visual detail.
+
+Goal: close the small UI gaps that make the conversation feel unfinished.
+
+Suggested files:
+
+```text
+apps/web/src/shared/conversation/ConversationToast.tsx
+apps/web/src/shared/conversation/InlineFeedback.tsx
+apps/web/src/shared/conversation/ShortcutHints.tsx
+apps/web/src/shared/conversation/MobileComposer.tsx
+apps/web/src/shared/conversation/ConversationEmptyState.tsx
+apps/web/src/shared/conversation/ImageCompareViewer.tsx
+apps/web/src/shared/conversation/CodeBlockTheme.ts
+apps/web/src/shared/conversation/CommandOutputBlock.tsx
+apps/web/src/styles/components.css
+apps/web/e2e/channel.spec.ts
+```
+
+Work:
+
+- Add inline feedback for copy/open/download/retry/queued-follow-up and reserve toast for
+  cross-surface background completion/failure.
+- Add shortcut hints in tooltips, command palette metadata, and composer focused state.
+- Add mobile composer gestures: preview swipe-down close, composer height drag, long-press
+  action menu, explicit buttons for approvals/interrupts.
+- Add quiet empty states for new channels with at most three compact suggestions.
+- Add image compare viewer modes: single, side-by-side, slider, diff overlay, metadata
+  strip.
+- Add code block theme tokens for Strict Daylight and dark mode without high-saturation
+  code islands.
+- Add command output folding thresholds for success, failure, build/test, install logs,
+  watch/server logs, and huge/binary output.
+
+Acceptance:
+
+- Copy/open/download feedback does not create transcript rows.
+- Background toasts focus the owning conversation turn and never open a drawer.
+- Shortcuts are discoverable but not permanently explained inside transcript copy.
+- Mobile gestures never approve, cancel, interrupt, or delete by accident.
+- Empty state is quiet, task-oriented, and disappears after first user message.
+- Image compare viewer preserves aspect ratio and keeps operation evidence visible.
+- Code block theme matches Strict Daylight and passes contrast checks.
+- Command output uses the documented line/character thresholds and never streams chunks as
+  separate rows.
+
+## Framework Hardening Slice
+
+Type: accessibility, performance, token governance, and fixture infrastructure.
+
+Goal: make the conversation framework durable under long channels, multiple locales,
+keyboard/screen-reader use, and visual regression testing.
+
+Suggested files:
+
+```text
+apps/web/src/shared/conversation/ConversationTranscript.tsx
+apps/web/src/shared/conversation/TranscriptVirtualizer.tsx
+apps/web/src/shared/conversation/FocusManager.tsx
+apps/web/src/shared/conversation/ConversationA11y.ts
+apps/web/src/shared/conversation/conversation-tokens.css
+apps/web/src/shared/conversation/fixtures/
+apps/web/src/styles/components.css
+apps/web/e2e/channel.spec.ts
+```
+
+Work:
+
+- Add focus-return behavior for previews, action menus, popovers, and modals.
+- Add `aria-expanded`, accessible names, polite live announcements for actionable state
+  changes, and keyboard parity for transcript actions.
+- Move conversation colors, spacing, status tones, code colors, and diff colors into
+  conversation design tokens.
+- Add locale-safe labels, durations, file sizes, and long-label layout checks.
+- Add transcript virtualization/windowing once block count crosses the documented
+  thresholds while preserving turn anchors and active rows.
+- Defer heavy syntax highlighting, image decoding, and raw/debug preview rendering.
+- Add fixture-driven visual regression states for plain, streaming, operation,
+  multi-agent, approval, artifacts, code, diff, image compare, mobile, reduced motion,
+  and long localized labels.
+
+Acceptance:
+
+- Keyboard users can operate approvals, action bars, previews, copy buttons, composer
+  actions, and evidence expansion.
+- Screen reader announcements happen for approval needed, blocked, failed, completed, and
+  queued-follow-up, but not every token or stdout chunk.
+- Long Chinese and English labels do not overlap or force horizontal scrolling outside
+  code/log containers.
+- Long channels stay responsive with large transcript histories.
+- Active operation rows remain visible and stable while older completed rows are
+  virtualized.
+- Component fixtures exist for the required state matrix and pass focused visual checks.
+- CSS for conversation states uses conversation tokens rather than ad hoc hex values.
+
+## Shared Conversation UI Package Slice
+
+Type: package extraction and cross-surface reuse.
+
+Goal: let Channel, teammate private chat, and future Desktop/PC render the same
+conversation semantics without duplicating UI logic.
+
+Current anchors:
+
+- `apps/web/src/shared/conversation/` already acts as a Web-local conversation component
+  library.
+- `TeammatePrivateChatSurface` already reuses `ConversationShell`,
+  `ConversationVirtualFeed`, `MessageBubble`, `ConversationAttachmentStrip`,
+  `MessageEvidencePanel`, `MessageFooterActions`, `ConversationGuidanceStrip`, and
+  composer primitives.
+- Desktop docs already require consuming the shared `ConversationTranscript` contract
+  instead of forking product semantics.
+
+Package target:
+
+```text
+packages/conversation-ui-core
+packages/conversation-ui-react
+```
+
+`packages/conversation-ui-core` owns:
+
+- headless `ConversationTranscript`, `TranscriptBlock`, `ConversationAction`,
+  `ConversationPreviewTarget`, and renderer registry contracts;
+- design token names and semantic class names;
+- pure helpers for command-output folding, block grouping, action availability, source
+  summarization, and preview metadata;
+- test fixtures that can be consumed by Web and Desktop.
+
+`packages/conversation-ui-react` owns:
+
+- React transcript renderer;
+- block renderers for coordinator message, operation, agent activity, approval, artifact,
+  source summary, requirement shaping, decision needed, final result, and raw/debug ref;
+- composer primitives;
+- action bars, inline feedback, preview/lightbox components, image compare viewer,
+  code/diff renderers;
+- accessibility/focus helpers that are browser/React-specific.
+
+Apps keep:
+
+- daemon/API fetching and mutations;
+- route state, selected channel/teammate identity, membership, settings, and app shell;
+- platform-specific notifications, native menus, file picker, keychain, and window
+  treatment.
+
+Implementation order:
+
+1. Refactor `apps/web/src/shared/conversation` into internal subfolders:
+   `transcript`, `blocks`, `composer`, `preview`, `feedback`, `tokens`, and `fixtures`.
+2. Make channel and private chat consume the same component entrypoints and token names.
+3. Move pure types/helpers into `packages/conversation-ui-core` once both surfaces use
+   them.
+4. Move React components into `packages/conversation-ui-react` only after imports are
+   app-agnostic.
+5. Add Desktop renderer smoke fixtures against the shared transcript contract before
+   Desktop-specific styling diverges.
+
+Acceptance:
+
+- Channel and private chat use the same message/body, attachment, action bar, preview,
+  code block, evidence, and composer primitives.
+- No channel-only CSS selector is required for a shared conversation component to render.
+- Shared packages do not import daemon/API client or app route modules.
+- Desktop can render fixture transcript data without copying channel Web logic.
+- Private memory/context policy remains outside the UI package.
+
 ## Existing Anchors
 
 | Concern | Current anchor | Reuse plan |
@@ -129,7 +487,7 @@ fallback and covered by a migration issue.
 | Collaboration projection | `apps/web/src/lib/collaboration-task-work-cell.ts` | Reuse, but remove card/report copy and map to AgentActivitySpan. |
 | Legacy collaboration card read model | `apps/web/src/lib/collaboration-task-card.ts` | Keep as internal input; stop treating it as a first-level UI card. |
 | Main operation renderer | `apps/web/src/shared/conversation/ConversationWorkCell.tsx` | Convert from work-cell/card rendering to borderless transcript rendering. |
-| Right drawer shell | `apps/web/src/shared/conversation/RightDrawer.tsx` | Keep shell, add completed result-review/file-preview contract in parent view. |
+| Conversation detail shell | `apps/web/src/shared/conversation/` | Keep detail tied to the owning transcript row; add completed result-review/file-preview contract in parent view. |
 | Channel assembly | `apps/web/src/features/workspace/WorkspaceClientView.tsx` | Keep orchestration in place for first slices; avoid large file split until behavior is correct. |
 | Floating progress popover | `apps/web/src/features/workspace/WorkspaceClientView.tsx`, `.channel-progress-popover` | Keep the popover, reduce content to active status. |
 | Styling | `apps/web/src/styles/components.css` | Apply Strict Daylight v3 transcript rules and remove residual card treatments. |
@@ -153,23 +511,22 @@ daemon, not raw channel/workflow/run records for default display. Desktop should
 the shared contract directly.
 
 ```ts
-type ConversationCellKind =
-  | "user_message"
-  | "coordinator_message"
-  | "operation"
-  | "agent_activity"
-  | "approval"
-  | "artifact_strip";
-
-interface ConversationCellRender {
-  readonly display: readonly DisplayLine[];
-  readonly expanded?: ExpandedDetail;
-  readonly raw?: RawDetailRef;
+interface ConversationTranscript {
+  readonly schemaVersion: 1;
+  readonly channelId: string;
+  readonly turns: readonly ConversationTurnViewModel[];
 }
 
-interface OperationCellViewModel {
+interface ConversationTurnViewModel {
   readonly id: string;
-  readonly turnId?: string;
+  readonly sourceMessageId: string;
+  readonly blocks: readonly TranscriptBlock[];
+}
+
+interface OperationBlockViewModel extends TranscriptBlock {
+  readonly kind: "operation";
+  readonly id: string;
+  readonly turnId: string;
   readonly sourceKind: "run_thread" | "workflow" | "collaboration_task";
   readonly status: "queued" | "running" | "waiting_for_approval" | "blocked" | "failed" | "cancelled" | "succeeded";
   readonly title: string;
@@ -196,7 +553,7 @@ interface EvidenceSourceRefViewModel {
 }
 
 interface SourceSummaryStripViewModel {
-  readonly placement: "floating_popover" | "expanded_operation" | "drawer_summary";
+  readonly placement: "floating_popover" | "expanded_operation" | "detail_summary";
   readonly sources: readonly EvidenceSourceRefViewModel[];
 }
 ```
@@ -209,31 +566,37 @@ while call sites migrate. Do not rename every file in the first slice.
 ```text
 ConversationTurn
   UserMessageCell
-  CoordinatorMessageCell?
-  OperationCell?
-    OperationDisplayLine[]
-    AgentActivitySpan[]
-    ExpandedDetail?
-  CoordinatorSummaryCell?
-  ArtifactStrip?
+  TranscriptBlock[]
+    coordinator_message?
+    operation?
+      OperationDisplayLine[]
+      AgentActivitySpan[]
+      ExpandedDetail?
+    approval?
+    artifact_strip?
+    source_summary?
+    requirement_shaping?
+    decision_needed?
+    final_result?
 
 FloatingRunPopover
   Active actor + elapsed + latest action + optional source icons + stop/approval action
 
-RightDrawer
-  Root: Files | Review | Settings
-  Detail: File preview | Diff review | Artifact preview | Approval detail | Source metadata | Raw/debug detail
+ConversationDetail
+  Inline: operation evidence | files/links | checks | approvals | sources
+  Preview: file preview | diff review | artifact preview | image lightbox | source metadata
+  Raw/debug: explicit developer/support inspector
 ```
 
 Surface ownership:
 
 | Surface | Owns | Must not own |
 | --- | --- | --- |
-| Main feed | user text, coordinator narrative, operation rows, agent spans, final result, artifact strip, image thumbnails | raw logs, ids, duplicate drawer copy |
+| Main feed | user text, coordinator narrative, operation rows, agent spans, final result, artifact strip, attachments, links, image thumbnails | raw logs, ids, duplicate side-panel copy |
 | Inline expansion | bounded semantic evidence, operation process detail, agent process history | unbounded stdout, JSON, provider metadata |
 | Floating popover | current active status, one action, compact source icons | transcript, branch history, completed summaries |
-| Right drawer root pages | files, completed review, settings | active progress, copied main transcript, operation process |
-| Right drawer detail pages | file previews, diffs, artifact previews, approval detail, source metadata, raw/debug payloads | default conversation summary or copied OperationCell rows |
+| In-turn preview / lightbox | file previews, diffs, artifact previews, approval detail, source metadata, selected raw/debug payloads | default conversation summary or copied OperationCell rows |
+| Optional right-side workspace utility | non-conversation settings, global workspace tools, non-conversation file browser, explicit support inspector | conversation timeline, attachments, links, agent operations, checks, approvals, artifacts, source lists |
 | Modal/blocking surface | approval, destructive confirmation, missing input | passive status |
 
 ## Implementation Phases
@@ -255,7 +618,7 @@ Gate A: Phase 1 core message framework
 
 Gate B: later surfaces
   R4 floating popover active-state boundary
-    -> R5 right drawer de-dup boundary
+    -> R5 conversation detail de-dup boundary
     -> R7 SourceSummaryStrip
     -> Slice 6 full surface cleanup and fixture matrix
 
@@ -266,7 +629,7 @@ Gate C: shared contract extraction
 ```
 
 Gate A is the user's original message-framework problem. It is mandatory before any new
-source, drawer-detail, or popover work. The only exception is a small fix that restores a
+source-detail, preview/detail, or popover work. The only exception is a small fix that restores a
 previously working floating surface if it was accidentally removed; that fix must not
 change transcript structure.
 
@@ -291,7 +654,7 @@ Work:
 - Identify current main-feed work cell states: active, completed, blocked, approval,
   multi-agent serial, multi-agent parallel.
 - Identify current duplicate surfaces from the old UI: main feed card, legacy right-side
-  progress card, drawer/process detail, floating popover, raw run bubble.
+  progress card, side-panel/process detail, floating popover, raw run bubble.
 - Capture screenshots for at least desktop and narrow viewport.
 - Record current failing copy examples from UI fixtures.
 
@@ -356,7 +719,7 @@ Work:
 - Add a lightweight `assertDefaultConversationCopy()` helper for tests and fixtures.
 - Move the remaining `I finished...`, `Expand evidence...`, `Run in progress`, and
   `Open run` default-feed copy behind the formatter or replace it.
-- Keep technical labels available only for drawer raw/detail pages.
+- Keep technical labels available only for explicit raw/debug detail.
 - Remove message-body regex rules that recognize generated phrases such as `确认需求` or
   `完成` as structural markers. Replace them with projection metadata or preserve the
   original assistant text when metadata is missing.
@@ -563,36 +926,37 @@ Work:
 - Hide after final coordinator summary and artifact strip commit.
 - Show one actor, elapsed time, one latest-action phrase, optional compact source icons,
   and one primary action.
-- Hide or compress when the right drawer is open.
+- Hide or compress when another non-conversation workspace utility is open.
 
 Acceptance:
 
 - Completed state does not linger as a second success message.
 - Popover never shows command output, raw ids, workflow/run labels, or branch history.
 - Popover source icons are compact evidence affordances, not progress rows.
-- Opening the right drawer does not create duplicate progress UI.
+- Opening any optional side utility does not create duplicate progress UI.
 
-### CUI8. Right Drawer Result Review Boundary
+### CUI8. Conversation Detail Boundary
 
-Type: Web drawer architecture.
+Type: Web conversation detail architecture.
 
-Goal: keep the right drawer as completed-result review/workspace, not a second
-transcript and not the default operation-process reader.
+Goal: keep completed-result review, files, links, source metadata, approvals, checks, and
+artifacts inside the conversation reading path, not in a second transcript or a right
+drawer.
 
 Decision update:
 
-- The right drawer no longer has a `Progress` root page. Active progress belongs to the
-  floating popover, and durable progress belongs to the main transcript.
-- Drawer root pages are `Files`, `Review`, and `Settings`.
+- Active progress belongs to the floating popover, and durable progress belongs to the
+  main transcript.
+- Conversation-owned details have no `Files`, `Review`, or `Progress` drawer root page.
 - Operation process detail belongs to inline `OperationCell` / `AgentActivitySpan`
   expansion in the main transcript.
 - Source metadata, approval detail, raw/debug detail, file preview, diff review, and
-  artifact preview remain explicit drill-down surfaces.
+  artifact preview remain explicit drill-down surfaces opened from the owning transcript
+  row.
 
 Suggested files:
 
 ```text
-apps/web/src/shared/conversation/RightDrawer.tsx
 apps/web/src/features/workspace/WorkspaceClientView.tsx
 apps/web/src/shared/conversation/ConversationEvidenceBundlePanel.tsx
 apps/web/src/shared/conversation/FileChangeEvidencePanel.tsx
@@ -600,33 +964,31 @@ apps/web/src/shared/conversation/FileChangeEvidencePanel.tsx
 
 Work:
 
-- Keep root pages: `Files`, `Review`, `Settings`. There is no `Progress` root page and no
-  ordinary `Context` root page.
-- Add result-review and file/artifact preview page state opened from explicit artifact,
-  file, approval, source, or raw/debug actions.
+- Add result-review and file/artifact preview state opened from explicit artifact, file,
+  approval, source, or raw/debug actions on the owning transcript row.
 - Do not add an operation-process drawer page. Expanded OperationCell detail is inline.
-- Drawer file/review pages should show changed files, generated artifacts, previews,
-  diffs, checks, approval decisions, and review/audit metadata.
-- Drawer source metadata should show source label, type, target URL/file/app/tool
+- File/review previews should show changed files, generated artifacts, previews, diffs,
+  checks, approval decisions, and review/audit metadata.
+- Source metadata should show source label, type, target URL/file/app/tool
   metadata, related operation refs, and raw detail ref when available.
 - Raw events and JSON are folded by default.
-- Preserve main feed scroll position when opening/closing drawer.
+- Preserve the owning turn anchor when opening/closing preview or detail.
 
 Acceptance:
 
-- Drawer root pages do not duplicate the main conversation.
-- Operation process rows do not move to the drawer and are still readable through inline
-  expansion after completion.
-- Drawer file/review pages can show full previews, diffs, checks, approvals, artifacts,
-  source metadata, and raw/debug refs.
-- Raw ids and JSON never appear in drawer root pages.
+- No right drawer owns conversation attachments, links, artifacts, checks, approvals,
+  operation evidence, source lists, or result review.
+- Operation process rows are still readable through inline expansion after completion.
+- File/review previews can show full previews, diffs, checks, approvals, artifacts,
+  source metadata, and raw/debug refs from the owning turn.
+- Raw ids and JSON never appear in normal conversation detail.
 
 ### CUI9. Legacy Collaboration Surface Retirement
 
 Type: Web cleanup.
 
-Goal: retire the first-level collaboration card concept after AgentActivitySpan and drawer
-detail are stable.
+Goal: retire the first-level collaboration card concept after AgentActivitySpan and
+conversation detail are stable.
 
 Suggested files:
 
@@ -650,7 +1012,7 @@ Acceptance:
 
 - No user-facing surface is labeled as a collaboration card.
 - Main feed multi-agent work appears as AgentActivitySpan.
-- The right drawer does not expose Progress as a root page and does not duplicate work
+- No right-side utility exposes Progress as a conversation root page or duplicates work
   cards.
 
 ### CUI10. Artifact, File, Check, And Memory Rows
@@ -682,16 +1044,16 @@ Work:
 - Show message-level memory citation footer only when memory affected the answer. Do not
   render memory as an OperationCell row unless the memory event is run-only and has no
   owning assistant/coordinator message.
-- Keep full file previews and diffs in drawer file/review detail.
+- Keep full file previews and diffs in in-turn preview/detail surfaces.
 
 Acceptance:
 
 - Artifact strip appears only when there are outputs.
 - Image thumbnails fit inside the transcript column and do not cause text overlap or
   layout shift while loading.
-- Lightbox preview does not duplicate operation progress or drawer review content.
+- Lightbox preview does not duplicate operation progress or result-review content.
 - Memory summary appears only when memory was used.
-- Drawer Files shows previews/diffs, not the same artifact strip repeated.
+- File/detail previews show previews/diffs, not the same artifact strip repeated.
 
 ### CUI10.5. Active Shimmer Motion
 
@@ -748,9 +1110,9 @@ Required fixture matrix:
 | waiting approval | approval row and blocking affordance | vague `continue?` copy |
 | blocked | human-readable blocker and next action | raw exception as default row |
 | interrupted redirect | cancelled source plus linked continuation | hidden prompt injection |
-| drawer open | detail/raw sections only | copied main transcript |
+| detail preview open | detail/raw sections only | copied main transcript |
 | popover active | one-line active status | command output or branch history |
-| artifact result | artifact strip and file detail path | duplicate artifact list in drawer root |
+| artifact result | artifact strip and selected file/detail path | duplicate artifact list in a drawer root |
 
 Copy regression assertions:
 
@@ -759,7 +1121,7 @@ Copy regression assertions:
 - Main feed does not contain `细节放在折叠证据里`.
 - Main feed does not contain UI-mechanism copy such as `主会话会同步状态` or
   `查看右侧抽屉了解完整细节`.
-- Right drawer result review does not repeat the coordinator final summary.
+- Conversation detail/preview does not repeat the coordinator final summary.
 - Floating popover is hidden after terminal summary commits.
 
 Verification commands:
@@ -791,8 +1153,9 @@ Phases: CUI1, CUI2, CUI3, part of CUI5.
 
 Execution rule: Slice 1 must land before Slice 2 starts. Slice 1 owns the single-agent
 and completed-work transcript treatment only. It must not remove or redesign the floating
-run popover or right drawer. The later R5 cleanup retires the right drawer `Progress`
-root page after the popover and transcript own their respective progress surfaces.
+run popover or unrelated workspace utilities. The later R5 cleanup removes any
+conversation-detail dependency on a right drawer after the popover and transcript own
+their respective progress surfaces.
 
 Files likely touched:
 
@@ -835,7 +1198,7 @@ Phases: CUI4 and CUI9 first half.
 
 Execution rule: start Slice 2 only after Slice 1 compiles and its focused e2e assertions
 are updated. Slice 2 owns multi-agent transcript rows in the main feed. It must not remove
-the floating run popover or convert the right drawer into a duplicate transcript.
+the floating run popover or convert a side panel into a duplicate transcript.
 
 Files likely touched:
 
@@ -854,7 +1217,7 @@ Acceptance:
 - The main feed does not use `Agent branches`, `{owner} branch`, `Expand branch`,
   `Collapse branch`, or `.conversation-work-cell-branch` as the user-facing model.
 - Each visible agent span shows one latest action line by default. Prior actions remain
-  behind that agent row, and raw sub-agent transcript stays in drawer/detail surfaces.
+  behind that agent row, and raw sub-agent transcript stays in explicit raw/debug detail.
 - Right progress panel cards may remain during this slice as compatibility UI; they are
   not first-level main-feed conversation cells and are cleaned up in later slices.
 - Branch overflow and blocked/failed visibility rules are tested.
@@ -886,7 +1249,8 @@ Acceptance:
 - Source refs are deduped and keep stable ids across active-to-terminal mutation.
 - Main feed has no standalone Sources card.
 - Floating popover may show compact source icons while active.
-- Right drawer can open source detail without duplicating the operation transcript.
+- Source detail opens from the owning transcript row without duplicating the operation
+  transcript.
 
 ### Slice 4: Floating Popover
 
@@ -904,7 +1268,7 @@ Acceptance:
 
 - Popover remains available during active work.
 - Popover hides after terminal summary.
-- Popover does not duplicate drawer progress.
+- Popover does not duplicate any other progress surface.
 - Popover source icons are optional compact affordances, not additional progress rows.
 
 ### Slice 5: Result Review, Artifacts, Images, And Motion
@@ -914,7 +1278,6 @@ Phases: CUI8, CUI10, and CUI10.5.
 Files likely touched:
 
 ```text
-apps/web/src/shared/conversation/RightDrawer.tsx
 apps/web/src/features/workspace/WorkspaceClientView.tsx
 apps/web/src/shared/conversation/ConversationEvidenceBundlePanel.tsx
 apps/web/src/shared/conversation/FileChangeEvidencePanel.tsx
@@ -923,10 +1286,10 @@ apps/web/e2e/channel.spec.ts
 
 Acceptance:
 
-- Drawer root pages do not duplicate main feed.
+- No right drawer root page duplicates or owns main-feed conversation artifacts.
 - Operation process detail remains inline and does not become a drawer page.
-- Drawer result review has files, diffs/previews, checks, approvals, sources, artifacts,
-  and folded raw/debug refs.
+- Conversation result/detail preview has files, diffs/previews, checks, approvals,
+  sources, artifacts, and folded raw/debug refs.
 - Files/artifacts/memory follow the strip/detail boundary.
 - Image thumbnails and lightbox preview work in the main transcript.
 - Active shimmer appears only on active rows/popover text and stops on terminal rows.
@@ -992,18 +1355,17 @@ Coverage:
 - Visible with running work.
 - Visible with pending approval and focuses approval surface.
 - Hidden after terminal summary.
-- Hidden or reduced when drawer opens.
+- Hidden or reduced when a non-conversation workspace utility opens.
 
-### Right Drawer
+### Conversation Detail
 
 Coverage:
 
-- Root pages render `Files`, `Review`, `Settings`.
 - File preview, diff review, artifact preview, source metadata, approval detail, and
-  raw/debug detail open from explicit actions.
+  raw/debug detail open from explicit actions on the owning conversation row.
 - Operation process detail remains inline in the main transcript.
 - Raw JSON is folded.
-- Drawer summary does not repeat coordinator final summary.
+- Detail/preview summary does not repeat coordinator final summary.
 
 ### Visual QA
 
@@ -1012,7 +1374,7 @@ Coverage:
 - Desktop screenshot of single-agent running/completed.
 - Desktop screenshot of parallel multi-agent.
 - Desktop screenshot of inline expanded OperationCell detail.
-- Desktop screenshot of drawer-open result review/file preview.
+- Desktop screenshot of in-turn result review/file preview.
 - Desktop screenshot of image thumbnail and lightbox preview.
 - Narrow viewport screenshot of active work and composer.
 
@@ -1022,7 +1384,7 @@ Coverage:
 | --- | --- |
 | Raw event spam returns to main feed | Copy regression tests and render contract checks. |
 | Completed popover keeps showing after run is done | Popover state tests tied to terminal operation commit. |
-| Right drawer becomes a second transcript | Drawer duplication guard and fixture tests. |
+| Side panel becomes a second transcript | Conversation detail ownership guard and fixture tests. |
 | Multi-agent work becomes separate teammate chats | AgentActivitySpan projection owns default multi-agent display. |
 | Existing e2e depends on legacy card selectors | Migrate selectors slice by slice; do not delete all legacy classes in Slice 1. |
 | `WorkspaceClientView.tsx` diff becomes too large | Keep first slices behavior-focused; split components only after acceptance. |
@@ -1061,7 +1423,7 @@ R1-R3.1 pass.
 | AgentActivitySpan | `apps/web/src/lib/`, `apps/web/src/shared/conversation/` | OperationCell renderer |
 | Floating popover | `apps/web/src/features/workspace/`, `apps/web/src/styles/` | Projection and active lifecycle fields |
 | SourceSummaryStrip | `apps/web/src/lib/`, `apps/web/src/shared/conversation/`, `apps/web/src/features/workspace/` | Stable OperationCell and AgentActivitySpan ids |
-| Right drawer result review | `apps/web/src/shared/conversation/`, `apps/web/src/features/workspace/` | Projection model, artifacts, file/change evidence, source refs |
+| Conversation result/detail preview | `apps/web/src/shared/conversation/`, `apps/web/src/features/workspace/` | Projection model, artifacts, file/change evidence, source refs |
 | Image/lightbox and shimmer | `apps/web/src/shared/conversation/`, `apps/web/src/styles/` | Artifact/result rows and active lifecycle fields |
 | E2E fixtures | `apps/web/e2e/` | Each corresponding slice |
 
@@ -1077,7 +1439,7 @@ Phase 1 core message framework:
 
 Later surfaces:
   R4 Floating Popover
-    -> R5 Right Drawer Detail
+    -> R5 Conversation Detail
     -> R7 SourceSummaryStrip
     -> Slice 6 Legacy Cleanup
 ```
@@ -1099,7 +1461,7 @@ If any of these happen during implementation, stop and adjust the plan:
 - A new default UI label introduces `workflow`, `run`, `work-unit`, `packet`, `raw event`,
   `attempt`, or `selector`.
 - A coordinator message explains the UI mechanism instead of the task state.
-- A detail drawer repeats the final coordinator answer verbatim.
+- A detail panel or preview repeats the final coordinator answer verbatim.
 - A running operation appends a new row for every stdout chunk.
 - A running operation appends a new row just to express terminal state; terminal state
   must mutate the existing semantic row.
@@ -1117,8 +1479,9 @@ The implementation is complete when:
 - Ling Agent copy follows the copy canon.
 - Active operation rows update in place.
 - Inline evidence is bounded and expandable.
-- Right drawer owns completed result review, file/artifact preview, source metadata,
-  settings, and explicit raw/debug access only.
+- Main conversation owns completed result review, file/artifact preview, source metadata,
+  approvals, checks, attachments, links, and evidence through inline detail or in-turn
+  preview.
 - Floating popover owns active status only and hides after completion.
 - Legacy collaboration cards no longer appear as first-level user concepts.
 - Full fixture matrix passes.

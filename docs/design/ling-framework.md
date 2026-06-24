@@ -40,6 +40,7 @@ docs:
 - [Product Design](../product-design.md)
 - [Platform Architecture](platform-architecture.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Ling Memory v1](ling-memory-v1.md)
 - [Ling Skill Import v1](ling-skill-import-v1.md)
