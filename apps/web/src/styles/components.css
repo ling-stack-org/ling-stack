@@ -757,15 +757,71 @@ button.artifact-action-link {
 }
 
 .conversation-evidence-section li em {
+  min-width: 0;
+  max-width: 260px;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: 11px;
   font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-evidence-section-content {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.conversation-evidence-code {
+  display: inline-block;
+  max-width: min(360px, 48vw);
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.conversation-evidence-link {
+  display: inline-block;
+  max-width: min(220px, 36vw);
+  overflow: hidden;
+  color: var(--accent);
+  text-overflow: ellipsis;
+  text-decoration: none;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.conversation-evidence-link:hover,
+.conversation-evidence-link:focus-visible {
+  text-decoration: underline;
+}
+
+.conversation-evidence-status {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 18px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
+.conversation-evidence-status.available {
+  border-color: var(--success-border);
+  color: var(--success);
+}
+
+.conversation-evidence-status.blocked {
+  border-color: var(--warning-border);
+  color: var(--warning);
 }
 
 .conversation-shell {

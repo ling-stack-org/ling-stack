@@ -18,11 +18,11 @@ import {
 } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
-  ConversationEvidenceBundlePanel,
   ConversationGuidanceStrip,
   ConversationShell,
   ConversationVirtualFeed,
   MessageBubble,
+  MessageEvidencePanel,
   MessageFooterActions,
 } from "../../shared/conversation/index.js";
 import type {
@@ -246,20 +246,13 @@ export function TeammatePrivateChatSurface({
                       }))}
                   />
                 ) : null}
-                evidenceNode={messageUsedMemoryEvents.length > 0 ? (
-                  <ConversationEvidenceBundlePanel
-                    label={t("Message evidence")}
-                    bundle={{
-                      summary: t("Used memory"),
-                      sections: [
-                        {
-                          id: "memory",
-                          label: t("Memory"),
-                          summary: t("Used memory"),
-                          content: <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />,
-                        },
-                      ],
-                    }}
+                evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
+                  <MessageEvidencePanel
+                    memoryContent={messageUsedMemoryEvents.length > 0 ? (
+                      <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
+                    ) : undefined}
+                    memorySummary={messageUsedMemoryEvents.length > 0 ? t("Used memory") : undefined}
+                    webEvidence={message.webEvidence}
                   />
                 ) : null}
                 errorNode={message.errorMessage && message.status !== "cancelled" && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}

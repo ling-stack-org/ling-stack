@@ -3,6 +3,7 @@ export { ConversationEmptyState, type ConversationEmptyStateProps } from "./Conv
 export { ConversationEvidenceBundlePanel, type ConversationEvidenceBundle, type ConversationEvidenceBundlePanelProps, type ConversationEvidenceItem, type ConversationEvidenceSection } from "./ConversationEvidenceBundlePanel.js";
 export { ConversationFeed, type ConversationFeedProps } from "./ConversationFeed.js";
 export { ConversationGuidanceStrip, type ConversationGuidanceItem } from "./ConversationGuidanceStrip.js";
+export { MessageEvidencePanel } from "./MessageEvidencePanel.js";
 export { ConversationShell, type ConversationShellProps } from "./ConversationShell.js";
 export { ConversationStatusStrip, type ConversationStatusAction, type ConversationStatusMetaItem, type ConversationStatusStripProps } from "./ConversationStatusStrip.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./ConversationSummaryRow.js";

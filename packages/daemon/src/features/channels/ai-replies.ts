@@ -20,6 +20,7 @@ import {
 import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 import { buildChannelWebContext, prependChannelWebContext } from "./web-tools.js";
+import { recordMessageWebEvidenceEvent } from "../web/message-web-evidence.js";
 
 export async function createAiChannelReply(input: {
   readonly runnerRegistry: RunnerRegistry;
@@ -208,6 +209,15 @@ async function completeAiChannelReply(input: {
       secretResolver: input.secretResolver,
       fetch: input.webFetch,
       resolveHostAddresses: input.webResolveHostAddresses,
+    });
+    recordMessageWebEvidenceEvent({
+      store: input.store,
+      workUnitId: input.supervised.workUnit.id,
+      attemptId: input.supervised.attempt.id,
+      sourceMessageId: input.sourceMessage.id,
+      linkedMessageId: input.pending.id,
+      context: webContext,
+      ts: new Date().toISOString(),
     });
     let discussionPrompt = prependChannelWebContext(renderContextPack(discussionContextPack), webContext);
     const systemPrompt = [

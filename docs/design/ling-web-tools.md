@@ -138,6 +138,18 @@ Codex Browser Use is not directly portable into Ling Agent as a simple function 
 
 Until that exists, Ling supports current public lookup and public URL reading, not interactive browser automation.
 
+## Conversation Evidence UI
+
+Web evidence is part of the conversation, not a right-drawer-only artifact. When a channel reply or private teammate reply uses or blocks web context, the daemon records a `web_evidence_recorded` runtime event linked to the pending AI reply message. Message list and stream responses then derive a compact `webEvidence` field from that event.
+
+The conversation page renders that field under the AI message in the existing message evidence disclosure:
+
+- `web_search` shows call status, query, provider adapter, and blocked reason when present.
+- `Sources` shows bounded citation URLs and snippets returned by the provider adapter.
+- `open_url` shows public URL read attempts, final URL, status, and blocked reason.
+
+The right drawer can still provide deeper run/work-unit inspection, but it is not the primary place for web-search evidence. Runtime/work-unit timelines also keep the same `web_evidence_recorded` event so reviewers can correlate the visible reply evidence with the underlying work-unit audit trail.
+
 ## Prompt Boundary
 
 The channel and private reply system prompts remain side-effect free:
@@ -174,9 +186,8 @@ The slice intentionally reuses the existing provider secret system:
 
 ## Next Slice
 
-1. Add UI evidence rows for web search calls, opened URLs, and cited sources.
-2. Wire workflow steps, automations, and multi-agent orchestration into the same web evidence service where the surface can preserve source URLs and blocked reasons.
-3. Add configurable search controls: allowed/blocked domains, live-access toggle, and context size.
-4. Add provider adapters one at a time: xAI/Grok, Google grounding, Perplexity/search-model providers, Anthropic, then domestic providers where official protocols and citation evidence are available.
-5. Add a browser-session design with approvals, artifacts, and replayable interaction events.
-6. Consider promoting `web_search` to a first-class runner-visible tool only after the tool schema can represent non-workspace side effects and source evidence.
+1. Wire workflow steps, automations, and multi-agent orchestration into the same web evidence service where the surface can preserve source URLs and blocked reasons.
+2. Add configurable search controls: allowed/blocked domains, live-access toggle, and context size.
+3. Add provider adapters one at a time: xAI/Grok, Google grounding, Perplexity/search-model providers, Anthropic, then domestic providers where official protocols and citation evidence are available.
+4. Add a browser-session design with approvals, artifacts, and replayable interaction events.
+5. Consider promoting `web_search` to a first-class runner-visible tool only after the tool schema can represent non-workspace side effects and source evidence.

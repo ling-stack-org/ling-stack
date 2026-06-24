@@ -1983,6 +1983,18 @@ test("channel discussion injects web search context before runner reply", async 
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.equal(finalReply.body, "Designer reply");
+    assert.equal(finalReply.webEvidence.status, "available");
+    assert.equal(finalReply.webEvidence.query, "@Designer 查一下 Ling Stack 最新消息");
+    assert.equal(finalReply.webEvidence.provider.adapterId, "openai-responses-web-search");
+    assert.deepEqual(finalReply.webEvidence.sources.map((source) => source.url), ["https://example.com/fresh"]);
+    assert.doesNotMatch(JSON.stringify(finalReply.webEvidence), /sk-test-secret-value/);
+    const workUnit = store.listWorkUnits({ kind: "channel_ai_reply", linkedMessageId: finalReply.id, limit: 1 })[0];
+    assert.ok(workUnit);
+    const webEvidenceEvents = store.listRuntimeEvents(workUnit.id).filter((event) => event.type === "web_evidence_recorded");
+    assert.equal(webEvidenceEvents.length, 1);
+    assert.equal(webEvidenceEvents[0].data.toolSurface, "web");
+    assert.equal(webEvidenceEvents[0].data.sourceCount, 1);
+    assert.deepEqual(webEvidenceEvents[0].data.sources.map((source) => source.url), ["https://example.com/fresh"]);
     assert.equal(webSearchCalls.length, 1);
     assert.equal(webSearchCalls[0].url, "https://api.openai.com/v1/responses");
     const requestBody = JSON.parse(webSearchCalls[0].init.body);
@@ -8923,6 +8935,15 @@ test("teammate direct reply injects web search context before runner reply", asy
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
     assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+    const doneEvent = events.find((event) => event.event === "done");
+    assert.equal(doneEvent.data.aiReply.webEvidence.status, "available");
+    assert.equal(doneEvent.data.aiReply.webEvidence.query, "查一下 Ling Stack 最新消息");
+    assert.equal(doneEvent.data.aiReply.webEvidence.provider.adapterId, "openai-responses-web-search");
+    assert.deepEqual(doneEvent.data.aiReply.webEvidence.sources.map((source) => source.url), ["https://example.com/private-fresh"]);
+    assert.doesNotMatch(JSON.stringify(doneEvent.data.aiReply.webEvidence), /sk-test-secret-value/);
+    const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    const finalReply = listed.messages.find((message) => message.id === doneEvent.data.aiReply.id);
+    assert.equal(finalReply.webEvidence.status, "available");
 
     assert.equal(webSearchCalls.length, 1);
     assert.equal(webSearchCalls[0].url, "https://api.openai.com/v1/responses");
@@ -8968,6 +8989,11 @@ test("teammate direct web search context blocks unsupported providers without fe
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
     assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+    const doneEvent = events.find((event) => event.event === "done");
+    assert.equal(doneEvent.data.aiReply.webEvidence.status, "blocked");
+    assert.match(doneEvent.data.aiReply.webEvidence.reason, /Current selected Ling provider does not support realtime web search/);
+    assert.deepEqual(doneEvent.data.aiReply.webEvidence.sources, []);
+    assert.deepEqual(doneEvent.data.aiReply.webEvidence.readUrls, []);
 
     assert.equal(fetched, false);
     assert.equal(runner.runs.length, 1);

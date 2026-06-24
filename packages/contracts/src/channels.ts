@@ -405,6 +405,38 @@ export interface ChannelMessageFileRef {
   readonly line?: number;
 }
 
+export type MessageWebEvidenceStatus = "available" | "blocked";
+
+export interface MessageWebEvidenceProvider {
+  readonly adapterId: string;
+  readonly providerPresetId: string;
+  readonly displayName: string;
+}
+
+export interface MessageWebEvidenceSource {
+  readonly url: string;
+  readonly title?: string;
+  readonly snippet?: string;
+}
+
+export interface MessageWebEvidenceReadUrl {
+  readonly url: string;
+  readonly status: "available" | "blocked";
+  readonly finalUrl?: string;
+  readonly title?: string;
+  readonly reason?: string;
+}
+
+export interface MessageWebEvidence {
+  readonly status: MessageWebEvidenceStatus;
+  readonly query?: string;
+  readonly provider?: MessageWebEvidenceProvider;
+  readonly reason?: string;
+  readonly sources: readonly MessageWebEvidenceSource[];
+  readonly readUrls: readonly MessageWebEvidenceReadUrl[];
+  readonly updatedAt: string;
+}
+
 export interface ChannelMessage {
   readonly id: string;
   readonly workspaceId: string;
@@ -423,6 +455,7 @@ export interface ChannelMessage {
   readonly linkedRunId?: string;
   readonly status: "pending" | "ready" | "blocked" | "failed";
   readonly errorMessage?: string;
+  readonly webEvidence?: MessageWebEvidence;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
