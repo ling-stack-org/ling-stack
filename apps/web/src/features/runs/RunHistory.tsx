@@ -2648,7 +2648,9 @@ function webProgressRuntimeEventLabel(event: WorkUnitDetailResponse["events"][nu
       return `web_search ${t("blocked")}${step}: ${truncatePreview(reason, 86)}`;
     }
     if (status === "degraded") {
-      return `web_search ${t("degraded")}${step}`;
+      return reason
+        ? `web_search ${t("degraded")}${step}: ${truncatePreview(reason, 86)}`
+        : `web_search ${t("degraded")}${step}`;
     }
     return `web_search ${status || "completed"}${step}: ${truncatePreview(query || "-", 86)}`;
   }
@@ -2674,6 +2676,10 @@ function webProgressRuntimeEventMeta(event: WorkUnitDetailResponse["events"][num
   }
   if (progressType === "web_search_completed") {
     const sourceCount = readDataNumber(event.data, "sourceCount");
+    const reason = readDataString(event.data, "reason");
+    if (reason) {
+      return truncatePreview(reason, 96);
+    }
     return sourceCount ? `${t("Sources")}: ${sourceCount}` : formatDateTime(event.ts);
   }
   if (progressType === "open_url_started" || progressType === "open_url_completed") {

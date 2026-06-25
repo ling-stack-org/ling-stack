@@ -759,6 +759,11 @@ button.artifact-action-link {
   font-size: 12px;
 }
 
+.conversation-evidence-section li.conversation-evidence-item-wide {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
 .conversation-evidence-section li strong {
   min-width: 0;
   overflow: hidden;
@@ -778,6 +783,18 @@ button.artifact-action-link {
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-evidence-section li.conversation-evidence-item-wide em {
+  max-width: none;
+  overflow: visible;
+  line-height: 16px;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.conversation-evidence-reason {
+  color: var(--text);
 }
 
 .conversation-evidence-section-content {

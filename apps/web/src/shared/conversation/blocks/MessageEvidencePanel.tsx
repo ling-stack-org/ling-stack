@@ -37,6 +37,7 @@ export function MessageEvidencePanel({
   if (sections.length === 0) {
     return null;
   }
+  const resolvedDefaultOpen = defaultOpen ?? shouldOpenMessageEvidenceByDefault(webEvidence);
   return (
     <ConversationEvidenceBundlePanel
       label={t("Message evidence")}
@@ -44,7 +45,7 @@ export function MessageEvidencePanel({
         summary: summarizeMessageEvidence(Boolean(memoryContent), webEvidence, t),
         sections,
       }}
-      defaultOpen={defaultOpen}
+      defaultOpen={resolvedDefaultOpen}
     />
   );
 }
@@ -95,11 +96,18 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
   if (webEvidence.reason) {
     searchItems.push({
       id: "blocked-reason",
-      label: t("Blocked reason"),
-      value: webEvidence.reason,
+      label: webEvidence.status === "blocked" ? t("Blocked reason") : t("Degraded reason"),
+      className: "conversation-evidence-item-wide",
+      value: <span className="conversation-evidence-reason">{webEvidence.reason}</span>,
       icon: <ShieldAlert size={12} />,
     });
   }
+  searchItems.push({
+    id: "source-count",
+    label: t("Sources"),
+    value: t("{count} sources", { count: webEvidence.sources.length }),
+    icon: <Link2 size={12} />,
+  });
   sections.push({
     id: "web-search",
     label: "web_search",
@@ -161,9 +169,9 @@ function summarizeMessageEvidence(hasMemory: boolean, webEvidence: MessageWebEvi
     const webParts: string[] = [];
     if (webEvidence.query || webEvidence.reason || webEvidence.sources.length > 0 || webEvidence.queries?.length) {
       if (webEvidence.status === "blocked") {
-        webParts.push("web_search blocked");
+        webParts.push(webEvidence.reason ? `web_search blocked: ${shortReason(webEvidence.reason)}` : "web_search blocked");
       } else if (webEvidence.status === "degraded") {
-        webParts.push("web_search degraded");
+        webParts.push(webEvidence.reason ? `web_search degraded: ${shortReason(webEvidence.reason)}` : "web_search degraded");
       } else {
         webParts.push(`web_search ${webEvidence.sources.length} sources`);
       }
@@ -184,6 +192,15 @@ function webEvidenceSearchSummary(webEvidence: MessageWebEvidence, t: Translate)
     return t("degraded");
   }
   return t("{count} sources", { count: webEvidence.sources.length });
+}
+
+function shouldOpenMessageEvidenceByDefault(webEvidence: MessageWebEvidence | undefined): boolean {
+  return webEvidence?.status === "blocked" || webEvidence?.status === "degraded";
+}
+
+function shortReason(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized.length > 96 ? `${normalized.slice(0, 93)}...` : normalized;
 }
 
 function sourceHost(url: string): string {

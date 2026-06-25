@@ -123,6 +123,12 @@ Do not batch-enable every market provider by capability name alone. Add adapters
 - no plaintext secret in prompts/logs;
 - provider check or model metadata can safely advertise `web_search`.
 
+### Codex Reference
+
+OpenAI Codex does not depend on an arbitrary chat-completions relay to infer live search support. Its open-source implementation contributes a `web.run` tool from `codex-rs/ext/web-search`; that tool executor builds a `SearchClient`, executes search/open/find commands, emits started/completed web-search turn items, and returns search output as tool output. Separately, `codex-rs/core/src/tools/hosted_spec.rs` can expose a hosted web-search tool when `WebSearchMode` is cached/indexed/live instead of disabled.
+
+Ling should keep the same product boundary: the conversation host owns the global web tool and evidence trail, while model/provider adapters are only interchangeable search backends. Custom OpenAI-compatible, Grok, Gemini, domestic, and private chat models can all consume the resulting evidence as ordinary prompt context. A provider that accepts `web_search_options` but returns no citation/source metadata is not equivalent to Codex-style live search; Ling marks that turn `degraded` and shows the provider/reason inline in the conversation.
+
 ### Provider `compat.webSearch`
 
 `capabilities` and `compat` carry different meanings:
@@ -209,6 +215,8 @@ The pending AI message also shows the live web state in the conversation feed:
 The conversation page renders that field under the AI message in the existing message evidence disclosure:
 
 - `web_search` shows call status, query, provider adapter, and blocked reason when present.
+- `degraded` and `blocked` web evidence opens by default because those states are user-actionable and otherwise look like the search never ran.
+- `degraded` reason names the backend/provider contract failure, such as a relay returning text without citation/source metadata.
 - `Sources` shows bounded citation URLs and snippets returned by the provider adapter.
 - `open_url` shows public URL read attempts, final URL, status, and blocked reason.
 
@@ -244,7 +252,7 @@ The slice intentionally reuses the existing provider secret system:
 | Backend provider declares `web_search` but no Ling adapter supports its protocol | Inject blocked web-search status; reply should say Ling has no web-search adapter for that backend yet. |
 | Backend provider key is missing | Inject blocked web-search status; reply should say the configured backend key is missing. |
 | OpenAI request fails | Inject sanitized HTTP/network error; continue ordinary reply. |
-| Model returns no citations | Include summary, mark the event `degraded`, and do not treat it as current evidence. |
+| Backend returns text without citation/source metadata | Include summary, mark the event `degraded`, show provider/reason inline, and do not treat it as current evidence. |
 | URL points to private/local network | Block before fetch or after DNS/redirect check. |
 | URL body too large | Truncate to prompt budget. |
 | Unsupported content type | Block URL body extraction. |

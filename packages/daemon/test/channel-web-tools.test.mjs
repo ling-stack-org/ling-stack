@@ -152,6 +152,7 @@ test("channel web context uses global web_search backend independent from chat p
 
 test("channel web context degrades search summaries without source URLs", async () => {
   const calls = [];
+  const progressEvents = [];
   const webProvider = {
     ...createResponsesCompatibleWebSearchProvider(),
     id: "provider_chat_completions_search",
@@ -170,6 +171,9 @@ test("channel web context degrades search summaries without source URLs", async 
     sourceMessage: { body: "查一下今天热门 AI 的新闻" },
     turnEnvelope: { body: "查一下今天热门 AI 的新闻", linkPreviews: [] },
     secretResolver: createCompositeSecretResolver({ env: { RELAY_API_KEY: "sk-test-relay-secret" } }),
+    onProgress: (event) => {
+      progressEvents.push(event);
+    },
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       return new Response(JSON.stringify({
@@ -188,10 +192,15 @@ test("channel web context degrades search summaries without source URLs", async 
   assert.equal(context.status, "degraded");
   assert.equal(context.search?.sources.length, 0);
   assert.ok(context.search?.queries && context.search.queries.length > 1);
-  assert.match(context.reason ?? "", /no source URLs/);
+  assert.match(context.reason ?? "", /no citation\/source metadata/);
   assert.match(context.prompt ?? "", /Web search status: degraded/);
+  assert.match(context.prompt ?? "", /provider or relay may accept the configured protocol/);
   assert.match(context.prompt ?? "", /Search queries:/);
   assert.doesNotMatch(context.prompt ?? "", /sk-test-relay-secret/);
+  assert.equal(progressEvents.filter((event) => event.type === "web_search_completed").length, 4);
+  assert.ok(progressEvents
+    .filter((event) => event.type === "web_search_completed")
+    .every((event) => event.status === "degraded" && /citation\/source metadata/.test(event.reason ?? "")));
 });
 
 test("channel web context resolves local provider secrets for global web_search backend", async () => {
