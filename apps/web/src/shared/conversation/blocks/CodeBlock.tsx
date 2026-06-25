@@ -1,6 +1,7 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../../../i18n.js";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
+import { notifyConversationDeferredContentReady } from "./deferred-rendering.js";
 
 export interface CodeBlockProps {
   readonly code: string;
@@ -13,6 +14,8 @@ export interface CodeBlockProps {
 
 const defaultCollapsedLines = 24;
 const defaultCollapsedCharacters = 3_600;
+const deferredHighlightLines = 300;
+const deferredHighlightCharacters = 24_000;
 
 export function CodeBlock({
   code,
@@ -23,30 +26,76 @@ export function CodeBlock({
   copyLabel,
 }: CodeBlockProps): JSX.Element {
   const { t } = useI18n();
+  const rootRef = useRef<HTMLElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const normalizedLanguage = normalizeCodeLanguage(language);
-  const lines = useMemo(() => code.replace(/\r\n?/g, "\n").split("\n"), [code]);
-  const shouldCollapse = lines.length > maxCollapsedLines || code.length > maxCollapsedCharacters;
+  const stats = useMemo(() => codeStats(code), [code]);
+  const shouldDeferBody = stats.lines > deferredHighlightLines || stats.characters > deferredHighlightCharacters;
+  const shouldCollapse = !shouldDeferBody && (stats.lines > maxCollapsedLines || stats.characters > maxCollapsedCharacters);
   const visibleCode = !expanded && shouldCollapse
-    ? lines.slice(0, maxCollapsedLines).join("\n")
+    ? takeLines(code, maxCollapsedLines)
     : code;
-  const hiddenLineCount = Math.max(0, lines.length - maxCollapsedLines);
-  const shouldHighlight = highlight && !shouldCollapse || highlight && expanded;
+  const hiddenLineCount = Math.max(0, stats.lines - maxCollapsedLines);
+  const bodyMounted = !shouldDeferBody || expanded;
+  const shouldHighlight = highlight && !shouldDeferBody && (!shouldCollapse || expanded);
+
+  useEffect(() => {
+    if (!bodyMounted) {
+      return;
+    }
+    const frameId = globalThis.requestAnimationFrame(() => {
+      notifyConversationDeferredContentReady(rootRef.current);
+    });
+    return () => globalThis.cancelAnimationFrame(frameId);
+  }, [bodyMounted, stats.characters]);
 
   return (
-    <figure className={`message-code-block${shouldCollapse && !expanded ? " collapsed" : ""}`} data-language={normalizedLanguage}>
+    <figure
+      ref={rootRef}
+      className={[
+        "message-code-block",
+        shouldCollapse && !expanded ? "collapsed" : "",
+        shouldDeferBody && !expanded ? "deferred" : "",
+      ].filter(Boolean).join(" ")}
+      data-language={normalizedLanguage}
+    >
       <figcaption>
         <span>{normalizedLanguage}</span>
+        <small>{t("{count} lines", { count: stats.lines })} · {formatCodeSize(stats.characters)}</small>
         <CopyActionButton text={code} label={copyLabel ?? t("Copy code")} className="message-code-copy" />
       </figcaption>
-      <pre>
-        <code>
-          {shouldHighlight
-            ? renderHighlightedCode(visibleCode, normalizedLanguage)
-            : visibleCode}
-        </code>
-      </pre>
-      {shouldCollapse ? (
+      {bodyMounted ? (
+        <pre>
+          <code>
+            {shouldHighlight
+              ? renderHighlightedCode(visibleCode, normalizedLanguage)
+              : visibleCode}
+          </code>
+        </pre>
+      ) : (
+        <div className="message-deferred-body-shell">
+          <strong>{t("Large code block deferred")}</strong>
+          <span>{t("Full body stays available inline without pre-rendering every line.")}</span>
+          <button
+            className="message-code-expand"
+            type="button"
+            aria-expanded={false}
+            onClick={() => setExpanded(true)}
+          >
+            {t("Show full code")}
+          </button>
+        </div>
+      )}
+      {shouldDeferBody && expanded ? (
+        <button
+          className="message-code-expand"
+          type="button"
+          aria-expanded={true}
+          onClick={() => setExpanded(false)}
+        >
+          {t("Collapse code")}
+        </button>
+      ) : shouldCollapse ? (
         <button
           className="message-code-expand"
           type="button"
@@ -62,6 +111,51 @@ export function CodeBlock({
       ) : null}
     </figure>
   );
+}
+
+interface CodeStats {
+  readonly characters: number;
+  readonly lines: number;
+}
+
+function codeStats(code: string): CodeStats {
+  if (code.length === 0) {
+    return { characters: 0, lines: 0 };
+  }
+  let lines = 1;
+  for (let index = 0; index < code.length; index += 1) {
+    if (code.charCodeAt(index) === 10) {
+      lines += 1;
+    }
+  }
+  return { characters: code.length, lines };
+}
+
+function takeLines(code: string, count: number): string {
+  if (count <= 0) {
+    return "";
+  }
+  let seen = 0;
+  for (let index = 0; index < code.length; index += 1) {
+    if (code.charCodeAt(index) !== 10) {
+      continue;
+    }
+    seen += 1;
+    if (seen >= count) {
+      return code.slice(0, index);
+    }
+  }
+  return code;
+}
+
+function formatCodeSize(characters: number): string {
+  if (characters < 1024) {
+    return `${characters} B`;
+  }
+  if (characters < 1024 * 1024) {
+    return `${(characters / 1024).toFixed(1)} KB`;
+  }
+  return `${(characters / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function normalizeCodeLanguage(language?: string): string {

@@ -105,6 +105,9 @@ function TranscriptDisplayLineView({
 }
 
 function shouldDefaultExpandBlock(block: TranscriptBlockBase): boolean {
+  if (block.kind === "raw_debug_ref") {
+    return false;
+  }
   return block.status === "running" ||
     block.status === "waiting_for_approval" ||
     block.status === "blocked" ||

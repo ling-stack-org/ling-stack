@@ -1794,6 +1794,16 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
     '  "done": true',
     "}",
   ].join("\n");
+  const largeCode = Array.from({ length: 320 }, (_, index) => `export const deferredLine${index + 1} = ${index + 1};`).join("\n");
+  const largeDiff = [
+    "diff --git a/src/large.ts b/src/large.ts",
+    "index 1111111..2222222 100644",
+    "--- a/src/large.ts",
+    "+++ b/src/large.ts",
+    "@@ -1,1 +1,190 @@",
+    "-export const oldValue = 0;",
+    ...Array.from({ length: 190 }, (_, index) => `+export const deferredDiffLine${index + 1} = ${index + 1};`),
+  ].join("\n");
   const longMixedLabel = "超长需求确认标签需要在移动端自然换行不压住按钮 SuperLongEnglishLabelWithoutSpacesForConversationEvidenceAndArtifactRows1234567890";
   state.channelMessages = [{
     id: "msg_rich_markdown",
@@ -1835,6 +1845,14 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       "",
       "```json",
       longJson,
+      "```",
+      "",
+      "```ts",
+      largeCode,
+      "```",
+      "",
+      "```diff",
+      largeDiff,
       "```",
     ].join("\n"),
     mentions: [],
@@ -1904,7 +1922,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
     };
   })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
 
-  const diffBlock = message.locator(".message-diff-block");
+  const diffBlock = message.locator(".message-diff-block").filter({ hasText: "src/example.ts" });
   await expect(diffBlock).toHaveCount(1);
   await expect(diffBlock).toContainText("src/example.ts");
   await expect(diffBlock.locator(".diff-line.delete")).toContainText("-export const value = 1;");
@@ -1936,6 +1954,37 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   await foldedJson.getByRole("button", { name: /Show full code/ }).click();
   await expect(foldedJson.getByRole("button", { name: "Collapse code" })).toBeVisible();
   await expect(foldedJson).toContainText('"done": true');
+
+  const deferredCode = message.locator(".message-code-block.deferred");
+  await expect(deferredCode).toContainText("Large code block deferred");
+  await expect(deferredCode).toContainText("320 lines");
+  await expect(deferredCode.locator("pre")).toHaveCount(0);
+  await expect(deferredCode).not.toContainText("deferredLine320");
+  await deferredCode.getByRole("button", { name: "Show full code" }).click();
+  const expandedDeferredCode = message.locator(".message-code-block").filter({ hasText: "deferredLine320" });
+  await expect(expandedDeferredCode).toBeVisible();
+  await expect(expandedDeferredCode.locator("pre")).toBeVisible();
+  await expect(expandedDeferredCode.locator(".code-token")).toHaveCount(0);
+  await expect(expandedDeferredCode.getByRole("button", { name: "Collapse code" })).toBeVisible();
+  await expandedDeferredCode.getByRole("button", { name: "Collapse code" }).click();
+  await expect(deferredCode).toContainText("Large code block deferred");
+  await expect(deferredCode.locator("pre")).toHaveCount(0);
+
+  const deferredDiff = message.locator(".message-diff-block.deferred");
+  await expect(deferredDiff).toContainText("Large diff deferred");
+  await expect(deferredDiff).toContainText("196 lines");
+  await expect(deferredDiff.locator(".diff-viewer")).toHaveCount(0);
+  await expect(deferredDiff).not.toContainText("deferredDiffLine190");
+  await deferredDiff.getByRole("button", { name: "Show diff details" }).click();
+  const expandedDeferredDiff = message.locator(".message-diff-block.expanded-deferred");
+  await expect(expandedDeferredDiff).toContainText("src/large.ts");
+  await expect(expandedDeferredDiff.locator(".diff-viewer")).toBeVisible();
+  await expect(expandedDeferredDiff).not.toContainText("deferredDiffLine190");
+  await expect(expandedDeferredDiff.getByRole("button", { name: /Show full diff/ })).toBeVisible();
+  await expandedDeferredDiff.getByRole("button", { name: /Show full diff/ }).click();
+  await expect(expandedDeferredDiff).toContainText("deferredDiffLine190");
+  await expandedDeferredDiff.getByRole("button", { name: "Collapse diff details" }).click();
+  await expect(message.locator(".message-diff-block.deferred")).toContainText("Large diff deferred");
 
   const streamingMessage = feed.locator(".message-bubble").filter({ hasText: "Streaming code stays plain" });
   await expect(streamingMessage).toBeVisible();

@@ -333,8 +333,14 @@ Progress:
 - Large code/log content stays folded and unhighlighted until expansion; images use lazy
   loading, and `raw_debug_ref` transcript blocks remain reference-style generic blocks
   instead of rendering raw payloads by default.
-- The deeper large-code, diff, image-compare, raw/debug, measured-height, and
-  virtualization follow-up is governed by
+- Large code blocks over 300 lines or 24 KB now render shell-first and skip eager
+  tokenization/highlighting until the user expands them. Large diffs over the first
+  thresholds render summary-first, parse hunks only after detail expansion, and collapse
+  oversized per-file diff bodies behind inline controls.
+- Deferred code, diff, and image body readiness now notifies `ConversationVirtualFeed`
+  so virtualized rows remeasure after expansion or image load.
+- Remaining future tuning for parser-level deferral, deeper height caching, and
+  cross-surface threshold adjustment is governed by
   [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md).
 
 ## P10. Design Tokens And Visual Regression

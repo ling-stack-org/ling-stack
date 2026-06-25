@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Columns2, Image as ImageIcon, SlidersHorizontal, ScanLine } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
 import type { PreviewImageCompare, PreviewImageCompareMode, PreviewImageCompareSource } from "../../../types.js";
+import { notifyConversationDeferredContentReady } from "../blocks/deferred-rendering.js";
 
 export interface ImageCompareViewerProps {
   readonly current: PreviewImageCompareSource;
@@ -50,12 +51,14 @@ export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps
       ) : activeMode === "slider" ? (
         <div className="image-compare-slider">
           <div className="image-compare-slider-stage">
-            <img src={before.imageUrl} alt={before.label} loading="lazy" />
+            <img src={before.imageUrl} alt={before.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
             <img
               className="image-compare-slider-after"
               src={after.imageUrl}
               alt={after.label}
               loading="lazy"
+              decoding="async"
+              onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)}
               style={{ clipPath: `inset(0 0 0 ${sliderClip})` }}
             />
             <span className="image-compare-slider-handle" style={{ left: sliderClip }} aria-hidden="true" />
@@ -73,8 +76,8 @@ export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps
         </div>
       ) : (
         <div className="image-compare-diff-overlay">
-          <img src={before.imageUrl} alt={before.label} loading="lazy" />
-          <img src={after.imageUrl} alt={after.label} loading="lazy" />
+          <img src={before.imageUrl} alt={before.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
+          <img src={after.imageUrl} alt={after.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
         </div>
       )}
     </div>
@@ -84,7 +87,7 @@ export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps
 function ImageFrame({ image, label }: { readonly image: PreviewImageCompareSource; readonly label: string }): JSX.Element {
   return (
     <figure className="image-compare-frame">
-      <img src={image.imageUrl} alt={image.label} loading="lazy" />
+      <img src={image.imageUrl} alt={image.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
       <figcaption>{label}</figcaption>
     </figure>
   );

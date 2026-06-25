@@ -1,6 +1,7 @@
-import type { KeyboardEventHandler, MouseEventHandler, PointerEventHandler, RefObject, ReactNode, UIEventHandler } from "react";
+import { useCallback, useEffect, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler, type RefObject, type ReactNode, type UIEventHandler } from "react";
 import type { VirtualItem } from "@tanstack/react-virtual";
 import { ConversationEmptyState } from "./ConversationEmptyState.js";
+import { conversationDeferredContentReadyEvent } from "./deferred-rendering.js";
 import { useConversationViewReconciliation } from "../view-store/use-conversation-view-reconciliation.js";
 import type { ConversationViewRetainKeys } from "../view-store/conversation-view-store.js";
 
@@ -71,6 +72,29 @@ export function ConversationVirtualFeed<TItem>({
 
   const resolvedFeedClassName = [feedClassName, empty ? emptyFeedClassName : ""].filter(Boolean).join(" ");
   const showLoadingState = loading && items.length === 0;
+  const handleMeasureElement = useCallback((node: HTMLDivElement | null) => {
+    measureElement(node);
+  }, [measureElement]);
+
+  useEffect(() => {
+    const feed = scrollRef.current;
+    if (!feed) {
+      return undefined;
+    }
+    const handleDeferredContentReady = (event: Event): void => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+      const row = target.closest<HTMLDivElement>(".message-feed-virtual-row");
+      if (!row) {
+        return;
+      }
+      measureElement(row);
+    };
+    feed.addEventListener(conversationDeferredContentReadyEvent, handleDeferredContentReady);
+    return () => feed.removeEventListener(conversationDeferredContentReadyEvent, handleDeferredContentReady);
+  }, [measureElement, scrollRef]);
 
   return (
     <div className={className}>
@@ -101,7 +125,7 @@ export function ConversationVirtualFeed<TItem>({
               return (
                 <div
                   key={virtualRow.key}
-                  ref={measureElement}
+                  ref={handleMeasureElement}
                   className="message-feed-virtual-row"
                   tabIndex={-1}
                   data-conversation-focus-block={item ? "true" : undefined}
