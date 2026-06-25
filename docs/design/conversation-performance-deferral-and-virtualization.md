@@ -121,6 +121,12 @@ across channel and teammate private chat.
 
 These are not aesthetic preferences. They are the guardrails that keep the feed usable.
 
+Implementation note: the web conversation surface now applies these thresholds in
+`CodeBlock`, `DiffCodeBlock`, `DiffViewer`, `ImageCompareViewer`, and
+`ConversationVirtualFeed`. Large code and large diff rows mount a shell first, then
+notify the virtualizer when the deferred body becomes ready so row measurement can
+settle after expansion or image load.
+
 ## Virtualization Contract
 
 The transcript virtualizer should reason about the row shell first and the heavy body

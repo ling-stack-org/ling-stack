@@ -1513,9 +1513,9 @@ button.message-local-file-link {
 }
 
 .message-code-block figcaption {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   min-width: 0;
   padding: 5px 7px;
@@ -1525,6 +1525,15 @@ button.message-local-file-link {
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
   font-weight: 760;
+}
+
+.message-code-block figcaption > small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--conversation-text-soft);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .message-code-copy {
@@ -1563,6 +1572,31 @@ button.message-local-file-link {
   font-size: 12px;
   line-height: 1.52;
   white-space: pre;
+}
+
+.message-deferred-body-shell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  background: var(--conversation-code-bg);
+  color: var(--conversation-text-muted);
+}
+
+.message-deferred-body-shell strong {
+  color: var(--conversation-text-strong);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.message-deferred-body-shell span {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.message-deferred-body-shell .message-code-expand {
+  margin: 4px -10px -10px;
 }
 
 .message-code-line {
