@@ -9,6 +9,7 @@ import {
   prependWebEvidenceContext,
   type WebEvidenceContext,
   type WebEvidenceContextStatus,
+  type WebEvidenceProgressEvent,
   type WebEvidenceReadUrlResult,
 } from "../web/web-evidence-service.js";
 import type { ProviderWebSearchSecretStore } from "../web/web-search-service.js";
@@ -39,6 +40,7 @@ export interface BuildChannelWebContextInput {
   readonly secretResolver: SecretResolver;
   readonly fetch?: typeof globalThis.fetch;
   readonly resolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
+  readonly onProgress?: (event: WebEvidenceProgressEvent) => void;
 }
 
 export async function buildChannelWebContext(input: BuildChannelWebContextInput): Promise<ChannelWebContext> {
@@ -53,6 +55,7 @@ export async function buildChannelWebContext(input: BuildChannelWebContextInput)
     secretResolver: input.secretResolver,
     fetch: input.fetch,
     resolveHostAddresses: input.resolveHostAddresses,
+    onProgress: input.onProgress,
     promptHeader: "Ling web context:",
     promptInstruction: "Use this web context only as cited evidence for the current channel reply. Do not claim access to web pages beyond the included results.",
   });

@@ -2584,6 +2584,9 @@ function RuntimeAuditBlock({
 }
 
 function runtimeEventTimelineLabel(event: WorkUnitDetailResponse["events"][number], t: Translate): string {
+  if (isWebProgressRuntimeEvent(event)) {
+    return `#${event.seq} ${webProgressRuntimeEventLabel(event, t)}`;
+  }
   if (event.type !== "web_evidence_recorded") {
     return `#${event.seq} ${event.type}`;
   }
@@ -2604,6 +2607,9 @@ function runtimeEventTimelineLabel(event: WorkUnitDetailResponse["events"][numbe
 }
 
 function runtimeEventTimelineMeta(event: WorkUnitDetailResponse["events"][number], t: Translate): string {
+  if (isWebProgressRuntimeEvent(event)) {
+    return webProgressRuntimeEventMeta(event, t);
+  }
   if (event.type !== "web_evidence_recorded") {
     return formatDateTime(event.ts);
   }
@@ -2614,6 +2620,68 @@ function runtimeEventTimelineMeta(event: WorkUnitDetailResponse["events"][number
     openUrls.length > 0 ? `open_url: ${openUrls.slice(0, 3).join(", ")}` : undefined,
   ].filter((item): item is string => Boolean(item));
   return details.length > 0 ? details.join(" · ") : formatDateTime(event.ts);
+}
+
+function isWebProgressRuntimeEvent(event: WorkUnitDetailResponse["events"][number]): boolean {
+  return event.type === "work_unit_progress" && readDataString(event.data, "toolSurface") === "web";
+}
+
+function webProgressRuntimeEventLabel(event: WorkUnitDetailResponse["events"][number], t: Translate): string {
+  const progressType = readDataString(event.data, "type");
+  const query = readDataString(event.data, "query");
+  const url = readDataString(event.data, "url");
+  const status = readDataString(event.data, "status");
+  const reason = readDataString(event.data, "reason");
+  const attempt = readDataNumber(event.data, "attempt");
+  const total = readDataNumber(event.data, "total");
+  const step = attempt && total ? ` (${attempt}/${total})` : "";
+  if (progressType === "web_search_planned") {
+    const queries = readDataField(event.data, "queries");
+    const queryCount = Array.isArray(queries) ? queries.length : 0;
+    return `web_search planned: ${queryCount} ${queryCount === 1 ? "query" : "queries"}`;
+  }
+  if (progressType === "web_search_started") {
+    return `web_search started${step}: ${truncatePreview(query || "-", 86)}`;
+  }
+  if (progressType === "web_search_completed") {
+    if (status === "blocked" && reason) {
+      return `web_search ${t("blocked")}${step}: ${truncatePreview(reason, 86)}`;
+    }
+    if (status === "degraded") {
+      return `web_search ${t("degraded")}${step}`;
+    }
+    return `web_search ${status || "completed"}${step}: ${truncatePreview(query || "-", 86)}`;
+  }
+  if (progressType === "open_url_started") {
+    return `open_url started${step}: ${truncatePreview(url || "-", 86)}`;
+  }
+  if (progressType === "open_url_completed") {
+    if (status === "blocked" && reason) {
+      return `open_url ${t("blocked")}${step}: ${truncatePreview(reason, 86)}`;
+    }
+    return `open_url ${status || "completed"}${step}: ${truncatePreview(url || "-", 86)}`;
+  }
+  return `web ${progressType || "progress"}`;
+}
+
+function webProgressRuntimeEventMeta(event: WorkUnitDetailResponse["events"][number], t: Translate): string {
+  const progressType = readDataString(event.data, "type");
+  if (progressType === "web_search_planned") {
+    const queries = readDataField(event.data, "queries");
+    return Array.isArray(queries)
+      ? queries.filter((query): query is string => typeof query === "string").slice(0, 3).join(" · ")
+      : formatDateTime(event.ts);
+  }
+  if (progressType === "web_search_completed") {
+    const sourceCount = readDataNumber(event.data, "sourceCount");
+    return sourceCount ? `${t("Sources")}: ${sourceCount}` : formatDateTime(event.ts);
+  }
+  if (progressType === "open_url_started" || progressType === "open_url_completed") {
+    const finalUrl = readDataString(event.data, "finalUrl");
+    const url = finalUrl || readDataString(event.data, "url");
+    return url ? sourceHost(url) : formatDateTime(event.ts);
+  }
+  return formatDateTime(event.ts);
 }
 
 function runtimeEventSources(event: WorkUnitDetailResponse["events"][number]): readonly { readonly url: string }[] {

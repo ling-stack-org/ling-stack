@@ -23,6 +23,11 @@ test("web search query planner expands freshness intent", () => {
   assert.equal(queries[0], "查一下今天热门 AI 的新闻");
   assert.ok(queries.length > 1);
   assert.ok(queries.includes("AI news today") || queries.includes("latest AI news"));
+
+  const compactQueries = planWebSearchQueries("帮我整理一下今天热门 AI的新闻");
+  assert.ok(compactQueries.includes("AI latest news"));
+  assert.ok(compactQueries.includes("AI news today"));
+  assert.ok(!compactQueries.includes("整理 AI"));
 });
 
 test("public URL intent extracts bounded HTTP URLs", () => {
@@ -286,9 +291,20 @@ test("Chat Completions web search protocol uses web_search_options and extracts 
         choices: [
           {
             message: {
-              content: "Chat search summary.",
-              annotations: [
-                { type: "url_citation", url_citation: { url: "https://example.com/chat-search", title: "Chat source" } },
+              content: [
+                {
+                  type: "text",
+                  text: "Chat search summary.",
+                  annotations: [
+                    { type: "url_citation", url_citation: { url: "https://example.com/chat-search", title: "Chat source" } },
+                  ],
+                  citations: [
+                    { url: "https://example.com/chat-content-citation", title: "Content citation" },
+                  ],
+                },
+              ],
+              citations: [
+                { url: "https://example.com/chat-message-citation", title: "Message citation" },
               ],
             },
           },
@@ -304,7 +320,53 @@ test("Chat Completions web search protocol uses web_search_options and extracts 
   assert.deepEqual(body.messages, [{ role: "user", content: "latest product news" }]);
   assert.deepEqual(body.web_search_options, { search_context_size: "low" });
   assert.equal(result.text, "Chat search summary.");
-  assert.deepEqual(result.sources.map((source) => source.url), ["https://example.com/chat-search"]);
+  assert.deepEqual(result.sources.map((source) => source.url), [
+    "https://example.com/chat-message-citation",
+    "https://example.com/chat-search",
+    "https://example.com/chat-content-citation",
+  ]);
+});
+
+test("channel web context emits web progress events while searching", async () => {
+  const events = [];
+  const context = await buildChannelWebContext({
+    providerPresetId: "provider_openai_web",
+    store: { getProviderPreset: () => createOpenAiWebSearchProvider() },
+    sourceMessage: { body: "查一下今天热门 AI 的新闻" },
+    turnEnvelope: { body: "查一下今天热门 AI 的新闻", linkPreviews: [] },
+    secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
+    onProgress: (event) => {
+      events.push(event);
+    },
+    fetch: async () => new Response(JSON.stringify({
+      output_text: "AI news summary.",
+      output: [
+        {
+          type: "message",
+          content: [
+            {
+              type: "output_text",
+              text: "AI news summary.",
+              annotations: [
+                { type: "url_citation", url: "https://example.com/ai-news", title: "AI news source" },
+              ],
+            },
+          ],
+        },
+      ],
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+
+  assert.equal(context.status, "available");
+  assert.deepEqual(events.map((event) => event.type), [
+    "web_search_planned",
+    "web_search_started",
+    "web_search_completed",
+  ]);
+  assert.equal(events[0].queries.length, 4);
+  assert.equal(events[1].query, "查一下今天热门 AI 的新闻");
+  assert.equal(events[2].status, "available");
+  assert.equal(events[2].sourceCount, 1);
 });
 
 test("Gemini web search protocol uses Google Search grounding and extracts sources", async () => {

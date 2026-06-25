@@ -99,6 +99,7 @@ Current implementation:
 - The current chat provider does not need `web_search`. Custom OpenAI-compatible, Grok, Gemini, domestic, and private models can consume global web evidence as plain context.
 - Generic OpenAI-compatible chat/completions relays do not inherit `web_search`; each relay or vendor needs either a known protocol declaration or a dedicated adapter if it exposes search.
 - Domestic providers are supported through the same protocol gate when their endpoint implements a known search protocol and returns citations/sources that Ling can normalize. If a domestic endpoint uses a vendor-specific extension, add a dedicated adapter and tests before advertising `web_search`.
+- Chat Completions citation extraction must accept URL evidence from `message.annotations`, `message.citations`, top-level `choice.citations`, and content-part `annotations`/`citations`; compatible relays differ in which field they populate.
 - Perplexity/search-model providers, Anthropic, and additional domestic provider-specific search extensions remain future adapters.
 
 Adapter quality gate:

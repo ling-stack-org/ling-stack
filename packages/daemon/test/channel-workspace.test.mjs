@@ -1964,7 +1964,7 @@ test("channel discussion injects web search context before runner reply", async 
       ok: true,
       code: "static_check",
       message: "Provider ready for web search context test.",
-      checkedAt: "2026-06-24T00:00:00.000Z",
+      checkedAt: new Date().toISOString(),
     });
     const teammateId = "teammate_builtin_designer";
     await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
@@ -1984,7 +1984,7 @@ test("channel discussion injects web search context before runner reply", async 
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.equal(finalReply.body, "Designer reply");
     assert.equal(finalReply.webEvidence.status, "available");
-    assert.equal(finalReply.webEvidence.query, "@Designer 查一下 Ling Stack 最新消息");
+    assert.equal(finalReply.webEvidence.query, "查一下 Ling Stack 最新消息");
     assert.equal(finalReply.webEvidence.provider.adapterId, "openai-responses-web-search");
     assert.deepEqual(finalReply.webEvidence.sources.map((source) => source.url), ["https://example.com/fresh"]);
     assert.doesNotMatch(JSON.stringify(finalReply.webEvidence), /sk-test-secret-value/);
@@ -1995,6 +1995,14 @@ test("channel discussion injects web search context before runner reply", async 
     assert.equal(webEvidenceEvents[0].data.toolSurface, "web");
     assert.equal(webEvidenceEvents[0].data.sourceCount, 1);
     assert.deepEqual(webEvidenceEvents[0].data.sources.map((source) => source.url), ["https://example.com/fresh"]);
+    const webProgressEvents = store.listRuntimeEvents(workUnit.id).filter((event) => event.type === "work_unit_progress" && event.data.toolSurface === "web");
+    assert.deepEqual(webProgressEvents.map((event) => event.data.type), [
+      "web_search_planned",
+      "web_search_started",
+      "web_search_completed",
+    ]);
+    assert.equal(webProgressEvents[2].data.status, "available");
+    assert.equal(webProgressEvents[2].data.sourceCount, 1);
     assert.equal(webSearchCalls.length, 1);
     assert.equal(webSearchCalls[0].url, "https://api.openai.com/v1/responses");
     const requestBody = JSON.parse(webSearchCalls[0].init.body);
@@ -8920,7 +8928,7 @@ test("teammate direct reply injects web search context before runner reply", asy
       ok: true,
       code: "static_check",
       message: "Provider ready for private web search context test.",
-      checkedAt: "2026-06-24T00:00:00.000Z",
+      checkedAt: new Date().toISOString(),
     });
     const teammateId = "teammate_builtin_designer";
     await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
@@ -8934,7 +8942,11 @@ test("teammate direct reply injects web search context before runner reply", asy
     });
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+    assert.equal(events[0].event, "ready");
+    assert.equal(events.at(-1).event, "done");
+    assert.ok(events.some((event) => event.event === "delta" && /正在准备 web_search/.test(event.data.body)));
+    assert.ok(events.some((event) => event.event === "delta" && /正在搜索网页/.test(event.data.body)));
+    assert.ok(events.some((event) => event.event === "delta" && /web_search 找到 1 个来源/.test(event.data.body)));
     const doneEvent = events.find((event) => event.event === "done");
     assert.equal(doneEvent.data.aiReply.webEvidence.status, "available");
     assert.equal(doneEvent.data.aiReply.webEvidence.query, "查一下 Ling Stack 最新消息");
@@ -8944,6 +8956,16 @@ test("teammate direct reply injects web search context before runner reply", asy
     const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
     const finalReply = listed.messages.find((message) => message.id === doneEvent.data.aiReply.id);
     assert.equal(finalReply.webEvidence.status, "available");
+    const workUnit = store.listWorkUnits({ kind: "teammate_direct_reply", linkedMessageId: finalReply.id, limit: 1 })[0];
+    assert.ok(workUnit);
+    const webProgressEvents = store.listRuntimeEvents(workUnit.id).filter((event) => event.type === "work_unit_progress" && event.data.toolSurface === "web");
+    assert.deepEqual(webProgressEvents.map((event) => event.data.type), [
+      "web_search_planned",
+      "web_search_started",
+      "web_search_completed",
+    ]);
+    assert.equal(webProgressEvents[2].data.status, "available");
+    assert.equal(webProgressEvents[2].data.sourceCount, 1);
 
     assert.equal(webSearchCalls.length, 1);
     assert.equal(webSearchCalls[0].url, "https://api.openai.com/v1/responses");
@@ -8988,17 +9010,19 @@ test("teammate direct web search context blocks unsupported providers without fe
     });
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+    assert.equal(events[0].event, "ready");
+    assert.equal(events.at(-1).event, "done");
+    assert.ok(events.some((event) => event.event === "delta" && /web_search 被阻止/.test(event.data.body)));
     const doneEvent = events.find((event) => event.event === "done");
     assert.equal(doneEvent.data.aiReply.webEvidence.status, "blocked");
-    assert.match(doneEvent.data.aiReply.webEvidence.reason, /Current selected Ling provider does not support realtime web search/);
+    assert.match(doneEvent.data.aiReply.webEvidence.reason, /No Ling global web_search backend is configured/);
     assert.deepEqual(doneEvent.data.aiReply.webEvidence.sources, []);
     assert.deepEqual(doneEvent.data.aiReply.webEvidence.readUrls, []);
 
     assert.equal(fetched, false);
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /Web search status: blocked/);
-    assert.match(runner.runs[0].task.prompt, /Current selected Ling provider does not support realtime web search/);
+    assert.match(runner.runs[0].task.prompt, /No Ling global web_search backend is configured/);
     assert.match(runner.runs[0].task.prompt, /will not bypass model settings/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /sk-test-secret-value/);
   } finally {

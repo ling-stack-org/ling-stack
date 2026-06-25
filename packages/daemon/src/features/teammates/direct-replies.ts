@@ -10,8 +10,12 @@ import type { LingImageVisionSummarizer } from "../channels/materialization/regi
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
 import { resolveProviderForRun } from "../runs/providers.js";
-import { recordMessageWebEvidenceEvent } from "../web/message-web-evidence.js";
-import { buildWebEvidenceContext, prependWebEvidenceContext } from "../web/web-evidence-service.js";
+import {
+  recordMessageWebEvidenceEvent,
+  recordMessageWebEvidenceProgressEvent,
+  renderWebEvidenceProgressPendingBody,
+} from "../web/message-web-evidence.js";
+import { buildWebEvidenceContext, prependWebEvidenceContext, type WebEvidenceProgressEvent } from "../web/web-evidence-service.js";
 import { materializeInlineTeammateDirectInputs } from "./direct-materialization.js";
 import type { DirectWorkspaceReady } from "./direct-workspace.js";
 
@@ -176,6 +180,15 @@ export async function createAiTeammateDirectReply(input: {
       resolveHostAddresses: input.webResolveHostAddresses,
       promptHeader: "Ling web context:",
       promptInstruction: "Use this web context only as cited evidence for the current private reply. Do not claim access to web pages beyond the included results.",
+      onProgress: (progress) => {
+        recordDirectWebEvidenceProgress({
+          store: input.store,
+          supervised,
+          sourceMessage: input.sourceMessage,
+          pending,
+          stream: input.stream,
+        }, progress);
+      },
     });
     recordMessageWebEvidenceEvent({
       store: input.store,
@@ -341,4 +354,44 @@ function finishDirectMessageWorkUnit(
       now,
     ) ?? store.getTeammateDirectMessage(messageId)!
   );
+}
+
+function recordDirectWebEvidenceProgress(
+  input: {
+    readonly store: RunStore;
+    readonly supervised: ReturnType<typeof startRuntimeWorkUnit>;
+    readonly sourceMessage: TeammateDirectMessage;
+    readonly pending: TeammateDirectMessage;
+    readonly stream?: {
+      readonly onReady: (aiReply: TeammateDirectMessage) => void;
+      readonly onDelta: (aiReply: TeammateDirectMessage, delta: string) => void;
+      readonly onDone: (aiReply: TeammateDirectMessage) => void;
+      readonly onBlocked: (aiReply: TeammateDirectMessage) => void;
+    };
+  },
+  progress: WebEvidenceProgressEvent,
+): void {
+  const now = new Date().toISOString();
+  recordMessageWebEvidenceProgressEvent({
+    store: input.store,
+    workUnitId: input.supervised.workUnit.id,
+    attemptId: input.supervised.attempt.id,
+    sourceMessageId: input.sourceMessage.id,
+    linkedMessageId: input.pending.id,
+    progress,
+    ts: now,
+  });
+  const body = renderWebEvidenceProgressPendingBody(progress, input.sourceMessage.body);
+  const updated = input.store.updateTeammateDirectMessageRuntime(
+    input.pending.id,
+    {
+      body,
+      status: "pending",
+      errorMessage: null,
+    },
+    now,
+  );
+  if (updated) {
+    input.stream?.onDelta(updated, "");
+  }
 }
