@@ -11,6 +11,7 @@ import {
   type WebEvidenceContextStatus,
   type WebEvidenceReadUrlResult,
 } from "../web/web-evidence-service.js";
+import type { ProviderWebSearchSecretStore } from "../web/web-search-service.js";
 import type { LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 
 export {
@@ -30,7 +31,7 @@ export type ChannelWebContext = WebEvidenceContext;
 export type ReadUrlContextResult = WebEvidenceReadUrlResult;
 
 export interface BuildChannelWebContextInput {
-  readonly store: Pick<RunStore, "getProviderPreset">;
+  readonly store: Pick<RunStore, "getProviderPreset"> & Partial<Pick<RunStore, "getProviderSecret" | "hasProviderSecret" | "listProviderPresets">>;
   readonly providerPresetId?: string;
   readonly sourceMessage: Pick<ChannelMessage, "body">;
   readonly turnEnvelope: Pick<LingAgentTurnEnvelope, "body" | "linkPreviews">;
@@ -42,6 +43,8 @@ export interface BuildChannelWebContextInput {
 export async function buildChannelWebContext(input: BuildChannelWebContextInput): Promise<ChannelWebContext> {
   return await buildWebEvidenceContext({
     providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
+    webSearchProviderPresets: input.store.listProviderPresets?.({ enabled: true }),
+    providerStore: hasProviderSecretLookup(input.store) ? input.store : undefined,
     sourceText: input.sourceMessage.body,
     availableMaterializedUrls: input.turnEnvelope.linkPreviews
       .filter((preview) => preview.materializationStatus === "available")
@@ -56,4 +59,10 @@ export async function buildChannelWebContext(input: BuildChannelWebContextInput)
 
 export function prependChannelWebContext(prompt: string, context: ChannelWebContext): string {
   return prependWebEvidenceContext(prompt, context);
+}
+
+function hasProviderSecretLookup(
+  store: BuildChannelWebContextInput["store"],
+): store is BuildChannelWebContextInput["store"] & ProviderWebSearchSecretStore {
+  return typeof store.getProviderSecret === "function" && typeof store.hasProviderSecret === "function";
 }
