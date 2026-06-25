@@ -39,12 +39,30 @@ test("sandbox readiness accepts a verified profile with disabled network policy"
   assert.deepEqual(report.blockingReasons, []);
 });
 
+test("sandbox readiness accepts every first-class policy profile id when evidence is verified", () => {
+  for (const policyProfileId of ["read_only", "workspace_write", "trusted_local", "danger_full_access"]) {
+    const profile = {
+      ...verifiedProfile(),
+      policyProfileId,
+    };
+    const report = evaluateLingSandboxReadiness({ profile });
+
+    assert.equal(report.status, "ready");
+    assert.deepEqual(report.blockingReasons, []);
+  }
+});
+
 test("sandbox readiness accepts a verified platform-native profile", () => {
   const profile = {
     ...verifiedProfile(),
     id: "platform-native-local",
     displayName: "Platform native local sandbox",
     backendKind: "platform_native",
+    executionWrapper: {
+      kind: "macos_sandbox_exec",
+      verified: true,
+      executableRef: "/usr/bin/sandbox-exec",
+    },
     capabilities: [
       "process_isolation",
       "filesystem_isolation",
@@ -75,6 +93,26 @@ test("sandbox readiness accepts a verified platform-native profile", () => {
   assert.equal(report.status, "ready");
   assert.equal(report.backendKind, "platform_native");
   assert.deepEqual(report.blockingReasons, []);
+});
+
+test("sandbox readiness blocks unverified policy, unsupported OS, and missing execution wrapper", () => {
+  const profile = {
+    ...verifiedProfile(),
+    policyVerified: false,
+    hostOsSupported: false,
+    executionWrapper: {
+      kind: "none",
+      verified: false,
+    },
+  };
+  const report = evaluateLingSandboxReadiness({ profile });
+
+  assert.equal(report.status, "blocked");
+  assert.deepEqual(blockerCodes(report), [
+    "sandbox_policy_unverified",
+    "sandbox_os_unsupported",
+    "sandbox_execution_wrapper_missing",
+  ]);
 });
 
 test("sandbox readiness blocks unverified backend, artifacts, and network policy", () => {
@@ -163,6 +201,9 @@ function verifiedProfile() {
     id: "local-readonly",
     displayName: "Local readonly sandbox",
     backendKind: "local_unix",
+    policyProfileId: "read_only",
+    policyVerified: true,
+    hostOsSupported: true,
     capabilities: ["filesystem_isolation", "artifact_export", "network_policy"],
     backendVerified: true,
     artifactImportVerified: true,
@@ -171,6 +212,11 @@ function verifiedProfile() {
     artifactImport: {
       importRoot: "/workspace/project/.ling/artifacts",
       requireRedaction: true,
+    },
+    executionWrapper: {
+      kind: "external",
+      verified: true,
+      evidenceRef: "test:verified-wrapper",
     },
   };
 }

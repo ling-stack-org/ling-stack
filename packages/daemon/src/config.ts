@@ -1,4 +1,5 @@
 import { resolve as resolvePath } from "node:path";
+import type { LingSandboxPolicyProfileId } from "@ling-stack/core";
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -48,6 +49,10 @@ export type PlatformNativeSandboxNetworkPolicy = SandboxNetworkPolicyConfig;
 
 export interface PlatformNativeSandboxFeatureConfig {
   readonly enabled?: boolean;
+  readonly policyProfileId?: LingSandboxPolicyProfileId;
+  readonly policyVerified?: boolean;
+  readonly executionWrapperVerified?: boolean;
+  readonly executionWrapperEvidenceRef?: string;
   readonly artifactImportRoot?: string;
   readonly networkPolicy?: PlatformNativeSandboxNetworkPolicy;
   readonly macosSandboxExecPath?: string;

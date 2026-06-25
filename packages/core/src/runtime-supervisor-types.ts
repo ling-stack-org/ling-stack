@@ -63,6 +63,7 @@ export type RuntimeEventType =
   | "semaphore_released"
   | "artifact_created"
   | "tool_namespace_materialized"
+  | "tool_hydration_rejected"
   | "web_evidence_recorded"
   | "stale_runner_completion_ignored"
   | "diagnostic_stuck_detected";

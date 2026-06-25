@@ -17,7 +17,9 @@ import type {
   ToolSurfaceDefaultApproval,
   ToolSurfaceResponse,
   RunnerHydratedToolDescriptor,
+  RunnerToolHydrationObservability,
   RunnerToolHydrationRequest,
+  RunnerToolHydrationRejectionCode,
   RunnerToolHydrationResponse,
 } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -159,37 +161,50 @@ export function hydrateRunnerToolSurface(input: {
       },
       now: generatedAt,
     });
+    const tools = result.tools.map(toRunnerHydratedToolDescriptor);
     return {
       ok: true,
       materialization: result.materialization,
-      tools: result.tools.map(toRunnerHydratedToolDescriptor),
+      tools,
+      hydration: buildAcceptedRunnerHydrationObservability(input.request, result.materialization, result.tools, generatedAt),
       generatedAt,
     };
   } catch (error) {
     if (error instanceof ToolMaterializationBudgetError) {
+      const hydration = buildRejectedRunnerHydrationObservability(input.request, "tool_materialization_over_budget", false, generatedAt, {
+        budget: error.budget,
+      });
+      appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.request, hydration, generatedAt);
       return {
         ok: false,
         code: "tool_materialization_over_budget",
         message: error.message,
         retryable: false,
         budget: error.budget,
+        hydration,
         generatedAt,
       };
     }
     if (error instanceof HttpError && isRunnerHydrationRejectionCode(error.code)) {
+      const hydration = buildRejectedRunnerHydrationObservability(input.request, error.code, false, generatedAt);
+      appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.request, hydration, generatedAt);
       return {
         ok: false,
         code: error.code,
         message: error.message,
         retryable: false,
+        hydration,
         generatedAt,
       };
     }
+    const hydration = buildRejectedRunnerHydrationObservability(input.request, "invalid_hydration_request", false, generatedAt);
+    appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.request, hydration, generatedAt);
     return {
       ok: false,
       code: "invalid_hydration_request",
       message: error instanceof Error ? error.message : String(error),
       retryable: false,
+      hydration,
       generatedAt,
     };
   }
@@ -236,7 +251,7 @@ function materializeToolSurface(input: {
     buildMaterializationSummary(input.run.id, selection.namespace, selection.tools, budget, input.now);
 
   if (!existingMaterialization) {
-    appendToolMaterializationRuntimeEvent(input.store, input.run.workUnitId, materialization, input.request, input.now, idempotencyDigest);
+    appendToolMaterializationRuntimeEvent(input.store, input.run.workUnitId, materialization, selection.tools, input.request, input.now, idempotencyDigest);
   }
 
   return {
@@ -261,6 +276,63 @@ function toRunnerHydratedToolDescriptor(tool: LingToolDescriptor): RunnerHydrate
     enabled: tool.enabled,
     disabledReasons: tool.disabledReasons,
   };
+}
+
+function buildAcceptedRunnerHydrationObservability(
+  request: RunnerToolHydrationRequest,
+  materialization: ToolMaterializationSummary,
+  tools: readonly LingToolDescriptor[],
+  generatedAt: string,
+): RunnerToolHydrationObservability {
+  return {
+    status: "accepted",
+    ...hydrationScopeSummary(request.scope),
+    materializationId: materialization.id,
+    descriptorIds: materialization.toolIds,
+    descriptorSchemaHashes: tools.map(hashToolDescriptorSchema),
+    schemaReturnedToRunner: true,
+    materializedToolCount: materialization.materializedToolCount,
+    disabledToolCount: materialization.disabledToolCount,
+    budgetDecision: materialization.budget.decision,
+    overBudgetByTokens: materialization.budget.overBudgetByTokens,
+    generatedAt,
+  };
+}
+
+function buildRejectedRunnerHydrationObservability(
+  request: RunnerToolHydrationRequest,
+  code: RunnerToolHydrationRejectionCode,
+  retryable: boolean,
+  generatedAt: string,
+  input: {
+    readonly budget?: ToolMaterializationBudget;
+    readonly materialization?: ToolMaterializationSummary;
+  } = {},
+): RunnerToolHydrationObservability {
+  return {
+    status: "rejected",
+    ...hydrationScopeSummary(request.scope),
+    ...(input.materialization ? { materializationId: input.materialization.id } : {}),
+    descriptorIds: input.materialization?.toolIds ?? [],
+    descriptorSchemaHashes: [],
+    schemaReturnedToRunner: false,
+    materializedToolCount: input.materialization?.materializedToolCount ?? 0,
+    disabledToolCount: input.materialization?.disabledToolCount ?? 0,
+    ...(input.budget ? {
+      budgetDecision: input.budget.decision,
+      overBudgetByTokens: input.budget.overBudgetByTokens,
+    } : {}),
+    rejectionCode: code,
+    retryable,
+    generatedAt,
+  };
+}
+
+function hydrationScopeSummary(scope: ToolLoadRequestScope): Pick<RunnerToolHydrationObservability, "scopeKind" | "namespaceId" | "toolId"> {
+  if (scope.kind === "namespace") {
+    return { scopeKind: "namespace", namespaceId: scope.namespaceId };
+  }
+  return { scopeKind: "tool", toolId: scope.toolId };
 }
 
 function isRunnerHydrationRejectionCode(code: string): code is Exclude<RunnerToolHydrationResponse, { readonly ok: true }>["code"] {
@@ -426,6 +498,7 @@ function appendToolMaterializationRuntimeEvent(
   store: RunStore,
   workUnitId: string | undefined,
   materialization: ToolMaterializationSummary,
+  tools: readonly LingToolDescriptor[],
   input: CreateToolLoadRequest,
   now: string,
   idempotencyDigest: string | undefined,
@@ -448,15 +521,63 @@ function appendToolMaterializationRuntimeEvent(
       materializationId: materialization.id,
       runId: materialization.runId,
       namespaceId: materialization.namespaceId,
-      toolIds: materialization.toolIds,
+      toolIds: [...materialization.toolIds],
+      descriptorIds: [...materialization.toolIds],
+      descriptorSchemaHashes: tools.map(hashToolDescriptorSchema),
       materializedToolCount: materialization.materializedToolCount,
       disabledToolCount: materialization.disabledToolCount,
       executionApprovalSummary: materialization.executionApprovalSummary,
       budget: materialization.budget,
+      hydrationStatus: "accepted",
+      schemaReturnedToRunner: false,
       scopeKind: input.scope.kind,
       reasonProvided: Boolean(input.reason),
       idempotencyKeyProvided: Boolean(input.idempotencyKey),
       ...(idempotencyDigest ? { idempotencyDigest } : {}),
+    },
+  });
+}
+
+function appendToolHydrationRejectedRuntimeEvent(
+  store: RunStore,
+  run: RunSession,
+  request: RunnerToolHydrationRequest,
+  hydration: RunnerToolHydrationObservability,
+  now: string,
+): void {
+  if (!run.workUnitId) {
+    return;
+  }
+  const workUnit = store.getWorkUnit(run.workUnitId);
+  if (!workUnit) {
+    return;
+  }
+  const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
+  store.appendRuntimeEvent({
+    workUnitId: run.workUnitId,
+    attemptId,
+    type: "tool_hydration_rejected",
+    actor: "system",
+    ts: now,
+    data: {
+      runId: request.runId,
+      runnerAttemptId: request.runnerAttemptId,
+      hydrationStatus: hydration.status,
+      rejectionCode: hydration.rejectionCode,
+      retryable: hydration.retryable,
+      scopeKind: hydration.scopeKind,
+      ...(hydration.namespaceId ? { namespaceId: hydration.namespaceId } : {}),
+      ...(hydration.toolId ? { toolId: hydration.toolId } : {}),
+      descriptorIds: hydration.descriptorIds,
+      descriptorSchemaHashes: hydration.descriptorSchemaHashes,
+      materializedToolCount: hydration.materializedToolCount,
+      disabledToolCount: hydration.disabledToolCount,
+      schemaReturnedToRunner: hydration.schemaReturnedToRunner,
+      ...(hydration.budgetDecision ? { budgetDecision: hydration.budgetDecision } : {}),
+      ...(hydration.overBudgetByTokens !== undefined ? { overBudgetByTokens: hydration.overBudgetByTokens } : {}),
+      reasonProvided: Boolean(request.reason),
+      idempotencyKeyProvided: Boolean(request.idempotencyKey),
+      idempotencyDigest: hashIdempotencyKey(request.idempotencyKey),
     },
   });
 }
@@ -575,6 +696,15 @@ function readFiniteNumber(value: unknown): number | undefined {
 function readApprovalCount(summary: Record<string, unknown>, key: ToolSurfaceDefaultApproval): number {
   const value = summary[key];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function hashToolDescriptorSchema(tool: LingToolDescriptor): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      id: tool.id,
+      inputSchema: tool.inputSchema ?? null,
+    }))
+    .digest("hex");
 }
 
 function hashIdempotencyKey(value: string): string {

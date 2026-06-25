@@ -129,6 +129,7 @@ export async function checkDockerSandboxBackend(
 
   const profile = buildDockerSandboxProfile({
     backendVerified,
+    dockerBinary,
     artifactImportRoot,
     artifactImportVerified: artifactImportRootValid,
     networkPolicy,
@@ -199,6 +200,7 @@ export function buildDockerSandboxRunPlan(input: {
 
 function buildDockerSandboxProfile(input: {
   readonly backendVerified: boolean;
+  readonly dockerBinary: string;
   readonly artifactImportRoot: string;
   readonly artifactImportVerified: boolean;
   readonly networkPolicy: LingSandboxNetworkPolicy;
@@ -209,6 +211,9 @@ function buildDockerSandboxProfile(input: {
     id: DEFAULT_PROFILE_ID,
     displayName: "Docker sandbox",
     backendKind: "docker",
+    policyProfileId: "read_only",
+    policyVerified: input.backendVerified,
+    hostOsSupported: true,
     capabilities: [
       "process_isolation",
       "filesystem_isolation",
@@ -223,6 +228,11 @@ function buildDockerSandboxProfile(input: {
     artifactImport: {
       importRoot: input.artifactImportRoot,
       requireRedaction: true,
+    },
+    executionWrapper: {
+      kind: "docker_run",
+      verified: input.backendVerified,
+      executableRef: input.dockerBinary,
     },
   };
 }

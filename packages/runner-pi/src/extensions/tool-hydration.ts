@@ -72,6 +72,12 @@ function createLoadToolsDefinition(
           runnerAttemptId: request.runnerAttemptId,
           materializationId: response.materialization?.id,
           toolIds: response.materialization?.toolIds,
+          descriptorSchemaHashes: response.hydration?.descriptorSchemaHashes,
+          materializedToolCount: response.hydration?.materializedToolCount,
+          disabledToolCount: response.hydration?.disabledToolCount,
+          schemaReturnedToRunner: response.hydration?.schemaReturnedToRunner ?? false,
+          budgetDecision: response.hydration?.budgetDecision ?? response.budget?.decision,
+          overBudgetByTokens: response.hydration?.overBudgetByTokens ?? response.budget?.overBudgetByTokens,
           rejected: true,
           code: response.code,
         });
@@ -86,6 +92,12 @@ function createLoadToolsDefinition(
         runnerAttemptId: request.runnerAttemptId,
         materializationId: response.materialization.id,
         toolIds: response.materialization.toolIds,
+        descriptorSchemaHashes: response.hydration?.descriptorSchemaHashes,
+        materializedToolCount: response.hydration?.materializedToolCount ?? response.materialization.materializedToolCount,
+        disabledToolCount: response.hydration?.disabledToolCount ?? response.materialization.disabledToolCount,
+        schemaReturnedToRunner: response.hydration?.schemaReturnedToRunner ?? true,
+        budgetDecision: response.hydration?.budgetDecision ?? response.materialization.budget.decision,
+        overBudgetByTokens: response.hydration?.overBudgetByTokens ?? response.materialization.budget.overBudgetByTokens,
         rejected: false,
       });
       return {

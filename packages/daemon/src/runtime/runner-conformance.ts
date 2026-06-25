@@ -423,12 +423,16 @@ export class FakeConformantRunner implements ConformanceRunner {
             id: "unsafe-sandbox",
             displayName: "Unsafe sandbox",
             backendKind: "external",
+            policyProfileId: "read_only",
+            policyVerified: false,
+            hostOsSupported: false,
             capabilities: ["artifact_export", "network_policy"],
             backendVerified: false,
             artifactImportVerified: false,
             networkPolicyVerified: false,
             networkPolicy: { mode: "allowlist", allowedHosts: [] },
             artifactImport: { importRoot: "/tmp/ling-runner-conformance/artifacts", requireRedaction: true },
+            executionWrapper: { kind: "none", verified: false },
           },
           manifest: {
             schemaVersion: 1,
@@ -545,6 +549,12 @@ export class FakeConformantRunner implements ConformanceRunner {
         runnerAttemptId,
         rejected: true,
         code: response.code,
+        descriptorSchemaHashes: response.hydration?.descriptorSchemaHashes,
+        materializedToolCount: response.hydration?.materializedToolCount,
+        disabledToolCount: response.hydration?.disabledToolCount,
+        schemaReturnedToRunner: response.hydration?.schemaReturnedToRunner ?? false,
+        budgetDecision: response.hydration?.budgetDecision ?? response.budget?.decision,
+        overBudgetByTokens: response.hydration?.overBudgetByTokens ?? response.budget?.overBudgetByTokens,
       });
       return response;
     }
@@ -555,6 +565,12 @@ export class FakeConformantRunner implements ConformanceRunner {
         runnerAttemptId,
         materializationId: response.materialization.id,
         toolIds: response.materialization.toolIds,
+        descriptorSchemaHashes: response.hydration?.descriptorSchemaHashes,
+        materializedToolCount: response.hydration?.materializedToolCount ?? response.materialization.materializedToolCount,
+        disabledToolCount: response.hydration?.disabledToolCount ?? response.materialization.disabledToolCount,
+        schemaReturnedToRunner: response.hydration?.schemaReturnedToRunner ?? true,
+        budgetDecision: response.hydration?.budgetDecision ?? response.materialization.budget.decision,
+        overBudgetByTokens: response.hydration?.overBudgetByTokens ?? response.materialization.budget.overBudgetByTokens,
         rejected: false,
       });
     }

@@ -81,6 +81,20 @@ LingSandboxProfile
 These are Ling-owned contracts. A runner adapter may expose similar concepts, but the
 adapter must normalize them into Ling records before they influence product state.
 
+## Implementation Priority
+
+The short-term path is to harden Ling's own runtime contracts before adding an OpenAI
+Agents SDK-backed runner. That means P14/P15 in the implementation plan are the next
+priority: platform-native sandbox policy/evidence and runner hydration observability.
+They make existing Pi execution and future external adapters safer without importing the
+SDK into the daemon.
+
+The medium-term SDK integration is deliberately a design record, not an active build
+slice. It can become an experimental runner adapter only after the short-term contracts
+are in place and conformance proves approval interception, artifact import, workspace
+boundaries, cancellation, and secret redaction. Until then, OpenAI Agents SDK remains a
+pattern source, not a runtime dependency.
+
 ## Pattern 1: Trace And Span Event Model
 
 ### Problem
