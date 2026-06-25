@@ -8,6 +8,7 @@ import {
   runGoogleInteractionsWebSearch,
   runOpenAiChatCompletionsWebSearch,
   runOpenAiWebSearch,
+  runPublicWebSearch,
   shouldReadPublicUrlsForText,
   shouldRunWebSearchForText,
 } from "../dist/features/channels/web-tools.js";
@@ -111,6 +112,38 @@ test("Responses-compatible web search uses explicit compat protocol for relays",
   assert.deepEqual(context.search?.sources.map((source) => source.url), ["https://example.com/grok"]);
 });
 
+test("Ling public web search fallback extracts source URLs without a provider key", async () => {
+  const calls = [];
+  const result = await runPublicWebSearch({
+    query: "AI news today",
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(publicSearchMarkdown([
+        {
+          title: "AI News Today",
+          url: "https://example.com/ai-news",
+          snippet: "Daily AI news with source URLs.",
+        },
+        {
+          title: "Google News - Artificial intelligence",
+          url: "https://news.google.com/topics/artificial-intelligence",
+          snippet: "Latest artificial intelligence headlines.",
+        },
+      ]), { status: 200, headers: { "content-type": "text/markdown" } });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://r.jina.ai/http://duckduckgo.com/html/?q=AI%20news%20today");
+  assert.equal(calls[0].init.headers.Authorization, undefined);
+  assert.equal(result.provider.adapterId, "ling-public-web-search");
+  assert.deepEqual(result.sources.map((source) => source.url), [
+    "https://example.com/ai-news",
+    "https://news.google.com/topics/artificial-intelligence",
+  ]);
+  assert.match(result.text, /Daily AI news with source URLs/);
+});
+
 test("channel web context uses global web_search backend independent from chat provider", async () => {
   const calls = [];
   const chatProvider = {
@@ -150,7 +183,7 @@ test("channel web context uses global web_search backend independent from chat p
   assert.match(context.prompt, /Global backend result/);
 });
 
-test("channel web context degrades search summaries without source URLs", async () => {
+test("channel web context falls back to public search when relay returns no source URLs", async () => {
   const calls = [];
   const progressEvents = [];
   const webProvider = {
@@ -176,6 +209,15 @@ test("channel web context degrades search summaries without source URLs", async 
     },
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
+      if (String(url).startsWith("https://r.jina.ai/")) {
+        return new Response(publicSearchMarkdown([
+          {
+            title: "AI News Today",
+            url: "https://example.com/fallback-ai-news",
+            snippet: "Fallback public search returned a cited AI news result.",
+          },
+        ]), { status: 200, headers: { "content-type": "text/markdown" } });
+      }
       return new Response(JSON.stringify({
         choices: [
           {
@@ -188,19 +230,19 @@ test("channel web context degrades search summaries without source URLs", async 
     },
   });
 
-  assert.equal(calls.length, 4);
-  assert.equal(context.status, "degraded");
-  assert.equal(context.search?.sources.length, 0);
-  assert.ok(context.search?.queries && context.search.queries.length > 1);
-  assert.match(context.reason ?? "", /no citation\/source metadata/);
-  assert.match(context.prompt ?? "", /Web search status: degraded/);
-  assert.match(context.prompt ?? "", /provider or relay may accept the configured protocol/);
+  assert.equal(calls.length, 2);
+  assert.equal(context.status, "available");
+  assert.equal(context.search?.provider.adapterId, "ling-public-web-search");
+  assert.deepEqual(context.search?.sources.map((source) => source.url), ["https://example.com/fallback-ai-news"]);
+  assert.ok(context.search?.queries && context.search.queries.length >= 1);
+  assert.equal(context.reason, undefined);
+  assert.doesNotMatch(context.prompt ?? "", /Web search status: degraded/);
   assert.match(context.prompt ?? "", /Search queries:/);
+  assert.match(context.prompt ?? "", /Fallback public search returned a cited AI news result/);
   assert.doesNotMatch(context.prompt ?? "", /sk-test-relay-secret/);
-  assert.equal(progressEvents.filter((event) => event.type === "web_search_completed").length, 4);
-  assert.ok(progressEvents
-    .filter((event) => event.type === "web_search_completed")
-    .every((event) => event.status === "degraded" && /citation\/source metadata/.test(event.reason ?? "")));
+  assert.equal(progressEvents.filter((event) => event.type === "web_search_completed").length, 1);
+  assert.equal(progressEvents.find((event) => event.type === "web_search_completed")?.status, "available");
+  assert.equal(progressEvents.find((event) => event.type === "web_search_completed")?.sourceCount, 1);
 });
 
 test("channel web context resolves local provider secrets for global web_search backend", async () => {
@@ -455,8 +497,8 @@ test("channel web context uses selected web_search provider key without exposing
   assert.doesNotMatch(context.prompt, /sk-test-secret-value/);
 });
 
-test("channel web context does not bypass provider settings with env OPENAI_API_KEY", async () => {
-  let fetched = false;
+test("channel web context uses public fallback without bypassing provider settings with env OPENAI_API_KEY", async () => {
+  const calls = [];
   const chatProvider = {
     ...createOpenAiWebSearchProvider(),
     id: "provider_chat_only",
@@ -472,21 +514,29 @@ test("channel web context does not bypass provider settings with env OPENAI_API_
     sourceMessage: { body: "查一下 Ling Stack 最新消息" },
     turnEnvelope: { body: "查一下 Ling Stack 最新消息", linkPreviews: [] },
     secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
-    fetch: async () => {
-      fetched = true;
-      return new Response("should not fetch", { status: 200 });
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(publicSearchMarkdown([
+        {
+          title: "Ling Stack result",
+          url: "https://example.com/ling-stack",
+          snippet: "Public fallback result.",
+        },
+      ]), { status: 200, headers: { "content-type": "text/markdown" } });
     },
   });
 
-  assert.equal(fetched, false);
-  assert.equal(context.status, "blocked");
-  assert.match(context.prompt, /No Ling global web_search backend is configured/);
-  assert.match(context.prompt, /will not bypass model settings/);
+  assert.equal(context.status, "available");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /^https:\/\/r\.jina\.ai\/http:\/\/duckduckgo\.com\/html\//);
+  assert.equal(calls[0].init.headers.Authorization, undefined);
+  assert.equal(context.search?.provider.adapterId, "ling-public-web-search");
+  assert.deepEqual(context.search?.sources.map((source) => source.url), ["https://example.com/ling-stack"]);
   assert.doesNotMatch(context.prompt, /sk-test-secret-value/);
 });
 
-test("channel web context blocks declared web_search providers without an adapter", async () => {
-  let fetched = false;
+test("channel web context uses public fallback for declared web_search providers without an adapter", async () => {
+  const calls = [];
   const context = await buildChannelWebContext({
     providerPresetId: "provider_compatible_web",
     store: {
@@ -503,15 +553,22 @@ test("channel web context blocks declared web_search providers without an adapte
     sourceMessage: { body: "查一下 Ling Stack 最新消息" },
     turnEnvelope: { body: "查一下 Ling Stack 最新消息", linkPreviews: [] },
     secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
-    fetch: async () => {
-      fetched = true;
-      return new Response("should not fetch", { status: 200 });
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(publicSearchMarkdown([
+        {
+          title: "Compatible relay fallback",
+          url: "https://example.com/compatible-fallback",
+          snippet: "Public search worked even though provider protocol is unsupported.",
+        },
+      ]), { status: 200, headers: { "content-type": "text/markdown" } });
     },
   });
 
-  assert.equal(fetched, false);
-  assert.equal(context.status, "blocked");
-  assert.match(context.prompt, /do not have a matching web-search adapter protocol/);
+  assert.equal(context.status, "available");
+  assert.equal(calls.length, 1);
+  assert.equal(context.search?.provider.adapterId, "ling-public-web-search");
+  assert.deepEqual(context.search?.sources.map((source) => source.url), ["https://example.com/compatible-fallback"]);
 });
 
 test("OpenAI web search redacts masked API keys from provider errors", async () => {
@@ -553,6 +610,26 @@ test("channel read URL context blocks localhost without fetching", async () => {
   assert.equal(context.status, "blocked");
   assert.match(context.prompt, /local or private network targets/i);
 });
+
+function publicSearchMarkdown(results) {
+  return [
+    "Title: AI news today at DuckDuckGo",
+    "",
+    "Markdown Content:",
+    "",
+    ...results.flatMap((result) => {
+      const wrappedUrl = `http://duckduckgo.com/l/?uddg=${encodeURIComponent(result.url)}&rut=test`;
+      return [
+        `## [${result.title}](${wrappedUrl})`,
+        "",
+        `[${new URL(result.url).hostname}](${wrappedUrl})`,
+        "",
+        `[${result.snippet}](${wrappedUrl})`,
+        "",
+      ];
+    }),
+  ].join("\n");
+}
 
 function createOpenAiWebSearchProvider() {
   return {
