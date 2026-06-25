@@ -196,7 +196,15 @@ Until that exists, Ling supports current public lookup and public URL reading, n
 
 ## Conversation Evidence UI
 
-Web evidence is part of the conversation, not a right-drawer-only artifact. When a channel reply or private teammate reply uses or blocks web context, the daemon records a `web_evidence_recorded` runtime event linked to the pending AI reply message. Message list and stream responses then derive a compact `webEvidence` field from that event.
+Web evidence is part of the conversation, not a right-drawer-only artifact. When a channel reply or private teammate reply uses or blocks web context, the daemon records live `work_unit_progress` events with `toolSurface: "web"` while search/read work is happening, then records a final `web_evidence_recorded` runtime event linked to the pending AI reply message. Message list and stream responses derive a compact `webEvidence` field from the final event.
+
+The pending AI message also shows the live web state in the conversation feed:
+
+- `web_search_planned`: show that Ling prepared the bounded query set.
+- `web_search_started`: show the current query and attempt count.
+- `web_search_completed`: show available/degraded/blocked status, source count, and blocked reason when present.
+- `open_url_started`: show the public URL being read and attempt count.
+- `open_url_completed`: show available/blocked status, final URL host, and blocked reason when present.
 
 The conversation page renders that field under the AI message in the existing message evidence disclosure:
 
@@ -204,7 +212,7 @@ The conversation page renders that field under the AI message in the existing me
 - `Sources` shows bounded citation URLs and snippets returned by the provider adapter.
 - `open_url` shows public URL read attempts, final URL, status, and blocked reason.
 
-The right drawer can still provide deeper run/work-unit inspection, but it is not the primary place for web-search evidence. Runtime/work-unit timelines also keep the same `web_evidence_recorded` event so reviewers can correlate the visible reply evidence with the underlying work-unit audit trail.
+The right drawer can still provide deeper run/work-unit inspection, but it is not the primary place for web-search evidence. Runtime/work-unit timelines keep both the live `work_unit_progress` web events and the final `web_evidence_recorded` event so reviewers can correlate the visible reply evidence with the underlying work-unit audit trail.
 
 ## Prompt Boundary
 

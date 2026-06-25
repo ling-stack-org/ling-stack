@@ -7,9 +7,10 @@ import type {
   RunStore,
   TeammateDirectMessage,
 } from "@ling-stack/core";
-import type { WebEvidenceContext } from "./web-evidence-service.js";
+import type { WebEvidenceContext, WebEvidenceProgressEvent } from "./web-evidence-service.js";
 
 export const WEB_EVIDENCE_RECORDED_EVENT = "web_evidence_recorded";
+export const WEB_EVIDENCE_PROGRESS_RUN_EVENT = "work_unit_progress";
 
 interface MessageWebEvidenceEventData extends MessageWebEvidence {
   readonly toolSurface: "web";
@@ -18,6 +19,12 @@ interface MessageWebEvidenceEventData extends MessageWebEvidence {
   readonly sourceCount: number;
   readonly readUrlCount: number;
 }
+
+type MessageWebEvidenceProgressEventData = WebEvidenceProgressEvent & {
+  readonly toolSurface: "web";
+  readonly sourceMessageId: string;
+  readonly linkedMessageId: string;
+};
 
 export function recordMessageWebEvidenceEvent(input: {
   readonly store: Pick<RunStore, "appendRuntimeEvent">;
@@ -49,6 +56,71 @@ export function recordMessageWebEvidenceEvent(input: {
     data,
   });
   return evidence;
+}
+
+export function recordMessageWebEvidenceProgressEvent(input: {
+  readonly store: Pick<RunStore, "appendRuntimeEvent">;
+  readonly workUnitId: string;
+  readonly attemptId?: string;
+  readonly sourceMessageId: string;
+  readonly linkedMessageId: string;
+  readonly progress: WebEvidenceProgressEvent;
+  readonly ts: string;
+}): void {
+  const data: MessageWebEvidenceProgressEventData = {
+    toolSurface: "web",
+    sourceMessageId: input.sourceMessageId,
+    linkedMessageId: input.linkedMessageId,
+    ...input.progress,
+  };
+  input.store.appendRuntimeEvent({
+    workUnitId: input.workUnitId,
+    attemptId: input.attemptId,
+    type: WEB_EVIDENCE_PROGRESS_RUN_EVENT,
+    actor: "system",
+    ts: input.ts,
+    data,
+  });
+}
+
+export function renderWebEvidenceProgressPendingBody(progress: WebEvidenceProgressEvent, sourceText: string): string {
+  const zh = hasCjk(sourceText);
+  if (progress.type === "web_search_planned") {
+    return zh
+      ? `正在准备 web_search：${progress.queries.length} 个查询`
+      : `Preparing web_search: ${progress.queries.length} queries`;
+  }
+  if (progress.type === "web_search_started") {
+    const query = trimProgressValue(progress.query);
+    return zh
+      ? `正在搜索网页（${progress.attempt}/${progress.total}）：${query}`
+      : `Searching the web (${progress.attempt}/${progress.total}): ${query}`;
+  }
+  if (progress.type === "web_search_completed") {
+    if (progress.status === "available") {
+      return zh
+        ? `web_search 找到 ${progress.sourceCount} 个来源，正在整理回复...`
+        : `web_search found ${progress.sourceCount} sources. Drafting reply...`;
+    }
+    if (progress.status === "blocked") {
+      const reason = progress.reason ? `：${trimProgressValue(progress.reason)}` : "";
+      return zh ? `web_search 被阻止${reason}` : `web_search blocked${reason}`;
+    }
+    return zh
+      ? `web_search 未拿到可引用来源，继续核验...`
+      : `web_search returned no citable sources. Checking fallback evidence...`;
+  }
+  if (progress.type === "open_url_started") {
+    const url = trimProgressValue(progress.url);
+    return zh
+      ? `正在打开 URL（${progress.attempt}/${progress.total}）：${url}`
+      : `Opening URL (${progress.attempt}/${progress.total}): ${url}`;
+  }
+  if (progress.status === "available") {
+    return zh ? "open_url 已读取，正在整理回复..." : "open_url read. Drafting reply...";
+  }
+  const reason = progress.reason ? `：${trimProgressValue(progress.reason)}` : "";
+  return zh ? `open_url 被阻止${reason}` : `open_url blocked${reason}`;
 }
 
 export function enrichChannelMessageWithWebEvidence(
@@ -201,6 +273,14 @@ function normalizeReadUrls(values: readonly unknown[]): readonly MessageWebEvide
 function trimString(value: string, maxLength: number): string {
   const trimmed = value.replace(/\s+/gu, " ").trim();
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 3)}...` : trimmed;
+}
+
+function trimProgressValue(value: string): string {
+  return trimString(value, 96);
+}
+
+function hasCjk(text: string): boolean {
+  return /[\u3400-\u9fff]/u.test(text);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

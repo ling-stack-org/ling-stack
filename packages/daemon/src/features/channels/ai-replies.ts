@@ -20,7 +20,12 @@ import {
 import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 import { buildChannelWebContext, prependChannelWebContext } from "./web-tools.js";
-import { recordMessageWebEvidenceEvent } from "../web/message-web-evidence.js";
+import {
+  recordMessageWebEvidenceEvent,
+  recordMessageWebEvidenceProgressEvent,
+  renderWebEvidenceProgressPendingBody,
+} from "../web/message-web-evidence.js";
+import type { WebEvidenceProgressEvent } from "../web/web-evidence-service.js";
 
 export async function createAiChannelReply(input: {
   readonly runnerRegistry: RunnerRegistry;
@@ -209,6 +214,9 @@ async function completeAiChannelReply(input: {
       secretResolver: input.secretResolver,
       fetch: input.webFetch,
       resolveHostAddresses: input.webResolveHostAddresses,
+      onProgress: (progress) => {
+        recordChannelWebEvidenceProgress(input, progress);
+      },
     });
     recordMessageWebEvidenceEvent({
       store: input.store,
@@ -518,6 +526,35 @@ function stripHiddenProposalText(raw: string): string {
   return raw
     .replace(/<ling_task_proposal[\s\S]*?<\/ling_task_proposal>/giu, "")
     .replace(/<ling_task_proposal[\s\S]*$/iu, "");
+}
+
+function recordChannelWebEvidenceProgress(
+  input: Pick<Parameters<typeof completeAiChannelReply>[0], "store" | "supervised" | "sourceMessage" | "pending" | "stream">,
+  progress: WebEvidenceProgressEvent,
+): void {
+  const now = new Date().toISOString();
+  recordMessageWebEvidenceProgressEvent({
+    store: input.store,
+    workUnitId: input.supervised.workUnit.id,
+    attemptId: input.supervised.attempt.id,
+    sourceMessageId: input.sourceMessage.id,
+    linkedMessageId: input.pending.id,
+    progress,
+    ts: now,
+  });
+  const body = renderWebEvidenceProgressPendingBody(progress, input.sourceMessage.body);
+  const updated = input.store.updateChannelMessageRuntime(
+    input.pending.id,
+    {
+      body,
+      status: "pending",
+      errorMessage: null,
+    },
+    now,
+  );
+  if (updated) {
+    input.stream?.onDelta(updated, "");
+  }
 }
 
 function toRunnerResolutionSnapshot(resolution: RunnerResolution): {

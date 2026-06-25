@@ -487,11 +487,14 @@ function extractChatCompletionsSources(payload: unknown): WebSource[] {
     if (!isRecord(choice) || !isRecord(choice.message)) {
       continue;
     }
-    if (Array.isArray(choice.message.annotations)) {
-      for (const annotation of choice.message.annotations) {
-        const parsed = parseWebSource(annotation);
-        if (parsed) {
-          sources.push(parsed);
+    appendParsedSources(sources, choice.message.annotations);
+    appendParsedSources(sources, choice.message.citations);
+    appendParsedSources(sources, choice.citations);
+    if (Array.isArray(choice.message.content)) {
+      for (const part of choice.message.content) {
+        if (isRecord(part)) {
+          appendParsedSources(sources, part.annotations);
+          appendParsedSources(sources, part.citations);
         }
       }
     }
@@ -558,18 +561,25 @@ function extractTopLevelSources(payload: unknown): WebSource[] {
   ].filter((value): value is unknown[] => Boolean(value));
   const sources: WebSource[] = [];
   for (const list of candidates) {
-    for (const item of list) {
-      if (typeof item === "string" && item.trim()) {
-        sources.push({ url: item.trim() });
-        continue;
-      }
-      const parsed = parseWebSource(item);
-      if (parsed) {
-        sources.push(parsed);
-      }
-    }
+    appendParsedSources(sources, list);
   }
   return sources;
+}
+
+function appendParsedSources(sources: WebSource[], values: unknown): void {
+  if (!Array.isArray(values)) {
+    return;
+  }
+  for (const item of values) {
+    if (typeof item === "string" && item.trim()) {
+      sources.push({ url: item.trim() });
+      continue;
+    }
+    const parsed = parseWebSource(item);
+    if (parsed) {
+      sources.push(parsed);
+    }
+  }
 }
 
 function parseWebSource(value: unknown): WebSource | undefined {

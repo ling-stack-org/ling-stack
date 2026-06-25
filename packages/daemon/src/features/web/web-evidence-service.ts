@@ -30,6 +30,42 @@ export interface WebEvidenceContext {
   readonly readUrls?: readonly WebEvidenceReadUrlResult[];
 }
 
+export type WebEvidenceProgressEvent =
+  | {
+      readonly type: "web_search_planned";
+      readonly queries: readonly string[];
+    }
+  | {
+      readonly type: "web_search_started";
+      readonly query: string;
+      readonly attempt: number;
+      readonly total: number;
+    }
+  | {
+      readonly type: "web_search_completed";
+      readonly query: string;
+      readonly attempt: number;
+      readonly total: number;
+      readonly status: "available" | "degraded" | "blocked";
+      readonly sourceCount: number;
+      readonly reason?: string;
+    }
+  | {
+      readonly type: "open_url_started";
+      readonly url: string;
+      readonly attempt: number;
+      readonly total: number;
+    }
+  | {
+      readonly type: "open_url_completed";
+      readonly url: string;
+      readonly attempt: number;
+      readonly total: number;
+      readonly status: "available" | "blocked";
+      readonly finalUrl?: string;
+      readonly reason?: string;
+    };
+
 export interface BuildWebEvidenceContextInput {
   readonly providerPreset?: ProviderPreset;
   readonly webSearchProviderPresets?: readonly ProviderPreset[];
@@ -41,6 +77,7 @@ export interface BuildWebEvidenceContextInput {
   readonly resolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly promptHeader?: string;
   readonly promptInstruction?: string;
+  readonly onProgress?: (event: WebEvidenceProgressEvent) => void;
 }
 
 export interface WebEvidenceReadUrlResult {
@@ -91,6 +128,7 @@ export async function buildWebEvidenceContext(input: BuildWebEvidenceContextInpu
       fetch: input.fetch,
       resolveHostAddresses: input.resolveHostAddresses,
       timeoutMs: READ_URL_TIMEOUT_MS,
+      onProgress: input.onProgress,
     })
     : [];
   if (readUrls.length > 0) {
@@ -151,6 +189,13 @@ export function planWebSearchQueries(text: string): string[] {
   const queries: string[] = [original];
   const topic = extractSearchTopic(original);
   const freshnessIntent = isFreshnessSearchText(original);
+  if (freshnessIntent && hasAiSearchTopic(original)) {
+    queries.push("AI latest news");
+    queries.push("AI news today");
+    if (hasCjk(original)) {
+      queries.push("今日 AI 新闻");
+    }
+  }
   if (topic && topic !== original) {
     queries.push(topic);
   }
@@ -161,7 +206,7 @@ export function planWebSearchQueries(text: string): string[] {
       queries.push(`${topic} 最新 新闻`);
     }
   }
-  if (/(?:^|\W)AI(?:\W|$)|人工智能|大模型/iu.test(original)) {
+  if (hasAiSearchTopic(original)) {
     queries.push("AI news today");
     queries.push("latest AI news");
     queries.push("今日 AI 新闻");
@@ -193,11 +238,21 @@ async function runPlannedProviderWebSearch(
   if (queries.length === 0) {
     return { status: "blocked", reason: "web_search query is empty." };
   }
+  emitWebEvidenceProgress(input.onProgress, {
+    type: "web_search_planned",
+    queries,
+  });
   let fallbackResult: WebSearchResult | undefined;
   let lastBlockedReason: string | undefined;
   const attemptedQueries: string[] = [];
-  for (const query of queries) {
+  for (const [index, query] of queries.entries()) {
     attemptedQueries.push(query);
+    emitWebEvidenceProgress(input.onProgress, {
+      type: "web_search_started",
+      query,
+      attempt: index + 1,
+      total: queries.length,
+    });
     const searchContext = await runProviderWebSearch({
       providerPreset: input.providerPreset,
       webSearchProviderPresets: input.webSearchProviderPresets,
@@ -208,9 +263,27 @@ async function runPlannedProviderWebSearch(
     });
     if (searchContext.status === "blocked") {
       lastBlockedReason = searchContext.reason;
+      emitWebEvidenceProgress(input.onProgress, {
+        type: "web_search_completed",
+        query,
+        attempt: index + 1,
+        total: queries.length,
+        status: "blocked",
+        sourceCount: 0,
+        reason: searchContext.reason,
+      });
       break;
     }
     if (!searchContext.result) {
+      emitWebEvidenceProgress(input.onProgress, {
+        type: "web_search_completed",
+        query,
+        attempt: index + 1,
+        total: queries.length,
+        status: "degraded",
+        sourceCount: 0,
+        reason: "web_search backend returned no usable result.",
+      });
       continue;
     }
     const result = {
@@ -218,8 +291,25 @@ async function runPlannedProviderWebSearch(
       queries: [...attemptedQueries],
     };
     if (result.sources.length > 0) {
+      emitWebEvidenceProgress(input.onProgress, {
+        type: "web_search_completed",
+        query,
+        attempt: index + 1,
+        total: queries.length,
+        status: "available",
+        sourceCount: result.sources.length,
+      });
       return { status: "available", result };
     }
+    emitWebEvidenceProgress(input.onProgress, {
+      type: "web_search_completed",
+      query,
+      attempt: index + 1,
+      total: queries.length,
+      status: "degraded",
+      sourceCount: 0,
+      reason: WEB_SEARCH_DEGRADED_REASON,
+    });
     fallbackResult = result;
   }
   if (fallbackResult) {
@@ -236,17 +326,40 @@ async function readPublicUrlsForContext(input: {
   readonly fetch?: typeof globalThis.fetch;
   readonly resolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly timeoutMs: number;
+  readonly onProgress?: (event: WebEvidenceProgressEvent) => void;
 }): Promise<readonly WebEvidenceReadUrlResult[]> {
   const fetchImpl = input.fetch ?? globalThis.fetch;
   if (!fetchImpl) {
-    return input.urls.map((url) => ({
-      url,
-      status: "blocked",
-      reason: "fetch is not available in this runtime.",
-    }));
+    return input.urls.map((url, index) => {
+      emitWebEvidenceProgress(input.onProgress, {
+        type: "open_url_started",
+        url,
+        attempt: index + 1,
+        total: input.urls.length,
+      });
+      emitWebEvidenceProgress(input.onProgress, {
+        type: "open_url_completed",
+        url,
+        attempt: index + 1,
+        total: input.urls.length,
+        status: "blocked",
+        reason: "fetch is not available in this runtime.",
+      });
+      return {
+        url,
+        status: "blocked",
+        reason: "fetch is not available in this runtime.",
+      };
+    });
   }
   const results: WebEvidenceReadUrlResult[] = [];
-  for (const url of input.urls) {
+  for (const [index, url] of input.urls.entries()) {
+    emitWebEvidenceProgress(input.onProgress, {
+      type: "open_url_started",
+      url,
+      attempt: index + 1,
+      total: input.urls.length,
+    });
     const fetched = await fetchPublicLinkBody(url, {
       fetch: fetchImpl,
       resolveHostAddresses: input.resolveHostAddresses,
@@ -255,6 +368,14 @@ async function readPublicUrlsForContext(input: {
       redirectLimit: 3,
     });
     if (!fetched.allowed) {
+      emitWebEvidenceProgress(input.onProgress, {
+        type: "open_url_completed",
+        url,
+        attempt: index + 1,
+        total: input.urls.length,
+        status: "blocked",
+        reason: fetched.message,
+      });
       results.push({
         url,
         status: "blocked",
@@ -265,6 +386,14 @@ async function readPublicUrlsForContext(input: {
     const text = (fetched.contentType.includes("html")
       ? extractReadableHtmlText(fetched.body)
       : normalizeExtractedText(fetched.body)).slice(0, READ_URL_MAX_CHARS);
+    emitWebEvidenceProgress(input.onProgress, {
+      type: "open_url_completed",
+      url,
+      attempt: index + 1,
+      total: input.urls.length,
+      status: "available",
+      finalUrl: fetched.finalUrl,
+    });
     results.push({
       url,
       status: "available",
@@ -339,6 +468,17 @@ function appendBoundedUniqueUrls(
   return result;
 }
 
+function emitWebEvidenceProgress(
+  onProgress: ((event: WebEvidenceProgressEvent) => void) | undefined,
+  event: WebEvidenceProgressEvent,
+): void {
+  try {
+    onProgress?.(event);
+  } catch {
+    // Web progress is diagnostic UI state; it must not block the actual search.
+  }
+}
+
 function normalizeSearchQuery(text: string): string {
   return text
     .replace(/[@＠][^\s，。,.!?！？；;:：)）]+/gu, " ")
@@ -352,7 +492,7 @@ function extractSearchTopic(query: string): string | undefined {
     .replace(/[@＠][^\s，。,.!?！？；;:：)）]+/gu, " ")
     .replace(/[，。,.!?！？；;:：()[\]（）【】"'`]/gu, " ")
     .replace(/\b(?:web[_ -]?search|search|browse|look up|lookup|find|current|latest|today|yesterday|recent|news|source|sources|citation|citations|url|urls)\b/giu, " ")
-    .replace(/(?:查一下|搜索一下|搜一下|查询一下|查找|查网页|搜网页|联网|上网|网页搜索|网络搜索|打开|读取|看看|今天|今日|昨天|昨日|热门|最新|实时|当前|新闻|动态|来源|链接|带来源|回复|一句话|帮我|请问|请|一下|一下子|关于|的)/gu, " ")
+    .replace(/(?:查一下|搜索一下|搜一下|查询一下|查找|查网页|搜网页|联网|上网|网页搜索|网络搜索|打开|读取|看看|整理一下|整理一份|整理|汇总一下|汇总|总结一下|总结|梳理一下|梳理|列出|生成|制作|做一份|写一份|今天|今日|昨天|昨日|热门|最新|实时|当前|新闻|动态|来源|链接|带来源|回复|一句话|帮我|给我|请问|请|一下|一下子|一份|关于|的)/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
   if (topic.length < 2 || topic === query) {
@@ -363,6 +503,10 @@ function extractSearchTopic(query: string): string | undefined {
 
 function isFreshnessSearchText(text: string): boolean {
   return /(最新|实时|今天|今日|昨日|昨天|本周|刚刚|现在|当前|新闻|动态|current|latest|today|yesterday|recent|news)/iu.test(text);
+}
+
+function hasAiSearchTopic(text: string): boolean {
+  return /(?:^|[^A-Za-z0-9])AI(?:$|[^A-Za-z0-9])|人工智能|大模型/iu.test(text);
 }
 
 function hasCjk(text: string): boolean {
