@@ -27,6 +27,9 @@ Borrow these patterns, not the whole implementation:
   OpenAI-compatible API server for model-like clients.
 - Hermes ACP maps internal tools into editor-facing tool kinds and keeps the exposed tool
   surface curated. Ling should do the same for external runners.
+- OpenAI Agents SDK should stay a deferred dedicated-adapter decision until Ling's own
+  sandbox policy and hydration observability gates are implemented. Treat SDK primitives as
+  pattern inputs first; implement a sidecar only after conformance can prove the boundary.
 
 References:
 
@@ -191,6 +194,17 @@ Use a dedicated adapter when Ling talks to a Codex server that exposes native Co
 session, stream, approval, and artifact semantics. Do not route this through ACP unless
 the selected Codex target explicitly speaks ACP and loses no required Ling controls.
 
+### OpenAI Agents SDK
+
+OpenAI Agents SDK is not a provider preset and is not the current default runner. It may
+become a dedicated adapter only if Ling wraps it behind a sidecar or equivalent boundary
+that exposes session lifecycle, tool events, approval interception, artifacts,
+cancellation, workspace constraints, and resume handles.
+
+The design record is [OpenAI Agents SDK Adapter Decision Record](openai-agents-sdk-adapter-decision-record.md).
+Do not add a runner id until that record is refreshed against current SDK APIs and the
+short-term runtime hardening slices have landed.
+
 ### OpenClaw ACP
 
 Use `openclaw-acp` when OpenClaw exposes an ACP-compatible endpoint and can report
@@ -320,6 +334,14 @@ Use this template before adding any non-Pi runner id or adapter module:
   preserved.
 - Acceptance: no `hermes` runner id exists without a concrete session protocol and
   conformance plan.
+
+### P8: Deferred OpenAI Agents SDK Decision Refresh
+
+- Re-check the current SDK transport, sandbox, approval, snapshot, and tool APIs.
+- Decide whether Ling should build a local sidecar, use a hosted sandbox bridge, or reject
+  SDK integration for the current cycle.
+- Acceptance: the decision record names the exact integration surface and required gates;
+  no runtime code is added in this slice.
 
 ## Implementation Guardrails
 

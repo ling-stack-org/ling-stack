@@ -392,6 +392,9 @@ function statusFromRuntimeEvent(type: RuntimeEvent["type"]): LingTraceStatus {
   if (type === "work_unit_approval_requested") {
     return "waiting_for_approval";
   }
+  if (type === "tool_hydration_rejected") {
+    return "skipped";
+  }
   return "running";
 }
 

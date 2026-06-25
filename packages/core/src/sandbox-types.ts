@@ -2,6 +2,14 @@ import { isSupportedSecretRef } from "./secrets.js";
 
 export type LingSandboxBackendKind = "local_unix" | "platform_native" | "docker" | "hosted" | "external";
 
+export type LingSandboxPolicyProfileId = "read_only" | "workspace_write" | "trusted_local" | "danger_full_access";
+
+export type LingSandboxExecutionWrapperKind =
+  | "none"
+  | "macos_sandbox_exec"
+  | "docker_run"
+  | "external";
+
 export type LingSandboxCapability =
   | "process_isolation"
   | "filesystem_isolation"
@@ -18,6 +26,9 @@ export type LingSandboxReadinessBlockerCode =
   | "sandbox_backend_unverified"
   | "sandbox_artifact_import_unverified"
   | "sandbox_network_policy_unverified"
+  | "sandbox_policy_unverified"
+  | "sandbox_os_unsupported"
+  | "sandbox_execution_wrapper_missing"
   | "sandbox_manifest_contains_raw_secret"
   | "sandbox_secret_ref_invalid"
   | "sandbox_profile_mismatch"
@@ -42,17 +53,28 @@ export interface LingSandboxArtifactImportPolicy {
   readonly requireRedaction: boolean;
 }
 
+export interface LingSandboxExecutionWrapperEvidence {
+  readonly kind: LingSandboxExecutionWrapperKind;
+  readonly verified: boolean;
+  readonly executableRef?: string;
+  readonly evidenceRef?: string;
+}
+
 export interface LingSandboxProfile {
   readonly schemaVersion: 1;
   readonly id: string;
   readonly displayName: string;
   readonly backendKind: LingSandboxBackendKind;
+  readonly policyProfileId: LingSandboxPolicyProfileId;
+  readonly policyVerified: boolean;
+  readonly hostOsSupported: boolean;
   readonly capabilities: readonly LingSandboxCapability[];
   readonly backendVerified: boolean;
   readonly artifactImportVerified: boolean;
   readonly networkPolicyVerified: boolean;
   readonly networkPolicy: LingSandboxNetworkPolicy;
   readonly artifactImport: LingSandboxArtifactImportPolicy;
+  readonly executionWrapper: LingSandboxExecutionWrapperEvidence;
 }
 
 export interface LingSandboxManifest {
@@ -107,6 +129,24 @@ export function evaluateLingSandboxReadiness(input: EvaluateLingSandboxReadiness
     blockers.push({
       code: "sandbox_backend_unverified",
       message: `Sandbox backend ${profile.displayName} has not been verified.`,
+    });
+  }
+  if (!profile.policyVerified || !isKnownSandboxPolicyProfile(profile.policyProfileId)) {
+    blockers.push({
+      code: "sandbox_policy_unverified",
+      message: `Sandbox profile ${profile.id} has not verified policy profile ${profile.policyProfileId}.`,
+    });
+  }
+  if (!profile.hostOsSupported) {
+    blockers.push({
+      code: "sandbox_os_unsupported",
+      message: `Sandbox profile ${profile.id} does not support this host operating system.`,
+    });
+  }
+  if (!profile.executionWrapper.verified || profile.executionWrapper.kind === "none") {
+    blockers.push({
+      code: "sandbox_execution_wrapper_missing",
+      message: `Sandbox profile ${profile.id} has no verified execution wrapper.`,
     });
   }
   if (!profile.artifactImportVerified) {
@@ -201,6 +241,13 @@ function isSafeNetworkPolicy(policy: LingSandboxNetworkPolicy): boolean {
     return true;
   }
   return policy.allowedHosts.length > 0 && policy.allowedHosts.every((host) => host.trim() === host && host.length > 0 && !host.includes("*"));
+}
+
+function isKnownSandboxPolicyProfile(policyProfileId: string): policyProfileId is LingSandboxPolicyProfileId {
+  return policyProfileId === "read_only" ||
+    policyProfileId === "workspace_write" ||
+    policyProfileId === "trusted_local" ||
+    policyProfileId === "danger_full_access";
 }
 
 function isInsideRoot(candidate: string, root: string): boolean {

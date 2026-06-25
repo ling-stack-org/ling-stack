@@ -217,14 +217,6 @@ export interface PiRunnerHydratedToolDescriptor {
   readonly disabledReasons: readonly { readonly code: string; readonly message: string }[];
 }
 
-export interface PiRunnerHydratedToolSurface {
-  readonly ok: true;
-  readonly materialization: PiRunnerToolMaterializationSummary;
-  readonly tools: readonly PiRunnerHydratedToolDescriptor[];
-  readonly generatedAt: string;
-  readonly expiresAt?: string;
-}
-
 export type PiRunnerToolHydrationRejectionCode =
   | "hydration_not_supported"
   | "tool_materialization_over_budget"
@@ -233,6 +225,33 @@ export type PiRunnerToolHydrationRejectionCode =
   | "tool_not_found"
   | "invalid_hydration_request";
 
+export interface PiRunnerToolHydrationObservability {
+  readonly status: "accepted" | "rejected";
+  readonly scopeKind: PiRunnerToolHydrationScope["kind"];
+  readonly namespaceId?: string;
+  readonly toolId?: string;
+  readonly materializationId?: string;
+  readonly descriptorIds: readonly string[];
+  readonly descriptorSchemaHashes: readonly string[];
+  readonly schemaReturnedToRunner: boolean;
+  readonly materializedToolCount: number;
+  readonly disabledToolCount: number;
+  readonly budgetDecision?: PiRunnerToolHydrationBudget["decision"];
+  readonly overBudgetByTokens?: number;
+  readonly rejectionCode?: PiRunnerToolHydrationRejectionCode;
+  readonly retryable?: boolean;
+  readonly generatedAt: string;
+}
+
+export interface PiRunnerHydratedToolSurface {
+  readonly ok: true;
+  readonly materialization: PiRunnerToolMaterializationSummary;
+  readonly tools: readonly PiRunnerHydratedToolDescriptor[];
+  readonly hydration?: PiRunnerToolHydrationObservability;
+  readonly generatedAt: string;
+  readonly expiresAt?: string;
+}
+
 export interface PiRunnerToolHydrationRejection {
   readonly ok: false;
   readonly code: PiRunnerToolHydrationRejectionCode;
@@ -240,6 +259,7 @@ export interface PiRunnerToolHydrationRejection {
   readonly retryable: boolean;
   readonly budget?: PiRunnerToolHydrationBudget;
   readonly materialization?: PiRunnerToolMaterializationSummary;
+  readonly hydration?: PiRunnerToolHydrationObservability;
   readonly generatedAt: string;
 }
 
@@ -326,6 +346,12 @@ export type PiRunnerEvent =
       readonly runnerAttemptId: string;
       readonly materializationId?: string;
       readonly toolIds?: readonly string[];
+      readonly descriptorSchemaHashes?: readonly string[];
+      readonly materializedToolCount?: number;
+      readonly disabledToolCount?: number;
+      readonly schemaReturnedToRunner?: boolean;
+      readonly budgetDecision?: PiRunnerToolHydrationBudget["decision"];
+      readonly overBudgetByTokens?: number;
       readonly rejected: boolean;
       readonly code?: PiRunnerToolHydrationRejectionCode;
     }

@@ -144,14 +144,6 @@ export interface RunnerHydratedToolDescriptor {
   readonly disabledReasons: readonly LingToolDisabledReason[];
 }
 
-export interface RunnerHydratedToolSurface {
-  readonly ok: true;
-  readonly materialization: ToolMaterializationSummary;
-  readonly tools: readonly RunnerHydratedToolDescriptor[];
-  readonly generatedAt: string;
-  readonly expiresAt?: string;
-}
-
 export type RunnerToolHydrationRejectionCode =
   | "hydration_not_supported"
   | "tool_materialization_over_budget"
@@ -160,6 +152,33 @@ export type RunnerToolHydrationRejectionCode =
   | "tool_not_found"
   | "invalid_hydration_request";
 
+export interface RunnerToolHydrationObservability {
+  readonly status: "accepted" | "rejected";
+  readonly scopeKind: ToolLoadRequestScope["kind"];
+  readonly namespaceId?: string;
+  readonly toolId?: string;
+  readonly materializationId?: string;
+  readonly descriptorIds: readonly string[];
+  readonly descriptorSchemaHashes: readonly string[];
+  readonly schemaReturnedToRunner: boolean;
+  readonly materializedToolCount: number;
+  readonly disabledToolCount: number;
+  readonly budgetDecision?: ToolMaterializationBudgetDecision;
+  readonly overBudgetByTokens?: number;
+  readonly rejectionCode?: RunnerToolHydrationRejectionCode;
+  readonly retryable?: boolean;
+  readonly generatedAt: string;
+}
+
+export interface RunnerHydratedToolSurface {
+  readonly ok: true;
+  readonly materialization: ToolMaterializationSummary;
+  readonly tools: readonly RunnerHydratedToolDescriptor[];
+  readonly hydration?: RunnerToolHydrationObservability;
+  readonly generatedAt: string;
+  readonly expiresAt?: string;
+}
+
 export interface RunnerToolHydrationRejection {
   readonly ok: false;
   readonly code: RunnerToolHydrationRejectionCode;
@@ -167,6 +186,7 @@ export interface RunnerToolHydrationRejection {
   readonly retryable: boolean;
   readonly budget?: ToolMaterializationBudget;
   readonly materialization?: ToolMaterializationSummary;
+  readonly hydration?: RunnerToolHydrationObservability;
   readonly generatedAt: string;
 }
 

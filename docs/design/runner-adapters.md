@@ -58,6 +58,8 @@ Still future:
 - real Codex app-server health probe, stream adapter, approval bridge, and resume handle;
 - real OpenClaw/ACP capability negotiation, client bridge, violation handling, and
   workspace-bound session lifecycle;
+- OpenAI Agents SDK adapter decision refresh after platform-native sandbox policy and
+  runner hydration observability are implemented;
 - wiring sandbox profile readiness into a concrete runner adapter after artifact import,
   network policy, and secret redaction conformance exists;
 - adapter decision records for Hermes, Claude, Gemini, or other future runtimes only when
@@ -82,6 +84,7 @@ Ling has two integration layers. Do not collapse them.
 | --- | --- | --- | --- |
 | OpenAI / Claude / Gemini model APIs | Ling only needs a model endpoint, model id, base URL, API key, and provider API compatibility. | A vendor or wrapper exposes a full agent session with tool events, artifacts, cancellation, approval proposals, and resume handles. | Provider preset first; adapter only for a real agent server. |
 | Codex server | Not applicable if the target is the Codex agent runtime rather than just an OpenAI model. | Ling delegates execution to a Codex app-server session and normalizes its stream/tool/artifact events. | Dedicated `codex-app-server` adapter, not ACP by default. |
+| OpenAI Agents SDK | Ling only needs OpenAI model access through an existing provider preset. | Ling wraps the SDK behind a sidecar that exposes sessions, tools, approvals, artifacts, cancellation, sandbox/workspace boundaries, and resume handles. | Deferred design record only; no runner id until P14/P15 hardening and conformance gates pass. |
 | OpenClaw | Not applicable if OpenClaw is used as an external agent runtime. | OpenClaw exposes an ACP-compatible endpoint with capability negotiation and interceptable side effects. | `openclaw-acp` adapter through an ACP client bridge. |
 | Hermes | Hermes only contributes memory/context files or runtime-native overlay content. | Hermes exposes an executable agent session API with stream events, tool proposals, workspace bounds, and resume/cancel support. | No runner id until a concrete Hermes agent protocol exists. |
 | Other agent servers | They only proxy model calls with no durable session or tool lifecycle. | They own an agent session and can run tasks outside Ling unless bridged through Ling policy. | Add a dedicated adapter or ACP-compatible adapter after conformance. |
@@ -448,10 +451,12 @@ high-level order is:
 3. extract reusable runner conformance helpers;
 4. implement a fake ACP server before wiring real OpenClaw;
 5. add shared approval, workspace-boundary, tool-surface, and artifact bridges;
-6. implement `openclaw-acp` behind feature flag, readiness, and conformance gates;
-7. implement `codex-app-server` as a dedicated adapter, not ACP by default;
-8. write a Hermes decision record before adding any Hermes runner id;
-9. expose picker options only for enabled, healthy, conformant runners.
+6. land P14/P15 sandbox policy and hydration observability before any SDK-backed runner;
+7. implement `openclaw-acp` behind feature flag, readiness, and conformance gates;
+8. implement `codex-app-server` as a dedicated adapter, not ACP by default;
+9. refresh the OpenAI Agents SDK adapter decision before adding any SDK runner id;
+10. write a Hermes decision record before adding any Hermes runner id;
+11. expose picker options only for enabled, healthy, conformant runners.
 
 ## Security Requirements
 

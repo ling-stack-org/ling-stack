@@ -14,6 +14,9 @@ export type RunnerReadinessBlockerCode =
   | "sandbox_backend_unverified"
   | "sandbox_artifact_import_unverified"
   | "sandbox_network_policy_unverified"
+  | "sandbox_policy_unverified"
+  | "sandbox_os_unsupported"
+  | "sandbox_execution_wrapper_missing"
   | "adapter_not_implemented";
 
 export interface RunnerReadinessBlocker {

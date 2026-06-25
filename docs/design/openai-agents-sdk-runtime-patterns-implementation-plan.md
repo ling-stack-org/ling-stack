@@ -18,6 +18,14 @@ Implement Ling-owned contracts inspired by OpenAI Agents SDK:
 - tool namespaces and deferred loading;
 - sandbox profiles, session refs, and artifact import boundaries.
 
+Current priority:
+
+- short term: implement the Ling-owned hardening slices P14 and P15;
+- medium term: keep the OpenAI Agents SDK adapter as a deferred design record, not an
+  active implementation slice;
+- later: revisit SDK adapter implementation only after P14/P15 evidence and runner
+  conformance make the boundary enforceable.
+
 Out of scope:
 
 - replacing Pi as the default runner;
@@ -25,6 +33,7 @@ Out of scope:
 - enabling a hosted sandbox provider;
 - changing provider preset semantics;
 - allowing any runner to bypass Ling approval policy.
+- implementing an OpenAI Agents SDK-backed runner in the short-term hardening slice.
 
 ## Implementation Principles
 
@@ -840,6 +849,11 @@ direction is:
 4. keep Desktop compatibility as an API/control-surface constraint until Web product
    surfaces settle.
 
+This follow-up plan is the short-term implementation track. It should land before any
+OpenAI Agents SDK adapter spike. The medium-term SDK record lives in
+[OpenAI Agents SDK Adapter Decision Record](openai-agents-sdk-adapter-decision-record.md)
+and exists to keep later work bounded, not to start it now.
+
 ### P14: Platform-Native Sandbox Policy And Evidence
 
 Purpose: turn P13's platform-native doctor/run-plan foundation into a product-ready local
@@ -884,6 +898,34 @@ Work:
    child-process/tool-execution wrapper. Passing a sandbox DTO into an in-process runner is
    readiness information, not isolation.
 
+Implementation package:
+
+```text
+P14 input
+  -> platformNative doctor/run-plan from P13
+  -> product policy profile
+  -> backend/profile conformance evidence
+  -> runner readiness blockers
+  -> Web/API diagnostic summaries
+```
+
+Likely files:
+
+- `packages/core/src/sandbox-types.ts`
+- `packages/daemon/src/runtime/runner-readiness.ts`
+- `packages/daemon/src/runtime/sandbox/platform-native.ts`
+- `packages/daemon/test/platform-native-sandbox.test.mjs`
+- `packages/daemon/test/runner-readiness.test.mjs`
+- `apps/web/src/features/settings` or the existing runtime runner settings panel
+
+Test requirements:
+
+- unit tests for every new policy profile and blocker code;
+- macOS run-plan test for disabled network and artifact import roots;
+- unsupported Linux/Windows test that returns explicit fail-closed blockers;
+- readiness tests proving `sandbox_execution_wrapper_missing` blocks runner binding;
+- Web/API fixture test showing bounded evidence without raw manifests or secret refs.
+
 Acceptance:
 
 - doctor output names the selected policy profile and every blocking reason;
@@ -898,6 +940,7 @@ Non-goal:
 - no hosted sandbox provider;
 - no Desktop shell implementation;
 - no claim that embedded Pi is OS-isolated until the process wrapper lands.
+- no OpenAI Agents SDK adapter implementation.
 
 ### P15: Runner Hydration Defaulting And Observability
 
@@ -944,6 +987,38 @@ Rollout:
    - daemon hydration failure: continue the run without hydrated schemas when possible;
    - execution request for an unhydrated or denied tool: reject before approval.
 
+Implementation package:
+
+```text
+runner turn starts
+  -> compact tool catalog
+  -> hydration request
+  -> daemon policy + budget + idempotency check
+  -> runner-only sanitized schema DTO
+  -> bounded runtime evidence
+  -> later tool execution still passes approval policy
+```
+
+Likely files:
+
+- `packages/core/src/tool-surface-types.ts`
+- `packages/contracts/src/tool-surfaces.ts`
+- `packages/runner-pi/src/types.ts`
+- `packages/runner-pi/src/adapter.ts`
+- `packages/daemon/src/features/runs/tool-surfaces.ts`
+- `packages/daemon/src/runtime/runner-conformance.ts`
+- `packages/daemon/test/runner-conformance.test.mjs`
+- existing Web run evidence or runtime diagnostics components
+
+Test requirements:
+
+- conformance test that hydration cannot bypass `ask` execution approval;
+- denied hydrated descriptor test that stays model-visible but not executable;
+- duplicate idempotency test for retrying the same hydration request;
+- budget rejection test that emits bounded evidence and no schema;
+- unsupported-runner test that omits hydration tools and keeps the old prompt path;
+- Web/API evidence test that stores descriptor ids or hashes, never raw schemas.
+
 Acceptance:
 
 - hydration defaulting cannot bypass `allow`/`ask`/`deny`;
@@ -951,6 +1026,28 @@ Acceptance:
 - successful hydration is idempotent and evidence-bounded;
 - runner prompt size improves for large tool catalogs;
 - disabling hydration returns to the existing non-hydrated runner behavior.
+
+Non-goal:
+
+- no SDK-backed runner receives hydrated schemas until it has its own conformance-backed
+  adapter.
+
+### Medium-Term SDK Adapter Record
+
+The medium-term SDK work is intentionally deferred. Keep the record in
+[OpenAI Agents SDK Adapter Decision Record](openai-agents-sdk-adapter-decision-record.md)
+current enough that a future implementation can start with the right gates, but do not
+turn it into an implementation slice until P14/P15 have landed.
+
+The future decision is:
+
+- use a dedicated adapter or sidecar only if the SDK exposes a session lifecycle, tool
+  events, approval interception, artifacts, cancellation, workspace boundary, and resume
+  handles;
+- keep Pi as the default runner;
+- keep SDK session state opaque;
+- route all approval, artifact, workspace, hydration, and trace data through Ling;
+- keep hosted SDK sandbox providers as a separate later decision.
 
 ### Desktop Compatibility Boundary
 

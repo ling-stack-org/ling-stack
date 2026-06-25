@@ -6,6 +6,7 @@ import {
   evaluateLingSandboxReadiness,
   type LingSandboxManifest,
   type LingSandboxNetworkPolicy,
+  type LingSandboxPolicyProfileId,
   type LingSandboxProfile,
   type LingSandboxReadinessReport,
   type LingSandboxSessionRef,
@@ -51,6 +52,8 @@ export interface PlatformNativeSandboxDiagnostic {
     | "platform_native_disabled"
     | "platform_native_unsupported_platform"
     | "platform_native_enforcer_missing"
+    | "platform_native_policy_unverified"
+    | "platform_native_execution_wrapper_missing"
     | "platform_native_network_policy_unimplemented"
     | "platform_native_artifact_import_root_invalid";
   readonly message: string;
@@ -84,6 +87,7 @@ export async function checkPlatformNativeSandboxBackend(
     });
   }
 
+  const policyProfileId: LingSandboxPolicyProfileId = config.policyProfileId ?? "read_only";
   const networkPolicy: LingSandboxNetworkPolicy = config.networkPolicy ?? { mode: "disabled" };
   const networkPolicyVerified = networkPolicy.mode === "disabled";
   if (!networkPolicyVerified) {
@@ -103,26 +107,55 @@ export async function checkPlatformNativeSandboxBackend(
   }
 
   const enforcement = await resolveEnforcement(platform, config, executableProbe);
+  let enforcerExecutableVerified = false;
   if (enforcement.kind === "unsupported") {
     diagnostics.push({
       code: "platform_native_unsupported_platform",
       message: `Platform-native sandbox enforcement is not implemented for ${platform}.`,
     });
     backendVerified = false;
-  } else if (!(await executableProbe(enforcement.executable))) {
+  } else {
+    enforcerExecutableVerified = await executableProbe(enforcement.executable);
+    if (!enforcerExecutableVerified) {
+      diagnostics.push({
+        code: "platform_native_enforcer_missing",
+        message: `Platform-native sandbox executable is unavailable: ${enforcement.executable}`,
+      });
+      backendVerified = false;
+    }
+  }
+
+  const policyVerified = config.policyVerified === true;
+  if (!policyVerified) {
     diagnostics.push({
-      code: "platform_native_enforcer_missing",
-      message: `Platform-native sandbox executable is unavailable: ${enforcement.executable}`,
+      code: "platform_native_policy_unverified",
+      message: `Platform-native sandbox policy profile is not verified: ${policyProfileId}`,
     });
-    backendVerified = false;
+  }
+
+  const executionWrapperVerified = config.executionWrapperVerified === true && enforcerExecutableVerified;
+  if (!executionWrapperVerified) {
+    diagnostics.push({
+      code: "platform_native_execution_wrapper_missing",
+      message: "Platform-native sandbox runner execution wrapper is not verified.",
+    });
   }
 
   const profile = buildPlatformNativeSandboxProfile({
     backendVerified,
+    policyProfileId,
+    policyVerified,
+    hostOsSupported: enforcement.kind !== "unsupported",
     artifactImportRoot,
     artifactImportVerified: artifactImportRootValid,
     networkPolicy,
     networkPolicyVerified,
+    executionWrapper: {
+      kind: enforcement.kind === "macos_sandbox_exec" ? "macos_sandbox_exec" : "none",
+      verified: executionWrapperVerified,
+      ...(enforcement.kind === "macos_sandbox_exec" ? { executableRef: enforcement.executable } : {}),
+      ...(config.executionWrapperEvidenceRef ? { evidenceRef: config.executionWrapperEvidenceRef } : {}),
+    },
   });
   const manifest = buildPlatformNativeSandboxManifest({
     profile,
@@ -194,16 +227,23 @@ async function resolveEnforcement(
 
 function buildPlatformNativeSandboxProfile(input: {
   readonly backendVerified: boolean;
+  readonly policyProfileId: LingSandboxPolicyProfileId;
+  readonly policyVerified: boolean;
+  readonly hostOsSupported: boolean;
   readonly artifactImportRoot: string;
   readonly artifactImportVerified: boolean;
   readonly networkPolicy: LingSandboxNetworkPolicy;
   readonly networkPolicyVerified: boolean;
+  readonly executionWrapper: LingSandboxProfile["executionWrapper"];
 }): LingSandboxProfile {
   return {
     schemaVersion: 1,
     id: DEFAULT_PROFILE_ID,
     displayName: "Platform-native local sandbox",
     backendKind: "platform_native",
+    policyProfileId: input.policyProfileId,
+    policyVerified: input.policyVerified,
+    hostOsSupported: input.hostOsSupported,
     capabilities: [
       "process_isolation",
       "filesystem_isolation",
@@ -219,6 +259,7 @@ function buildPlatformNativeSandboxProfile(input: {
       importRoot: input.artifactImportRoot,
       requireRedaction: true,
     },
+    executionWrapper: input.executionWrapper,
   };
 }
 

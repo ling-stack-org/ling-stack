@@ -111,6 +111,11 @@ test("tool load requests materialize catalog summary without changing execution 
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "tool_namespace_materialized");
     assert.equal(events[0].attemptId, fixture.attemptId);
+    assert.deepEqual(events[0].data.descriptorIds, response.materialization.toolIds);
+    assert.equal(events[0].data.descriptorSchemaHashes.length, 2);
+    assert.equal(events[0].data.descriptorSchemaHashes.every((hash) => typeof hash === "string" && hash.length === 64), true);
+    assert.equal(events[0].data.hydrationStatus, "accepted");
+    assert.equal(events[0].data.schemaReturnedToRunner, false);
     assert.deepEqual(events[0].data.executionApprovalSummary, { allow: 1, ask: 1, deny: 0 });
     assert.equal(events[0].data.reasonProvided, true);
     assert.equal(events[0].data.idempotencyKeyProvided, true);
@@ -154,6 +159,10 @@ test("runner tool hydration returns runner-only tool schemas and bounded runtime
     assert.equal(response.ok, true);
     assert.equal(response.materialization.namespaceId, "mcp:mcp_files");
     assert.deepEqual(response.materialization.toolIds, ["mcp:mcp_files:read_file", "mcp:mcp_files:write_file"]);
+    assert.equal(response.hydration.status, "accepted");
+    assert.equal(response.hydration.schemaReturnedToRunner, true);
+    assert.equal(response.hydration.descriptorSchemaHashes.length, 2);
+    assert.equal(response.hydration.descriptorSchemaHashes.every((hash) => typeof hash === "string" && hash.length === 64), true);
     const readFile = response.tools.find((tool) => tool.id === "mcp:mcp_files:read_file");
     assert.deepEqual(readFile.inputSchema.properties.path, { type: "string" });
     assert.equal(readFile.executionApproval, "allow");
@@ -164,8 +173,61 @@ test("runner tool hydration returns runner-only tool schemas and bounded runtime
     const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 });
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "tool_namespace_materialized");
+    assert.equal(events[0].data.schemaReturnedToRunner, false);
+    assert.deepEqual(events[0].data.descriptorSchemaHashes, response.hydration.descriptorSchemaHashes);
     const runtimeEventJson = JSON.stringify(events[0].data);
     assert.doesNotMatch(runtimeEventJson, /inputSchema|properties|runner-only-secret|runner-load-mcp-files-once/);
+  } finally {
+    store.close?.();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runner tool hydration writes bounded rejection evidence without schemas", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-tool-hydration-rejected-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const fixture = seedToolSurfaceFixture(store, cwd);
+    seedManyToolServer(store, 65);
+    const run = store.getRun(fixture.runId);
+    const response = hydrateRunnerToolSurface({
+      store,
+      runnerRegistry: {
+        list: () => [{
+          id: "pi",
+          displayName: "Pi",
+          status: "enabled",
+          supportedTools: ["read", "grep", "find", "ls"],
+        }],
+      },
+      run,
+      request: {
+        runId: fixture.runId,
+        runnerAttemptId: fixture.attemptId,
+        scope: { kind: "namespace", namespaceId: "mcp:mcp_many" },
+        reason: "need schema for rejected-secret",
+        idempotencyKey: "runner-load-too-many-tools",
+      },
+      now: "2026-06-19T04:20:00.000Z",
+    });
+
+    assert.equal(response.ok, false);
+    assert.equal(response.code, "tool_materialization_over_budget");
+    assert.equal(response.hydration.status, "rejected");
+    assert.equal(response.hydration.schemaReturnedToRunner, false);
+    assert.deepEqual(response.hydration.descriptorSchemaHashes, []);
+    assert.equal(response.hydration.budgetDecision, "over_budget");
+
+    const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, "tool_hydration_rejected");
+    assert.equal(events[0].data.rejectionCode, "tool_materialization_over_budget");
+    assert.equal(events[0].data.schemaReturnedToRunner, false);
+    assert.equal(events[0].data.budgetDecision, "over_budget");
+    assert.equal(events[0].data.idempotencyKeyProvided, true);
+    assert.equal(typeof events[0].data.idempotencyDigest, "string");
+    const runtimeEventJson = JSON.stringify(events[0].data);
+    assert.doesNotMatch(runtimeEventJson, /inputSchema|properties|rejected-secret|runner-load-too-many-tools|schema-secret-marker/);
   } finally {
     store.close?.();
     await rm(cwd, { recursive: true, force: true });
