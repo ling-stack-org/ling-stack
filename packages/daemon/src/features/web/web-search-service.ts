@@ -44,36 +44,52 @@ interface ProviderWebSearchConfig {
 }
 
 interface ProviderWebSearchConfigResolution {
-  readonly config?: ProviderWebSearchConfig;
+  readonly configs: readonly ProviderWebSearchConfig[];
   readonly blockedReason?: string;
 }
 
 export async function runProviderWebSearch(input: ProviderWebSearchServiceInput): Promise<ProviderWebSearchServiceResult> {
-  const resolution = resolveProviderWebSearchConfig(input);
-  if (!resolution.config) {
+  const resolution = resolveProviderWebSearchConfigs(input);
+  if (resolution.configs.length === 0) {
     return {
       status: "blocked",
       reason: resolution.blockedReason ?? "Current selected Ling provider does not support realtime web search.",
     };
   }
-  try {
-    const result = await resolution.config.adapter.search({
-      providerPreset: resolution.config.providerPreset,
-      apiKey: resolution.config.apiKey,
-      query: input.query,
-      fetch: input.fetch,
-      timeoutMs: input.timeoutMs ?? providerWebSearchTimeoutMs(resolution.config.providerPreset),
-    });
-    return { status: "available", result };
-  } catch (error) {
+  let fallbackResult: WebSearchResult | undefined;
+  const failedReasons: string[] = [];
+  for (const config of resolution.configs) {
+    try {
+      const result = await config.adapter.search({
+        providerPreset: config.providerPreset,
+        apiKey: config.apiKey,
+        query: input.query,
+        fetch: input.fetch,
+        timeoutMs: input.timeoutMs ?? providerWebSearchTimeoutMs(config.providerPreset),
+      });
+      if (result.sources.length > 0) {
+        return { status: "available", result };
+      }
+      fallbackResult ??= result;
+      failedReasons.push(`${config.providerPreset.displayName} returned no citation/source metadata`);
+    } catch (error) {
+      failedReasons.push(`${config.adapter.displayName} failed for ${config.providerPreset.displayName}: ${safeErrorMessage(error)}`);
+    }
+  }
+  if (fallbackResult) {
     return {
-      status: "blocked",
-      reason: `${resolution.config.adapter.displayName} failed: ${safeErrorMessage(error)}`,
+      status: "available",
+      result: fallbackResult,
+      reason: failedReasons.join("; "),
     };
   }
+  return {
+    status: "blocked",
+    reason: failedReasons.join("; ") || "web_search backend returned no usable result.",
+  };
 }
 
-function resolveProviderWebSearchConfig(input: {
+function resolveProviderWebSearchConfigs(input: {
   readonly providerPreset?: ProviderPreset;
   readonly webSearchProviderPresets?: readonly ProviderPreset[];
   readonly providerStore?: ProviderWebSearchSecretStore;
@@ -82,9 +98,10 @@ function resolveProviderWebSearchConfig(input: {
   const unsupportedProviderReason = "No Ling global web_search backend is configured. Select or add an enabled provider with the web_search capability and a Ling web-search adapter in model settings; Ling will not bypass model settings with env:OPENAI_API_KEY.";
   const candidates = collectWebSearchProviderCandidates(input.webSearchProviderPresets, input.providerPreset);
   if (candidates.length === 0) {
-    return { blockedReason: unsupportedProviderReason };
+    return { configs: [], blockedReason: unsupportedProviderReason };
   }
 
+  const configs: ProviderWebSearchConfig[] = [];
   const missingKeyNames: string[] = [];
   const unsupportedNames: string[] = [];
   for (const provider of candidates) {
@@ -101,26 +118,30 @@ function resolveProviderWebSearchConfig(input: {
       missingKeyNames.push(provider.displayName);
       continue;
     }
-    return {
-      config: {
-        adapter,
-        providerPreset: provider,
-        apiKey: providerSecret.value,
-      },
-    };
+    configs.push({
+      adapter,
+      providerPreset: provider,
+      apiKey: providerSecret.value,
+    });
+  }
+
+  if (configs.length > 0) {
+    return { configs };
   }
 
   if (missingKeyNames.length > 0) {
     return {
+      configs: [],
       blockedReason: `Ling global web_search backend key is missing for: ${missingKeyNames.join(", ")}.`,
     };
   }
   if (unsupportedNames.length > 0) {
     return {
+      configs: [],
       blockedReason: "Configured Ling global web_search providers do not have a matching web-search adapter protocol yet.",
     };
   }
-  return { blockedReason: unsupportedProviderReason };
+  return { configs: [], blockedReason: unsupportedProviderReason };
 }
 
 function collectWebSearchProviderCandidates(

@@ -3,6 +3,7 @@ import type {
   SecretResolver,
 } from "@ling-stack/core";
 import type { WebSearchResult } from "./web-search-adapters.js";
+import { runPublicWebSearch } from "./web-search-adapters.js";
 import {
   runProviderWebSearch,
   type ProviderWebSearchSecretStore,
@@ -233,7 +234,7 @@ export function extractPublicUrls(text: string): string[] {
 async function runPlannedProviderWebSearch(
   input: BuildWebEvidenceContextInput,
   sourceText: string,
-): Promise<{ readonly status: "available" | "blocked"; readonly result?: WebSearchResult; readonly reason?: string }> {
+): Promise<{ readonly status: "available" | "degraded" | "blocked"; readonly result?: WebSearchResult; readonly reason?: string }> {
   const queries = planWebSearchQueries(sourceText);
   if (queries.length === 0) {
     return { status: "blocked", reason: "web_search query is empty." };
@@ -261,8 +262,49 @@ async function runPlannedProviderWebSearch(
       query,
       fetch: input.fetch,
     });
-    if (searchContext.status === "blocked") {
+    if (searchContext.result) {
+      const result = {
+        ...searchContext.result,
+        queries: [...attemptedQueries],
+      };
+      if (result.sources.length > 0) {
+        emitWebEvidenceProgress(input.onProgress, {
+          type: "web_search_completed",
+          query,
+          attempt: index + 1,
+          total: queries.length,
+          status: "available",
+          sourceCount: result.sources.length,
+        });
+        return { status: "available", result };
+      }
+      fallbackResult = result;
+      lastBlockedReason = searchContext.reason ?? WEB_SEARCH_DEGRADED_REASON;
+    } else {
       lastBlockedReason = searchContext.reason;
+    }
+
+    const publicSearchContext = await runPublicSearchFallback({
+      query,
+      attemptedQueries,
+      fetch: input.fetch,
+    });
+    if (publicSearchContext.result && publicSearchContext.result.sources.length > 0) {
+      emitWebEvidenceProgress(input.onProgress, {
+        type: "web_search_completed",
+        query,
+        attempt: index + 1,
+        total: queries.length,
+        status: "available",
+        sourceCount: publicSearchContext.result.sources.length,
+        reason: searchContext.reason,
+      });
+      return { status: "available", result: publicSearchContext.result };
+    }
+    if (publicSearchContext.result) {
+      fallbackResult = fallbackResult ?? publicSearchContext.result;
+    }
+    if (searchContext.status === "blocked" && !publicSearchContext.result) {
       emitWebEvidenceProgress(input.onProgress, {
         type: "web_search_completed",
         query,
@@ -270,11 +312,11 @@ async function runPlannedProviderWebSearch(
         total: queries.length,
         status: "blocked",
         sourceCount: 0,
-        reason: searchContext.reason,
+        reason: publicSearchContext.reason ?? searchContext.reason,
       });
-      break;
+      continue;
     }
-    if (!searchContext.result) {
+    if (!searchContext.result && !publicSearchContext.result) {
       emitWebEvidenceProgress(input.onProgress, {
         type: "web_search_completed",
         query,
@@ -282,24 +324,9 @@ async function runPlannedProviderWebSearch(
         total: queries.length,
         status: "degraded",
         sourceCount: 0,
-        reason: "web_search backend returned no usable result.",
+        reason: publicSearchContext.reason ?? searchContext.reason ?? "web_search backend returned no usable result.",
       });
       continue;
-    }
-    const result = {
-      ...searchContext.result,
-      queries: [...attemptedQueries],
-    };
-    if (result.sources.length > 0) {
-      emitWebEvidenceProgress(input.onProgress, {
-        type: "web_search_completed",
-        query,
-        attempt: index + 1,
-        total: queries.length,
-        status: "available",
-        sourceCount: result.sources.length,
-      });
-      return { status: "available", result };
     }
     emitWebEvidenceProgress(input.onProgress, {
       type: "web_search_completed",
@@ -308,17 +335,39 @@ async function runPlannedProviderWebSearch(
       total: queries.length,
       status: "degraded",
       sourceCount: 0,
-      reason: WEB_SEARCH_DEGRADED_REASON,
+      reason: publicSearchContext.reason ?? searchContext.reason ?? WEB_SEARCH_DEGRADED_REASON,
     });
-    fallbackResult = result;
   }
   if (fallbackResult) {
-    return { status: "available", result: fallbackResult, reason: WEB_SEARCH_DEGRADED_REASON };
+    return { status: "degraded", result: fallbackResult, reason: lastBlockedReason ?? WEB_SEARCH_DEGRADED_REASON };
   }
   return {
     status: "blocked",
     reason: lastBlockedReason ?? "web_search backend returned no usable result.",
   };
+}
+
+async function runPublicSearchFallback(input: {
+  readonly query: string;
+  readonly attemptedQueries: readonly string[];
+  readonly fetch?: typeof globalThis.fetch;
+}): Promise<{ readonly result?: WebSearchResult; readonly reason?: string }> {
+  try {
+    const result = await runPublicWebSearch({
+      query: input.query,
+      fetch: input.fetch,
+    });
+    return {
+      result: {
+        ...result,
+        queries: [...input.attemptedQueries],
+      },
+    };
+  } catch (error) {
+    return {
+      reason: `Ling public web search failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 async function readPublicUrlsForContext(input: {

@@ -19,6 +19,7 @@ export {
   runGoogleInteractionsWebSearch,
   runOpenAiChatCompletionsWebSearch,
   runOpenAiWebSearch,
+  runPublicWebSearch,
 } from "../web/web-search-adapters.js";
 export {
   extractPublicUrls,

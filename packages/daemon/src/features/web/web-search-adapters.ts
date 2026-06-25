@@ -7,6 +7,7 @@ const DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-5.5";
 const WEB_SEARCH_MAX_OUTPUT_TOKENS = 900;
 const WEB_SEARCH_SUMMARY_CHARS = 2_400;
 const WEB_SEARCH_MAX_SOURCES = 8;
+const PUBLIC_SEARCH_TIMEOUT_MS = 12_000;
 
 type ProviderWebSearchProtocol =
   | "responses-web-search"
@@ -45,6 +46,12 @@ export interface GoogleInteractionsWebSearchRequest {
   readonly model: string;
   readonly query: string;
   readonly headers?: Record<string, string>;
+  readonly fetch?: typeof globalThis.fetch;
+  readonly timeoutMs?: number;
+}
+
+export interface PublicWebSearchRequest {
+  readonly query: string;
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
 }
@@ -278,6 +285,39 @@ export async function runGoogleInteractionsWebSearch(input: GoogleInteractionsWe
     query: input.query,
     text: extractGoogleInteractionsText(payload).slice(0, WEB_SEARCH_SUMMARY_CHARS),
     sources: extractGoogleSources(payload).slice(0, WEB_SEARCH_MAX_SOURCES),
+  };
+}
+
+export async function runPublicWebSearch(input: PublicWebSearchRequest): Promise<WebSearchResult> {
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  if (!fetchImpl) {
+    throw new Error("fetch is not available in this runtime.");
+  }
+  const endpoint = `https://r.jina.ai/http://duckduckgo.com/html/?q=${encodeURIComponent(input.query)}`;
+  const response = await fetchImpl(endpoint, {
+    method: "GET",
+    headers: {
+      Accept: "text/plain, text/markdown;q=0.9, */*;q=0.8",
+      "User-Agent": "Ling-Stack-Web-Search/1.0",
+    },
+    signal: AbortSignal.timeout(input.timeoutMs ?? PUBLIC_SEARCH_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Public web search returned HTTP ${response.status}${await safeReadErrorBody(response)}`);
+  }
+
+  const markdown = await response.text();
+  const sources = extractPublicSearchSources(markdown).slice(0, WEB_SEARCH_MAX_SOURCES);
+  return {
+    query: input.query,
+    text: renderPublicSearchSummary(input.query, sources),
+    sources,
+    provider: {
+      adapterId: "ling-public-web-search",
+      providerPresetId: "ling-public-web-search",
+      displayName: "Ling public web search",
+    },
   };
 }
 
@@ -549,6 +589,109 @@ function extractGoogleSources(payload: unknown): WebSource[] {
   }
   sources.push(...extractTopLevelSources(payload));
   return uniqueSources(sources);
+}
+
+function extractPublicSearchSources(markdown: string): WebSource[] {
+  const sources: WebSource[] = [];
+  const sections = markdown.split(/\n(?=## \[)/u);
+  for (const section of sections) {
+    const lines = section.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+    const heading = lines[0] ?? "";
+    const headingMatch = /^## \[(.+?)\]\((.+?)\)$/u.exec(heading);
+    if (!headingMatch) {
+      continue;
+    }
+    const url = unwrapDuckDuckGoUrl(headingMatch[2] ?? "");
+    if (!isPublicHttpUrl(url)) {
+      continue;
+    }
+    const snippet = lines
+      .slice(1)
+      .map((line) => parsePublicSearchSnippetLine(line, url))
+      .find((value) => value && value.length > 0);
+    sources.push({
+      url,
+      title: cleanMarkdownText(headingMatch[1] ?? ""),
+      snippet,
+    });
+  }
+  return uniqueSources(sources);
+}
+
+function parsePublicSearchSnippetLine(line: string, sourceUrl: string): string | undefined {
+  if (!line || line.includes("![Image") || /duckduckgo\.com\/ip3\//u.test(line)) {
+    return undefined;
+  }
+  const linkMatch = /^\[(.+?)\]\((.+?)\)$/u.exec(line);
+  if (!linkMatch) {
+    return undefined;
+  }
+  const url = unwrapDuckDuckGoUrl(linkMatch[2] ?? "");
+  if (url !== sourceUrl) {
+    return undefined;
+  }
+  const text = cleanMarkdownText(linkMatch[1] ?? "");
+  if (!text || looksLikeBareHost(text)) {
+    return undefined;
+  }
+  return text.slice(0, 420);
+}
+
+function renderPublicSearchSummary(query: string, sources: readonly WebSource[]): string {
+  if (sources.length === 0) {
+    return `No public search results with source URLs were returned for: ${query}`;
+  }
+  return [
+    `Public search results for: ${query}`,
+    ...sources.map((source, index) =>
+      `${index + 1}. ${source.title ?? source.url} - ${source.snippet ?? source.url}`
+    ),
+  ].join("\n");
+}
+
+function unwrapDuckDuckGoUrl(value: string): string {
+  const trimmed = value.trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.hostname === "duckduckgo.com" && parsed.pathname === "/l/") {
+      const target = parsed.searchParams.get("uddg");
+      if (target) {
+        return target;
+      }
+    }
+  } catch {
+    return trimmed;
+  }
+  return trimmed;
+}
+
+function isPublicHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname !== "duckduckgo.com" && !hostname.endsWith(".duckduckgo.com");
+  } catch {
+    return false;
+  }
+}
+
+function cleanMarkdownText(value: string): string {
+  return value
+    .replace(/\*\*/gu, "")
+    .replace(/!\[[^\]]*\]\([^)]+\)/gu, "")
+    .replace(/\[[^\]]*\]\([^)]+\)/gu, "")
+    .replace(/&amp;/gu, "&")
+    .replace(/&quot;/gu, "\"")
+    .replace(/&#39;/gu, "'")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function looksLikeBareHost(value: string): boolean {
+  return /^[a-z0-9.-]+\.[a-z]{2,}(?:\/\S*)?$/iu.test(value.trim());
 }
 
 function extractTopLevelSources(payload: unknown): WebSource[] {

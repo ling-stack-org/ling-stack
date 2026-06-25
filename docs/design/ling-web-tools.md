@@ -4,7 +4,7 @@
 
 Ling Agent should answer questions that require current public web evidence without pretending that Codex-only tools are part of the Ling runtime. Like Codex, Ling treats `web_search`, `open_url`, and future `browser` as host/global tools owned by the daemon. The selected chat model provider does not need to implement web access; Ling gathers web evidence first, then passes bounded evidence to the current model as context.
 
-- `web_search`: a Ling global tool backed by a configured web-search backend provider. The backend may be OpenAI Responses, xAI/Grok, Gemini grounding, an OpenAI-compatible relay with a supported search protocol, or a future search API backend.
+- `web_search`: a Ling global tool backed by a configured web-search backend provider when one can return citations, with a host-owned public search fallback when model-provider search cannot produce source URLs.
 - `open_url` / `read_url`: public URL body extraction for explicit URL-reading requests.
 - `browser`: deferred; interactive browser control requires a separate session, approval, and audit model.
 
@@ -21,9 +21,11 @@ flowchart LR
   WebIntent -->|search intent| Evidence["Daemon web evidence service"]
   Evidence --> Registry["Global web tool registry"]
   Registry --> SearchBackend["Configured web_search backend"]
+  Registry --> PublicSearch["Ling public search fallback"]
   WebIntent -->|URL read intent| Evidence
   Evidence --> ReadUrl["Public URL reader"]
   SearchBackend --> Context["Ling web context"]
+  PublicSearch --> Context
   ReadUrl --> Context
   Context --> Prompt["Reply prompt"]
   Prompt --> Runner["Configured Ling runner and chat provider"]
@@ -33,7 +35,7 @@ flowchart LR
 The shared implementation lives under `packages/daemon/src/features/web/`:
 
 - `web-search-adapters.ts`: backend protocol adapters and normalized `WebSearchResult`.
-- `web-search-service.ts`: global backend candidate resolution, local/env/keychain secret lookup, adapter dispatch, and sanitized failures.
+- `web-search-service.ts`: global backend candidate resolution, local/env/keychain secret lookup, adapter dispatch, multi-backend failover, and sanitized failures.
 - `web-evidence-service.ts`: global intent detection, URL reading, evidence prompt rendering, and normalized metadata for `search` and `readUrls`.
 
 The evidence service keeps the search phase bounded. It can expand a freshness request into a small planned query set, but it must stay deterministic and capped. The planner is a helper, not a second search engine.
@@ -69,10 +71,12 @@ Global tool contract:
 - Do not fall back to a standalone `env:OPENAI_API_KEY` unless there is an explicit provider preset using that ref. Real-time search must be explained as a Ling global tool backend in model settings, not as a hidden daemon key.
 - Never log or render the plaintext key.
 - If search fails, no backend exists, or the backend key is missing, continue the reply with a web-context blocked reason instead of fabricating current facts.
-- If search returns a summary but no source URLs, continue the reply as `degraded` and do not treat the summary as current evidence.
+- If provider search returns a summary but no source URLs, try the host-owned public fallback before marking the turn `degraded`.
+- If neither provider search nor public fallback returns source URLs, continue the reply as `degraded` and do not treat the summary as current evidence.
 
 Current adapters:
 
+- `ling-public-web-search`: no-key host fallback that asks DuckDuckGo HTML search through Jina Reader and normalizes Markdown result links into URL sources/snippets. It is not model-side browsing and does not use any provider secret.
 - `openai-responses-web-search`: calls a Responses-compatible API with `tools: [{ "type": "web_search", "search_context_size": "low" }]` and requests `include: ["web_search_call.action.sources"]`. Official OpenAI Responses providers are recognized automatically; compatible providers such as xAI/Grok or private relays must set `compat.webSearch.protocol = "responses-web-search"`.
 - `openai-chat-completions-web-search`: calls a Chat Completions-compatible API with `web_search_options`. Providers must explicitly set `compat.webSearch.protocol = "openai-chat-completions-search"` because normal chat compatibility does not guarantee hosted search or citation annotations.
 - `google-interactions-web-search`: calls Gemini's Google Search grounding through the Gemini API Interactions endpoint. Providers must set `compat.webSearch.protocol = "google-interactions-search"`.
@@ -89,6 +93,7 @@ flowchart LR
   Agent --> ChatModel["Current chat provider"]
   GlobalTool --> Policy["Policy and evidence budget"]
   Policy --> Adapter["Backend adapter"]
+  Policy --> PublicFallback["Public search fallback"]
   Adapter --> OpenAI["OpenAI Responses web_search"]
   Adapter --> Grok["xAI/Grok Responses web_search"]
   Adapter --> Google["Gemini Google Search grounding"]
@@ -99,6 +104,7 @@ flowchart LR
   Google --> Evidence
   Perplexity --> Evidence
   Domestic --> Evidence
+  PublicFallback --> Evidence
   Evidence --> ChatModel
 ```
 
@@ -106,6 +112,7 @@ flowchart LR
 
 | Provider family | Ling adapter status | Why not implicit |
 | --- | --- | --- |
+| Ling public search fallback | Implemented: `ling-public-web-search` | No provider key. Host-side fallback obtains URL results when configured provider search returns no citations. |
 | OpenAI Responses | Implemented: `openai-responses-web-search` | Uses Responses `web_search` tool and source include shape. |
 | OpenAI-compatible Responses relay | Implemented when `compat.webSearch.protocol = "responses-web-search"` | The relay must expose `/responses` with OpenAI/xAI-style `web_search` and citations. |
 | OpenAI-compatible chat/completions relay | Implemented when `compat.webSearch.protocol = "openai-chat-completions-search"` | Normal chat compatibility does not guarantee `web_search_options` or URL annotations. |
@@ -127,7 +134,7 @@ Do not batch-enable every market provider by capability name alone. Add adapters
 
 OpenAI Codex does not depend on an arbitrary chat-completions relay to infer live search support. Its open-source implementation contributes a `web.run` tool from `codex-rs/ext/web-search`; that tool executor builds a `SearchClient`, executes search/open/find commands, emits started/completed web-search turn items, and returns search output as tool output. Separately, `codex-rs/core/src/tools/hosted_spec.rs` can expose a hosted web-search tool when `WebSearchMode` is cached/indexed/live instead of disabled.
 
-Ling should keep the same product boundary: the conversation host owns the global web tool and evidence trail, while model/provider adapters are only interchangeable search backends. Custom OpenAI-compatible, Grok, Gemini, domestic, and private chat models can all consume the resulting evidence as ordinary prompt context. A provider that accepts `web_search_options` but returns no citation/source metadata is not equivalent to Codex-style live search; Ling marks that turn `degraded` and shows the provider/reason inline in the conversation.
+Ling should keep the same product boundary: the conversation host owns the global web tool and evidence trail, while model/provider adapters are only interchangeable search backends. Custom OpenAI-compatible, Grok, Gemini, domestic, and private chat models can all consume the resulting evidence as ordinary prompt context. A provider that accepts `web_search_options` but returns no citation/source metadata is not equivalent to Codex-style live search; Ling first falls back to host public search, then marks the turn `degraded` only if no source-producing backend exists.
 
 ### Provider `compat.webSearch`
 
@@ -215,6 +222,7 @@ The pending AI message also shows the live web state in the conversation feed:
 The conversation page renders that field under the AI message in the existing message evidence disclosure:
 
 - `web_search` shows call status, query, provider adapter, and blocked reason when present.
+- `ling-public-web-search` means Ling host-side fallback found source URLs even though the selected model provider did not produce citations.
 - `degraded` and `blocked` web evidence opens by default because those states are user-actionable and otherwise look like the search never ran.
 - `degraded` reason names the backend/provider contract failure, such as a relay returning text without citation/source metadata.
 - `Sources` shows bounded citation URLs and snippets returned by the provider adapter.
@@ -242,17 +250,19 @@ The slice intentionally reuses the existing provider secret system:
 - Ling does not read a separate daemon-level `OPENAI_API_KEY` as a hidden fallback.
 - No new key is created.
 - No secret is persisted by this feature.
+- The public fallback uses no provider key and does not send configured model secrets.
 - Provider adapters may map Ling's generic `web_search` capability to vendor-specific search or grounding APIs, but each adapter must define its request and citation contract explicitly.
 
 ## Failure Modes
 
 | Failure | Behavior |
 | --- | --- |
-| No global `web_search` backend is configured | Inject blocked web-search status; reply should say Ling has no configured web-search backend. |
-| Backend provider declares `web_search` but no Ling adapter supports its protocol | Inject blocked web-search status; reply should say Ling has no web-search adapter for that backend yet. |
-| Backend provider key is missing | Inject blocked web-search status; reply should say the configured backend key is missing. |
+| No global `web_search` backend is configured | Try `ling-public-web-search`; if it returns no URLs, inject blocked/degraded web-search status. |
+| Backend provider declares `web_search` but no Ling adapter supports its protocol | Try `ling-public-web-search`; if it returns no URLs, inject blocked/degraded web-search status. |
+| Backend provider key is missing | Try `ling-public-web-search`; if it returns no URLs, report the configured backend key problem. |
 | OpenAI request fails | Inject sanitized HTTP/network error; continue ordinary reply. |
-| Backend returns text without citation/source metadata | Include summary, mark the event `degraded`, show provider/reason inline, and do not treat it as current evidence. |
+| Backend returns text without citation/source metadata | Try `ling-public-web-search`; if it returns URLs, mark evidence `available` with public sources; otherwise include summary, mark the event `degraded`, show provider/reason inline, and do not treat it as current evidence. |
+| Public fallback is blocked/rate-limited or returns no URLs | Mark the event `degraded`; do not claim realtime search success. |
 | URL points to private/local network | Block before fetch or after DNS/redirect check. |
 | URL body too large | Truncate to prompt budget. |
 | Unsupported content type | Block URL body extraction. |
