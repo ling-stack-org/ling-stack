@@ -1,6 +1,8 @@
 import type { KeyboardEventHandler, MouseEventHandler, PointerEventHandler, RefObject, ReactNode, UIEventHandler } from "react";
 import type { VirtualItem } from "@tanstack/react-virtual";
 import { ConversationEmptyState } from "./ConversationEmptyState.js";
+import { useConversationViewReconciliation } from "../view-store/use-conversation-view-reconciliation.js";
+import type { ConversationViewRetainKeys } from "../view-store/conversation-view-store.js";
 
 export interface ConversationVirtualFeedProps<TItem> {
   readonly scrollRef: RefObject<HTMLDivElement>;
@@ -20,6 +22,7 @@ export interface ConversationVirtualFeedProps<TItem> {
   readonly getItemKind: (item: TItem) => string;
   readonly renderItem: (item: TItem, index: number) => ReactNode;
   readonly measureElement: (node: HTMLDivElement | null) => void;
+  readonly viewStateRetainKeys?: ConversationViewRetainKeys;
   readonly onScroll?: UIEventHandler<HTMLDivElement>;
   readonly onUserScrollIntent?: () => void;
   readonly onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
@@ -51,6 +54,7 @@ export function ConversationVirtualFeed<TItem>({
   getItemKind,
   renderItem,
   measureElement,
+  viewStateRetainKeys,
   onScroll,
   onUserScrollIntent,
   onKeyDown,
@@ -63,6 +67,8 @@ export function ConversationVirtualFeed<TItem>({
   statusNode,
   latestButtonNode,
 }: ConversationVirtualFeedProps<TItem>): JSX.Element {
+  useConversationViewReconciliation(viewStateRetainKeys);
+
   const resolvedFeedClassName = [feedClassName, empty ? emptyFeedClassName : ""].filter(Boolean).join(" ");
   const showLoadingState = loading && items.length === 0;
 

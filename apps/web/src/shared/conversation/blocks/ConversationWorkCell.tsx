@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronDown, CircleAlert, Clock3, Eye, FileText, History, Image as ImageIcon, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
 import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
 import { ArtifactPreviewDrawer, type ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
+import { OperationBubble } from "./OperationBubble.js";
+import { OperationBubbleActions } from "./OperationBubbleActions.js";
+import { OperationBubbleBody } from "./OperationBubbleBody.js";
+import { OperationBubbleCopyAction } from "./OperationBubbleCopyAction.js";
+import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
+import { useConversationSpanView } from "../view-store/use-conversation-span-view.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -34,7 +40,6 @@ export function ConversationWorkCell({
   renderAgentAvatar,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
-  const [detailsCollapsed, setDetailsCollapsed] = useState(true);
   const [previewItem, setPreviewItem] = useState<ConversationArtifactStripItem | undefined>();
   const active = model.mode === "active";
   const fallbackRows: readonly ConversationWorkCellRow[] = model.operationRows.length === 0 && model.agentSpans.length === 0
@@ -67,7 +72,20 @@ export function ConversationWorkCell({
     groups: model.groups,
     evidenceLinks: model.evidenceLinks,
   };
-  const detailsExpanded = Boolean(evidenceSummary && !detailsCollapsed);
+  const detailsDisclosure = useConversationBlockView({
+    blockId: `operation-details:${model.id}`,
+    revisionKey: operationBubbleRevisionKey(model, evidenceSummary),
+    defaultExpanded: operationDetailsDefaultExpanded(model.status),
+  });
+  const detailsExpanded = Boolean(evidenceSummary && detailsDisclosure.expanded);
+  const bubbleCopyText = operationBubbleCopyText(model, evidenceSummary, statusLabel);
+  const shellExpandable = operationShellExpandable(model.status, active);
+  const shellDisclosure = useConversationBlockView({
+    blockId: operationShellViewKey(model.id),
+    revisionKey: operationShellRevisionKey(model, active),
+    defaultExpanded: !shellExpandable,
+  });
+  const shellExpanded = !shellExpandable || shellDisclosure.expanded;
 
   useEffect(() => {
     if (detailsExpanded && currentDetailsState.status === "not_loaded") {
@@ -76,8 +94,8 @@ export function ConversationWorkCell({
   }, [currentDetailsState.status, detailsExpanded, model.threadId, onLoadDetails]);
 
   function toggleDetails(): void {
-    const nextExpanded = detailsCollapsed;
-    setDetailsCollapsed(!detailsCollapsed);
+    const nextExpanded = !detailsExpanded;
+    detailsDisclosure.setExpanded(nextExpanded);
     if (nextExpanded && (currentDetailsState.status === "not_loaded" || currentDetailsState.status === "error")) {
       onLoadDetails?.(model.threadId);
     }
@@ -86,69 +104,94 @@ export function ConversationWorkCell({
   return (
     <article className={rootClassName} data-thread-id={model.threadId} data-operation-source={model.sourceKind} aria-label={statusLabel}>
       <span className="visually-hidden" role="status" aria-live="polite" aria-label={statusLabel} />
-      <div className="conversation-work-cell-body">
-        {agentSpans.length > 0 ? (
-          <AgentActivitySpans spans={agentSpans} renderAgentAvatar={renderAgentAvatar} />
-        ) : null}
+      <OperationBubble
+        status={model.status}
+        active={active}
+        sourceLabel={operationBubbleSourceLabel(model.sourceKind, t)}
+        statusLabel={operationBubbleStatusChipLabel(model.status, active, t)}
+        ariaLabel={statusLabel}
+        expandable={shellExpandable}
+        expanded={shellExpanded}
+        toggleLabel={shellExpanded ? t("Collapse operation") : t("Expand operation")}
+        onToggleExpanded={shellDisclosure.toggleExpanded}
+        actions={(
+          <OperationBubbleActions>
+            <OperationBubbleCopyAction
+              actionId={`operation-copy:${model.id}`}
+              text={bubbleCopyText}
+              label={t("Copy summary")}
+              className="conversation-operation-bubble-action"
+              iconSize={13}
+            />
+          </OperationBubbleActions>
+        )}
+      >
+        <OperationBubbleBody>
+          <div className="conversation-work-cell-body">
+            {agentSpans.length > 0 ? (
+              <AgentActivitySpans spans={agentSpans} renderAgentAvatar={renderAgentAvatar} />
+            ) : null}
 
-        {showOperationRows ? (
-          <ActiveTurnItemStream rows={operationRows} />
-        ) : null}
+            {showOperationRows ? (
+              <ActiveTurnItemStream rows={operationRows} />
+            ) : null}
 
-        {evidenceSummary ? (
-          <button
-            className={artifactStripSummary ? "conversation-work-cell-evidence-summary conversation-work-cell-artifact-strip" : "conversation-work-cell-evidence-summary"}
-            type="button"
-            onClick={toggleDetails}
-            aria-expanded={detailsExpanded}
-          >
-            <ChevronDown size={14} aria-hidden="true" />
-            <span>{evidenceSummary}</span>
-          </button>
-        ) : null}
+            {evidenceSummary ? (
+              <button
+                className={artifactStripSummary ? "conversation-work-cell-evidence-summary conversation-work-cell-artifact-strip" : "conversation-work-cell-evidence-summary"}
+                type="button"
+                onClick={toggleDetails}
+                aria-expanded={detailsExpanded}
+              >
+                <ChevronDown size={14} aria-hidden="true" />
+                <span>{evidenceSummary}</span>
+              </button>
+            ) : null}
 
-        {visibleArtifactItems.length > 0 ? (
-          <ConversationArtifactStrip
-            items={visibleArtifactItems}
-            cwd={cwd}
-            onPreview={setPreviewItem}
-          />
-        ) : null}
+            {visibleArtifactItems.length > 0 ? (
+              <ConversationArtifactStrip
+                items={visibleArtifactItems}
+                cwd={cwd}
+                onPreview={setPreviewItem}
+              />
+            ) : null}
 
-        {diagnosticsHandler ? (
-          <div className="conversation-work-cell-actions">
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={() => diagnosticsHandler(model.anchorRunId)}
-            >
-              <History size={13} />
-              {t("Diagnostics")}
-            </button>
+            {diagnosticsHandler ? (
+              <div className="conversation-work-cell-actions">
+                <button
+                  className="secondary-button compact-button"
+                  type="button"
+                  onClick={() => diagnosticsHandler(model.anchorRunId)}
+                >
+                  <History size={13} />
+                  {t("Diagnostics")}
+                </button>
+              </div>
+            ) : null}
+
+            {detailsExpanded ? (
+              <WorkCellDetails
+                state={currentDetailsState}
+                onRetry={() => onLoadDetails?.(model.threadId)}
+              />
+            ) : null}
+
+            <ArtifactPreviewDrawer
+              request={previewItem?.artifactId && cwd ? {
+                source: "artifact",
+                cwd,
+                artifactId: previewItem.artifactId,
+              } : undefined}
+              loadPreview={loadPreview}
+              openHref={previewItem?.href}
+              downloadHref={previewItem?.href}
+              downloadName={previewItem?.label}
+              variant="lightbox"
+              onClose={() => setPreviewItem(undefined)}
+            />
           </div>
-        ) : null}
-
-        {detailsExpanded ? (
-          <WorkCellDetails
-            state={currentDetailsState}
-            onRetry={() => onLoadDetails?.(model.threadId)}
-          />
-        ) : null}
-
-        <ArtifactPreviewDrawer
-          request={previewItem?.artifactId && cwd ? {
-            source: "artifact",
-            cwd,
-            artifactId: previewItem.artifactId,
-          } : undefined}
-          loadPreview={loadPreview}
-          openHref={previewItem?.href}
-          downloadHref={previewItem?.href}
-          downloadName={previewItem?.label}
-          variant="lightbox"
-          onClose={() => setPreviewItem(undefined)}
-        />
-      </div>
+        </OperationBubbleBody>
+      </OperationBubble>
     </article>
   );
 }
@@ -292,6 +335,102 @@ function buildEvidenceSummary(model: ConversationOperationCellViewModel, t: Tran
   return pieces.length > 0 ? pieces.join(" · ") : undefined;
 }
 
+function operationBubbleSourceLabel(
+  sourceKind: ConversationOperationCellViewModel["sourceKind"],
+  t: Translate,
+): string {
+  if (sourceKind === "workflow") {
+    return t("Workflow");
+  }
+  if (sourceKind === "collaboration_task") {
+    return t("Collaboration");
+  }
+  return t("Run");
+}
+
+function operationBubbleStatusChipLabel(
+  status: ConversationOperationCellViewModel["status"],
+  active: boolean,
+  t: Translate,
+): string {
+  if (status === "succeeded") {
+    return t("Done");
+  }
+  if (status === "failed") {
+    return t("Failed");
+  }
+  if (status === "blocked") {
+    return t("Blocked");
+  }
+  if (status === "waiting_for_approval") {
+    return t("Approval");
+  }
+  if (status === "cancelled" || status === "superseded") {
+    return t("Stopped");
+  }
+  return active ? t("Running") : t("Idle");
+}
+
+function operationBubbleCopyText(
+  model: ConversationOperationCellViewModel,
+  evidenceSummary: string | undefined,
+  statusLabel: string,
+): string {
+  return [
+    model.kicker,
+    model.summary,
+    evidenceSummary,
+    model.title,
+    statusLabel,
+  ].map((value) => value?.trim()).find((value): value is string => Boolean(value)) ?? statusLabel;
+}
+
+function operationBubbleRevisionKey(
+  model: ConversationOperationCellViewModel,
+  evidenceSummary: string | undefined,
+): string {
+  return [
+    model.updatedAt,
+    model.status,
+    model.operationRows.length,
+    model.agentSpans.length,
+    model.artifactStripItems.length,
+    evidenceSummary ?? "",
+  ].join("|");
+}
+
+function operationShellViewKey(operationId: string): string {
+  return `operation-shell:${operationId}`;
+}
+
+function operationShellRevisionKey(
+  model: ConversationOperationCellViewModel,
+  active: boolean,
+): string {
+  return [
+    model.updatedAt,
+    model.status,
+    active ? "active" : "completed",
+    model.operationRows.length,
+    model.agentSpans.length,
+    model.artifactStripItems.length,
+  ].join("|");
+}
+
+function operationShellExpandable(
+  status: ConversationOperationCellViewModel["status"],
+  active: boolean,
+): boolean {
+  if (active) {
+    return false;
+  }
+  return status === "succeeded" || status === "cancelled" || status === "superseded";
+}
+
+function operationDetailsDefaultExpanded(status: ConversationOperationCellViewModel["status"]): boolean {
+  return status === "waiting_for_approval" || status === "blocked" || status === "failed";
+}
+
 function AgentActivitySpans({
   spans,
   renderAgentAvatar,
@@ -300,113 +439,84 @@ function AgentActivitySpans({
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
-  const autoExpandedSpanIds = useMemo(
-    () => new Set(spans.filter(shouldAutoExpandAgentActivitySpan).map((span) => span.id)),
-    [spans],
-  );
-  const autoExpandedSpanKey = useMemo(
-    () => [...autoExpandedSpanIds].sort().join("\n"),
-    [autoExpandedSpanIds],
-  );
-  const [expandedSpanIds, setExpandedSpanIds] = useState<ReadonlySet<string>>(() => autoExpandedSpanIds);
-  const [manuallyCollapsedSpanIds, setManuallyCollapsedSpanIds] = useState<ReadonlySet<string>>(() => new Set());
-
-  useEffect(() => {
-    if (autoExpandedSpanIds.size === 0) {
-      return;
-    }
-    setExpandedSpanIds((current) => {
-      const next = new Set(current);
-      let changed = false;
-      for (const spanId of autoExpandedSpanIds) {
-        if (manuallyCollapsedSpanIds.has(spanId) || next.has(spanId)) {
-          continue;
-        }
-        next.add(spanId);
-        changed = true;
-      }
-      return changed ? next : current;
-    });
-  }, [autoExpandedSpanIds, autoExpandedSpanKey, manuallyCollapsedSpanIds]);
-
   return (
     <section className="conversation-work-cell-agent-spans" aria-label={t("Agent activity")}>
       <div className="conversation-work-cell-agent-span-list">
-        {spans.map((span) => {
-          const hasDetail = span.rows.length > 0;
-          const expanded = hasDetail && expandedSpanIds.has(span.id);
-          const latestRow = span.latestRow;
-          const currentSummary = agentActivityCurrentSummary(latestRow, span.summary);
-          const avatar = renderAgentAvatar?.(span);
-          const headContent = (
-            <>
-              <span className="conversation-work-cell-agent-avatar" aria-hidden="true">
-                {avatar ?? agentAvatarLabel(span.label)}
-              </span>
-              <span className="conversation-work-cell-agent-span-copy">
-                <strong>{span.label}</strong>
-                {currentSummary ? <small>{currentSummary}</small> : null}
-              </span>
-              {span.stateLabel ? <span className="conversation-work-cell-agent-span-state">{span.stateLabel}</span> : null}
-              {hasDetail ? (
-                <span className="conversation-work-cell-agent-span-toggle" aria-hidden="true">
-                  <ChevronDown size={13} aria-hidden="true" />
-                </span>
-              ) : null}
-            </>
-          );
-          return (
-            <div
-              key={span.id}
-              className={["conversation-work-cell-agent-span", `kind-${span.kind ?? "agent"}`, span.tone ?? "neutral", expanded ? "expanded" : ""].filter(Boolean).join(" ")}
-              data-agent-span-kind={span.kind ?? "agent"}
-            >
-              {hasDetail ? (
-                <button
-                  className="conversation-work-cell-agent-span-head"
-                  type="button"
-                  aria-expanded={expanded}
-                  aria-label={expanded ? t("Collapse agent activity") : t("Expand agent activity")}
-                  onClick={() => {
-                    setExpandedSpanIds((current) => {
-                      const next = new Set(current);
-                      if (expanded) {
-                        next.delete(span.id);
-                      } else {
-                        next.add(span.id);
-                      }
-                      return next;
-                    });
-                    setManuallyCollapsedSpanIds((current) => {
-                      const next = new Set(current);
-                      if (expanded) {
-                        next.add(span.id);
-                      } else {
-                        next.delete(span.id);
-                      }
-                      return next;
-                    });
-                  }}
-                >
-                  {headContent}
-                </button>
-              ) : (
-                <div className="conversation-work-cell-agent-span-head static">
-                  {headContent}
-                </div>
-              )}
-              {expanded && hasDetail ? (
-                <div className="conversation-work-cell-agent-span-detail" aria-label={t("Agent activity detail")}>
-                  <div className="conversation-work-cell-row-list">
-                    {span.rows.map((row) => <WorkCellRow key={row.id} row={row} compact showIcon={false} />)}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
+        {spans.map((span) => (
+          <AgentActivitySpanItem
+            key={span.id}
+            span={span}
+            renderAgentAvatar={renderAgentAvatar}
+          />
+        ))}
       </div>
     </section>
+  );
+}
+
+function AgentActivitySpanItem({
+  span,
+  renderAgentAvatar,
+}: {
+  readonly span: ConversationAgentActivitySpan;
+  readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
+}): JSX.Element {
+  const { t } = useI18n();
+  const hasDetail = span.rows.length > 0;
+  const disclosure = useConversationSpanView({
+    spanId: span.id,
+    revisionKey: agentActivitySpanRevisionKey(span),
+    defaultExpanded: hasDetail && shouldAutoExpandAgentActivitySpan(span),
+  });
+  const expanded = hasDetail && disclosure.expanded;
+  const latestRow = span.latestRow;
+  const currentSummary = agentActivityCurrentSummary(latestRow, span.summary);
+  const avatar = renderAgentAvatar?.(span);
+  const headContent = (
+    <>
+      <span className="conversation-work-cell-agent-avatar" aria-hidden="true">
+        {avatar ?? agentAvatarLabel(span.label)}
+      </span>
+      <span className="conversation-work-cell-agent-span-copy">
+        <strong>{span.label}</strong>
+        {currentSummary ? <small>{currentSummary}</small> : null}
+      </span>
+      {span.stateLabel ? <span className="conversation-work-cell-agent-span-state">{span.stateLabel}</span> : null}
+      {hasDetail ? (
+        <span className="conversation-work-cell-agent-span-toggle" aria-hidden="true">
+          <ChevronDown size={13} aria-hidden="true" />
+        </span>
+      ) : null}
+    </>
+  );
+  return (
+    <div
+      className={["conversation-work-cell-agent-span", `kind-${span.kind ?? "agent"}`, span.tone ?? "neutral", expanded ? "expanded" : ""].filter(Boolean).join(" ")}
+      data-agent-span-kind={span.kind ?? "agent"}
+    >
+      {hasDetail ? (
+        <button
+          className="conversation-work-cell-agent-span-head"
+          type="button"
+          aria-expanded={expanded}
+          aria-label={expanded ? t("Collapse agent activity") : t("Expand agent activity")}
+          onClick={disclosure.toggleExpanded}
+        >
+          {headContent}
+        </button>
+      ) : (
+        <div className="conversation-work-cell-agent-span-head static">
+          {headContent}
+        </div>
+      )}
+      {expanded && hasDetail ? (
+        <div className="conversation-work-cell-agent-span-detail" aria-label={t("Agent activity detail")}>
+          <div className="conversation-work-cell-row-list">
+            {span.rows.map((row) => <WorkCellRow key={row.id} row={row} compact showIcon={false} />)}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -416,6 +526,18 @@ function shouldAutoExpandAgentActivitySpan(span: ConversationAgentActivitySpan):
     span.latestRow?.tone === "waiting" ||
     span.latestRow?.tone === "failed" ||
     span.rows.some((row) => row.tone === "waiting" || row.tone === "failed");
+}
+
+function agentActivitySpanRevisionKey(span: ConversationAgentActivitySpan): string {
+  return [
+    span.tone ?? "",
+    span.stateLabel ?? "",
+    span.summary ?? "",
+    span.latestRow?.id ?? "",
+    span.latestRow?.tone ?? "",
+    span.latestRow?.title ?? "",
+    span.rows.length,
+  ].join("|");
 }
 
 function workCellStatusLabel(

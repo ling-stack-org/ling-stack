@@ -13,6 +13,8 @@ visual accessibility checks verified; P11 Web-local modularization complete; P12
 package and Desktop/PC sync gates defined. Right-side root
 utility is settings-only; Files/Review conversation drawer roots and preview components
 removed.
+Current e2e coverage follows that boundary: Files and Review are not root drawer views;
+approval/source details open from the owning conversation surface.
 
 Date: 2026-06-24
 
@@ -24,6 +26,7 @@ Source docs:
 
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
+- [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Desktop Shell](desktop-shell.md)
@@ -330,6 +333,9 @@ Progress:
 - Large code/log content stays folded and unhighlighted until expansion; images use lazy
   loading, and `raw_debug_ref` transcript blocks remain reference-style generic blocks
   instead of rendering raw payloads by default.
+- The deeper large-code, diff, image-compare, raw/debug, measured-height, and
+  virtualization follow-up is governed by
+  [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md).
 
 ## P10. Design Tokens And Visual Regression
 

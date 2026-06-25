@@ -2686,6 +2686,193 @@ button.message-local-file-link {
   color: var(--conversation-text-strong);
 }
 
+.conversation-operation-bubble {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--conversation-border) 82%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--conversation-bg) 94%, var(--conversation-bg-muted));
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.conversation-operation-bubble.active {
+  border-color: color-mix(in srgb, var(--conversation-focus-ring) 28%, var(--conversation-border));
+}
+
+.conversation-operation-bubble.tone-failed {
+  border-color: color-mix(in srgb, var(--conversation-status-danger) 32%, var(--conversation-border));
+}
+
+.conversation-operation-bubble.tone-waiting {
+  border-color: color-mix(in srgb, var(--conversation-status-waiting) 36%, var(--conversation-border));
+}
+
+.conversation-operation-bubble-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 24px;
+}
+
+.conversation-operation-bubble-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--conversation-text-muted);
+}
+
+.conversation-operation-bubble-toggle svg {
+  transition: transform 140ms ease;
+}
+
+.conversation-operation-bubble.expanded .conversation-operation-bubble-toggle svg {
+  transform: rotate(90deg);
+}
+
+.conversation-operation-bubble-toggle:hover,
+.conversation-operation-bubble-toggle:focus-visible {
+  border-color: var(--conversation-border);
+  background: var(--conversation-bg-muted);
+  color: var(--conversation-text-strong);
+}
+
+.conversation-operation-bubble-kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--conversation-text-muted);
+}
+
+.conversation-operation-bubble.tone-running .conversation-operation-bubble-kind {
+  color: var(--conversation-status-running);
+}
+
+.conversation-operation-bubble.tone-waiting .conversation-operation-bubble-kind {
+  color: var(--conversation-status-waiting);
+}
+
+.conversation-operation-bubble.tone-success .conversation-operation-bubble-kind {
+  color: var(--conversation-status-success);
+}
+
+.conversation-operation-bubble.tone-failed .conversation-operation-bubble-kind {
+  color: var(--conversation-status-danger);
+}
+
+.conversation-operation-bubble-copy {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.conversation-operation-bubble-source {
+  overflow: hidden;
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-operation-bubble-status {
+  flex: 0 0 auto;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 999px;
+  background: var(--conversation-bg-muted);
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 14px;
+}
+
+.conversation-operation-bubble.tone-running .conversation-operation-bubble-status {
+  border-color: color-mix(in srgb, var(--conversation-status-running) 34%, var(--conversation-border));
+  color: var(--conversation-text-strong);
+}
+
+.conversation-operation-bubble.tone-success .conversation-operation-bubble-status {
+  border-color: color-mix(in srgb, var(--conversation-status-success) 34%, var(--conversation-border));
+  color: var(--conversation-status-success);
+}
+
+.conversation-operation-bubble.tone-waiting .conversation-operation-bubble-status {
+  border-color: color-mix(in srgb, var(--conversation-status-waiting) 40%, var(--conversation-border));
+  color: var(--conversation-text-strong);
+}
+
+.conversation-operation-bubble.tone-failed .conversation-operation-bubble-status {
+  border-color: color-mix(in srgb, var(--conversation-status-danger) 36%, var(--conversation-border));
+  color: var(--conversation-status-danger);
+}
+
+.conversation-operation-bubble-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.conversation-operation-bubble:hover .conversation-operation-bubble-actions,
+.conversation-operation-bubble:focus-within .conversation-operation-bubble-actions {
+  opacity: 1;
+}
+
+.conversation-operation-bubble-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--conversation-text-muted);
+}
+
+.conversation-operation-bubble-action:hover,
+.conversation-operation-bubble-action:focus-visible,
+.conversation-operation-bubble-action[data-active="true"] {
+  border-color: var(--conversation-border);
+  background: var(--conversation-bg-muted);
+  color: var(--conversation-text-strong);
+}
+
+.conversation-operation-bubble-action[data-copied="true"] {
+  border-color: color-mix(in srgb, var(--conversation-status-success) 30%, var(--conversation-border));
+  background: color-mix(in srgb, var(--conversation-status-success) 9%, var(--conversation-bg));
+  color: var(--conversation-status-success);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-operation-bubble-toggle svg,
+  .conversation-operation-bubble-actions {
+    transition: none;
+  }
+}
+
+.conversation-operation-bubble-body,
 .conversation-work-cell-body {
   display: grid;
   gap: 6px;
@@ -2694,6 +2881,12 @@ button.message-local-file-link {
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.conversation-operation-bubble-section {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .conversation-work-cell-head {
@@ -4442,6 +4635,9 @@ code,
   position: relative;
   grid-template-rows: auto auto auto minmax(0, 1fr);
   min-height: calc(100vh - 74px);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .task-workbench-window > * {
@@ -5263,6 +5459,7 @@ code,
 .task-detail-panel,
 .channel-side-panel {
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -5276,6 +5473,7 @@ code,
   position: relative;
   z-index: 2;
   min-height: 0;
+  min-width: 0;
   height: 100%;
   padding: 0;
   border: 0;
@@ -9930,6 +10128,9 @@ body {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .task-workbench-header,

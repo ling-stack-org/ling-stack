@@ -9,7 +9,8 @@ export { ConversationStatusStrip, type ConversationStatusAction, type Conversati
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
 export { ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
-export { TranscriptBlockView, type TranscriptBlockViewProps } from "./blocks/TranscriptBlockView.js";
+export { ConversationViewProvider, useOptionalConversationViewStore, type ConversationViewProviderProps } from "./view-store/conversation-view-provider.js";
+export { TranscriptBlockView, transcriptBlockViewKey, type TranscriptBlockViewProps } from "./blocks/TranscriptBlockView.js";
 export { EvidenceDisclosure, type EvidenceDisclosureProps } from "./blocks/EvidenceDisclosure.js";
 export { ArtifactPreview, type ArtifactPreviewProps } from "./preview/ArtifactPreview.js";
 export { ArtifactPreviewDrawer, type ArtifactPreviewDrawerProps } from "./preview/ArtifactPreviewDrawer.js";
@@ -26,6 +27,17 @@ export { MessageBodyRenderer, type MessageBodyRendererProps } from "./blocks/Mes
 export { MessageBubble, type MessageBubbleProps, type MessageBubbleTone } from "./blocks/MessageBubble.js";
 export { MessageFooterActions, type MessageFooterAction, type MessageFooterActionsProps } from "./blocks/MessageFooterActions.js";
 export { MessageRow, type MessageRowAuthorType, type MessageRowProps } from "./blocks/MessageRow.js";
+export { OperationBubble, type OperationBubbleProps } from "./blocks/OperationBubble.js";
+export { OperationBubbleActions, type OperationBubbleActionsProps } from "./blocks/OperationBubbleActions.js";
+export { OperationBubbleBody, type OperationBubbleBodyProps } from "./blocks/OperationBubbleBody.js";
+export { OperationBubbleCopyAction, type OperationBubbleCopyActionProps } from "./blocks/OperationBubbleCopyAction.js";
+export { OperationBubbleHeader, type OperationBubbleHeaderProps } from "./blocks/OperationBubbleHeader.js";
+export { OperationBubbleSection, type OperationBubbleSectionProps } from "./blocks/OperationBubbleSections.js";
+export { useConversationActionView, type ConversationActionViewState } from "./view-store/use-conversation-action-view.js";
+export { useConversationBlockView, type ConversationBlockViewState } from "./view-store/use-conversation-block-view.js";
+export { useConversationSpanView, type ConversationSpanViewState } from "./view-store/use-conversation-span-view.js";
+export { useConversationViewReconciliation } from "./view-store/use-conversation-view-reconciliation.js";
+export type { ConversationViewRetainKeys } from "./view-store/conversation-view-store.js";
 export { RightDrawer, type RightDrawerNavItem, type RightDrawerProps } from "./blocks/RightDrawer.js";
 export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "./composer/TokenizedComposerInput.js";
 export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer/composer-input-parts.js";

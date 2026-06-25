@@ -170,6 +170,7 @@ import {
   ConversationGuidanceStrip,
   ConversationStatusStrip,
   ConversationVirtualFeed,
+  ConversationViewProvider,
   ConversationWorkCell,
   FileRefChip,
   MessageBodyRenderer,
@@ -181,7 +182,9 @@ import {
   TranscriptBlockView,
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
+  transcriptBlockViewKey,
   type ConversationGuidanceItem,
+  type ConversationViewRetainKeys,
   type ConversationWorkCellDetailsState,
 } from "../../shared/conversation/index.js";
 import type {
@@ -476,6 +479,67 @@ function messageFeedItemRenderSignature(item: MessageFeedItem | undefined): stri
     return conversationTurnRenderSignature(item.turn);
   }
   return channelActivityItemRenderSignature(item.item);
+}
+
+function buildMessageFeedViewRetainKeys(input: {
+  readonly items: readonly MessageFeedItem[];
+  readonly conversationWorkCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
+  readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
+}): ConversationViewRetainKeys {
+  const blockIds = new Set<string>();
+  const spanIds = new Set<string>();
+  const actionIds = new Set<string>();
+  const collectWorkCell = (workCell: ConversationWorkCellViewModel | undefined): void => {
+    if (!workCell) {
+      return;
+    }
+    blockIds.add(operationShellViewKey(workCell.id));
+    blockIds.add(operationDetailsViewKey(workCell.id));
+    actionIds.add(operationCopyActionViewKey(workCell.id));
+    for (const span of workCell.agentSpans) {
+      spanIds.add(span.id);
+    }
+  };
+
+  for (const item of input.items) {
+    if (item.kind === "turn") {
+      for (const block of item.turn.blocks) {
+        if (block.kind === "operation") {
+          collectWorkCell(block.operationCell);
+        } else if (block.kind !== "coordinator_message") {
+          blockIds.add(transcriptBlockViewKey(block.id));
+        }
+      }
+      continue;
+    }
+    if (item.kind !== "activity") {
+      continue;
+    }
+    if (item.item.kind === "workflow") {
+      collectWorkCell(input.conversationWorkCellByWorkflowId.get(item.item.record.id));
+      continue;
+    }
+    if (item.item.kind === "run" && item.item.record.threadId) {
+      const workCell = input.conversationWorkCellByThreadId.get(item.item.record.threadId);
+      if (workCell?.anchorRunId === item.item.record.id) {
+        collectWorkCell(workCell);
+      }
+    }
+  }
+
+  return { blockIds, spanIds, actionIds };
+}
+
+function operationDetailsViewKey(operationId: string): string {
+  return `operation-details:${operationId}`;
+}
+
+function operationShellViewKey(operationId: string): string {
+  return `operation-shell:${operationId}`;
+}
+
+function operationCopyActionViewKey(operationId: string): string {
+  return `operation-copy:${operationId}`;
 }
 
 function messageFeedItemCanAnchor(item: MessageFeedItem | undefined): item is Extract<MessageFeedItem, { readonly kind: "activity" | "turn" }> {
@@ -1973,6 +2037,14 @@ export function WorkspaceClientView({
         : []),
     ],
     [conversationFeedBodyItems, messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendState.acknowledged, pendingChannelSendVisible],
+  );
+  const messageFeedViewRetainKeys = useMemo(
+    () => buildMessageFeedViewRetainKeys({
+      items: messageFeedItems,
+      conversationWorkCellByWorkflowId,
+      conversationWorkCellByThreadId,
+    }),
+    [conversationWorkCellByThreadId, conversationWorkCellByWorkflowId, messageFeedItems],
   );
   const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && conversationFeedBodyItems.length === 0 && !pendingChannelSendVisible;
   const messageFeedVirtualizer = useVirtualizer({
@@ -6287,87 +6359,90 @@ export function WorkspaceClientView({
 	                      </div>
                     </div>
                   ) : null}
-                  <ConversationVirtualFeed
-                    scrollRef={messageFeedRef}
-                    ariaLabel={t("Channel message feed")}
-                    loading={channelMessagesLoading || channelProtocolLoading}
-                    empty={messageFeedEmpty}
-                    loadingLabel={t("Loading messages...")}
-                    emptyIcon={activeWorkThreadId ? <GitBranch /> : activityFiltersActive ? <Search /> : <MessageSquare />}
-                    emptyLabel={
-                      activeWorkThreadId
-                        ? t("No work recorded in this branch yet")
-                        : activityFiltersActive
-                        ? t("No activity matches these filters")
-                        : selectedChannel
-                          ? t("No channel messages yet")
-                          : t("Create a default channel to start the workspace loop.")
-                    }
-                    totalSize={messageFeedTotalSize}
-                    virtualRows={messageFeedVirtualRows}
-                    items={messageFeedItems}
-                    getItemId={(feedItem) => feedItem.id}
-                    getItemKind={(feedItem) => feedItem.kind}
-                    renderItem={(feedItem) => renderMessageFeedItem(feedItem)}
-                    measureElement={messageFeedVirtualizer.measureElement}
-                    onScroll={handleMessageFeedScroll}
-                    onUserScrollIntent={cancelMessageFeedAutoFollow}
-                    onKeyDown={handleMessageFeedKeyDown}
-                    onPointerDown={handleMessageFeedPointerDown}
-                    onPointerMove={handleMessageFeedPointerMove}
-                    onPointerUp={handleMessageFeedPointerEnd}
-                    onPointerCancel={handleMessageFeedPointerEnd}
-                    onContextMenu={handleMessageFeedContextMenu}
-                    title={t("Conversation shortcuts: Alt+Up/Down moves between blocks. Enter expands evidence. Ctrl/Cmd+Shift+C copies the focused block.")}
-                    statusNode={
-                      <>
-                        {channelActivityTransitionsLoading ? (
-                          <div className="activity-feed-status" role="status">
-                            <Loader2 className="spin" size={14} />
-                            <span>{t("Loading activity events...")}</span>
-                          </div>
-                        ) : null}
-                        {channelActivityTransitionError ? (
-                          <div className="activity-feed-status warning" role="status">
-                            <CircleAlert size={14} />
-                            <span>{t("Some activity changes could not be loaded")}</span>
-                          </div>
-                        ) : null}
-                      </>
-                    }
-                    latestButtonNode={
-                      <>
-                        {conversationBackgroundToast ? (
-                          <button
-                            key={conversationBackgroundToast.id}
-                            className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
-                            type="button"
-                            onClick={scrollMessageFeedToLatest}
-                            aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
-                          >
-                            <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
-                            <small>{t("Jump to latest")}</small>
-                          </button>
-                        ) : null}
-                        {conversationBlockFeedback ? (
-                          <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
-                            {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
-                            <span>{conversationBlockFeedback.message}</span>
-                          </div>
-                        ) : null}
-                        {messageFeedLatestButtonVisible ? (
-                          <button
-                            className="message-feed-latest-button"
-                            type="button"
-                            onClick={scrollMessageFeedToLatest}
-                            aria-label={t("Jump to latest message")}
-                          >
-                            <ArrowDown size={22} />
-                          </button>
-                        ) : null}
-                      </>
-                    }
-                  />
+                  <ConversationViewProvider surfaceId={`channel:${selectedChannel?.id ?? "none"}:${activeWorkThreadId || "root"}`}>
+                    <ConversationVirtualFeed
+                      scrollRef={messageFeedRef}
+                      ariaLabel={t("Channel message feed")}
+                      loading={channelMessagesLoading || channelProtocolLoading}
+                      empty={messageFeedEmpty}
+                      loadingLabel={t("Loading messages...")}
+                      emptyIcon={activeWorkThreadId ? <GitBranch /> : activityFiltersActive ? <Search /> : <MessageSquare />}
+                      emptyLabel={
+                        activeWorkThreadId
+                          ? t("No work recorded in this branch yet")
+                          : activityFiltersActive
+                          ? t("No activity matches these filters")
+                          : selectedChannel
+                            ? t("No channel messages yet")
+                            : t("Create a default channel to start the workspace loop.")
+                      }
+                      totalSize={messageFeedTotalSize}
+                      virtualRows={messageFeedVirtualRows}
+                      items={messageFeedItems}
+                      getItemId={(feedItem) => feedItem.id}
+                      getItemKind={(feedItem) => feedItem.kind}
+                      renderItem={(feedItem) => renderMessageFeedItem(feedItem)}
+                      measureElement={messageFeedVirtualizer.measureElement}
+                      viewStateRetainKeys={messageFeedViewRetainKeys}
+                      onScroll={handleMessageFeedScroll}
+                      onUserScrollIntent={cancelMessageFeedAutoFollow}
+                      onKeyDown={handleMessageFeedKeyDown}
+                      onPointerDown={handleMessageFeedPointerDown}
+                      onPointerMove={handleMessageFeedPointerMove}
+                      onPointerUp={handleMessageFeedPointerEnd}
+                      onPointerCancel={handleMessageFeedPointerEnd}
+                      onContextMenu={handleMessageFeedContextMenu}
+                      title={t("Conversation shortcuts: Alt+Up/Down moves between blocks. Enter expands evidence. Ctrl/Cmd+Shift+C copies the focused block.")}
+                      statusNode={
+                        <>
+                          {channelActivityTransitionsLoading ? (
+                            <div className="activity-feed-status" role="status">
+                              <Loader2 className="spin" size={14} />
+                              <span>{t("Loading activity events...")}</span>
+                            </div>
+                          ) : null}
+                          {channelActivityTransitionError ? (
+                            <div className="activity-feed-status warning" role="status">
+                              <CircleAlert size={14} />
+                              <span>{t("Some activity changes could not be loaded")}</span>
+                            </div>
+                          ) : null}
+                        </>
+                      }
+                      latestButtonNode={
+                        <>
+                          {conversationBackgroundToast ? (
+                            <button
+                              key={conversationBackgroundToast.id}
+                              className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
+                              type="button"
+                              onClick={scrollMessageFeedToLatest}
+                              aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
+                            >
+                              <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
+                              <small>{t("Jump to latest")}</small>
+                            </button>
+                          ) : null}
+                          {conversationBlockFeedback ? (
+                            <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
+                              {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
+                              <span>{conversationBlockFeedback.message}</span>
+                            </div>
+                          ) : null}
+                          {messageFeedLatestButtonVisible ? (
+                            <button
+                              className="message-feed-latest-button"
+                              type="button"
+                              onClick={scrollMessageFeedToLatest}
+                              aria-label={t("Jump to latest message")}
+                            >
+                              <ArrowDown size={22} />
+                            </button>
+                          ) : null}
+                        </>
+                      }
+                    />
+                  </ConversationViewProvider>
                   {conversationBlockActionMenu ? (
                     <div
                       ref={conversationBlockActionMenuRef}

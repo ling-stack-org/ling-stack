@@ -781,8 +781,9 @@ export async function openTaskFromAttentionQueue(page: Page, title: string): Pro
     const handleApproval = workItem.getByRole("button", { name: "Handle approval" });
     await expect(handleApproval).toBeVisible();
     await handleApproval.click();
-    await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Approval details");
-    await page.getByRole("button", { name: "Open linked task" }).click();
+    const approvalOverlay = page.locator(".conversation-detail-overlay").filter({ hasText: "Approval details" });
+    await expect(approvalOverlay).toBeVisible();
+    await approvalOverlay.getByRole("button", { name: "Open linked task" }).click();
   }
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
 }
@@ -791,10 +792,6 @@ export async function openNewTaskPanel(page: Page): Promise<void> {
   await openChannelContextPanel(page);
   await page.locator(".channel-side-panel").hover();
   await page.getByRole("button", { name: "New task" }).click();
-}
-
-export async function openChannelFilesPanel(page: Page): Promise<void> {
-  await openChannelSidePanel(page, "Files");
 }
 
 export async function openChannelContextPanel(page: Page): Promise<void> {
@@ -820,7 +817,7 @@ export async function openChannelContextPanel(page: Page): Promise<void> {
   await panel.hover();
 }
 
-export async function openChannelSidePanel(page: Page, name: "Files" | "Settings"): Promise<void> {
+export async function openChannelSidePanel(page: Page, name: "Settings"): Promise<void> {
   const expectedLabels = [name];
   const panel = page.locator(".channel-side-panel");
   const panelVisible = (await panel.count()) > 0 && await panel.isVisible().catch(() => false);
