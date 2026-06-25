@@ -159,6 +159,8 @@ test("shared channel context message listing excludes historical queued guidance
   const current = createMessage({ id: "msg_current", body: "继续" });
   const store = {
     listRunInterventions: () => [{ idempotencyKey: "channel_message:msg_guidance:queue_followup" }],
+    getChannelMessage: (messageId) => [current].find((message) => message.id === messageId),
+    listChannelBranches: () => [],
     listChannelMessages: () => [
       createMessage({ id: "msg_old", body: "old topic" }),
       createMessage({ id: "msg_guidance", body: "queued guidance" }),
@@ -173,6 +175,63 @@ test("shared channel context message listing excludes historical queued guidance
   });
 
   assert.deepEqual(messages.map((message) => message.id), ["msg_old", "msg_current"]);
+});
+
+test("channel context message listing scopes root and branch surfaces separately", () => {
+  const rootMessage = createMessage({ id: "msg_root", body: "root" });
+  const rootReply = createMessage({ id: "msg_root_reply", threadId: rootMessage.id, kind: "ai_reply", authorType: "ai-teammate", body: "root reply" });
+  const branchMessage = createMessage({ id: "msg_branch", threadId: "thread_branch", body: "branch" });
+  const latestRoot = createMessage({ id: "msg_latest_root", body: "latest root" });
+  const messages = [rootMessage, rootReply, branchMessage, latestRoot];
+  const store = {
+    listRunInterventions: () => [],
+    getChannelMessage: (messageId) => messages.find((message) => message.id === messageId),
+    listChannelBranches: () => [{ id: "branch_1", channelId: "channel_1", name: "Branch", status: "active", rootThreadId: "thread_branch" }],
+    listChannelMessages: (options) => messages.filter((message) => {
+      if (message.channelId !== options.channelId) {
+        return false;
+      }
+      if (options.threadId) {
+        return message.threadId === options.threadId;
+      }
+      return !(options.excludeThreadIds ?? []).includes(message.threadId);
+    }),
+  };
+
+  assert.deepEqual(
+    listChannelContextMessages({ store, channelId: "channel_1", sourceMessage: latestRoot }).map((message) => message.id),
+    ["msg_root", "msg_root_reply", "msg_latest_root"],
+  );
+  assert.deepEqual(
+    listChannelContextMessages({ store, channelId: "channel_1", sourceMessage: branchMessage }).map((message) => message.id),
+    ["msg_branch"],
+  );
+});
+
+test("channel context message listing scopes topic replies to their source message", () => {
+  const rootMessage = createMessage({ id: "msg_root", body: "root" });
+  const topicReply = createMessage({ id: "msg_topic", threadId: rootMessage.id, body: "topic follow-up" });
+  const branchMessage = createMessage({ id: "msg_branch", threadId: "thread_branch", body: "branch" });
+  const messages = [rootMessage, topicReply, branchMessage];
+  const store = {
+    listRunInterventions: () => [],
+    getChannelMessage: (messageId) => messages.find((message) => message.id === messageId),
+    listChannelBranches: () => [{ id: "branch_1", channelId: "channel_1", name: "Branch", status: "active", rootThreadId: "thread_branch" }],
+    listChannelMessages: (options) => messages.filter((message) => {
+      if (message.channelId !== options.channelId) {
+        return false;
+      }
+      if (options.threadId) {
+        return message.threadId === options.threadId;
+      }
+      return true;
+    }),
+  };
+
+  assert.deepEqual(
+    listChannelContextMessages({ store, channelId: "channel_1", sourceMessage: topicReply }).map((message) => message.id),
+    ["msg_root", "msg_topic"],
+  );
 });
 
 test("active work collector projects proposals workflows runs and approvals as metadata sources", () => {

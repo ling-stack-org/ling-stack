@@ -10,6 +10,7 @@ Implementation detail plan:
 
 - [Thread-First Work History Implementation Plan](thread-first-work-history-implementation-plan.md)
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
+- [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 
 ## Summary
 
@@ -108,6 +109,7 @@ Ling-specific differences:
 | --- | --- | --- |
 | Channel | Collaboration space that owns messages, topic replies, and work threads | Existing channel records |
 | Topic reply / side thread | A lightweight Slack-style branch from a channel message | Existing `ChannelMessage.threadId` |
+| Channel branch | A named work lane under one channel | Existing `ChannelBranch.rootThreadId` plus `LingThread` |
 | Work thread | A durable unit of project work, conversation, or workflow step | Existing `LingThread` |
 | Turn | One user intent, follow-up, or continuation inside a thread | V1 derived; V2 durable |
 | Run attempt | One execution attempt by the runner | Existing `RunSession` |
@@ -130,7 +132,9 @@ future `fork` creates a new work thread branch under the same channel by default
 not create or copy a channel. The selected channel should expose a work-thread tree under
 the channel row so users can switch between source and forked child threads. A source
 transcript branch notice may confirm creation, while Work History shows parent/child
-lineage.
+lineage. The boundary between channel root, channel branch, topic reply, teammate private
+chat, and future session surfaces is defined in
+[Conversation Surface Taxonomy](conversation-surface-taxonomy.md).
 
 ### Ownership
 

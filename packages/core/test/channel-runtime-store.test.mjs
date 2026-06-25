@@ -485,6 +485,76 @@ test("sqlite channel messages page latest history with stable cursors", async ()
   }
 });
 
+test("sqlite channel message root pages can exclude channel branch lanes while keeping topic replies", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-surface-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel(
+      {
+        name: "Engineering",
+        boundPath: cwd,
+      },
+      "2026-05-29T00:00:00.000Z",
+    );
+    const branch = store.createChannelBranch(
+      {
+        channelId: channel.id,
+        name: "Branch lane",
+        rootThreadId: "thread_branch_lane",
+      },
+      "2026-05-29T00:00:01.000Z",
+    );
+    const rootMessage = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        authorType: "local-user",
+        body: "Root message",
+      },
+      "2026-05-29T00:00:02.000Z",
+    );
+    store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: rootMessage.id,
+        kind: "ai_reply",
+        authorType: "ai-teammate",
+        authorId: "ling_agent",
+        body: "Root attached reply",
+      },
+      "2026-05-29T00:00:03.000Z",
+    );
+    store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: branch.rootThreadId,
+        authorType: "local-user",
+        body: "Branch message",
+      },
+      "2026-05-29T00:00:04.000Z",
+    );
+
+    assert.deepEqual(
+      store.listChannelMessages({
+        channelId: channel.id,
+        excludeThreadIds: [branch.rootThreadId],
+        limit: 10,
+      }).map((message) => message.body),
+      ["Root message", "Root attached reply"],
+    );
+    assert.deepEqual(
+      store.listChannelMessages({
+        channelId: channel.id,
+        threadId: branch.rootThreadId,
+        limit: 10,
+      }).map((message) => message.body),
+      ["Branch message"],
+    );
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel message cursors keep same-timestamp order stable", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-same-time-"));
   const store = createSqliteRunStore(cwd);

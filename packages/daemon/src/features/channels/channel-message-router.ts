@@ -29,6 +29,7 @@ import {
   turnEnvelopeHasUserInput,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
+import { resolveChannelConversationSurface } from "./conversation-surface.js";
 import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
@@ -206,7 +207,7 @@ function routeLingAgentVisibleReply(
     teammateId: lingAgentCandidate.teammate.id,
     providerPresetId: lingAgentCandidate.providerPresetId,
     confidence: 1,
-    reason: fallbackReason ?? "Ling Agent answered a root channel message.",
+    reason: fallbackReason ?? defaultLingAgentReplyReason(input),
     status: "accepted",
     createdBy,
     alternativesConsidered: candidatesToAlternatives(candidates),
@@ -280,7 +281,11 @@ function deterministicNoReplyReason(input: ChannelMessageRouteInput): string | u
   if (message.intent !== "discuss") {
     return "Only discussion messages can trigger automatic replies.";
   }
-  if (message.threadId) {
+  const surface = resolveChannelConversationSurface(input.store, input.channel.id, message);
+  if (surface.kind === "topic") {
+    return "Topic replies are outside the first auto-reply scope.";
+  }
+  if (surface.kind === "thread") {
     return "Thread replies are outside the first auto-reply scope.";
   }
   if (input.channel.status !== "active") {
@@ -295,6 +300,14 @@ function deterministicNoReplyReason(input: ChannelMessageRouteInput): string | u
     return "Message is empty.";
   }
   return undefined;
+}
+
+function defaultLingAgentReplyReason(input: ChannelMessageRouteInput): string {
+  const surface = resolveChannelConversationSurface(input.store, input.channel.id, input.sourceMessage);
+  if (surface.kind === "branch") {
+    return "Ling Agent answered a channel branch message.";
+  }
+  return "Ling Agent answered a root channel message.";
 }
 
 function buildRouteCandidates(input: ChannelMessageRouteInput, defaultTeammateId: string | undefined): RouteCandidate[] {

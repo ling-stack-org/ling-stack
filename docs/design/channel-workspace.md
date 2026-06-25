@@ -36,6 +36,7 @@ Related docs:
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
 - [Channel Workspace v1.25 Codex-Inspired Attention Popover](channel-workspace-v1.25.md)
 - [Channel Workspace v1.26 Channel Branches](channel-workspace-v1.26.md)
+- [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Channel And Agent Governance Notifications](channel-and-agent-governance-notifications.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
@@ -195,7 +196,9 @@ lane under the parent channel, not a Git branch. The section header `+` creates 
 top-level channel; a hovered or focused channel row exposes row actions for `Create
 branch` and `Archive channel`; a hovered or focused branch row exposes only `Archive
 branch`. Branches render as an indented tree continuation below the parent channel, not as
-nested cards or separate top-level channels.
+nested cards or separate top-level channels. The detailed boundary between channel root,
+channel branch, topic reply, teammate private chat, and future session surfaces lives in
+[Conversation Surface Taxonomy](conversation-surface-taxonomy.md).
 
 When the right details drawer is hidden, the chat body and composer expand back into the
 available channel content area. If the attention queue is visible, wide viewports keep
@@ -232,6 +235,9 @@ Rules:
 - branches are one level deep,
 - branches do not override provider, teammate, bound path, or runtime policy in the first
   implementation,
+- branches use `ChannelBranch.rootThreadId` as the selected conversation scope; topic
+  replies continue to use `ChannelMessage.threadId = sourceMessage.id` and are not branch
+  navigation,
 - creating a channel branch is available from the parent channel row,
 - forking, pinning, archiving, and filtering work branches happens in Work History / Run
   Diagnostics, not the normal channel drawer,
@@ -1912,6 +1918,10 @@ Current MVP implementation status:
   implementation. Archived channels and branches are recovered or permanently deleted from
   a Settings management surface, while the normal drawer only exposes reversible archive.
   The UI must not imply Git checkout, merge, push, or delete-branch operations,
+- the conversation surface taxonomy now fixes the naming boundary between channel root,
+  channel branch, topic reply, teammate private chat, and future session views. Future
+  session UI should be a `LingThread` view grouped by owner surface, not a new channel-like
+  conversation store,
 - the 2026-06-11 channel boundary hides synthetic normal-channel branch chrome introduced
   by v1.26. The left drawer shows real branches only after they exist, the channel-row
   `Create branch` action stays hover/focus scoped, the conversation surface no longer

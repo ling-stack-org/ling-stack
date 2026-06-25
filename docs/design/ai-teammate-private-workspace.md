@@ -81,6 +81,9 @@ The shared Codex-style conversation, evidence folding, right drawer, and compone
 extraction direction lives in
 [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md) and
 [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md).
+The boundary between teammate private chat, channel root messages, channel branches, topic
+replies, and future session views lives in
+[Conversation Surface Taxonomy](conversation-surface-taxonomy.md).
 
 ## Product Principles
 
