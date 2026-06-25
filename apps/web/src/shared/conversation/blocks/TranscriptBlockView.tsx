@@ -1,7 +1,7 @@
 import { ChevronDown, FileText } from "lucide-react";
-import { useState } from "react";
 import { useI18n, type Translate } from "../../../i18n.js";
 import type { TranscriptBlockBase, TranscriptDisplayLine } from "../transcript/index.js";
+import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 
 export interface TranscriptBlockViewProps {
@@ -18,7 +18,12 @@ export function TranscriptBlockView({
   const { t } = useI18n();
   const hasExpandedDetail = Boolean(block.expanded?.summary || block.expanded?.lines?.length);
   const previewTargets = block.previewTargets ?? [];
-  const [expanded, setExpanded] = useState(Boolean(defaultExpanded || shouldDefaultExpandBlock(block)));
+  const disclosure = useConversationBlockView({
+    blockId: transcriptBlockViewKey(block.id),
+    revisionKey: transcriptBlockRevisionKey(block),
+    defaultExpanded: Boolean(defaultExpanded || shouldDefaultExpandBlock(block)),
+  });
+  const expanded = disclosure.expanded;
   const rootClassName = [
     "transcript-block-view",
     `kind-${block.kind}`,
@@ -34,7 +39,7 @@ export function TranscriptBlockView({
         aria-expanded={expanded}
         aria-label={expanded ? t("Collapse transcript block") : t("Expand transcript block")}
         disabled={!hasExpandedDetail && previewTargets.length === 0}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={disclosure.toggleExpanded}
       >
         <span className="transcript-block-view-icon" aria-hidden="true">
           <FileText size={13} />
@@ -80,6 +85,10 @@ export function TranscriptBlockView({
   );
 }
 
+export function transcriptBlockViewKey(blockId: string): string {
+  return `transcript-block:${blockId}`;
+}
+
 function TranscriptDisplayLineView({
   line,
   cwd,
@@ -100,6 +109,18 @@ function shouldDefaultExpandBlock(block: TranscriptBlockBase): boolean {
     block.status === "waiting_for_approval" ||
     block.status === "blocked" ||
     block.status === "failed";
+}
+
+function transcriptBlockRevisionKey(block: TranscriptBlockBase): string {
+  return [
+    block.revision ?? "",
+    block.updatedAt ?? "",
+    block.status ?? "",
+    block.display.length,
+    block.expanded?.summary ?? "",
+    block.expanded?.lines?.length ?? 0,
+    block.previewTargets?.length ?? 0,
+  ].join("|");
 }
 
 function transcriptBlockLabel(kind: TranscriptBlockBase["kind"], t: Translate): string {

@@ -21,6 +21,7 @@ import {
   ConversationGuidanceStrip,
   ConversationShell,
   ConversationVirtualFeed,
+  ConversationViewProvider,
   MessageBubble,
   MessageEvidencePanel,
   MessageFooterActions,
@@ -170,125 +171,127 @@ export function TeammatePrivateChatSurface({
       className="teammate-private-chat"
       ariaLabel={t("Private chat")}
       feedNode={(
-        <ConversationVirtualFeed
-          scrollRef={privateFeedRef}
-          ariaLabel={t("Private message feed")}
-          feedClassName="message-feed teammate-message-list"
-          emptyFeedClassName="message-feed teammate-message-list message-feed-empty"
-          loading={loading}
-          empty={!loading && visibleMessages.length === 0}
-          loadingLabel={t("Loading teammate workspace...")}
-          emptyIcon={<MessageSquare size={18} />}
-          emptyLabel={normalizedMessageSearchQuery ? t("No private messages match search") : t("No private messages yet")}
-          totalSize={privateMessageFeedVirtualizer.getTotalSize()}
-          virtualRows={privateMessageFeedVirtualRows}
-          items={visibleMessages}
-          getItemId={(message) => message.id}
-          getItemKind={(message) => message.authorType}
-          measureElement={privateMessageFeedVirtualizer.measureElement}
-          onScroll={onPrivateFeedScroll}
-          onUserScrollIntent={onCancelPrivateFeedAutoFollow}
-          renderItem={(message) => {
-            const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
-            const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";
-            const blockedMessage = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
-            const recoveredHistoricalProviderFailure = providerRecovered && isHistoricalProviderPreflightMessage(message);
-            const systemMessage = message.authorType === "system";
-            const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : localUserDisplayName;
-            const messageBody = pendingAiReply && !message.body.trim()
-              ? t("AI teammate is replying...")
-              : message.status === "cancelled" && !message.body.trim()
-                ? t("Reply stopped")
-                : recoveredHistoricalProviderFailure
-                  ? t("Historical model check failed. The model is available now; resend or continue the chat.")
-                  : message.body;
-            return (
-              <MessageBubble
-                className={`teammate-message-row ${message.authorType}`}
-                tone={systemMessage ? "system" : blockedMessage ? "chat-blocked" : "chat"}
-                side={message.authorType === "local-user" ? "end" : "start"}
-                avatar={
-                  message.authorType === "ai-teammate"
-                    ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-                    : message.authorType === "system"
-                      ? <AvatarInitial label="S" tone="violet" />
-                      : <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />
-                }
-                author={authorName}
-                time={formatDateTime(message.createdAt)}
-                body={messageBody}
-                bodyCwd={cwd}
-                bodyCompact
-                showOwnAuthor={message.authorType === "local-user"}
-                pending={pendingAiReply}
-                attachmentsNode={message.attachmentIds.length > 0 ? (
-                  <ConversationAttachmentStrip
-                    className="teammate-message-attachments"
-                    chipClassName="teammate-attachment-chip"
-                    loadPreview={loadPreviewContent}
-                    attachments={message.attachmentIds
-                      .map((id) => privateAttachmentById.get(id))
-                      .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
-                      .map((attachment) => ({
-                        id: attachment.id,
-                        label: attachment.fileName,
-                        meta: formatBytes(attachment.sizeBytes),
-                        href: attachmentContentUrl(attachment, cwd.trim()),
-                        target: "_blank",
-                        rel: "noreferrer",
-                        icon: attachment.kind === "image" ? <Image size={13} /> : <FileText size={13} />,
-                        previewRequest: attachmentCanPreview(attachment) ? {
-                          source: "attachment",
-                          cwd: cwd.trim(),
-                          attachmentId: attachment.id,
-                          scope: "teammate_private",
-                          teammateId: teammate.id,
-                        } : undefined,
-                      }))}
-                  />
-                ) : null}
-                evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
-                  <MessageEvidencePanel
-                    memoryContent={messageUsedMemoryEvents.length > 0 ? (
-                      <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
-                    ) : undefined}
-                    memorySummary={messageUsedMemoryEvents.length > 0 ? t("Used memory") : undefined}
-                    webEvidence={message.webEvidence}
-                  />
-                ) : null}
-                errorNode={message.errorMessage && message.status !== "cancelled" && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
-                action={(
-                  <MessageFooterActions
-                    className="teammate-message-actions"
-                    actions={[
-                      {
-                        id: "copy",
-                        label: t("Copy message"),
-                        icon: <Copy size={14} />,
-                        onClick: () => onCopyMessageText(message.body),
-                      },
-                      {
-                        id: "create-task",
-                        label: t("Create task"),
-                        icon: creatingTask ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
-                        className: "secondary-button compact-button",
-                        disabled: creatingTask || taskChannelOptions.length === 0,
-                        onClick: () => void onCreateTaskFromMessage(message),
-                      },
-                    ]}
-                  />
-                )}
-              />
-            );
-          }}
-          latestButtonNode={
-            latestButtonVisible ? (
-              <button className="message-feed-latest-button" type="button" onClick={onScrollToLatest} aria-label={t("Jump to latest message")}>
-                <ArrowDown size={22} />
-              </button>
-            ) : null
-          }
-        />
+        <ConversationViewProvider surfaceId={`teammate:${teammate.id}`}>
+          <ConversationVirtualFeed
+            scrollRef={privateFeedRef}
+            ariaLabel={t("Private message feed")}
+            feedClassName="message-feed teammate-message-list"
+            emptyFeedClassName="message-feed teammate-message-list message-feed-empty"
+            loading={loading}
+            empty={!loading && visibleMessages.length === 0}
+            loadingLabel={t("Loading teammate workspace...")}
+            emptyIcon={<MessageSquare size={18} />}
+            emptyLabel={normalizedMessageSearchQuery ? t("No private messages match search") : t("No private messages yet")}
+            totalSize={privateMessageFeedVirtualizer.getTotalSize()}
+            virtualRows={privateMessageFeedVirtualRows}
+            items={visibleMessages}
+            getItemId={(message) => message.id}
+            getItemKind={(message) => message.authorType}
+            measureElement={privateMessageFeedVirtualizer.measureElement}
+            onScroll={onPrivateFeedScroll}
+            onUserScrollIntent={onCancelPrivateFeedAutoFollow}
+            renderItem={(message) => {
+              const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
+              const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";
+              const blockedMessage = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
+              const recoveredHistoricalProviderFailure = providerRecovered && isHistoricalProviderPreflightMessage(message);
+              const systemMessage = message.authorType === "system";
+              const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : localUserDisplayName;
+              const messageBody = pendingAiReply && !message.body.trim()
+                ? t("AI teammate is replying...")
+                : message.status === "cancelled" && !message.body.trim()
+                  ? t("Reply stopped")
+                  : recoveredHistoricalProviderFailure
+                    ? t("Historical model check failed. The model is available now; resend or continue the chat.")
+                    : message.body;
+              return (
+                <MessageBubble
+                  className={`teammate-message-row ${message.authorType}`}
+                  tone={systemMessage ? "system" : blockedMessage ? "chat-blocked" : "chat"}
+                  side={message.authorType === "local-user" ? "end" : "start"}
+                  avatar={
+                    message.authorType === "ai-teammate"
+                      ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
+                      : message.authorType === "system"
+                        ? <AvatarInitial label="S" tone="violet" />
+                        : <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />
+                  }
+                  author={authorName}
+                  time={formatDateTime(message.createdAt)}
+                  body={messageBody}
+                  bodyCwd={cwd}
+                  bodyCompact
+                  showOwnAuthor={message.authorType === "local-user"}
+                  pending={pendingAiReply}
+                  attachmentsNode={message.attachmentIds.length > 0 ? (
+                    <ConversationAttachmentStrip
+                      className="teammate-message-attachments"
+                      chipClassName="teammate-attachment-chip"
+                      loadPreview={loadPreviewContent}
+                      attachments={message.attachmentIds
+                        .map((id) => privateAttachmentById.get(id))
+                        .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
+                        .map((attachment) => ({
+                          id: attachment.id,
+                          label: attachment.fileName,
+                          meta: formatBytes(attachment.sizeBytes),
+                          href: attachmentContentUrl(attachment, cwd.trim()),
+                          target: "_blank",
+                          rel: "noreferrer",
+                          icon: attachment.kind === "image" ? <Image size={13} /> : <FileText size={13} />,
+                          previewRequest: attachmentCanPreview(attachment) ? {
+                            source: "attachment",
+                            cwd: cwd.trim(),
+                            attachmentId: attachment.id,
+                            scope: "teammate_private",
+                            teammateId: teammate.id,
+                          } : undefined,
+                        }))}
+                    />
+                  ) : null}
+                  evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
+                    <MessageEvidencePanel
+                      memoryContent={messageUsedMemoryEvents.length > 0 ? (
+                        <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
+                      ) : undefined}
+                      memorySummary={messageUsedMemoryEvents.length > 0 ? t("Used memory") : undefined}
+                      webEvidence={message.webEvidence}
+                    />
+                  ) : null}
+                  errorNode={message.errorMessage && message.status !== "cancelled" && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
+                  action={(
+                    <MessageFooterActions
+                      className="teammate-message-actions"
+                      actions={[
+                        {
+                          id: "copy",
+                          label: t("Copy message"),
+                          icon: <Copy size={14} />,
+                          onClick: () => onCopyMessageText(message.body),
+                        },
+                        {
+                          id: "create-task",
+                          label: t("Create task"),
+                          icon: creatingTask ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
+                          className: "secondary-button compact-button",
+                          disabled: creatingTask || taskChannelOptions.length === 0,
+                          onClick: () => void onCreateTaskFromMessage(message),
+                        },
+                      ]}
+                    />
+                  )}
+                />
+              );
+            }}
+            latestButtonNode={
+              latestButtonVisible ? (
+                <button className="message-feed-latest-button" type="button" onClick={onScrollToLatest} aria-label={t("Jump to latest message")}>
+                  <ArrowDown size={22} />
+                </button>
+              ) : null
+            }
+          />
+        </ConversationViewProvider>
       )}
       composerNode={(
         <>

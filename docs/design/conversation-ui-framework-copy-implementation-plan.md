@@ -17,6 +17,8 @@ Related docs:
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent Collaboration Cards Implementation Plan](multi-agent-collaboration-cards-implementation-plan.md)
 - [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
+- [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
+- [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
 
 ## Summary
 
@@ -200,6 +202,13 @@ records.
 ## Assistant-UI Borrowing Plan
 
 assistant-ui should influence interaction polish, not data ownership.
+
+The detailed borrowing contract for assistant-ui-style tool folding and high-performance
+view state is defined in [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md).
+Use that document for Operation Bubble headers, section rendering, collapse defaults,
+hover/focus action bars, and scoped view-store state. Use
+[Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
+for large code, diff, image, raw/debug, measured-height, and deep virtualization rules.
 
 Borrow these implementation ideas:
 
@@ -387,7 +396,8 @@ Work:
 - Add locale-safe labels, durations, file sizes, and long-label layout checks.
 - Add transcript virtualization/windowing once block count crosses the documented
   thresholds while preserving turn anchors and active rows.
-- Defer heavy syntax highlighting, image decoding, and raw/debug preview rendering.
+- Defer heavy syntax highlighting, image decoding, and raw/debug preview rendering under
+  [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md).
 - Add fixture-driven visual regression states for plain, streaming, operation,
   multi-agent, approval, artifacts, code, diff, image compare, mobile, reduced motion,
   and long localized labels.

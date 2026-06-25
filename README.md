@@ -45,6 +45,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Input Materialization Detailed Design](docs/design/input-materialization-detailed-design.md)
 - [Ling Web Tools](docs/design/ling-web-tools.md)
 - [Web E2E Acceptance Matrix](docs/design/web-e2e-acceptance-matrix.md)
+- [Conversation performance deferral and virtualization](docs/design/conversation-performance-deferral-and-virtualization.md)
 - [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
 - [AI councils](docs/design/ai-councils.md)
 - [GStack skill source sync](docs/design/gstack-skill-source-sync.md)

@@ -15,6 +15,8 @@ Related docs:
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
 - [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
+- [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
+- [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
 
 ## Summary
 
@@ -1505,6 +1507,15 @@ after success, failure, cancellation, or blocking.
 
 `OperationCell` is a transcript group, not a card. It should feel like a compact CLI/TUI
 history cell adapted to Web typography.
+
+The assistant-ui-inspired visual treatment for this cell is defined by
+[Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md).
+That document supersedes the older "no outer border" visual rule when implementing the
+next visual polish slice: an `OperationBubble` may use a subtle inline shell, status chip,
+hover/focus action bar, and folded tool-like sections, but it remains the same
+`OperationCell` semantic object and must keep all evidence inline. Large code, diff,
+image, raw/debug, measured-height, and deep virtualization behavior is defined separately
+in [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md).
 
 Geometry:
 

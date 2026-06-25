@@ -1071,16 +1071,11 @@ function workflowTerminalResultSummary(steps: readonly ChannelWorkflowStep[]): s
     .reverse()
     .map((step) => step.resultSummary?.trim())
     .find((candidate): candidate is string => Boolean(candidate && !isGenericRunSuccessSummary(candidate)));
-  return summary ? truncateWorkflowTerminalSummary(summary) : undefined;
+  return summary;
 }
 
 function isGenericRunSuccessSummary(summary: string): boolean {
   return /^(Run succeeded\.?|Task created from workflow step\.)$/iu.test(summary.trim());
-}
-
-function truncateWorkflowTerminalSummary(summary: string): string {
-  const normalized = summary.replace(/\s+/g, " ").trim();
-  return normalized.length > 360 ? `${normalized.slice(0, 357)}...` : normalized;
 }
 
 function workflowTerminalBlocker(

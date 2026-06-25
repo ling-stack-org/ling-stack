@@ -520,3 +520,175 @@
   transform: translateY(-50%);
   white-space: normal;
 }
+
+@media (max-width: 900px) {
+  .app-shell,
+  .app-shell.inspector-collapsed,
+  .app-shell.inspector-hidden,
+  .app-shell.channel-drawer-shell,
+  .app-shell.channel-drawer-shell.inspector-hidden,
+  .app-shell.channel-sidebar-collapsed.inspector-collapsed {
+    grid-template-areas: "nav workspace";
+    grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .app-shell > .right-panel {
+    display: none;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer {
+    z-index: 1;
+    width: var(--sidebar-collapsed-width);
+    padding: 10px 8px;
+    transform: none;
+    opacity: 1;
+    box-shadow: none;
+    overflow: hidden;
+  }
+
+  .app-shell.channel-drawer-shell .channel-sidebar-toolbar:hover + .channel-left-drawer,
+  .app-shell.channel-drawer-shell .channel-left-drawer:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer:focus-within {
+    width: var(--sidebar-collapsed-width);
+    transform: none;
+    opacity: 1;
+    box-shadow: none;
+    overflow: hidden;
+  }
+
+  .app-shell.channel-drawer-shell .sidebar-fixed-top {
+    gap: 8px;
+  }
+
+  .app-shell.channel-drawer-shell .sidebar-brand-row {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .app-shell.channel-drawer-shell .sidebar-brand-button,
+  .app-shell.channel-drawer-shell .channel-sidebar-switch,
+  .app-shell.channel-drawer-shell .sidebar-command-button,
+  .app-shell.channel-drawer-shell .channel-left-drawer .nav-item,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-main,
+  .app-shell.channel-drawer-shell .channel-left-drawer .config-button,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-inbox-alert {
+    display: grid;
+    grid-template-columns: 1fr;
+    place-items: center;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+  }
+
+  .app-shell.channel-drawer-shell .channel-sidebar-switch {
+    justify-self: center;
+  }
+
+  .app-shell.channel-drawer-shell .sidebar-brand-copy,
+  .app-shell.channel-drawer-shell .sidebar-command-button span,
+  .app-shell.channel-drawer-shell .channel-left-drawer .nav-item span,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-title > span:first-child,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row span:not(.avatar-initial):not(.channel-mention):not(.channel-unread),
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-main span:not(.sidebar-channel-avatar):not(.channel-mention):not(.channel-unread),
+  .app-shell.channel-drawer-shell .channel-left-drawer .config-button-label,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-inbox-alert span:not(.status-dot) {
+    display: none;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-title {
+    justify-content: center;
+    height: 8px;
+    padding: 0;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-menu,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-tools,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-branch-list,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-branch-create-form {
+    display: none;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-hash,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-channel-avatar {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-hash {
+    font-size: 16px;
+    line-height: 20px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .teammate-avatar-image.compact,
+  .app-shell.channel-drawer-shell .channel-left-drawer .avatar-initial {
+    width: 20px;
+    height: 20px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .channel-mention {
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    font-size: 9px;
+    line-height: 15px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .channel-unread {
+    position: absolute;
+    right: 6px;
+    top: 6px;
+  }
+
+  .workspace-client-surface,
+  .workspace-teammate-private-surface {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .task-workbench-main.with-channel-side-panel {
+    grid-template-columns: minmax(0, 1fr);
+    padding-right: 0;
+  }
+
+  .task-workbench-main.with-channel-side-panel .channel-side-panel,
+  .activity-chat-layout.with-thread > .thread-reply-panel,
+  .teammate-workspace.chat-mode > .teammate-context-panel {
+    display: none;
+  }
+
+  .activity-chat-layout,
+  .activity-chat-layout.with-thread {
+    grid-template-columns: minmax(0, 1fr);
+    align-self: stretch;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .activity-shell .channel-composer {
+    align-self: stretch;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .activity-shell .message-feed-wrap,
+  .activity-shell .message-feed,
+  .message-feed-virtualizer {
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .teammate-workspace.chat-mode {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

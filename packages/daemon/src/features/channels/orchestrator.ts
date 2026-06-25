@@ -489,7 +489,7 @@ function readRunAssistantTextSummary(store: RunStore, runId: string): string | u
     .join("")
     .replace(/\s+/g, " ")
     .trim();
-  return text ? truncateResultSummary(text) : undefined;
+  return text || undefined;
 }
 
 function readRunArtifactResultSummary(store: RunStore, runId: string): string | undefined {
@@ -502,10 +502,6 @@ function readRunArtifactResultSummary(store: RunStore, runId: string): string | 
     .filter((label) => label.trim().length > 0)
     .slice(0, 3);
   return labels.length > 0 ? `Run succeeded. Artifacts: ${labels.join(", ")}.` : undefined;
-}
-
-function truncateResultSummary(value: string): string {
-  return value.length > 480 ? `${value.slice(0, 477)}...` : value;
 }
 
 function attachWorkflowStepOutputArtifact(
