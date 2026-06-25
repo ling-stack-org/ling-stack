@@ -3,14 +3,17 @@ import type {
   SecretResolver,
 } from "@ling-stack/core";
 import type { WebSearchResult } from "./web-search-adapters.js";
-import { runProviderWebSearch } from "./web-search-service.js";
+import {
+  runProviderWebSearch,
+  type ProviderWebSearchSecretStore,
+} from "./web-search-service.js";
 import {
   extractReadableHtmlText,
   fetchPublicLinkBody,
   normalizeExtractedText,
 } from "../channels/materialization/extractors/link-body.js";
 
-const WEB_CONTEXT_TIMEOUT_MS = 12_000;
+const READ_URL_TIMEOUT_MS = 12_000;
 const READ_URL_MAX_BYTES = 192_000;
 const READ_URL_MAX_CHARS = 4_000;
 const READ_URL_MAX_LINKS = 3;
@@ -27,6 +30,8 @@ export interface WebEvidenceContext {
 
 export interface BuildWebEvidenceContextInput {
   readonly providerPreset?: ProviderPreset;
+  readonly webSearchProviderPresets?: readonly ProviderPreset[];
+  readonly providerStore?: ProviderWebSearchSecretStore;
   readonly sourceText: string;
   readonly availableMaterializedUrls?: readonly string[];
   readonly secretResolver: SecretResolver;
@@ -65,10 +70,11 @@ export async function buildWebEvidenceContext(input: BuildWebEvidenceContextInpu
   if (shouldSearch) {
     const searchContext = await runProviderWebSearch({
       providerPreset: input.providerPreset,
+      webSearchProviderPresets: input.webSearchProviderPresets,
+      providerStore: input.providerStore,
       secretResolver: input.secretResolver,
       query: text,
       fetch: input.fetch,
-      timeoutMs: WEB_CONTEXT_TIMEOUT_MS,
     });
     if (searchContext.status === "blocked") {
       searchBlockedReason = searchContext.reason ?? "Current selected Ling provider does not support realtime web search.";
@@ -84,7 +90,7 @@ export async function buildWebEvidenceContext(input: BuildWebEvidenceContextInpu
       urls: urlsToRead,
       fetch: input.fetch,
       resolveHostAddresses: input.resolveHostAddresses,
-      timeoutMs: WEB_CONTEXT_TIMEOUT_MS,
+      timeoutMs: READ_URL_TIMEOUT_MS,
     })
     : [];
   if (readUrls.length > 0) {

@@ -168,6 +168,8 @@ export async function createAiTeammateDirectReply(input: {
     });
     const webContext = await buildWebEvidenceContext({
       providerPreset: input.store.getProviderPreset(providerPresetId),
+      webSearchProviderPresets: input.store.listProviderPresets({ enabled: true }),
+      providerStore: input.store,
       sourceText: input.sourceMessage.body,
       secretResolver: input.secretResolver,
       fetch: input.webFetch,

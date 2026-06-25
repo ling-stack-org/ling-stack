@@ -53,7 +53,7 @@ export interface ProviderAdapter {
 
 ## Web Search Adapter Contract
 
-`web_search` is a provider capability only when Ling has an adapter that can translate a specific provider protocol into normalized evidence. Surfaces do not call adapters directly; they call the daemon web evidence service, which resolves the selected provider preset, dispatches the adapter, and renders a bounded evidence prompt for channel or private replies.
+`web_search` is a Ling global tool backed by provider-style backend presets. A backend preset is eligible only when Ling has an adapter that can translate its protocol into normalized evidence. Surfaces do not call adapters directly; they call the daemon web evidence service, which resolves a global web-search backend independently from the current chat provider, dispatches the adapter, and renders a bounded evidence prompt for channel or private replies.
 
 ```ts
 interface WebSearchRequest {
@@ -92,8 +92,9 @@ Current implementation:
 - `openai-responses-web-search` supports enabled official OpenAI Responses presets that declare `web_search`, plus explicit Responses-compatible presets such as xAI/Grok or private relays with `compat.webSearch.protocol = "responses-web-search"`.
 - `openai-chat-completions-web-search` supports explicit Chat Completions search presets with `compat.webSearch.protocol = "openai-chat-completions-search"`.
 - `google-interactions-web-search` supports Gemini Google Search grounding presets with `compat.webSearch.protocol = "google-interactions-search"`.
-- `web-evidence-service` is the global daemon surface for web intent detection, URL reading, provider-backed search dispatch, blocked reasons, and prompt metadata.
+- `web-evidence-service` is the global daemon surface for web intent detection, URL reading, backend-backed search dispatch, blocked reasons, and prompt metadata.
 - Channel replies and private teammate replies both reuse the same evidence service; workflow steps and automations should use this service instead of adding surface-local web-search logic.
+- The current chat provider does not need `web_search`. Custom OpenAI-compatible, Grok, Gemini, domestic, and private models can consume global web evidence as plain context.
 - Generic OpenAI-compatible chat/completions relays do not inherit `web_search`; each relay or vendor needs either a known protocol declaration or a dedicated adapter if it exposes search.
 - Domestic providers are supported through the same protocol gate when their endpoint implements a known search protocol and returns citations/sources that Ling can normalize. If a domestic endpoint uses a vendor-specific extension, add a dedicated adapter and tests before advertising `web_search`.
 - Perplexity/search-model providers, Anthropic, and additional domestic provider-specific search extensions remain future adapters.
@@ -119,6 +120,8 @@ Use for Chat Completions-compatible search models or gateways that accept `web_s
 Use for Gemini Search grounding through the Gemini API Interactions endpoint.
 
 `endpointPath` may be provided for relays that mount the same protocol at a non-standard path. It must be a relative path; full URLs are ignored so provider search cannot silently send the configured provider key to an unrelated host.
+
+`timeoutMs` may be provided for slow relays. The default is 12 seconds and overrides are clamped to 12-120 seconds. This applies only to provider-backed `web_search`; public `open_url` reads keep their shorter bounded timeout.
 
 ## Media Execution Contract
 
