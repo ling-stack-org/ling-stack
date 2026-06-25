@@ -705,6 +705,57 @@ function channelActivityItemRenderSignature(item: ChannelActivityItem): string {
   return [base, item.record.status, item.record.updatedAt].join("|");
 }
 
+interface BranchConversationActivityScope {
+  readonly threadId: string;
+  readonly messageIds: ReadonlySet<string>;
+  readonly runIds: ReadonlySet<string>;
+  readonly taskIds: ReadonlySet<string>;
+  readonly workflowIds: ReadonlySet<string>;
+  readonly workflowStepIds: ReadonlySet<string>;
+}
+
+function channelActivityItemBelongsToBranchConversation(
+  item: ChannelActivityItem,
+  scope: BranchConversationActivityScope,
+): boolean {
+  switch (item.kind) {
+    case "message":
+      return item.record.threadId === scope.threadId;
+    case "run":
+      return item.record.threadId === scope.threadId;
+    case "task":
+      return scope.taskIds.has(item.record.id);
+    case "approval":
+      return Boolean(
+        (item.record.runId && scope.runIds.has(item.record.runId)) ||
+        (item.record.taskId && scope.taskIds.has(item.record.taskId)),
+      );
+    case "state-transition":
+      return (
+        (item.record.entityType === "run" && scope.runIds.has(item.record.entityId)) ||
+        (item.record.entityType === "task" && scope.taskIds.has(item.record.entityId)) ||
+        (item.record.entityType === "workflow" && scope.workflowIds.has(item.record.entityId)) ||
+        (item.record.entityType === "workflow_step" && scope.workflowStepIds.has(item.record.entityId))
+      );
+    case "workflow":
+      return scope.workflowIds.has(item.record.id);
+    case "workflow-step":
+      return (
+        scope.workflowIds.has(item.record.workflowId) ||
+        Boolean(item.record.runId && scope.runIds.has(item.record.runId)) ||
+        Boolean(item.record.metadata?.sourceMessageId && scope.messageIds.has(item.record.metadata.sourceMessageId))
+      );
+    case "summary":
+      return (
+        item.record.targetId === scope.threadId ||
+        scope.messageIds.has(item.record.targetId) ||
+        item.record.sourceMessageIds.some((messageId) => scope.messageIds.has(messageId))
+      );
+    default:
+      return false;
+  }
+}
+
 export function WorkspaceClientView({
   cwd,
   daemonHealthy,
@@ -1926,6 +1977,51 @@ export function WorkspaceClientView({
       usedMemoryEvents,
     ],
   );
+  const selectedChannelBranchActivityScope = useMemo<BranchConversationActivityScope | undefined>(() => {
+    if (!selectedChannelBranchRootThreadId) {
+      return undefined;
+    }
+    const messageIds = new Set(
+      channelMessages
+        .filter((message) => message.threadId === selectedChannelBranchRootThreadId)
+        .map((message) => message.id),
+    );
+    const runIds = new Set(
+      channelRuns
+        .filter((run) => run.threadId === selectedChannelBranchRootThreadId)
+        .map((run) => run.id),
+    );
+    const taskIds = new Set(
+      tasks
+        .filter((task) => task.currentRunId && runIds.has(task.currentRunId))
+        .map((task) => task.id),
+    );
+    const workflowIds = new Set(
+      channelWorkflows
+        .filter((workflow) => workflow.metadata?.sourceMessageId && messageIds.has(workflow.metadata.sourceMessageId))
+        .map((workflow) => workflow.id),
+    );
+    const workflowStepIds = new Set<string>();
+    for (const step of channelWorkflowSteps) {
+      const belongsToBranch = (
+        workflowIds.has(step.workflowId) ||
+        Boolean(step.runId && runIds.has(step.runId)) ||
+        Boolean(step.metadata?.sourceMessageId && messageIds.has(step.metadata.sourceMessageId))
+      );
+      if (belongsToBranch) {
+        workflowStepIds.add(step.id);
+        workflowIds.add(step.workflowId);
+      }
+    }
+    return {
+      threadId: selectedChannelBranchRootThreadId,
+      messageIds,
+      runIds,
+      taskIds,
+      workflowIds,
+      workflowStepIds,
+    };
+  }, [channelMessages, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelBranchRootThreadId, tasks]);
   const visibleActivityItems = useMemo(
     () => {
       const baseItems = auditActivityVisible
@@ -1935,11 +2031,21 @@ export function WorkspaceClientView({
           (item.kind === "workflow" && workflowProgressByWorkflowId.has(item.record.id)) ||
           (item.kind === "run" && Boolean(item.record.threadId && conversationWorkCellByThreadId.has(item.record.threadId)))
         );
-      return activeWorkThreadId
-        ? baseItems.filter((item) => item.kind === "run" && item.record.threadId === activeWorkThreadId)
+      const scopedItems = selectedChannelBranchActivityScope
+        ? baseItems.filter((item) => channelActivityItemBelongsToBranchConversation(item, selectedChannelBranchActivityScope))
         : baseItems;
+      return activeWorkThreadId
+        ? scopedItems.filter((item) => item.kind === "run" && item.record.threadId === activeWorkThreadId)
+        : scopedItems;
     },
-    [activeWorkThreadId, auditActivityVisible, conversationWorkCellByThreadId, filteredActivityItems, workflowProgressByWorkflowId],
+    [
+      activeWorkThreadId,
+      auditActivityVisible,
+      conversationWorkCellByThreadId,
+      filteredActivityItems,
+      selectedChannelBranchActivityScope,
+      workflowProgressByWorkflowId,
+    ],
   );
   const renderableActivityItems = useMemo(
     () => visibleActivityItems.filter((item) => {
