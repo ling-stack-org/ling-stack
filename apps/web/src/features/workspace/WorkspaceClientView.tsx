@@ -4584,8 +4584,21 @@ export function WorkspaceClientView({
   }): ReactNode {
     const pendingCoordinatorMessage = block.message.status === "pending";
     const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
+    const evidenceNode = (block.memoryCitationEvents.length > 0 || block.message.webEvidence) ? (
+      <MessageEvidencePanel
+        memoryContent={block.memoryCitationEvents.length > 0 ? (
+          <UsedMemorySummary
+            variant="footer"
+            events={block.memoryCitationEvents}
+            memoryById={memoryById}
+          />
+        ) : undefined}
+        memorySummary={block.memoryCitationEvents.length > 0 ? t("Used memory") : undefined}
+        webEvidence={block.message.webEvidence}
+      />
+    ) : null;
     if (!body) {
-      return null;
+      return evidenceNode ? <div className="conversation-turn-assistant-copy" key={block.id}>{evidenceNode}</div> : null;
     }
     return (
       <div
@@ -4597,13 +4610,7 @@ export function WorkspaceClientView({
       >
         {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
         <MessageBodyRenderer text={body} cwd={cwd} compact streaming={pendingCoordinatorMessage} />
-        {block.memoryCitationEvents.length > 0 ? (
-          <UsedMemorySummary
-            variant="footer"
-            events={block.memoryCitationEvents}
-            memoryById={memoryById}
-          />
-        ) : null}
+        {evidenceNode}
       </div>
     );
   }

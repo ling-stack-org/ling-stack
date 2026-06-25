@@ -106,9 +106,10 @@ export function renderWebEvidenceProgressPendingBody(progress: WebEvidenceProgre
       const reason = progress.reason ? `：${trimProgressValue(progress.reason)}` : "";
       return zh ? `web_search 被阻止${reason}` : `web_search blocked${reason}`;
     }
+    const reason = progress.reason ? `：${trimProgressValue(progress.reason)}` : "";
     return zh
-      ? `web_search 未拿到可引用来源，继续核验...`
-      : `web_search returned no citable sources. Checking fallback evidence...`;
+      ? `web_search 未拿到可引用来源${reason}，继续核验...`
+      : `web_search returned no citable sources${reason}. Checking fallback evidence...`;
   }
   if (progress.type === "open_url_started") {
     const url = trimProgressValue(progress.url);

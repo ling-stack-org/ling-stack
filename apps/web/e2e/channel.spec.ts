@@ -1580,6 +1580,78 @@ test("channel message feed renders web evidence inline with sources and blocked 
   await expect(blockedEvidence).toContainText("Current selected Ling provider does not support realtime web search.");
 });
 
+test("conversation turn transcript renders coordinator web evidence in the main chat", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    {
+      id: "msg_web_turn_user",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "帮我整理一下今天热门 AI 的新闻",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-06-24T00:22:00.000Z",
+      updatedAt: "2026-06-24T00:22:00.000Z",
+    },
+    {
+      id: "msg_web_turn_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_web_turn_user",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "Here is the AI news summary.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      webEvidence: {
+        status: "degraded",
+        query: "AI news today",
+        queries: ["帮我整理一下今天热门 AI 的新闻", "AI latest news", "AI news today", "今日 AI 新闻"],
+        provider: {
+          adapterId: "openai-chat-completions-web-search",
+          providerPresetId: "provider_chat_search",
+          displayName: "Chat Completions Search Relay",
+        },
+        reason: "web_search backend returned text but no citation/source metadata.",
+        sources: [],
+        readUrls: [],
+        updatedAt: "2026-06-24T00:22:30.000Z",
+      },
+      createdAt: "2026-06-24T00:22:30.000Z",
+      updatedAt: "2026-06-24T00:22:30.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const turn = page.locator('[data-conversation-turn-id="conversation-turn:msg_web_turn_user"]');
+  await expect(turn).toBeVisible();
+  await expect(turn).toContainText("Here is the AI news summary.");
+  const evidence = turn.getByLabel("Message evidence");
+  const toggle = evidence.getByRole("button", { name: /web_search degraded/ });
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(evidence).toContainText("Search queries");
+  await expect(evidence).toContainText("AI latest news");
+  await expect(evidence).toContainText("Provider");
+  await expect(evidence).toContainText("Chat Completions Search Relay");
+  await expect(evidence).toContainText("Degraded reason");
+  await expect(evidence).toContainText("web_search backend returned text but no citation/source metadata.");
+  await expect(evidence).toContainText("0 sources");
+});
+
 test("channel settings manage workspace binding and header badge", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

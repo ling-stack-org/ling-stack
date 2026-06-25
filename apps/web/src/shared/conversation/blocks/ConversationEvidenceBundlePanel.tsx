@@ -4,6 +4,7 @@ import { EvidenceDisclosure } from "./EvidenceDisclosure.js";
 export interface ConversationEvidenceItem {
   readonly id: string;
   readonly label: string;
+  readonly className?: string;
   readonly value?: ReactNode;
   readonly meta?: ReactNode;
   readonly status?: ReactNode;
@@ -59,7 +60,7 @@ export function ConversationEvidenceBundlePanel({
             {section.items && section.items.length > 0 ? (
               <ul>
                 {section.items.map((item) => (
-                  <li key={item.id}>
+                  <li key={item.id} className={item.className}>
                     <span>
                       {item.icon}
                       <strong>{item.label}</strong>

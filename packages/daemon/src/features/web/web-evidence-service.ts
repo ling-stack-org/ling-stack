@@ -18,7 +18,7 @@ const READ_URL_MAX_BYTES = 192_000;
 const READ_URL_MAX_CHARS = 4_000;
 const READ_URL_MAX_LINKS = 3;
 const WEB_SEARCH_MAX_QUERY_ATTEMPTS = 4;
-const WEB_SEARCH_DEGRADED_REASON = "web_search backend returned a summary but no source URLs. Treat current facts as unverified unless open_url/read_url evidence is also included.";
+const WEB_SEARCH_DEGRADED_REASON = "web_search backend returned text but no citation/source metadata. This provider or relay may accept the configured protocol without supporting real hosted web search; treat current facts as unverified unless open_url evidence is included.";
 
 export type WebEvidenceContextStatus = "not_applicable" | "available" | "degraded" | "blocked";
 
