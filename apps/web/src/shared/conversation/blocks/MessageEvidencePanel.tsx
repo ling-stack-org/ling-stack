@@ -58,8 +58,8 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
     {
       id: "status",
       label: t("Status"),
-      value: <span className={`conversation-evidence-status ${webEvidence.status}`}>{webEvidence.status}</span>,
-      icon: webEvidence.status === "blocked" ? <ShieldAlert size={12} /> : <Globe2 size={12} />,
+      value: <span className={`conversation-evidence-status ${webEvidence.status}`}>{t(webEvidence.status)}</span>,
+      icon: webEvidence.status === "available" ? <Globe2 size={12} /> : <ShieldAlert size={12} />,
     },
   ];
   if (webEvidence.query) {
@@ -67,6 +67,20 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
       id: "query",
       label: "web_search",
       value: <code className="conversation-evidence-code">{webEvidence.query}</code>,
+      icon: <Search size={12} />,
+    });
+  }
+  if (webEvidence.queries && webEvidence.queries.length > 0) {
+    searchItems.push({
+      id: "queries",
+      label: t("Search queries"),
+      value: (
+        <span className="conversation-evidence-code-list">
+          {webEvidence.queries.map((query, index) => (
+            <code key={`${index}-${query}`} className="conversation-evidence-code">{query}</code>
+          ))}
+        </span>
+      ),
       icon: <Search size={12} />,
     });
   }
@@ -89,10 +103,8 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
   sections.push({
     id: "web-search",
     label: "web_search",
-    summary: webEvidence.status === "blocked"
-      ? t("blocked")
-      : t("{count} sources", { count: webEvidence.sources.length }),
-    icon: <Search size={13} />,
+    summary: webEvidenceSearchSummary(webEvidence, t),
+    icon: webEvidence.status === "available" ? <Search size={13} /> : <ShieldAlert size={13} />,
     items: searchItems,
   });
 
@@ -147,8 +159,14 @@ function summarizeMessageEvidence(hasMemory: boolean, webEvidence: MessageWebEvi
   }
   if (webEvidence) {
     const webParts: string[] = [];
-    if (webEvidence.query || webEvidence.reason || webEvidence.sources.length > 0) {
-      webParts.push(webEvidence.status === "blocked" ? "web_search blocked" : `web_search ${webEvidence.sources.length} sources`);
+    if (webEvidence.query || webEvidence.reason || webEvidence.sources.length > 0 || webEvidence.queries?.length) {
+      if (webEvidence.status === "blocked") {
+        webParts.push("web_search blocked");
+      } else if (webEvidence.status === "degraded") {
+        webParts.push("web_search degraded");
+      } else {
+        webParts.push(`web_search ${webEvidence.sources.length} sources`);
+      }
     }
     if (webEvidence.readUrls.length > 0) {
       webParts.push(`open_url ${webEvidence.readUrls.length} URLs`);
@@ -156,6 +174,16 @@ function summarizeMessageEvidence(hasMemory: boolean, webEvidence: MessageWebEvi
     parts.push(webParts.join(" / ") || "web evidence");
   }
   return parts.join(" · ");
+}
+
+function webEvidenceSearchSummary(webEvidence: MessageWebEvidence, t: Translate): string {
+  if (webEvidence.status === "blocked") {
+    return t("blocked");
+  }
+  if (webEvidence.status === "degraded") {
+    return t("degraded");
+  }
+  return t("{count} sources", { count: webEvidence.sources.length });
 }
 
 function sourceHost(url: string): string {

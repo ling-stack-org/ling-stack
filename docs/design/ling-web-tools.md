@@ -36,6 +36,8 @@ The shared implementation lives under `packages/daemon/src/features/web/`:
 - `web-search-service.ts`: global backend candidate resolution, local/env/keychain secret lookup, adapter dispatch, and sanitized failures.
 - `web-evidence-service.ts`: global intent detection, URL reading, evidence prompt rendering, and normalized metadata for `search` and `readUrls`.
 
+The evidence service keeps the search phase bounded. It can expand a freshness request into a small planned query set, but it must stay deterministic and capped. The planner is a helper, not a second search engine.
+
 Channel code keeps a small compatibility wrapper in `features/channels/web-tools.ts`. Private teammate replies call the same evidence service directly.
 
 ## Tool Semantics
@@ -49,6 +51,7 @@ Global result contract:
 ```ts
 interface WebSearchResult {
   query: string;
+  queries?: readonly string[];
   text: string;
   sources: Array<{ title?: string; url: string; snippet?: string }>;
   provider: {
@@ -66,6 +69,7 @@ Global tool contract:
 - Do not fall back to a standalone `env:OPENAI_API_KEY` unless there is an explicit provider preset using that ref. Real-time search must be explained as a Ling global tool backend in model settings, not as a hidden daemon key.
 - Never log or render the plaintext key.
 - If search fails, no backend exists, or the backend key is missing, continue the reply with a web-context blocked reason instead of fabricating current facts.
+- If search returns a summary but no source URLs, continue the reply as `degraded` and do not treat the summary as current evidence.
 
 Current adapters:
 
@@ -232,7 +236,7 @@ The slice intentionally reuses the existing provider secret system:
 | Backend provider declares `web_search` but no Ling adapter supports its protocol | Inject blocked web-search status; reply should say Ling has no web-search adapter for that backend yet. |
 | Backend provider key is missing | Inject blocked web-search status; reply should say the configured backend key is missing. |
 | OpenAI request fails | Inject sanitized HTTP/network error; continue ordinary reply. |
-| Model returns no citations | Include summary and mark sources as none returned. |
+| Model returns no citations | Include summary, mark the event `degraded`, and do not treat it as current evidence. |
 | URL points to private/local network | Block before fetch or after DNS/redirect check. |
 | URL body too large | Truncate to prompt budget. |
 | Unsupported content type | Block URL body extraction. |

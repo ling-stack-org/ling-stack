@@ -117,6 +117,7 @@ function buildMessageWebEvidence(context: WebEvidenceContext, updatedAt: string)
   return {
     status: context.status,
     ...(context.search?.query ? { query: trimString(context.search.query, 600) } : {}),
+    ...(context.search?.queries?.length ? { queries: context.search.queries.map((query) => trimString(query, 240)).filter((query) => Boolean(query)) } : {}),
     ...(context.search?.provider ? { provider: normalizeProvider(context.search.provider) } : {}),
     ...(context.reason ? { reason: trimString(context.reason, 600) } : {}),
     sources,
@@ -129,7 +130,7 @@ function readMessageWebEvidence(data: unknown): MessageWebEvidence | undefined {
   if (!isRecord(data) || data.toolSurface !== "web") {
     return undefined;
   }
-  const status = data.status === "available" || data.status === "blocked" ? data.status : undefined;
+  const status = data.status === "available" || data.status === "degraded" || data.status === "blocked" ? data.status : undefined;
   const updatedAt = typeof data.updatedAt === "string" ? data.updatedAt : undefined;
   if (!status || !updatedAt) {
     return undefined;
@@ -137,6 +138,7 @@ function readMessageWebEvidence(data: unknown): MessageWebEvidence | undefined {
   return {
     status,
     ...(typeof data.query === "string" ? { query: trimString(data.query, 600) } : {}),
+    ...(Array.isArray(data.queries) ? { queries: data.queries.filter((query): query is string => typeof query === "string").map((query) => trimString(query, 240)).filter((query) => Boolean(query)) } : {}),
     ...(isRecord(data.provider) ? { provider: normalizeProvider(data.provider) } : {}),
     ...(typeof data.reason === "string" ? { reason: trimString(data.reason, 600) } : {}),
     sources: Array.isArray(data.sources) ? normalizeSources(data.sources) : [],

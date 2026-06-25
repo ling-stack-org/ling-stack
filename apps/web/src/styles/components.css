@@ -796,6 +796,18 @@ button.artifact-action-link {
   white-space: nowrap;
 }
 
+.conversation-evidence-code-list {
+  display: inline-flex;
+  gap: 6px;
+  max-width: min(420px, 52vw);
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
+.conversation-evidence-code-list .conversation-evidence-code {
+  max-width: min(180px, 22vw);
+}
+
 .conversation-evidence-link {
   display: inline-block;
   max-width: min(220px, 36vw);
@@ -833,6 +845,11 @@ button.artifact-action-link {
 }
 
 .conversation-evidence-status.blocked {
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+
+.conversation-evidence-status.degraded {
   border-color: var(--warning-border);
   color: var(--warning);
 }

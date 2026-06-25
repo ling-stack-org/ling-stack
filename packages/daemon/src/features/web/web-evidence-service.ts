@@ -17,8 +17,10 @@ const READ_URL_TIMEOUT_MS = 12_000;
 const READ_URL_MAX_BYTES = 192_000;
 const READ_URL_MAX_CHARS = 4_000;
 const READ_URL_MAX_LINKS = 3;
+const WEB_SEARCH_MAX_QUERY_ATTEMPTS = 4;
+const WEB_SEARCH_DEGRADED_REASON = "web_search backend returned a summary but no source URLs. Treat current facts as unverified unless open_url/read_url evidence is also included.";
 
-export type WebEvidenceContextStatus = "not_applicable" | "available" | "blocked";
+export type WebEvidenceContextStatus = "not_applicable" | "available" | "degraded" | "blocked";
 
 export interface WebEvidenceContext {
   readonly status: WebEvidenceContextStatus;
@@ -54,7 +56,7 @@ export async function buildWebEvidenceContext(input: BuildWebEvidenceContextInpu
   const text = input.sourceText;
   const shouldSearch = shouldRunWebSearchForText(text);
   const availableMaterializedUrls = new Set(input.availableMaterializedUrls ?? []);
-  const urlsToRead = shouldReadPublicUrlsForText(text)
+  let urlsToRead = shouldReadPublicUrlsForText(text)
     ? extractPublicUrls(text)
       .filter((url) => !availableMaterializedUrls.has(url))
       .slice(0, READ_URL_MAX_LINKS)
@@ -66,22 +68,20 @@ export async function buildWebEvidenceContext(input: BuildWebEvidenceContextInpu
 
   const sections: string[] = [];
   let search: WebSearchResult | undefined;
-  let searchBlockedReason: string | undefined;
+  let webReason: string | undefined;
   if (shouldSearch) {
-    const searchContext = await runProviderWebSearch({
-      providerPreset: input.providerPreset,
-      webSearchProviderPresets: input.webSearchProviderPresets,
-      providerStore: input.providerStore,
-      secretResolver: input.secretResolver,
-      query: text,
-      fetch: input.fetch,
-    });
+    const searchContext = await runPlannedProviderWebSearch(input, text);
     if (searchContext.status === "blocked") {
-      searchBlockedReason = searchContext.reason ?? "Current selected Ling provider does not support realtime web search.";
-      sections.push(`Web search status: blocked\nReason: ${searchBlockedReason}`);
+      webReason = searchContext.reason ?? "Current selected Ling provider does not support realtime web search.";
+      sections.push(`Web search status: blocked\nReason: ${webReason}`);
     } else if (searchContext.result) {
       search = searchContext.result;
       sections.push(renderWebSearchResult(search));
+      if (search.sources.length === 0) {
+        webReason = searchContext.reason ?? WEB_SEARCH_DEGRADED_REASON;
+        sections.push(`Web search status: degraded\nReason: ${webReason}`);
+        urlsToRead = appendBoundedUniqueUrls(urlsToRead, extractPublicUrls(search.text), availableMaterializedUrls, READ_URL_MAX_LINKS);
+      }
     }
   }
 
@@ -100,14 +100,20 @@ export async function buildWebEvidenceContext(input: BuildWebEvidenceContextInpu
   if (sections.length === 0) {
     return { status: "not_applicable" };
   }
+  const hasSourceEvidence = Boolean(search && search.sources.length > 0);
+  const hasReadUrlEvidence = readUrls.some((item) => item.status === "available");
   return {
-    status: search || readUrls.some((item) => item.status === "available") ? "available" : "blocked",
+    status: hasSourceEvidence || hasReadUrlEvidence
+      ? "available"
+      : search
+        ? "degraded"
+        : "blocked",
     prompt: [
       input.promptHeader ?? "Ling web context:",
       input.promptInstruction ?? "Use this web context only as cited evidence for the current reply. Do not claim access to web pages beyond the included results.",
       ...sections,
     ].join("\n"),
-    reason: searchBlockedReason,
+    reason: webReason,
     search,
     readUrls,
   };
@@ -137,6 +143,32 @@ export function shouldReadPublicUrlsForText(text: string): boolean {
     /(open[_ -]?url|read[_ -]?url|打开|读取|读一下|看看|总结|概括|提取|分析|open|read|summari[sz]e|extract|analy[sz]e|what.*about)/iu.test(text);
 }
 
+export function planWebSearchQueries(text: string): string[] {
+  const original = normalizeSearchQuery(text);
+  if (!original) {
+    return [];
+  }
+  const queries: string[] = [original];
+  const topic = extractSearchTopic(original);
+  const freshnessIntent = isFreshnessSearchText(original);
+  if (topic && topic !== original) {
+    queries.push(topic);
+  }
+  if (topic && freshnessIntent) {
+    queries.push(`${topic} latest news`);
+    queries.push(`${topic} news today`);
+    if (hasCjk(original)) {
+      queries.push(`${topic} 最新 新闻`);
+    }
+  }
+  if (/(?:^|\W)AI(?:\W|$)|人工智能|大模型/iu.test(original)) {
+    queries.push("AI news today");
+    queries.push("latest AI news");
+    queries.push("今日 AI 新闻");
+  }
+  return uniqueQueries(queries).slice(0, WEB_SEARCH_MAX_QUERY_ATTEMPTS);
+}
+
 export function extractPublicUrls(text: string): string[] {
   const urls: string[] = [];
   const seen = new Set<string>();
@@ -151,6 +183,52 @@ export function extractPublicUrls(text: string): string[] {
     urls.push(url);
   }
   return urls;
+}
+
+async function runPlannedProviderWebSearch(
+  input: BuildWebEvidenceContextInput,
+  sourceText: string,
+): Promise<{ readonly status: "available" | "blocked"; readonly result?: WebSearchResult; readonly reason?: string }> {
+  const queries = planWebSearchQueries(sourceText);
+  if (queries.length === 0) {
+    return { status: "blocked", reason: "web_search query is empty." };
+  }
+  let fallbackResult: WebSearchResult | undefined;
+  let lastBlockedReason: string | undefined;
+  const attemptedQueries: string[] = [];
+  for (const query of queries) {
+    attemptedQueries.push(query);
+    const searchContext = await runProviderWebSearch({
+      providerPreset: input.providerPreset,
+      webSearchProviderPresets: input.webSearchProviderPresets,
+      providerStore: input.providerStore,
+      secretResolver: input.secretResolver,
+      query,
+      fetch: input.fetch,
+    });
+    if (searchContext.status === "blocked") {
+      lastBlockedReason = searchContext.reason;
+      break;
+    }
+    if (!searchContext.result) {
+      continue;
+    }
+    const result = {
+      ...searchContext.result,
+      queries: [...attemptedQueries],
+    };
+    if (result.sources.length > 0) {
+      return { status: "available", result };
+    }
+    fallbackResult = result;
+  }
+  if (fallbackResult) {
+    return { status: "available", result: fallbackResult, reason: WEB_SEARCH_DEGRADED_REASON };
+  }
+  return {
+    status: "blocked",
+    reason: lastBlockedReason ?? "web_search backend returned no usable result.",
+  };
 }
 
 async function readPublicUrlsForContext(input: {
@@ -202,6 +280,12 @@ function renderWebSearchResult(result: WebSearchResult): string {
     "Web search result:",
     `Provider: ${result.provider.displayName} (${result.provider.adapterId})`,
     `Query: ${result.query}`,
+    result.queries && result.queries.length > 0
+      ? [
+        "Search queries:",
+        ...result.queries.map((query, index) => `- ${index + 1}. ${query}`),
+      ].join("\n")
+      : undefined,
     result.text ? `Summary:\n${indent(result.text)}` : "Summary: none returned",
     result.sources.length > 0
       ? [
@@ -211,7 +295,7 @@ function renderWebSearchResult(result: WebSearchResult): string {
         ),
       ].join("\n")
       : "Sources: none returned",
-  ].join("\n");
+  ].filter((line): line is string => Boolean(line)).join("\n");
 }
 
 function renderReadUrlResults(results: readonly WebEvidenceReadUrlResult[]): string {
@@ -232,4 +316,70 @@ function stripTrailingUrlPunctuation(value: string): string {
 
 function indent(value: string): string {
   return value.split(/\r?\n/u).map((line) => `  ${line}`).join("\n");
+}
+
+function appendBoundedUniqueUrls(
+  current: readonly string[],
+  next: readonly string[],
+  unavailableUrls: ReadonlySet<string>,
+  maxCount: number,
+): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const url of [...current, ...next]) {
+    if (seen.has(url) || unavailableUrls.has(url)) {
+      continue;
+    }
+    seen.add(url);
+    result.push(url);
+    if (result.length >= maxCount) {
+      break;
+    }
+  }
+  return result;
+}
+
+function normalizeSearchQuery(text: string): string {
+  return text
+    .replace(/[@＠][^\s，。,.!?！？；;:：)）]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 160);
+}
+
+function extractSearchTopic(query: string): string | undefined {
+  const topic = query
+    .replace(/[@＠][^\s，。,.!?！？；;:：)）]+/gu, " ")
+    .replace(/[，。,.!?！？；;:：()[\]（）【】"'`]/gu, " ")
+    .replace(/\b(?:web[_ -]?search|search|browse|look up|lookup|find|current|latest|today|yesterday|recent|news|source|sources|citation|citations|url|urls)\b/giu, " ")
+    .replace(/(?:查一下|搜索一下|搜一下|查询一下|查找|查网页|搜网页|联网|上网|网页搜索|网络搜索|打开|读取|看看|今天|今日|昨天|昨日|热门|最新|实时|当前|新闻|动态|来源|链接|带来源|回复|一句话|帮我|请问|请|一下|一下子|关于|的)/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (topic.length < 2 || topic === query) {
+    return undefined;
+  }
+  return topic.slice(0, 96);
+}
+
+function isFreshnessSearchText(text: string): boolean {
+  return /(最新|实时|今天|今日|昨日|昨天|本周|刚刚|现在|当前|新闻|动态|current|latest|today|yesterday|recent|news)/iu.test(text);
+}
+
+function hasCjk(text: string): boolean {
+  return /[\u3400-\u9fff]/u.test(text);
+}
+
+function uniqueQueries(values: readonly string[]): string[] {
+  const queries: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const query = normalizeSearchQuery(value);
+    const key = query.toLocaleLowerCase();
+    if (!query || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    queries.push(query);
+  }
+  return queries;
 }

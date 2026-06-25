@@ -2594,6 +2594,9 @@ function runtimeEventTimelineLabel(event: WorkUnitDetailResponse["events"][numbe
   if (status === "blocked" && reason) {
     return `#${event.seq} ${toolName} ${t("blocked")}: ${truncatePreview(reason, 86)}`;
   }
+  if (status === "degraded") {
+    return `#${event.seq} ${toolName} ${t("degraded")}`;
+  }
   if (query) {
     return `#${event.seq} web_search: ${truncatePreview(query, 86)}`;
   }
