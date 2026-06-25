@@ -65,6 +65,7 @@ interface WebSearchRequest {
 
 interface WebSearchResult {
   query: string;
+  queries?: readonly string[];
   text: string;
   sources: Array<{
     title?: string;
@@ -93,11 +94,18 @@ Current implementation:
 - `openai-chat-completions-web-search` supports explicit Chat Completions search presets with `compat.webSearch.protocol = "openai-chat-completions-search"`.
 - `google-interactions-web-search` supports Gemini Google Search grounding presets with `compat.webSearch.protocol = "google-interactions-search"`.
 - `web-evidence-service` is the global daemon surface for web intent detection, URL reading, backend-backed search dispatch, blocked reasons, and prompt metadata.
+- `web-evidence-service` may plan a bounded set of query variants for freshness searches. The adapter still receives one query at a time and returns normalized evidence for that query.
 - Channel replies and private teammate replies both reuse the same evidence service; workflow steps and automations should use this service instead of adding surface-local web-search logic.
 - The current chat provider does not need `web_search`. Custom OpenAI-compatible, Grok, Gemini, domestic, and private models can consume global web evidence as plain context.
 - Generic OpenAI-compatible chat/completions relays do not inherit `web_search`; each relay or vendor needs either a known protocol declaration or a dedicated adapter if it exposes search.
 - Domestic providers are supported through the same protocol gate when their endpoint implements a known search protocol and returns citations/sources that Ling can normalize. If a domestic endpoint uses a vendor-specific extension, add a dedicated adapter and tests before advertising `web_search`.
 - Perplexity/search-model providers, Anthropic, and additional domestic provider-specific search extensions remain future adapters.
+
+Adapter quality gate:
+
+- A provider response with source URLs is `available`.
+- A provider response with summary text but no source URLs is `degraded`; Ling can show the summary as non-authoritative context but must not present it as verified current evidence.
+- A provider error, missing key, or unsupported protocol is `blocked`.
 
 Supported `compat.webSearch` protocols:
 

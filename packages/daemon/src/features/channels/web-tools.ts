@@ -21,6 +21,7 @@ export {
 } from "../web/web-search-adapters.js";
 export {
   extractPublicUrls,
+  planWebSearchQueries,
   shouldReadPublicUrlsForText,
   shouldRunWebSearchForText,
 } from "../web/web-evidence-service.js";

@@ -1494,6 +1494,37 @@ test("channel message feed renders web evidence inline with sources and blocked 
       updatedAt: "2026-06-24T00:20:00.000Z",
     },
     {
+      id: "msg_web_evidence_degraded",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "engineer",
+      body: "Degraded web reply.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      webEvidence: {
+        status: "degraded",
+        query: "AI news today",
+        queries: ["查一下今天热门 AI 的新闻", "AI news today", "latest AI news"],
+        provider: {
+          adapterId: "openai-chat-completions-web-search",
+          providerPresetId: "provider_chat_search",
+          displayName: "Chat Completions Search Relay",
+        },
+        reason: "web_search backend returned a summary but no source URLs.",
+        sources: [],
+        readUrls: [],
+        updatedAt: "2026-06-24T00:20:30.000Z",
+      },
+      createdAt: "2026-06-24T00:20:30.000Z",
+      updatedAt: "2026-06-24T00:20:30.000Z",
+    },
+    {
       id: "msg_web_evidence_blocked",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
@@ -1532,6 +1563,14 @@ test("channel message feed renders web evidence inline with sources and blocked 
   await expect(sourcedEvidence).toContainText("Ling release note");
   await expect(sourcedEvidence).toContainText("example.com");
   await expect(sourcedEvidence).toContainText("open_url");
+
+  const degradedReply = feed.locator(".channel-message-row").filter({ hasText: "Degraded web reply." });
+  const degradedEvidence = degradedReply.getByLabel("Message evidence");
+  await expect(degradedEvidence.getByRole("button", { name: /web_search degraded/ })).toBeVisible();
+  await degradedEvidence.getByRole("button").click();
+  await expect(degradedEvidence).toContainText("Search queries");
+  await expect(degradedEvidence).toContainText("AI news today");
+  await expect(degradedEvidence).toContainText("web_search backend returned a summary but no source URLs.");
 
   const blockedReply = feed.locator(".channel-message-row").filter({ hasText: "Blocked web reply." });
   const blockedEvidence = blockedReply.getByLabel("Message evidence");

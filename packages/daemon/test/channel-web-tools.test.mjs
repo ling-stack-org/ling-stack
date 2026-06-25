@@ -4,6 +4,7 @@ import { createCompositeSecretResolver } from "../../core/dist/index.js";
 import {
   buildChannelWebContext,
   extractPublicUrls,
+  planWebSearchQueries,
   runGoogleInteractionsWebSearch,
   runOpenAiChatCompletionsWebSearch,
   runOpenAiWebSearch,
@@ -15,6 +16,13 @@ test("web search trigger detects explicit and freshness search intent", () => {
   assert.equal(shouldRunWebSearchForText("搜索一下 OpenAI 今天的新闻"), true);
   assert.equal(shouldRunWebSearchForText("What is the latest Node LTS news?"), true);
   assert.equal(shouldRunWebSearchForText("现在实现这个按钮"), false);
+});
+
+test("web search query planner expands freshness intent", () => {
+  const queries = planWebSearchQueries("查一下今天热门 AI 的新闻");
+  assert.equal(queries[0], "查一下今天热门 AI 的新闻");
+  assert.ok(queries.length > 1);
+  assert.ok(queries.includes("AI news today") || queries.includes("latest AI news"));
 });
 
 test("public URL intent extracts bounded HTTP URLs", () => {
@@ -135,6 +143,50 @@ test("channel web context uses global web_search backend independent from chat p
   assert.equal(calls[0].url, "https://api.x.ai/v1/responses");
   assert.equal(context.search?.provider.providerPresetId, webProvider.id);
   assert.match(context.prompt, /Global backend result/);
+});
+
+test("channel web context degrades search summaries without source URLs", async () => {
+  const calls = [];
+  const webProvider = {
+    ...createResponsesCompatibleWebSearchProvider(),
+    id: "provider_chat_completions_search",
+    displayName: "Chat Completions Search Relay",
+    api: "openai-completions",
+    baseUrl: "https://relay.example.test/v1",
+    apiKeyRef: "env:RELAY_API_KEY",
+    compat: { webSearch: { protocol: "openai-chat-completions-search" } },
+  };
+  const context = await buildChannelWebContext({
+    providerPresetId: webProvider.id,
+    store: {
+      getProviderPreset: () => webProvider,
+      listProviderPresets: () => [webProvider],
+    },
+    sourceMessage: { body: "查一下今天热门 AI 的新闻" },
+    turnEnvelope: { body: "查一下今天热门 AI 的新闻", linkPreviews: [] },
+    secretResolver: createCompositeSecretResolver({ env: { RELAY_API_KEY: "sk-test-relay-secret" } }),
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: "Relay returned a summary without citations.",
+            },
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  assert.equal(calls.length, 4);
+  assert.equal(context.status, "degraded");
+  assert.equal(context.search?.sources.length, 0);
+  assert.ok(context.search?.queries && context.search.queries.length > 1);
+  assert.match(context.reason ?? "", /no source URLs/);
+  assert.match(context.prompt ?? "", /Web search status: degraded/);
+  assert.match(context.prompt ?? "", /Search queries:/);
+  assert.doesNotMatch(context.prompt ?? "", /sk-test-relay-secret/);
 });
 
 test("channel web context resolves local provider secrets for global web_search backend", async () => {

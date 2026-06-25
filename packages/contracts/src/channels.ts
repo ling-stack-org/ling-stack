@@ -405,7 +405,7 @@ export interface ChannelMessageFileRef {
   readonly line?: number;
 }
 
-export type MessageWebEvidenceStatus = "available" | "blocked";
+export type MessageWebEvidenceStatus = "available" | "degraded" | "blocked";
 
 export interface MessageWebEvidenceProvider {
   readonly adapterId: string;
@@ -430,6 +430,7 @@ export interface MessageWebEvidenceReadUrl {
 export interface MessageWebEvidence {
   readonly status: MessageWebEvidenceStatus;
   readonly query?: string;
+  readonly queries?: readonly string[];
   readonly provider?: MessageWebEvidenceProvider;
   readonly reason?: string;
   readonly sources: readonly MessageWebEvidenceSource[];

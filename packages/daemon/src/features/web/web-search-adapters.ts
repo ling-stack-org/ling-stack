@@ -51,6 +51,7 @@ export interface GoogleInteractionsWebSearchRequest {
 
 export interface WebSearchResult {
   readonly query: string;
+  readonly queries?: readonly string[];
   readonly text: string;
   readonly sources: readonly WebSource[];
   readonly provider: {
