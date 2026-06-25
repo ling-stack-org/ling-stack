@@ -1635,6 +1635,7 @@ export type MemoryStoreFacet = RunStoreFacet<
 >;
 
 export type ChannelStoreFacet = RunStoreFacet<
+  | "listChannelBranches"
   | "createChannelMessage"
   | "updateChannelMessageRuntime"
   | "getChannelMessage"

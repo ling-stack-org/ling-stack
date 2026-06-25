@@ -15,6 +15,7 @@ import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-age
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { buildLingAgentSessionViewForChannel } from "./ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope, type LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
+import { listChannelBranchRootThreadIds } from "./conversation-surface.js";
 import { materializeInlineChannelInputs } from "./materialization/inline.js";
 import { createProviderBackedImageVisionSummarizer } from "./materialization/provider-vision.js";
 import type { LingImageVisionSummarizer } from "./materialization/registry.js";
@@ -285,9 +286,11 @@ export async function handleChannelMessagesCollection(
     }
 
     if (request.method === "GET") {
+      const threadId = url.searchParams.get("threadId") ?? undefined;
       const page = store.listChannelMessagesPage({
         channelId,
-        threadId: url.searchParams.get("threadId") ?? undefined,
+        threadId,
+        excludeThreadIds: threadId ? undefined : listChannelBranchRootThreadIds(store, channelId),
         beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       });

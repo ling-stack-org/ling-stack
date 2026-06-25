@@ -10923,8 +10923,10 @@ function channelRouteDecisionUserReason(decision: ChannelMessageRouteDecision, t
       return t("A similar short greeting was already answered recently.");
     case "Message is empty.":
       return t("The message has no content for an AI teammate to answer.");
+    case "Topic replies are outside the first auto-reply scope.":
+      return t("Automatic replies currently run for root channel messages and channel branches, not topic replies.");
     case "Thread replies are outside the first auto-reply scope.":
-      return t("Automatic replies currently only run for root channel messages.");
+      return t("Automatic replies currently run for root channel messages and channel branches.");
     case "Channel is not active.":
       return t("This channel is not active, so Ling did not create an automatic reply.");
     case "No active teammate candidate has a runnable provider.":

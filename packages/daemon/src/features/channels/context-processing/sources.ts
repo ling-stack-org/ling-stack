@@ -15,6 +15,7 @@ import {
   summarizeArtifactEvidence,
   workflowPacketKindForArtifact,
 } from "./evidence.js";
+import { listChannelBranchRootThreadIds, resolveChannelConversationSurface } from "../conversation-surface.js";
 import type { ChannelContextSource, ChannelContextSourceRef } from "./types.js";
 
 type ChannelContextConversationStore = ChannelStoreFacet & RunExecutionStoreFacet;
@@ -227,8 +228,27 @@ export function listChannelContextMessages(input: {
       .map((intervention) => parseChannelMessageGuidanceIdempotencyKey(intervention.idempotencyKey))
       .filter((messageId): messageId is string => Boolean(messageId)),
   );
+  const limit = input.limit ?? 8;
+  const surface = resolveChannelConversationSurface(input.store, input.channelId, input.sourceMessage);
+  if (surface.kind === "branch") {
+    return input.store
+      .listChannelMessages({ channelId: input.channelId, threadId: surface.rootThreadId, limit })
+      .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+  }
+  if (surface.kind === "topic") {
+    const parentMessage = input.store.getChannelMessage(surface.sourceMessageId);
+    const topicMessages = input.store.listChannelMessages({ channelId: input.channelId, threadId: surface.sourceMessageId, limit });
+    const messages = parentMessage?.channelId === input.channelId
+      ? [parentMessage, ...topicMessages.filter((message) => message.id !== parentMessage.id)]
+      : topicMessages;
+    return messages.filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+  }
   return input.store
-    .listChannelMessages({ channelId: input.channelId, limit: input.limit ?? 8 })
+    .listChannelMessages({
+      channelId: input.channelId,
+      limit,
+      excludeThreadIds: listChannelBranchRootThreadIds(input.store, input.channelId),
+    })
     .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
 }
 

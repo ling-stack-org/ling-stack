@@ -150,9 +150,13 @@ export class SqliteChannelMessageStore {
   listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage {
     const clauses = ["workspace_id = ?", "channel_id = ?"];
     const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    const excludedThreadIds = [...new Set(options.excludeThreadIds ?? [])].filter((threadId) => threadId.trim().length > 0);
     if (options.threadId) {
       clauses.push("thread_id = ?");
       params.push(options.threadId);
+    } else if (excludedThreadIds.length > 0) {
+      clauses.push(`(thread_id IS NULL OR thread_id NOT IN (${excludedThreadIds.map(() => "?").join(", ")}))`);
+      params.push(...excludedThreadIds);
     }
     if (options.beforeMessageId) {
       const cursor = this.context.database
@@ -163,7 +167,10 @@ export class SqliteChannelMessageStore {
       }
       const cursorRow = cursor as Record<string, SQLOutputValue>;
       const cursorThreadId = readNullableString(cursorRow, "thread_id");
-      if ((options.threadId ?? undefined) !== cursorThreadId) {
+      if (options.threadId !== undefined && options.threadId !== cursorThreadId) {
+        throw new Error(`Invalid channel message cursor: ${options.beforeMessageId}`);
+      }
+      if (options.threadId === undefined && cursorThreadId && excludedThreadIds.includes(cursorThreadId)) {
         throw new Error(`Invalid channel message cursor: ${options.beforeMessageId}`);
       }
       clauses.push("(created_at < ? OR (created_at = ? AND rowid < ?))");

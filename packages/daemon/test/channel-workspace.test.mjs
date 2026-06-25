@@ -4390,6 +4390,112 @@ test("default_teammate route suppresses duplicate Ling Agent replies for the sam
   }
 });
 
+test("default_teammate route treats channel branches and topic replies as separate surfaces", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-surface-route-"));
+  const now = "2026-06-25T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const provider = store.createProviderPreset(
+      {
+        kind: "glm",
+        displayName: "Static Chat",
+        providerId: "static-chat",
+        model: "static-model",
+        api: "google-generative-ai",
+        capabilities: ["chat"],
+        input: ["text"],
+        authHeader: false,
+        enabled: true,
+      },
+      now,
+    );
+    store.recordProviderCheckResult(provider.id, {
+      ok: true,
+      code: "static_check",
+      message: "Provider configuration is valid.",
+      checkedAt: now,
+    });
+    const channel = store.createChannel(
+      {
+        name: "Engineering",
+        boundPath: cwd,
+        defaultProviderPresetId: provider.id,
+        defaultTeammateId: "engineer",
+        autoReplyMode: "default_teammate",
+      },
+      now,
+    );
+    const branch = store.createChannelBranch(
+      {
+        channelId: channel.id,
+        name: "test",
+        rootThreadId: "thread_branch_root",
+      },
+      now,
+    );
+    const branchMessage = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: branch.rootThreadId,
+        authorType: "local-user",
+        body: "分支里也需要继续回复。",
+      },
+      now,
+    );
+    const topicSource = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        authorType: "local-user",
+        body: "主频道源消息。",
+      },
+      now,
+    );
+    const topicReply = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: topicSource.id,
+        authorType: "local-user",
+        body: "这是 topic reply，不应该自动拉起 agent。",
+      },
+      now,
+    );
+
+    const sharedRouteInput = {
+      store,
+      channel,
+      config: testDaemonConfig(cwd),
+      secretResolver: createCompositeSecretResolver({ env: {} }),
+      runnerRegistry: unusedRunnerRegistry(),
+    };
+    const branchRoute = await routeChannelMessageReply({
+      ...sharedRouteInput,
+      sourceMessage: branchMessage,
+    });
+    const topicRoute = await routeChannelMessageReply({
+      ...sharedRouteInput,
+      sourceMessage: topicReply,
+    });
+
+    assert.equal(branchRoute.action, "reply");
+    assert.equal(branchRoute.teammateId, "ling_agent");
+    assert.equal(branchRoute.reason, "Ling Agent answered a channel branch message.");
+    assert.equal(topicRoute.action, "no_reply");
+    assert.equal(topicRoute.reason, "Topic replies are outside the first auto-reply scope.");
+
+    const branchDecisions = store.listChannelMessageRouteDecisions({ channelId: channel.id, sourceMessageId: branchMessage.id });
+    assert.equal(branchDecisions.length, 1);
+    assert.equal(branchDecisions[0].action, "reply");
+    assert.equal(branchDecisions[0].status, "accepted");
+    const topicDecisions = store.listChannelMessageRouteDecisions({ channelId: channel.id, sourceMessageId: topicReply.id });
+    assert.equal(topicDecisions.length, 1);
+    assert.equal(topicDecisions[0].action, "no_reply");
+    assert.equal(topicDecisions[0].status, "suppressed");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("Ling Agent replies to greetings, repeated greetings, punctuation, and acknowledgements", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-greeting-"));
   const runner = new ScriptedRunner([

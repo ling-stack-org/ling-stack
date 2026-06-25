@@ -1261,6 +1261,7 @@ export interface CreateChannelMessageInput {
 export interface ListChannelMessagesOptions {
   readonly channelId: string;
   readonly threadId?: string;
+  readonly excludeThreadIds?: readonly string[];
   readonly beforeMessageId?: string;
   readonly limit?: number;
 }
