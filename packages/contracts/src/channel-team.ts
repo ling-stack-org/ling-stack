@@ -223,6 +223,69 @@ export interface ChannelTeamExpertsProjectionResponse {
   readonly experts: FoldedExpertsReadModel;
 }
 
+export type ChannelTeamHealthState = "healthy" | "attention_needed" | "degraded";
+
+export interface ChannelTeamMetricsSummary {
+  readonly healthState: ChannelTeamHealthState;
+  readonly totalEvidenceCount: number;
+  readonly activeEvidenceCount: number;
+  readonly delayedEvidenceCount: number;
+  readonly unavailableEvidenceCount: number;
+  readonly reliabilityIncidentCount: number;
+  readonly availabilityIncidentCount: number;
+  readonly latestUpdatedAt?: string;
+}
+
+export interface ChannelTeamAgentMetric {
+  readonly agentId: string;
+  readonly evidenceCount: number;
+  readonly completedCount: number;
+  readonly delayedCount: number;
+  readonly unavailableCount: number;
+  readonly adoptedCount: number;
+  readonly rejectedCount: number;
+  readonly reliabilityIncidentCount: number;
+  readonly latestSummary?: string;
+  readonly latestUpdatedAt?: string;
+}
+
+export interface ChannelTeamAttentionMetric {
+  readonly activeAgentCount: number;
+  readonly evidenceKindCounts: Partial<Record<ChannelTeamEvidenceKind, number>>;
+  readonly evidenceStatusCounts: Partial<Record<ChannelTeamEvidenceStatus, number>>;
+}
+
+export interface ChannelTeamRiskReviewMetric {
+  readonly riskSignalCount: number;
+  readonly dissentSignalCount: number;
+  readonly openReliabilityIncidentCount: number;
+  readonly openCriticalReliabilityIncidentCount: number;
+}
+
+export interface ChannelTeamLearningQueueMetric {
+  readonly recommendationEvidenceCount: number;
+  readonly adoptedEvidenceCount: number;
+  readonly rejectedEvidenceCount: number;
+  readonly provisionalRuleCount: number;
+  readonly note: string;
+}
+
+export interface ChannelTeamMetricsProjection {
+  readonly channelId: string;
+  readonly generatedAt: string;
+  readonly summary: ChannelTeamMetricsSummary;
+  readonly agents: readonly ChannelTeamAgentMetric[];
+  readonly attention: ChannelTeamAttentionMetric;
+  readonly riskReview: ChannelTeamRiskReviewMetric;
+  readonly learningQueue: ChannelTeamLearningQueueMetric;
+}
+
+export interface ChannelTeamMetricsProjectionResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly metrics: ChannelTeamMetricsProjection;
+}
+
 export interface DissentSignal {
   readonly id: string;
   readonly turnId: string;

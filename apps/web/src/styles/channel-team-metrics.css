@@ -1,0 +1,105 @@
+.channel-team-metrics-panel {
+  gap: 14px;
+}
+
+.channel-team-metrics-health {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 8px;
+  text-transform: capitalize;
+}
+
+.channel-team-metrics-health.state-degraded {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.channel-team-metrics-health.state-attention_needed {
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+
+.channel-team-metrics-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.channel-team-metrics-tile,
+.channel-team-metrics-split article {
+  background: var(--surface-panel-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.channel-team-metrics-tile {
+  display: grid;
+  gap: 4px;
+}
+
+.channel-team-metrics-tile span,
+.channel-team-metrics-tile small,
+.channel-team-metrics-split small,
+.channel-team-metrics-agent-row small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.channel-team-metrics-tile strong {
+  color: var(--text-strong);
+  font-size: 18px;
+}
+
+.channel-team-metrics-split {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.channel-team-metrics-split h4,
+.channel-team-metrics-agents h4 {
+  color: var(--text-strong);
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+
+.channel-team-metrics-split p,
+.channel-team-metrics-agents p {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.channel-team-metrics-agents {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-team-metrics-agent-row {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-top: 8px;
+}
+
+.channel-team-metrics-agent-row div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.channel-team-metrics-agent-row strong,
+.channel-team-metrics-agent-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-team-metrics-agent-row > span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
