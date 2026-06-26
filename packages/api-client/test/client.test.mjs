@@ -204,6 +204,20 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[46].method, "POST");
 });
 
+test("builds channel team experts projection endpoint URL", async () => {
+  const mock = createFetchMock({
+    cwd: "/repo",
+    channelId: "channel 1",
+    turnId: "turn 1",
+    experts: { channelId: "channel 1", turnId: "turn 1", totalCount: 0, activeCount: 0, completedCount: 0, delayedCount: 0, unavailableCount: 0, adoptedCount: 0, rejectedCount: 0, statusCounts: {}, chips: [], entries: [] },
+  });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  await client.getChannelTeamExpertsProjection("/repo path", "channel 1", "turn 1", { limit: 12 });
+
+  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/team-experts?cwd=%2Frepo+path&turnId=turn+1&limit=12");
+});
+
 test("builds governance notification endpoint URLs", async () => {
   const mock = createFetchMock({ cwd: "/repo", notifications: [] });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });

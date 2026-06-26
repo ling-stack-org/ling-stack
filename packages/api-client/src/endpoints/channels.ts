@@ -53,6 +53,7 @@ import type {
   ChannelWorkspaceMutationResponse,
   ChannelWorkspaceResponse,
   ChannelCollaborationCardListResponse,
+  ChannelTeamExpertsProjectionResponse,
   WorkflowEvidenceResponse,
   WorkflowCollaborationCardResponse,
   CreateChannelAttachmentRequest,
@@ -554,6 +555,15 @@ export const channelEndpoints = {
 
   async getChannelWorkflowCollaborationCard(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<WorkflowCollaborationCardResponse> {
       return this._get(`/workflows/${encodeURIComponent(workflowId)}/collaboration-card`, { cwd });
+    },
+
+  async getChannelTeamExpertsProjection(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      turnId: string,
+      options: { readonly limit?: number } = {},
+    ): Promise<ChannelTeamExpertsProjectionResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/team-experts`, { cwd, turnId, limit: options.limit });
     },
 
   async updateChannelWorkflow(this: LingDaemonEndpointContext,

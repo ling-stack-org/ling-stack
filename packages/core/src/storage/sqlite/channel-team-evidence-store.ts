@@ -13,6 +13,7 @@ import {
   type ChannelTeamEvidenceSourceRef,
   type CreateChannelTeamEvidenceItemInput,
   type FoldedExpertsReadModel,
+  type ListFoldedChannelTeamEvidenceForTurnOptions,
   type ListChannelTeamEvidenceItemsOptions,
   type UpdateChannelTeamEvidenceItemInput,
 } from "../../channel-team-types.js";
@@ -21,14 +22,6 @@ import { nullableUpdate, stringifyJson } from "./helpers.js";
 import { mapChannelTeamEvidenceItem } from "./channel-team-evidence-mappers.js";
 import { channelTeamEvidenceItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
-
-export interface ListFoldedChannelTeamEvidenceForTurnOptions {
-  readonly channelId: string;
-  readonly turnId: string;
-  readonly now?: string;
-  readonly includeExpired?: boolean;
-  readonly limit?: number;
-}
 
 export interface SqliteChannelTeamEvidenceStorePorts {
   readonly assertChannelExists: (channelId: string) => void;

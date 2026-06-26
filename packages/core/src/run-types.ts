@@ -37,6 +37,14 @@ import type {
   ListChannelInputMaterializationsOptions,
 } from "./input-materialization-types.js";
 import type {
+  ChannelTeamEvidenceItem,
+  CreateChannelTeamEvidenceItemInput,
+  FoldedExpertsReadModel,
+  ListChannelTeamEvidenceItemsOptions,
+  ListFoldedChannelTeamEvidenceForTurnOptions,
+  UpdateChannelTeamEvidenceItemInput,
+} from "./channel-team-types.js";
+import type {
   AiCouncil,
   AiCouncilHealthReport,
   AiCouncilHealthReportOptions,
@@ -955,6 +963,15 @@ export interface RunStore {
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];
   getLatestControlPlaneEventSeq(workspaceId: string): number;
+  createChannelTeamEvidenceItem(input: CreateChannelTeamEvidenceItemInput, now: string): ChannelTeamEvidenceItem;
+  getChannelTeamEvidenceItem(id: string): ChannelTeamEvidenceItem | undefined;
+  listChannelTeamEvidenceItems(options: ListChannelTeamEvidenceItemsOptions): ChannelTeamEvidenceItem[];
+  updateChannelTeamEvidenceItem(
+    id: string,
+    input: UpdateChannelTeamEvidenceItemInput,
+    now: string,
+  ): ChannelTeamEvidenceItem | undefined;
+  listFoldedChannelTeamEvidenceForTurn(options: ListFoldedChannelTeamEvidenceForTurnOptions): FoldedExpertsReadModel;
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
