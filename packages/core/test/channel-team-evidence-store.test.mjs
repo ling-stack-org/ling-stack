@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
+  buildSpecialistNoteEvidenceInput,
   createSqliteRunStore,
   resolveRuntimePaths,
 } from "../dist/index.js";
@@ -59,7 +60,7 @@ test("sqlite channel team evidence round-trips without visible message or runtim
     const beforeRunEventCount = readCount(database, "run_events");
 
     const created = evidence.createChannelTeamEvidenceItem(
-      {
+      buildSpecialistNoteEvidenceInput({
         id: "channel_team_evidence_test_note",
         channelId: channel.id,
         turnId: "turn_demo",
@@ -73,9 +74,8 @@ test("sqlite channel team evidence round-trips without visible message or runtim
         recommendations: ["Route destructive changes through the existing approval policy."],
         confidence: 0.82,
         sourceRefs: [{ type: "message", id: message.id, label: "User request" }],
-        payload: { noteType: "specialist_note", hiddenReasoningStored: false },
         expiresAt: "2026-07-26T00:00:00.000Z",
-      },
+      }),
       "2026-06-26T00:02:00.000Z",
     );
 
@@ -120,6 +120,19 @@ test("sqlite channel team evidence round-trips without visible message or runtim
       }).map((item) => item.id),
       ["channel_team_evidence_test_relevance", "channel_team_evidence_test_note"],
     );
+
+    const folded = evidence.listFoldedChannelTeamEvidenceForTurn({
+      channelId: channel.id,
+      turnId: "turn_demo",
+      now: "2026-06-26T00:04:00.000Z",
+    });
+
+    assert.equal(folded.totalCount, 1);
+    assert.equal(folded.completedCount, 1);
+    assert.deepEqual(folded.entries.map((item) => item.id), ["channel_team_evidence_test_note"]);
+    assert.deepEqual(folded.chips.map((chip) => chip.agentId), ["teammate_builtin_security"]);
+    assert.equal(folded.entries[0].summary, "Security reviewer found one approval risk.");
+    assert.equal(folded.entries[0].payload, undefined);
 
     const updated = evidence.updateChannelTeamEvidenceItem(
       created.id,

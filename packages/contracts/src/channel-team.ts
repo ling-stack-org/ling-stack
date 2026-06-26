@@ -156,6 +156,66 @@ export interface SpecialistNote {
   readonly createdAt: string;
 }
 
+export interface CreateSpecialistNoteEvidenceInput {
+  readonly id?: string;
+  readonly channelId: string;
+  readonly turnId: string;
+  readonly agentId: string;
+  readonly evidenceGrade: ChannelTeamEvidenceGrade;
+  readonly summary: string;
+  readonly concerns?: readonly string[];
+  readonly recommendations?: readonly string[];
+  readonly confidence?: number;
+  readonly sourceRefs?: readonly ChannelTeamEvidenceSourceRef[];
+  readonly visibility?: ChannelTeamEvidenceVisibility;
+  readonly status?: ChannelTeamEvidenceStatus;
+  readonly now?: string;
+  readonly retentionDays?: number;
+  readonly expiresAt?: string | null;
+  readonly payload?: Record<string, unknown>;
+}
+
+export interface FoldedExpertEvidenceEntry {
+  readonly id: string;
+  readonly agentId?: string;
+  readonly kind: ChannelTeamEvidenceKind;
+  readonly status: ChannelTeamEvidenceStatus;
+  readonly visibility: ChannelTeamEvidenceVisibility;
+  readonly evidenceGrade?: ChannelTeamEvidenceGrade;
+  readonly summary: string;
+  readonly concerns: readonly string[];
+  readonly recommendations: readonly string[];
+  readonly confidence?: number;
+  readonly sourceRefs: readonly ChannelTeamEvidenceSourceRef[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface FoldedExpertChip {
+  readonly agentId: string;
+  readonly status: ChannelTeamEvidenceStatus;
+  readonly evidenceCount: number;
+  readonly evidenceGrade?: ChannelTeamEvidenceGrade;
+  readonly latestSummary: string;
+  readonly updatedAt: string;
+}
+
+export interface FoldedExpertsReadModel {
+  readonly channelId: string;
+  readonly turnId: string;
+  readonly totalCount: number;
+  readonly activeCount: number;
+  readonly completedCount: number;
+  readonly delayedCount: number;
+  readonly unavailableCount: number;
+  readonly adoptedCount: number;
+  readonly rejectedCount: number;
+  readonly statusCounts: Partial<Record<ChannelTeamEvidenceStatus, number>>;
+  readonly chips: readonly FoldedExpertChip[];
+  readonly entries: readonly FoldedExpertEvidenceEntry[];
+  readonly latestUpdatedAt?: string;
+}
+
 export interface DissentSignal {
   readonly id: string;
   readonly turnId: string;

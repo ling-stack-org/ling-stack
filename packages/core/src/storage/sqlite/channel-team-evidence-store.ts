@@ -12,13 +12,23 @@ import {
   type ChannelTeamEvidenceItem,
   type ChannelTeamEvidenceSourceRef,
   type CreateChannelTeamEvidenceItemInput,
+  type FoldedExpertsReadModel,
   type ListChannelTeamEvidenceItemsOptions,
   type UpdateChannelTeamEvidenceItemInput,
 } from "../../channel-team-types.js";
+import { foldChannelTeamEvidenceForTurn } from "../../channel-team-specialist-notes.js";
 import { nullableUpdate, stringifyJson } from "./helpers.js";
 import { mapChannelTeamEvidenceItem } from "./channel-team-evidence-mappers.js";
 import { channelTeamEvidenceItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+
+export interface ListFoldedChannelTeamEvidenceForTurnOptions {
+  readonly channelId: string;
+  readonly turnId: string;
+  readonly now?: string;
+  readonly includeExpired?: boolean;
+  readonly limit?: number;
+}
 
 export interface SqliteChannelTeamEvidenceStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -143,6 +153,23 @@ export class SqliteChannelTeamEvidenceStore {
       .prepare(`${channelTeamEvidenceItemSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, rowid DESC LIMIT ?`)
       .all(...params)
       .map((row) => mapChannelTeamEvidenceItem(row as Record<string, SQLOutputValue>));
+  }
+
+  listFoldedChannelTeamEvidenceForTurn(options: ListFoldedChannelTeamEvidenceForTurnOptions): FoldedExpertsReadModel {
+    const evidence = this.listChannelTeamEvidenceItems({
+      channelId: options.channelId,
+      turnId: options.turnId,
+      now: options.now,
+      includeExpired: options.includeExpired,
+      limit: options.limit ?? 200,
+    });
+    return foldChannelTeamEvidenceForTurn({
+      channelId: options.channelId,
+      turnId: options.turnId,
+      evidence,
+      now: options.now,
+      includeExpired: options.includeExpired,
+    });
   }
 
   updateChannelTeamEvidenceItem(
