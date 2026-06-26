@@ -1,6 +1,9 @@
 import {
   builtinMediaModelCandidates,
+  enrichProviderModelOption,
   mediaModelKind,
+  normalizeProviderThinkingModes,
+  normalizeProviderThinkingSupport,
   normalizeProviderBaseUrlForAdapter,
   providerMediaKind,
   providerApis,
@@ -10,6 +13,8 @@ import {
   type ProviderModelListResponse,
   type ProviderModelOption,
   type ProviderPreset,
+  type ProviderThinkingSupport,
+  type ProviderThinkingMode,
   type ProviderStoreFacet,
   type ResolvedSecret,
   type SecretResolver,
@@ -60,7 +65,7 @@ export async function listProviderModels(
     const body = await response.json() as unknown;
     return {
       source,
-      models: parseProviderModelsResponse(body),
+      models: parseProviderModelsResponse(body, preset),
     };
   } catch (error) {
     if (error instanceof HttpError) {
@@ -108,7 +113,7 @@ async function listMediaProviderModels(
       );
     }
     const body = await response.json() as unknown;
-    const models = parseProviderModelsResponse(body);
+    const models = parseProviderModelsResponse(body, preset);
     return {
       source,
       models: models.length > 0 ? models : builtin,
@@ -142,6 +147,7 @@ function providerModelListInputToPreset(input: ProviderModelListRequest): Provid
     headers: input.headers ?? {},
     authHeader: input.authHeader ?? true,
     reasoning: false,
+    thinkingModes: [],
     input: ["text"],
     compat: {},
     capabilities: ["chat"],
@@ -200,12 +206,12 @@ async function providerModelListFailureMessage(response: Response, secret?: stri
   return `Provider returned HTTP ${response.status}${bodyText ? `: ${bodyText}` : "."}`;
 }
 
-function parseProviderModelsResponse(body: unknown): readonly ProviderModelOption[] {
+function parseProviderModelsResponse(body: unknown, preset: ProviderPreset): readonly ProviderModelOption[] {
   const data = isRecord(body) && Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : [];
   const models: ProviderModelOption[] = [];
   const seen = new Set<string>();
   for (const item of data) {
-    const model = parseProviderModelOption(item);
+    const model = parseProviderModelOption(item, preset);
     if (!model || seen.has(model.id)) {
       continue;
     }
@@ -218,10 +224,10 @@ function parseProviderModelsResponse(body: unknown): readonly ProviderModelOptio
   return models;
 }
 
-function parseProviderModelOption(value: unknown): ProviderModelOption | undefined {
+function parseProviderModelOption(value: unknown, preset: ProviderPreset): ProviderModelOption | undefined {
   if (typeof value === "string") {
     const id = value.trim();
-    return id ? { id } : undefined;
+    return id ? enrichProviderModelOption({ id }, preset) : undefined;
   }
   if (!isRecord(value)) {
     return undefined;
@@ -240,19 +246,134 @@ function parseProviderModelOption(value: unknown): ProviderModelOption | undefin
     : inferredMediaKind
       ? ["image_generate", "image_edit"] as const
       : undefined;
-  return removeUndefined({
+  return enrichProviderModelOption(removeUndefined({
     id,
     displayName: typeof value.display_name === "string" ? value.display_name : typeof value.displayName === "string" ? value.displayName : undefined,
     ownedBy: typeof value.owned_by === "string" ? value.owned_by : typeof value.ownedBy === "string" ? value.ownedBy : undefined,
-    createdAt: typeof value.created_at === "string" ? value.created_at : undefined,
+    createdAt: readProviderModelCreatedAt(value),
     api: typeof value.api === "string" && providerApis.includes(value.api as ProviderApi)
       ? value.api as ProviderApi
       : inferredCapabilities
         ? "media-job"
         : undefined,
-    input: parseProviderModelStringArray(value.input, providerModelInputTypes) ?? (inferredCapabilities ? providerModelInputTypes : undefined),
+    input: parseProviderModelInput(value) ?? (inferredCapabilities ? providerModelInputTypes : undefined),
     capabilities: parseProviderModelStringArray(value.capabilities, providerCapabilities) ?? inferredCapabilities,
+    thinkingModes: parseProviderModelThinkingModes(value),
+    thinkingSupport: parseProviderModelThinkingSupport(value),
+    contextWindow: readPositiveInteger(
+      value.contextWindow ??
+      value.context_window ??
+      value.context_length ??
+      value.contextLength ??
+      value.max_context_tokens,
+    ),
+    maxTokens: readPositiveInteger(
+      value.maxTokens ??
+      value.max_tokens ??
+      value.max_completion_tokens ??
+      value.max_output_tokens ??
+      value.output_token_limit,
+    ),
+    supportedParameters: parseProviderModelLooseStringArray(value.supported_parameters ?? value.supportedParameters),
+    capabilitySource: "upstream" as const,
+    capabilityConfidence: "known" as const,
+  }), preset);
+}
+
+function readProviderModelCreatedAt(value: Record<string, unknown>): string | undefined {
+  if (typeof value.created_at === "string") {
+    return value.created_at;
+  }
+  if (typeof value.createdAt === "string") {
+    return value.createdAt;
+  }
+  if (typeof value.created === "number" && Number.isFinite(value.created)) {
+    return new Date(value.created * 1000).toISOString();
+  }
+  return undefined;
+}
+
+function parseProviderModelInput(value: Record<string, unknown>): readonly ("text" | "image")[] | undefined {
+  return (
+    parseProviderModelStringArray(value.input, providerModelInputTypes) ??
+    parseProviderModelStringArray(value.input_modalities, providerModelInputTypes) ??
+    parseProviderModelModalities(value.modalities)
+  );
+}
+
+function parseProviderModelModalities(value: unknown): readonly ("text" | "image")[] | undefined {
+  const raw = parseProviderModelLooseStringArray(value);
+  if (!raw) {
+    return undefined;
+  }
+  const normalized = raw.map((item) => item.toLowerCase());
+  const result: ("text" | "image")[] = [];
+  if (normalized.some((item) => ["text", "input_text", "chat", "completion"].includes(item))) {
+    result.push("text");
+  }
+  if (normalized.some((item) => ["image", "input_image", "vision"].includes(item))) {
+    result.push("image");
+  }
+  return result.length > 0 ? result : undefined;
+}
+
+function parseProviderModelThinkingModes(value: Record<string, unknown>): readonly ProviderThinkingMode[] | undefined {
+  const explicit = normalizeProviderThinkingModes(
+    parseProviderModelLooseStringArray(value.thinkingModes ?? value.thinking_modes ?? value.reasoningLevels ?? value.reasoning_levels),
+  );
+  if (explicit) {
+    return explicit;
+  }
+  const support = parseProviderModelThinkingSupport(value);
+  if (support?.levels.length) {
+    return support.levels;
+  }
+  if (value.reasoning === true || value.supports_reasoning === true || value.supportsThinking === true || value.supports_thinking === true) {
+    return ["off", "low", "medium", "high"];
+  }
+  const supportedParameters = parseProviderModelLooseStringArray(value.supported_parameters ?? value.supportedParameters);
+  if (supportedParameters?.some((parameter) => /reasoning|thinking/i.test(parameter))) {
+    return ["off", "low", "medium", "high"];
+  }
+  return undefined;
+}
+
+function parseProviderModelThinkingSupport(value: Record<string, unknown>): ProviderThinkingSupport | undefined {
+  const thinking = isRecord(value.thinking)
+    ? value.thinking
+    : isRecord(value.thinking_support)
+      ? value.thinking_support
+      : isRecord(value.reasoning)
+        ? value.reasoning
+        : undefined;
+  if (!thinking) {
+    return undefined;
+  }
+  return normalizeProviderThinkingSupport({
+    levels: normalizeProviderThinkingModes(parseProviderModelLooseStringArray(thinking.levels) ?? []) ?? [],
+    minTokens: readPositiveInteger(thinking.min ?? thinking.min_tokens ?? thinking.minTokens),
+    maxTokens: readPositiveInteger(thinking.max ?? thinking.max_tokens ?? thinking.maxTokens),
+    zeroAllowed: readOptionalBooleanLike(thinking.zero_allowed ?? thinking.zeroAllowed),
+    dynamicAllowed: readOptionalBooleanLike(thinking.dynamic_allowed ?? thinking.dynamicAllowed),
   });
+}
+
+function readPositiveInteger(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function readOptionalBooleanLike(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return undefined;
 }
 
 function parseProviderModelStringArray<T extends string>(value: unknown, allowed: readonly T[]): readonly T[] | undefined {
@@ -265,6 +386,23 @@ function parseProviderModelStringArray<T extends string>(value: unknown, allowed
       continue;
     }
     result.push(item as T);
+  }
+  return result.length > 0 ? result : undefined;
+}
+
+function parseProviderModelLooseStringArray(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      continue;
+    }
+    const trimmed = item.trim();
+    if (trimmed && !result.includes(trimmed)) {
+      result.push(trimmed);
+    }
   }
   return result.length > 0 ? result : undefined;
 }

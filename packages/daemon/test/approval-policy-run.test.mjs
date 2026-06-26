@@ -1755,7 +1755,27 @@ test("provider local API keys are edited from sqlite without leaking in provider
 
 test("provider model listing probes the endpoint with the provided API key", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-models-"));
-  const openai = await startMockOpenAICompatibleServer();
+  const openai = await startMockOpenAICompatibleServer({
+    models: [
+      { id: "cliproxy-gpt-4o", object: "model", owned_by: "cliproxy" },
+      {
+        id: "gpt-5.5-codex",
+        object: "model",
+        owned_by: "openai",
+        context_length: 256000,
+        max_completion_tokens: 64000,
+        supported_parameters: ["reasoning_effort", "tools"],
+        thinking: {
+          levels: ["low", "medium", "high", "max"],
+          min: 1024,
+          max: 64000,
+          zero_allowed: true,
+          dynamic_allowed: false,
+        },
+        input_modalities: ["text", "image"],
+      },
+    ],
+  });
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_model_list",
     toolName: "bash",
@@ -1774,7 +1794,15 @@ test("provider model listing probes the endpoint with the provided API key", asy
     assert.equal(openai.requests[0].method, "GET");
     assert.equal(openai.requests[0].path, "/v1/models");
     assert.equal(openai.requests[0].authorization, "Bearer model-list-secret");
-    assert.deepEqual(result.models.map((model) => model.id), ["cliproxy-gpt-4o", "cliproxy-claude-sonnet"], JSON.stringify({ result, requests: openai.requests }));
+    assert.deepEqual(result.models.map((model) => model.id), ["cliproxy-gpt-4o", "gpt-5.5-codex"], JSON.stringify({ result, requests: openai.requests }));
+    const codexModel = result.models.find((model) => model.id === "gpt-5.5-codex");
+    assert.deepEqual(codexModel.thinkingModes, ["low", "medium", "high", "xhigh"]);
+    assert.deepEqual(codexModel.thinkingSupport.levels, ["low", "medium", "high", "xhigh"]);
+    assert.equal(codexModel.thinkingSupport.maxTokens, 64000);
+    assert.equal(codexModel.contextWindow, 256000);
+    assert.equal(codexModel.maxTokens, 64000);
+    assert.deepEqual(codexModel.supportedParameters, ["reasoning_effort", "tools", "response_format"]);
+    assert.deepEqual(codexModel.input, ["text", "image"]);
     assert.equal(result.source, `${openai.url}/v1/models`);
     assert.doesNotMatch(JSON.stringify(result), /model-list-secret/);
   } finally {
@@ -1833,7 +1861,20 @@ test("provider model import creates and updates supplier model presets", async (
       capabilities: ["chat", "tool_call", "reasoning"],
       input: ["text", "image"],
       models: [
-        { id: "relay-gpt", displayName: "Relay GPT" },
+        {
+          id: "relay-gpt",
+          displayName: "Relay GPT",
+          thinkingModes: ["off", "low", "medium", "high", "xhigh"],
+          contextWindow: 64000,
+          maxTokens: 8192,
+          supportedParameters: ["reasoning_effort"],
+          thinkingSupport: {
+            levels: ["off", "low", "medium", "high", "xhigh"],
+            maxTokens: 8192,
+          },
+          capabilitySource: "model_catalog",
+          capabilityConfidence: "known",
+        },
         { id: "relay-image", capabilities: ["image_generate"], input: ["text", "image"], api: "media-job" },
       ],
     });
@@ -1842,6 +1883,13 @@ test("provider model import creates and updates supplier model presets", async (
     assert.equal(imported.updatedCount, 0);
     assert.equal(imported.providers.length, 2);
     assert.ok(imported.providers.every((provider) => provider.apiKeyConfigured));
+    const relayGpt = imported.providers.find((provider) => provider.model === "relay-gpt");
+    assert.equal(relayGpt.reasoning, true);
+    assert.deepEqual(relayGpt.thinkingModes, ["off", "low", "medium", "high", "xhigh"]);
+    assert.equal(relayGpt.contextWindow, 64000);
+    assert.equal(relayGpt.maxTokens, 8192);
+    assert.deepEqual(relayGpt.compat.modelMetadata.supportedParameters, ["reasoning_effort"]);
+    assert.equal(relayGpt.compat.modelMetadata.thinkingSupport.maxTokens, 8192);
     assert.doesNotMatch(JSON.stringify(imported), /import-secret/);
 
     const updated = await postJson(`${daemon.url}/providers/import-models?cwd=${encodeURIComponent(cwd)}`, {
@@ -1902,6 +1950,9 @@ test("media provider model listing returns provider-exposed candidates without c
       "doubao-seedream-5-0-260128",
       "doubao-seedance-1-0-pro-250528",
     ]);
+    const seedreamModel = seedreamResult.models.find((model) => model.id === "doubao-seedream-5-0-260128");
+    assert.equal(seedreamModel.api, "media-job");
+    assert.deepEqual(seedreamModel.capabilities, ["image_generate", "image_edit"]);
 
     const seedanceResult = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
       kind: "seedance",

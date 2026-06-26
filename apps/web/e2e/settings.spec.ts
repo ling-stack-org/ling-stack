@@ -98,9 +98,9 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: /工作区工具/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /配置/ }).click();
   await page.getByRole("button", { name: "打开 AI 队友" }).click();
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "返回工作区工具" })).toBeVisible();
+  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "返回配置" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("AI 队友上下文")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
@@ -282,15 +282,21 @@ test("settings workspace tools use compact rows and live counts", async ({ page 
   await expect(settingsSections).not.toContainText("Profile, preferences, and identity");
 
   const workspaceTools = page.locator(".settings-workspace-tools");
-  await expect(workspaceTools.getByRole("heading", { name: "Workspace tools" })).toBeVisible();
-  await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(3);
+  await expect(workspaceTools.getByRole("heading", { name: "Configuration" })).toBeVisible();
+  await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(4);
   await expect(workspaceTools.locator(".settings-tool-row.selected")).toHaveCount(0);
   await expect(workspaceTools).toContainText("1 available model");
   await expect(workspaceTools).toContainText("2 teammates");
   await expect(workspaceTools).toContainText("1 pending work items");
+  await expect(workspaceTools).toContainText("Global approval default");
+  await expect(workspaceTools.locator(".settings-authorization-option.selected")).toContainText("Smart authorization");
   await expect(workspaceTools.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
   await expect(workspaceTools.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
   await expect(workspaceTools.getByRole("button", { name: "Open Work Board" })).toBeVisible();
+  await expect(workspaceTools.locator(".settings-global-approval-card").getByRole("button", { name: "Open advanced policy" })).toBeVisible();
+  await workspaceTools.getByRole("button", { name: "Ask first" }).click();
+  await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("ask_everything");
+  await expect.poll(() => state.workspaceSettings.defaultPermissionPreset).toBe("read_only");
 });
 
 test("settings approval policy loads, edits, and saves tool decisions and write paths", async ({ page }) => {

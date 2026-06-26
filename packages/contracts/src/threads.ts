@@ -5,7 +5,7 @@ import type { ExecutionAction } from "./execution-actions.js";
 import type { StateTransitionEvent } from "./workflows.js";
 import type { LingTurn } from "./turns.js";
 
-export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work" | "automation";
+export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work" | "automation" | "conversation";
 
 export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
 export type LingThreadArchivedFilter = "exclude" | "include" | "only";

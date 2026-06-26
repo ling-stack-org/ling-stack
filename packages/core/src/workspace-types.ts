@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { ProcedureObservationStep, ProcedureObservationValidationStep } from "./procedure-observation-types.js";
 import type { RunnerFallbackReason, RunnerRequestSource } from "./runtime-supervisor-types.js";
+import type { PermissionPreset, SessionPermissionMode } from "./session-permissions.js";
 import type { SkillCandidateSourceRef } from "./skill-candidate-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
 import type { WorkflowTerminationPolicy } from "./workflow-graph-types.js";
@@ -461,6 +462,8 @@ export interface WorkspaceSettings {
   readonly theme?: "light" | "dark" | "system";
   readonly locale?: string;
   readonly responseLanguage?: ResponseLanguagePreference;
+  readonly defaultPermissionMode?: SessionPermissionMode;
+  readonly defaultPermissionPreset?: PermissionPreset;
   readonly channelNotifications?: Record<string, string>;
   readonly channelActivityViews?: Record<string, unknown>;
   readonly skillGovernancePolicy: SkillGovernancePolicy;
@@ -472,6 +475,8 @@ export interface UpdateWorkspaceSettingsInput {
   readonly theme?: "light" | "dark" | "system" | null;
   readonly locale?: string | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
+  readonly defaultPermissionMode?: SessionPermissionMode | null;
+  readonly defaultPermissionPreset?: PermissionPreset | null;
   readonly channelNotifications?: Record<string, string> | null;
   readonly channelActivityViews?: Record<string, unknown> | null;
   readonly skillGovernancePolicy?: SkillGovernancePolicy | null;

@@ -73,7 +73,7 @@ function resolveProtocolPreference(
   };
 }
 
-function inferUserLanguage(text: string): ResponseLanguage {
+export function inferUserLanguage(text: string): ResponseLanguage {
   return /[\u3400-\u9fff]/u.test(text) ? "zh-CN" : "en-US";
 }
 

@@ -4,6 +4,7 @@ import {
   secretPurposes,
   type SecretPurpose,
   type SecretResolver,
+  type ProviderCapability,
   type ProviderPreset,
   type RunStore,
 } from "@ling-stack/core";
@@ -125,8 +126,12 @@ export async function handleProviderModelImport(
 
     for (const model of dedupeProviderImportModels(input.models)) {
       const modelApi = model.api ?? input.api;
-      const modelCapabilities = model.capabilities ?? input.capabilities;
       const modelInput = model.input ?? input.input ?? ["text"];
+      const modelThinkingModes = model.thinkingModes ?? input.thinkingModes ?? [];
+      const modelReasoning = providerThinkingModesIncludeReasoning(modelThinkingModes);
+      const modelCapabilities = providerCapabilitiesWithReasoning(model.capabilities ?? input.capabilities, modelReasoning);
+      const modelContextWindow = model.contextWindow ?? input.contextWindow;
+      const modelMaxTokens = model.maxTokens ?? input.maxTokens;
       const displayName = providerImportDisplayName(input.displayName, model);
       const existing = existingProviders.find((provider) =>
         provider.providerId === input.providerId &&
@@ -147,11 +152,19 @@ export async function handleProviderModelImport(
           apiKeyRef: input.apiKey ? localProviderSecretRef(existing.id) : input.apiKeyRef,
           headers: input.headers ?? existing.headers,
           authHeader: input.authHeader ?? existing.authHeader,
-          reasoning: input.reasoning ?? existing.reasoning,
+	          reasoning: modelReasoning,
+          thinkingModes: modelThinkingModes,
           input: modelInput,
-          contextWindow: input.contextWindow ?? existing.contextWindow,
-          maxTokens: input.maxTokens ?? existing.maxTokens,
-          compat: input.compat ?? existing.compat,
+          contextWindow: modelContextWindow ?? existing.contextWindow,
+          maxTokens: modelMaxTokens ?? existing.maxTokens,
+          compat: providerImportCompat(input.compat ?? existing.compat, model, {
+            api: modelApi,
+            input: modelInput,
+            capabilities: modelCapabilities,
+            thinkingModes: modelThinkingModes,
+            contextWindow: modelContextWindow ?? existing.contextWindow,
+            maxTokens: modelMaxTokens ?? existing.maxTokens,
+          }),
           capabilities: modelCapabilities,
           enabled: input.enabled ?? existing.enabled,
         }, now);
@@ -180,11 +193,19 @@ export async function handleProviderModelImport(
         apiKeyRef: input.apiKey ? undefined : input.apiKeyRef,
         headers: input.headers,
         authHeader: input.authHeader,
-        reasoning: input.reasoning,
+        reasoning: modelReasoning,
+        thinkingModes: modelThinkingModes,
         input: modelInput,
-        contextWindow: input.contextWindow,
-        maxTokens: input.maxTokens,
-        compat: input.compat,
+        contextWindow: modelContextWindow,
+        maxTokens: modelMaxTokens,
+        compat: providerImportCompat(input.compat, model, {
+          api: modelApi,
+          input: modelInput,
+          capabilities: modelCapabilities,
+          thinkingModes: modelThinkingModes,
+          contextWindow: modelContextWindow,
+          maxTokens: modelMaxTokens,
+        }),
         capabilities: modelCapabilities,
         enabled: input.enabled,
       }, now);
@@ -208,6 +229,67 @@ export async function handleProviderModelImport(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function providerThinkingModesIncludeReasoning(thinkingModes: readonly string[]): boolean {
+  return thinkingModes.some((mode) => mode !== "off");
+}
+
+function providerCapabilitiesWithReasoning(capabilities: readonly ProviderCapability[], reasoning: boolean): readonly ProviderCapability[] {
+  if (!reasoning || capabilities.includes("reasoning")) {
+    return capabilities;
+  }
+  return [...capabilities, "reasoning"];
+}
+
+function providerImportCompat(
+  compat: Record<string, unknown> | undefined,
+  model: {
+    readonly id: string;
+    readonly displayName?: string;
+    readonly ownedBy?: string;
+    readonly createdAt?: string;
+    readonly supportedParameters?: readonly string[];
+    readonly thinkingSupport?: unknown;
+    readonly capabilitySource?: string;
+    readonly capabilityConfidence?: string;
+  },
+  resolved: {
+    readonly api: string;
+    readonly input: readonly string[];
+    readonly capabilities: readonly string[];
+    readonly thinkingModes: readonly string[];
+    readonly contextWindow?: number;
+    readonly maxTokens?: number;
+  },
+): Record<string, unknown> | undefined {
+  const modelMetadata = removeUndefined({
+    id: model.id,
+    displayName: model.displayName,
+    ownedBy: model.ownedBy,
+    createdAt: model.createdAt,
+    api: resolved.api,
+    input: resolved.input,
+    capabilities: resolved.capabilities,
+    thinkingModes: resolved.thinkingModes,
+    thinkingSupport: model.thinkingSupport,
+    contextWindow: resolved.contextWindow,
+    maxTokens: resolved.maxTokens,
+    supportedParameters: model.supportedParameters,
+    capabilitySource: model.capabilitySource,
+    capabilityConfidence: model.capabilityConfidence,
+  });
+  if (!compat && Object.keys(modelMetadata).length === 0) {
+    return undefined;
+  }
+  return {
+    ...(compat ?? {}),
+    modelMetadata,
+  };
+}
+
+function removeUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)) as T;
 }
 
 async function checkImportedProviderPreset(

@@ -44,16 +44,17 @@ export const defaultProviderForm: ProviderFormState = {
   clearApiKey: false,
   capabilitiesText: "chat,tool_call,reasoning",
   inputText: "text",
-  enabled: true,
-  authHeader: true,
-  reasoning: true,
-  contextWindow: "",
-  maxTokens: "",
-};
+	  enabled: true,
+	  authHeader: true,
+	  reasoning: true,
+	  thinkingModes: ["off", "minimal", "low", "medium", "high", "xhigh"],
+	  contextWindow: "",
+	  maxTokens: "",
+	};
 
 export const customOpenAICompatibleForm: ProviderFormState = {
   kind: "openai-compatible",
-  displayName: "Custom OpenAI-compatible",
+  displayName: "Custom",
   providerId: "custom-openai-compatible",
   model: "your-model-id",
   api: "openai-completions",
@@ -62,14 +63,15 @@ export const customOpenAICompatibleForm: ProviderFormState = {
   apiKey: "",
   apiKeyRef: "",
   clearApiKey: false,
-  capabilitiesText: "chat,tool_call,reasoning",
-  inputText: "text",
-  enabled: true,
-  authHeader: true,
-  reasoning: true,
-  contextWindow: "",
-  maxTokens: "",
-};
+	  capabilitiesText: "chat,tool_call",
+	  inputText: "text",
+	  enabled: true,
+	  authHeader: true,
+	  reasoning: false,
+	  thinkingModes: [],
+	  contextWindow: "",
+	  maxTokens: "",
+	};
 
 export function deriveProviderCapabilityUiState(
   provider: ProviderCapabilityUiInput,
@@ -170,10 +172,11 @@ export function providerToForm(provider: ProviderPreset, templates: readonly Pro
     clearApiKey: false,
     capabilitiesText: provider.capabilities.join(", "),
     inputText: provider.input.join(", "),
-    enabled: provider.enabled,
-    authHeader: provider.authHeader ?? true,
-    reasoning: provider.reasoning ?? false,
-    contextWindow: provider.contextWindow ? String(provider.contextWindow) : "",
+	    enabled: provider.enabled,
+	    authHeader: provider.authHeader ?? true,
+	    reasoning: provider.reasoning ?? false,
+	    thinkingModes: provider.thinkingModes ?? [],
+	    contextWindow: provider.contextWindow ? String(provider.contextWindow) : "",
     maxTokens: provider.maxTokens ? String(provider.maxTokens) : "",
   };
 }
@@ -218,11 +221,12 @@ export function providerTemplateToForm(template: ProviderTemplate, t?: ProviderT
     clearApiKey: false,
     capabilitiesText: template.capabilities.join(", "),
     inputText: (template.input ?? ["text"]).join(", "),
-    enabled: template.capabilities.includes("chat") && template.api !== "media-job" ? true : template.enabled ?? false,
-    authHeader: template.authHeader ?? true,
-    reasoning: template.reasoning ?? false,
-    contextWindow: "",
-    maxTokens: "",
+	    enabled: template.capabilities.includes("chat") && template.api !== "media-job" ? true : template.enabled ?? false,
+	    authHeader: template.authHeader ?? true,
+	    reasoning: template.reasoning ?? false,
+	    thinkingModes: template.thinkingModes ?? (template.reasoning ? ["off", "minimal", "low", "medium", "high", "xhigh"] : []),
+	    contextWindow: "",
+	    maxTokens: "",
   };
 }
 
@@ -237,10 +241,11 @@ export function providerFormToTemplate(form: ProviderFormState): ProviderTemplat
     api: form.api,
     providerTransport: form.providerTransport || undefined,
     baseUrl: form.baseUrl,
-    apiKeyRef: form.apiKeyRef,
-    authHeader: form.authHeader,
-    reasoning: form.reasoning,
-    input: splitProviderCsv(form.inputText) as ProviderTemplate["input"],
+	    apiKeyRef: form.apiKeyRef,
+	    authHeader: form.authHeader,
+	    reasoning: form.reasoning,
+	    thinkingModes: form.thinkingModes,
+	    input: splitProviderCsv(form.inputText) as ProviderTemplate["input"],
     contextWindow: form.contextWindow ? Number(form.contextWindow) : undefined,
     maxTokens: form.maxTokens ? Number(form.maxTokens) : undefined,
     compat: {},
@@ -255,13 +260,17 @@ export function providerFormWithSelectedModel(
   sourceForm?: ProviderFormState,
 ): { readonly form: ProviderFormState; readonly notice?: string } {
   const baseForm = sourceForm ?? form;
-  const nextForm = {
-    ...baseForm,
-    model: model.id,
-    api: model.api ?? baseForm.api,
-    capabilitiesText: model.capabilities?.length ? model.capabilities.join(", ") : baseForm.capabilitiesText,
-    inputText: model.input?.length ? model.input.join(", ") : baseForm.inputText,
-  };
+	  const nextForm = {
+	    ...baseForm,
+	    model: model.id,
+	    api: model.api ?? baseForm.api,
+	    capabilitiesText: model.capabilities?.length ? model.capabilities.join(", ") : baseForm.capabilitiesText,
+	    inputText: model.input?.length ? model.input.join(", ") : baseForm.inputText,
+	    reasoning: model.thinkingModes?.some((mode) => mode !== "off") ?? baseForm.reasoning,
+	    thinkingModes: model.thinkingModes ?? baseForm.thinkingModes,
+	    contextWindow: model.contextWindow ? String(model.contextWindow) : baseForm.contextWindow,
+	    maxTokens: model.maxTokens ? String(model.maxTokens) : baseForm.maxTokens,
+	  };
   if (sourceForm) {
     return { form: nextForm };
   }
@@ -272,9 +281,18 @@ export function normalizeProviderModelForImport(
   model: ProviderModelOption,
   form: Pick<ProviderFormState, "api" | "kind" | "providerId" | "capabilitiesText" | "inputText">,
 ): ProviderModelOption {
-  if (model.capabilities?.length || model.api || model.input?.length) {
-    return model;
-  }
+	  if (
+	    model.capabilities?.length ||
+	    model.api ||
+	    model.input?.length ||
+	    model.thinkingModes?.length ||
+	    model.contextWindow ||
+	    model.maxTokens ||
+	    model.supportedParameters?.length ||
+	    model.thinkingSupport
+	  ) {
+	    return model;
+	  }
   const knownGenerationKind = mediaModelKind(model.id);
   if (!knownGenerationKind) {
     return model;

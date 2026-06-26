@@ -285,7 +285,7 @@ export function useWorkspaceDomain(input: {
         if (response.channels.some((channel) => channel.id === current)) {
           return current;
         }
-        return response.channels[0]?.id ?? "";
+        return "";
       });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);

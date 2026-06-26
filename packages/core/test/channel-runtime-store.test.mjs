@@ -323,6 +323,8 @@ test("sqlite channels persist workspace binding and workspace settings", async (
         workspaceCwd: cwd,
         theme: "dark",
         locale: "zh-CN",
+        defaultPermissionMode: "workspace_write",
+        defaultPermissionPreset: "workspace_collaboration",
         channelNotifications: { [channel.id]: "mentions" },
         channelActivityViews: { [channel.id]: [{ id: "custom:risks", name: "Risks" }] },
       },
@@ -330,6 +332,8 @@ test("sqlite channels persist workspace binding and workspace settings", async (
     );
     assert.equal(settings.workspaceCwd, cwd);
     assert.equal(settings.theme, "dark");
+    assert.equal(settings.defaultPermissionMode, "workspace_write");
+    assert.equal(settings.defaultPermissionPreset, "workspace_collaboration");
     assert.equal(settings.channelNotifications[channel.id], "mentions");
   } finally {
     store.close();
@@ -344,6 +348,8 @@ test("sqlite channels persist workspace binding and workspace settings", async (
     assert.equal(reopenedSettings.workspaceCwd, cwd);
     assert.equal(reopenedSettings.theme, "dark");
     assert.equal(reopenedSettings.locale, "zh-CN");
+    assert.equal(reopenedSettings.defaultPermissionMode, "workspace_write");
+    assert.equal(reopenedSettings.defaultPermissionPreset, "workspace_collaboration");
     assert.equal(reopenedSettings.channelNotifications[reopenedChannel.id], "mentions");
     assert.equal(Array.isArray(reopenedSettings.channelActivityViews[reopenedChannel.id]), true);
 

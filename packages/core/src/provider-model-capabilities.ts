@@ -1,5 +1,5 @@
 import { defaultProviderTemplates, type ProviderTemplate } from "./provider-templates.js";
-import type { ProviderApi, ProviderKind, ProviderPreset } from "./provider-types.js";
+import type { ProviderApi, ProviderCapability, ProviderKind, ProviderPreset, ProviderThinkingMode } from "./provider-types.js";
 
 export type ProviderModelCapabilitySource =
   | "user_override"
@@ -62,6 +62,13 @@ type ProviderModelCapabilityPreset = Pick<
   | "capabilities"
 >;
 
+export type ProviderModelThinkingModeInput = Pick<
+  ProviderPreset,
+  "api" | "kind" | "providerId" | "model"
+> & {
+  readonly capabilities?: readonly ProviderCapability[];
+};
+
 interface ProviderFamilyEstimate {
   readonly contextWindowTokens: number;
   readonly maxOutputTokens: number;
@@ -83,6 +90,7 @@ const ESTIMATED_CONTEXT_WINDOW_TOKENS = 32_768;
 const DEFAULT_OUTPUT_TOKENS = 1_024;
 const STRUCTURED_OUTPUT_APIS = new Set<ProviderApi>(["openai-responses", "openai-completions"]);
 const ESTIMATED_PROVIDER_FAMILIES = new Set<ProviderKind>(["openai", "anthropic", "google", "doubao", "deepseek", "minimax", "glm"]);
+const FULL_THINKING_MODES = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ProviderThinkingMode[];
 
 export function resolveProviderModelCapabilitySnapshot(
   providerPreset: ProviderModelCapabilityPreset | undefined,
@@ -153,6 +161,62 @@ export function resolveProviderModelCapabilitySnapshot(
     conservativeSnapshot(providerPreset, "Unknown compatible provider uses conservative defaults."),
     options.runtimeObservation,
   );
+}
+
+export function resolveProviderModelThinkingModes(input: ProviderModelThinkingModeInput): readonly ProviderThinkingMode[] {
+  if (input.api === "media-job") {
+    return [];
+  }
+  if (input.capabilities?.includes("reasoning")) {
+    return FULL_THINKING_MODES;
+  }
+  if (input.capabilities && input.capabilities.length > 0) {
+    return [];
+  }
+
+  const model = input.model.toLowerCase();
+  const providerId = input.providerId.toLowerCase();
+  if (isKnownOpenAiReasoningModel(model, input.kind, providerId)) {
+    return FULL_THINKING_MODES;
+  }
+  if (isKnownAnthropicThinkingModel(model, input.kind, providerId)) {
+    return FULL_THINKING_MODES;
+  }
+  if (isKnownGeminiThinkingModel(model, input.kind, providerId)) {
+    return FULL_THINKING_MODES;
+  }
+  if (isKnownDeepSeekReasoningModel(model, input.kind, providerId)) {
+    return FULL_THINKING_MODES;
+  }
+  return [];
+}
+
+function isKnownOpenAiReasoningModel(model: string, kind: ProviderKind, providerId: string): boolean {
+  if (kind !== "openai" && kind !== "openai-compatible" && providerId !== "openai") {
+    return false;
+  }
+  return /(^|[-_/])(?:gpt-5|o1|o3|o4)(?=$|[-_/.])/u.test(model) || model.includes("codex");
+}
+
+function isKnownAnthropicThinkingModel(model: string, kind: ProviderKind, providerId: string): boolean {
+  if (kind !== "anthropic" && kind !== "openai-compatible" && providerId !== "anthropic") {
+    return false;
+  }
+  return model.includes("claude-3-7") || model.includes("claude-sonnet-4") || model.includes("claude-opus-4") || model.includes("claude-4");
+}
+
+function isKnownGeminiThinkingModel(model: string, kind: ProviderKind, providerId: string): boolean {
+  if (kind !== "google" && kind !== "openai-compatible" && providerId !== "google" && providerId !== "gemini") {
+    return false;
+  }
+  return model.includes("gemini-2.5");
+}
+
+function isKnownDeepSeekReasoningModel(model: string, kind: ProviderKind, providerId: string): boolean {
+  if (kind !== "deepseek" && kind !== "openai-compatible" && providerId !== "deepseek") {
+    return false;
+  }
+  return model.includes("deepseek-r1") || model.includes("deepseek-reasoner");
 }
 
 export function providerCapabilitySourceLabel(source: ProviderModelCapabilitySource): "Auto" | "Estimated" | "Conservative" | "Custom override" {

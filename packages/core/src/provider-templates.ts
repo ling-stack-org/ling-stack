@@ -189,9 +189,10 @@ function chatProviderTemplate(input: {
     capabilities: input.capabilities ?? ["chat", "tool_call", "reasoning"],
     input: ["text"],
     enabled: false,
-    authHeader: true,
-    reasoning: true,
-    compat: input.compat ?? {},
+	    authHeader: true,
+	    reasoning: true,
+	    thinkingModes: ["off", "minimal", "low", "medium", "high", "xhigh"],
+	    compat: input.compat ?? {},
     contextWindow: 128000,
     maxTokens: 16384,
   };

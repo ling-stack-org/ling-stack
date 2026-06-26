@@ -15,12 +15,14 @@ import type {
   ChannelBranch,
   ChannelCollaborationProtocolResponse,
   ChannelMessage,
+  ConversationTranscriptMessage,
   DaemonFeatureFlags,
   ExternalWorkActionView,
   MediaJob,
   RunArtifact,
   RunEventEnvelope,
   RunFormState,
+  ResponseLanguagePreference,
   SessionPermissionMode,
   StartupStatusResponse,
   TaskRunActionState,
@@ -39,7 +41,8 @@ import {
 import type { DomainEvent } from "./domain-events.js";
 import type { ApprovalResolution } from "../features/approvals/types.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
-import { SidebarNavigation } from "../features/navigation/SidebarNavigation.js";
+import { SidebarNavigation, type SidebarRecentConversation } from "../features/navigation/SidebarNavigation.js";
+import { ConversationHome, type ConversationHomeMessage } from "../features/workspace/ConversationHome.js";
 import {
   LazyAutomationsPage as AutomationsPage,
   LazyAiTeammatesPage as AiTeammatesPage,
@@ -72,6 +75,7 @@ import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammat
 import { readDataString } from "../lib/data.js";
 import { getStartupStatus, refreshStartupStatus } from "../api/startup.js";
 import { getUserProfile } from "../api/profile.js";
+import { selectWorkspaceDirectory } from "../api/workspace-directory.js";
 import {
   getChannelCouncilPolicy,
   updateChannelCouncilPolicy,
@@ -82,6 +86,7 @@ import {
 } from "../lib/run-evidence.js";
 import { useApprovalsDomain } from "../domains/approvals/use-approvals-domain.js";
 import { useAutomationsDomain } from "../domains/automations/use-automations-domain.js";
+import { useConversationDomain } from "../domains/conversations/use-conversation-domain.js";
 import { useExternalWorkDomain } from "../domains/external-work/use-external-work-domain.js";
 import { useMediaDomain } from "../domains/media/use-media-domain.js";
 import { useMcpDomain } from "../domains/mcp/use-mcp-domain.js";
@@ -105,6 +110,7 @@ import {
   customOpenAICompatibleForm,
   providerFormToTemplate,
   providerPreflightReady,
+  sortProvidersForWorkbench,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
 import { inferPermissionPreset } from "../lib/session-permissions.js";
@@ -333,6 +339,22 @@ export function AppShell(): JSX.Element {
   const selectedChannelMessageThreadId = selectedChannelBranchId
     ? selectedChannelBranchRootThreadId ?? `missing-channel-branch-thread:${selectedChannelBranchId}`
     : undefined;
+  const conversationDomain = useConversationDomain({
+    cwd: form.cwd.trim(),
+    setErrorMessage,
+  });
+  const {
+    conversationThreads,
+    selectedConversationThreadId,
+    selectedConversationDetail,
+    conversationStreamBusy,
+  } = conversationDomain.state;
+  const {
+    refreshConversationThreads,
+    openNewConversation,
+    selectConversationThread,
+    sendConversationMessage,
+  } = conversationDomain.actions;
   const automationsDomain = useAutomationsDomain({
     cwd: form.cwd.trim(),
     channels,
@@ -871,6 +893,59 @@ export function AppShell(): JSX.Element {
     () => buildSidebarTeammateNotifications(approvals, tasks),
     [approvals, tasks],
   );
+  const recentConversations = useMemo<readonly SidebarRecentConversation[]>(() => {
+    return conversationThreads
+      .map((thread) => ({
+        id: thread.id,
+        label: thread.title || t("Conversation"),
+        meta: t("Conversation"),
+        updatedAt: thread.metadata?.lastActivityAt ?? thread.updatedAt,
+      }) satisfies SidebarRecentConversation)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 5);
+  }, [conversationThreads, t]);
+  const conversationChatProviders = useMemo(
+    () => providers.filter((provider) => provider.api !== "media-job" && provider.capabilities.includes("chat")),
+    [providers],
+  );
+  const sortedConversationProviders = useMemo(
+    () => sortProvidersForWorkbench(conversationChatProviders, form.providerPresetId),
+    [conversationChatProviders, form.providerPresetId],
+  );
+  const configuredConversationDefaultProvider = conversationChatProviders.find((provider) => provider.id === form.providerPresetId);
+  const defaultConversationProviderPresetId = configuredConversationDefaultProvider?.id || sortedConversationProviders[0]?.id || "";
+  const conversationModelOptions = useMemo(
+    () => sortProvidersForWorkbench(conversationChatProviders, defaultConversationProviderPresetId)
+      .map((provider) => ({
+        id: provider.id,
+        displayName: provider.displayName,
+        model: provider.model,
+        providerId: provider.providerId,
+        enabled: provider.enabled,
+        thinkingModes: provider.thinkingModes ?? [],
+      })),
+    [conversationChatProviders, defaultConversationProviderPresetId],
+  );
+  const defaultConversationProvider = conversationModelOptions.find((option) => option.id === defaultConversationProviderPresetId);
+  const defaultConversationProviderLabel = defaultConversationProvider
+    ? defaultConversationProvider.model
+    : form.model;
+  const selectedConversationMessages = useMemo<readonly ConversationHomeMessage[]>(
+    () => (selectedConversationDetail?.messages ?? []).map((message) => ({
+      id: message.id,
+      role: message.role,
+      authorLabel: message.authorLabel,
+      content: message.content,
+      status: message.status,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+    })),
+    [selectedConversationDetail],
+  );
+  const selectedConversationProjectPath = selectedConversationDetail?.defaults.projectPath ?? "";
+  const selectedConversationProjectLabel = selectedConversationProjectPath
+    ? summarizeConversationProjectPath(selectedConversationProjectPath)
+    : "";
   const localTeammates = useMemo(
     () => aiTeammates.map((teammate) => aiTeammateToLocalDraft(teammate, providers)),
     [aiTeammates, providers],
@@ -1051,6 +1126,55 @@ export function AppShell(): JSX.Element {
     openPlainView(view);
   }
 
+  function openConversationHome(): void {
+    setSettingsReturnSection("");
+    setThreadPageTargetId("");
+    setChannelCreateOpen(false);
+    setSelectedChannelBranchId("");
+    setSelectedChannelId("");
+    setSelectedTaskId("");
+    setTaskRunProviderId("");
+    openNewConversation();
+    setActiveView("workspace");
+    setActiveSidebarTarget("workspace");
+  }
+
+  async function chooseConversationProjectDirectory(): Promise<{ readonly projectPath?: string; readonly projectLabel?: string } | undefined> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage(t("Local workspace is not ready."));
+      return undefined;
+    }
+
+    try {
+      const response = await selectWorkspaceDirectory(workspaceCwd);
+      if (response.cancelled) {
+        return undefined;
+      }
+      setErrorMessage("");
+      return {
+        projectPath: response.path,
+        projectLabel: response.label,
+      };
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+  }
+
+  function selectRecentConversation(conversation: SidebarRecentConversation): void {
+    setSettingsReturnSection("");
+    setThreadPageTargetId("");
+    setChannelCreateOpen(false);
+    setSelectedChannelBranchId("");
+    setSelectedChannelId("");
+    setSelectedTaskId("");
+    setTaskRunProviderId("");
+    setActiveView("workspace");
+    setActiveSidebarTarget("workspace");
+    void selectConversationThread(conversation.id);
+  }
+
   function openSettingsWorkspaceTool(view: "providers" | "teammates" | "work_board"): void {
     setSettingsReturnSection("workspace-tools");
     if (view === "work_board") {
@@ -1214,6 +1338,7 @@ export function AppShell(): JSX.Element {
   useEffect(() => {
     if (activeView === "workspace") {
       void refreshChannels();
+      void refreshConversationThreads();
       void refreshRuns();
       void refreshApprovals();
       void refreshExternalWorkCiTriage();
@@ -1294,6 +1419,7 @@ export function AppShell(): JSX.Element {
       return;
     }
     void refreshAiCouncils(workspaceCwd);
+    void refreshConversationThreads(workspaceCwd);
   }, [form.cwd]);
 
   useEffect(() => {
@@ -1615,7 +1741,16 @@ export function AppShell(): JSX.Element {
         cwd={form.cwd}
         channelNotifications={sidebarChannelNotifications}
         teammateNotifications={sidebarTeammateNotifications}
-        onOpenView={openPlainViewWithoutSettingsReturn}
+        recentConversations={recentConversations}
+        selectedRecentConversationId={activeView === "workspace" && !selectedChannelId ? selectedConversationThreadId : ""}
+        onOpenView={(view) => {
+          if (view === "workspace") {
+            openConversationHome();
+            return;
+          }
+          openPlainViewWithoutSettingsReturn(view);
+        }}
+        onOpenConversationHome={openConversationHome}
         onCreateChannel={openChannelCreatePanel}
         onCreateTeammate={openTeammateCreatePanel}
         onCreateChannelBranch={(channelId, name) => void saveChannelBranch(channelId, name)}
@@ -1633,6 +1768,7 @@ export function AppShell(): JSX.Element {
           setSettingsReturnSection("");
           selectAiTeammate(teammateId);
         }}
+        onSelectRecentConversation={selectRecentConversation}
         channelDrawer
         channelDrawerOpen={channelSidebarOpen}
         onChannelDrawerOpenChange={setChannelSidebarOpen}
@@ -1663,7 +1799,8 @@ export function AppShell(): JSX.Element {
         >
           <Suspense fallback={<div className="client-empty-state"><span>{t("Loading")}</span></div>}>
             {activeView === "workspace" ? (
-              <WorkspaceClientView
+              selectedChannelId ? (
+                <WorkspaceClientView
             cwd={form.cwd}
             daemonHealthy={daemonHealthy}
             channelAutoRouteEnabled={daemonFeatures.channels.autoRoute}
@@ -1845,6 +1982,56 @@ export function AppShell(): JSX.Element {
             workspaceSettings={workspaceSettings}
             onWorkspaceSettingsPatch={patchWorkspaceSettings}
               />
+              ) : (
+                <ConversationHome
+                  initialMessages={selectedConversationMessages}
+                  initialProjectPath={selectedConversationProjectPath}
+                  initialProjectLabel={selectedConversationProjectLabel}
+                  initialProviderPresetId={selectedConversationDetail?.defaults.providerPresetId ?? ""}
+                  initialThinkingLevel={selectedConversationDetail?.defaults.thinkingLevel ?? "off"}
+                  initialPermissionMode={selectedConversationDetail?.defaults.permissionMode ?? workspaceSettings?.defaultPermissionMode}
+                  initialPermissionPreset={selectedConversationDetail?.defaults.permissionPreset ?? workspaceSettings?.defaultPermissionPreset}
+                  defaultProviderLabel={defaultConversationProviderLabel}
+                  defaultProviderPresetId={defaultConversationProviderPresetId}
+                  modelOptions={conversationModelOptions}
+                  slashCommands={slashCommands}
+                  onChooseProjectDirectory={chooseConversationProjectDirectory}
+                  sending={conversationStreamBusy}
+                  onSendConversation={async (input) => {
+                    await sendConversationMessage({
+                      message: input.message,
+                      projectPath: input.project.projectPath,
+                      providerPresetId: input.model.providerPresetId || defaultConversationProviderPresetId,
+                      thinkingLevel: input.model.thinkingLevel,
+                      permissionMode: input.authorization.permissionMode,
+                      permissionPreset: input.authorization.permissionPreset,
+                      responseLanguage: resolveConversationResponseLanguage(
+                        workspaceSettings?.responseLanguage ?? effectiveConfig?.values.responseLanguage.value,
+                      ),
+                    }, {
+                      onReady: (event) => input.replaceMessages([
+                        homeMessageFromTranscript(event.userMessage),
+                        homeMessageFromTranscript(event.assistantMessage),
+                      ]),
+                      onRunEvent: (event) => {
+                        if (event.assistantMessage) {
+                          input.upsertMessage(homeMessageFromTranscript(event.assistantMessage));
+                        }
+                      },
+                      onDone: (event) => input.upsertMessage(homeMessageFromTranscript(event.assistantMessage)),
+                      onBlocked: (event) => {
+                        if (event.assistantMessage) {
+                          input.upsertMessage(homeMessageFromTranscript(event.assistantMessage));
+                        }
+                        if (event.error) {
+                          input.failMessage(event.error);
+                        }
+                      },
+                      onError: (message) => input.failMessage(message),
+                    });
+                  }}
+                />
+              )
             ) : (
               <>
                 {activeView === "providers" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" || activeView === "settings" ? null : (
@@ -2148,6 +2335,8 @@ export function AppShell(): JSX.Element {
                     latestPluginApplyResult={latestPluginApplyResult}
                     latestPluginRuntimePreview={latestPluginRuntimePreview}
                     latestPluginNotice={latestPluginNotice}
+                    workspaceDefaultPermissionMode={workspaceSettings?.defaultPermissionMode}
+                    workspaceDefaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                     permissionMode={form.permissionMode}
                     permissionPreset={form.permissionPreset}
                     isLoading={approvalPolicyLoading}
@@ -2164,6 +2353,10 @@ export function AppShell(): JSX.Element {
                     errorMessage={errorMessage}
                     onFormChange={setApprovalPolicyForm}
                     onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode, permissionPreset: inferPermissionPreset(permissionMode) }))}
+                    onWorkspaceDefaultPermissionChange={(permissionMode, permissionPreset) => patchWorkspaceSettings({
+                      defaultPermissionMode: permissionMode,
+                      defaultPermissionPreset: permissionPreset,
+                    })}
                     onRefresh={() => void refreshApprovalPolicy()}
                     onSave={() => void saveApprovalPolicy()}
                     onWorkspaceResponseLanguageChange={(responseLanguage) => patchWorkspaceSettings({ responseLanguage })}
@@ -2356,4 +2549,30 @@ function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode 
   return value === "ask_everything" || value === "balanced" || value === "workspace_write" || value === "full_access" || value === "custom"
     ? value
     : undefined;
+}
+
+function homeMessageFromTranscript(message: ConversationTranscriptMessage): ConversationHomeMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    authorLabel: message.authorLabel,
+    content: message.content,
+    status: message.status,
+    createdAt: message.createdAt,
+    updatedAt: message.updatedAt,
+  };
+}
+
+function summarizeConversationProjectPath(path: string): string {
+  const normalizedPath = path.replace(/[\\/]+$/u, "");
+  return normalizedPath.split(/[\\/]/u).filter(Boolean).at(-1) || path;
+}
+
+function resolveConversationResponseLanguage(
+  preference: ResponseLanguagePreference | undefined,
+): ResponseLanguagePreference {
+  if (preference === "follow_user" || preference === "zh-CN" || preference === "en-US") {
+    return preference;
+  }
+  return "follow_user";
 }

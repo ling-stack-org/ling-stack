@@ -17,7 +17,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { listProviderModels } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -53,6 +53,7 @@ import type {
   ProviderFormState,
   ProviderModelOption,
   ProviderPreset,
+  ProviderThinkingMode,
   ProviderTemplate,
   RunSession,
 } from "../../types.js";
@@ -60,6 +61,9 @@ import type { ProviderBatchResult, ProviderCheckScope } from "./types.js";
 
 const customOpenAICompatibleTemplateId = "custom-openai-compatible";
 type ProviderStatusFilter = "all" | "ready" | "needsAttention" | "missingKey" | "disabled";
+type ProviderMenuAnchor = { readonly id: string; readonly top: number; readonly right: number };
+
+const providerRowMenuEstimatedHeight = 132;
 
 export interface ProviderSaveResult {
   readonly ok: boolean;
@@ -156,7 +160,8 @@ export function ProviderSettings({
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [providerSearch, setProviderSearch] = useState("");
   const [providerStatusFilter, setProviderStatusFilter] = useState<ProviderStatusFilter>("all");
-  const [openProviderMenuId, setOpenProviderMenuId] = useState("");
+  const [openProviderMenu, setOpenProviderMenu] = useState<ProviderMenuAnchor>({ id: "", top: 0, right: 0 });
+  const openProviderMenuId = openProviderMenu.id;
   const [showApiKey, setShowApiKey] = useState(true);
   const [modelOptions, setModelOptions] = useState<readonly ProviderModelOption[]>([]);
   const [modelOptionsContext, setModelOptionsContext] = useState<ProviderFormState | undefined>(undefined);
@@ -183,6 +188,23 @@ export function ProviderSettings({
   const checkedProvider = checkedProviderId ? providers.find((provider) => provider.id === checkedProviderId) : undefined;
   const editorCheckProvider = checkedProvider ?? (editingProviderId ? providers.find((provider) => provider.id === editingProviderId) : undefined);
   const editorCheckSource = editorCheckProvider ?? (form.api === "media-job" ? { api: "media-job" as const } : undefined);
+
+  function openProviderRowMenu(providerId: string, element: HTMLElement): void {
+    const rect = element.getBoundingClientRect();
+    const viewportPadding = 8;
+    const shouldOpenUp = rect.bottom + providerRowMenuEstimatedHeight > window.innerHeight - viewportPadding;
+    setOpenProviderMenu({
+      id: providerId,
+      top: shouldOpenUp
+        ? Math.max(viewportPadding, rect.top - providerRowMenuEstimatedHeight)
+        : rect.bottom,
+      right: Math.max(viewportPadding, window.innerWidth - rect.right),
+    });
+  }
+
+  function closeProviderRowMenu(): void {
+    setOpenProviderMenu({ id: "", top: 0, right: 0 });
+  }
   const editorCheckMessage = checkResult ? providerCheckDisplayMessage(checkResult, editorCheckSource, t) : "";
   const editorCheckGuidance = checkResult ? providerCheckDisplayGuidance(checkResult, editorCheckSource, t) : "";
   const isCheckingProviders = checkingProviderIds.length > 0;
@@ -640,12 +662,12 @@ export function ProviderSettings({
                             )}
                             <span
                               className={openProviderMenuId === provider.id ? "provider-row-menu hover-action-menu open" : "provider-row-menu hover-action-menu"}
-                              onMouseEnter={() => setOpenProviderMenuId(provider.id)}
-                              onMouseLeave={() => setOpenProviderMenuId("")}
-                              onFocus={() => setOpenProviderMenuId(provider.id)}
+                              onMouseEnter={(event) => openProviderRowMenu(provider.id, event.currentTarget)}
+                              onMouseLeave={closeProviderRowMenu}
+                              onFocus={(event) => openProviderRowMenu(provider.id, event.currentTarget)}
                               onBlur={(event) => {
                                 if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                                  setOpenProviderMenuId("");
+                                  closeProviderRowMenu();
                                 }
                               }}
                             >
@@ -663,12 +685,16 @@ export function ProviderSettings({
                                 className="provider-row-menu-popover hover-action-menu-popover"
                                 role="menu"
                                 hidden={openProviderMenuId !== provider.id}
+                                style={{
+                                  "--provider-row-menu-top": `${openProviderMenu.top}px`,
+                                  "--provider-row-menu-right": `${openProviderMenu.right}px`,
+                                } as CSSProperties}
                               >
                                 <button
                                   type="button"
                                   role="menuitem"
                                   onClick={() => {
-                                    setOpenProviderMenuId("");
+                                    closeProviderRowMenu();
                                     openEditProviderSheet(provider);
                                   }}
                                 >
@@ -680,7 +706,7 @@ export function ProviderSettings({
                                   role="menuitem"
                                   disabled={isCheckingProviders}
                                   onClick={() => {
-                                    setOpenProviderMenuId("");
+                                    closeProviderRowMenu();
                                     onToggleEnabled(provider, !provider.enabled);
                                   }}
                                 >
@@ -693,7 +719,7 @@ export function ProviderSettings({
                                     role="menuitem"
                                     disabled={isCheckingProviders || providerMissingApiKey}
                                     onClick={() => {
-                                      setOpenProviderMenuId("");
+                                      closeProviderRowMenu();
                                       onCheck(provider.id);
                                     }}
                                   >
@@ -706,7 +732,7 @@ export function ProviderSettings({
                                   role="menuitem"
                                   className="danger"
                                   onClick={() => {
-                                    setOpenProviderMenuId("");
+                                    closeProviderRowMenu();
                                     onDelete(provider.id);
                                   }}
                                 >
@@ -967,9 +993,14 @@ export function ProviderSettings({
                     toggleImportModel(model);
                   }}
                 >
-                  <strong>{model.displayName ?? model.id}</strong>
-                  <small>{model.ownedBy ?? model.id}</small>
-                  <em>{providerCapabilityChipLabels(model, t).join(" / ")}</em>
+                  <span className="provider-model-card-copy">
+                    <strong>{model.displayName ?? model.id}</strong>
+                    <small>{model.ownedBy ?? model.id}</small>
+                    <em>{providerCapabilityChipLabels(model, t).join(" / ")}</em>
+                  </span>
+                  <span className={modelThinkingModes(model).length > 0 ? "provider-model-thinking-chip" : "provider-model-thinking-chip unsupported"}>
+                    {providerModelThinkingLabel(model, t)}
+                  </span>
                 </button>
                 );
               })}
@@ -1161,6 +1192,50 @@ function providerInitial(displayName: string): string {
     return "#";
   }
   return normalizedName.slice(0, 1).toUpperCase();
+}
+
+function providerModelThinkingLabel(
+  model: ProviderModelOption,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const modes = modelThinkingModes(model);
+  if (modes.length === 0) {
+    return t("No thinking");
+  }
+  return t("Thinking: {modes}", { modes: modes.map((mode) => providerThinkingModeLabel(mode, t)).join(" / ") });
+}
+
+function modelThinkingModes(model: ProviderModelOption): readonly ProviderThinkingMode[] {
+  const modes = model.thinkingModes ?? [];
+  return providerOrderedThinkingModes(modes).filter((mode) => mode !== "off");
+}
+
+function providerOrderedThinkingModes(modes: readonly ProviderThinkingMode[]): readonly ProviderThinkingMode[] {
+  const selectedModes = new Set(modes);
+  const order: readonly ProviderThinkingMode[] = ["off", "auto", "minimal", "low", "medium", "high", "xhigh"];
+  return order.filter((mode) => selectedModes.has(mode));
+}
+
+function providerThinkingModeLabel(
+  mode: ProviderThinkingMode,
+  t: (key: string) => string,
+): string {
+  switch (mode) {
+    case "off":
+      return t("Off");
+    case "auto":
+      return t("Auto");
+    case "minimal":
+      return t("Minimal");
+    case "low":
+      return t("Low");
+    case "medium":
+      return t("Medium");
+    case "high":
+      return t("High");
+    case "xhigh":
+      return t("XHigh");
+  }
 }
 
 function ProviderRunRepairPanel({

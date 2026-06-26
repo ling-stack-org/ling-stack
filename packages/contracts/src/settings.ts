@@ -1,3 +1,5 @@
+import type { PermissionPreset, SessionPermissionMode } from "./shared.js";
+
 export type ResponseLanguage = "zh-CN" | "en-US";
 
 export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
@@ -20,6 +22,8 @@ export interface WorkspaceSettings {
   readonly theme?: "light" | "dark" | "system";
   readonly locale?: string;
   readonly responseLanguage?: ResponseLanguagePreference;
+  readonly defaultPermissionMode?: SessionPermissionMode;
+  readonly defaultPermissionPreset?: PermissionPreset;
   readonly channelNotifications?: Record<string, string>;
   readonly channelActivityViews?: Record<string, unknown>;
   readonly skillGovernancePolicy: SkillGovernancePolicy;
@@ -31,6 +35,8 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly theme?: "light" | "dark" | "system" | null;
   readonly locale?: string | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
+  readonly defaultPermissionMode?: SessionPermissionMode | null;
+  readonly defaultPermissionPreset?: PermissionPreset | null;
   readonly channelNotifications?: Record<string, string> | null;
   readonly channelActivityViews?: Record<string, unknown> | null;
   readonly skillGovernancePolicy?: SkillGovernancePolicy | null;

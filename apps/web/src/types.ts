@@ -12,6 +12,7 @@ import type {
   PermissionPreset,
   ProviderApi,
   ProviderKind,
+  ProviderThinkingMode,
   ProviderTransport,
   SessionPermissionMode,
   TaskStatus,
@@ -55,6 +56,7 @@ export interface ProviderFormState {
   readonly enabled: boolean;
   readonly authHeader: boolean;
   readonly reasoning: boolean;
+  readonly thinkingModes: readonly ProviderThinkingMode[];
   readonly contextWindow: string;
   readonly maxTokens: string;
 }

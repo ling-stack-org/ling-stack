@@ -28,6 +28,7 @@ import {
   type WorkspaceRuntimeSettings,
   type WorkUnit,
   type WorkUnitAttempt,
+  type WorkUnitKind,
 } from "@ling-stack/core";
 import type {
   PiRunnerEvent,
@@ -84,7 +85,7 @@ import {
 } from "./mcp.js";
 import { hydrateRunnerToolSurface } from "./tool-surfaces.js";
 import { createQueuedRunForConflict } from "./queue.js";
-import { resolveProviderForRun } from "./providers.js";
+import { resolveProviderForRun, resolveProviderRunThinkingLevel } from "./providers.js";
 import type { RunRequest } from "./schemas.js";
 import { appendFailureEvent, writeTerminalSummary } from "./terminal.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
@@ -328,7 +329,7 @@ export async function executeRunRequest(
       provider: resolvedProvider,
       tools: runtimeTools,
       mcpTools,
-      thinkingLevel: runRequest.thinkingLevel,
+      thinkingLevel: resolveProviderRunThinkingLevel(resolvedProvider, runRequest.thinkingLevel),
       systemPrompt: runRequest.systemPrompt,
       appendSystemPrompt: appendSystemPrompt.length > 0 ? appendSystemPrompt : undefined,
       agentDir: runRequest.agentDir,
@@ -343,11 +344,14 @@ export async function executeRunRequest(
     runId = createRunId();
     createdAt = new Date().toISOString();
     const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;
+    thread = ensureLingThreadForRun(store, runRequest, createdAt);
+    turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
+    const workUnitOwner = resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     const existingWorkUnit = runRequest.idempotencyKey
       ? store.findWorkUnitByIdempotency({
-          kind: "task_run",
-          ownerType: "task",
-          ownerId: runRequest.task.id,
+          kind: workUnitOwner.kind,
+          ownerType: workUnitOwner.ownerType,
+          ownerId: workUnitOwner.ownerId,
           idempotencyKey: runRequest.idempotencyKey,
         })
       : undefined;
@@ -364,13 +368,11 @@ export async function executeRunRequest(
       runId,
       now: createdAt,
     });
-    thread = ensureLingThreadForRun(store, runRequest, createdAt);
-    turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     workUnit = store.createWorkUnit({
       workspaceId: DEFAULT_WORKSPACE_ID,
-      kind: "task_run",
-      ownerType: "task",
-      ownerId: runRequest.task.id,
+      kind: workUnitOwner.kind,
+      ownerType: workUnitOwner.ownerType,
+      ownerId: workUnitOwner.ownerId,
       channelId: runRequest.task.channelId,
       taskId: runRequest.task.id,
       providerPresetId: runRequest.providerPresetId,
@@ -1427,6 +1429,29 @@ function getExplicitRunnerRequestSource(runRequest: RunRequest): RunnerRequestSo
     return "workflow_step";
   }
   return "run_request";
+}
+
+function resolveRunWorkUnitOwner(
+  thread: LingThread,
+  runRequest: RunRequest,
+  turnId: string,
+): {
+  readonly kind: WorkUnitKind;
+  readonly ownerType: string;
+  readonly ownerId: string;
+} {
+  if (thread.kind === "conversation") {
+    return {
+      kind: "conversation_run",
+      ownerType: "conversation_turn",
+      ownerId: turnId,
+    };
+  }
+  return {
+    kind: "task_run",
+    ownerType: "task",
+    ownerId: runRequest.task.id,
+  };
 }
 
 function assertFullAccessPermissionConfirmed(runRequest: RunRequest): void {

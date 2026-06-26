@@ -10,6 +10,7 @@ import type {
   StartupRefreshResponse,
   StartupStatusResponse,
   UserProfileResponse,
+  WorkspaceDirectorySelectResponse,
   WorkspaceSettingsResponse,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "../errors.js";
@@ -64,6 +65,10 @@ export const systemEndpoints = {
 
   async refreshStartupStatus(this: LingDaemonEndpointContext, cwd?: string): Promise<StartupRefreshResponse> {
       return this._post("/startup/refresh", { cwd });
+    },
+
+  async selectWorkspaceDirectory(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceDirectorySelectResponse> {
+      return this._post("/workspace-directory/select", { cwd });
     },
 
   async getControlPlaneSnapshot(this: LingDaemonEndpointContext,

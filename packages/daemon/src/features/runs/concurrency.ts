@@ -68,7 +68,7 @@ export function prepareRunConcurrency(input: {
     attemptId: input.attemptId,
     runRequest: input.runRequest,
     channel,
-    taskId,
+    taskId: task ? taskId : undefined,
     now: input.now,
   });
 
@@ -228,7 +228,7 @@ function buildRunLeaseInputs(input: {
   readonly attemptId?: string;
   readonly runRequest: RunRequest;
   readonly channel?: Channel;
-  readonly taskId: string;
+  readonly taskId?: string;
   readonly now: string;
 }): Parameters<RunStore["acquireResourceLease"]>[0][] {
   const expiresAt = new Date(new Date(input.now).getTime() + RESOURCE_LEASE_TTL_MS).toISOString();
@@ -241,13 +241,15 @@ function buildRunLeaseInputs(input: {
     workUnitId: input.workUnitId,
     attemptId: input.attemptId,
   });
-  const leases: Parameters<RunStore["acquireResourceLease"]>[0][] = [
-    {
+  const leases: Parameters<RunStore["acquireResourceLease"]>[0][] = [];
+
+  if (input.taskId) {
+    leases.push({
       ...base,
       resourceType: "task",
       resourceKey: input.taskId,
-    },
-  ];
+    });
+  }
 
   if (input.channel?.runtimePolicy.executionMode === "serial") {
     leases.push({
@@ -261,8 +263,10 @@ function buildRunLeaseInputs(input: {
     const scope = input.channel?.runtimePolicy.writeLockScope ?? "boundPath";
     if (scope === "workspace") {
       leases.push({ ...base, resourceType: "workspace", resourceKey: DEFAULT_WORKSPACE_ID });
+    } else if (scope === "channel" && input.channel) {
+      leases.push({ ...base, resourceType: "channel", resourceKey: input.channel.id });
     } else if (scope === "channel") {
-      leases.push({ ...base, resourceType: "channel", resourceKey: input.channel?.id ?? input.taskId });
+      leases.push({ ...base, resourceType: "workspace", resourceKey: DEFAULT_WORKSPACE_ID });
     } else {
       leases.push({ ...base, resourceType: "bound_path", resourceKey: canonicalResourcePath(input.runRequest.cwd) });
     }

@@ -165,6 +165,7 @@ export interface MockLingThread {
   forkedFromRunId?: string;
   createdAt: string;
   updatedAt: string;
+  metadata?: unknown;
   pinnedAt?: string;
   archivedAt?: string;
   archivedReason?: string;
@@ -1134,9 +1135,23 @@ function normalizeWorkspaceSettings(settings: Record<string, unknown>): Record<s
     schemaVersion: 1,
     ...settings,
     workspaceCwd: typeof settings.workspaceCwd === "string" ? settings.workspaceCwd : cwd,
+    defaultPermissionMode: normalizeDefaultPermissionMode(settings.defaultPermissionMode),
+    defaultPermissionPreset: normalizeDefaultPermissionPreset(settings.defaultPermissionPreset),
     skillGovernancePolicy: normalizeSkillGovernancePolicy(settings.skillGovernancePolicy),
     updatedAt: typeof settings.updatedAt === "string" ? settings.updatedAt : "2026-05-22T00:00:00.000Z",
   };
+}
+
+function normalizeDefaultPermissionMode(value: unknown): string {
+  return value === "ask_everything" || value === "balanced" || value === "workspace_write" || value === "full_access" || value === "custom"
+    ? value
+    : "workspace_write";
+}
+
+function normalizeDefaultPermissionPreset(value: unknown): string {
+  return value === "read_only" || value === "workspace_collaboration" || value === "full_access" || value === "custom"
+    ? value
+    : "workspace_collaboration";
 }
 
 function normalizeSkillGovernancePolicy(value: unknown): Record<string, string> {
@@ -3231,9 +3246,10 @@ export function createChatProvider(overrides: Record<string, unknown> = {}): Rec
     apiKeyRef: "env:LOCAL_RELAY_API_KEY",
     apiKeyConfigured: true,
     headers: {},
-    authHeader: true,
-    reasoning: true,
-    input: ["text"],
+	    authHeader: true,
+	    reasoning: true,
+	    thinkingModes: ["off", "minimal", "low", "medium", "high", "xhigh"],
+	    input: ["text"],
     compat: {},
     capabilities: ["chat", "tool_call", "reasoning"],
     enabled: true,
@@ -3921,10 +3937,11 @@ export function createProviderFromBody(body: Record<string, unknown>, id: string
     apiKeyRef,
     apiKeyConfigured,
     headers: isRecord(existing.headers) ? existing.headers : {},
-    authHeader: typeof body.authHeader === "boolean" ? body.authHeader : existing.authHeader === true,
-    reasoning: typeof body.reasoning === "boolean" ? body.reasoning : existing.reasoning === true,
-    input: Array.isArray(body.input) ? body.input : Array.isArray(existing.input) ? existing.input : ["text"],
-    compat: isRecord(existing.compat) ? existing.compat : {},
+	    authHeader: typeof body.authHeader === "boolean" ? body.authHeader : existing.authHeader === true,
+	    reasoning: typeof body.reasoning === "boolean" ? body.reasoning : existing.reasoning === true,
+	    thinkingModes: Array.isArray(body.thinkingModes) ? body.thinkingModes : Array.isArray(existing.thinkingModes) ? existing.thinkingModes : [],
+	    input: Array.isArray(body.input) ? body.input : Array.isArray(existing.input) ? existing.input : ["text"],
+    compat: isRecord(body.compat) ? body.compat : isRecord(existing.compat) ? existing.compat : {},
     capabilities: Array.isArray(body.capabilities) ? body.capabilities : Array.isArray(existing.capabilities) ? existing.capabilities : ["chat"],
     enabled: typeof body.enabled === "boolean" ? body.enabled : existing.enabled === true,
     contextWindow: typeof body.contextWindow === "number" ? body.contextWindow : typeof existing.contextWindow === "number" ? existing.contextWindow : undefined,
@@ -5376,6 +5393,94 @@ export function buildMockExternalActionView(state: MockState, action: MockExtern
   };
 }
 
+function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
+  const turns = state.turns
+    .filter((turn) => turn.threadId === thread.id)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const runLinks = turns.flatMap((turn) => state.turnRunLinks.filter((link) => link.turnId === turn.id));
+  const runs = runLinks
+    .map((link) => state.runs.find((run) => run.id === link.runId))
+    .filter((run): run is MockRun => Boolean(run));
+  const messages = turns.flatMap((turn) => {
+    const runLink = state.turnRunLinks.find((link) => link.turnId === turn.id);
+    const run = runLink ? state.runs.find((item) => item.id === runLink.runId) : undefined;
+    return run
+      ? [createMockConversationUserMessage(thread, turn), createMockConversationAssistantMessageFromRun(state, thread, turn, run)]
+      : [createMockConversationUserMessage(thread, turn)];
+  });
+  const latestRun = runs[runs.length - 1];
+  const requestSnapshot = isRecord(latestRun?.requestSnapshot) ? latestRun.requestSnapshot : {};
+  const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
+  return {
+    cwd,
+    thread,
+    turns,
+    runs,
+    messages,
+    defaults: {
+      projectPath: typeof requestSnapshot.projectPath === "string" ? requestSnapshot.projectPath : latestProjectPath,
+      providerPresetId: latestRun?.providerPresetId,
+      thinkingLevel: typeof requestSnapshot.thinkingLevel === "string" ? requestSnapshot.thinkingLevel : undefined,
+      permissionPreset: typeof requestSnapshot.permissionPreset === "string" ? requestSnapshot.permissionPreset : undefined,
+      permissionMode: typeof requestSnapshot.permissionMode === "string" ? requestSnapshot.permissionMode : undefined,
+    },
+  };
+}
+
+function createMockConversationUserMessage(thread: MockLingThread, turn: MockLingTurn): Record<string, unknown> {
+  return {
+    id: `conversation-user:${turn.id}`,
+    role: "user",
+    content: turn.userInstruction,
+    status: turn.status === "failed" ? "failed" : "succeeded",
+    threadId: thread.id,
+    turnId: turn.id,
+    createdAt: turn.createdAt,
+    updatedAt: turn.updatedAt,
+  };
+}
+
+function createMockConversationAssistantMessageFromRun(
+  state: MockState,
+  thread: MockLingThread,
+  turn: MockLingTurn,
+  run: MockRun,
+): Record<string, unknown> {
+  const content = (state.eventsByRun[run.id] ?? [])
+    .filter((event) => event.type === "assistant_text_delta")
+    .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
+    .join("");
+  return createMockConversationAssistantMessage(thread, turn, run, content, run.status === "failed" ? "failed" : "succeeded", run.updatedAt);
+}
+
+function createMockConversationAssistantMessage(
+  thread: MockLingThread,
+  turn: MockLingTurn,
+  run: MockRun,
+  content: string,
+  status: string,
+  now: string,
+): Record<string, unknown> {
+  return {
+    id: `conversation-assistant:${turn.id}`,
+    role: "assistant",
+    authorId: "ling_agent",
+    authorLabel: "Ling Agent",
+    content,
+    status,
+    threadId: thread.id,
+    turnId: turn.id,
+    runId: run.id,
+    createdAt: run.createdAt,
+    updatedAt: now,
+  };
+}
+
+function summarizeMockConversationTitle(message: string): string {
+  const oneLine = message.replace(/\s+/g, " ").trim();
+  return oneLine.length > 48 ? `${oneLine.slice(0, 45)}...` : oneLine || "New conversation";
+}
+
 export async function mockDaemon(
   page: Page,
   state: MockState,
@@ -5452,14 +5557,30 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: state.startupStatus });
     return;
   }
+  if (request.method() === "POST" && path === "/workspace-directory/select") {
+    await route.fulfill({
+      json: {
+        cancelled: false,
+        path: "/Users/gsx/minimax-agent-cn/projects",
+        label: "projects",
+      },
+    });
+    return;
+  }
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const nextSettings = { ...state.workspaceSettings };
-    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
+    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
       if (body[key] === null) {
         delete nextSettings[key];
       } else if (body[key] !== undefined) {
-        nextSettings[key] = key === "skillGovernancePolicy" ? normalizeSkillGovernancePolicy(body[key]) : body[key];
+        nextSettings[key] = key === "skillGovernancePolicy"
+          ? normalizeSkillGovernancePolicy(body[key])
+          : key === "defaultPermissionMode"
+            ? normalizeDefaultPermissionMode(body[key])
+            : key === "defaultPermissionPreset"
+              ? normalizeDefaultPermissionPreset(body[key])
+              : body[key];
       }
     }
     state.workspaceSettings = {
@@ -7626,7 +7747,18 @@ export async function handleDaemonRoute(
           { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
           { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
           { id: "doubao-1-5-pro-32k-250115", ownedBy: "volcengine" },
-          { id: "cliproxy-claude-sonnet", ownedBy: "cliproxy" },
+	          {
+	            id: "cliproxy-claude-sonnet",
+	            ownedBy: "cliproxy",
+	            capabilities: ["chat", "reasoning"],
+	            thinkingModes: ["off", "low", "medium", "high", "xhigh"],
+	            thinkingSupport: { levels: ["off", "low", "medium", "high", "xhigh"], maxTokens: 8192 },
+	            contextWindow: 200000,
+	            maxTokens: 8192,
+	            supportedParameters: ["thinking", "tools"],
+	            capabilitySource: "model_catalog",
+	            capabilityConfidence: "known",
+	          },
         ],
       },
     });
@@ -7653,14 +7785,28 @@ export async function handleDaemonRoute(
         item.baseUrl === body.baseUrl &&
         item.model === modelId
       );
-      const providerBody = {
-        ...body,
-        displayName,
-        model: modelId,
-        api: modelApi,
-        input: Array.isArray(model.input) ? model.input : body.input,
-        capabilities: Array.isArray(model.capabilities) ? model.capabilities : body.capabilities,
-      };
+	      const providerBody = {
+	        ...body,
+	        displayName,
+	        model: modelId,
+	        api: modelApi,
+	        input: Array.isArray(model.input) ? model.input : body.input,
+	        capabilities: Array.isArray(model.capabilities) ? model.capabilities : body.capabilities,
+	        thinkingModes: Array.isArray(model.thinkingModes) ? model.thinkingModes : body.thinkingModes,
+	        reasoning: Array.isArray(model.thinkingModes) ? model.thinkingModes.some((mode) => mode !== "off") : body.reasoning,
+	        contextWindow: typeof model.contextWindow === "number" ? model.contextWindow : body.contextWindow,
+	        maxTokens: typeof model.maxTokens === "number" ? model.maxTokens : body.maxTokens,
+	        compat: {
+	          ...(isRecord(body.compat) ? body.compat : {}),
+	          modelMetadata: {
+	            id: modelId,
+	            supportedParameters: Array.isArray(model.supportedParameters) ? model.supportedParameters : undefined,
+	            thinkingSupport: isRecord(model.thinkingSupport) ? model.thinkingSupport : undefined,
+	            capabilitySource: typeof model.capabilitySource === "string" ? model.capabilitySource : undefined,
+	            capabilityConfidence: typeof model.capabilityConfidence === "string" ? model.capabilityConfidence : undefined,
+	          },
+	        },
+	      };
       if (providerIndex >= 0) {
         const existing = state.providers[providerIndex];
         const provider = isRecord(existing)
@@ -9362,6 +9508,146 @@ export async function handleDaemonRoute(
       ? state.tasks.filter((task) => isRecord(task) && task.channelId === channelId)
       : state.tasks;
     await route.fulfill({ json: { cwd, tasks } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/conversations/stream") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    const providerPresetId = typeof body.providerPresetId === "string" ? body.providerPresetId.trim() : "";
+    const provider = state.providers.find((item) => isRecord(item) && item.id === providerPresetId);
+    if (!message) {
+      await route.fulfill({ status: 400, json: { error: "message_required", message: "message is required." } });
+      return;
+    }
+    if (!provider) {
+      await route.fulfill({ status: 400, json: { error: "provider_not_found", message: "No available chat model is configured." } });
+      return;
+    }
+    const now = new Date(Date.UTC(2026, 4, 25, 1, state.turns.length, 0)).toISOString();
+    const requestedThreadId = typeof body.threadId === "string" ? body.threadId : "";
+    let thread = requestedThreadId ? state.threads.find((item) => item.id === requestedThreadId && item.kind === "conversation") : undefined;
+    if (!thread) {
+      thread = {
+        id: `thread_conversation_${state.threads.filter((item) => item.kind === "conversation").length + 1}`,
+        workspaceId: "workspace_default",
+        kind: "conversation",
+        teammateId: "ling_agent",
+        title: summarizeMockConversationTitle(message),
+        objective: message,
+        status: "open",
+        createdAt: now,
+        updatedAt: now,
+        metadata: {
+          schemaVersion: 1,
+          pendingApprovalCount: 0,
+          blockedCount: 0,
+          failedAttemptCount: 0,
+          artifactCount: 0,
+          lastActivityAt: now,
+          rebuiltAt: now,
+        },
+      };
+      state.threads.unshift(thread);
+    }
+    const turnId = `turn_conversation_${state.turns.length + 1}`;
+    const runId = `run_conversation_${state.runs.length + 1}`;
+    const turn: MockLingTurn = {
+      id: turnId,
+      workspaceId: "workspace_default",
+      threadId: thread.id,
+      kind: state.turns.some((item) => item.threadId === thread?.id) ? "manual_followup" : "initial_request",
+      status: "succeeded",
+      title: summarizeMockConversationTitle(message),
+      userInstruction: message,
+      teammateId: "ling_agent",
+      activeRunId: undefined,
+      lastRunId: runId,
+      createdByActor: "local-user",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const run: MockRun = {
+      id: runId,
+      status: "succeeded",
+      cwd: typeof body.projectPath === "string" && body.projectPath.trim() ? body.projectPath.trim() : cwd,
+      taskId: `conversation:${turnId}`,
+      providerPresetId,
+      providerName: isRecord(provider) && typeof provider.providerId === "string" ? provider.providerId : "mock-provider",
+      providerModel: isRecord(provider) && typeof provider.model === "string" ? provider.model : "mock-model",
+      taskSnapshot: { id: `conversation:${turnId}`, title: turn.title, prompt: message },
+      providerSnapshot: provider,
+      requestSnapshot: body,
+      eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+      threadId: thread.id,
+      turnId,
+      createdAt: now,
+      startedAt: now,
+      updatedAt: now,
+      endedAt: now,
+    };
+    const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en-US"
+      ? body.responseLanguage
+      : /[\u3400-\u9fff]/u.test(message) ? "zh-CN" : "en-US";
+    const assistantText = responseLanguage === "zh-CN"
+      ? `Ling Agent 回复：${message}`
+      : `Ling Agent response: ${message}`;
+    const event: MockRunEvent = {
+      id: `evt_${runId}_assistant`,
+      runId,
+      seq: 0,
+      ts: now,
+      type: "assistant_text_delta",
+      data: { text: assistantText },
+    };
+    state.turns.push(turn);
+    state.runs.unshift(run);
+    state.turnRunLinks.push({ turnId, runId, attemptNumber: 1, role: "primary", createdAt: now });
+    state.eventsByRun[runId] = [
+      event,
+      { id: `evt_${runId}_end`, runId, seq: 1, ts: now, type: "run_end", data: { status: "succeeded" } },
+    ];
+    thread = {
+      ...thread,
+      status: "succeeded",
+      lastRunId: runId,
+      updatedAt: now,
+      metadata: {
+        ...(isRecord(thread.metadata) ? thread.metadata : {}),
+        schemaVersion: 1,
+        lastTurnId: turnId,
+        lastActivityAt: now,
+        pendingApprovalCount: 0,
+        blockedCount: 0,
+        failedAttemptCount: 0,
+        artifactCount: 0,
+        rebuiltAt: now,
+      },
+    };
+    state.threads = state.threads.map((item) => item.id === thread?.id ? thread as MockLingThread : item);
+    const userMessage = createMockConversationUserMessage(thread, turn);
+    const pendingAssistant = createMockConversationAssistantMessage(thread, turn, run, "", "running", now);
+    const assistantMessage = createMockConversationAssistantMessage(thread, turn, run, assistantText, "succeeded", now);
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: ready\ndata: ${JSON.stringify({ thread, turn, userMessage, assistantMessage: pendingAssistant, runId })}`,
+        `event: run_event\ndata: ${JSON.stringify({ threadId: thread.id, turnId, runId, event, assistantMessage })}`,
+        `event: done\ndata: ${JSON.stringify({ thread, turn, run, assistantMessage })}`,
+        "",
+      ].join("\n\n"),
+    });
+    return;
+  }
+  const conversationRouteMatch = /^\/conversations\/([^/]+)$/.exec(path);
+  if (request.method() === "GET" && conversationRouteMatch) {
+    const threadId = decodeURIComponent(conversationRouteMatch[1]);
+    const thread = state.threads.find((item) => item.id === threadId && item.kind === "conversation");
+    if (!thread) {
+      await route.fulfill({ status: 404, json: { error: "conversation_not_found", message: `Conversation not found: ${threadId}` } });
+      return;
+    }
+    await route.fulfill({ json: buildMockConversationDetail(state, cwd, thread) });
     return;
   }
   if (request.method() === "POST" && path === "/threads") {
