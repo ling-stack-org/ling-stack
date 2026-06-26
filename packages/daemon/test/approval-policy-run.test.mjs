@@ -116,6 +116,57 @@ test("bash=allow lets the runner continue without creating an approval request",
   }
 });
 
+test("risk review upgrades allowed force push into an explicit approval request", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-risk-review-force-push-"));
+  execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["commit", "--allow-empty", "-m", "initial"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["branch", "-M", "main"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", "https://example.com/ling-stack.git"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["branch", "--set-upstream-to", "origin/main", "main"], { cwd, stdio: "ignore" });
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_risk_review_force_push",
+    toolName: "bash",
+    input: { command: "git push origin main --force-with-lease" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_risk_review_force_push"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    assert.equal(runner.decisions.length, 0);
+    assert.equal(requested.data.data.risk, "critical");
+    assert.match(requested.data.data.title, /Risk review required/);
+    assert.match(requested.data.data.description, /Risk review/);
+    assert.deepEqual(requested.data.data.payload.riskFlags, ["git_force_push"]);
+
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].id, approvalId);
+    assert.equal(approvals[0].status, "pending");
+    assert.equal(approvals[0].risk, "critical");
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/deny?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "risk review denied",
+    });
+    await sse.collectRemaining();
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /risk review denied/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("runtimeTools.unifiedExec config is authoritative over run request feature flags", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-gate-"));
   const runner = new ApprovalProbeRunner({
