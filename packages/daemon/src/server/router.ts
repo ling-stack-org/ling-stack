@@ -36,6 +36,7 @@ import { handleChannelPlaybookCandidates } from "../features/channels/playbooks.
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
 import { handleChannelMessagesCollection, handleChannelMessageStream } from "../features/channels/messages.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
+import { handleChannelTeamExpertsProjection } from "../features/channels/team-experts.js";
 import {
   handleWorkflowHandoffIntentAccept,
   handleWorkflowHandoffIntentItem,
@@ -1624,6 +1625,10 @@ export async function routeRequest(
     }
     if (channelRoute.action === "collaboration-cards") {
       await handleChannelCollaborationCardsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "team-experts") {
+      await handleChannelTeamExpertsProjection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "council-policy") {

@@ -406,6 +406,14 @@ export interface ListChannelTeamEvidenceItemsOptions {
   readonly limit?: number;
 }
 
+export interface ListFoldedChannelTeamEvidenceForTurnOptions {
+  readonly channelId: string;
+  readonly turnId: string;
+  readonly now?: string;
+  readonly includeExpired?: boolean;
+  readonly limit?: number;
+}
+
 export function createChannelTeamEvidenceItemId(): string {
   return `channel_team_evidence_${randomUUID()}`;
 }

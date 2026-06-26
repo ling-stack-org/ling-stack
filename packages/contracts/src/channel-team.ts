@@ -216,6 +216,13 @@ export interface FoldedExpertsReadModel {
   readonly latestUpdatedAt?: string;
 }
 
+export interface ChannelTeamExpertsProjectionResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly turnId: string;
+  readonly experts: FoldedExpertsReadModel;
+}
+
 export interface DissentSignal {
   readonly id: string;
   readonly turnId: string;

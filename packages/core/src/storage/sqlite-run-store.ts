@@ -29,6 +29,14 @@ import {
   type CreateChannelInputMaterializationInput,
   type ListChannelInputMaterializationsOptions,
 } from "../input-materialization-types.js";
+import type {
+  ChannelTeamEvidenceItem,
+  CreateChannelTeamEvidenceItemInput,
+  FoldedExpertsReadModel,
+  ListChannelTeamEvidenceItemsOptions,
+  ListFoldedChannelTeamEvidenceForTurnOptions,
+  UpdateChannelTeamEvidenceItemInput,
+} from "../channel-team-types.js";
 import {
   type ApprovalPolicy,
   type ApprovalPolicyUpdateInput,
@@ -446,6 +454,7 @@ import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-
 import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
 import { SqliteChannelWorkflowStore } from "./sqlite/channel-workflow-store.js";
+import { SqliteChannelTeamEvidenceStore } from "./sqlite/channel-team-evidence-store.js";
 import { SqliteChannelCoreStore } from "./sqlite/channel-core-store.js";
 import { SqliteExternalWorkStore } from "./sqlite/external-work-store.js";
 import { SqliteExternalWorkActionStore } from "./sqlite/external-work-action-store.js";
@@ -512,6 +521,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelProtocols: SqliteChannelProtocolStore;
   private readonly channelPlaybooks: SqliteChannelPlaybookStore;
   private readonly channelWorkflows: SqliteChannelWorkflowStore;
+  private readonly channelTeamEvidence: SqliteChannelTeamEvidenceStore;
   private readonly channelCore: SqliteChannelCoreStore;
   private readonly externalWork: SqliteExternalWorkStore;
   private readonly externalWorkActions: SqliteExternalWorkActionStore;
@@ -813,6 +823,10 @@ export class SqliteRunStore implements RunStore {
     this.channelCore = new SqliteChannelCoreStore(
       { database: this.database },
       { ensureLingAgentChannelMemberships: (now, channelId) => this.ensureLingAgentChannelMemberships(now, channelId) },
+    );
+    this.channelTeamEvidence = new SqliteChannelTeamEvidenceStore(
+      { database: this.database },
+      { assertChannelExists: (channelId) => this.assertChannelExists(channelId) },
     );
     this.externalWork = new SqliteExternalWorkStore(
       { database: this.database },
@@ -1338,6 +1352,30 @@ export class SqliteRunStore implements RunStore {
 
   deleteChannelBranch(id: string): boolean {
     return this.channelCore.deleteChannelBranch(id);
+  }
+
+  createChannelTeamEvidenceItem(input: CreateChannelTeamEvidenceItemInput, now: string): ChannelTeamEvidenceItem {
+    return this.channelTeamEvidence.createChannelTeamEvidenceItem(input, now);
+  }
+
+  getChannelTeamEvidenceItem(id: string): ChannelTeamEvidenceItem | undefined {
+    return this.channelTeamEvidence.getChannelTeamEvidenceItem(id);
+  }
+
+  listChannelTeamEvidenceItems(options: ListChannelTeamEvidenceItemsOptions): ChannelTeamEvidenceItem[] {
+    return this.channelTeamEvidence.listChannelTeamEvidenceItems(options);
+  }
+
+  updateChannelTeamEvidenceItem(
+    id: string,
+    input: UpdateChannelTeamEvidenceItemInput,
+    now: string,
+  ): ChannelTeamEvidenceItem | undefined {
+    return this.channelTeamEvidence.updateChannelTeamEvidenceItem(id, input, now);
+  }
+
+  listFoldedChannelTeamEvidenceForTurn(options: ListFoldedChannelTeamEvidenceForTurnOptions): FoldedExpertsReadModel {
+    return this.channelTeamEvidence.listFoldedChannelTeamEvidenceForTurn(options);
   }
 
   createTask(input: CreateTaskInput, now: string): Task {
