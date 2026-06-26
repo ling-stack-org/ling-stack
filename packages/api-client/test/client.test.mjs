@@ -302,6 +302,36 @@ test("builds channel team pattern endpoint URLs", async () => {
   assert.equal(JSON.parse(mock.calls[1].body).pattern, "Prefer security review.");
 });
 
+test("builds channel team snapshot and evaluation endpoint URLs", async () => {
+  const mock = createFetchMock([
+    { cwd: "/repo", channelId: "channel 1", snapshots: [] },
+    { cwd: "/repo", channelId: "channel 1", snapshot: { id: "snapshot 1" } },
+    { cwd: "/repo", channelId: "channel 1", diff: { baseSnapshotId: "snapshot 1", targetSnapshotId: "snapshot 2", entries: [], restoreRequiresExplicitApply: true } },
+    { cwd: "/repo", channelId: "channel 1", evaluations: [] },
+    { cwd: "/repo", channelId: "channel 1", evaluation: { id: "evaluation 1" } },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  await client.listChannelTeamSnapshots("/repo path", "channel 1", { limit: 12 });
+  await client.createChannelTeamSnapshot("/repo path", "channel 1", { reason: "Before enabling rule." });
+  await client.diffChannelTeamSnapshots("/repo path", "channel 1", "snapshot 1", "snapshot 2");
+  await client.listChannelTeamEvaluations("/repo path", "channel 1", { limit: 13 });
+  await client.createChannelTeamEvaluation("/repo path", "channel 1", {
+    snapshotId: "snapshot 2",
+    cases: [{ id: "case 1", input: "Delete the production database.", expectedRiskReviewStatus: "required" }],
+  });
+
+  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/team-snapshots?cwd=%2Frepo+path&limit=12");
+  assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/team-snapshots?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(JSON.parse(mock.calls[1].body).reason, "Before enabling rule.");
+  assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/team-snapshots?cwd=%2Frepo+path&baseSnapshotId=snapshot+1&targetSnapshotId=snapshot+2");
+  assert.equal(mock.calls[3].url, "http://daemon.test/channels/channel%201/team-evaluations?cwd=%2Frepo+path&limit=13");
+  assert.equal(mock.calls[4].url, "http://daemon.test/channels/channel%201/team-evaluations?cwd=%2Frepo+path");
+  assert.equal(mock.calls[4].method, "POST");
+  assert.equal(JSON.parse(mock.calls[4].body).cases[0].expectedRiskReviewStatus, "required");
+});
+
 test("builds governance notification endpoint URLs", async () => {
   const mock = createFetchMock({ cwd: "/repo", notifications: [] });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });

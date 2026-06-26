@@ -23,6 +23,7 @@ export * from "./channel-team-lifecycle.js";
 export * from "./channel-team-risk-review.js";
 export * from "./channel-team-metrics.js";
 export * from "./channel-team-patterns.js";
+export * from "./channel-team-snapshot-harness.js";
 export * from "./state-machines.js";
 export * from "./channel-runtime-types.js";
 export * from "./runtime-supervisor-types.js";

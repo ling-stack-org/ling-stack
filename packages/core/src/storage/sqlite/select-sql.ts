@@ -51,6 +51,37 @@ export function channelTeamPatternSelectSql(whereClause: string): string {
   `;
 }
 
+export function channelTeamSnapshotSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      reason,
+      created_by,
+      state_json,
+      created_at
+    FROM channel_team_snapshots
+    ${whereClause}
+  `;
+}
+
+export function channelTeamEvaluationSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      snapshot_id,
+      cases_json,
+      results_json,
+      summary_json,
+      created_at
+    FROM channel_team_evaluations
+    ${whereClause}
+  `;
+}
+
 export function channelPlaybookCandidateSelectSql(whereClause: string): string {
   return `
     SELECT

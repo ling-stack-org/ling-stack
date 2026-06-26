@@ -423,6 +423,117 @@ export interface ListActiveChannelTeamProvisionalRulesOptions {
   readonly limit?: number;
 }
 
+export type ChannelTeamSnapshotCreatedBy = "system" | "local-user" | "ai-draft";
+
+export const channelTeamSnapshotCreatedByValues: readonly ChannelTeamSnapshotCreatedBy[] = [
+  "system",
+  "local-user",
+  "ai-draft",
+];
+
+export interface ChannelTeamSnapshotProtocolState {
+  readonly version?: number;
+  readonly defaultWorkflowPreference?: string;
+  readonly visibleMultiReplyMaxParticipants?: number;
+  readonly privacyRules: readonly string[];
+  readonly reviewRules: readonly string[];
+  readonly updatedAt?: string;
+}
+
+export interface ChannelTeamSnapshotState {
+  readonly protocol?: ChannelTeamSnapshotProtocolState;
+  readonly activeProvisionalRules: readonly ChannelTeamPattern[];
+  readonly patterns: readonly ChannelTeamPattern[];
+  readonly reliabilityIncidentIds: readonly string[];
+  readonly availabilityIncidentIds: readonly string[];
+  readonly metrics?: ChannelTeamMetricsProjection;
+  readonly messageCount: number;
+  readonly latestMessageAt?: string;
+}
+
+export interface ChannelTeamSnapshot {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly reason: string;
+  readonly createdBy: ChannelTeamSnapshotCreatedBy;
+  readonly state: ChannelTeamSnapshotState;
+  readonly createdAt: string;
+}
+
+export interface CreateChannelTeamSnapshotInput {
+  readonly id?: string;
+  readonly channelId: string;
+  readonly reason: string;
+  readonly createdBy?: ChannelTeamSnapshotCreatedBy;
+  readonly state: ChannelTeamSnapshotState;
+}
+
+export interface ListChannelTeamSnapshotsOptions {
+  readonly channelId: string;
+  readonly limit?: number;
+}
+
+export interface ChannelTeamSnapshotDiffEntry {
+  readonly path: string;
+  readonly before: unknown;
+  readonly after: unknown;
+  readonly kind: "added" | "removed" | "changed";
+}
+
+export interface ChannelTeamSnapshotDiff {
+  readonly baseSnapshotId: string;
+  readonly targetSnapshotId: string;
+  readonly entries: readonly ChannelTeamSnapshotDiffEntry[];
+  readonly restoreRequiresExplicitApply: true;
+}
+
+export interface ChannelTeamEvaluationCase {
+  readonly id: string;
+  readonly input: string;
+  readonly expectedRiskReviewStatus?: ChannelTeamRiskReviewDecision["status"];
+  readonly maxObserverCount?: number;
+}
+
+export interface ChannelTeamEvaluationCaseResult {
+  readonly caseId: string;
+  readonly passed: boolean;
+  readonly observedRiskReviewStatus: ChannelTeamRiskReviewDecision["status"];
+  readonly observedObserverCount: number;
+  readonly reasons: readonly string[];
+}
+
+export interface ChannelTeamEvaluationSummary {
+  readonly passedCount: number;
+  readonly failedCount: number;
+  readonly totalCount: number;
+}
+
+export interface ChannelTeamEvaluationRun {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly snapshotId?: string;
+  readonly cases: readonly ChannelTeamEvaluationCase[];
+  readonly results: readonly ChannelTeamEvaluationCaseResult[];
+  readonly summary: ChannelTeamEvaluationSummary;
+  readonly createdAt: string;
+}
+
+export interface CreateChannelTeamEvaluationRunInput {
+  readonly id?: string;
+  readonly channelId: string;
+  readonly snapshotId?: string;
+  readonly cases: readonly ChannelTeamEvaluationCase[];
+  readonly results: readonly ChannelTeamEvaluationCaseResult[];
+  readonly summary: ChannelTeamEvaluationSummary;
+}
+
+export interface ListChannelTeamEvaluationRunsOptions {
+  readonly channelId: string;
+  readonly limit?: number;
+}
+
 export interface DissentSignal {
   readonly id: string;
   readonly turnId: string;
@@ -667,4 +778,12 @@ export function createChannelTeamIncidentId(): string {
 
 export function createChannelTeamPatternId(): string {
   return `channel_team_pattern_${randomUUID()}`;
+}
+
+export function createChannelTeamSnapshotId(): string {
+  return `channel_team_snapshot_${randomUUID()}`;
+}
+
+export function createChannelTeamEvaluationRunId(): string {
+  return `channel_team_evaluation_${randomUUID()}`;
 }

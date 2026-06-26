@@ -176,6 +176,8 @@ const CHANNEL_TEAM_INCIDENTS_MIGRATION_VERSION = 82;
 const CHANNEL_TEAM_INCIDENTS_MIGRATION_NAME = "create_channel_team_incidents";
 const CHANNEL_TEAM_PATTERNS_MIGRATION_VERSION = 83;
 const CHANNEL_TEAM_PATTERNS_MIGRATION_NAME = "create_channel_team_patterns";
+const CHANNEL_TEAM_SNAPSHOTS_MIGRATION_VERSION = 84;
+const CHANNEL_TEAM_SNAPSHOTS_MIGRATION_NAME = "create_channel_team_snapshots_and_evaluations";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -1686,6 +1688,50 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasChannelTeamPatternsMigration) {
         context.recordMigration(CHANNEL_TEAM_PATTERNS_MIGRATION_VERSION, CHANNEL_TEAM_PATTERNS_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelTeamSnapshotsMigration = context.hasMigration(CHANNEL_TEAM_SNAPSHOTS_MIGRATION_VERSION);
+    if (
+      !hasChannelTeamSnapshotsMigration ||
+      !context.hasTable("channel_team_snapshots") ||
+      !context.hasTable("channel_team_evaluations")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_team_snapshots (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          state_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_snapshots_channel_created
+        ON channel_team_snapshots(workspace_id, channel_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS channel_team_evaluations (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          snapshot_id TEXT,
+          cases_json TEXT NOT NULL,
+          results_json TEXT NOT NULL,
+          summary_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(snapshot_id) REFERENCES channel_team_snapshots(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_evaluations_channel_created
+        ON channel_team_evaluations(workspace_id, channel_id, created_at);
+      `);
+      if (!hasChannelTeamSnapshotsMigration) {
+        context.recordMigration(CHANNEL_TEAM_SNAPSHOTS_MIGRATION_VERSION, CHANNEL_TEAM_SNAPSHOTS_MIGRATION_NAME);
       }
     }
 

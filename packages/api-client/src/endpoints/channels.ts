@@ -57,6 +57,11 @@ import type {
   ChannelTeamMetricsProjectionResponse,
   ChannelTeamPatternResponse,
   ChannelTeamPatternsResponse,
+  ChannelTeamEvaluationRunResponse,
+  ChannelTeamEvaluationRunsResponse,
+  ChannelTeamSnapshotDiffResponse,
+  ChannelTeamSnapshotResponse,
+  ChannelTeamSnapshotsResponse,
   WorkflowEvidenceResponse,
   WorkflowCollaborationCardResponse,
   CreateChannelAttachmentRequest,
@@ -72,6 +77,8 @@ import type {
   CreateChannelMessageRequest,
   CreateChannelRequest,
   CreateChannelTeamPatternRequest,
+  CreateChannelTeamEvaluationRunRequest,
+  CreateChannelTeamSnapshotRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowTemplateCompileRequest,
   CreateChannelWorkflowRequest,
@@ -597,6 +604,51 @@ export const channelEndpoints = {
       input: CreateChannelTeamPatternRequest,
     ): Promise<ChannelTeamPatternResponse> {
       return this._post(`/channels/${encodeURIComponent(channelId)}/team-patterns`, { cwd }, input);
+    },
+
+  async listChannelTeamSnapshots(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      options: { readonly limit?: number } = {},
+    ): Promise<ChannelTeamSnapshotsResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/team-snapshots`, { cwd, limit: options.limit });
+    },
+
+  async createChannelTeamSnapshot(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      input: CreateChannelTeamSnapshotRequest,
+    ): Promise<ChannelTeamSnapshotResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/team-snapshots`, { cwd }, input);
+    },
+
+  async diffChannelTeamSnapshots(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      baseSnapshotId: string,
+      targetSnapshotId: string,
+    ): Promise<ChannelTeamSnapshotDiffResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/team-snapshots`, {
+        cwd,
+        baseSnapshotId,
+        targetSnapshotId,
+      });
+    },
+
+  async listChannelTeamEvaluations(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      options: { readonly limit?: number } = {},
+    ): Promise<ChannelTeamEvaluationRunsResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/team-evaluations`, { cwd, limit: options.limit });
+    },
+
+  async createChannelTeamEvaluation(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      input: CreateChannelTeamEvaluationRunRequest,
+    ): Promise<ChannelTeamEvaluationRunResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/team-evaluations`, { cwd }, input);
     },
 
   async updateChannelWorkflow(this: LingDaemonEndpointContext,
