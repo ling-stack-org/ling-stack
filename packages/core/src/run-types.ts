@@ -39,13 +39,18 @@ import type {
 import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
+  ChannelTeamPattern,
   CreateChannelTeamEvidenceItemInput,
+  CreateChannelTeamPatternInput,
   FoldedExpertsReadModel,
+  ListActiveChannelTeamProvisionalRulesOptions,
   ListAvailabilityIncidentsOptions,
   ListChannelTeamEvidenceItemsOptions,
+  ListChannelTeamPatternsOptions,
   ListFoldedChannelTeamEvidenceForTurnOptions,
   ListReliabilityIncidentsOptions,
   ReliabilityIncident,
+  UpdateChannelTeamPatternInput,
   UpdateChannelTeamEvidenceItemInput,
 } from "./channel-team-types.js";
 import type {
@@ -978,6 +983,12 @@ export interface RunStore {
   listFoldedChannelTeamEvidenceForTurn(options: ListFoldedChannelTeamEvidenceForTurnOptions): FoldedExpertsReadModel;
   listReliabilityIncidents(options?: ListReliabilityIncidentsOptions): ReliabilityIncident[];
   listAvailabilityIncidents(options?: ListAvailabilityIncidentsOptions): AvailabilityIncident[];
+  createChannelTeamPattern(input: CreateChannelTeamPatternInput, now: string): ChannelTeamPattern;
+  getChannelTeamPattern(id: string): ChannelTeamPattern | undefined;
+  listChannelTeamPatterns(options: ListChannelTeamPatternsOptions): ChannelTeamPattern[];
+  listActiveChannelTeamProvisionalRules(options: ListActiveChannelTeamProvisionalRulesOptions): ChannelTeamPattern[];
+  updateChannelTeamPattern(id: string, input: UpdateChannelTeamPatternInput, now: string): ChannelTeamPattern | undefined;
+  expireChannelTeamPatterns(now: string): number;
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];

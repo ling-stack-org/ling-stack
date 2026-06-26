@@ -322,6 +322,107 @@ export interface ChannelTeamMetricsProjection {
   readonly learningQueue: ChannelTeamLearningQueueMetric;
 }
 
+export type ChannelTeamPatternStatus = "candidate" | "provisional" | "approved" | "expired" | "rejected";
+
+export const channelTeamPatternStatuses: readonly ChannelTeamPatternStatus[] = [
+  "candidate",
+  "provisional",
+  "approved",
+  "expired",
+  "rejected",
+];
+
+export type ChannelTeamPatternCreatedBy = "system" | "ai-draft" | "local-user";
+
+export const channelTeamPatternCreatedByValues: readonly ChannelTeamPatternCreatedBy[] = [
+  "system",
+  "ai-draft",
+  "local-user",
+];
+
+export type ChannelTeamProvisionalRuleEffect =
+  | "attention_ordering"
+  | "default_observer_suggestion"
+  | "folded_experts_sort"
+  | "low_risk_recommendation";
+
+export const channelTeamProvisionalRuleEffects: readonly ChannelTeamProvisionalRuleEffect[] = [
+  "attention_ordering",
+  "default_observer_suggestion",
+  "folded_experts_sort",
+  "low_risk_recommendation",
+];
+
+export interface ChannelTeamPattern {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly pattern: string;
+  readonly summary: string;
+  readonly evidenceCount: number;
+  readonly adoptedCount: number;
+  readonly failureCount: number;
+  readonly sourceRefs: readonly ChannelTeamEvidenceSourceRef[];
+  readonly status: ChannelTeamPatternStatus;
+  readonly createdBy: ChannelTeamPatternCreatedBy;
+  readonly provisionalEffect?: ChannelTeamProvisionalRuleEffect;
+  readonly provisionalRationale?: string;
+  readonly verifyBeforeUse: boolean;
+  readonly supersededByPatternId?: string;
+  readonly lastSeenAt: string;
+  readonly expiresAt?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelTeamPatternInput {
+  readonly id?: string;
+  readonly channelId: string;
+  readonly pattern: string;
+  readonly summary: string;
+  readonly evidenceCount?: number;
+  readonly adoptedCount?: number;
+  readonly failureCount?: number;
+  readonly sourceRefs?: readonly ChannelTeamEvidenceSourceRef[];
+  readonly status?: Extract<ChannelTeamPatternStatus, "candidate" | "provisional">;
+  readonly createdBy?: ChannelTeamPatternCreatedBy;
+  readonly provisionalEffect?: ChannelTeamProvisionalRuleEffect;
+  readonly provisionalRationale?: string;
+  readonly verifyBeforeUse?: boolean;
+  readonly supersededByPatternId?: string;
+  readonly lastSeenAt?: string;
+  readonly expiresAt?: string;
+}
+
+export interface UpdateChannelTeamPatternInput {
+  readonly status?: ChannelTeamPatternStatus;
+  readonly summary?: string;
+  readonly evidenceCount?: number;
+  readonly adoptedCount?: number;
+  readonly failureCount?: number;
+  readonly sourceRefs?: readonly ChannelTeamEvidenceSourceRef[];
+  readonly provisionalEffect?: ChannelTeamProvisionalRuleEffect | null;
+  readonly provisionalRationale?: string | null;
+  readonly verifyBeforeUse?: boolean;
+  readonly supersededByPatternId?: string | null;
+  readonly lastSeenAt?: string;
+  readonly expiresAt?: string | null;
+}
+
+export interface ListChannelTeamPatternsOptions {
+  readonly channelId: string;
+  readonly status?: ChannelTeamPatternStatus;
+  readonly includeExpired?: boolean;
+  readonly now?: string;
+  readonly limit?: number;
+}
+
+export interface ListActiveChannelTeamProvisionalRulesOptions {
+  readonly channelId: string;
+  readonly now: string;
+  readonly limit?: number;
+}
+
 export interface DissentSignal {
   readonly id: string;
   readonly turnId: string;
@@ -562,4 +663,8 @@ export function createChannelTeamEvidenceItemId(): string {
 
 export function createChannelTeamIncidentId(): string {
   return `channel_team_incident_${randomUUID()}`;
+}
+
+export function createChannelTeamPatternId(): string {
+  return `channel_team_pattern_${randomUUID()}`;
 }

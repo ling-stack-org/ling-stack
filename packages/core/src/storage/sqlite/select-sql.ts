@@ -24,6 +24,33 @@ export function runInterventionSelectSql(whereClause: string): string {
   `;
 }
 
+export function channelTeamPatternSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      pattern,
+      summary,
+      evidence_count,
+      adopted_count,
+      failure_count,
+      source_refs_json,
+      status,
+      created_by,
+      provisional_effect,
+      provisional_rationale,
+      verify_before_use,
+      superseded_by_pattern_id,
+      last_seen_at,
+      expires_at,
+      created_at,
+      updated_at
+    FROM channel_team_patterns
+    ${whereClause}
+  `;
+}
+
 export function channelPlaybookCandidateSelectSql(whereClause: string): string {
   return `
     SELECT

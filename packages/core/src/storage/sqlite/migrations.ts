@@ -174,6 +174,8 @@ const CHANNEL_TEAM_EVIDENCE_MIGRATION_VERSION = 81;
 const CHANNEL_TEAM_EVIDENCE_MIGRATION_NAME = "create_channel_team_evidence_items";
 const CHANNEL_TEAM_INCIDENTS_MIGRATION_VERSION = 82;
 const CHANNEL_TEAM_INCIDENTS_MIGRATION_NAME = "create_channel_team_incidents";
+const CHANNEL_TEAM_PATTERNS_MIGRATION_VERSION = 83;
+const CHANNEL_TEAM_PATTERNS_MIGRATION_NAME = "create_channel_team_patterns";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -1646,6 +1648,44 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasChannelTeamIncidentsMigration) {
         context.recordMigration(CHANNEL_TEAM_INCIDENTS_MIGRATION_VERSION, CHANNEL_TEAM_INCIDENTS_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelTeamPatternsMigration = context.hasMigration(CHANNEL_TEAM_PATTERNS_MIGRATION_VERSION);
+    if (!hasChannelTeamPatternsMigration || !context.hasTable("channel_team_patterns")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_team_patterns (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          pattern TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          evidence_count INTEGER NOT NULL,
+          adopted_count INTEGER NOT NULL,
+          failure_count INTEGER NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          provisional_effect TEXT,
+          provisional_rationale TEXT,
+          verify_before_use INTEGER NOT NULL DEFAULT 0,
+          superseded_by_pattern_id TEXT,
+          last_seen_at TEXT NOT NULL,
+          expires_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_patterns_channel_status
+        ON channel_team_patterns(workspace_id, channel_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_patterns_expiry
+        ON channel_team_patterns(workspace_id, channel_id, status, expires_at);
+      `);
+      if (!hasChannelTeamPatternsMigration) {
+        context.recordMigration(CHANNEL_TEAM_PATTERNS_MIGRATION_VERSION, CHANNEL_TEAM_PATTERNS_MIGRATION_NAME);
       }
     }
 

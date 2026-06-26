@@ -9,15 +9,18 @@ import type {
   ChannelTeamLearningQueueMetric,
   ChannelTeamMetricsProjection,
   ChannelTeamMetricsSummary,
+  ChannelTeamPattern,
   ChannelTeamRiskReviewMetric,
   ReliabilityIncident,
 } from "./channel-team-types.js";
+import { isActiveChannelTeamProvisionalRule } from "./channel-team-patterns.js";
 
 export interface BuildChannelTeamMetricsProjectionInput {
   readonly channelId: string;
   readonly evidence: readonly ChannelTeamEvidenceItem[];
   readonly reliabilityIncidents?: readonly ReliabilityIncident[];
   readonly availabilityIncidents?: readonly AvailabilityIncident[];
+  readonly patterns?: readonly ChannelTeamPattern[];
   readonly now: string;
 }
 
@@ -25,6 +28,7 @@ export function buildChannelTeamMetricsProjection(
   input: BuildChannelTeamMetricsProjectionInput,
 ): ChannelTeamMetricsProjection {
   const evidence = input.evidence.filter((item) => item.channelId === input.channelId);
+  const patterns = (input.patterns ?? []).filter((pattern) => pattern.channelId === input.channelId);
   const reliabilityIncidents = (input.reliabilityIncidents ?? []).filter((incident) => !incident.recoveredAt);
   const availabilityIncidents = input.availabilityIncidents ?? [];
   const summary = buildSummary(evidence, reliabilityIncidents, availabilityIncidents);
@@ -36,7 +40,7 @@ export function buildChannelTeamMetricsProjection(
     agents,
     attention: buildAttentionMetric(evidence),
     riskReview: buildRiskReviewMetric(evidence, reliabilityIncidents),
-    learningQueue: buildLearningQueueMetric(evidence),
+    learningQueue: buildLearningQueueMetric(evidence, patterns, input.now),
   };
 }
 
@@ -134,13 +138,23 @@ function buildRiskReviewMetric(
   };
 }
 
-function buildLearningQueueMetric(evidence: readonly ChannelTeamEvidenceItem[]): ChannelTeamLearningQueueMetric {
+function buildLearningQueueMetric(
+  evidence: readonly ChannelTeamEvidenceItem[],
+  patterns: readonly ChannelTeamPattern[],
+  now: string,
+): ChannelTeamLearningQueueMetric {
   return {
-    recommendationEvidenceCount: evidence.filter((item) => item.recommendations.length > 0).length,
-    adoptedEvidenceCount: evidence.filter((item) => item.status === "adopted").length,
-    rejectedEvidenceCount: evidence.filter((item) => item.status === "rejected").length,
-    provisionalRuleCount: 0,
-    note: "Pattern Store is inspect-only here; provisional rules are introduced by the next PR.",
+    recommendationEvidenceCount:
+      evidence.filter((item) => item.recommendations.length > 0).length +
+      patterns.filter((pattern) => pattern.status === "candidate").length,
+    adoptedEvidenceCount:
+      evidence.filter((item) => item.status === "adopted").length +
+      patterns.filter((pattern) => pattern.status === "approved").length,
+    rejectedEvidenceCount:
+      evidence.filter((item) => item.status === "rejected").length +
+      patterns.filter((pattern) => pattern.status === "rejected").length,
+    provisionalRuleCount: patterns.filter((pattern) => isActiveChannelTeamProvisionalRule(pattern, now)).length,
+    note: "Pattern Store is inspect-only here; provisional rules stay TTL-bound and do not promote to protocol or memory automatically.",
   };
 }
 

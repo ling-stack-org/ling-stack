@@ -55,6 +55,8 @@ import type {
   ChannelCollaborationCardListResponse,
   ChannelTeamExpertsProjectionResponse,
   ChannelTeamMetricsProjectionResponse,
+  ChannelTeamPatternResponse,
+  ChannelTeamPatternsResponse,
   WorkflowEvidenceResponse,
   WorkflowCollaborationCardResponse,
   CreateChannelAttachmentRequest,
@@ -69,6 +71,7 @@ import type {
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
   CreateChannelRequest,
+  CreateChannelTeamPatternRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowTemplateCompileRequest,
   CreateChannelWorkflowRequest,
@@ -573,6 +576,27 @@ export const channelEndpoints = {
       options: { readonly limit?: number } = {},
     ): Promise<ChannelTeamMetricsProjectionResponse> {
       return this._get(`/channels/${encodeURIComponent(channelId)}/team-metrics`, { cwd, limit: options.limit });
+    },
+
+  async listChannelTeamPatterns(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      options: { readonly status?: string; readonly includeExpired?: boolean; readonly limit?: number } = {},
+    ): Promise<ChannelTeamPatternsResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/team-patterns`, {
+        cwd,
+        status: options.status,
+        includeExpired: options.includeExpired,
+        limit: options.limit,
+      });
+    },
+
+  async createChannelTeamPattern(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      input: CreateChannelTeamPatternRequest,
+    ): Promise<ChannelTeamPatternResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/team-patterns`, { cwd }, input);
     },
 
   async updateChannelWorkflow(this: LingDaemonEndpointContext,

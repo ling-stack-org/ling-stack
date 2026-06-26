@@ -41,6 +41,12 @@ export async function handleChannelTeamMetricsProjection(
       }),
       reliabilityIncidents: store.listReliabilityIncidents({ now, limit }),
       availabilityIncidents: store.listAvailabilityIncidents({ now, limit }),
+      patterns: store.listChannelTeamPatterns({
+        channelId,
+        now,
+        includeExpired: true,
+        limit,
+      }),
     });
     writeJson(response, 200, { cwd, channelId, metrics });
   } catch (error) {
