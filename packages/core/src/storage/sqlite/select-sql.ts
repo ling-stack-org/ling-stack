@@ -1251,6 +1251,32 @@ export function channelCollaborationProtocolDraftSelectSql(whereClause: string):
   `;
 }
 
+export function channelTeamEvidenceItemSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      turn_id,
+      agent_id,
+      kind,
+      status,
+      visibility,
+      evidence_grade,
+      summary,
+      concerns_json,
+      recommendations_json,
+      confidence,
+      source_refs_json,
+      payload_json,
+      expires_at,
+      created_at,
+      updated_at
+    FROM channel_team_evidence_items
+    ${whereClause}
+  `;
+}
+
 export function channelWorkflowSelectSql(whereClause: string): string {
   return `
     SELECT

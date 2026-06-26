@@ -170,6 +170,8 @@ const TASK_ATTACHMENT_IDS_MIGRATION_VERSION = 79;
 const TASK_ATTACHMENT_IDS_MIGRATION_NAME = "add_task_attachment_ids";
 const PROVIDER_THINKING_MODES_MIGRATION_VERSION = 80;
 const PROVIDER_THINKING_MODES_MIGRATION_NAME = "add_provider_thinking_modes";
+const CHANNEL_TEAM_EVIDENCE_MIGRATION_VERSION = 81;
+const CHANNEL_TEAM_EVIDENCE_MIGRATION_NAME = "create_channel_team_evidence_items";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -1560,6 +1562,49 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
       if (!hasProviderThinkingModesMigration) {
         context.recordMigration(PROVIDER_THINKING_MODES_MIGRATION_VERSION, PROVIDER_THINKING_MODES_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelTeamEvidenceMigration = context.hasMigration(CHANNEL_TEAM_EVIDENCE_MIGRATION_VERSION);
+    if (!hasChannelTeamEvidenceMigration || !context.hasTable("channel_team_evidence_items")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_team_evidence_items (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          turn_id TEXT,
+          agent_id TEXT,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          visibility TEXT NOT NULL,
+          evidence_grade TEXT,
+          summary TEXT NOT NULL,
+          concerns_json TEXT NOT NULL,
+          recommendations_json TEXT NOT NULL,
+          confidence REAL,
+          source_refs_json TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          expires_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_evidence_channel_updated
+        ON channel_team_evidence_items(workspace_id, channel_id, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_evidence_turn
+        ON channel_team_evidence_items(workspace_id, channel_id, turn_id, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_evidence_agent
+        ON channel_team_evidence_items(workspace_id, channel_id, agent_id, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_evidence_kind_status
+        ON channel_team_evidence_items(workspace_id, channel_id, kind, status, updated_at);
+      `);
+      if (!hasChannelTeamEvidenceMigration) {
+        context.recordMigration(CHANNEL_TEAM_EVIDENCE_MIGRATION_VERSION, CHANNEL_TEAM_EVIDENCE_MIGRATION_NAME);
       }
     }
 
