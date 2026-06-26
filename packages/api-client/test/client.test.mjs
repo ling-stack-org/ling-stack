@@ -218,6 +218,46 @@ test("builds channel team experts projection endpoint URL", async () => {
   assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/team-experts?cwd=%2Frepo+path&turnId=turn+1&limit=12");
 });
 
+test("builds channel team metrics projection endpoint URL", async () => {
+  const mock = createFetchMock({
+    cwd: "/repo",
+    channelId: "channel 1",
+    metrics: {
+      channelId: "channel 1",
+      generatedAt: "2026-06-26T00:00:00.000Z",
+      summary: {
+        healthState: "healthy",
+        totalEvidenceCount: 0,
+        activeEvidenceCount: 0,
+        delayedEvidenceCount: 0,
+        unavailableEvidenceCount: 0,
+        reliabilityIncidentCount: 0,
+        availabilityIncidentCount: 0,
+      },
+      agents: [],
+      attention: { activeAgentCount: 0, evidenceKindCounts: {}, evidenceStatusCounts: {} },
+      riskReview: {
+        riskSignalCount: 0,
+        dissentSignalCount: 0,
+        openReliabilityIncidentCount: 0,
+        openCriticalReliabilityIncidentCount: 0,
+      },
+      learningQueue: {
+        recommendationEvidenceCount: 0,
+        adoptedEvidenceCount: 0,
+        rejectedEvidenceCount: 0,
+        provisionalRuleCount: 0,
+        note: "Pattern Store is inspect-only here; provisional rules are introduced by the next PR.",
+      },
+    },
+  });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  await client.getChannelTeamMetricsProjection("/repo path", "channel 1", { limit: 12 });
+
+  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/team-metrics?cwd=%2Frepo+path&limit=12");
+});
+
 test("builds governance notification endpoint URLs", async () => {
   const mock = createFetchMock({ cwd: "/repo", notifications: [] });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });

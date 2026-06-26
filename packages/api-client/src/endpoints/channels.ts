@@ -54,6 +54,7 @@ import type {
   ChannelWorkspaceResponse,
   ChannelCollaborationCardListResponse,
   ChannelTeamExpertsProjectionResponse,
+  ChannelTeamMetricsProjectionResponse,
   WorkflowEvidenceResponse,
   WorkflowCollaborationCardResponse,
   CreateChannelAttachmentRequest,
@@ -564,6 +565,14 @@ export const channelEndpoints = {
       options: { readonly limit?: number } = {},
     ): Promise<ChannelTeamExpertsProjectionResponse> {
       return this._get(`/channels/${encodeURIComponent(channelId)}/team-experts`, { cwd, turnId, limit: options.limit });
+    },
+
+  async getChannelTeamMetricsProjection(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      options: { readonly limit?: number } = {},
+    ): Promise<ChannelTeamMetricsProjectionResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/team-metrics`, { cwd, limit: options.limit });
     },
 
   async updateChannelWorkflow(this: LingDaemonEndpointContext,

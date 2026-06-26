@@ -37,6 +37,7 @@ import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } fro
 import { handleChannelMessagesCollection, handleChannelMessageStream } from "../features/channels/messages.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import { handleChannelTeamExpertsProjection } from "../features/channels/team-experts.js";
+import { handleChannelTeamMetricsProjection } from "../features/channels/team-metrics.js";
 import {
   handleWorkflowHandoffIntentAccept,
   handleWorkflowHandoffIntentItem,
@@ -1629,6 +1630,10 @@ export async function routeRequest(
     }
     if (channelRoute.action === "team-experts") {
       await handleChannelTeamExpertsProjection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "team-metrics") {
+      await handleChannelTeamMetricsProjection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "council-policy") {

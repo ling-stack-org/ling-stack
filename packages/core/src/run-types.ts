@@ -37,11 +37,15 @@ import type {
   ListChannelInputMaterializationsOptions,
 } from "./input-materialization-types.js";
 import type {
+  AvailabilityIncident,
   ChannelTeamEvidenceItem,
   CreateChannelTeamEvidenceItemInput,
   FoldedExpertsReadModel,
+  ListAvailabilityIncidentsOptions,
   ListChannelTeamEvidenceItemsOptions,
   ListFoldedChannelTeamEvidenceForTurnOptions,
+  ListReliabilityIncidentsOptions,
+  ReliabilityIncident,
   UpdateChannelTeamEvidenceItemInput,
 } from "./channel-team-types.js";
 import type {
@@ -972,6 +976,8 @@ export interface RunStore {
     now: string,
   ): ChannelTeamEvidenceItem | undefined;
   listFoldedChannelTeamEvidenceForTurn(options: ListFoldedChannelTeamEvidenceForTurnOptions): FoldedExpertsReadModel;
+  listReliabilityIncidents(options?: ListReliabilityIncidentsOptions): ReliabilityIncident[];
+  listAvailabilityIncidents(options?: ListAvailabilityIncidentsOptions): AvailabilityIncident[];
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
