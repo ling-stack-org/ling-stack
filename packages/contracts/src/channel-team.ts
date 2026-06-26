@@ -76,12 +76,38 @@ export interface ModelSignature {
   readonly capabilityHash?: string;
 }
 
+export interface AgentCapabilityManifest {
+  readonly agentId: string;
+  readonly summary?: string;
+  readonly capabilityScopes: readonly string[];
+  readonly preferredTurnModes?: readonly ChannelTeamTurnMode[];
+  readonly disallowedActions?: readonly string[];
+  readonly maxLeaseLevel?: "L0" | "L1" | "L2" | "L3";
+  readonly riskReviewEligible?: boolean;
+  readonly source?: "teammate_profile" | "template" | "inferred" | "system";
+}
+
+export interface ChannelTeamFeatureFlags {
+  readonly attentionPlanEnabled?: boolean;
+  readonly agentRelevanceCardsEnabled?: boolean;
+}
+
+export interface ChannelTeamTurnSignal {
+  readonly kind: "topic" | "risk" | "tool" | "file" | "workflow" | "user_mention" | "default";
+  readonly scope: string;
+  readonly weight?: number;
+  readonly sourceRefs?: readonly ChannelTeamEvidenceSourceRef[];
+}
+
 export interface AgentObserverPlan {
   readonly agentId: string;
   readonly participationMode: ChannelParticipationMode;
   readonly reason: string;
   readonly sourceRefs: readonly ChannelTeamEvidenceSourceRef[];
   readonly maxLevel: "L0" | "L1" | "L2" | "L3";
+  readonly matchedScopes?: readonly string[];
+  readonly availabilityState?: AgentAvailabilityState;
+  readonly qualityState?: AgentQualityState;
 }
 
 export interface AttentionPlan {
