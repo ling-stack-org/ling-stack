@@ -18,6 +18,8 @@ Related docs:
 - [Input Materialization Detailed Design](input-materialization-detailed-design.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
+- [Channel Team Operating System](channel-team-operating-system.md)
+- [Channel Team Operating System Task Plan - 2026-06-26](channel-team-operating-system-task-plan-2026-06-26.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
 
 ## Summary
@@ -33,6 +35,11 @@ from deletion, disablement, or removal from channels. Specialist teammates are o
 collaborators. Missing specialists may produce a visible recommendation, but must not
 prevent executable work when Ling Agent can safely run it through existing workflow, run,
 approval, and evidence paths.
+
+The team observation and folded expert-evidence direction is defined in
+[Channel Team Operating System](channel-team-operating-system.md). That design keeps Ling
+Agent as the single narrator and coordinator while allowing custom teammates to observe,
+produce structured notes, provide dissent, and participate after explicit selection.
 
 Target user experience:
 

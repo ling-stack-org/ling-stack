@@ -43,6 +43,7 @@ Related docs:
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
+- [Channel Team Operating System](channel-team-operating-system.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)

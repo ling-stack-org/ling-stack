@@ -16,6 +16,11 @@ old reference in this historical document to an evidence drawer or right-drawer 
 must be read as inline operation-cell expansion, in-turn preview/lightbox, or explicit
 raw/debug inspector from the owning conversation row.
 
+2026-06-26 update: new multi-agent observation, Specialist Notes, Risk Review Gate,
+folded Experts activity, and Team Metrics direction lives in
+[Channel Team Operating System](channel-team-operating-system.md). Treat this historical
+document as background for ambient audit only.
+
 Previous status: product design baseline.
 Date: 2026-06-13
 
@@ -27,6 +32,7 @@ Related docs:
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
+- [Channel Team Operating System](channel-team-operating-system.md)
 - [Channel Message Streaming](channel-message-streaming.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
