@@ -1277,6 +1277,32 @@ export function channelTeamEvidenceItemSelectSql(whereClause: string): string {
   `;
 }
 
+export function channelTeamIncidentSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      incident_type,
+      agent_id,
+      capability_scope,
+      provider_preset_id,
+      kind,
+      severity,
+      availability_state,
+      model_signature_json,
+      summary,
+      source_refs_json,
+      recovery_required,
+      recovered_at,
+      observed_at,
+      expires_at,
+      created_at,
+      updated_at
+    FROM channel_team_incidents
+    ${whereClause}
+  `;
+}
+
 export function channelWorkflowSelectSql(whereClause: string): string {
   return `
     SELECT

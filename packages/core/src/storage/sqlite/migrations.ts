@@ -172,6 +172,8 @@ const PROVIDER_THINKING_MODES_MIGRATION_VERSION = 80;
 const PROVIDER_THINKING_MODES_MIGRATION_NAME = "add_provider_thinking_modes";
 const CHANNEL_TEAM_EVIDENCE_MIGRATION_VERSION = 81;
 const CHANNEL_TEAM_EVIDENCE_MIGRATION_NAME = "create_channel_team_evidence_items";
+const CHANNEL_TEAM_INCIDENTS_MIGRATION_VERSION = 82;
+const CHANNEL_TEAM_INCIDENTS_MIGRATION_NAME = "create_channel_team_incidents";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -1605,6 +1607,45 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasChannelTeamEvidenceMigration) {
         context.recordMigration(CHANNEL_TEAM_EVIDENCE_MIGRATION_VERSION, CHANNEL_TEAM_EVIDENCE_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelTeamIncidentsMigration = context.hasMigration(CHANNEL_TEAM_INCIDENTS_MIGRATION_VERSION);
+    if (!hasChannelTeamIncidentsMigration || !context.hasTable("channel_team_incidents")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_team_incidents (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          incident_type TEXT NOT NULL,
+          agent_id TEXT,
+          capability_scope TEXT,
+          provider_preset_id TEXT,
+          kind TEXT NOT NULL,
+          severity TEXT,
+          availability_state TEXT,
+          model_signature_json TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          recovery_required INTEGER NOT NULL DEFAULT 0,
+          recovered_at TEXT,
+          observed_at TEXT NOT NULL,
+          expires_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_incidents_agent_scope
+        ON channel_team_incidents(workspace_id, agent_id, capability_scope, observed_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_incidents_provider
+        ON channel_team_incidents(workspace_id, provider_preset_id, observed_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_team_incidents_type_kind
+        ON channel_team_incidents(workspace_id, incident_type, kind, observed_at);
+      `);
+      if (!hasChannelTeamIncidentsMigration) {
+        context.recordMigration(CHANNEL_TEAM_INCIDENTS_MIGRATION_VERSION, CHANNEL_TEAM_INCIDENTS_MIGRATION_NAME);
       }
     }
 

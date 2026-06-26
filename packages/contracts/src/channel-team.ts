@@ -255,27 +255,53 @@ export type TeamFailureKind =
   | "low_quality"
   | "unknown";
 
+export type ChannelTeamIncidentSeverity = "low" | "medium" | "high" | "critical";
+
 export interface ReliabilityIncident {
   readonly id: string;
+  readonly workspaceId?: string;
   readonly agentId: string;
   readonly capabilityScope: string;
   readonly kind: TeamFailureKind;
+  readonly severity?: ChannelTeamIncidentSeverity;
   readonly summary: string;
   readonly sourceRefs: readonly ChannelTeamEvidenceSourceRef[];
+  readonly modelSignature?: ModelSignature;
+  readonly recoveryRequired?: boolean;
+  readonly recoveredAt?: string;
   readonly createdAt: string;
+  readonly updatedAt?: string;
   readonly expiresAt?: string;
 }
 
 export interface AvailabilityIncident {
   readonly id: string;
+  readonly workspaceId?: string;
   readonly agentId?: string;
   readonly providerPresetId?: string;
   readonly modelSignature?: ModelSignature;
   readonly state: AgentAvailabilityState;
   readonly kind: Extract<TeamFailureKind, "quota" | "timeout" | "overload" | "network" | "unknown">;
+  readonly severity?: ChannelTeamIncidentSeverity;
   readonly summary: string;
   readonly observedAt: string;
+  readonly updatedAt?: string;
   readonly expiresAt?: string;
+}
+
+export interface AgentLifecycleScopeState {
+  readonly agentId: string;
+  readonly capabilityScope: string;
+  readonly qualityState: AgentQualityState;
+  readonly availabilityState: AgentAvailabilityState;
+  readonly reviewerEligible: boolean;
+  readonly highRiskReviewerEligible: boolean;
+  readonly recoveryRequired: boolean;
+  readonly modelSignatureChanged: boolean;
+  readonly activeReliabilityIncidentIds: readonly string[];
+  readonly activeAvailabilityIncidentIds: readonly string[];
+  readonly reasons: readonly string[];
+  readonly updatedAt: string;
 }
 
 export interface RiskReviewGate {
