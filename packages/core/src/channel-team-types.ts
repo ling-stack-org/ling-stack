@@ -405,6 +405,15 @@ export interface RiskReviewGate {
   readonly createdAt: string;
 }
 
+export type ChannelTeamRiskReviewStatus = "not_required" | "required" | "blocked";
+
+export interface ChannelTeamRiskReviewDecision {
+  readonly status: ChannelTeamRiskReviewStatus;
+  readonly risk: "none" | "low" | "medium" | "high" | "critical";
+  readonly reasons: readonly string[];
+  readonly triggerCodes: readonly string[];
+}
+
 export interface AuthorityLedgerEntry {
   readonly id: string;
   readonly channelId: string;

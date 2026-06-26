@@ -25,6 +25,9 @@ test("runtime permission requests resolve through durable approvals and return c
     assert.equal(ready.event, "ready");
     const requested = await sse.nextMatching("approval_requested");
     const approvalId = requested.data.data.approvalId;
+    assert.equal(requested.data.data.risk, "high");
+    assert.match(requested.data.data.title, /Risk review required/);
+    assert.match(requested.data.data.description, /Runtime permission expansion requires risk review/);
 
     const approval = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
       reason: "grant write through continuation",
@@ -42,6 +45,7 @@ test("runtime permission requests resolve through durable approvals and return c
     const approvals = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(ready.data.runId)}`);
     assert.equal(approvals.approvals.length, 1);
     assert.equal(approvals.approvals[0].actionType, "runtime_permission_request");
+    assert.equal(approvals.approvals[0].risk, "high");
     assert.equal(approvals.approvals[0].payload.type, "runtime_permission_request");
     assert.equal(approvals.approvals[0].payload.currentScope.runnerId, "pi");
     assert.deepEqual(approvals.approvals[0].payload.proposedContinuation.toolDelta, ["write"]);

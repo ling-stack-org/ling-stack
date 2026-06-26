@@ -1,4 +1,5 @@
 import {
+  buildChannelTeamRiskReviewDecision,
   buildRuntimePermissionGrant,
   evaluateRuntimePermissionRequest,
   runtimePermissionToolDelta,
@@ -26,6 +27,9 @@ import {
   streamOrAppendApprovalDecisionEvent,
   waitForApprovalDecision,
 } from "./approvals.js";
+import {
+  applyRiskReviewToApprovalInput,
+} from "./risk-review-approval-adapter.js";
 
 const PERMISSION_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -62,7 +66,15 @@ export function createRunPermissionRequestHandler(options: {
       runnerCapabilities: options.runnerCapabilities,
       mcpToolRefs: options.mcpToolRefs,
     });
-    const approvalInput = toCreateApprovalRequestInput(options.run, request, payload, evaluation.decision === "deny" ? "high" : undefined);
+    const riskReview = buildChannelTeamRiskReviewDecision({
+      actionType: "runtime_permission_request",
+      risk: evaluation.decision === "deny" ? "high" : classifyRuntimePermissionRisk(payload),
+      payload,
+    });
+    const approvalInput = applyRiskReviewToApprovalInput(
+      toCreateApprovalRequestInput(options.run, request, payload, evaluation.decision === "deny" ? "high" : undefined),
+      riskReview,
+    );
 
     if (evaluation.decision === "deny") {
       const denied = createAutoDeniedPermissionApproval({

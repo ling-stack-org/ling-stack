@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   DEFAULT_WORKSPACE_ID,
+  buildChannelTeamRiskReviewDecision,
   defaultApprovalToolDecisions,
   riskyRunTools,
   syncExternalWorkActionForApproval,
@@ -45,6 +46,10 @@ import {
   createUnifiedExecDeniedResult,
   executeUnifiedBashTool,
 } from "./unified-exec.js";
+import {
+  applyRiskReviewToApprovalInput,
+  applyRiskReviewToPolicyDecision,
+} from "./risk-review-approval-adapter.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
@@ -153,7 +158,7 @@ export function createRunApprovalHandler(options: {
     }
 
     let approvalInput = toCreateApprovalRequestInput(options.run, request, patchMetadata?.payload);
-    const policyDecision = evaluateApprovalPolicy(options.approvalPolicy, request, approvalInput.payload);
+    let policyDecision = evaluateApprovalPolicy(options.approvalPolicy, request, approvalInput.payload);
     let patchDraft: PatchActionDraft | undefined;
     if (patchMetadata && policyDecision.decision !== "deny") {
       try {
@@ -170,6 +175,14 @@ export function createRunApprovalHandler(options: {
         };
       }
     }
+    policyDecision = evaluateApprovalPolicy(options.approvalPolicy, request, approvalInput.payload);
+    const riskReview = buildChannelTeamRiskReviewDecision({
+      actionType: approvalInput.actionType,
+      risk: approvalInput.risk,
+      payload: approvalInput.payload,
+    });
+    approvalInput = applyRiskReviewToApprovalInput(approvalInput, riskReview);
+    policyDecision = applyRiskReviewToPolicyDecision(policyDecision, riskReview);
 
     if (policyDecision.decision === "allow") {
       if (unifiedExecBash) {
