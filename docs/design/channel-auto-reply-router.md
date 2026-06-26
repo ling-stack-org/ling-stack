@@ -3,11 +3,17 @@
 Status: internal module under Ling Agent Session; legacy auto-route terminology kept only for storage, diagnostics, and rollback
 Date: 2026-06-09
 
+2026-06-26 update: the broader team observation, Attention Graph, Specialist Notes,
+Risk Review Gate, and folded Experts UI direction lives in
+[Channel Team Operating System](channel-team-operating-system.md). This document remains
+only the internal ordinary-answer router contract.
+
 Related docs:
 
 - [Channel Workspace Design](channel-workspace.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
+- [Channel Team Operating System](channel-team-operating-system.md)
 - [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
