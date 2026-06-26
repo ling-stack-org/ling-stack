@@ -258,6 +258,50 @@ test("builds channel team metrics projection endpoint URL", async () => {
   assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/team-metrics?cwd=%2Frepo+path&limit=12");
 });
 
+test("builds channel team pattern endpoint URLs", async () => {
+  const mock = createFetchMock([
+    { cwd: "/repo", channelId: "channel 1", patterns: [] },
+    {
+      cwd: "/repo",
+      channelId: "channel 1",
+      pattern: {
+        id: "pattern 1",
+        workspaceId: "workspace_default",
+        channelId: "channel 1",
+        pattern: "Prefer security review.",
+        summary: "Low-risk candidate.",
+        evidenceCount: 1,
+        adoptedCount: 0,
+        failureCount: 0,
+        sourceRefs: [],
+        status: "candidate",
+        createdBy: "ai-draft",
+        verifyBeforeUse: true,
+        lastSeenAt: "2026-06-26T00:00:00.000Z",
+        createdAt: "2026-06-26T00:00:00.000Z",
+        updatedAt: "2026-06-26T00:00:00.000Z",
+      },
+    },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  await client.listChannelTeamPatterns("/repo path", "channel 1", {
+    status: "provisional",
+    includeExpired: true,
+    limit: 12,
+  });
+  await client.createChannelTeamPattern("/repo path", "channel 1", {
+    pattern: "Prefer security review.",
+    summary: "Low-risk candidate.",
+    status: "candidate",
+  });
+
+  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/team-patterns?cwd=%2Frepo+path&status=provisional&includeExpired=true&limit=12");
+  assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/team-patterns?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(JSON.parse(mock.calls[1].body).pattern, "Prefer security review.");
+});
+
 test("builds governance notification endpoint URLs", async () => {
   const mock = createFetchMock({ cwd: "/repo", notifications: [] });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });

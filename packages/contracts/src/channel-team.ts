@@ -286,6 +286,67 @@ export interface ChannelTeamMetricsProjectionResponse {
   readonly metrics: ChannelTeamMetricsProjection;
 }
 
+export type ChannelTeamPatternStatus = "candidate" | "provisional" | "approved" | "expired" | "rejected";
+
+export type ChannelTeamPatternCreatedBy = "system" | "ai-draft" | "local-user";
+
+export type ChannelTeamProvisionalRuleEffect =
+  | "attention_ordering"
+  | "default_observer_suggestion"
+  | "folded_experts_sort"
+  | "low_risk_recommendation";
+
+export interface ChannelTeamPattern {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly pattern: string;
+  readonly summary: string;
+  readonly evidenceCount: number;
+  readonly adoptedCount: number;
+  readonly failureCount: number;
+  readonly sourceRefs: readonly ChannelTeamEvidenceSourceRef[];
+  readonly status: ChannelTeamPatternStatus;
+  readonly createdBy: ChannelTeamPatternCreatedBy;
+  readonly provisionalEffect?: ChannelTeamProvisionalRuleEffect;
+  readonly provisionalRationale?: string;
+  readonly verifyBeforeUse: boolean;
+  readonly supersededByPatternId?: string;
+  readonly lastSeenAt: string;
+  readonly expiresAt?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelTeamPatternRequest {
+  readonly pattern: string;
+  readonly summary: string;
+  readonly evidenceCount?: number;
+  readonly adoptedCount?: number;
+  readonly failureCount?: number;
+  readonly sourceRefs?: readonly ChannelTeamEvidenceSourceRef[];
+  readonly status?: Extract<ChannelTeamPatternStatus, "candidate" | "provisional">;
+  readonly createdBy?: ChannelTeamPatternCreatedBy;
+  readonly provisionalEffect?: ChannelTeamProvisionalRuleEffect;
+  readonly provisionalRationale?: string;
+  readonly verifyBeforeUse?: boolean;
+  readonly supersededByPatternId?: string;
+  readonly lastSeenAt?: string;
+  readonly expiresAt?: string;
+}
+
+export interface ChannelTeamPatternsResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly patterns: readonly ChannelTeamPattern[];
+}
+
+export interface ChannelTeamPatternResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly pattern: ChannelTeamPattern;
+}
+
 export interface DissentSignal {
   readonly id: string;
   readonly turnId: string;
