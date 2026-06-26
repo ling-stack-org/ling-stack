@@ -40,6 +40,10 @@ import { handleChannelTeamExpertsProjection } from "../features/channels/team-ex
 import { handleChannelTeamMetricsProjection } from "../features/channels/team-metrics.js";
 import { handleChannelTeamPatterns } from "../features/channels/team-patterns.js";
 import {
+  handleChannelTeamEvaluations,
+  handleChannelTeamSnapshots,
+} from "../features/channels/team-snapshots.js";
+import {
   handleWorkflowHandoffIntentAccept,
   handleWorkflowHandoffIntentItem,
   handleWorkflowHandoffIntentsCollection,
@@ -1639,6 +1643,14 @@ export async function routeRequest(
     }
     if (channelRoute.action === "team-patterns") {
       await handleChannelTeamPatterns(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "team-snapshots") {
+      await handleChannelTeamSnapshots(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "team-evaluations") {
+      await handleChannelTeamEvaluations(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "council-policy") {

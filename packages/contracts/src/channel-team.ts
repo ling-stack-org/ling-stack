@@ -347,6 +347,126 @@ export interface ChannelTeamPatternResponse {
   readonly pattern: ChannelTeamPattern;
 }
 
+export type ChannelTeamSnapshotCreatedBy = "system" | "local-user" | "ai-draft";
+
+export interface ChannelTeamSnapshotProtocolState {
+  readonly version?: number;
+  readonly defaultWorkflowPreference?: string;
+  readonly visibleMultiReplyMaxParticipants?: number;
+  readonly privacyRules: readonly string[];
+  readonly reviewRules: readonly string[];
+  readonly updatedAt?: string;
+}
+
+export interface ChannelTeamSnapshotState {
+  readonly protocol?: ChannelTeamSnapshotProtocolState;
+  readonly activeProvisionalRules: readonly ChannelTeamPattern[];
+  readonly patterns: readonly ChannelTeamPattern[];
+  readonly reliabilityIncidentIds: readonly string[];
+  readonly availabilityIncidentIds: readonly string[];
+  readonly metrics?: ChannelTeamMetricsProjection;
+  readonly messageCount: number;
+  readonly latestMessageAt?: string;
+}
+
+export interface ChannelTeamSnapshot {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly reason: string;
+  readonly createdBy: ChannelTeamSnapshotCreatedBy;
+  readonly state: ChannelTeamSnapshotState;
+  readonly createdAt: string;
+}
+
+export interface CreateChannelTeamSnapshotRequest {
+  readonly reason: string;
+  readonly createdBy?: ChannelTeamSnapshotCreatedBy;
+}
+
+export interface ChannelTeamSnapshotsResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly snapshots: readonly ChannelTeamSnapshot[];
+}
+
+export interface ChannelTeamSnapshotResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly snapshot: ChannelTeamSnapshot;
+}
+
+export interface ChannelTeamSnapshotDiffEntry {
+  readonly path: string;
+  readonly before: unknown;
+  readonly after: unknown;
+  readonly kind: "added" | "removed" | "changed";
+}
+
+export interface ChannelTeamSnapshotDiff {
+  readonly baseSnapshotId: string;
+  readonly targetSnapshotId: string;
+  readonly entries: readonly ChannelTeamSnapshotDiffEntry[];
+  readonly restoreRequiresExplicitApply: true;
+}
+
+export interface ChannelTeamSnapshotDiffResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly diff: ChannelTeamSnapshotDiff;
+}
+
+export interface ChannelTeamEvaluationCase {
+  readonly id: string;
+  readonly input: string;
+  readonly expectedRiskReviewStatus?: ChannelTeamRiskReviewDecision["status"];
+  readonly maxObserverCount?: number;
+}
+
+export interface CreateChannelTeamEvaluationRunRequest {
+  readonly snapshotId?: string;
+  readonly cases: readonly ChannelTeamEvaluationCase[];
+  readonly includeRecentMessages?: boolean;
+  readonly recentMessageLimit?: number;
+}
+
+export interface ChannelTeamEvaluationCaseResult {
+  readonly caseId: string;
+  readonly passed: boolean;
+  readonly observedRiskReviewStatus: ChannelTeamRiskReviewDecision["status"];
+  readonly observedObserverCount: number;
+  readonly reasons: readonly string[];
+}
+
+export interface ChannelTeamEvaluationSummary {
+  readonly passedCount: number;
+  readonly failedCount: number;
+  readonly totalCount: number;
+}
+
+export interface ChannelTeamEvaluationRun {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly snapshotId?: string;
+  readonly cases: readonly ChannelTeamEvaluationCase[];
+  readonly results: readonly ChannelTeamEvaluationCaseResult[];
+  readonly summary: ChannelTeamEvaluationSummary;
+  readonly createdAt: string;
+}
+
+export interface ChannelTeamEvaluationRunsResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly evaluations: readonly ChannelTeamEvaluationRun[];
+}
+
+export interface ChannelTeamEvaluationRunResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly evaluation: ChannelTeamEvaluationRun;
+}
+
 export interface DissentSignal {
   readonly id: string;
   readonly turnId: string;

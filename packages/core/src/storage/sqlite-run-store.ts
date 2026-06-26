@@ -32,14 +32,20 @@ import {
 import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
+  ChannelTeamEvaluationRun,
   ChannelTeamPattern,
+  ChannelTeamSnapshot,
+  CreateChannelTeamEvaluationRunInput,
   CreateChannelTeamEvidenceItemInput,
   CreateChannelTeamPatternInput,
+  CreateChannelTeamSnapshotInput,
   FoldedExpertsReadModel,
   ListActiveChannelTeamProvisionalRulesOptions,
   ListAvailabilityIncidentsOptions,
+  ListChannelTeamEvaluationRunsOptions,
   ListChannelTeamEvidenceItemsOptions,
   ListChannelTeamPatternsOptions,
+  ListChannelTeamSnapshotsOptions,
   ListFoldedChannelTeamEvidenceForTurnOptions,
   ListReliabilityIncidentsOptions,
   ReliabilityIncident,
@@ -466,6 +472,7 @@ import { SqliteChannelWorkflowStore } from "./sqlite/channel-workflow-store.js";
 import { SqliteChannelTeamEvidenceStore } from "./sqlite/channel-team-evidence-store.js";
 import { SqliteChannelTeamLifecycleStore } from "./sqlite/channel-team-lifecycle-store.js";
 import { SqliteChannelTeamPatternStore } from "./sqlite/channel-team-pattern-store.js";
+import { SqliteChannelTeamSnapshotStore } from "./sqlite/channel-team-snapshot-store.js";
 import { SqliteChannelCoreStore } from "./sqlite/channel-core-store.js";
 import { SqliteExternalWorkStore } from "./sqlite/external-work-store.js";
 import { SqliteExternalWorkActionStore } from "./sqlite/external-work-action-store.js";
@@ -535,6 +542,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelTeamEvidence: SqliteChannelTeamEvidenceStore;
   private readonly channelTeamLifecycle: SqliteChannelTeamLifecycleStore;
   private readonly channelTeamPatterns: SqliteChannelTeamPatternStore;
+  private readonly channelTeamSnapshots: SqliteChannelTeamSnapshotStore;
   private readonly channelCore: SqliteChannelCoreStore;
   private readonly externalWork: SqliteExternalWorkStore;
   private readonly externalWorkActions: SqliteExternalWorkActionStore;
@@ -843,6 +851,10 @@ export class SqliteRunStore implements RunStore {
     );
     this.channelTeamLifecycle = new SqliteChannelTeamLifecycleStore({ database: this.database });
     this.channelTeamPatterns = new SqliteChannelTeamPatternStore(
+      { database: this.database },
+      { assertChannelExists: (channelId) => this.assertChannelExists(channelId) },
+    );
+    this.channelTeamSnapshots = new SqliteChannelTeamSnapshotStore(
       { database: this.database },
       { assertChannelExists: (channelId) => this.assertChannelExists(channelId) },
     );
@@ -1430,6 +1442,30 @@ export class SqliteRunStore implements RunStore {
 
   expireChannelTeamPatterns(now: string): number {
     return this.channelTeamPatterns.expireChannelTeamPatterns(now);
+  }
+
+  createChannelTeamSnapshot(input: CreateChannelTeamSnapshotInput, now: string): ChannelTeamSnapshot {
+    return this.channelTeamSnapshots.createChannelTeamSnapshot(input, now);
+  }
+
+  getChannelTeamSnapshot(id: string): ChannelTeamSnapshot | undefined {
+    return this.channelTeamSnapshots.getChannelTeamSnapshot(id);
+  }
+
+  listChannelTeamSnapshots(options: ListChannelTeamSnapshotsOptions): ChannelTeamSnapshot[] {
+    return this.channelTeamSnapshots.listChannelTeamSnapshots(options);
+  }
+
+  createChannelTeamEvaluationRun(input: CreateChannelTeamEvaluationRunInput, now: string): ChannelTeamEvaluationRun {
+    return this.channelTeamSnapshots.createChannelTeamEvaluationRun(input, now);
+  }
+
+  getChannelTeamEvaluationRun(id: string): ChannelTeamEvaluationRun | undefined {
+    return this.channelTeamSnapshots.getChannelTeamEvaluationRun(id);
+  }
+
+  listChannelTeamEvaluationRuns(options: ListChannelTeamEvaluationRunsOptions): ChannelTeamEvaluationRun[] {
+    return this.channelTeamSnapshots.listChannelTeamEvaluationRuns(options);
   }
 
   createTask(input: CreateTaskInput, now: string): Task {
