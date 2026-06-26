@@ -129,6 +129,7 @@ import {
   handleGovernanceNotificationRoute,
   parseGovernanceNotificationRoute,
 } from "../features/governance-notifications/routes.js";
+import { handleConversationDetail, handleConversationStream } from "../features/conversations/routes.js";
 import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
@@ -139,6 +140,7 @@ import {
   handlePluginsCollection,
 } from "../features/plugins/routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
+import { handleWorkspaceDirectorySelect } from "../features/workspace-directory/routes.js";
 import {
   handleProviderDraftCheck,
   handleProviderItem,
@@ -384,6 +386,11 @@ export async function routeRequest(
 
   if (url.pathname === "/workspace-settings") {
     await handleWorkspaceSettings(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/workspace-directory/select") {
+    await handleWorkspaceDirectorySelect(request, response, config);
     return;
   }
 
@@ -763,6 +770,36 @@ export async function routeRequest(
 
   if (url.pathname === "/threads") {
     await handleLingThreadsCollection(request, response, url, storeRegistry, config.maxBodyBytes);
+    return;
+  }
+
+  if (url.pathname === "/conversations/stream") {
+    await handleConversationStream(request, response, config, storeRegistry, async (runRequest, sink) =>
+      await executeRunRequest(
+        runRequest,
+        sink,
+        runnerRegistry,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+        {
+          afterRunTerminal: maybeContinueRunInterventions,
+          controlPlaneEvents,
+          startupState,
+        },
+      ));
+    return;
+  }
+
+  const conversationRoute = parseConversationRoute(url.pathname);
+  if (conversationRoute) {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for conversation detail` });
+      return;
+    }
+    handleConversationDetail(response, url, storeRegistry, conversationRoute.threadId);
     return;
   }
 
@@ -1978,6 +2015,14 @@ function readRunWorkspaceCwd(run: RunSession): string | undefined {
   }
   const workspaceCwd = (snapshot as { readonly workspaceCwd?: unknown }).workspaceCwd;
   return typeof workspaceCwd === "string" && workspaceCwd.trim() ? workspaceCwd : undefined;
+}
+
+function parseConversationRoute(pathname: string): { readonly threadId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "conversations" && segments[1]) {
+    return { threadId: segments[1] };
+  }
+  return undefined;
 }
 
 function createBlockedTeammateDirectReply(

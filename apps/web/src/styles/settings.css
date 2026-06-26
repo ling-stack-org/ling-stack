@@ -210,9 +210,22 @@
 .settings-workspace-tools {
   display: grid;
   align-content: start;
-  gap: 30px;
+  gap: 18px;
   width: 100%;
-  max-width: 856px;
+  max-width: 1120px;
+}
+
+.settings-configuration-head {
+  display: grid;
+  gap: 5px;
+}
+
+.settings-configuration-head > span {
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 740;
+  line-height: 18px;
+  text-transform: uppercase;
 }
 
 .settings-workspace-tools h2 {
@@ -222,6 +235,22 @@
   font-weight: 760;
   line-height: 34px;
   letter-spacing: 0;
+}
+
+.settings-configuration-head p {
+  max-width: 620px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.settings-configuration-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  align-items: start;
+  gap: 16px;
+  min-width: 0;
 }
 
 .settings-tool-row-list {
@@ -234,11 +263,11 @@
 
 .settings-tool-row {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 20px;
-  min-height: 86px;
-  padding: 18px 20px;
+  gap: 14px;
+  min-height: 76px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-panel);
 }
@@ -251,8 +280,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
+  width: 42px;
+  height: 42px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface-panel-strong);
@@ -276,8 +305,8 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 17px;
-  font-weight: 740;
+  font-size: 15px;
+  font-weight: 720;
   line-height: 22px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -286,7 +315,7 @@
 .settings-tool-row-heading small {
   display: inline-flex;
   align-items: center;
-  max-width: 180px;
+  max-width: 220px;
   min-height: 22px;
   padding: 0 8px;
   border: 1px solid var(--border);
@@ -312,7 +341,7 @@
 
 .settings-tool-row-action {
   justify-self: end;
-  min-width: 132px;
+  min-width: 116px;
   min-height: 36px;
   padding: 0 14px;
   border-color: var(--border);
@@ -322,6 +351,108 @@
   font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.settings-global-approval-card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-panel);
+}
+
+.settings-global-approval-head {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.settings-global-approval-head > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel-strong);
+  color: var(--text-strong);
+}
+
+.settings-global-approval-head strong,
+.settings-authorization-note strong {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 20px;
+}
+
+.settings-global-approval-head small,
+.settings-authorization-note span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-authorization-options {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-authorization-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.settings-authorization-option:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-selected);
+}
+
+.settings-authorization-option.selected {
+  border-color: var(--text-strong);
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.settings-authorization-option svg {
+  flex: 0 0 auto;
+}
+
+.settings-authorization-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-authorization-note {
+  display: grid;
+  gap: 3px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-panel-strong);
+}
+
+.settings-global-approval-action {
+  justify-content: center;
+  width: 100%;
 }
 
 .settings-tool-shortcut-list {

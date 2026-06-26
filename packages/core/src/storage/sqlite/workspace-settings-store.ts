@@ -31,6 +31,8 @@ export class SqliteWorkspaceSettingsStore {
       theme: nullableUpdate(input.theme, current.theme),
       locale: nullableUpdate(input.locale, current.locale),
       responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
+      defaultPermissionMode: nullableUpdate(input.defaultPermissionMode, current.defaultPermissionMode),
+      defaultPermissionPreset: nullableUpdate(input.defaultPermissionPreset, current.defaultPermissionPreset),
       channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
       channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
       skillGovernancePolicy: input.skillGovernancePolicy === undefined
@@ -54,6 +56,8 @@ export class SqliteWorkspaceSettingsStore {
 function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
   return {
     schemaVersion: 1,
+    defaultPermissionMode: "workspace_write",
+    defaultPermissionPreset: "workspace_collaboration",
     skillGovernancePolicy: DEFAULT_SKILL_GOVERNANCE_POLICY,
     updatedAt: now,
   };
@@ -73,11 +77,25 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     theme: parsedTheme,
     locale: typeof parsed.locale === "string" && parsed.locale.trim() ? parsed.locale : undefined,
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
+    defaultPermissionMode: parseOptionalSessionPermissionMode(parsed.defaultPermissionMode) ?? "workspace_write",
+    defaultPermissionPreset: parseOptionalPermissionPreset(parsed.defaultPermissionPreset) ?? "workspace_collaboration",
     channelNotifications: parseOptionalStringRecord(parsed.channelNotifications),
     channelActivityViews: parseOptionalUnknownRecord(parsed.channelActivityViews),
     skillGovernancePolicy: parseSkillGovernancePolicy(parsed.skillGovernancePolicy) ?? DEFAULT_SKILL_GOVERNANCE_POLICY,
     updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim() ? parsed.updatedAt : updatedAt,
   });
+}
+
+function parseOptionalSessionPermissionMode(value: unknown): WorkspaceSettings["defaultPermissionMode"] | undefined {
+  return value === "ask_everything" || value === "balanced" || value === "workspace_write" || value === "full_access" || value === "custom"
+    ? value
+    : undefined;
+}
+
+function parseOptionalPermissionPreset(value: unknown): WorkspaceSettings["defaultPermissionPreset"] | undefined {
+  return value === "read_only" || value === "workspace_collaboration" || value === "full_access" || value === "custom"
+    ? value
+    : undefined;
 }
 
 function parseSkillGovernancePolicy(value: unknown): SkillGovernancePolicy | undefined {

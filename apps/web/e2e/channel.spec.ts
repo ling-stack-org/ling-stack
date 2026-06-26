@@ -162,12 +162,14 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Inbox" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Image Generation" })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
+  await expect(navigation.locator(".primary-nav").getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "AI Teammates" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Automations" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await navigation.getByRole("button", { name: "Engineering" }).click();
 
   const expanded = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
@@ -279,9 +281,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Account and profile/ })).toBeVisible();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Workspace tools/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Configuration/ }).click();
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
 
   await page.getByRole("button", { name: "Show navigation" }).click();

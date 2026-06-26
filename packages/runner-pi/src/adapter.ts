@@ -128,6 +128,7 @@ export class PiRunnerAdapter {
           api: provider.api ?? "openai-completions",
           baseUrl: provider.baseUrl,
           reasoning: provider.reasoning ?? true,
+          thinkingLevelMap: provider.thinkingLevelMap,
           input: [...(provider.input ?? ["text"])],
           contextWindow: provider.contextWindow ?? 128_000,
           maxTokens: provider.maxTokens ?? 16_384,

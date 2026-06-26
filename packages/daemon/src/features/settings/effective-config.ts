@@ -158,6 +158,8 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     theme: readNullableTheme(record.theme),
     locale: readNullableString(record.locale, "locale"),
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
+    defaultPermissionMode: readNullableSessionPermissionMode(record.defaultPermissionMode),
+    defaultPermissionPreset: readNullablePermissionPreset(record.defaultPermissionPreset),
     channelNotifications: readNullableStringRecord(record.channelNotifications, "channelNotifications"),
     channelActivityViews: readNullableUnknownRecord(record.channelActivityViews, "channelActivityViews"),
     skillGovernancePolicy: readNullableSkillGovernancePolicy(record.skillGovernancePolicy),
@@ -303,6 +305,32 @@ function readNullableResponseLanguagePreference(value: unknown): UpdateWorkspace
   }
   if (value !== "follow_user" && value !== "zh-CN" && value !== "en-US") {
     throw new Error("responseLanguage must be follow_user, zh-CN, en-US, or null");
+  }
+  return value;
+}
+
+function readNullableSessionPermissionMode(value: unknown): UpdateWorkspaceSettingsInput["defaultPermissionMode"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "ask_everything" && value !== "balanced" && value !== "workspace_write" && value !== "full_access" && value !== "custom") {
+    throw new Error("defaultPermissionMode must be ask_everything, balanced, workspace_write, full_access, custom, or null");
+  }
+  return value;
+}
+
+function readNullablePermissionPreset(value: unknown): UpdateWorkspaceSettingsInput["defaultPermissionPreset"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "read_only" && value !== "workspace_collaboration" && value !== "full_access" && value !== "custom") {
+    throw new Error("defaultPermissionPreset must be read_only, workspace_collaboration, full_access, custom, or null");
   }
   return value;
 }

@@ -64,7 +64,7 @@ export class ProviderStartupRefreshService {
       return;
     }
     const provider = input.store.getProviderPreset(input.providerPresetId);
-    if (!provider || !shouldRefreshProviderOnStartup(input.store, provider, this.dependencies.secretResolver)) {
+    if (!provider || !shouldRefreshProviderBeforeRun(input.store, provider, this.dependencies.secretResolver)) {
       return;
     }
     await this.start(input.cwd, input.store, { force: true });
@@ -114,6 +114,13 @@ export async function refreshProvidersOnStartup(input: {
   const results: ProviderCheckResult[] = [];
   for (const provider of candidates) {
     const result = withStartupRefreshMessage(await checkProviderPreset(input.store, provider, input.secretResolver));
+    const currentProvider = input.store.getProviderPreset(provider.id);
+    if (!currentProvider || !startupRefreshCandidateIsCurrent(provider, currentProvider)) {
+      if (currentProvider?.lastCheck) {
+        results.push(currentProvider.lastCheck);
+      }
+      continue;
+    }
     input.store.recordProviderCheckResult(provider.id, result);
     appendControlPlaneEvent(input.store, input.controlPlaneEvents, {
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -133,6 +140,10 @@ export async function refreshProvidersOnStartup(input: {
     results.push(result);
   }
   return results;
+}
+
+function startupRefreshCandidateIsCurrent(candidate: ProviderPreset, current: ProviderPreset): boolean {
+  return JSON.stringify(candidate.lastCheck ?? null) === JSON.stringify(current.lastCheck ?? null);
 }
 
 function withStartupRefreshMessage(result: ProviderCheckResult): ProviderCheckResult {
@@ -168,6 +179,20 @@ export function shouldRefreshProviderOnStartup(
   }
   const checkedAtMs = Date.parse(provider.lastCheck.checkedAt);
   return !Number.isFinite(checkedAtMs) || nowMs - checkedAtMs > STARTUP_CHECK_MAX_AGE_MS;
+}
+
+export function shouldRefreshProviderBeforeRun(
+  store: ProviderStoreFacet,
+  provider: ProviderPreset,
+  secretResolver: SecretResolver,
+): boolean {
+  if (!provider.enabled || provider.api === "media-job" || !provider.capabilities.includes("chat")) {
+    return false;
+  }
+  if (!providerSecretCanBeChecked(store, provider, secretResolver)) {
+    return false;
+  }
+  return !provider.lastCheck || !provider.lastCheck.ok;
 }
 
 function providerSecretCanBeChecked(store: ProviderStoreFacet, provider: ProviderPreset, secretResolver: SecretResolver): boolean {

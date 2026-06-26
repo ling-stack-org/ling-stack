@@ -90,7 +90,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".profile-insights",
   ]);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: "工作区工具" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: "配置" }).click();
   await page.getByRole("button", { name: "打开模型工作台" }).click();
   await expect(page.locator(".provider-workbench-surface")).toBeVisible();
   await assertDarkPage(page, "model workbench", [
@@ -168,7 +168,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   await navigation.getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: "工作区工具" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: "配置" }).click();
   await page.getByRole("button", { name: "打开工作看板" }).click();
   await expect(page.locator(".work-board-page")).toBeVisible();
   await assertDarkPage(page, "work board", [

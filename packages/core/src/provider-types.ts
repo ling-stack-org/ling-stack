@@ -37,6 +37,24 @@ export type ProviderApi =
   | "media-job";
 
 export type ProviderTransport = "auto" | "websocket" | "websocket-cached" | "sse";
+export type ProviderThinkingMode = "off" | "auto" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export interface ProviderThinkingSupport {
+  readonly levels: readonly ProviderThinkingMode[];
+  readonly minTokens?: number;
+  readonly maxTokens?: number;
+  readonly zeroAllowed?: boolean;
+  readonly dynamicAllowed?: boolean;
+}
+
+export type ProviderModelOptionCapabilitySource =
+  | "upstream"
+  | "model_catalog"
+  | "provider_template"
+  | "user_override"
+  | "conservative_default";
+
+export type ProviderModelOptionCapabilityConfidence = "known" | "estimated" | "conservative";
 
 export interface ProviderPreset {
   readonly id: string;
@@ -51,6 +69,7 @@ export interface ProviderPreset {
   readonly headers: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
+  readonly thinkingModes?: readonly ProviderThinkingMode[];
   readonly input: readonly ("text" | "image")[];
   readonly contextWindow?: number;
   readonly maxTokens?: number;
@@ -74,6 +93,7 @@ export interface ProviderPresetInput {
   readonly headers?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
+  readonly thinkingModes?: readonly ProviderThinkingMode[];
   readonly input?: readonly ("text" | "image")[];
   readonly contextWindow?: number;
   readonly maxTokens?: number;
@@ -94,6 +114,7 @@ export interface ProviderPresetUpdateInput {
   readonly headers?: Record<string, string>;
   readonly authHeader?: boolean | null;
   readonly reasoning?: boolean | null;
+  readonly thinkingModes?: readonly ProviderThinkingMode[];
   readonly input?: readonly ("text" | "image")[];
   readonly contextWindow?: number | null;
   readonly maxTokens?: number | null;
@@ -122,6 +143,13 @@ export interface ProviderModelOption {
   readonly api?: ProviderApi;
   readonly input?: readonly ("text" | "image")[];
   readonly capabilities?: readonly ProviderCapability[];
+  readonly thinkingModes?: readonly ProviderThinkingMode[];
+  readonly thinkingSupport?: ProviderThinkingSupport;
+  readonly contextWindow?: number;
+  readonly maxTokens?: number;
+  readonly supportedParameters?: readonly string[];
+  readonly capabilitySource?: ProviderModelOptionCapabilitySource;
+  readonly capabilityConfidence?: ProviderModelOptionCapabilityConfidence;
 }
 
 export interface ProviderModelImportRequest {
@@ -136,6 +164,7 @@ export interface ProviderModelImportRequest {
   readonly headers?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
+  readonly thinkingModes?: readonly ProviderThinkingMode[];
   readonly input?: readonly ("text" | "image")[];
   readonly contextWindow?: number;
   readonly maxTokens?: number;
@@ -206,6 +235,16 @@ export const providerTransports: readonly ProviderTransport[] = [
   "websocket",
   "websocket-cached",
   "sse",
+];
+
+export const providerThinkingModes: readonly ProviderThinkingMode[] = [
+  "off",
+  "auto",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
 ];
 
 export const providerCapabilities: readonly ProviderCapability[] = [

@@ -1,4 +1,4 @@
-import type { Api, ImageContent, Model, ModelThinkingLevel, OpenAICompletionsCompat, TextContent, Transport } from "@earendil-works/pi-ai";
+import type { Api, ImageContent, Model, ModelThinkingLevel, OpenAICompletionsCompat, TextContent, ThinkingLevelMap, Transport } from "@earendil-works/pi-ai";
 import type { ToolDefaultApproval, ToolSideEffectLevel } from "@ling-stack/plugin-sdk";
 
 export type PiRunnerBuiltinToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
@@ -26,6 +26,7 @@ export interface PiRunnerProviderConfig {
   readonly headers?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
+  readonly thinkingLevelMap?: ThinkingLevelMap;
   readonly input?: readonly ("text" | "image")[];
   readonly contextWindow?: number;
   readonly maxTokens?: number;

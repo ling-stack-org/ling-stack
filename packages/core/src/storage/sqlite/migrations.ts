@@ -168,6 +168,8 @@ const SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION = 78;
 const SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_NAME = "create_skill_source_upgrade_lifecycle";
 const TASK_ATTACHMENT_IDS_MIGRATION_VERSION = 79;
 const TASK_ATTACHMENT_IDS_MIGRATION_NAME = "add_task_attachment_ids";
+const PROVIDER_THINKING_MODES_MIGRATION_VERSION = 80;
+const PROVIDER_THINKING_MODES_MIGRATION_NAME = "add_provider_thinking_modes";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -255,6 +257,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           headers_json TEXT NOT NULL,
           auth_header INTEGER,
           reasoning INTEGER,
+          thinking_modes_json TEXT NOT NULL DEFAULT '[]',
           input_json TEXT NOT NULL,
           context_window INTEGER,
           max_tokens INTEGER,
@@ -1547,6 +1550,16 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
       if (!hasProviderTransportMigration) {
         context.recordMigration(PROVIDER_TRANSPORT_MIGRATION_VERSION, PROVIDER_TRANSPORT_MIGRATION_NAME);
+      }
+    }
+
+    const hasProviderThinkingModesMigration = context.hasMigration(PROVIDER_THINKING_MODES_MIGRATION_VERSION);
+    if (!hasProviderThinkingModesMigration || !context.hasColumn("provider_presets", "thinking_modes_json")) {
+      if (context.hasTable("provider_presets") && !context.hasColumn("provider_presets", "thinking_modes_json")) {
+        database.exec("ALTER TABLE provider_presets ADD COLUMN thinking_modes_json TEXT NOT NULL DEFAULT '[]';");
+      }
+      if (!hasProviderThinkingModesMigration) {
+        context.recordMigration(PROVIDER_THINKING_MODES_MIGRATION_VERSION, PROVIDER_THINKING_MODES_MIGRATION_NAME);
       }
     }
 

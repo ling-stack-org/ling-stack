@@ -5,6 +5,7 @@ import {
   type ProviderTransport,
   type ResolvedSecret,
   type SecretResolver,
+  providerThinkingModesToLevelMap,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { providerSecretStatus, resolveProviderSecret } from "../providers/secrets.js";
@@ -52,6 +53,7 @@ export function resolveProviderForRun(
       headers: preset.headers,
       authHeader: preset.authHeader,
       reasoning: preset.reasoning,
+      thinkingLevelMap: providerThinkingModesToLevelMap(preset.thinkingModes),
       input: preset.input,
       contextWindow: preset.contextWindow,
       maxTokens: preset.maxTokens,
@@ -71,6 +73,20 @@ export function resolveProviderForRun(
       options.providerWebSocketFallbackEnabled === true,
     ),
   }) as PiRunnerProviderConfig;
+}
+
+export function resolveProviderRunThinkingLevel(
+  provider: Pick<PiRunnerProviderConfig, "reasoning" | "thinkingLevelMap">,
+  requestedLevel: RunRequest["thinkingLevel"],
+): RunRequest["thinkingLevel"] {
+  const level = requestedLevel ?? "medium";
+  if (provider.reasoning === false) {
+    return "off";
+  }
+  if (provider.thinkingLevelMap?.[level] === null) {
+    return "off";
+  }
+  return requestedLevel;
 }
 
 function resolveEffectiveProviderTransport(

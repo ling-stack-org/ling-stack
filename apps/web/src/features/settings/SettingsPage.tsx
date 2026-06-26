@@ -82,7 +82,7 @@ const settingsSectionGroups: readonly {
 }[] = [
   {
     items: [
-      { id: "workspace-tools", label: "Workspace tools" },
+      { id: "workspace-tools", label: "Configuration" },
       { id: "account-profile", label: "Account and profile" },
       { id: "external-work", label: "External work" },
       { id: "interface", label: "Interface preferences" },
@@ -134,6 +134,8 @@ export function SettingsPage({
   latestPluginApplyResult,
   latestPluginRuntimePreview,
   latestPluginNotice,
+  workspaceDefaultPermissionMode,
+  workspaceDefaultPermissionPreset,
   permissionMode,
   permissionPreset,
   isLoading,
@@ -150,6 +152,7 @@ export function SettingsPage({
   errorMessage,
   onFormChange,
   onPermissionModeChange,
+  onWorkspaceDefaultPermissionChange,
   onRefresh,
   onSave,
   onWorkspaceResponseLanguageChange,
@@ -213,6 +216,8 @@ export function SettingsPage({
   readonly latestPluginApplyResult?: ManagedPluginApplyPresetResponse;
   readonly latestPluginRuntimePreview?: ManagedPluginRuntimePreviewResponse;
   readonly latestPluginNotice?: PluginActionNotice;
+  readonly workspaceDefaultPermissionMode?: SessionPermissionMode;
+  readonly workspaceDefaultPermissionPreset?: PermissionPreset;
   readonly permissionMode: SessionPermissionMode;
   readonly permissionPreset?: PermissionPreset;
   readonly isLoading: boolean;
@@ -229,6 +234,7 @@ export function SettingsPage({
   readonly errorMessage: string;
   readonly onFormChange: (form: ApprovalPolicyFormState) => void;
   readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  readonly onWorkspaceDefaultPermissionChange: (mode: SessionPermissionMode, preset: PermissionPreset) => void;
   readonly onRefresh: () => void;
   readonly onSave: () => void;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
@@ -494,9 +500,13 @@ export function SettingsPage({
       {activeSection === "workspace-tools" ? (
         <SettingsWorkspaceToolsPanel
           counts={workspaceToolCounts}
+          defaultPermissionMode={workspaceDefaultPermissionMode}
+          defaultPermissionPreset={workspaceDefaultPermissionPreset}
+          onDefaultPermissionChange={onWorkspaceDefaultPermissionChange}
           onOpenProviders={onOpenProviders}
           onOpenTeammates={onOpenTeammates}
           onOpenWorkBoard={onOpenWorkBoard}
+          onOpenApprovalPolicy={() => setActiveSection("approval-policy")}
         />
       ) : null}
 

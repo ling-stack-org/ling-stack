@@ -2,12 +2,17 @@ import {
   providerApis,
   providerCapabilities,
   providerKinds,
+  providerThinkingModes,
   providerTransports,
   type ProviderApi,
   type ProviderCapability,
   type ProviderKind,
   type ProviderModelImportRequest,
   type ProviderModelOption,
+  type ProviderModelOptionCapabilityConfidence,
+  type ProviderModelOptionCapabilitySource,
+  type ProviderThinkingSupport,
+  type ProviderThinkingMode,
   type ProviderTransport,
   type ProviderModelListRequest,
   type ProviderPreset,
@@ -103,6 +108,7 @@ export function parseProviderModelImportRequest(value: unknown): ProviderModelIm
     headers: readOptionalStringRecord(value, "headers"),
     authHeader: readOptionalBoolean(value, "authHeader"),
     reasoning: readOptionalBoolean(value, "reasoning"),
+    thinkingModes: readProviderThinkingModes(value, "thinkingModes"),
     input: readOptionalStringArray(value, "input", ["text", "image"]),
     contextWindow: readOptionalNumber(value, "contextWindow"),
     maxTokens: readOptionalNumber(value, "maxTokens"),
@@ -165,6 +171,7 @@ function parseProviderPresetInput(value: unknown): ProviderPresetInput {
     headers: readOptionalStringRecord(value, "headers"),
     authHeader: readOptionalBoolean(value, "authHeader"),
     reasoning: readOptionalBoolean(value, "reasoning"),
+    thinkingModes: readProviderThinkingModes(value, "thinkingModes"),
     input: readOptionalStringArray(value, "input", ["text", "image"]),
     contextWindow: readOptionalNumber(value, "contextWindow"),
     maxTokens: readOptionalNumber(value, "maxTokens"),
@@ -191,6 +198,7 @@ function parseProviderPresetUpdateInput(value: unknown): ProviderPresetUpdateInp
     headers: readOptionalStringRecord(value, "headers"),
     authHeader: readNullableBoolean(value, "authHeader"),
     reasoning: readNullableBoolean(value, "reasoning"),
+    thinkingModes: value.thinkingModes === undefined ? undefined : readProviderThinkingModes(value, "thinkingModes"),
     input: readOptionalStringArray(value, "input", ["text", "image"]),
     contextWindow: readNullableNumber(value, "contextWindow"),
     maxTokens: readNullableNumber(value, "maxTokens"),
@@ -271,6 +279,13 @@ function parseProviderImportModel(value: unknown, index: number): ProviderModelO
     api: value.api === undefined ? undefined : readProviderApi(value, "api"),
     input: readOptionalStringArray(value, "input", ["text", "image"]),
     capabilities: value.capabilities === undefined ? undefined : readProviderCapabilities(value, "capabilities"),
+    thinkingModes: value.thinkingModes === undefined ? undefined : readProviderThinkingModes(value, "thinkingModes"),
+    thinkingSupport: readProviderThinkingSupport(value, "thinkingSupport"),
+    contextWindow: readOptionalPositiveInteger(value, "contextWindow"),
+    maxTokens: readOptionalPositiveInteger(value, "maxTokens"),
+    supportedParameters: readOptionalStringArray(value, "supportedParameters"),
+    capabilitySource: readProviderModelOptionCapabilitySource(value, "capabilitySource"),
+    capabilityConfidence: readProviderModelOptionCapabilityConfidence(value, "capabilityConfidence"),
   };
 }
 
@@ -350,4 +365,73 @@ function readNullableProviderTransport(record: Record<string, unknown>, key: str
 
 function readProviderCapabilities(record: Record<string, unknown>, key: string): ProviderCapability[] {
   return readOptionalStringArray(record, key, providerCapabilities)?.map((capability) => capability as ProviderCapability) ?? [];
+}
+
+function readProviderThinkingModes(record: Record<string, unknown>, key: string): ProviderThinkingMode[] {
+  return readOptionalStringArray(record, key, providerThinkingModes)?.map((mode) => mode as ProviderThinkingMode) ?? [];
+}
+
+function readProviderThinkingSupport(record: Record<string, unknown>, key: string): ProviderThinkingSupport | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  const levels = readProviderThinkingModes(value, "levels");
+  return {
+    levels,
+    minTokens: readOptionalPositiveInteger(value, "minTokens"),
+    maxTokens: readOptionalPositiveInteger(value, "maxTokens"),
+    zeroAllowed: readOptionalBoolean(value, "zeroAllowed"),
+    dynamicAllowed: readOptionalBoolean(value, "dynamicAllowed"),
+  };
+}
+
+function readOptionalPositiveInteger(record: Record<string, unknown>, key: string): number | undefined {
+  const value = readOptionalNumber(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+  return value;
+}
+
+function readProviderModelOptionCapabilitySource(
+  record: Record<string, unknown>,
+  key: string,
+): ProviderModelOptionCapabilitySource | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  const allowed: readonly ProviderModelOptionCapabilitySource[] = [
+    "upstream",
+    "model_catalog",
+    "provider_template",
+    "user_override",
+    "conservative_default",
+  ];
+  if (!allowed.includes(value as ProviderModelOptionCapabilitySource)) {
+    throw new Error(`${key} must be one of: ${allowed.join(", ")}`);
+  }
+  return value as ProviderModelOptionCapabilitySource;
+}
+
+function readProviderModelOptionCapabilityConfidence(
+  record: Record<string, unknown>,
+  key: string,
+): ProviderModelOptionCapabilityConfidence | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  const allowed: readonly ProviderModelOptionCapabilityConfidence[] = ["known", "estimated", "conservative"];
+  if (!allowed.includes(value as ProviderModelOptionCapabilityConfidence)) {
+    throw new Error(`${key} must be one of: ${allowed.join(", ")}`);
+  }
+  return value as ProviderModelOptionCapabilityConfidence;
 }

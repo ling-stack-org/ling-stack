@@ -106,6 +106,28 @@ Optional warmup failures do not make `/health` fail. Failed provider startup che
 plugin descriptor checks move the workspace status to `degraded` and add bounded
 diagnostics; action-specific preflight still owns the final run/provider/plugin block.
 
+## Workspace Directory Selection
+
+```http
+POST /workspace-directory/select?cwd=/path/to/workspace
+```
+
+Opens the local daemon host's native directory picker and returns a real absolute
+path. The request `cwd` is used only as the default picker location; it does not
+change the workspace settings.
+
+```json
+{ "cancelled": false, "path": "/path/to/project", "label": "project" }
+```
+
+If the user cancels the native picker, the daemon returns:
+
+```json
+{ "cancelled": true }
+```
+
+Unsupported platforms return `501 directory_picker_unsupported`.
+
 ## Effective Configuration
 
 ```http

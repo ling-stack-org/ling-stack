@@ -3,6 +3,7 @@ export * from "./api/config.js";
 export * from "./api/startup.js";
 export * from "./api/control-plane.js";
 export * from "./api/automations.js";
+export * from "./api/conversations.js";
 export * from "./api/skills.js";
 export * from "./api/runs.js";
 export * from "./api/run-request-builders.js";

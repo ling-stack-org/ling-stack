@@ -691,6 +691,9 @@
 }
 
 .workspace-provider-surface .provider-row.selected td:nth-child(7) {
+  border-color: var(--border);
+  border-left-color: var(--border);
+  outline: 0;
   box-shadow: none;
 }
 
