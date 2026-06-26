@@ -18,6 +18,7 @@ export * from "./provider-model-capabilities.js";
 export * from "./provider-adapters.js";
 export * from "./channel-team-types.js";
 export * from "./channel-team-attention.js";
+export * from "./channel-team-specialist-notes.js";
 export * from "./state-machines.js";
 export * from "./channel-runtime-types.js";
 export * from "./runtime-supervisor-types.js";
