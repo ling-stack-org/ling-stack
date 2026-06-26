@@ -11,6 +11,7 @@ export type * from "./automations.js";
 export type * from "./execution-actions.js";
 export type * from "./tasks.js";
 export type * from "./channels.js";
+export type * from "./channel-team.js";
 export type * from "./workflows.js";
 export type * from "./external-work.js";
 export type * from "./work-items.js";
