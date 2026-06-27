@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  lingThreadKinds,
   permissionPresets,
   sessionPermissionModes,
   type ApprovalRequest,
@@ -1621,8 +1622,8 @@ function readOptionalLingThreadKindQuery(url: URL): LingThreadKind | undefined {
   if (value === null) {
     return undefined;
   }
-  if (!["task", "channel_discussion", "teammate_direct", "workflow_step", "external_work", "automation"].includes(value)) {
-    throw new Error("kind must be one of: task, channel_discussion, teammate_direct, workflow_step, external_work, automation");
+  if (!lingThreadKinds.includes(value as LingThreadKind)) {
+    throw new Error(`kind must be one of: ${lingThreadKinds.join(", ")}`);
   }
   return value as LingThreadKind;
 }

@@ -3,9 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { createSqliteRunStore } from "@ling-stack/core";
+import { lingThreadKinds as contractLingThreadKinds } from "@ling-stack/contracts";
+import { createSqliteRunStore, lingThreadKinds as coreLingThreadKinds } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+
+test("Ling thread kind runtime constants stay in sync across packages", () => {
+  assert.deepEqual([...contractLingThreadKinds], [...coreLingThreadKinds]);
+  assert.equal(coreLingThreadKinds.includes("conversation"), true);
+});
 
 test("daemon API exposes durable Ling turns and links runs to turns", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-ling-turns-"));
@@ -491,6 +497,39 @@ test("daemon archive pin and archived filters", async () => {
     const badFilter = await getJsonAllowError(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&archived=invalid`);
     assert.equal(badFilter.status, 400);
     assert.equal(badFilter.body.error, "bad_archived_filter");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon thread collection accepts conversation kind query", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-conversation-thread-kind-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&limit=1`);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const conversationThread = store.createLingThread(
+      {
+        kind: "conversation",
+        teammateId: "ling_agent",
+        title: "Conversation smoke",
+        objective: "Verify conversation thread listing.",
+        status: "open",
+      },
+      "2026-06-08T00:40:00.000Z",
+    );
+
+    const listed = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&kind=conversation&archived=exclude&limit=20`);
+    assert.deepEqual(listed.threads.map((thread) => thread.id), [conversationThread.id]);
+    assert.deepEqual(listed.threads.map((thread) => thread.kind), ["conversation"]);
+
+    const invalid = await getJsonAllowError(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&kind=invalid`);
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.error, "bad_request");
+    assert.match(invalid.body.message, /conversation/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

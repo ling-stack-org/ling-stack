@@ -512,7 +512,16 @@ export const runInterventionStatuses = [
 ] as const;
 export type RunInterventionStatus = (typeof runInterventionStatuses)[number];
 
-export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work" | "automation" | "conversation";
+export const lingThreadKinds = [
+  "task",
+  "channel_discussion",
+  "teammate_direct",
+  "workflow_step",
+  "external_work",
+  "automation",
+  "conversation",
+] as const;
+export type LingThreadKind = (typeof lingThreadKinds)[number];
 export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
 export type LingThreadArchivedFilter = "exclude" | "include" | "only";
 export type LingThreadSearchField =
