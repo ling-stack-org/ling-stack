@@ -46,6 +46,7 @@ export { ComposerPermissionMenu, type ComposerPermissionMenuProps } from "./comp
 export { ConversationComposerShell, type ConversationComposerDensity, type ConversationComposerShellProps, type ConversationComposerSurface } from "./composer/ConversationComposerShell.js";
 export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "./composer/TokenizedComposerInput.js";
 export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer/composer-input-parts.js";
+export { filterSlashCommandPickerOptions, findActiveSlashCommand, insertSlashCommandToken, type ActiveSlashCommandPicker } from "./composer/slash-command-picker.js";
 export {
   conversationTranscriptFixtures,
   createTranscriptBlockRendererRegistry,

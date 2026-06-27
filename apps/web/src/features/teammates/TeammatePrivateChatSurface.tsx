@@ -1,4 +1,4 @@
-import { useEffect, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
 import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Plus, Send, Square, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import { artifactContentUrl, attachmentContentUrl } from "../../api.js";
@@ -29,6 +29,11 @@ import {
   MessageEvidencePanel,
   MessageRow,
   TokenizedComposerInput,
+  filterSlashCommandPickerOptions,
+  findActiveSlashCommand,
+  insertSlashCommandToken,
+  type ActiveSlashCommandPicker,
+  type TokenizedComposerInputHandle,
 } from "../../shared/conversation/index.js";
 import type {
   AiTeammate,
@@ -91,6 +96,7 @@ export function TeammatePrivateChatSurface({
   uploadingAttachments,
   pendingAttachments,
   pendingDirectLinkPreviews,
+  slashCommands,
   composerInputParts,
   composerFileReferenceParts,
   composerFileReferenceTokens,
@@ -152,6 +158,7 @@ export function TeammatePrivateChatSurface({
   readonly uploadingAttachments: boolean;
   readonly pendingAttachments: readonly PendingAttachmentItem<TeammatePrivateAttachment>[];
   readonly pendingDirectLinkPreviews: readonly TeammateDirectLinkPreview[];
+  readonly slashCommands: readonly { readonly id: string; readonly label: string }[];
   readonly composerInputParts: readonly ComposerInputPart[];
   readonly composerFileReferenceParts: readonly ComposerFileReferencePart[];
   readonly composerFileReferenceTokens: readonly {
@@ -185,6 +192,9 @@ export function TeammatePrivateChatSurface({
   const { t } = useI18n();
   const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
+  const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const privateWorkCellByMessageId = buildPrivateWorkCellMap({
     messages: visibleMessages,
@@ -193,6 +203,7 @@ export function TeammatePrivateChatSurface({
     t,
   });
   const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
+  const slashCommandPickerOptions = filterSlashCommandPickerOptions(slashCommands, slashPicker);
   const privateComposerCurrentSendIcon = privateComposerSending
     ? <Loader2 className="spin" size={15} />
     : directReplyActive && !privateComposerHasGuidancePayload
@@ -202,6 +213,70 @@ export function TeammatePrivateChatSurface({
   useEffect(() => {
     setSelectedPermissionPreset(defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
   }, [defaultPermissionMode, defaultPermissionPreset]);
+
+  useEffect(() => {
+    if (!privateComposerSending) {
+      return;
+    }
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
+  }, [privateComposerSending]);
+
+  function updateSlashPicker(value: string, caret: number): void {
+    setSlashPicker(findActiveSlashCommand(value, caret));
+    setSlashActiveIndex(0);
+  }
+
+  function focusComposerAt(caret: number): void {
+    const focus = (): void => {
+      composerInputRef.current?.focusAt(caret);
+    };
+    focus();
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(focus);
+      return;
+    }
+    globalThis.setTimeout(focus, 0);
+  }
+
+  function commitSlashCommand(option: { readonly id: string }): void {
+    const composer = composerInputRef.current;
+    const liveValue = messageDraft;
+    const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
+    const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret) ?? findActiveSlashCommand(liveValue, liveValue.length);
+    const inserted = insertSlashCommandToken(liveValue, picker, option.id);
+    onMessageDraftChange(inserted.value);
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
+    focusComposerAt(inserted.caret);
+  }
+
+  function handleComposerInputKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (slashPicker && slashCommandPickerOptions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSlashActiveIndex((current) => (current + 1) % slashCommandPickerOptions.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSlashActiveIndex((current) => (current - 1 + slashCommandPickerOptions.length) % slashCommandPickerOptions.length);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        commitSlashCommand(slashCommandPickerOptions[Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlashPicker(undefined);
+        setSlashActiveIndex(0);
+        return;
+      }
+    }
+    onComposerKeyDown(event);
+  }
 
   function toggleMessageFeedback(messageId: string, feedback: "up" | "down"): void {
     setMessageFeedbackById((current) => {
@@ -478,16 +553,40 @@ export function TeammatePrivateChatSurface({
             ) : null}
             inputNode={(
               <TokenizedComposerInput
+                ref={composerInputRef}
                 value={messageDraft}
                 parts={composerInputParts}
-                onChange={(value) => onMessageDraftChange(value)}
-                onKeyDown={onComposerKeyDown}
+                onChange={(value, caret) => {
+                  onMessageDraftChange(value);
+                  updateSlashPicker(value, caret);
+                }}
+                onKeyDown={handleComposerInputKeyDown}
                 onPaste={onComposerPaste}
-                onSelect={() => undefined}
+                onSelect={updateSlashPicker}
                 placeholder={privateComposerPlaceholder}
                 ariaLabel={privateComposerPlaceholder}
               />
             )}
+            slashPickerNode={slashPicker ? (
+              <div className="mention-picker-popover command-picker-popover conversation-composer-popover" role="listbox" aria-label={t("Slash command")}>
+                {slashCommandPickerOptions.length > 0 ? slashCommandPickerOptions.map((option, index) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="option"
+                    aria-selected={index === Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)}
+                    className={index === Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1) ? "mention-suggestion command active" : "mention-suggestion command"}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => commitSlashCommand(option)}
+                  >
+                    <span>/{option.id}</span>
+                    <small>{option.label}</small>
+                  </button>
+                )) : (
+                  <span className="mention-suggestion empty">{t("No matching commands")}</span>
+                )}
+              </div>
+            ) : null}
             dropHintNode={composerDragActive ? (
               <div className="composer-drop-hint">
                 <FileText size={16} />

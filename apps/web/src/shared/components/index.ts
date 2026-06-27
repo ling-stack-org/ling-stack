@@ -13,4 +13,5 @@ export { TokenizedComposerInput, type TokenizedComposerInputHandle, type Tokeniz
 export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
 export { UserProfileAvatar } from "./UserProfileAvatar.js";
 export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "../conversation/composer/composer-input-parts.js";
+export { filterSlashCommandPickerOptions, findActiveSlashCommand, insertSlashCommandToken, type ActiveSlashCommandPicker } from "../conversation/composer/slash-command-picker.js";
 export { parseComposerSlashIntent, type ComposerSlashIntent } from "./composer-slash-intents.js";

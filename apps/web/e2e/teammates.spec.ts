@@ -19,6 +19,7 @@ async function openAiTeammatesFromSettings(page: Page): Promise<void> {
 }
 
 async function openChannelTeammateManager(page: Page): Promise<void> {
+  await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await page.locator(".channel-header-actions").getByRole("button", { name: /channel teammates|AI teammate management/ }).click();
 }
 
@@ -1139,6 +1140,16 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   const teammateId = "teammate_builtin_engineer";
   const threadId = `tdthread_${teammateId}`;
   state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
+  state.teammateSkillBindings = [
+    {
+      teammateId,
+      skillId: "review",
+      source: "user",
+      enabled: true,
+      createdAt: "2026-05-29T00:08:00.000Z",
+      updatedAt: "2026-05-29T00:08:00.000Z",
+    },
+  ];
   state.teammateDirectMessages = [
     {
       id: "tdmsg_pending_reply",
@@ -1190,6 +1201,11 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await expect(guidance).toBeVisible();
   await expect(guidance.locator("textarea")).toHaveCount(0);
   await expect(privateComposer.getByRole("button", { name: "停止回复" })).toBeEnabled();
+
+  await privateInput.fill("/rev");
+  await expect(page.getByRole("listbox", { name: /Slash command|命令/ })).toBeVisible();
+  await page.getByRole("option", { name: /^\/review\b/ }).click();
+  await expect(privateInput).toHaveAttribute("data-value", "/review ");
 
   await privateInput.fill("Continue with only risks after this reply.");
   await privateInput.press("Enter");
