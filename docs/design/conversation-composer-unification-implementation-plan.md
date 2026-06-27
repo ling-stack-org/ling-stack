@@ -59,11 +59,30 @@ This is the line between "full design" and "safe implementation": design the com
 component boundary now, but land behavior in small slices that keep existing route and
 runtime ownership intact.
 
+## Canonical Delivery Slices
+
+Use this order for implementation and PR review. It is the source of truth for the
+current slice plan:
+
+| Slice | Name | Primary outcome |
+| --- | --- | --- |
+| 1 | Code audit / state confirmation | Composer state sources and surface boundaries are mapped before edits. |
+| 2 | Shared Composer Shell | All three surfaces render one shared shell and visual class family. |
+| 3 | Shared Toolbar + four authorization presets | Authorization is visible everywhere and locked during active execution. |
+| 4 | Normal conversation adapter | Normal conversation uses the shared composer, keeps model/thinking, and blocks `@`. |
+| 5 | Teammate private adapter | Private chat uses the shared composer, keeps direct guidance, blocks `@`, and has no model picker. |
+| 6 | Channel adapter | Channel uses the shared composer without losing `/`, `@`, files, approvals, active run stop/follow-up, or inline guidance. |
+| 7 | Tokenized input / preview / popover convergence | Input, pending assets, slash/mention popovers, and preview strips behave and look consistent. |
+| 8 | Delayed core/package extraction | Only after Web stabilizes: expand pure policy in `conversation-ui-core`, then consider `conversation-ui-react`. |
+
+Do not invert Slice 8 into an early extraction. A premature React package would freeze
+guesses about active runs, private direct replies, and channel routing.
+
 ## Non-Goals
 
 Do not include these in the first implementation slice:
 
-- daemon route changes,
+- unrelated daemon route changes outside composer parity,
 - a new transcript persistence model,
 - moving all `WorkspaceClientView` send/routing logic into a new state machine,
 - Desktop/PC implementation,
@@ -357,56 +376,98 @@ Goal: reduce page-local duplication after behavior is stable.
 - private chat direct guidance logic still lives in private owner,
 - normal conversation model/authorization persistence still lives in normal owner.
 
-## Slice 6: Core Policy Extraction
+## Slice 6: Channel Adapter Parity
 
-Goal: move only stable, app-agnostic composer policy into `conversation-ui-core`.
+Goal: move channel onto the shared shell without shrinking the channel composer contract.
 
 ### Work
 
-- Add a pure composer policy helper that returns capability flags for:
-  - channel,
-  - normal conversation,
-  - teammate private chat.
-- Add pure permission preset types or re-export existing `PermissionPreset` contracts
-  without pulling React or Web state into the package.
-- Add tests that assert:
+- Render the channel composer through `ConversationComposerShell`.
+- Keep the channel as the functional baseline:
+  - `/` slash commands,
+  - teammate `@` mentions,
+  - file uploads and drag/drop,
+  - pending assets,
+  - inline approvals,
+  - active run status,
+  - active run stop,
+  - follow-up guidance while a run is active,
+  - failed-send retry and feedback.
+- Keep channel model picker absent.
+- Keep channel authorization visible and locked while a message/run/guidance action is
+  active.
+
+### Acceptance
+
+- Channel still supports all pre-existing composer capabilities.
+- Channel does not show a model picker or private/direct-only model control.
+- Local user bubbles do not expose stale hover-only topic reply actions; AI replies use
+  the shared `MessageActionBar` reply action.
+- E2E covers mention, slash command, file/link assets, topic reply, and active-run
+  guidance behavior.
+
+## Slice 7: Tokenized Input / Preview / Popover Convergence
+
+Goal: make the three surfaces feel like the same input system while keeping their
+capability policies different.
+
+### Work
+
+- Use `TokenizedComposerInput` for channel, normal conversation, and teammate private
+  chat.
+- Keep parser capability gates:
+  - channel receives teammate mention options,
+  - normal conversation receives no teammate mention options,
+  - teammate private receives no teammate mention options.
+- Route pending attachments, link previews, file refs, upload states, and remove actions
+  through the shared preview strip location.
+- Route slash and mention popovers through shared popover classes and placement rules.
+- Keep surface-owned business state until the behavior is stable enough for adapter
+  extraction.
+
+### Acceptance
+
+- Typing `/` behaves consistently across all three surfaces.
+- Typing `@` opens teammate routing only in channel.
+- Normal/private typed `@name` stays plain text.
+- File and URL chips use the same visual treatment.
+- Popovers share radius, border, shadow, row hover/focus, max height, and keyboard
+  selection behavior.
+
+## Stage 8: Delayed Core Policy / React Package Extraction
+
+Goal: make future Desktop/PC reuse possible without freezing unstable Web assumptions.
+
+Only start this after channel, normal conversation, and teammate private chat all use the
+same Web-local component props and tests have covered the surface differences.
+
+### Work
+
+- Expand `packages/conversation-ui-core` only with stable, app-agnostic policy helpers:
+  - surface capabilities,
+  - permission preset mapping,
+  - action filtering,
+  - explicit active-execution lock derivation.
+- Add pure package tests that assert:
   - private chat cannot enable teammate mentions,
   - private chat cannot enable model picker,
   - channel cannot enable model picker,
   - all three surfaces enable authorization,
   - authorization lock state is derived from explicit active execution state, not from
     route names.
-
-### Acceptance
-
-- `packages/conversation-ui-core` imports no React,
-- Web can use the policy helper without importing app routes,
-- package tests cover the surface capability matrix.
-
-## Slice 7: Optional React Package Extraction
-
-Goal: make future Desktop/PC reuse possible without copying Web conversation UI.
-
-Only start this after channel, normal conversation, and teammate private chat all use the
-same Web-local component props.
-
-### Work
-
-- Move app-agnostic React primitives into a future `packages/conversation-ui-react`:
+- Consider a future `packages/conversation-ui-react` only after Web props stabilize:
   - `ConversationComposer`,
   - `ConversationComposerShell`,
   - `ConversationComposerToolbar`,
   - `ComposerPermissionMenu`,
   - message/action/source primitives only after their props are stable.
-- Keep Web adapters, daemon calls, i18n wiring, route navigation, and provider fetching in
-  Web.
 
 ### Acceptance
 
-- fixture transcript/composer props can render in isolation,
-- package imports do not reach into `apps/web/src/app`, daemon clients, route modules, or
-  workspace domain hooks,
-- Desktop/PC can consume the package with its own adapters.
+- `packages/conversation-ui-core` imports no React.
+- Future React package imports do not reach into `apps/web/src/app`, daemon clients,
+  route modules, or workspace domain hooks.
+- Desktop/PC can consume package APIs with their own adapters.
 
 ## Detailed Type Contract
 
@@ -526,39 +587,46 @@ Surface CSS must not redefine:
 
 ### Channel
 
-- [ ] Wrap existing channel composer in `ConversationComposer`.
-- [ ] Preserve `channelActiveStatusStrip`.
-- [ ] Preserve inline approval strip.
-- [ ] Preserve run guidance strip.
-- [ ] Preserve file upload, drag/drop, and pending assets.
-- [ ] Add four-preset authorization in the shared toolbar.
-- [ ] Lock authorization while a channel run is active.
-- [ ] Preserve mention picker and slash picker.
-- [ ] Preserve active run stop/follow-up behavior.
-- [ ] Remove channel-only composer visual styles after parity.
+- [x] Wrap existing channel composer in `ConversationComposerShell`.
+- [x] Preserve `channelActiveStatusStrip`.
+- [x] Preserve inline approval strip.
+- [x] Preserve run guidance strip.
+- [x] Preserve file upload, drag/drop, and pending assets.
+- [x] Add four-preset authorization in the shared toolbar.
+- [x] Lock authorization while a channel run is active.
+- [x] Preserve mention picker and slash picker.
+- [x] Preserve active run stop/follow-up behavior.
+- [x] Reduce channel-only composer visual styles to placement and channel-specific
+  behavior compatibility.
 
 ### Normal Conversation
 
-- [ ] Replace textarea with tokenized input.
-- [ ] Reuse shared preview strip for file refs/attachments.
-- [ ] Move four-preset authorization into shared toolbar.
-- [ ] Lock authorization while message send/run is active.
-- [ ] Move model/thinking picker into shared right toolbar.
-- [ ] Keep floating shadow visual through shared density.
-- [ ] Ensure no mention button or mention picker.
-- [ ] Ensure model selection still affects send payload.
+- [x] Replace textarea with tokenized input.
+- [x] Reuse shared preview strip for file attachments.
+- [x] Move four-preset authorization into shared toolbar.
+- [x] Lock authorization while message send/run is active.
+- [x] Move model/thinking picker into shared right toolbar.
+- [x] Keep floating shadow visual through shared density.
+- [x] Ensure no mention button or mention picker.
+- [x] Ensure model selection still affects send payload.
+- [x] Add conversation-scoped attachment upload, stream payload, preview/content/delete,
+  and transcript replay.
 
 ### Teammate Private Chat
 
-- [ ] Replace `MessageComposer` usage with `ConversationComposer`.
-- [ ] Reuse shared preview strip for private attachments/link previews/file refs.
-- [ ] Add four-preset authorization control.
-- [ ] Lock authorization while direct reply is active.
-- [ ] Keep model picker absent.
-- [ ] Optionally show read-only effective teammate provider/model status.
-- [ ] Preserve direct guidance strip and stop state.
-- [ ] Ensure no mention button or mention picker.
-- [ ] Ensure private-scoped attachments and file refs stay private.
+- [x] Replace `MessageComposer` usage with `ConversationComposerShell`.
+- [x] Reuse shared preview strip for private attachments/link previews/file refs.
+- [x] Add four-preset authorization control.
+- [x] Lock authorization while direct reply is active.
+- [x] Keep model picker absent.
+- [x] Preserve direct guidance strip and stop state.
+- [x] Ensure no mention button or mention picker.
+- [x] Ensure private-scoped attachments and file refs stay private.
+
+Deferred:
+
+- Read-only effective teammate provider/model status remains optional and is not required
+  for first parity because private model edits are intentionally blocked in the composer.
 
 ## Regression Tests
 
@@ -611,9 +679,9 @@ Run in this order while implementing:
 
 ```bash
 corepack pnpm --filter @ling-stack/web typecheck
-corepack pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g "composer|mention|slash|active run"
-corepack pnpm --filter @ling-stack/web test:e2e -- app.spec.ts -g "conversation home|recent conversations"
-corepack pnpm --filter @ling-stack/web test:e2e -- teammates.spec.ts -g "private chat|direct guidance|attachments"
+corepack pnpm --dir apps/web exec playwright test e2e/app.spec.ts
+corepack pnpm --dir apps/web exec playwright test e2e/channel.spec.ts -g "channel activity supports mentions, messages, files, links, and topic replies"
+corepack pnpm --dir apps/web exec playwright test e2e/teammates.spec.ts -g "AI teammate private chat exposes direct reply guidance and stop controls"
 git diff --check
 ```
 
@@ -638,21 +706,19 @@ composer renders -> no console error/warn -> no framework overlay
 
 ## Implementation Order Recommendation
 
-1. Land docs and CSS contract.
-2. Extract shared visual shell without changing behavior.
-3. Move normal conversation onto the shared shell.
-4. Move private chat onto the shared shell.
-5. Move channel onto the shared shell while preserving current rich behavior.
-6. Replace normal/private textarea paths with tokenized input.
-7. Consolidate toolbar controls and popovers.
-8. Remove old surface-specific composer styles once E2E proves parity.
-9. Extract pure composer policy to `conversation-ui-core`.
-10. Consider `conversation-ui-react` only after Web props stabilize across all three
-    surfaces.
+1. Audit state sources and produce the implementation checklist.
+2. Extract shared visual shell without changing send behavior.
+3. Move toolbar authorization into the shared shell and lock it during active execution.
+4. Move normal conversation onto the shared shell.
+5. Move teammate private chat onto the shared shell.
+6. Move channel onto the shared shell while preserving current rich behavior.
+7. Converge tokenized input, preview strip, slash/mention popovers, and shared visual
+   classes.
+8. Delay package extraction until Web props stabilize.
 
 The order is intentionally conservative. Channel composer carries the most product
-behavior, so it should not be the first surface rewritten unless the change is only a
-rendering wrapper.
+behavior, so it is not the first behavior-heavy rewrite. Package extraction is also
+delayed because the adapter contracts are still proving themselves in Web.
 
 ## Done Criteria
 
@@ -696,29 +762,49 @@ Completed in the first shared composer slice:
   stay owned by `WorkspaceClientView`.
 - Private chat keeps its private attachment/link/file-ref preview path and direct
   guidance controls while moving off the old generic textarea composer.
+- Normal conversation now has a committed backend attachment scope:
+  `conversation_attachments`, `/conversations/attachments`, `attachmentIds` on
+  `/conversations/stream`, conversation preview scope, and transcript replay of uploaded
+  files.
 - Focused regression tests cover:
   - shared composer rendering and capability differences in normal/channel/private
     surfaces,
+  - normal conversation attachment upload, send, and replay,
   - normal conversation send and recent conversation behavior,
   - private chat attachment and direct guidance behavior,
   - channel slash, mention, failed-send retry, pending-routing send, and active-run
     guidance behavior.
 
+Coverage against the canonical delivery slices:
+
+- Slice 1 is represented by this implementation plan and the current-state anchors.
+- Slices 2 and 3 are implemented with `ConversationComposerShell` and
+  `ComposerPermissionMenu`.
+- Slices 4, 5, and 6 are implemented Web-locally for normal conversation, teammate
+  private chat, and channel.
+- Slice 7 is partially implemented: all three surfaces use tokenized input and shared
+  preview/popover class families, while deeper picker state extraction remains deferred.
+- Stage 8 is intentionally deferred. The existing `conversation-ui-core` package remains
+  pure policy; this slice does not expand it into a React package.
+
 Deferred after this slice:
 
-- Normal conversation still has no committed backend attachment/link-preview contract.
-  The shared shell is ready for `previewNode`, but the payload should not grow until the
-  daemon route supports those fields.
+- Normal conversation link-preview persistence remains deferred. File attachments are
+  implemented; URL previews should get a separate conversation-scoped contract before
+  becoming durable transcript assets.
 - Private chat permission changes are not sent to the daemon yet. Add this only with a
   teammate direct message permission snapshot contract.
 - Shared slash picker state is still surface-owned. Channel keeps the richest picker;
   normal/private currently tokenize commands without sharing the channel picker state
   machine.
+- Strict scope requirements for attachment content/delete endpoints remain deferred for
+  compatibility with existing channel and private attachment links. Conversation preview
+  lookups already support `scope=conversation` plus `threadId`.
 - `conversation-ui-react` extraction remains deferred until the Web-local props have
   stabilized across all three surfaces.
-- Large channel message action tests still need separate synchronization with the newer
-  shared `MessageActionBar` UI. That is outside the composer slice unless the PR also
-  chooses to finish message action migration cleanup.
+- Channel message action tests are synchronized with the newer shared `MessageActionBar`
+  boundary: local user bubbles no longer expose the old hover-only meta reply button,
+  while AI replies expose `Reply in topic` through the shared action bar.
 
 ## Resolved Decisions
 

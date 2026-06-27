@@ -42,6 +42,27 @@ The unified composer is not three skins. It is one visual system with surface po
 The surface decides which controls exist, but spacing, radius, shadow, input behavior,
 pending asset chips, popovers, toolbar layout, and send/stop states stay identical.
 
+## Delivery Slices
+
+The implementation is split into seven product slices plus one delayed packaging stage:
+
+1. Code audit and current-state checklist for channel, normal conversation, and teammate
+   private chat composer state.
+2. Shared composer shell and visual tokens.
+3. Shared toolbar with the four authorization presets.
+4. Normal conversation adapter, including model selection and no teammate mentions.
+5. Teammate private chat adapter, including direct guidance and no model picker.
+6. Channel adapter, preserving the richest `/`, `@`, attachment, approval, active run,
+   stop, and follow-up behavior.
+7. Tokenized input, preview strip, pending assets, slash/mention popovers, and visual
+   parity convergence across all three surfaces.
+8. Delayed extraction stage: expand `conversation-ui-core` only for stable pure policy,
+   then consider a future `conversation-ui-react` package after the Web adapters stop
+   changing.
+
+This order is intentional. Shell and visual parity come before deeper policy extraction,
+and channel moves after normal/private because it carries the largest behavior surface.
+
 ## Complete Component Architecture
 
 The full target is a Conversation UI Kit, not only a shared input box. The kit has three
@@ -120,6 +141,25 @@ teammate settings domains, route modules, or app shell navigation.
 
 Adapters own business state. `ConversationComposer` receives already-resolved props and
 only renders the result.
+
+### Attachment Scope Contract
+
+The shared composer visual system does not mean shared attachment storage. Attachment
+records stay scoped to their surface owner:
+
+| Surface | Attachment owner | Required invariant |
+| --- | --- | --- |
+| Channel | `channel_attachments` | attachment belongs to the current channel/message |
+| Normal conversation | `conversation_attachments` | attachment belongs to the current conversation thread/turn after send |
+| Teammate private chat | teammate private attachments | attachment belongs to the private teammate thread/message |
+
+Normal conversation attachments use their own contract and storage path. They must not
+be faked as channel attachments or teammate private attachments just because the chip UI
+is shared. Preview/content/delete routes may share global attachment endpoints. Preview
+lookups must validate source scope when the caller supplies scope context. The first Web
+slice keeps the existing id-plus-cwd content/delete compatibility for channel and private
+attachments; making content/delete require explicit scope is a separate compatibility
+slice, not part of the composer unification.
 
 ### Full Composer Props Target
 

@@ -42,6 +42,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
+  readonly conversationAttachmentIds?: readonly string[];
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;

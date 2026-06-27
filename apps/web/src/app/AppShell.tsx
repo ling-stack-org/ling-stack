@@ -939,6 +939,7 @@ export function AppShell(): JSX.Element {
       role: message.role,
       authorLabel: message.authorLabel,
       content: message.content,
+      attachments: message.attachments,
       status: message.status,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
@@ -2003,12 +2004,14 @@ export function AppShell(): JSX.Element {
                   defaultProviderPresetId={defaultConversationProviderPresetId}
                   modelOptions={conversationModelOptions}
                   slashCommands={slashCommands}
+                  workspaceCwd={form.cwd}
                   onChooseProjectDirectory={chooseConversationProjectDirectory}
                   sending={conversationStreamBusy}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,
+                      attachmentIds: input.attachmentIds,
                       projectPath: input.project.projectPath,
                       providerPresetId: input.model.providerPresetId || defaultConversationProviderPresetId,
                       thinkingLevel: input.model.thinkingLevel,
@@ -2573,6 +2576,7 @@ function homeMessageFromTranscript(message: ConversationTranscriptMessage): Conv
     role: message.role,
     authorLabel: message.authorLabel,
     content: message.content,
+    attachments: message.attachments,
     status: message.status,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,

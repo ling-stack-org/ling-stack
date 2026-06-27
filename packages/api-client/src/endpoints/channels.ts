@@ -398,9 +398,10 @@ export const channelEndpoints = {
       attachmentId: string,
       options: {
         readonly maxBytes?: number;
-        readonly scope?: "channel" | "teammate_private";
+        readonly scope?: "channel" | "teammate_private" | "conversation";
         readonly channelId?: string;
         readonly teammateId?: string;
+        readonly threadId?: string;
       } = {},
     ): Promise<PreviewContentResponse> {
       return this._get(`/attachments/${encodeURIComponent(attachmentId)}/preview`, {
@@ -409,6 +410,7 @@ export const channelEndpoints = {
         scope: options.scope,
         channelId: options.channelId,
         teammateId: options.teammateId,
+        threadId: options.threadId,
       });
     },
 

@@ -87,6 +87,7 @@ export interface MockState {
   teammateDirectInterventions: MockTeammateDirectIntervention[];
   teammateDirectLinkPreviews: unknown[];
   teammatePrivateAttachments: unknown[];
+  conversationAttachments: unknown[];
   retentionTombstones: unknown[];
   tasks: unknown[];
   runs: MockRun[];
@@ -978,6 +979,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     teammateDirectInterventions: [],
     teammateDirectLinkPreviews: [],
     teammatePrivateAttachments: [],
+    conversationAttachments: [],
     retentionTombstones: [],
     tasks: [
       {
@@ -5420,8 +5422,8 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     const runLink = state.turnRunLinks.find((link) => link.turnId === turn.id);
     const run = runLink ? state.runs.find((item) => item.id === runLink.runId) : undefined;
     return run
-      ? [createMockConversationUserMessage(thread, turn), createMockConversationAssistantMessageFromRun(state, thread, turn, run)]
-      : [createMockConversationUserMessage(thread, turn)];
+      ? [createMockConversationUserMessage(state, thread, turn, run), createMockConversationAssistantMessageFromRun(state, thread, turn, run)]
+      : [createMockConversationUserMessage(state, thread, turn)];
   });
   const latestRun = runs[runs.length - 1];
   const requestSnapshot = isRecord(latestRun?.requestSnapshot) ? latestRun.requestSnapshot : {};
@@ -5442,7 +5444,14 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
   };
 }
 
-function createMockConversationUserMessage(thread: MockLingThread, turn: MockLingTurn): Record<string, unknown> {
+function createMockConversationUserMessage(
+  state: MockState,
+  thread: MockLingThread,
+  turn: MockLingTurn,
+  run?: MockRun,
+  attachments?: readonly Record<string, unknown>[],
+): Record<string, unknown> {
+  const resolvedAttachments = attachments ?? findMockConversationAttachmentsForTurn(state, thread.id, turn.id, run);
   return {
     id: `conversation-user:${turn.id}`,
     role: "user",
@@ -5450,9 +5459,42 @@ function createMockConversationUserMessage(thread: MockLingThread, turn: MockLin
     status: turn.status === "failed" ? "failed" : "succeeded",
     threadId: thread.id,
     turnId: turn.id,
+    attachments: resolvedAttachments,
     createdAt: turn.createdAt,
     updatedAt: turn.updatedAt,
   };
+}
+
+function findMockConversationAttachmentsForTurn(
+  state: MockState,
+  threadId: string,
+  turnId: string,
+  run?: MockRun,
+): Record<string, unknown>[] {
+  const snapshot = isRecord(run?.requestSnapshot) ? run.requestSnapshot : {};
+  const snapshotIds = Array.isArray(snapshot.conversationAttachmentIds)
+    ? snapshot.conversationAttachmentIds.filter((item): item is string => typeof item === "string")
+    : Array.isArray(snapshot.attachmentIds)
+      ? snapshot.attachmentIds.filter((item): item is string => typeof item === "string")
+      : [];
+  return state.conversationAttachments
+    .filter((attachment): attachment is Record<string, unknown> => {
+      if (!isRecord(attachment)) {
+        return false;
+      }
+      if (snapshotIds.length > 0) {
+        return typeof attachment.id === "string" && snapshotIds.includes(attachment.id);
+      }
+      return attachment.threadId === threadId && attachment.turnId === turnId;
+    });
+}
+
+function findMockAttachmentById(state: MockState, attachmentId: string): Record<string, unknown> | undefined {
+  return [
+    ...state.channelAttachments,
+    ...state.teammatePrivateAttachments,
+    ...state.conversationAttachments,
+  ].find((attachment): attachment is Record<string, unknown> => isRecord(attachment) && attachment.id === attachmentId);
 }
 
 function createMockConversationAssistantMessageFromRun(
@@ -9433,11 +9475,47 @@ export async function handleDaemonRoute(
     await route.fulfill({ body: "mock attachment content", contentType: "text/plain" });
     return;
   }
+  const attachmentPreviewMatch = /^\/attachments\/([^/]+)\/preview$/.exec(path);
+  if (attachmentPreviewMatch && request.method() === "GET") {
+    const attachmentId = decodeURIComponent(attachmentPreviewMatch[1]);
+    const attachment = findMockAttachmentById(state, attachmentId);
+    if (!attachment) {
+      await route.fulfill({ status: 404, json: { error: "attachment_not_found" } });
+      return;
+    }
+    const image = typeof attachment.contentType === "string" && attachment.contentType.startsWith("image/");
+    await route.fulfill({
+      json: {
+        ref: {
+          id: attachmentId,
+          source: "attachment",
+          scope: state.conversationAttachments.some((item) => isRecord(item) && item.id === attachmentId)
+            ? "conversation"
+            : state.teammatePrivateAttachments.some((item) => isRecord(item) && item.id === attachmentId)
+              ? "teammate_private"
+              : "channel",
+          label: typeof attachment.fileName === "string" ? attachment.fileName : attachmentId,
+          displayPath: typeof attachment.path === "string" ? attachment.path : undefined,
+          contentType: typeof attachment.contentType === "string" ? attachment.contentType : "text/plain; charset=utf-8",
+          sizeBytes: typeof attachment.sizeBytes === "number" ? attachment.sizeBytes : 0,
+          previewable: true,
+        },
+        kind: image ? "image" : attachment.kind === "json" ? "json" : "plain_text",
+        text: image ? undefined : `mock preview for ${String(attachment.fileName ?? attachmentId)}\n`,
+        imageUrl: image ? `/attachments/${encodeURIComponent(attachmentId)}/content?cwd=${encodeURIComponent(cwd)}` : undefined,
+        truncated: false,
+        sizeBytes: typeof attachment.sizeBytes === "number" ? attachment.sizeBytes : 0,
+        redactionNotes: [],
+      },
+    });
+    return;
+  }
   const attachmentMatch = /^\/attachments\/([^/]+)$/.exec(path);
   if (attachmentMatch && request.method() === "DELETE") {
     const attachmentId = decodeURIComponent(attachmentMatch[1]);
     state.channelAttachments = state.channelAttachments.filter((attachment) => !isRecord(attachment) || attachment.id !== attachmentId);
     state.teammatePrivateAttachments = state.teammatePrivateAttachments.filter((attachment) => !isRecord(attachment) || attachment.id !== attachmentId);
+    state.conversationAttachments = state.conversationAttachments.filter((attachment) => !isRecord(attachment) || attachment.id !== attachmentId);
     state.aiTeammates = state.aiTeammates.map((teammate) =>
       isRecord(teammate) && teammate.avatarImageAttachmentId === attachmentId ? { ...teammate, avatarImageAttachmentId: undefined } : teammate,
     );
@@ -9608,12 +9686,51 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, tasks } });
     return;
   }
+  if (request.method() === "GET" && path === "/conversations/attachments") {
+    const threadId = url.searchParams.get("threadId") ?? undefined;
+    const limit = Number(url.searchParams.get("limit") ?? 100);
+    const attachments = state.conversationAttachments
+      .filter((attachment): attachment is Record<string, unknown> =>
+        isRecord(attachment) && (!threadId || attachment.threadId === threadId)
+      )
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 100);
+    await route.fulfill({ json: { cwd, threadId, attachments } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/conversations/attachments") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const fileName = typeof body.fileName === "string" && body.fileName.trim() ? body.fileName.trim() : "upload.txt";
+    const inferred = inferMockChannelAttachment(fileName);
+    const contentBase64 = typeof body.contentBase64 === "string" ? body.contentBase64 : "";
+    const threadId = typeof body.threadId === "string" && body.threadId.trim() ? body.threadId.trim() : undefined;
+    const attachment = {
+      id: `conv_att_${state.conversationAttachments.length + 1}`,
+      workspaceId: "workspace_default",
+      threadId,
+      kind: inferred.kind,
+      fileName,
+      contentType: typeof body.contentType === "string" && body.contentType.trim() ? body.contentType.trim() : inferred.contentType,
+      sizeBytes: contentBase64.length,
+      path: `conversations/${threadId ?? "pending"}/${fileName}`,
+      createdAt: "2026-05-25T00:18:02.000Z",
+    };
+    state.conversationAttachments.unshift(attachment);
+    await route.fulfill({ status: 201, json: { attachment } });
+    return;
+  }
   if (request.method() === "POST" && path === "/conversations/stream") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const message = typeof body.message === "string" ? body.message.trim() : "";
     const providerPresetId = typeof body.providerPresetId === "string" ? body.providerPresetId.trim() : "";
     const provider = state.providers.find((item) => isRecord(item) && item.id === providerPresetId);
-    if (!message) {
+    const attachmentIds = Array.isArray(body.attachmentIds)
+      ? body.attachmentIds.filter((item): item is string => typeof item === "string")
+      : [];
+    const conversationAttachments = state.conversationAttachments
+      .filter((attachment): attachment is Record<string, unknown> =>
+        isRecord(attachment) && typeof attachment.id === "string" && attachmentIds.includes(attachment.id)
+      );
+    if (!message && conversationAttachments.length === 0) {
       await route.fulfill({ status: 400, json: { error: "message_required", message: "message is required." } });
       return;
     }
@@ -9624,13 +9741,14 @@ export async function handleDaemonRoute(
     const now = new Date(Date.UTC(2026, 4, 25, 1, state.turns.length, 0)).toISOString();
     const requestedThreadId = typeof body.threadId === "string" ? body.threadId : "";
     let thread = requestedThreadId ? state.threads.find((item) => item.id === requestedThreadId && item.kind === "conversation") : undefined;
+    const conversationTitle = summarizeMockConversationTitle(message || conversationAttachments.map((attachment) => String(attachment.fileName ?? "attachment")).join(", "));
     if (!thread) {
       thread = {
         id: `thread_conversation_${state.threads.filter((item) => item.kind === "conversation").length + 1}`,
         workspaceId: "workspace_default",
         kind: "conversation",
         teammateId: "ling_agent",
-        title: summarizeMockConversationTitle(message),
+        title: conversationTitle,
         objective: message,
         status: "open",
         createdAt: now,
@@ -9655,7 +9773,7 @@ export async function handleDaemonRoute(
       threadId: thread.id,
       kind: state.turns.some((item) => item.threadId === thread?.id) ? "manual_followup" : "initial_request",
       status: "succeeded",
-      title: summarizeMockConversationTitle(message),
+      title: conversationTitle,
       userInstruction: message,
       teammateId: "ling_agent",
       activeRunId: undefined,
@@ -9674,7 +9792,7 @@ export async function handleDaemonRoute(
       providerModel: isRecord(provider) && typeof provider.model === "string" ? provider.model : "mock-model",
       taskSnapshot: { id: `conversation:${turnId}`, title: turn.title, prompt: message },
       providerSnapshot: provider,
-      requestSnapshot: body,
+      requestSnapshot: { ...body, conversationAttachmentIds: conversationAttachments.map((attachment) => attachment.id) },
       eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
       threadId: thread.id,
       turnId,
@@ -9686,9 +9804,12 @@ export async function handleDaemonRoute(
     const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en-US"
       ? body.responseLanguage
       : /[\u3400-\u9fff]/u.test(message) ? "zh-CN" : "en-US";
+    const attachmentSummary = conversationAttachments.length > 0
+      ? ` ${conversationAttachments.map((attachment) => String(attachment.fileName ?? "attachment")).join(", ")}`
+      : "";
     const assistantText = responseLanguage === "zh-CN"
-      ? `Ling Agent 回复：${message}`
-      : `Ling Agent response: ${message}`;
+      ? `Ling Agent 回复：${message || "已收到附件"}${attachmentSummary}`
+      : `Ling Agent response: ${message || "Attachment received"}${attachmentSummary}`;
     const event: MockRunEvent = {
       id: `evt_${runId}_assistant`,
       runId,
@@ -9698,6 +9819,12 @@ export async function handleDaemonRoute(
       data: { text: assistantText },
     };
     state.turns.push(turn);
+    state.conversationAttachments = state.conversationAttachments.map((attachment) =>
+      isRecord(attachment) && conversationAttachments.some((item) => item.id === attachment.id)
+        ? { ...attachment, threadId: thread?.id, turnId }
+        : attachment
+    );
+    const boundConversationAttachments = conversationAttachments.map((attachment) => ({ ...attachment, threadId: thread?.id, turnId }));
     state.runs.unshift(run);
     state.turnRunLinks.push({ turnId, runId, attemptNumber: 1, role: "primary", createdAt: now });
     state.eventsByRun[runId] = [
@@ -9722,7 +9849,7 @@ export async function handleDaemonRoute(
       },
     };
     state.threads = state.threads.map((item) => item.id === thread?.id ? thread as MockLingThread : item);
-    const userMessage = createMockConversationUserMessage(thread, turn);
+    const userMessage = createMockConversationUserMessage(state, thread, turn, run, boundConversationAttachments);
     const pendingAssistant = createMockConversationAssistantMessage(thread, turn, run, "", "running", now);
     const assistantMessage = createMockConversationAssistantMessage(thread, turn, run, assistantText, "succeeded", now);
     await route.fulfill({

@@ -28,7 +28,7 @@ export type PreviewContentKind =
 export interface PreviewFileRef {
   readonly id: string;
   readonly source: "attachment" | "artifact";
-  readonly scope: "channel" | "teammate_private" | "run" | "external_work";
+  readonly scope: "channel" | "conversation" | "teammate_private" | "run" | "external_work";
   readonly label: string;
   readonly displayPath?: string;
   readonly contentType?: string;

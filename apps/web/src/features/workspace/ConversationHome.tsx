@@ -10,24 +10,33 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Loader2,
   PackagePlus,
+  Paperclip,
   Plus,
   Presentation,
   Search,
   Table2,
   ThumbsDown,
   ThumbsUp,
+  X,
 } from "lucide-react";
-import { artifactContentUrl } from "../../api.js";
+import { artifactContentUrl, attachmentContentUrl, deleteAttachment, uploadConversationAttachment } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
-import type { ConversationTranscriptStatus, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode } from "../../types.js";
+import type { ConversationAttachment, ConversationTranscriptStatus, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode } from "../../types.js";
 import {
   AvatarInitial,
+  createAttachmentPreviewUrl,
+  createLocalComposerAssetId,
   parseComposerInputParts,
+  pendingAssetLabel,
+  revokePendingAttachmentPreviews,
   TokenizedComposerInput,
+  type PendingAttachmentItem,
   type TokenizedComposerInputHandle,
 } from "../../shared/components/index.js";
 import {
+  ConversationAttachmentStrip,
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationFeed,
@@ -39,7 +48,7 @@ import {
 } from "../../shared/conversation/index.js";
 import { inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
 import { buildConversationWorkCellViewModel, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
-import { loadPreviewContent } from "../../lib/previews.js";
+import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 
 export interface ConversationHomeProjectSelection {
   readonly projectPath?: string;
@@ -68,6 +77,7 @@ export interface ConversationHomeMessage {
   readonly role: "user" | "assistant" | "system";
   readonly authorLabel?: string;
   readonly content: string;
+  readonly attachments?: readonly ConversationAttachment[];
   readonly status?: ConversationTranscriptStatus;
   readonly createdAt: string;
   readonly updatedAt?: string;
@@ -81,6 +91,7 @@ export interface ConversationHomeDetailContext {
 
 export interface ConversationHomeSendInput {
   readonly message: string;
+  readonly attachmentIds: readonly string[];
   readonly project: ConversationHomeProjectSelection;
   readonly model: ConversationHomeModelSelection;
   readonly authorization: {
@@ -107,6 +118,7 @@ export function ConversationHome({
   modelOptions,
   slashCommands,
   onChooseProjectDirectory,
+  workspaceCwd,
   sending = false,
   onOpenRun,
   onSendConversation,
@@ -124,6 +136,7 @@ export function ConversationHome({
   readonly defaultProviderPresetId: string;
   readonly modelOptions: readonly ConversationHomeModelOption[];
   readonly slashCommands: readonly ComposerSlashCommandOption[];
+  readonly workspaceCwd: string;
   readonly onChooseProjectDirectory: () => Promise<ConversationHomeProjectSelection | undefined>;
   readonly sending?: boolean;
   readonly onOpenRun?: (runId: string) => void;
@@ -144,6 +157,7 @@ export function ConversationHome({
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<ProviderThinkingMode>(initialThinkingLevel);
   const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => initialPermissionPreset ?? inferPermissionPreset(initialPermissionMode));
   const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
+  const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<ConversationAttachment>[]>([]);
   const [project, setProject] = useState<ConversationHomeProjectSelection>(() => ({
     projectPath: initialProjectPath.trim() || undefined,
     projectLabel: initialProjectLabel.trim() || undefined,
@@ -152,6 +166,14 @@ export function ConversationHome({
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const thinkingPickerRef = useRef<HTMLDivElement>(null);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
+  const pendingAttachmentsRef = useRef<readonly PendingAttachmentItem<ConversationAttachment>[]>([]);
+  const readyAttachmentIds = useMemo(
+    () => pendingAttachments
+      .filter((item) => item.state === "ready" && item.attachment)
+      .map((item) => item.attachment?.id)
+      .filter((id): id is string => Boolean(id)),
+    [pendingAttachments],
+  );
   const visibleCommands = useMemo(() => slashCommands.slice(0, 4), [slashCommands]);
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
@@ -298,10 +320,22 @@ export function ConversationHome({
     setThinkingMenuOpen(false);
   }, [sendBusy]);
 
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
+
+  useEffect(() => () => {
+    revokePendingAttachmentPreviews(pendingAttachmentsRef.current);
+  }, []);
+
   async function submitDraft(): Promise<void> {
     const trimmedDraft = draft.trim();
-    if (!trimmedDraft) {
+    if (!trimmedDraft && readyAttachmentIds.length === 0) {
       setNotice(t("Type a message before sending."));
+      return;
+    }
+    if (pendingAttachments.some((item) => item.state === "uploading")) {
+      setNotice(t("Wait for attachments to finish uploading."));
       return;
     }
     if (sendBusy) {
@@ -316,21 +350,28 @@ export function ConversationHome({
     const pendingUserMessage: ConversationHomeMessage = {
       id: createConversationHomeMessageId(),
       role: "user",
-      content: trimmedDraft,
+      content: trimmedDraft || t("User attached files."),
+      attachments: pendingAttachments
+        .map((item) => item.attachment)
+        .filter((attachment): attachment is ConversationAttachment => Boolean(attachment)),
       status: "pending",
       createdAt: now,
       updatedAt: now,
     };
+    const pendingAttachmentsSnapshot = pendingAttachments;
+    const readyAttachmentIdsSnapshot = readyAttachmentIds;
     setMessages((current) => [
       ...current,
       pendingUserMessage,
     ]);
     setDraft("");
+    setPendingAttachments([]);
     setNotice("");
     setLocalSending(true);
     try {
       await onSendConversation({
         message: trimmedDraft,
+        attachmentIds: readyAttachmentIdsSnapshot,
         project: project.projectPath ? project : {},
         model: {
           providerPresetId,
@@ -355,6 +396,11 @@ export function ConversationHome({
           }));
         },
       });
+      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
+    } catch (error) {
+      setDraft(trimmedDraft);
+      setPendingAttachments(pendingAttachmentsSnapshot);
+      setNotice(error instanceof Error ? error.message : String(error));
     } finally {
       setLocalSending(false);
     }
@@ -410,6 +456,57 @@ export function ConversationHome({
     }
   }
 
+  async function attachConversationFiles(files: FileList | readonly File[]): Promise<void> {
+    const fileList = Array.from(files);
+    if (fileList.length === 0 || sendBusy) {
+      return;
+    }
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      setNotice(t("Local workspace is not ready."));
+      return;
+    }
+    if (pendingAttachments.length + fileList.length > 10) {
+      setNotice(t("A conversation message can attach at most 10 files."));
+      return;
+    }
+    setNotice("");
+    await Promise.all(fileList.map(async (file) => {
+      const localId = createLocalComposerAssetId("conversation-attachment");
+      const previewUrl = createAttachmentPreviewUrl(file);
+      setPendingAttachments((current) => [
+        ...current,
+        {
+          localId,
+          fileName: file.name,
+          sizeBytes: file.size,
+          state: "uploading",
+          previewUrl,
+        },
+      ]);
+      try {
+        const response = await uploadConversationAttachment(cwd, file, detailContext?.threadId);
+        setPendingAttachments((current) => current.map((item) => item.localId === localId
+          ? { ...item, state: "ready", attachment: response.attachment, deleteOnRemove: true }
+          : item));
+      } catch (error) {
+        setPendingAttachments((current) => current.map((item) => item.localId === localId
+          ? { ...item, state: "failed", error: error instanceof Error ? error.message : String(error) }
+          : item));
+      }
+    }));
+  }
+
+  function removePendingAttachment(localId: string): void {
+    const item = pendingAttachments.find((candidate) => candidate.localId === localId);
+    setPendingAttachments((current) => current.filter((candidate) => candidate.localId !== localId));
+    revokePendingAttachmentPreviews(item ? [item] : []);
+    const cwd = workspaceCwd.trim();
+    if (cwd && item?.attachment && item.deleteOnRemove) {
+      void deleteAttachment(cwd, item.attachment.id).catch(() => undefined);
+    }
+  }
+
   function selectModel(option: ConversationHomeModelOption): void {
     if (sendBusy) {
       return;
@@ -459,8 +556,46 @@ export function ConversationHome({
             />
           </div>
         )}
+        previewNode={pendingAttachments.length > 0 ? (
+          <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
+            {pendingAttachments.map((item) => (
+              <div key={item.localId} className={`composer-preview-card ${item.previewUrl ? "image" : "file"} ${item.state}`}>
+                {item.previewUrl ? (
+                  <img className="composer-preview-thumbnail" src={item.previewUrl} alt={item.fileName} />
+                ) : (
+                  <span className="composer-preview-file-icon" aria-hidden="true">
+                    <FileText size={17} />
+                  </span>
+                )}
+                <span className="composer-preview-body">
+                  <strong title={item.fileName}>{item.fileName}</strong>
+                  <small>{item.error ?? `${t(pendingAssetLabel(item.state))} · ${formatBytes(item.attachment?.sizeBytes ?? item.sizeBytes)}`}</small>
+                </span>
+                {item.state === "uploading" ? <Loader2 className="composer-preview-state-icon spin" size={13} /> : null}
+                <button className="composer-preview-remove" type="button" onClick={() => removePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
         leftToolsNode={(
           <>
+            <label className="icon-button composer-tool-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
+              <Paperclip size={16} />
+              <input
+                type="file"
+                multiple
+                hidden
+                accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+                onChange={(event) => {
+                  if (event.currentTarget.files) {
+                    void attachConversationFiles(event.currentTarget.files);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
+            </label>
             <div
               className="conversation-skill-launcher"
               onMouseEnter={() => setSkillMenuVisible(true)}
@@ -595,7 +730,13 @@ export function ConversationHome({
                 </div>
               ) : null}
             </div>
-            <button className="conversation-home-send" type="button" onClick={() => void submitDraft()} aria-label={t("Send")} disabled={sendBusy}>
+            <button
+              className="conversation-home-send"
+              type="button"
+              onClick={() => void submitDraft()}
+              aria-label={t("Send")}
+              disabled={sendBusy || (!draft.trim() && readyAttachmentIds.length === 0)}
+            >
               <ArrowUp size={17} />
             </button>
           </>
@@ -680,6 +821,28 @@ export function ConversationHome({
                   body={message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
                   bodyCompact
                   bodyStreaming={message.status === "running" || message.status === "pending"}
+                  attachmentsNode={message.attachments && message.attachments.length > 0 ? (
+                    <ConversationAttachmentStrip
+                      attachments={message.attachments.map((attachment) => ({
+                        id: attachment.id,
+                        label: attachment.fileName,
+                        meta: formatBytes(attachment.sizeBytes),
+                        icon: <FileText size={13} />,
+                        href: attachmentContentUrl(attachment, workspaceCwd.trim()),
+                        target: "_blank",
+                        rel: "noreferrer",
+                        previewRequest: attachmentCanPreview(attachment) ? {
+                          source: "attachment",
+                          cwd: workspaceCwd.trim(),
+                          attachmentId: attachment.id,
+                          scope: "conversation",
+                          threadId: message.threadId,
+                          maxBytes: 64_000,
+                        } : undefined,
+                      }))}
+                      loadPreview={loadPreviewContent}
+                    />
+                  ) : null}
                   workCellNode={workCell ? (
                     <ConversationWorkCell
                       model={workCell.model}
@@ -929,4 +1092,14 @@ function formatConversationTimeLabel(value: string): string {
     return "";
   }
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }

@@ -2061,30 +2061,11 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(teammateReplyContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
   await expect(teammateReplyContent).toHaveCSS("padding-top", "0px");
   await page.mouse.move(8, 8);
-  await expect(sentMessage.locator(".message-meta-action")).toHaveCSS("opacity", "0");
-  const replyActionLayout = await sentMessage.evaluate((element) => {
-    const action = element.querySelector(".message-meta-action");
-    const content = element.querySelector(".message-content");
-    if (!action || !content) {
-      return null;
-    }
-    const actionRect = action.getBoundingClientRect();
-    const contentRect = content.getBoundingClientRect();
-    return {
-      actionHeight: actionRect.height,
-      actionRightInset: contentRect.right - actionRect.right,
-    };
-  });
-  expect(replyActionLayout).toEqual({
-    actionHeight: expect.any(Number),
-    actionRightInset: expect.any(Number),
-  });
-  expect(replyActionLayout?.actionHeight).toBeLessThanOrEqual(20);
-  expect(replyActionLayout?.actionRightInset).toBeLessThanOrEqual(12);
-  await sentMessage.hover();
-  await expect(sentMessage.locator(".message-meta-action")).toHaveCSS("opacity", "1");
-  await expect(sentMessage.getByRole("button", { name: "Reply in topic" })).toHaveAttribute("data-tooltip", "Reply in topic");
-  await sentMessage.getByRole("button", { name: "Reply in topic" }).click();
+  await expect(sentMessage.locator(".message-meta-action")).toHaveCount(0);
+  await expect(sentMessage.getByRole("button", { name: "Reply in topic" })).toHaveCount(0);
+  const topicReplyButton = teammateReply.getByRole("button", { name: "Reply in topic" });
+  await expect(topicReplyButton).toHaveAttribute("data-tooltip", "Reply in topic");
+  await topicReplyButton.click();
   const topicPanel = page.getByLabel("Topic replies");
   await expect(topicPanel).toBeVisible();
   await expect(topicPanel).toContainText("收到，我会按频道上下文推进。");

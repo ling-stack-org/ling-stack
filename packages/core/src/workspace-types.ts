@@ -1576,6 +1576,42 @@ export interface ListChannelAttachmentsOptions {
   readonly limit?: number;
 }
 
+export interface ConversationAttachment {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly kind: ChannelAttachmentKind;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly path: string;
+  readonly createdAt: string;
+}
+
+export interface CreateConversationAttachmentInput {
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly kind: ChannelAttachmentKind;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly path: string;
+  readonly createdAt?: string;
+}
+
+export interface ListConversationAttachmentsOptions {
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly limit?: number;
+}
+
+export interface AssignConversationAttachmentInput {
+  readonly attachmentId: string;
+  readonly threadId: string;
+  readonly turnId: string;
+}
+
 export type ChannelLinkPreviewStatus = "ready" | "blocked" | "failed";
 
 export interface ChannelLinkPreview {
@@ -2480,6 +2516,10 @@ export function createChannelExecutionProposalId(): string {
 
 export function createChannelAttachmentId(): string {
   return `att_${randomUUID()}`;
+}
+
+export function createConversationAttachmentId(): string {
+  return `conv_att_${randomUUID()}`;
 }
 
 export function createTeammatePrivateAttachmentId(): string {

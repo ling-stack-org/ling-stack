@@ -137,7 +137,7 @@ import {
   handleGovernanceNotificationRoute,
   parseGovernanceNotificationRoute,
 } from "../features/governance-notifications/routes.js";
-import { handleConversationDetail, handleConversationStream } from "../features/conversations/routes.js";
+import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream } from "../features/conversations/routes.js";
 import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
@@ -782,6 +782,11 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/conversations/attachments") {
+    await handleConversationAttachmentsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/conversations/stream") {
     await handleConversationStream(request, response, config, storeRegistry, async (runRequest, sink) =>
       await executeRunRequest(
@@ -798,7 +803,7 @@ export async function routeRequest(
           controlPlaneEvents,
           startupState,
         },
-      ));
+      ), imageVisionSummarizer);
     return;
   }
 
