@@ -28,10 +28,14 @@ import {
   AvatarInitial,
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
+  filterSlashCommandPickerOptions,
+  findActiveSlashCommand,
+  insertSlashCommandToken,
   parseComposerInputParts,
   pendingAssetLabel,
   revokePendingAttachmentPreviews,
   TokenizedComposerInput,
+  type ActiveSlashCommandPicker,
   type PendingAttachmentItem,
   type TokenizedComposerInputHandle,
 } from "../../shared/components/index.js";
@@ -147,6 +151,8 @@ export function ConversationHome({
   const [messages, setMessages] = useState<readonly ConversationHomeMessage[]>(initialMessages);
   const [localSending, setLocalSending] = useState(false);
   const [notice, setNotice] = useState("");
+  const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [skillMenuVisible, setSkillMenuVisible] = useState(false);
   const [folderMenuOpen, setFolderMenuOpen] = useState(false);
   const [folderPickerBusy, setFolderPickerBusy] = useState(false);
@@ -175,6 +181,10 @@ export function ConversationHome({
     [pendingAttachments],
   );
   const visibleCommands = useMemo(() => slashCommands.slice(0, 4), [slashCommands]);
+  const slashCommandPickerOptions = useMemo(
+    () => filterSlashCommandPickerOptions(slashCommands, slashPicker),
+    [slashCommands, slashPicker],
+  );
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
   const activeModelLabel = activeModelOption ? modelTriggerLabel(activeModelOption) : defaultProviderLabel;
@@ -318,6 +328,8 @@ export function ConversationHome({
     }
     setModelMenuOpen(false);
     setThinkingMenuOpen(false);
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
   }, [sendBusy]);
 
   useEffect(() => {
@@ -366,6 +378,8 @@ export function ConversationHome({
     ]);
     setDraft("");
     setPendingAttachments([]);
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
     setNotice("");
     setLocalSending(true);
     try {
@@ -407,6 +421,29 @@ export function ConversationHome({
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (slashPicker && slashCommandPickerOptions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSlashActiveIndex((current) => (current + 1) % slashCommandPickerOptions.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSlashActiveIndex((current) => (current - 1 + slashCommandPickerOptions.length) % slashCommandPickerOptions.length);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        commitSlashCommand(slashCommandPickerOptions[Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlashPicker(undefined);
+        setSlashActiveIndex(0);
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void submitDraft();
@@ -422,8 +459,40 @@ export function ConversationHome({
       const suffix = current.trim() ? ` ${current.trim()}` : "";
       return `/${command.id}${suffix}`;
     });
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
     setSkillMenuVisible(false);
     setNotice("");
+  }
+
+  function updateSlashPicker(value: string, caret: number): void {
+    setSlashPicker(findActiveSlashCommand(value, caret));
+    setSlashActiveIndex(0);
+  }
+
+  function focusComposerAt(caret: number): void {
+    const focus = (): void => {
+      composerInputRef.current?.focusAt(caret);
+    };
+    focus();
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(focus);
+      return;
+    }
+    globalThis.setTimeout(focus, 0);
+  }
+
+  function commitSlashCommand(option: ComposerSlashCommandOption): void {
+    const composer = composerInputRef.current;
+    const liveValue = draft;
+    const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
+    const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret) ?? findActiveSlashCommand(liveValue, liveValue.length);
+    const inserted = insertSlashCommandToken(liveValue, picker, option.id);
+    setDraft(inserted.value);
+    setNotice("");
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
+    focusComposerAt(inserted.caret);
   }
 
   function handleSkillLauncherBlur(event: FocusEvent<HTMLDivElement>): void {
@@ -544,18 +613,39 @@ export function ConversationHome({
               ref={composerInputRef}
               value={draft}
               parts={composerInputParts}
-              onChange={(value) => {
+              onChange={(value, caret) => {
                 setDraft(value);
                 setNotice("");
+                updateSlashPicker(value, caret);
               }}
               onKeyDown={handleComposerKeyDown}
               onPaste={handleComposerPaste}
-              onSelect={() => undefined}
+              onSelect={updateSlashPicker}
               placeholder={t("Message Ling Stack... (type / for commands)")}
               ariaLabel={t("Conversation message")}
             />
           </div>
         )}
+        slashPickerNode={slashPicker ? (
+          <div className="mention-picker-popover command-picker-popover conversation-composer-popover" role="listbox" aria-label={t("Slash command")}>
+            {slashCommandPickerOptions.length > 0 ? slashCommandPickerOptions.map((option, index) => (
+              <button
+                key={option.id}
+                type="button"
+                role="option"
+                aria-selected={index === Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)}
+                className={index === Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1) ? "mention-suggestion command active" : "mention-suggestion command"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => commitSlashCommand(option)}
+              >
+                <span>/{option.id}</span>
+                <small>{option.label}</small>
+              </button>
+            )) : (
+              <span className="mention-suggestion empty">{t("No matching commands")}</span>
+            )}
+          </div>
+        ) : null}
         previewNode={pendingAttachments.length > 0 ? (
           <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
             {pendingAttachments.map((item) => (

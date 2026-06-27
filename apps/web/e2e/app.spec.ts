@@ -294,8 +294,14 @@ test("conversation home skill popover opens only from plus hover or focus", asyn
   const firstSkill = popover.locator(".conversation-skill-list button").first();
   const commandText = await firstSkill.locator("span").innerText();
   await firstSkill.click();
-  await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", commandText);
+  const conversationInput = home.getByRole("textbox", { name: "Conversation message" });
+  await expect(conversationInput).toHaveAttribute("data-value", commandText);
   await expect(page.locator(".conversation-skill-popover")).toHaveCount(0);
+
+  await conversationInput.fill("/rev");
+  await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
+  await page.getByRole("option", { name: /^\/review\b/ }).click();
+  await expect(conversationInput).toHaveAttribute("data-value", "/review ");
 });
 
 test("conversation home folder picker stores selected project paths on conversations", async ({ page }) => {

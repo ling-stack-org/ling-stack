@@ -762,6 +762,10 @@ Completed in the first shared composer slice:
   stay owned by `WorkspaceClientView`.
 - Private chat keeps its private attachment/link/file-ref preview path and direct
   guidance controls while moving off the old generic textarea composer.
+- Slash picker detection, filtering, and token insertion now use a shared helper across
+  channel, normal conversation, and teammate private chat. Each surface still owns its
+  local picker state so channel routing and private direct guidance do not leak into a
+  premature global state machine.
 - Normal conversation now has a committed backend attachment scope:
   `conversation_attachments`, `/conversations/attachments`, `attachmentIds` on
   `/conversations/stream`, conversation preview scope, and transcript replay of uploaded
@@ -782,8 +786,9 @@ Coverage against the canonical delivery slices:
   `ComposerPermissionMenu`.
 - Slices 4, 5, and 6 are implemented Web-locally for normal conversation, teammate
   private chat, and channel.
-- Slice 7 is partially implemented: all three surfaces use tokenized input and shared
-  preview/popover class families, while deeper picker state extraction remains deferred.
+- Slice 7 is implemented for Web-local parity: all three surfaces use tokenized input
+  and shared preview/popover class families, and slash command picker behavior is shared
+  through helper functions while picker state remains surface-owned.
 - Stage 8 is intentionally deferred. The existing `conversation-ui-core` package remains
   pure policy; this slice does not expand it into a React package.
 
@@ -794,9 +799,9 @@ Deferred after this slice:
   becoming durable transcript assets.
 - Private chat permission changes are not sent to the daemon yet. Add this only with a
   teammate direct message permission snapshot contract.
-- Shared slash picker state is still surface-owned. Channel keeps the richest picker;
-  normal/private currently tokenize commands without sharing the channel picker state
-  machine.
+- Global slash picker state extraction remains deferred. Channel, normal conversation,
+  and private chat share command matching/filtering/insertion helpers, but keep separate
+  picker state because their execution contexts differ.
 - Strict scope requirements for attachment content/delete endpoints remain deferred for
   compatibility with existing channel and private attachment links. Conversation preview
   lookups already support `scope=conversation` plus `threadId`.

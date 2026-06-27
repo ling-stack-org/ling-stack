@@ -161,7 +161,10 @@ import {
   composerWorkspaceFileParts,
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
+  filterSlashCommandPickerOptions,
   filterUsedMemoryEventsByResponse,
+  findActiveSlashCommand,
+  insertSlashCommandToken,
   parseComposerInputParts,
   parseComposerSlashIntent,
   pendingAssetLabel,
@@ -169,6 +172,7 @@ import {
   revokePendingAttachmentPreview,
   revokePendingAttachmentPreviews,
   serializeComposerInputParts,
+  type ActiveSlashCommandPicker,
   type ComposerSlashIntent,
   type TokenizedComposerInputHandle,
   type PendingAssetState,
@@ -373,12 +377,6 @@ interface ChannelComposerSnapshot {
 }
 
 interface ActiveMentionPicker {
-  readonly query: string;
-  readonly start: number;
-  readonly end: number;
-}
-
-interface ActiveSlashCommandPicker {
   readonly query: string;
   readonly start: number;
   readonly end: number;
@@ -3523,20 +3521,7 @@ export function WorkspaceClientView({
     [mentionPicker, teammateOptions],
   );
   const slashCommandPickerOptions = useMemo(
-    () => {
-      if (!slashPicker) {
-        return [];
-      }
-      const query = slashPicker.query.trim().toLowerCase();
-      return slashCommands
-        .filter((option) => {
-          if (!query) {
-            return true;
-          }
-          return option.id.toLowerCase().includes(query) || option.label.toLowerCase().includes(query);
-        })
-        .slice(0, 8);
-    },
+    () => filterSlashCommandPickerOptions(slashCommands, slashPicker),
     [slashCommands, slashPicker],
   );
   const localTeammateById = useMemo(
@@ -12128,36 +12113,6 @@ function findActiveMention(value: string, caret: number): ActiveMentionPicker | 
   };
 }
 
-function findActiveSlashCommand(
-  value: string,
-  caret: number,
-): ActiveSlashCommandPicker | undefined {
-  const beforeCaret = value.slice(0, caret);
-  const match = /(^|[\s([{])\/([A-Za-z0-9_.-]{0,48})$/.exec(beforeCaret);
-  if (!match) {
-    return undefined;
-  }
-  const slashStart = beforeCaret.length - (match[2]?.length ?? 0) - 1;
-  if (!slashCommandCanOpenAt(value, slashStart)) {
-    return undefined;
-  }
-  return {
-    query: match[2] ?? "",
-    start: slashStart,
-    end: caret,
-  };
-}
-
-function slashCommandCanOpenAt(
-  value: string,
-  slashStart: number,
-): boolean {
-  if (slashStart === 0) {
-    return true;
-  }
-  return !/[/:]/u.test(value.slice(0, slashStart).trimEnd().at(-1) ?? "");
-}
-
 function insertMentionToken(value: string, picker: ActiveMentionPicker | undefined, label: string): { readonly value: string; readonly caret: number } {
   const start = Math.max(0, Math.min(picker?.start ?? value.length, value.length));
   const end = Math.max(start, Math.min(picker?.end ?? value.length, value.length));
@@ -12167,18 +12122,6 @@ function insertMentionToken(value: string, picker: ActiveMentionPicker | undefin
   return {
     value: `${prefix}${mention}${suffix ? ` ${suffix}` : " "}`,
     caret: prefix.length + mention.length + 1,
-  };
-}
-
-function insertSlashCommandToken(value: string, picker: ActiveSlashCommandPicker | undefined, commandId: string): { readonly value: string; readonly caret: number } {
-  const start = Math.max(0, Math.min(picker?.start ?? value.length, value.length));
-  const end = Math.max(start, Math.min(picker?.end ?? value.length, value.length));
-  const prefix = value.slice(0, start);
-  const suffix = value.slice(end).replace(/^\s+/, "");
-  const command = `/${commandId}`;
-  return {
-    value: `${prefix}${command}${suffix ? ` ${suffix}` : " "}`,
-    caret: prefix.length + command.length + 1,
   };
 }
 

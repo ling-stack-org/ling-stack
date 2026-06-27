@@ -307,10 +307,15 @@ export function TeammateWorkspace({
   const memoryById = useMemo(() => new Map(memoryObjects.map((memory) => [memory.id, memory])), [memoryObjects]);
   const privateAttachmentById = useMemo(() => new Map(privateAttachments.map((attachment) => [attachment.id, attachment])), [privateAttachments]);
   const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
+  const privateSlashCommands = useMemo(
+    () => effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
+    [effectiveSkills],
+  );
   const composerInputParts = parseComposerInputParts(messageDraft, {
     cwd: cwd.trim(),
     attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
     skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
+    slashCommands: privateSlashCommands,
   });
   const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
   const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
@@ -1984,6 +1989,7 @@ export function TeammateWorkspace({
           uploadingAttachments={uploadingAttachments}
           pendingAttachments={pendingAttachments}
           pendingDirectLinkPreviews={pendingDirectLinkPreviews}
+          slashCommands={privateSlashCommands}
           composerInputParts={composerInputParts}
           composerFileReferenceParts={composerFileReferenceParts}
           composerFileReferenceTokens={composerFileReferenceTokens}
