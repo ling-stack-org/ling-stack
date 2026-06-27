@@ -42,7 +42,7 @@ export function MessageEvidencePanel({
     <ConversationEvidenceBundlePanel
       label={t("Message evidence")}
       bundle={{
-        summary: summarizeMessageEvidence(Boolean(memoryContent), webEvidence, t),
+        summary: messageEvidenceSummary(Boolean(memoryContent), webEvidence, t),
         sections,
       }}
       defaultOpen={resolvedDefaultOpen}
@@ -160,28 +160,53 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
   return sections;
 }
 
-function summarizeMessageEvidence(hasMemory: boolean, webEvidence: MessageWebEvidence | undefined, t: Translate): string {
-  const parts: string[] = [];
+function messageEvidenceSummary(hasMemory: boolean, webEvidence: MessageWebEvidence | undefined, t: Translate): ReactNode {
+  const parts: ReactNode[] = [];
   if (hasMemory) {
-    parts.push(t("Used memory"));
+    parts.push(<span key="memory">{t("Used memory")}</span>);
   }
-  if (webEvidence) {
-    const webParts: string[] = [];
-    if (webEvidence.query || webEvidence.reason || webEvidence.sources.length > 0 || webEvidence.queries?.length) {
-      if (webEvidence.status === "blocked") {
-        webParts.push(webEvidence.reason ? `web_search blocked: ${shortReason(webEvidence.reason)}` : "web_search blocked");
-      } else if (webEvidence.status === "degraded") {
-        webParts.push(webEvidence.reason ? `web_search degraded: ${shortReason(webEvidence.reason)}` : "web_search degraded");
-      } else {
-        webParts.push(`web_search ${webEvidence.sources.length} sources`);
-      }
-    }
-    if (webEvidence.readUrls.length > 0) {
-      webParts.push(`open_url ${webEvidence.readUrls.length} URLs`);
-    }
-    parts.push(webParts.join(" / ") || "web evidence");
+  const webSummary = webEvidence ? webEvidenceSummaryNode(webEvidence, t) : undefined;
+  if (webSummary) {
+    parts.push(webSummary);
   }
-  return parts.join(" · ");
+  if (parts.length === 0) {
+    return "";
+  }
+  return (
+    <span className="message-evidence-summary">
+      {parts.map((part, index) => (
+        <span key={index} className="message-evidence-summary-part">
+          {index > 0 ? <span className="message-evidence-summary-separator" aria-hidden="true">·</span> : null}
+          {part}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function webEvidenceSummaryNode(webEvidence: MessageWebEvidence, t: Translate): ReactNode {
+  const fallback = webEvidenceSummaryText(webEvidence, t);
+  if (webEvidence.status === "available" && webEvidence.sources.length > 0) {
+    return <WebSourceIconStack sources={webEvidence.sources} label={fallback} />;
+  }
+  return <WebEvidenceStatusIcon webEvidence={webEvidence} label={fallback} />;
+}
+
+function webEvidenceSummaryText(webEvidence: MessageWebEvidence, t: Translate): string {
+  const webParts: string[] = [];
+  if (webEvidence.query || webEvidence.reason || webEvidence.sources.length > 0 || webEvidence.queries?.length) {
+    if (webEvidence.status === "blocked") {
+      webParts.push(webEvidence.reason ? `web_search blocked: ${shortReason(webEvidence.reason)}` : "web_search blocked");
+    } else if (webEvidence.status === "degraded") {
+      webParts.push(webEvidence.reason ? `web_search degraded: ${shortReason(webEvidence.reason)}` : "web_search degraded");
+    } else {
+      webParts.push(`web_search ${t("{count} sources", { count: webEvidence.sources.length })}`);
+    }
+  }
+  if (webEvidence.readUrls.length > 0) {
+    webParts.push(`open_url ${webEvidence.readUrls.length} URLs`);
+  }
+  return webParts.join(" / ") || "web evidence";
 }
 
 function webEvidenceSearchSummary(webEvidence: MessageWebEvidence, t: Translate): string {
@@ -196,6 +221,53 @@ function webEvidenceSearchSummary(webEvidence: MessageWebEvidence, t: Translate)
 
 function shouldOpenMessageEvidenceByDefault(webEvidence: MessageWebEvidence | undefined): boolean {
   return webEvidence?.status === "blocked" || webEvidence?.status === "degraded";
+}
+
+function WebSourceIconStack({
+  sources,
+  label,
+}: {
+  readonly sources: MessageWebEvidence["sources"];
+  readonly label: string;
+}): JSX.Element {
+  const visibleSources = sources.slice(0, 4);
+  const overflowCount = sources.length - visibleSources.length;
+  return (
+    <span className="message-evidence-source-stack" title={label} aria-label={label}>
+      {visibleSources.map((source, index) => {
+        const host = sourceHost(source.url);
+        return (
+          <span
+            key={`${index}-${source.url}`}
+            className={`message-evidence-source-icon tone-${index % 5}`}
+            title={source.title ? `${source.title} · ${host}` : host}
+            aria-hidden="true"
+          >
+            <Globe2 size={15} strokeWidth={1.9} />
+          </span>
+        );
+      })}
+      {overflowCount > 0 ? (
+        <span className="message-evidence-source-overflow" aria-hidden="true">
+          +{overflowCount}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function WebEvidenceStatusIcon({
+  webEvidence,
+  label,
+}: {
+  readonly webEvidence: MessageWebEvidence;
+  readonly label: string;
+}): JSX.Element {
+  return (
+    <span className={`message-evidence-web-status ${webEvidence.status}`} title={label} aria-label={label}>
+      {webEvidence.status === "available" ? <Search size={12} /> : <ShieldAlert size={12} />}
+    </span>
+  );
 }
 
 function shortReason(value: string): string {

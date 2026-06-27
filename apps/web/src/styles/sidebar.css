@@ -128,12 +128,12 @@
   grid-template-columns: 14px max-content;
   align-items: center;
   justify-content: center;
-  justify-self: start;
+  justify-self: stretch;
   gap: 5px;
-  width: 148px;
+  width: 100%;
   min-width: 0;
-  min-height: 26px;
-  margin-left: 34px;
+  min-height: 32px;
+  margin-left: 0;
   padding: 0 10px;
   border: 1px solid var(--accent-strong);
   border-radius: 6px;

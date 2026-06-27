@@ -44,6 +44,8 @@ import {
   Square,
   SquareTerminal,
   Trash2,
+  ThumbsDown,
+  ThumbsUp,
   UserPlus,
   UsersRound,
   Workflow,
@@ -1219,6 +1221,7 @@ export function WorkspaceClientView({
   const [channelTeamMetricsLoading, setChannelTeamMetricsLoading] = useState(false);
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
   const [channelTeamMetricsRefreshKey, setChannelTeamMetricsRefreshKey] = useState(0);
+  const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
@@ -3556,6 +3559,29 @@ export function WorkspaceClientView({
     },
     [channelTeammateMemberships, localTeammateById],
   );
+  const visibleChannelHeaderTeammates = useMemo(
+    () => channelTeammates.filter(({ teammate }) => !teammate.hidden),
+    [channelTeammates],
+  );
+  const channelExpertTeammateByKey = useMemo(
+    () => {
+      const map = new Map<string, LocalTeammateDraft>();
+      for (const { teammate } of channelTeammates) {
+        indexChannelExpertTeammate(map, teammate);
+      }
+      for (const teammate of localTeammates) {
+        indexChannelExpertTeammate(map, teammate);
+      }
+      return map;
+    },
+    [channelTeammates, localTeammates],
+  );
+  const channelHeaderTeammates = useMemo(
+    () => visibleChannelHeaderTeammates.slice(0, 4),
+    [visibleChannelHeaderTeammates],
+  );
+  const channelHeaderTeammateCount = visibleChannelHeaderTeammates.length;
+  const channelHeaderTeammateOverflow = Math.max(0, channelHeaderTeammateCount - channelHeaderTeammates.length);
   const availableChannelTeammates = useMemo(
     () => activeLocalTeammates.filter((teammate) => teammate.id !== LING_AGENT_AUTHOR_ID && !teammate.hidden && !channelTeammateIds.has(teammate.id)),
     [activeLocalTeammates, channelTeammateIds],
@@ -4634,12 +4660,14 @@ export function WorkspaceClientView({
 
     return (
       <MessageRow
-        className="channel-message-row conversation-turn-assistant-row"
+        className={[
+          "channel-message-row conversation-turn-assistant-row",
+          teamExperts ? "has-team-experts" : "",
+        ].filter(Boolean).join(" ")}
         authorType="ai-teammate"
         avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : <AvatarInitial label="L" tone="violet" />}
         authorName={authorName}
         createdAtLabel={formatDateTime(createdAt)}
-        statusNode={<small className="conversation-message-tag">AI</small>}
         bodyNode={(
           <div className="conversation-turn-assistant-transcript">
             {turn.blocks.map((block) => renderTranscriptBlockFromRegistry(conversationTranscriptBlockRenderers, {
@@ -4647,13 +4675,16 @@ export function WorkspaceClientView({
               block,
               context: transcriptContext,
             }))}
+            {renderChannelAiMessageActions(turn.sourceMessage, copyText)}
             {teamExperts ? (
               <ChannelTeamExpertsSummary
                 experts={teamExperts}
                 expanded={channelTeamExpertsExpanded}
                 onToggleExpanded={() => setChannelTeamExpertsExpanded((current) => !current)}
+                cwd={cwd}
+                resolveExpertTeammate={(agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId))}
                 labels={{
-                  experts: t("Experts"),
+                  experts: t("Teammates"),
                   active: t("active"),
                   done: t("done"),
                   delayed: t("delayed"),
@@ -4663,30 +4694,59 @@ export function WorkspaceClientView({
             ) : null}
           </div>
         )}
-        actionsNode={(
-          <div className="channel-message-row-footer-stack">
-            <MessageFooterActions
-              className="channel-message-row-actions"
-              actions={[
-                {
-                  id: "copy",
-                  label: t("Copy message"),
-                  icon: <Copy size={11} />,
-                  copyText,
-                },
-                {
-                  id: "reply",
-                  label: t("Reply in topic"),
-                  icon: <Reply size={11} />,
-                  className: "message-reply-button message-meta-action",
-                  onClick: () => openThreadForMessage(turn.sourceMessage),
-                },
-              ]}
-            />
-          </div>
-        )}
       />
     );
+  }
+
+  function renderChannelAiMessageActions(message: ChannelMessage, copyText: string): ReactNode {
+    const feedback = channelMessageFeedbackById[message.id];
+    return (
+      <div className="channel-message-row-footer-stack">
+        <MessageFooterActions
+          className="channel-message-ai-actions"
+          actions={[
+            {
+              id: "copy",
+              label: t("Copy message"),
+              icon: <Copy size={14} />,
+              copyText,
+            },
+            {
+              id: "like",
+              label: t("Like response"),
+              icon: <ThumbsUp size={14} />,
+              className: feedback === "up" ? "selected" : "",
+              onClick: () => toggleChannelMessageFeedback(message.id, "up"),
+            },
+            {
+              id: "dislike",
+              label: t("Dislike response"),
+              icon: <ThumbsDown size={14} />,
+              className: feedback === "down" ? "selected" : "",
+              onClick: () => toggleChannelMessageFeedback(message.id, "down"),
+            },
+            {
+              id: "reply",
+              label: t("Reply in topic"),
+              icon: <Reply size={14} />,
+              className: "message-reply-button",
+              onClick: () => openThreadForMessage(message),
+            },
+          ]}
+        />
+      </div>
+    );
+  }
+
+  function toggleChannelMessageFeedback(messageId: string, feedback: "up" | "down"): void {
+    setChannelMessageFeedbackById((current) => {
+      if (current[messageId] === feedback) {
+        const next = { ...current };
+        delete next[messageId];
+        return next;
+      }
+      return { ...current, [messageId]: feedback };
+    });
   }
 
   function renderCoordinatorMessageTranscriptBlock({
@@ -4822,7 +4882,6 @@ export function WorkspaceClientView({
               avatar={renderChannelMessageAvatar(message)}
               authorName={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), localUserDisplayName, allLocalTeammateById)}
               createdAtLabel={formatDateTime(message.createdAt)}
-              statusNode={message.kind === "ai_reply" ? <small className="conversation-message-tag">AI</small> : null}
               bodyNode={(
                 <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                   {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
@@ -4837,28 +4896,7 @@ export function WorkspaceClientView({
                   webEvidence={message.webEvidence}
                 />
               ) : null}
-              actionsNode={(
-                <div className="channel-message-row-footer-stack">
-                  <MessageFooterActions
-                    className="channel-message-row-actions"
-                    actions={[
-                      {
-                        id: "copy",
-                        label: t("Copy message"),
-                        icon: <Copy size={11} />,
-                        copyText: message.body,
-                      },
-                      {
-                        id: "reply",
-                        label: t("Reply in topic"),
-                        icon: <Reply size={11} />,
-                        className: "message-reply-button message-meta-action",
-                        onClick: () => openThreadForMessage(message),
-                      },
-                    ]}
-                  />
-                </div>
-              )}
+              actionsNode={message.authorType === "ai-teammate" ? renderChannelAiMessageActions(message, message.body) : null}
             />
             {executionProposals.map((proposal) => (
               <ChannelExecutionProposalCard
@@ -6097,6 +6135,18 @@ export function WorkspaceClientView({
   ) : null;
   const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !sidePanelOpen && channelHasProgressContent;
 
+  function toggleChannelTeammateManager(): void {
+    const nextOpen = !teammateManagerOpen;
+    setTeammateManagerOpen(nextOpen);
+    if (nextOpen) {
+      setProgressPopoverOpen(false);
+    }
+    setWorkspaceSettingsOpen(false);
+    setActivityToolsOpen(false);
+    setSidePanelOpen(false);
+    onChannelCreateOpenChange(false);
+  }
+
   return (
     <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
       <header className="channel-header task-workbench-header">
@@ -6162,6 +6212,27 @@ export function WorkspaceClientView({
 	          </div>
         </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
+          {channelHeaderTeammateCount > 0 ? (
+            <button
+              ref={teammateManagerButtonRef}
+              className={teammateManagerOpen ? "channel-team-stack-button active" : "channel-team-stack-button"}
+              type="button"
+              aria-expanded={teammateManagerOpen}
+              aria-label={t("{count} channel teammates", { count: channelHeaderTeammateCount })}
+              title={t("{count} channel teammates", { count: channelHeaderTeammateCount })}
+              onClick={toggleChannelTeammateManager}
+              disabled={!selectedChannelId}
+            >
+              <span className="channel-team-stack" aria-hidden="true">
+                {channelHeaderTeammates.map(({ teammate }) => (
+                  <span key={teammate.id} className="channel-team-stack-avatar">
+                    <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
+                  </span>
+                ))}
+                {channelHeaderTeammateOverflow > 0 ? <span className="channel-team-stack-overflow">+{channelHeaderTeammateOverflow}</span> : null}
+              </span>
+            </button>
+          ) : null}
           {governanceNotificationCount > 0 ? (
             <div className="channel-governance-wrap" ref={governanceNotificationsRef}>
               <button
@@ -6200,28 +6271,20 @@ export function WorkspaceClientView({
               ) : null}
             </div>
           ) : null}
-          <button
-            ref={teammateManagerButtonRef}
-            className={teammateManagerOpen ? "icon-button active task-toolbar-teammates" : "icon-button task-toolbar-teammates"}
-            type="button"
-            aria-expanded={teammateManagerOpen}
-            aria-label={t("AI teammate management")}
-            title={t("AI teammate management")}
-            onClick={() => {
-              const nextOpen = !teammateManagerOpen;
-              setTeammateManagerOpen(nextOpen);
-              if (nextOpen) {
-                setProgressPopoverOpen(false);
-              }
-              setWorkspaceSettingsOpen(false);
-              setActivityToolsOpen(false);
-              setSidePanelOpen(false);
-              onChannelCreateOpenChange(false);
-            }}
-            disabled={!selectedChannelId}
-          >
-            <UserPlus size={15} />
-          </button>
+          {channelHeaderTeammateCount === 0 ? (
+            <button
+              ref={teammateManagerButtonRef}
+              className={teammateManagerOpen ? "icon-button active task-toolbar-teammates" : "icon-button task-toolbar-teammates"}
+              type="button"
+              aria-expanded={teammateManagerOpen}
+              aria-label={t("AI teammate management")}
+              title={t("AI teammate management")}
+              onClick={toggleChannelTeammateManager}
+              disabled={!selectedChannelId}
+            >
+              <UserPlus size={15} />
+            </button>
+          ) : null}
           <button
             className={sidePanelOpen && sidePanelView === "settings" ? "icon-button active task-toolbar-settings" : "icon-button task-toolbar-settings"}
             type="button"
@@ -6652,7 +6715,6 @@ export function WorkspaceClientView({
                       onPointerUp={handleMessageFeedPointerEnd}
                       onPointerCancel={handleMessageFeedPointerEnd}
                       onContextMenu={handleMessageFeedContextMenu}
-                      title={t("Conversation shortcuts: Alt+Up/Down moves between blocks. Enter expands evidence. Ctrl/Cmd+Shift+C copies the focused block.")}
                       statusNode={
                         <>
                           {channelActivityTransitionsLoading ? (
@@ -11224,6 +11286,25 @@ function messageAuthorLabel(
 
 const LING_AGENT_AUTHOR_ID = "ling_agent";
 const LING_AGENT_AUTHOR_LABEL = "Ling Agent";
+
+function indexChannelExpertTeammate(map: Map<string, LocalTeammateDraft>, teammate: LocalTeammateDraft): void {
+  const aliases = [
+    teammate.id,
+    teammate.displayName,
+    teammate.roleKey,
+    teammate.systemRole,
+  ];
+  for (const alias of aliases) {
+    const key = normalizeChannelExpertTeammateKey(alias);
+    if (key && !map.has(key)) {
+      map.set(key, teammate);
+    }
+  }
+}
+
+function normalizeChannelExpertTeammateKey(value: string | undefined): string {
+  return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
+}
 
 function teammateLabel(
   teammateId: string | undefined,
