@@ -2399,8 +2399,10 @@ Current MVP implementation status:
   `docs/design/codex-inspired-conversation-v1.md`.
 - [x] Define implementation-level shared component detail in
   `docs/design/codex-inspired-conversation-components-v1.md`.
-- [ ] Consolidate channel and private chat onto shared `MessageRow`,
-  `ConversationFeed`, evidence bundle, and composer geometry.
+- [ ] Consolidate normal conversation, channel, and private chat onto shared `MessageRow`,
+  `ConversationFeed`, evidence bundle, compact work cell, and composer geometry.
+- [ ] Keep private chat one-to-one with the selected teammate: no `@` routing to other
+  teammates inside the private thread.
 - [ ] Render run/thread work as compact summaries with folded memory, skill, tool,
   approval, file, runtime, and lineage evidence.
 - [ ] Add targeted browser checks for left drawer stability, composer width consistency,

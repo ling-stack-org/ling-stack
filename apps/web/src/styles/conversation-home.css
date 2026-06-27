@@ -823,3 +823,77 @@
   background: var(--surface-selected);
   color: var(--text-strong);
 }
+
+.normal-conversation-page {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  padding: 30px 32px 18px;
+  background: var(--app-bg);
+  overflow: hidden;
+}
+
+.normal-conversation-feed {
+  display: grid;
+  align-content: end;
+  gap: 18px;
+  width: min(920px, 100%);
+  min-height: 0;
+  margin: 0 auto;
+  padding: 28px 0 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.normal-conversation-feed::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.normal-conversation-message-row {
+  width: 100%;
+}
+
+.normal-conversation-message-row:not(.local-user) {
+  grid-template-columns: 30px minmax(0, min(720px, 78%));
+}
+
+.normal-conversation-message-row.local-user {
+  grid-template-columns: minmax(0, min(640px, 78%)) 30px;
+}
+
+.normal-conversation-message-row > .message-content {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.normal-conversation-message-row.blocked > .message-content {
+  border-color: var(--warning-border);
+  background: color-mix(in srgb, var(--warning-soft) 44%, var(--surface-panel-strong));
+}
+
+.normal-conversation-composer-stack {
+  display: grid;
+  width: min(920px, 100%);
+  margin: 0 auto;
+}
+
+.normal-conversation-page .conversation-home-composer {
+  width: 100%;
+  margin-top: 0;
+}
+
+.normal-conversation-page .conversation-home-composer-body {
+  min-height: 104px;
+}
+
+.normal-conversation-page .conversation-home-composer textarea {
+  min-height: 104px;
+}
+
+.normal-conversation-page .conversation-folder-row {
+  width: 100%;
+}

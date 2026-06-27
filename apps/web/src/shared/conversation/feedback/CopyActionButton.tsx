@@ -47,6 +47,7 @@ export function CopyActionButton({
       type="button"
       title={currentLabel}
       aria-label={currentLabel}
+      data-tooltip={currentLabel}
       onClick={() => void copyText()}
     >
       {copied ? copiedContent ?? <Check size={iconSize} /> : idleContent ?? <Copy size={iconSize} />}

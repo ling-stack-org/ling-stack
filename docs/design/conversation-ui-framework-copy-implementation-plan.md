@@ -420,13 +420,17 @@ Acceptance:
 
 Type: package extraction and cross-surface reuse.
 
-Goal: let Channel, teammate private chat, and future Desktop/PC render the same
-conversation semantics without duplicating UI logic.
+Goal: let normal conversation, Channel, teammate private chat, run/thread detail, and
+future Desktop/PC render the same conversation semantics without duplicating UI logic.
 
 Current anchors:
 
 - `apps/web/src/shared/conversation/` already acts as a Web-local conversation component
   library.
+- Normal conversation is the page opened after the first home-composer send. The home
+  screen is only the pre-send entry state; after send, the app must switch into the
+  conversation page layout and share message, evidence, work cell, attachment, and composer
+  primitives instead of keeping a hero-form layout after messages exist.
 - `TeammatePrivateChatSurface` already reuses `ConversationShell`,
   `ConversationVirtualFeed`, `MessageBubble`, `ConversationAttachmentStrip`,
   `MessageEvidencePanel`, `MessageFooterActions`, `ConversationGuidanceStrip`, and
@@ -471,7 +475,8 @@ Implementation order:
 
 1. Refactor `apps/web/src/shared/conversation` into internal subfolders:
    `transcript`, `blocks`, `composer`, `preview`, `feedback`, `tokens`, and `fixtures`.
-2. Make channel and private chat consume the same component entrypoints and token names.
+2. Make normal conversation, channel, and private chat consume the same component
+   entrypoints and token names.
 3. Move pure types/helpers into `packages/conversation-ui-core` once both surfaces use
    them.
 4. Move React components into `packages/conversation-ui-react` only after imports are
@@ -481,8 +486,10 @@ Implementation order:
 
 Acceptance:
 
-- Channel and private chat use the same message/body, attachment, action bar, preview,
-  code block, evidence, and composer primitives.
+- Normal conversation, channel, and private chat use the same message/body, attachment,
+  action bar, preview, code block, evidence, compact work cell, and composer primitives.
+- Private chat remains one-to-one with the selected teammate and does not expose `@`
+  routing to other teammates.
 - No channel-only CSS selector is required for a shared conversation component to render.
 - Shared packages do not import daemon/API client or app route modules.
 - Desktop can render fixture transcript data without copying channel Web logic.
@@ -589,6 +596,12 @@ ConversationTurn
     decision_needed?
     final_result?
 
+NormalConversation
+  Created/opened after first home-composer send
+  Conversation page transcript + compact evidence/work blocks
+  Composer anchored to conversation page, not the empty home hero
+  No channel roster, no team activity stream, no topic reply controls
+
 FloatingRunPopover
   Active actor + elapsed + latest action + optional source icons + stop/approval action
 
@@ -602,6 +615,7 @@ Surface ownership:
 
 | Surface | Owns | Must not own |
 | --- | --- | --- |
+| Normal conversation | direct assistant transcript, compact evidence, compact work cells, attachments, approvals when work requires confirmation | channel roster, multi-teammate activity, topic reply controls, raw run logs |
 | Main feed | user text, coordinator narrative, operation rows, agent spans, final result, artifact strip, attachments, links, image thumbnails | raw logs, ids, duplicate side-panel copy |
 | Inline expansion | bounded semantic evidence, operation process detail, agent process history | unbounded stdout, JSON, provider metadata |
 | Floating popover | current active status, one action, compact source icons | transcript, branch history, completed summaries |

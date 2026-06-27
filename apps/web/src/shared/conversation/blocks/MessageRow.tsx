@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 
 export type MessageRowAuthorType = "local-user" | "ai-teammate" | "system";
+export type MessageRowTone = "chat" | "chat-blocked" | "system";
 
 export interface MessageRowProps {
   readonly id?: string;
@@ -10,7 +12,9 @@ export interface MessageRowProps {
   readonly avatar?: ReactNode;
   readonly authorName: string;
   readonly createdAtLabel?: string;
+  readonly tone?: MessageRowTone;
   readonly statusNode?: ReactNode;
+  readonly showOwnAuthor?: boolean;
   readonly body?: string;
   readonly bodyCwd?: string;
   readonly bodyCompact?: boolean;
@@ -29,7 +33,9 @@ export function MessageRow({
   avatar,
   authorName,
   createdAtLabel,
+  tone,
   statusNode,
+  showOwnAuthor = false,
   body,
   bodyCwd,
   bodyCompact,
@@ -42,27 +48,35 @@ export function MessageRow({
 }: MessageRowProps): JSX.Element {
   const ownMessage = authorType === "local-user";
   const legacySideClass = authorType === "local-user" ? "message-bubble-own" : "message-bubble-peer";
-  const legacyToneClass = authorType === "system" ? "message-bubble-system" : "message-bubble-chat";
+  const resolvedTone = tone ?? (authorType === "system" ? "system" : "chat");
+  const legacyToneClass = `message-bubble-${resolvedTone}`;
   const rootClassName = [
     "conversation-message-row",
     "message-bubble",
     "message-bubble-inline",
     legacyToneClass,
     legacySideClass,
+    bodyStreaming ? "message-bubble-pending" : "",
     authorType,
     className,
   ].filter(Boolean).join(" ");
+  const resolvedBodyNode = bodyNode ?? (body ? (
+    <div className={bodyStreaming ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
+      {bodyStreaming ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
+      <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} streaming={bodyStreaming} />
+    </div>
+  ) : null);
 
   return (
     <article id={id} className={rootClassName}>
-      {ownMessage ? (
+      {!ownMessage ? avatar : showOwnAuthor ? (
         <header className="message-row-own-identity">
           <strong>{authorName}</strong>
           {createdAtLabel ? <time>{createdAtLabel}</time> : null}
           {statusNode}
           {avatar}
         </header>
-      ) : avatar}
+      ) : null}
       <div className="message-content">
         {ownMessage ? null : (
           <header>
@@ -71,12 +85,13 @@ export function MessageRow({
             {statusNode}
           </header>
         )}
-        {bodyNode ?? (body ? <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} streaming={bodyStreaming} /> : null)}
+        {resolvedBodyNode}
         {attachmentsNode}
         {evidenceNode}
         {errorNode}
         {actionsNode}
       </div>
+      {ownMessage && !showOwnAuthor ? avatar : null}
     </article>
   );
 }

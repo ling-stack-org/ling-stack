@@ -18,6 +18,43 @@ async function openAiTeammatesFromSettings(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
 }
 
+async function openChannelTeammateManager(page: Page): Promise<void> {
+  await page.locator(".channel-header-actions").getByRole("button", { name: /channel teammates|AI teammate management/ }).click();
+}
+
+async function readMessageFeedEmptyStateVisuals(page: Page, feedLabel: string): Promise<Record<string, string>> {
+  return page.getByLabel(feedLabel).locator(".message-feed-empty-state").evaluate((element) => {
+    const style = getComputedStyle(element);
+    const icon = element.querySelector("svg");
+    const iconStyle = icon ? getComputedStyle(icon) : undefined;
+    return {
+      className: element.className,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      gap: style.gap,
+      minHeight: style.minHeight,
+      iconWidth: iconStyle?.width ?? "",
+      iconHeight: iconStyle?.height ?? "",
+      iconStrokeWidth: iconStyle?.strokeWidth ?? "",
+    };
+  });
+}
+
+async function readMessageFeedEmptyStateGeometry(page: Page, feedLabel: string): Promise<{ deltaX: number; deltaY: number }> {
+  return page.getByLabel(feedLabel).evaluate((feed) => {
+    const emptyState = feed.querySelector<HTMLElement>(".message-feed-empty-state");
+    if (!emptyState) {
+      return { deltaX: Number.NaN, deltaY: Number.NaN };
+    }
+    const feedRect = feed.getBoundingClientRect();
+    const emptyRect = emptyState.getBoundingClientRect();
+    return {
+      deltaX: Math.round((emptyRect.left + emptyRect.width / 2) - (feedRect.left + feedRect.width / 2)),
+      deltaY: Math.round((emptyRect.top + emptyRect.height / 2) - (feedRect.top + feedRect.height / 2)),
+    };
+  });
+}
+
 test("AI teammates page creates a durable teammate and opens its private workspace", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -125,6 +162,34 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   }).toBe("disabled:true");
   await expect(lingEngineerRow).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toContainText("No workspace teammates");
+});
+
+test("channel and private chat empty message states share conversation visuals", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "teammate_empty_private", displayName: "Empty Private" })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  const channelFeed = page.getByLabel("Channel message feed");
+  await expect(channelFeed.getByText("No channel messages yet")).toBeVisible();
+  const channelEmptyVisuals = await readMessageFeedEmptyStateVisuals(page, "Channel message feed");
+  const channelEmptyGeometry = await readMessageFeedEmptyStateGeometry(page, "Channel message feed");
+  expect(Math.abs(channelEmptyGeometry.deltaX)).toBeLessThanOrEqual(1);
+  expect(Math.abs(channelEmptyGeometry.deltaY)).toBeLessThanOrEqual(1);
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Empty Private" }).click();
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  await expect(privateFeed.getByText("No private messages yet")).toBeVisible();
+  const privateEmptyVisuals = await readMessageFeedEmptyStateVisuals(page, "Private message feed");
+  const privateEmptyGeometry = await readMessageFeedEmptyStateGeometry(page, "Private message feed");
+  expect(Math.abs(privateEmptyGeometry.deltaX)).toBeLessThanOrEqual(1);
+  expect(Math.abs(privateEmptyGeometry.deltaY)).toBeLessThanOrEqual(1);
+
+  expect(privateEmptyVisuals).toEqual(channelEmptyVisuals);
 });
 
 test("Ling Agent private chat renders workspace governance digest without source body", async ({ page }) => {
@@ -678,7 +743,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("Private reply: I will refine this into a scoped task.")).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
-  await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
+  await openChannelTeammateManager(page);
   const channelTeammateManager = page.getByLabel("Channel teammates");
   const renamedEngineerChip = channelTeammateManager.locator(".channel-teammate-chip").filter({ hasText: "Renamed Engineer" });
   await expect(renamedEngineerChip).toBeVisible();
@@ -724,7 +789,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(rosterRowWithAvatar.locator(".teammate-avatar-image")).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
-  await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
+  await openChannelTeammateManager(page);
   const channelChipWithAvatar = page.getByLabel("Channel teammates").locator(".channel-teammate-chip").filter({ hasText: "Imported QA Persona" });
   await expect(channelChipWithAvatar.locator(".teammate-avatar-image")).toBeVisible();
   await expect(channelChipWithAvatar).not.toHaveClass(/default/);
@@ -1100,7 +1165,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     "Close only this queued guidance.",
     "Keep this queued guidance.",
   ]);
-  const closeOnlyRow = guidanceAfterCancel.locator(".channel-run-guidance-row").filter({ hasText: "Close only this queued guidance." });
+  const closeOnlyRow = guidanceAfterCancel.locator(".conversation-guidance-row").filter({ hasText: "Close only this queued guidance." });
   await closeOnlyRow.getByRole("button", { name: "更多引导操作" }).click();
   await closeOnlyRow.getByRole("menuitem", { name: "关闭排队" }).click();
   await expect.poll(() => {
@@ -1108,7 +1173,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     const kept = state.teammateDirectInterventions.find((item) => item.instruction === "Keep this queued guidance.");
     return [closed?.status, kept?.status];
   }).toEqual(["cancelled", "queued"]);
-  const keptRow = guidanceAfterCancel.locator(".channel-run-guidance-row").filter({ hasText: "Keep this queued guidance." });
+  const keptRow = guidanceAfterCancel.locator(".conversation-guidance-row").filter({ hasText: "Keep this queued guidance." });
   await expect(keptRow).toBeVisible();
   await expect(keptRow.getByRole("button", { name: "立即执行这条引导" })).toBeVisible();
   await keptRow.getByRole("button", { name: "删除排队引导" }).click();
@@ -1120,7 +1185,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await privateInput.fill("Run this queued guidance immediately.");
   await privateInput.press("Enter");
   await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");
-  await guidanceAfterCancel.locator(".channel-run-guidance-row").filter({ hasText: "Run this queued guidance immediately." }).getByRole("button", { name: "立即执行这条引导" }).click();
+  await guidanceAfterCancel.locator(".conversation-guidance-row").filter({ hasText: "Run this queued guidance immediately." }).getByRole("button", { name: "立即执行这条引导" }).click();
   await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("cancelling_source");
   await expect.poll(() => state.workUnits[0]?.status).toBe("cancelled");
   await expect(page.getByLabel("私聊引导")).toContainText("正在停止");
@@ -1214,7 +1279,7 @@ test("AI teammate private chat queues image attachments in direct guidance", asy
   await privateComposer.locator("textarea").press("Enter");
 
   const guidance = page.getByLabel("正在回复");
-  const queuedRow = guidance.locator(".channel-run-guidance-row").filter({ hasText: "Use this new image before answering." });
+  const queuedRow = guidance.locator(".conversation-guidance-row").filter({ hasText: "Use this new image before answering." });
   await expect(queuedRow).toContainText("queued-shot.png");
   await expect.poll(() => {
     const intervention = state.teammateDirectInterventions.at(-1);
@@ -1271,7 +1336,7 @@ test("AI teammate private chat keeps queued guidance from bypassing into a new m
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
   const guidance = page.getByLabel("私聊引导");
-  const queuedRow = guidance.locator(".channel-run-guidance-row").filter({ hasText: "Use the queued guidance before any new message." });
+  const queuedRow = guidance.locator(".conversation-guidance-row").filter({ hasText: "Use the queued guidance before any new message." });
   await expect(queuedRow).toBeVisible();
   await expect(queuedRow.getByRole("button", { name: "立即执行这条引导" })).toBeVisible();
 

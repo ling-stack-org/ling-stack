@@ -19,6 +19,15 @@ import { useI18n } from "../../i18n.js";
 import type { ConversationTranscriptStatus, PermissionPreset, ProviderThinkingMode, SessionPermissionMode } from "../../types.js";
 import { ConversationAuthorizationMenu } from "./ConversationAuthorizationMenu.js";
 import {
+  AvatarInitial,
+} from "../../shared/components/index.js";
+import {
+  ConversationFeed,
+  ConversationShell,
+  MessageRow,
+  type MessageRowAuthorType,
+} from "../../shared/conversation/index.js";
+import {
   authorizationModeToPermission,
   permissionToAuthorizationMode,
   type ConversationAuthorizationSelection,
@@ -345,6 +354,240 @@ export function ConversationHome({
     setNotice("");
   }
 
+  const composerNode = (
+    <>
+      <div className="conversation-home-composer" aria-label={t("New conversation composer")}>
+        <div className="conversation-home-composer-body">
+          <textarea
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setNotice("");
+            }}
+            onKeyDown={handleComposerKeyDown}
+            placeholder={t("Message Ling Stack... (type / for commands)")}
+            aria-label={t("Conversation message")}
+            rows={3}
+          />
+        </div>
+
+        <div className="conversation-home-toolbar">
+          <div className="conversation-home-tools">
+            <div
+              className="conversation-skill-launcher"
+              onMouseEnter={() => setSkillMenuVisible(true)}
+              onMouseLeave={() => setSkillMenuVisible(false)}
+              onFocus={() => setSkillMenuVisible(true)}
+              onBlur={handleSkillLauncherBlur}
+            >
+              <button
+                type="button"
+                aria-label={t("Skills")}
+                title={t("Skills")}
+                aria-haspopup="listbox"
+                aria-expanded={skillMenuVisible}
+              >
+                <Plus size={15} />
+              </button>
+              {skillMenuVisible ? (
+                <div className="conversation-skill-popover" role="listbox" aria-label={t("Skill menu")}>
+                  <div className="conversation-skill-tabs" aria-hidden="true">
+                    <span>{t("Skills")}</span>
+                    <span>{t("AI teammates")}</span>
+                  </div>
+                  <div className="conversation-skill-list">
+                    {visibleCommands.length > 0 ? visibleCommands.map((command) => (
+                      <button key={command.id} type="button" onClick={() => insertSkill(command)}>
+                        <span>/{command.id}</span>
+                        <small>{command.label}</small>
+                      </button>
+                    )) : (
+                      <span className="conversation-skill-empty">{t("No visible skills")}</span>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <ConversationAuthorizationMenu mode={authorizationMode} onModeChange={setAuthorizationMode} />
+          </div>
+          <div className="conversation-home-right-tools">
+            {thinkingEnabled ? (
+              <div className="conversation-thinking-picker" ref={thinkingPickerRef}>
+                <button
+                  className={thinkingOff ? "conversation-thinking-button off" : "conversation-thinking-button active"}
+                  type="button"
+                  aria-label={t("Selected thinking mode {label}", { label: activeThinkingLabel })}
+                  title={thinkingButtonTitle}
+                  aria-haspopup="listbox"
+                  aria-expanded={thinkingMenuOpen}
+                  onClick={() => setThinkingMenuOpen((current) => !current)}
+                >
+                  <Brain size={15} />
+                  <span>{thinkingButtonLabel}</span>
+                  <ChevronDown className={thinkingMenuOpen ? "expanded" : ""} size={13} />
+                </button>
+                {thinkingMenuOpen ? (
+                  <div className="conversation-thinking-menu" role="listbox" aria-label={t("Thinking mode")}>
+                    {thinkingMenuOptions.map((level) => {
+                      const selected = level === selectedThinkingLevel;
+                      return (
+                        <button
+                          key={level}
+                          className={selected ? "conversation-thinking-option selected" : "conversation-thinking-option"}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => selectThinkingLevel(level)}
+                        >
+                          <span>{thinkingModeLabel(level, t)}</span>
+                          {selected ? <Check size={14} /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="conversation-model-picker" ref={modelPickerRef}>
+              <button
+                className="conversation-model-trigger"
+                type="button"
+                aria-label={t("Selected model {label}", { label: activeModelLabel })}
+                aria-haspopup="listbox"
+                aria-expanded={modelMenuOpen}
+                onClick={() => setModelMenuOpen((current) => !current)}
+              >
+                <span>{activeModelLabel}</span>
+                <ChevronDown className={modelMenuOpen ? "expanded" : ""} size={13} />
+              </button>
+              {modelMenuOpen ? (
+                <div className="conversation-model-menu" role="listbox" aria-label={t("Model options")}>
+                  <label className="conversation-model-search">
+                    <Search size={14} />
+                    <input
+                      value={modelSearch}
+                      onChange={(event) => setModelSearch(event.target.value)}
+                      placeholder={t("Search models")}
+                      aria-label={t("Search models")}
+                      autoFocus
+                    />
+                  </label>
+                  <div className="conversation-model-list">
+                    {visibleModelOptions.length > 0 ? visibleModelOptions.map((option) => {
+                      const selected = option.id === activeProviderPresetId;
+                      return (
+                        <button
+                          key={option.id}
+                          className={selected ? "conversation-model-option selected" : "conversation-model-option"}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => selectModel(option)}
+                        >
+                          <span className="conversation-model-option-copy">
+                            <strong>{modelTriggerLabel(option)}</strong>
+                          </span>
+                          {option.id === defaultProviderPresetId ? <span className="conversation-model-default-chip">{t("Default")}</span> : null}
+                          {selected ? <Check size={14} /> : null}
+                        </button>
+                      );
+                    }) : (
+                      <span className="conversation-model-empty">{t("No matching models")}</span>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <button className="conversation-home-send" type="button" onClick={() => void submitDraft()} aria-label={t("Send")} disabled={sendBusy}>
+              <ArrowUp size={17} />
+            </button>
+          </div>
+        </div>
+        {notice ? <div className="conversation-home-notice" role="status">{notice}</div> : null}
+      </div>
+      <div className="conversation-folder-row">
+        <div className="conversation-folder-picker" ref={folderPickerRef}>
+          <button
+            className="conversation-folder-trigger"
+            type="button"
+            aria-label={effectiveProjectLabel ? t("Selected folder {label}", { label: effectiveProjectLabel }) : t("Select folder")}
+            aria-haspopup="menu"
+            aria-expanded={folderMenuOpen}
+            title={project.projectPath}
+            onClick={() => setFolderMenuOpen((current) => !current)}
+          >
+            <Folder size={16} />
+            <span>{effectiveProjectLabel || t("Select folder")}</span>
+            <ChevronDown className={folderMenuOpen ? "expanded" : ""} size={13} />
+          </button>
+          {folderMenuOpen ? (
+            <div className="conversation-folder-popover" role="menu" aria-label={t("Project folder options")}>
+              {project.projectPath ? (
+                <>
+                  <span className="conversation-folder-section-label">{t("Recent")}</span>
+                  <button
+                    className="conversation-folder-option has-tooltip"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setFolderMenuOpen(false)}
+                  >
+                    <Folder size={15} />
+                    <span className="conversation-folder-option-copy">
+                      <strong>{effectiveProjectLabel}</strong>
+                      <small>{project.projectPath}</small>
+                    </span>
+                    <span className="conversation-folder-tooltip" role="tooltip">{project.projectPath}</span>
+                  </button>
+                </>
+              ) : null}
+              <button
+                className="conversation-folder-option"
+                type="button"
+                role="menuitem"
+                disabled={folderPickerBusy}
+                onClick={() => void chooseNewProject()}
+              >
+                <FolderPlus size={15} />
+                <span>{folderPickerBusy ? t("Selecting project...") : t("Choose new project")}</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+
+  if (messages.length > 0) {
+    return (
+      <ConversationShell
+        className="normal-conversation-page"
+        ariaLabel={t("Conversation page")}
+        feedNode={(
+          <ConversationFeed
+            className="normal-conversation-feed"
+            ariaLabel={t("Conversation messages")}
+            items={messages}
+            emptyLabel={t("No conversation messages yet")}
+            getItemId={(message) => message.id}
+            renderItem={(message) => (
+              <MessageRow
+                className={normalConversationMessageClassName(message)}
+                authorType={conversationMessageAuthorType(message)}
+                avatar={conversationMessageAvatar(message)}
+                authorName={conversationMessageAuthorName(message, t)}
+                createdAtLabel={formatConversationTimeLabel(message.createdAt)}
+                body={message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
+                bodyCompact
+                bodyStreaming={message.status === "running" || message.status === "pending"}
+              />
+            )}
+          />
+        )}
+        composerNode={<div className="normal-conversation-composer-stack">{composerNode}</div>}
+      />
+    );
+  }
+
   return (
     <section className="conversation-home" aria-label={t("Conversation home")}>
       <div className="conversation-home-center">
@@ -356,217 +599,7 @@ export function ConversationHome({
         </div>
         <h1>{t("Ling Stack, make work easier.")}</h1>
 
-        {messages.length > 0 ? (
-          <div className="conversation-home-thread" aria-label={t("Conversation messages")}>
-            {messages.map((message) => (
-              <div key={message.id} className={`conversation-home-message ${message.role} ${message.status ?? ""}`.trim()}>
-                <span>
-                  {message.role === "assistant" && message.authorLabel ? <strong>{conversationAuthorLabel(message.authorLabel, t)}</strong> : null}
-                  {message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        <div className="conversation-home-composer" aria-label={t("New conversation composer")}>
-          <div className="conversation-home-composer-body">
-            <textarea
-              value={draft}
-              onChange={(event) => {
-                setDraft(event.target.value);
-                setNotice("");
-              }}
-              onKeyDown={handleComposerKeyDown}
-              placeholder={t("Message Ling Stack... (type / for commands)")}
-              aria-label={t("Conversation message")}
-              rows={3}
-            />
-          </div>
-
-          <div className="conversation-home-toolbar">
-            <div className="conversation-home-tools">
-              <div
-                className="conversation-skill-launcher"
-                onMouseEnter={() => setSkillMenuVisible(true)}
-                onMouseLeave={() => setSkillMenuVisible(false)}
-                onFocus={() => setSkillMenuVisible(true)}
-                onBlur={handleSkillLauncherBlur}
-              >
-                <button
-                  type="button"
-                  aria-label={t("Skills")}
-                  title={t("Skills")}
-                  aria-haspopup="listbox"
-                  aria-expanded={skillMenuVisible}
-                >
-                  <Plus size={15} />
-                </button>
-                {skillMenuVisible ? (
-                  <div className="conversation-skill-popover" role="listbox" aria-label={t("Skill menu")}>
-                    <div className="conversation-skill-tabs" aria-hidden="true">
-                      <span>{t("Skills")}</span>
-                      <span>{t("AI teammates")}</span>
-                    </div>
-                    <div className="conversation-skill-list">
-                      {visibleCommands.length > 0 ? visibleCommands.map((command) => (
-                        <button key={command.id} type="button" onClick={() => insertSkill(command)}>
-                          <span>/{command.id}</span>
-                          <small>{command.label}</small>
-                        </button>
-                      )) : (
-                        <span className="conversation-skill-empty">{t("No visible skills")}</span>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-              <ConversationAuthorizationMenu mode={authorizationMode} onModeChange={setAuthorizationMode} />
-            </div>
-            <div className="conversation-home-right-tools">
-              {thinkingEnabled ? (
-                <div className="conversation-thinking-picker" ref={thinkingPickerRef}>
-                  <button
-                    className={thinkingOff ? "conversation-thinking-button off" : "conversation-thinking-button active"}
-                    type="button"
-                    aria-label={t("Selected thinking mode {label}", { label: activeThinkingLabel })}
-                    title={thinkingButtonTitle}
-                    aria-haspopup="listbox"
-                    aria-expanded={thinkingMenuOpen}
-                    onClick={() => setThinkingMenuOpen((current) => !current)}
-                  >
-                    <Brain size={15} />
-                    <span>{thinkingButtonLabel}</span>
-                    <ChevronDown className={thinkingMenuOpen ? "expanded" : ""} size={13} />
-                  </button>
-                  {thinkingMenuOpen ? (
-                    <div className="conversation-thinking-menu" role="listbox" aria-label={t("Thinking mode")}>
-                      {thinkingMenuOptions.map((level) => {
-                        const selected = level === selectedThinkingLevel;
-                        return (
-                          <button
-                            key={level}
-                            className={selected ? "conversation-thinking-option selected" : "conversation-thinking-option"}
-                            type="button"
-                            role="option"
-                            aria-selected={selected}
-                            onClick={() => selectThinkingLevel(level)}
-                          >
-                            <span>{thinkingModeLabel(level, t)}</span>
-                            {selected ? <Check size={14} /> : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="conversation-model-picker" ref={modelPickerRef}>
-                <button
-                  className="conversation-model-trigger"
-                  type="button"
-                  aria-label={t("Selected model {label}", { label: activeModelLabel })}
-                  aria-haspopup="listbox"
-                  aria-expanded={modelMenuOpen}
-                  onClick={() => setModelMenuOpen((current) => !current)}
-                >
-                  <span>{activeModelLabel}</span>
-                  <ChevronDown className={modelMenuOpen ? "expanded" : ""} size={13} />
-                </button>
-                {modelMenuOpen ? (
-                  <div className="conversation-model-menu" role="listbox" aria-label={t("Model options")}>
-                    <label className="conversation-model-search">
-                      <Search size={14} />
-                      <input
-                        value={modelSearch}
-                        onChange={(event) => setModelSearch(event.target.value)}
-                        placeholder={t("Search models")}
-                        aria-label={t("Search models")}
-                        autoFocus
-                      />
-                    </label>
-                    <div className="conversation-model-list">
-                      {visibleModelOptions.length > 0 ? visibleModelOptions.map((option) => {
-                        const selected = option.id === activeProviderPresetId;
-                        return (
-                          <button
-                            key={option.id}
-                            className={selected ? "conversation-model-option selected" : "conversation-model-option"}
-                            type="button"
-                            role="option"
-                            aria-selected={selected}
-                            onClick={() => selectModel(option)}
-                          >
-                            <span className="conversation-model-option-copy">
-                              <strong>{modelTriggerLabel(option)}</strong>
-                            </span>
-                            {option.id === defaultProviderPresetId ? <span className="conversation-model-default-chip">{t("Default")}</span> : null}
-                            {selected ? <Check size={14} /> : null}
-                          </button>
-                        );
-                      }) : (
-                        <span className="conversation-model-empty">{t("No matching models")}</span>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-              <button className="conversation-home-send" type="button" onClick={() => void submitDraft()} aria-label={t("Send")} disabled={sendBusy}>
-                <ArrowUp size={17} />
-              </button>
-            </div>
-          </div>
-          {notice ? <div className="conversation-home-notice" role="status">{notice}</div> : null}
-        </div>
-        <div className="conversation-folder-row">
-          <div className="conversation-folder-picker" ref={folderPickerRef}>
-            <button
-              className="conversation-folder-trigger"
-              type="button"
-              aria-label={effectiveProjectLabel ? t("Selected folder {label}", { label: effectiveProjectLabel }) : t("Select folder")}
-              aria-haspopup="menu"
-              aria-expanded={folderMenuOpen}
-              title={project.projectPath}
-              onClick={() => setFolderMenuOpen((current) => !current)}
-            >
-              <Folder size={16} />
-              <span>{effectiveProjectLabel || t("Select folder")}</span>
-              <ChevronDown className={folderMenuOpen ? "expanded" : ""} size={13} />
-            </button>
-            {folderMenuOpen ? (
-              <div className="conversation-folder-popover" role="menu" aria-label={t("Project folder options")}>
-                {project.projectPath ? (
-                  <>
-                    <span className="conversation-folder-section-label">{t("Recent")}</span>
-                    <button
-                      className="conversation-folder-option has-tooltip"
-                      type="button"
-                      role="menuitem"
-                      onClick={() => setFolderMenuOpen(false)}
-                    >
-                      <Folder size={15} />
-                      <span className="conversation-folder-option-copy">
-                        <strong>{effectiveProjectLabel}</strong>
-                        <small>{project.projectPath}</small>
-                      </span>
-                      <span className="conversation-folder-tooltip" role="tooltip">{project.projectPath}</span>
-                    </button>
-                  </>
-                ) : null}
-                <button
-                  className="conversation-folder-option"
-                  type="button"
-                  role="menuitem"
-                  disabled={folderPickerBusy}
-                  onClick={() => void chooseNewProject()}
-                >
-                  <FolderPlus size={15} />
-                  <span>{folderPickerBusy ? t("Selecting project...") : t("Choose new project")}</span>
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
+        {composerNode}
 
         <div className="conversation-home-shortcuts" aria-label={t("Conversation shortcuts")}>
           <button type="button" onClick={() => applyShortcut(t("Create a Team workspace for this project."))}>
@@ -671,4 +704,50 @@ function thinkingModeLabel(mode: ProviderThinkingMode, t: (key: string) => strin
 
 function conversationAuthorLabel(label: string, t: (key: string) => string): string {
   return label === "Ling Agent" ? t("Ling Agent") : label;
+}
+
+function conversationMessageAuthorType(message: ConversationHomeMessage): MessageRowAuthorType {
+  if (message.role === "user") {
+    return "local-user";
+  }
+  if (message.role === "system") {
+    return "system";
+  }
+  return "ai-teammate";
+}
+
+function conversationMessageAuthorName(message: ConversationHomeMessage, t: (key: string) => string): string {
+  if (message.role === "user") {
+    return t("You");
+  }
+  if (message.role === "system") {
+    return t("System");
+  }
+  return conversationAuthorLabel(message.authorLabel || "Ling Agent", t);
+}
+
+function conversationMessageAvatar(message: ConversationHomeMessage): JSX.Element | undefined {
+  if (message.role === "user") {
+    return <AvatarInitial label="Y" tone="default" />;
+  }
+  if (message.role === "system") {
+    return <AvatarInitial label="S" tone="violet" />;
+  }
+  return <AvatarInitial label="L" tone="violet" />;
+}
+
+function normalConversationMessageClassName(message: ConversationHomeMessage): string {
+  return [
+    "channel-message-row",
+    "normal-conversation-message-row",
+    message.status === "blocked" || message.status === "failed" ? "blocked" : "",
+  ].filter(Boolean).join(" ");
+}
+
+function formatConversationTimeLabel(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }

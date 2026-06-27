@@ -4675,7 +4675,6 @@ export function WorkspaceClientView({
               block,
               context: transcriptContext,
             }))}
-            {renderChannelAiMessageActions(turn.sourceMessage, copyText)}
             {teamExperts ? (
               <ChannelTeamExpertsSummary
                 experts={teamExperts}
@@ -4692,6 +4691,7 @@ export function WorkspaceClientView({
                 }}
               />
             ) : null}
+            {renderChannelAiMessageActions(turn.sourceMessage, copyText)}
           </div>
         )}
       />
