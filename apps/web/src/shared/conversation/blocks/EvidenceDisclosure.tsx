@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 export interface EvidenceDisclosureProps {
   readonly className?: string;
   readonly label: string;
-  readonly summary: string;
+  readonly summary: ReactNode;
   readonly defaultOpen?: boolean;
   readonly children: ReactNode;
 }

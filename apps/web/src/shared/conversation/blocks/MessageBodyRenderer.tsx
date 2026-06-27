@@ -85,8 +85,10 @@ function renderInlineTokens(
         return <code key={`code-${index}`} className="message-inline-code">{token.code}</code>;
       case "web_link":
         return (
-          <a key={`link-${index}`} className="message-web-link" href={token.href} target="_blank" rel="noreferrer">
-            {token.label}
+          <a key={`link-${index}`} className="message-web-link" href={token.href} target="_blank" rel="noreferrer" title={token.href}>
+            <span className="message-inline-token-icon" aria-hidden="true">L</span>
+            <strong>{webLinkPrimaryLabel(token)}</strong>
+            {webLinkSecondaryLabel(token) ? <small>{webLinkSecondaryLabel(token)}</small> : null}
           </a>
         );
       case "local_file":
@@ -95,4 +97,30 @@ function renderInlineTokens(
         return token.text;
     }
   });
+}
+
+function webLinkPrimaryLabel(token: Extract<MessageInlineToken, { readonly kind: "web_link" }>): string {
+  const normalizedLabel = token.label.trim();
+  const host = webLinkHost(token.href);
+  if (!normalizedLabel || normalizedLabel === token.href || normalizedLabel.replace(/\/$/u, "") === token.href.replace(/\/$/u, "")) {
+    return host ?? (normalizedLabel || token.href);
+  }
+  return normalizedLabel;
+}
+
+function webLinkSecondaryLabel(token: Extract<MessageInlineToken, { readonly kind: "web_link" }>): string | undefined {
+  const host = webLinkHost(token.href);
+  const primary = webLinkPrimaryLabel(token);
+  if (!host || primary === host) {
+    return undefined;
+  }
+  return host;
+}
+
+function webLinkHost(href: string): string | undefined {
+  try {
+    return new URL(href).hostname.replace(/^www\./iu, "");
+  } catch {
+    return undefined;
+  }
 }

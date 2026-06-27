@@ -21,14 +21,35 @@ export function LocalFileLink({ reference, onOpen }: LocalFileLinkProps): JSX.El
         title={title}
         onClick={() => onOpen(reference)}
       >
-        {reference.displayPath}
+        <span className="message-inline-token-icon" aria-hidden="true">F</span>
+        <strong>{localFilePrimaryLabel(reference)}</strong>
+        {localFileSecondaryLabel(reference) ? <small>{localFileSecondaryLabel(reference)}</small> : null}
       </button>
     );
   }
 
   return (
     <span className={className} title={title}>
-      {reference.displayPath}
+      <span className="message-inline-token-icon" aria-hidden="true">F</span>
+      <strong>{localFilePrimaryLabel(reference)}</strong>
+      {localFileSecondaryLabel(reference) ? <small>{localFileSecondaryLabel(reference)}</small> : null}
     </span>
   );
+}
+
+function localFilePrimaryLabel(reference: LocalFileReference): string {
+  const withoutLocation = reference.displayPath.replace(reference.location ?? "", "");
+  const parts = withoutLocation.split("/").filter(Boolean);
+  return parts.at(-1) ?? (withoutLocation || reference.displayPath);
+}
+
+function localFileSecondaryLabel(reference: LocalFileReference): string | undefined {
+  const location = reference.location;
+  const withoutLocation = reference.displayPath.replace(location ?? "", "");
+  const parts = withoutLocation.split("/").filter(Boolean);
+  const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+  if (location && folder) {
+    return `${folder}${location}`;
+  }
+  return location ?? (folder || undefined);
 }

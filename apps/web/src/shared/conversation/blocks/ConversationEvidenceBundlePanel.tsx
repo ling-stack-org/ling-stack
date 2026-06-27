@@ -21,7 +21,7 @@ export interface ConversationEvidenceSection {
 }
 
 export interface ConversationEvidenceBundle {
-  readonly summary?: string;
+  readonly summary?: ReactNode;
   readonly sections: readonly ConversationEvidenceSection[];
 }
 

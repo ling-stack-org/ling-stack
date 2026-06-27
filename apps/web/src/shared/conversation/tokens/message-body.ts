@@ -176,11 +176,13 @@ export function splitInlineTokens(
       continue;
     }
 
-    const localPath = readLocalPath(remaining, cwd);
-    if (localPath) {
-      tokens.push({ kind: "local_file", reference: localPath.reference });
-      index += localPath.raw.length;
-      continue;
+    if (isLocalPathStartBoundary(text[index - 1])) {
+      const localPath = readLocalPath(remaining, cwd);
+      if (localPath) {
+        tokens.push({ kind: "local_file", reference: localPath.reference });
+        index += localPath.raw.length;
+        continue;
+      }
     }
 
     appendText(text[index] ?? "");
@@ -325,11 +327,11 @@ function readWebLink(text: string): { readonly href: string } | undefined {
 }
 
 function readLocalPath(text: string, cwd?: string): LocalPathMatch | undefined {
-  const startsLikePath = /^(?:~\/|\.{1,2}\/|\/|(?:[A-Za-z0-9_.-]+\/))/.test(text);
+  const startsLikePath = /^(?:~\/|\.{1,2}\/|\/[A-Za-z0-9._~@%+-]|(?:[A-Za-z0-9_.-]+\/))/.test(text);
   if (!startsLikePath) {
     return undefined;
   }
-  const match = /^(?:(?:~\/|\.{1,2}\/|\/)[^\s<>"'`]+|(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.@+-][^\s<>"'`]*)/.exec(text);
+  const match = /^(?:(?:~\/|\.{1,2}\/)[A-Za-z0-9._~@%+/#:-]+|\/[A-Za-z0-9._~@%+-][A-Za-z0-9._~@%+/#:-]*|(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.@+-][A-Za-z0-9._~@%+/#:-]*)/.exec(text);
   if (!match) {
     return undefined;
   }
@@ -341,6 +343,10 @@ function readLocalPath(text: string, cwd?: string): LocalPathMatch | undefined {
     raw,
     reference: parseLocalFileReference(raw, cwd),
   };
+}
+
+function isLocalPathStartBoundary(previous: string | undefined): boolean {
+  return previous === undefined || /\s/.test(previous) || "([{<\"'`|".includes(previous);
 }
 
 function isLikelyLocalPath(value: string): boolean {
