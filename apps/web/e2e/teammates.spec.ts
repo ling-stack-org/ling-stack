@@ -618,11 +618,18 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const privateActions = privateMessageRow.locator(".teammate-message-actions.message-action-bar");
   await expect(privateActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
   await expect(privateActions.locator('[data-tooltip="Create task"]')).toHaveCount(1);
+  await expect(privateActions.locator('[data-tooltip="Like response"]')).toHaveCount(0);
+  await expect(privateActions.locator('[data-tooltip="Dislike response"]')).toHaveCount(0);
   await expect(privateActions.locator('[data-tooltip="Reply in topic"]')).toHaveCount(0);
   const blockedPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "AI teammate is blocked: No provider preset is selected for this teammate." });
   await expect(blockedPrivateRow).toHaveClass(/message-bubble-chat-blocked/);
   await expect(blockedPrivateRow).toHaveClass(/message-bubble-peer/);
   await expect(blockedPrivateRow.locator(".status-badge")).toHaveCount(0);
+  const blockedPrivateActions = blockedPrivateRow.locator(".teammate-message-actions.message-action-bar");
+  await expect(blockedPrivateActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
+  await expect(blockedPrivateActions.locator('[data-tooltip="Like response"]')).toHaveCount(1);
+  await expect(blockedPrivateActions.locator('[data-tooltip="Dislike response"]')).toHaveCount(1);
+  await expect(blockedPrivateActions.locator('[data-tooltip="Reply in topic"]')).toHaveCount(0);
   await expect(page.getByLabel("Conversation context").getByText("Private acceptance memory")).toBeVisible();
   await expect.poll(() => state.teammateDirectMessages.length).toBe(4);
   await expect.poll(() => {
@@ -632,7 +639,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     return isRecord(message) && Array.isArray(message.attachmentIds) ? message.attachmentIds : [];
   }).toEqual(["tpatt_1"]);
 
-  await page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." }).getByRole("button", { name: "Create task" }).click();
+  await privateMessageRow.hover();
+  await privateMessageRow.getByRole("button", { name: "Create task" }).click();
   await expect.poll(() => {
     const created = state.tasks.find((task) =>
       isRecord(task) &&
@@ -1016,7 +1024,7 @@ test("AI teammate private chat previews image attachments and keeps them in mess
     return isRecord(attachment) ? attachment.kind : undefined;
   }).toBe("image");
 
-  const privateInput = privateComposer.locator("textarea");
+  const privateInput = privateComposer.getByRole("textbox");
   await privateInput.fill("Please read this private image.");
   await privateInput.press("Enter");
 
@@ -1174,7 +1182,11 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
   const guidance = page.getByLabel("正在回复");
   const privateComposer = page.locator(".teammate-direct-composer");
-  const privateInput = privateComposer.getByPlaceholder("输入引导，回车加入队列");
+  await expect(privateComposer).toHaveClass(/conversation-composer/);
+  await expect(privateComposer.getByRole("button", { name: /选择的权限预设|Selected permission preset/ })).toBeVisible();
+  await expect(privateComposer.getByRole("button", { name: /选择的模型|Selected model/ })).toHaveCount(0);
+  await expect(privateComposer.getByRole("button", { name: /提及队友|Mention teammate/ })).toHaveCount(0);
+  const privateInput = privateComposer.getByRole("textbox", { name: "输入引导，回车加入队列" });
   await expect(guidance).toBeVisible();
   await expect(guidance.locator("textarea")).toHaveCount(0);
   await expect(privateComposer.getByRole("button", { name: "停止回复" })).toBeEnabled();
@@ -1184,7 +1196,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await expect.poll(() => state.teammateDirectInterventions.map((item) => [item.mode, item.status, item.instruction])).toEqual([
     ["queue_followup", "queued", "Continue with only risks after this reply."],
   ]);
-  await expect(privateInput).toHaveValue("");
+  await expect(privateInput).toHaveAttribute("data-value", "");
   await expect(guidance).toContainText("已排队");
   await expect(guidance.getByRole("button", { name: "立即执行这条引导" })).toBeEnabled();
   await expect(guidance.getByRole("button", { name: "删除排队引导" })).toBeEnabled();
@@ -1192,13 +1204,13 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await expect(guidance.getByRole("menuitem", { name: "编辑消息" })).toBeVisible();
   await expect(guidance.getByRole("menuitem", { name: "关闭排队" })).toBeVisible();
   await guidance.getByRole("menuitem", { name: "编辑消息" }).click();
-  await expect(privateInput).toHaveValue("Continue with only risks after this reply.");
+  await expect(privateInput).toHaveAttribute("data-value", "Continue with only risks after this reply.");
   await expect.poll(() => state.teammateDirectInterventions[0]?.status).toBe("cancelled");
 
   const guidanceAfterCancel = page.getByLabel("正在回复");
   await privateInput.fill("Line one");
   await privateInput.press("Shift+Enter");
-  await expect(privateInput).toHaveValue("Line one\n");
+  await expect(privateInput).toHaveAttribute("data-value", "Line one\n");
   await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").length).toBe(0);
 
   await privateInput.fill("Close only this queued guidance.");
@@ -1206,7 +1218,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").map((item) => item.instruction)).toEqual([
     "Close only this queued guidance.",
   ]);
-  await expect(privateInput).toHaveValue("");
+  await expect(privateInput).toHaveAttribute("data-value", "");
   await privateInput.fill("Keep this queued guidance.");
   await privateInput.press("Enter");
   await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").map((item) => item.instruction)).toEqual([
@@ -1247,12 +1259,12 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await page.reload();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
   const resumedComposer = page.locator(".teammate-direct-composer");
-  const resumedInput = resumedComposer.locator("textarea");
+  const resumedInput = resumedComposer.getByRole("textbox", { name: "输入引导，回车加入队列" });
   await resumedInput.fill("Keep this draft while stopping.");
   await expect(resumedComposer.getByRole("button", { name: "排队执行" })).toBeEnabled();
   await resumedComposer.getByRole("button", { name: "排队执行" }).click();
   await expect.poll(() => state.teammateDirectInterventions.at(-1)?.instruction).toBe("Keep this draft while stopping.");
-  await expect(resumedInput).toHaveValue("");
+  await expect(resumedInput).toHaveAttribute("data-value", "");
   await expect(resumedComposer.getByRole("button", { name: "停止回复" })).toBeEnabled();
 
   await resumedComposer.getByRole("button", { name: "停止回复" }).click();
@@ -1261,7 +1273,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     const message = state.teammateDirectMessages.find((item) => isRecord(item) && item.id === "tdmsg_pending_reply");
     return isRecord(message) ? message.status : undefined;
   }).toBe("cancelled");
-  await expect(resumedInput).toHaveValue("");
+  await expect(resumedInput).toHaveAttribute("data-value", "");
   await expect(page.getByLabel("Private message feed").getByText("回复已停止").first()).toBeVisible();
 });
 
@@ -1323,8 +1335,9 @@ test("AI teammate private chat queues image attachments in direct guidance", asy
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"),
   });
   await expect(privateComposer.locator(".composer-preview-thumbnail[alt='queued-shot.png']")).toBeVisible();
-  await privateComposer.locator("textarea").fill("Use this new image before answering.");
-  await privateComposer.locator("textarea").press("Enter");
+  const privateInput = privateComposer.getByRole("textbox");
+  await privateInput.fill("Use this new image before answering.");
+  await privateInput.press("Enter");
 
   const guidance = page.getByLabel("正在回复");
   const queuedRow = guidance.locator(".conversation-guidance-row").filter({ hasText: "Use this new image before answering." });

@@ -1,6 +1,6 @@
-import type { ClipboardEvent, DragEvent, KeyboardEvent, RefObject, UIEvent } from "react";
+import { useEffect, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
-import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Plus, Square, X } from "lucide-react";
+import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Plus, Send, Square, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import { artifactContentUrl, attachmentContentUrl } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -9,7 +9,6 @@ import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js"
 import {
   AvatarInitial,
   ComposerFileReferenceToken,
-  MessageComposer,
   UsedMemorySummary,
   UserProfileAvatar,
   filterUsedMemoryEventsByResponse,
@@ -18,7 +17,9 @@ import {
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import {
+  ComposerPermissionMenu,
   ConversationAttachmentStrip,
+  ConversationComposerShell,
   ConversationGuidanceStrip,
   ConversationShell,
   ConversationWorkCell,
@@ -27,6 +28,7 @@ import {
   MessageActionBar,
   MessageEvidencePanel,
   MessageRow,
+  TokenizedComposerInput,
 } from "../../shared/conversation/index.js";
 import type {
   AiTeammate,
@@ -39,7 +41,10 @@ import type {
   TeammatePrivateAttachment,
   UsedMemoryEvent,
   UserProfile,
+  PermissionPreset,
+  SessionPermissionMode,
 } from "../../types.js";
+import { inferPermissionPreset } from "../../lib/session-permissions.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import {
   directFileRefLabel,
@@ -86,6 +91,7 @@ export function TeammatePrivateChatSurface({
   uploadingAttachments,
   pendingAttachments,
   pendingDirectLinkPreviews,
+  composerInputParts,
   composerFileReferenceParts,
   composerFileReferenceTokens,
   composerDragActive,
@@ -109,6 +115,8 @@ export function TeammatePrivateChatSurface({
   onRemoveComposerFileReference,
   onRemovePendingLinkPreview,
   onRemovePendingAttachment,
+  defaultPermissionMode,
+  defaultPermissionPreset,
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
@@ -144,6 +152,7 @@ export function TeammatePrivateChatSurface({
   readonly uploadingAttachments: boolean;
   readonly pendingAttachments: readonly PendingAttachmentItem<TeammatePrivateAttachment>[];
   readonly pendingDirectLinkPreviews: readonly TeammateDirectLinkPreview[];
+  readonly composerInputParts: readonly ComposerInputPart[];
   readonly composerFileReferenceParts: readonly ComposerFileReferencePart[];
   readonly composerFileReferenceTokens: readonly {
     readonly part: ComposerFileReferencePart;
@@ -161,8 +170,8 @@ export function TeammatePrivateChatSurface({
   readonly onEditDirectGuidance: (intervention: TeammateDirectReplyIntervention) => void | Promise<void>;
   readonly onMessageDraftChange: (value: string) => void;
   readonly onComposerSubmit: () => void;
-  readonly onComposerKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  readonly onComposerPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
+  readonly onComposerKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  readonly onComposerPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
   readonly onComposerDragOver: (event: DragEvent<HTMLDivElement>) => void;
   readonly onComposerDragLeave: (event: DragEvent<HTMLDivElement>) => void;
   readonly onComposerDrop: (event: DragEvent<HTMLDivElement>) => void;
@@ -170,8 +179,12 @@ export function TeammatePrivateChatSurface({
   readonly onRemoveComposerFileReference: (raw: string, occurrenceIndex: number) => void;
   readonly onRemovePendingLinkPreview: (previewId: string) => void;
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
+  readonly defaultPermissionMode?: SessionPermissionMode;
+  readonly defaultPermissionPreset?: PermissionPreset;
 }): JSX.Element {
   const { t } = useI18n();
+  const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
+  const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const privateWorkCellByMessageId = buildPrivateWorkCellMap({
     messages: visibleMessages,
@@ -179,6 +192,28 @@ export function TeammatePrivateChatSurface({
     runs,
     t,
   });
+  const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
+  const privateComposerCurrentSendIcon = privateComposerSending
+    ? <Loader2 className="spin" size={15} />
+    : directReplyActive && !privateComposerHasGuidancePayload
+      ? <Square size={15} />
+      : <Send size={15} />;
+
+  useEffect(() => {
+    setSelectedPermissionPreset(defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
+  }, [defaultPermissionMode, defaultPermissionPreset]);
+
+  function toggleMessageFeedback(messageId: string, feedback: "up" | "down"): void {
+    setMessageFeedbackById((current) => {
+      if (current[messageId] === feedback) {
+        const next = { ...current };
+        delete next[messageId];
+        return next;
+      }
+      return { ...current, [messageId]: feedback };
+    });
+  }
+
   return (
     <ConversationShell
       className="teammate-private-chat"
@@ -218,6 +253,25 @@ export function TeammatePrivateChatSurface({
                     : message.body;
               const workCell = privateWorkCellByMessageId.get(message.id);
               const workCellRun = workCell ? runs.find((run) => run.id === workCell.model.anchorRunId) : undefined;
+              const messageFeedback = messageFeedbackById[message.id];
+              const feedbackActions = message.authorType === "ai-teammate" ? [
+                {
+                  id: "like",
+                  kind: "like" as const,
+                  label: t("Like response"),
+                  icon: <ThumbsUp size={14} />,
+                  selected: messageFeedback === "up",
+                  onClick: () => toggleMessageFeedback(message.id, "up"),
+                },
+                {
+                  id: "dislike",
+                  kind: "dislike" as const,
+                  label: t("Dislike response"),
+                  icon: <ThumbsDown size={14} />,
+                  selected: messageFeedback === "down",
+                  onClick: () => toggleMessageFeedback(message.id, "down"),
+                },
+              ] : [];
               return (
                 <MessageRow
                   className={`teammate-message-row ${message.authorType}${blockedMessage ? " blocked" : ""}`}
@@ -293,12 +347,12 @@ export function TeammatePrivateChatSurface({
                           icon: <Copy size={14} />,
                           onClick: () => onCopyMessageText(message.body),
                         },
+                        ...feedbackActions,
                         {
                           id: "create-task",
                           kind: "create_task",
                           label: t("Create task"),
                           icon: creatingTask ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
-                          className: "secondary-button compact-button",
                           disabled: creatingTask || taskChannelOptions.length === 0,
                           onClick: () => void onCreateTaskFromMessage(message),
                         },
@@ -367,29 +421,16 @@ export function TeammatePrivateChatSurface({
               })}
             />
           ) : null}
-          <MessageComposer
+          <ConversationComposerShell
+            surface="teammate_direct"
+            density="docked"
             className="teammate-direct-composer"
-            label={t("Private chat composer")}
-            value={messageDraft}
-            rows={3}
-            sending={privateComposerSending}
-            sendDisabled={privateComposerSendDisabled}
-            sendLabel={privateComposerSendLabel}
-            sendingLabel={privateComposerSendingLabel}
-            sendIcon={directReplyActive ? (privateComposerHasGuidancePayload ? undefined : <Square size={15} />) : undefined}
-            attachLabel={uploadingAttachments ? t("Uploading...") : t("Attach files")}
-            accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-            placeholder={privateComposerPlaceholder}
-            onChange={onMessageDraftChange}
-            onSend={onComposerSubmit}
-            onKeyDown={onComposerKeyDown}
-            onPaste={onComposerPaste}
+            ariaLabel={t("Private chat composer")}
+            dropZoneClassName={composerDragActive ? "active" : undefined}
             onDragOver={onComposerDragOver}
             onDragLeave={onComposerDragLeave}
             onDrop={onComposerDrop}
-            onAttachFiles={(files) => void onUploadPrivateFiles(Array.from(files))}
-            dropZoneClassName={composerDragActive ? "active" : undefined}
-            previewContent={pendingAttachments.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
+            previewNode={pendingAttachments.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
               <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
                 {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
                   <ComposerFileReferenceToken
@@ -435,12 +476,62 @@ export function TeammatePrivateChatSurface({
                 ))}
               </div>
             ) : null}
-            overlayContent={composerDragActive ? (
+            inputNode={(
+              <TokenizedComposerInput
+                value={messageDraft}
+                parts={composerInputParts}
+                onChange={(value) => onMessageDraftChange(value)}
+                onKeyDown={onComposerKeyDown}
+                onPaste={onComposerPaste}
+                onSelect={() => undefined}
+                placeholder={privateComposerPlaceholder}
+                ariaLabel={privateComposerPlaceholder}
+              />
+            )}
+            dropHintNode={composerDragActive ? (
               <div className="composer-drop-hint">
                 <FileText size={16} />
                 <span>{t("Drop files to attach")}</span>
               </div>
             ) : null}
+            leftToolsNode={(
+              <>
+                <label className="icon-button composer-tool-button composer-attach-button" aria-label={uploadingAttachments ? t("Uploading...") : t("Attach files")} title={uploadingAttachments ? t("Uploading...") : t("Attach files")}>
+                  <Plus size={17} />
+                  <input
+                    type="file"
+                    multiple
+                    hidden
+                    accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+                    onChange={(event) => {
+                      const files = event.currentTarget.files;
+                      if (files && files.length > 0) {
+                        void onUploadPrivateFiles(Array.from(files));
+                      }
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+                <ComposerPermissionMenu
+                  preset={selectedPermissionPreset}
+                  disabled={permissionLocked}
+                  disabledReason={t("Permission is locked while the private reply is running.")}
+                  onPresetChange={setSelectedPermissionPreset}
+                />
+              </>
+            )}
+            rightToolsNode={(
+              <button
+                className="primary-button composer-send-button"
+                type="button"
+                onClick={onComposerSubmit}
+                disabled={privateComposerSendDisabled || privateComposerSending}
+                aria-label={privateComposerSending ? privateComposerSendingLabel : privateComposerSendLabel}
+                title={privateComposerSending ? privateComposerSendingLabel : privateComposerSendLabel}
+              >
+                {privateComposerCurrentSendIcon}
+              </button>
+            )}
           />
         </>
       )}

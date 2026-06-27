@@ -1,0 +1,581 @@
+# Conversation Composer Unification
+
+Status: active design addendum for shared conversation UI
+Date: 2026-06-28
+Scope: channel composer, normal conversation composer, teammate private chat composer,
+and future Desktop/PC conversation composers
+
+Related docs:
+
+- [Conversation Surface Contract](conversation-surface-contract.md)
+- [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
+- [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
+- [Channel Workspace v1.13 Smart Composer](channel-workspace-v1.13.md)
+- [Multi-Agent Slash Commands](multi-agent-slash-commands.md)
+- [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
+
+## Purpose
+
+The conversation composer must become one shared product surface across channel,
+normal conversation, and teammate private chat.
+
+The current implementation already moved message rows, action bars, source icons,
+teammate stacks, and empty states toward shared primitives. The composer is still split:
+
+- channel owns the richest composer behavior in `WorkspaceClientView`,
+- normal conversation owns a separate floating home composer,
+- private chat uses `MessageComposer`, but with a narrower textarea-based behavior set.
+
+That split makes future work drift. A user should not have to learn three different
+input boxes for the same underlying action: send a message with files, slash commands,
+runtime guidance, and optional approval context.
+
+## Product Decision
+
+Use one shared `ConversationComposer` system.
+
+Behavior should align to the current channel composer because it has the broadest
+functional contract. Visual treatment should align to the normal conversation composer
+because it has the cleaner floating shell, softer border, and better focused input feel.
+
+The unified composer is not three skins. It is one visual system with surface policies.
+The surface decides which controls exist, but spacing, radius, shadow, input behavior,
+pending asset chips, popovers, toolbar layout, and send/stop states stay identical.
+
+## Complete Component Architecture
+
+The full target is a Conversation UI Kit, not only a shared input box. The kit has three
+layers:
+
+```text
+packages/conversation-ui-core/
+  surface-policy.ts
+  composer-policy.ts
+  message-actions.ts
+  permission-types.ts
+
+apps/web/src/shared/conversation/
+  surface/
+    ConversationSurface.tsx
+    ConversationFeed.tsx
+    ConversationEmptyState.tsx
+
+  message/
+    MessageRow.tsx
+    MessageAvatar.tsx
+    MessageActionBar.tsx
+    MessageMeta.tsx
+    MessageBody.tsx
+
+  evidence/
+    EvidenceBundle.tsx
+    SourceIconStack.tsx
+    WorkCell.tsx
+    FileReferenceBlock.tsx
+
+  composer/
+    ConversationComposer.tsx
+    ConversationComposerShell.tsx
+    TokenizedComposerInput.tsx
+    ComposerToolbar.tsx
+    ComposerPermissionMenu.tsx
+    ComposerPreviewStrip.tsx
+    ComposerStatusStrip.tsx
+    ComposerPopoverLayer.tsx
+    composer-types.ts
+    composer-policy.ts
+```
+
+The first implementation can remain Web-local, but the component boundaries should match
+this target so the later `packages/conversation-ui-react` extraction is mechanical rather
+than a second redesign.
+
+### Layer Responsibilities
+
+| Layer | Owns | Must not own |
+| --- | --- | --- |
+| `conversation-ui-core` | pure types, policy helpers, action filtering, permission preset mapping | React, daemon calls, app routing, channel stores |
+| Web shared conversation components | rendering primitives, shared CSS classes, keyboard/focus behavior, popover placement | provider fetching, teammate mutation, channel routing |
+| Surface adapters | mapping app state into shared props, send callbacks, model/provider state, active run status | redefining shared visual tokens or capability semantics |
+
+The architecture should make these dependencies one-way:
+
+```text
+surface owner state
+  -> surface adapter
+    -> shared conversation components
+      -> core policy helpers
+```
+
+Shared components must never import upward from daemon APIs, `WorkspaceClientView`,
+teammate settings domains, route modules, or app shell navigation.
+
+### Surface Adapters
+
+| Adapter | Surface | Required mapping |
+| --- | --- | --- |
+| `ChannelComposerAdapter` | channel root/branch | text, slash commands, teammate mentions, attachments, active run guidance, stop/follow-up, four-preset authorization, no model picker |
+| `NormalConversationComposerAdapter` | normal conversation after home send | text, slash commands, attachments, selected model, thinking when supported, four-preset authorization, no teammate mentions |
+| `TeammateDirectComposerAdapter` | teammate private chat | text, slash commands, private-scoped attachments, direct guidance, four-preset authorization, optional read-only teammate model status, no model picker, no teammate mentions |
+
+Adapters own business state. `ConversationComposer` receives already-resolved props and
+only renders the result.
+
+### Full Composer Props Target
+
+The first slice may pass `authorizationNode`, `modelNode`, and `thinkingNode` slots to
+avoid moving business logic too early. The stable target should become typed state:
+
+```ts
+type ConversationComposerSurface =
+  | "channel"
+  | "normal_conversation"
+  | "teammate_direct";
+
+type ConversationComposerSendState =
+  | "idle"
+  | "sending"
+  | "active_run_empty_guidance"
+  | "active_run_has_guidance"
+  | "queued_guidance"
+  | "approval_required"
+  | "failed"
+  | "uploading";
+
+type ConversationPermissionPreset =
+  | "read_only"
+  | "workspace_collaboration"
+  | "full_access"
+  | "custom";
+
+interface ConversationComposerAuthorizationState {
+  readonly preset: ConversationPermissionPreset;
+  readonly disabled: boolean;
+  readonly disabledReason?: string;
+  readonly requiresConfirmation?: boolean;
+}
+
+interface ConversationComposerModelState {
+  readonly label: string;
+  readonly providerLabel?: string;
+  readonly readonly: boolean;
+}
+
+interface ConversationComposerProps {
+  readonly surface: ConversationComposerSurface;
+  readonly capabilities: ConversationComposerCapabilities;
+  readonly value: string;
+  readonly placeholder: string;
+  readonly inputParts: readonly ComposerInputPart[];
+  readonly sendState: ConversationComposerSendState;
+  readonly authorization: ConversationComposerAuthorizationState;
+  readonly model?: ConversationComposerModelState;
+  readonly attachments?: ConversationComposerAttachmentState;
+  readonly slashCommands?: readonly ComposerSlashCommandOption[];
+  readonly mentionOptions?: readonly ComposerMentionOption[];
+  readonly statusNode?: ReactNode;
+  readonly approvalNode?: ReactNode;
+  readonly guidanceNode?: ReactNode;
+  readonly previewNode?: ReactNode;
+  readonly feedbackNode?: ReactNode;
+  readonly onChange: (value: string, caret: number) => void;
+  readonly onSubmit: () => void | Promise<void>;
+  readonly onStop?: () => void | Promise<void>;
+  readonly onAuthorizationChange: (preset: ConversationPermissionPreset) => void;
+  readonly onModelChange?: (modelId: string) => void;
+  readonly onAttachFiles?: (files: readonly File[]) => void | Promise<void>;
+}
+```
+
+Rules:
+
+- `onModelChange` is only valid when `capabilities.modelPicker` is true.
+- Private chat passes `model.readonly = true` when showing model status.
+- Channel usually omits `model`; if model status is shown, it is read-only explanatory
+  copy, not a control.
+- `authorization.disabled` must be true while the active execution snapshot exists.
+- `requiresConfirmation` only describes UI flow; enforcement still belongs to the daemon
+  policy snapshot.
+
+## Hard Rules
+
+1. Channel, normal conversation, and teammate private chat must use the same composer
+   shell, input, toolbar, pending asset strip, status strip, and send button visual
+   tokens.
+2. The channel composer is the functional baseline. Do not remove channel capabilities
+   while extracting the shared component.
+3. Normal conversation and teammate private chat must not expose teammate `@` routing.
+   They may tokenize typed text for files, URLs, and slash commands, but `@someone`
+   remains plain text unless a future explicit product decision changes it.
+4. Normal conversation can select a model from the composer. Teammate private chat
+   cannot change model from the composer; it may show the teammate's effective
+   provider/model as read-only status, and edits belong in teammate settings. Channel
+   cannot select a model from the composer because channel teammates already own
+   configured model/provider settings.
+5. Authorization belongs in the shared composer toolbar for channel, normal
+   conversation, and teammate private chat. It is always visible as the same four
+   permission presets: `read_only`, `workspace_collaboration`, `full_access`, and
+   `custom`.
+6. Authorization defaults come from settings/surface defaults. If settings resolve to a
+   custom policy, the composer starts on `custom`; do not silently coerce it into a
+   friendlier preset.
+7. Once a message is sent and a model/run/direct reply is active, authorization is locked
+   for that active execution. A changed preset can only apply to the next turn/run after
+   the current execution finishes.
+8. Placeholder copy must reflect the surface capability. Do not show `@` instructions
+   in surfaces where `@` is disabled.
+9. The normal conversation floating shadow and soft rounded shell are the base style.
+   Channel and private chat may be docked differently, but they must not introduce a
+   separate visual language.
+10. Active work guidance, inline approval, upload state, failed send retry, and stop
+   controls render above or inside the same composer shell, not as unrelated page-local
+   panels.
+11. The composer must stay keyboard accessible. Hover-only controls need focus-visible
+   equivalents.
+12. The shared composer must not fetch daemon/channel/teammate state. Surfaces adapt
+    their state into composer props.
+
+## Surface Capability Matrix
+
+| Capability | Channel | Normal conversation | Teammate private chat |
+| --- | --- | --- | --- |
+| Shared shell/style | Required | Required | Required |
+| Tokenized input | Required | Required | Required |
+| Plain textarea fallback | No, except accessibility fallback | No, except accessibility fallback | No, except accessibility fallback |
+| `/` command picker | Yes | Yes | Yes |
+| Teammate `@` picker | Yes | No | No |
+| File upload | Yes | Yes | Yes |
+| Drag and drop files | Yes | Yes | Yes |
+| Pending file preview strip | Yes | Yes | Yes |
+| Link preview chips | Yes | Yes | Yes when private preview exists |
+| Workspace file refs | Yes | Yes | Yes, private-scoped |
+| Model picker | No | Yes | No |
+| Read-only model status | Optional | Optional | Yes if model identity is useful |
+| Thinking mode picker | No by default | Yes when selected model supports it | No from composer; inherited from teammate settings/runtime |
+| Authorization picker | Yes, locked while active | Yes, locked while active | Yes, locked while active |
+| Inline approval strip | Yes | Yes | Yes |
+| Active run guidance strip | Yes | Yes | Yes |
+| Stop active run button | Yes | Yes | Yes when direct reply is running |
+| Send shortcut | Enter sends, Shift+Enter newline | Same | Same |
+| Surface-specific placeholder | Required | Required | Required |
+
+## Placeholder Copy
+
+Placeholders are part of the capability contract. They must not promise controls that
+are disabled.
+
+| Surface | Placeholder |
+| --- | --- |
+| Channel | `Message this channel... (type / for commands, @ to mention teammates)` |
+| Normal conversation | `Message Ling Stack... (type / for commands)` |
+| Teammate private chat | `Message this AI teammate privately... (type / for commands)` |
+
+Chinese copy should follow the same boundary:
+
+| Surface | Chinese placeholder |
+| --- | --- |
+| Channel | `输入消息...（输入 / 唤起命令，@ 队友协作）` |
+| Normal conversation | `输入消息...（输入 / 唤起命令）` |
+| Teammate private chat | `私聊这位队友...（输入 / 唤起命令）` |
+
+## Unified Visual Contract
+
+### Shell
+
+The composer shell should use one shared class family:
+
+```text
+conversation-composer
+conversation-composer-surface-channel
+conversation-composer-surface-normal
+conversation-composer-surface-direct
+conversation-composer-density-floating
+conversation-composer-density-docked
+```
+
+Shared shell tokens:
+
+| Token | Target |
+| --- | --- |
+| Background | `var(--surface-panel)` or a shared composer panel token |
+| Border | `1px solid var(--border)` |
+| Radius | 18-20px for the outer shell |
+| Shadow | floating soft shadow from normal conversation composer |
+| Padding | 8-10px outer, consistent across surfaces |
+| Focus | accent border plus one subtle focus ring |
+| Width | align to the conversation content column, never narrower than the feed |
+| Overflow | popovers and preview strips may overflow; shell body must not clip menus |
+
+Channel is allowed to be positioned in a docked bottom slot. It is not allowed to look
+like a different component. Private chat is allowed to be narrower because the chat pane
+is narrower; it still uses the same tokens and control sizes.
+
+### Input Area
+
+The input area uses `TokenizedComposerInput` as the default.
+
+Requirements:
+
+- minimum height is shared across surfaces,
+- text wraps and never causes horizontal scroll except code/file preview internals,
+- slash command, file reference, URL, and optional mention tokens use the same chip
+  colors and shape,
+- disabled mention support means no mention picker and no mention token parsing,
+- drag-over state uses the same accent background and drop hint.
+
+### Toolbar
+
+The toolbar has two zones:
+
+```text
+left tools: attach, optional mention, authorization, optional extra tools
+right tools: model/thinking controls when editable, read-only model status when useful, send/stop button
+```
+
+Toolbar rules:
+
+- icon buttons are 30-32px with transparent default background,
+- authorization uses the same compact trigger across channel, normal, and private
+  surfaces,
+- model picker is right aligned and appears only for normal conversation,
+- teammate private chat can show read-only effective model status, but not a model
+  picker,
+- channel does not show a disabled model picker,
+- send button is the same shape and size across all surfaces,
+- stop button uses the same send-button slot and swaps icon/state.
+
+### Popovers
+
+Mention picker, slash command picker, authorization menu, model menu, and thinking menu
+must share:
+
+- border radius,
+- border token,
+- panel shadow,
+- row hover/focus treatment,
+- max-height and overflow behavior,
+- keyboard selection rules.
+
+The popover anchor differs by control, not by surface-specific CSS.
+
+## Behavior Contract
+
+### Slash Commands
+
+All three surfaces support slash commands, but execution context differs:
+
+- channel slash commands may target channel teammates or multi-agent work,
+- normal conversation slash commands target the selected assistant/model context,
+- private chat slash commands target the selected teammate/private context.
+
+The parser should receive `surface` and `allowedTargets` so it can disable invalid
+targets before rendering executable tokens.
+
+### Mentions
+
+Only channel surfaces allow teammate mentions.
+
+Normal conversation and private chat:
+
+- do not show the `@` toolbar button,
+- do not open mention picker on `@`,
+- do not include teammate mention options in `parseComposerInputParts`,
+- do not convert typed `@name` into teammate route metadata,
+- can still display `@name` as plain typed text.
+
+### Model Selection
+
+Normal conversation:
+
+- shows selected provider/model,
+- shows thinking mode only when supported by the selected model,
+- sends provider preset and thinking level with the conversation message.
+
+Teammate private chat:
+
+- shows the teammate's effective provider/model,
+- does not allow model switching from the composer,
+- uses the teammate's configured model/provider and any runtime router decision,
+- edits to the teammate's persistent provider/model happen only in teammate settings,
+- must not mutate channel teammate model settings accidentally.
+
+Channel:
+
+- hides model picker,
+- uses channel membership, teammate settings, and router policy,
+- may expose a read-only tooltip such as `Channel teammate models are configured in settings`.
+
+### Authorization
+
+All conversation composers expose authorization next to the attach button. The menu is
+the same four-preset model used by workspace settings:
+
+| Preset | Session mode | Meaning |
+| --- | --- | --- |
+| `read_only` | `ask_everything` | Inspect and plan; ask before risky workspace mutation. |
+| `workspace_collaboration` | `workspace_write` | Allow scoped workspace edits; keep commands and external actions gated. |
+| `full_access` | `full_access` | Broad local access after explicit confirmation and policy resolution. |
+| `custom` | `custom` | Use the saved custom workspace/channel policy. |
+
+Default resolution:
+
+- surface-specific saved default, if present,
+- conversation/thread/channel default, if present,
+- workspace settings default,
+- `custom` when the effective settings policy is custom or cannot be mapped cleanly to a
+  preset.
+
+Runtime lock:
+
+- authorization is editable only while the composer has no active send/run/direct reply,
+- while `sending`, `active_run_*`, `queued_guidance`, `approval_required`, or an active
+  direct reply exists, the trigger stays visible but disabled with a tooltip such as
+  `Authorization is locked for the running reply`,
+- any user request to change authorization during active execution must be deferred to
+  the next turn/run, not applied to the current model call,
+- `full_access` still requires explicit confirmation before starting the run, even if the
+  trigger is visible.
+
+This borrows Codex's useful authority shape: configuration selects the default,
+pre-execution UI can choose the next execution profile, and the active execution uses an
+immutable permission snapshot. The authorization trigger is visual, not a permission
+override. Existing `PermissionPreset`, `SessionPermissionMode`, `ApprovalPolicy`, and
+effective policy snapshots remain the source of truth for execution.
+
+### Active Work
+
+The shared composer owns these active states:
+
+- `idle`
+- `sending`
+- `failed`
+- `active_run_empty_guidance`
+- `active_run_has_guidance`
+- `queued_guidance`
+- `approval_required`
+- `uploading`
+
+When active work exists:
+
+- typed text is explicit guidance,
+- empty send button can become stop only when the run can be stopped,
+- non-empty send queues or submits follow-up guidance,
+- the UI must not silently reroute a normal message into an active run.
+
+## Component Boundary
+
+Target shared component:
+
+```ts
+type ConversationComposerSurface = "channel" | "normal_conversation" | "teammate_direct";
+
+interface ConversationComposerProps {
+  readonly surface: ConversationComposerSurface;
+  readonly density?: "floating" | "docked";
+  readonly value: string;
+  readonly inputParts: readonly ComposerInputPart[];
+  readonly placeholder: string;
+  readonly disabled?: boolean;
+  readonly sendState: ConversationComposerSendState;
+  readonly capabilities: ConversationComposerCapabilities;
+  readonly attachments?: ConversationComposerAttachmentState;
+  readonly linkPreviews?: ConversationComposerLinkPreviewState;
+  readonly fileRefs?: ConversationComposerFileRefState;
+  readonly slashCommands?: readonly ComposerSlashCommandOption[];
+  readonly mentionOptions?: readonly ComposerMentionOption[];
+  readonly authorization?: ConversationComposerAuthorizationState;
+  readonly model?: ConversationComposerModelState;
+  readonly thinking?: ConversationComposerThinkingState;
+  readonly guidance?: ConversationComposerGuidanceState;
+  readonly approvals?: ConversationComposerApprovalState;
+  readonly feedback?: ConversationComposerFeedbackState;
+  readonly onChange: (value: string, caret: number) => void;
+  readonly onSubmit: () => void | Promise<void>;
+  readonly onStop?: () => void | Promise<void>;
+  readonly onAttachFiles?: (files: readonly File[]) => void | Promise<void>;
+}
+
+interface ConversationComposerCapabilities {
+  readonly slashCommands: boolean;
+  readonly teammateMentions: boolean;
+  readonly attachments: boolean;
+  readonly dragDropAttachments: boolean;
+  readonly workspaceFileRefs: boolean;
+  readonly linkPreviews: boolean;
+  readonly modelPicker: boolean;
+  readonly modelStatus: boolean;
+  readonly thinkingPicker: boolean;
+  readonly authorizationPicker: boolean;
+  readonly activeRunGuidance: boolean;
+  readonly inlineApprovals: boolean;
+}
+```
+
+The component renders controls only from `capabilities`. It does not inspect route names
+or infer behavior from `surface` alone.
+
+## Implementation Notes
+
+The first implementation should extract shared UI without moving all channel state
+management at once.
+
+Recommended adapters:
+
+- `ChannelComposerAdapter` in `WorkspaceClientView` maps channel state to
+  `ConversationComposerProps`,
+- `NormalConversationComposerAdapter` in `ConversationHome` maps provider/model,
+  authorization, and slash state,
+- `TeammateDirectComposerAdapter` in `TeammatePrivateChatSurface` maps private
+  attachments, direct guidance, authorization, and read-only teammate provider/model
+  state.
+
+The channel composer logic can remain in `WorkspaceClientView` initially. The first
+slice should move rendering and shared control behavior, not daemon routing.
+
+## Regression Contract
+
+Every implementation slice must prove:
+
+- the three surfaces use the same root class family,
+- channel still supports `/`, `@`, attachments, pending previews, active guidance, and
+  inline approvals,
+- normal conversation supports `/`, attachments, model, thinking, authorization, and no
+  `@` picker,
+- private chat supports `/`, attachments, authorization, optional read-only model status,
+  direct guidance, and no `@` picker,
+- channel renders authorization and does not render a model picker,
+- authorization is disabled while each surface has an active send/run/direct reply,
+- placeholder copy differs by surface,
+- visual shell tokens match across surfaces,
+- keyboard send and picker navigation still work.
+
+## Current Implementation Note - 2026-06-28
+
+The first Web-local implementation now shares the composer shell and permission menu
+across channel, normal conversation, and teammate private chat. Normal conversation and
+teammate private chat use `TokenizedComposerInput`; channel already used it and now routes
+that input through the shared shell.
+
+Important boundary:
+
+- Normal conversation sends the selected four-preset authorization through the existing
+  conversation stream payload.
+- Channel authorization continues to update the existing run permission mode and preset.
+- Teammate private chat shows and locks the permission preset in the shared composer, but
+  does not send it to the daemon yet because teammate direct messages do not currently
+  have a permission snapshot field.
+- Normal/private do not expose teammate `@` routing. Channel remains the only surface
+  with teammate mention picker behavior.
+
+## Resolved Decisions
+
+No blocking product decision remains for the first design slice.
+
+- Teammate private chat does not change model from the composer. The model is owned by
+  teammate/provider settings and may be shown read-only.
+- Channel authorization is not hidden. Channel, normal conversation, and teammate private
+  chat all show the same four permission presets.
+- The default authorization preset comes from settings. A configured custom policy
+  resolves to `custom`.
+- Authorization cannot change the permission snapshot of an active model call/run/direct
+  reply. Changes apply only before send or to the next execution.

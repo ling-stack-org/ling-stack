@@ -1929,6 +1929,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   state.linkPreviewDelayMs = 150;
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.getByRole("button", { name: "Chat", exact: true })).toHaveCount(0);
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
@@ -2336,6 +2337,7 @@ test("channel composer sends workspace file refs as native message payload", asy
   state.approvals = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Please inspect apps/web/src/features/workspace/WorkspaceClientView.tsx");
@@ -2363,6 +2365,7 @@ test("channel composer preserves IME composition until committed", async ({ page
   state.approvals = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   await composerInput.evaluate((node) => {
@@ -2403,6 +2406,7 @@ test("channel composer does not render multi-agent slash command tokens as file 
   state.approvals = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   await composerInput.fill("@Engineer @Designer /review apps/web");
@@ -2427,6 +2431,7 @@ test("channel composer supports spaced teammate names before slash commands", as
   state.approvals = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   await composerInput.fill("@Ling Agent /rev");
@@ -2459,6 +2464,7 @@ test("channel composer opens slash picker for later slash tokens without multi-d
   state.approvals = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   await composerInput.fill("/office-hours summarize this channel /rev");
@@ -5639,6 +5645,7 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   state.failNextChannelMessage = true;
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   const composer = page.getByLabel("Channel composer");
@@ -5669,6 +5676,7 @@ test("channel composer moves sent messages into the feed while routing is pendin
   state.channelMessageDelayMs = 1_000;
   await mockDaemon(page, state, { channelAutoRouteEnabled: true });
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   const channelFeed = page.getByLabel("Channel message feed");
@@ -6659,6 +6667,7 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
     : task);
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const guidance = page.getByLabel("Run guidance");
   await expect(guidance).toBeVisible();

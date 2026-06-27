@@ -12,6 +12,8 @@ Related docs:
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
+- [Conversation Composer Unification](conversation-composer-unification.md)
+- [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
 
 ## Goal
 
@@ -104,6 +106,16 @@ Slice 3 has started with a core-only package extraction:
   `apps/web/src/shared/conversation/tokens/conversation-surface-policy.ts`.
 - React components are still Web-local. Do not extract `conversation-ui-react` until the
   view-model adapter props stabilize.
+
+Composer unification is now a separate follow-up design track:
+
+- [Conversation Composer Unification](conversation-composer-unification.md) defines the
+  shared product and visual contract.
+- [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
+  defines the implementation slices.
+- It should not be treated as a generic visual polish task. The channel composer remains
+  the functional baseline, the normal conversation composer remains the visual baseline,
+  and the surface policy decides model, authorization, and `@` capabilities.
 
 This checkpoint is still a branch state until merged. Any follow-up implementation should
 start by re-running the focused checks listed below against the final branch state.
@@ -894,6 +906,7 @@ Goal: prevent future screenshot-driven tweaks from breaking the shared contract.
 | Private chat | centered empty state, shared rows, copy/create-task only, no topic reply, no `@` teammate routing |
 | Source/evidence | source icons only for actual sources, no nested link inside button, blocked/degraded state visible |
 | Overflow | teammate/source `+N` chip spacing does not collide with previous icon |
+| Composer unification | shared composer root/style on channel, normal, and private; channel keeps `/`, `@`, attachments, active guidance, visible authorization, and no model picker; normal keeps `/`, model, authorization, attachments, and no `@`; private keeps `/`, authorization, optional read-only model status, attachments, and no `@` or model picker; authorization is locked while active |
 
 Selectors should target shared primitives:
 

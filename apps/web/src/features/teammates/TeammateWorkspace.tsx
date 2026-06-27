@@ -78,7 +78,9 @@ import type {
   McpServer,
   McpTool,
   ProviderPreset,
+  PermissionPreset,
   RunSession,
+  SessionPermissionMode,
   SkillImportDraft,
   SkillRegistryEntry,
   SkillSourceSnapshot,
@@ -177,6 +179,8 @@ export function TeammateWorkspace({
   onRefreshTasks,
   onOpenRun,
   onBackToWorkspaceTools,
+  defaultPermissionMode,
+  defaultPermissionPreset,
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
@@ -195,6 +199,8 @@ export function TeammateWorkspace({
   readonly onRefreshTasks?: (channelId: string) => MaybePromise<void>;
   readonly onOpenRun?: (runId: string) => void;
   readonly onBackToWorkspaceTools?: () => void;
+  readonly defaultPermissionMode?: SessionPermissionMode;
+  readonly defaultPermissionPreset?: PermissionPreset;
 }): JSX.Element {
   const { t } = useI18n();
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
@@ -1027,7 +1033,7 @@ export function TeammateWorkspace({
     void sendPrivateMessage();
   }
 
-  function handlePrivateComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+  function handlePrivateComposerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
       return;
     }
@@ -1045,7 +1051,7 @@ export function TeammateWorkspace({
     void sendPrivateMessage();
   }
 
-  function handlePrivateComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+  function handlePrivateComposerPaste(event: ClipboardEvent<HTMLDivElement>): void {
     if (event.clipboardData.files.length === 0) {
       return;
     }
@@ -1978,6 +1984,7 @@ export function TeammateWorkspace({
           uploadingAttachments={uploadingAttachments}
           pendingAttachments={pendingAttachments}
           pendingDirectLinkPreviews={pendingDirectLinkPreviews}
+          composerInputParts={composerInputParts}
           composerFileReferenceParts={composerFileReferenceParts}
           composerFileReferenceTokens={composerFileReferenceTokens}
           composerDragActive={composerDragActive}
@@ -2001,6 +2008,8 @@ export function TeammateWorkspace({
           onRemoveComposerFileReference={removeComposerFileReference}
           onRemovePendingLinkPreview={(previewId) => setPendingDirectLinkPreviewIds((current) => current.filter((id) => id !== previewId))}
           onRemovePendingAttachment={removePendingAttachment}
+          defaultPermissionMode={defaultPermissionMode}
+          defaultPermissionPreset={defaultPermissionPreset}
         />
       ) : null}
 

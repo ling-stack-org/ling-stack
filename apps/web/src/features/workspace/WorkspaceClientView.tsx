@@ -175,6 +175,8 @@ import {
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import {
+  ComposerPermissionMenu,
+  ConversationComposerShell,
   ConversationAttachmentStrip,
   ConversationGuidanceStrip,
   ConversationStatusStrip,
@@ -5376,10 +5378,17 @@ export function WorkspaceClientView({
     );
   }
 
+  const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
+  const channelComposerPermissionLocked = Boolean(activeConversationRun) || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
   const channelComposer = (
-    <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
-      {channelActiveStatusStrip}
-      {activeConversationRun || openRunGuidanceInterventions.length > 0 ? (
+    <ConversationComposerShell
+      surface="channel"
+      density="docked"
+      className="channel-composer"
+      ariaLabel={t("Channel composer")}
+      leftToolsAriaLabel={t("Message tools")}
+      statusNode={channelActiveStatusStrip}
+      guidanceNode={activeConversationRun || openRunGuidanceInterventions.length > 0 ? (
         <>
           <ConversationGuidanceStrip
             title={activeConversationRun ? t("Run guidance") : t("Queued guidance")}
@@ -5401,19 +5410,20 @@ export function WorkspaceClientView({
           ) : null}
         </>
       ) : null}
-      <InlineApprovalStrip
+      approvalNode={(
+        <InlineApprovalStrip
         approvals={inlineApprovalViews}
         resolvingApprovals={resolvingApprovals}
         onResolve={onResolveApproval}
         onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
       />
-      <div
-        className={composerDragActive ? "composer-drop-zone active" : "composer-drop-zone"}
-        style={composerDropZoneStyle}
-        onDragOver={handleComposerDragOver}
-        onDragLeave={handleComposerDragLeave}
-        onDrop={handleComposerDrop}
-      >
+      )}
+      dropZoneClassName={composerDragActive ? "active" : undefined}
+      dropZoneStyle={composerDropZoneStyle}
+      onDragOver={handleComposerDragOver}
+      onDragLeave={handleComposerDragLeave}
+      onDrop={handleComposerDrop}
+      resizeHandleNode={(
         <button
           className="composer-resize-handle"
           type="button"
@@ -5426,7 +5436,8 @@ export function WorkspaceClientView({
         >
           <span aria-hidden="true" />
         </button>
-        {pendingMessageAssetsVisible ? (
+      )}
+      previewNode={pendingMessageAssetsVisible ? (
           <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
             {pendingAttachments.map((item) => (
               <div key={item.localId} className={`composer-preview-card ${item.previewUrl ? "image" : "file"} ${item.state}`}>
@@ -5449,6 +5460,7 @@ export function WorkspaceClientView({
             ))}
           </div>
         ) : null}
+      inputNode={(
         <TokenizedComposerInput
           ref={composerInputRef}
           value={messageDraft}
@@ -5463,7 +5475,8 @@ export function WorkspaceClientView({
           executableSlashCommandId={composerSlashCommandActive ? composerSlashIntent.commandId : undefined}
           executableSlashTargetLabel={composerSlashTargetLabel}
         />
-        {mentionPicker ? (
+      )}
+      mentionPickerNode={mentionPicker ? (
           <div className="mention-picker-popover" role="listbox" aria-label={t("Mention teammate")}>
             {mentionPickerOptions.length > 0 ? mentionPickerOptions.map((option, index) => (
               <button
@@ -5483,7 +5496,7 @@ export function WorkspaceClientView({
             )}
           </div>
         ) : null}
-        {!mentionPicker && slashPicker ? (
+      slashPickerNode={!mentionPicker && slashPicker ? (
           <div className="mention-picker-popover command-picker-popover" role="listbox" aria-label={t("Slash command")}>
             {slashCommandPickerOptions.length > 0 ? slashCommandPickerOptions.map((option, index) => (
               <button
@@ -5503,15 +5516,14 @@ export function WorkspaceClientView({
             )}
           </div>
         ) : null}
-        {composerDragActive ? (
+      dropHintNode={composerDragActive ? (
           <div className="composer-drop-hint">
             <FileText size={16} />
             <span>{t("Drop files to attach")}</span>
           </div>
         ) : null}
-      </div>
-      <div className="composer-primary-actions">
-        <div className="composer-tool-row" aria-label={t("Message tools")}>
+      leftToolsNode={(
+        <>
           <label className="icon-button composer-tool-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
             <Plus size={17} />
             <input
@@ -5530,7 +5542,15 @@ export function WorkspaceClientView({
           <button className="icon-button composer-tool-button" type="button" onClick={insertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
             <AtSign size={16} />
           </button>
-        </div>
+          <ComposerPermissionMenu
+            preset={channelComposerPermissionPreset}
+            disabled={channelComposerPermissionLocked}
+            disabledReason={t("Permission is locked while this channel run or message is active.")}
+            onPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
+          />
+        </>
+      )}
+      rightToolsNode={(
         <button
           className="primary-button composer-send-button"
           type="button"
@@ -5555,38 +5575,42 @@ export function WorkspaceClientView({
               : isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} />
             : sendState === "sending" ? <Loader2 className="spin" size={15} /> : composerSlashCommandActive ? <ListChecks size={15} /> : <Send size={15} />}
         </button>
-      </div>
-      {composerFeedback ? (
-        <div key={composerFeedback.id} className={`composer-status-row ${composerFeedback.tone}`} role="status" aria-live="polite">
-          {composerFeedback.tone === "success"
-            ? <CheckCircle2 size={14} />
-            : composerFeedback.tone === "error"
-              ? <CircleAlert size={14} />
-              : <Info size={14} />}
-          <span>{composerFeedback.message}</span>
-        </div>
-      ) : null}
-      {sendState === "failed" ? (
-        <div className="composer-status-list" aria-live="polite">
-          <div className="composer-status-row failed">
-            <CircleAlert size={14} />
-            <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
-            <button className="secondary-button compact-button" type="button" onClick={() => {
-              void sendMessage();
-            }}>
-              <RefreshCw size={13} />
-              {t("Retry")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => {
-              setSendState("idle");
-              setSendError("");
-            }}>
-              {t("Dismiss")}
-            </button>
-          </div>
-        </div>
-      ) : null}
-    </section>
+      )}
+      feedbackNode={(
+        <>
+          {composerFeedback ? (
+            <div key={composerFeedback.id} className={`composer-status-row ${composerFeedback.tone}`} role="status" aria-live="polite">
+              {composerFeedback.tone === "success"
+                ? <CheckCircle2 size={14} />
+                : composerFeedback.tone === "error"
+                  ? <CircleAlert size={14} />
+                  : <Info size={14} />}
+              <span>{composerFeedback.message}</span>
+            </div>
+          ) : null}
+          {sendState === "failed" ? (
+            <div className="composer-status-list" aria-live="polite">
+              <div className="composer-status-row failed">
+                <CircleAlert size={14} />
+                <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
+                <button className="secondary-button compact-button" type="button" onClick={() => {
+                  void sendMessage();
+                }}>
+                  <RefreshCw size={13} />
+                  {t("Retry")}
+                </button>
+                <button className="secondary-button compact-button" type="button" onClick={() => {
+                  setSendState("idle");
+                  setSendError("");
+                }}>
+                  {t("Dismiss")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </>
+      )}
+    />
   );
 
   const channelTeammateManager = (

@@ -17,7 +17,14 @@ previews, and diff/file-change evidence.
 main-agent and multi-agent projection model used by the channel feed.
 [Conversation Surface Contract](conversation-surface-contract.md) is the current shared
 component and capability contract across normal conversation, channel, private chat, and
-run/thread detail.
+run/thread detail. [Conversation Composer Unification](conversation-composer-unification.md)
+extends that contract to the input surface: channel, normal conversation, and teammate
+private chat should share one composer visual system while surface policy decides model,
+authorization, slash command, and teammate mention capabilities. Composer permissions
+borrow Codex's useful execution shape: the default comes from settings, the user may pick
+the next execution preset before send, and the active run/direct reply uses an immutable
+permission snapshot. Teammate private chat does not edit model from the composer; it uses
+the teammate/provider settings and may show that model as read-only status.
 
 The Codex-style pattern to borrow is not the terminal look. It is the information shape:
 
@@ -60,6 +67,10 @@ Implementation status, 2026-06-28:
   explicit [Conversation Surface Contract](conversation-surface-contract.md): action bar,
   teammate avatar stack, source icon stack, compact evidence/work capability parity, and
   regression fixtures.
+- composer unification is now tracked separately in
+  [Conversation Composer Unification](conversation-composer-unification.md): the channel
+  composer remains the functional baseline, the normal conversation composer remains the
+  visual baseline, and private/normal surfaces must not expose `@` teammate routing.
 
 ## Component Tree
 
@@ -101,8 +112,10 @@ apps/web/src/shared/conversation/
   conversation-types.ts
 ```
 
-`MessageComposer` can remain in `shared/components` until it gains enough
-conversation-specific behavior to move.
+`MessageComposer` can remain in `shared/components` for legacy textarea paths, but new
+conversation composer work should target the shared
+`apps/web/src/shared/conversation/composer/ConversationComposer.tsx` boundary described
+by [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md).
 
 After the shared surface slice, the next local structure should converge toward:
 
@@ -1111,7 +1124,7 @@ into page-specific layouts.
 | --- | --- | --- |
 | Normal conversation | `ConversationFeed`, `MessageRow`, shared `MessageComposer`, evidence bundle, compact work cell | post-send layout no longer looks like empty home state with messages pasted in; evidence/work render only when real data exists |
 | Channel chat | `ConversationVirtualFeed`, `MessageRow`, `ConversationSummaryRow`, `ConversationStatusStrip`, `RightDrawer` | left drawer unchanged, no raw event spam, evidence collapsed |
-| Private chat | `ConversationFeed`, `MessageRow`, shared `MessageComposer`, attachment strip, evidence bundle, compact work cell | composer width matches channel, empty state centered, streaming row mutates in place, no `@` teammate routing |
+| Private chat | `ConversationFeed`, `MessageRow`, shared `MessageComposer`, attachment strip, evidence bundle, compact work cell | composer width matches channel, empty state centered, streaming row mutates in place, no `@` teammate routing, no composer model switching |
 | Single-agent settings | center settings shell, effective skill rows | private chat does not show settings tabs, persona cannot grant permissions |
 | Workspace Skill Library | global settings shell, import draft rows, skill definition rows | definitions are global, bindings are per teammate, blocked reasons remain visible |
 | Run thread | `ConversationSummaryRow`, evidence bundle, resume composer | linked runs read as summaries, raw timeline is one level down |
@@ -1127,6 +1140,9 @@ Targeted browser checks after implementation should assert:
 - switching between channel and private chat keeps composer geometry stable,
 - empty private chat state is vertically centered,
 - private chat composer does not offer `@` routing to other teammates,
+- private chat composer does not expose a model picker,
+- channel, normal conversation, and private chat all show authorization and lock it while
+  a run/direct reply is active,
 - stream send creates one user row and one mutable teammate row,
 - channel feed has message footer actions without visible text clutter,
 - run detail has at least one collapsed evidence toggle,

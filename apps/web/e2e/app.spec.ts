@@ -39,6 +39,11 @@ test("sidebar selection is exclusive and conversation sections stay below primar
 
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
+  const channelComposer = page.getByLabel("Channel composer");
+  await expect(channelComposer).toHaveClass(/conversation-composer/);
+  await expect(channelComposer.getByRole("button", { name: /Selected permission preset/ })).toBeVisible();
+  await expect(channelComposer.getByRole("button", { name: "Mention teammate" })).toBeVisible();
+  await expect(channelComposer.getByRole("button", { name: /Selected model/ })).toHaveCount(0);
 
   await expect(navigation.getByText("Ada")).toHaveCount(0);
   await expect(navigation.getByText("Tian")).toHaveCount(0);
@@ -102,18 +107,29 @@ test("recent conversations only show records created from the conversation home"
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
   const home = page.getByLabel("Conversation home");
+  const homeComposer = home.locator(".conversation-composer");
+  await expect(homeComposer).toHaveClass(/conversation-composer-surface-normal_conversation/);
+  await expect(homeComposer.getByRole("button", { name: /Selected permission preset/ })).toBeVisible();
+  await expect(homeComposer.getByRole("button", { name: /Selected model/ })).toBeVisible();
+  await expect(homeComposer.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Plan launch");
   await home.getByRole("button", { name: "Send" }).click();
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
   await expect(page.getByLabel("Conversation home")).toHaveCount(0);
   await expect(conversationPage.getByText("Conversation saved to recent conversations.")).toHaveCount(0);
-  await expect(conversationPage.getByRole("textbox", { name: "Conversation message" })).toHaveValue("");
+  await expect(conversationPage.locator(".conversation-composer")).toHaveClass(/conversation-composer-surface-normal_conversation/);
+  await expect(conversationPage.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "");
   await expect(conversationPage.getByLabel("Conversation messages")).toContainText("Plan launch");
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   const assistantRow = conversationPage.locator(".normal-conversation-message-row.ai-teammate").first();
   await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(1);
-  await expect(assistantRow.locator(".normal-conversation-message-actions.message-action-bar")).toHaveCount(1);
+  const assistantActions = assistantRow.locator(".normal-conversation-message-actions.message-action-bar");
+  await expect(assistantActions).toHaveCount(1);
+  await expect(assistantActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
+  await expect(assistantActions.locator('[data-tooltip="Like response"]')).toHaveCount(1);
+  await expect(assistantActions.locator('[data-tooltip="Dislike response"]')).toHaveCount(1);
+  await expect(assistantActions.locator('[data-tooltip="Reply in topic"]')).toHaveCount(0);
   await expect(assistantRow.locator(".message-reply-button")).toHaveCount(0);
   await expect(assistantRow.locator(".teammate-avatar-stack")).toHaveCount(0);
   await expect(assistantRow.locator(".source-icon-stack")).toHaveCount(0);
@@ -242,7 +258,7 @@ test("conversation home skill popover opens only from plus hover or focus", asyn
   const firstSkill = popover.locator(".conversation-skill-list button").first();
   const commandText = await firstSkill.locator("span").innerText();
   await firstSkill.click();
-  await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveValue(commandText);
+  await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", commandText);
   await expect(page.locator(".conversation-skill-popover")).toHaveCount(0);
 });
 

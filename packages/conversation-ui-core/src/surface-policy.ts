@@ -106,7 +106,7 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
   teammate_direct: {
     surface: "teammate_direct",
     allowCopy: true,
-    allowFeedback: false,
+    allowFeedback: true,
     allowTopicReply: false,
     allowCreateTask: true,
     allowRetry: false,
