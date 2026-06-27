@@ -4062,6 +4062,13 @@
   font-size: 13px;
 }
 
+.teammate-workspace.chat-mode .teammate-direct-composer .tokenized-composer-input {
+  min-height: 96px;
+  padding: 8px 9px 2px;
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
 .teammate-workspace.chat-mode .teammate-direct-composer .composer-primary-actions {
   min-height: 34px;
 }

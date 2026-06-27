@@ -181,6 +181,19 @@
   resize: none;
 }
 
+.conversation-home-composer .tokenized-composer-input {
+  display: block;
+  width: 100%;
+  min-height: 112px;
+  padding: 17px 17px 10px;
+  border: 0;
+  border-radius: 19px 19px 0 0;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 14px;
+  line-height: 22px;
+}
+
 .conversation-home-composer textarea::placeholder {
   color: var(--text-soft);
 }

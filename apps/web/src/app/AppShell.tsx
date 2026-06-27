@@ -2073,6 +2073,8 @@ export function AppShell(): JSX.Element {
                 onRefreshChannels={() => refreshChannels()}
                 onRefreshTasks={(channelId) => refreshTasks(channelId)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                defaultPermissionMode={workspaceSettings?.defaultPermissionMode}
+                defaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                   />
                 ) : activeView === "teammates" ? (
                   <AiTeammatesPage

@@ -10,6 +10,8 @@ test("private chat policy blocks channel-only controls", () => {
   const policy = getConversationSurfacePolicy("teammate_direct");
 
   assert.equal(conversationActionAllowedByPolicy("copy", policy), true);
+  assert.equal(conversationActionAllowedByPolicy("like", policy), true);
+  assert.equal(conversationActionAllowedByPolicy("dislike", policy), true);
   assert.equal(conversationActionAllowedByPolicy("create_task", policy), true);
   assert.equal(conversationActionAllowedByPolicy("reply_topic", policy), false);
   assert.equal(policy.allowTeammateMentions, false);

@@ -42,6 +42,8 @@ export { useConversationSpanView, type ConversationSpanViewState } from "./view-
 export { useConversationViewReconciliation } from "./view-store/use-conversation-view-reconciliation.js";
 export type { ConversationViewRetainKeys } from "./view-store/conversation-view-store.js";
 export { RightDrawer, type RightDrawerNavItem, type RightDrawerProps } from "./blocks/RightDrawer.js";
+export { ComposerPermissionMenu, type ComposerPermissionMenuProps } from "./composer/ComposerPermissionMenu.js";
+export { ConversationComposerShell, type ConversationComposerDensity, type ConversationComposerShellProps, type ConversationComposerSurface } from "./composer/ConversationComposerShell.js";
 export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "./composer/TokenizedComposerInput.js";
 export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer/composer-input-parts.js";
 export {

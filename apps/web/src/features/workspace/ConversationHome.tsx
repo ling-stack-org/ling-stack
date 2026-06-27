@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FocusEvent, type KeyboardEvent } from "react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import {
   ArrowUp,
@@ -15,15 +15,21 @@ import {
   Presentation,
   Search,
   Table2,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
 import { artifactContentUrl } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import type { ConversationTranscriptStatus, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode } from "../../types.js";
-import { ConversationAuthorizationMenu } from "./ConversationAuthorizationMenu.js";
 import {
   AvatarInitial,
+  parseComposerInputParts,
+  TokenizedComposerInput,
+  type TokenizedComposerInputHandle,
 } from "../../shared/components/index.js";
 import {
+  ComposerPermissionMenu,
+  ConversationComposerShell,
   ConversationFeed,
   ConversationShell,
   ConversationWorkCell,
@@ -31,11 +37,7 @@ import {
   MessageRow,
   type MessageRowAuthorType,
 } from "../../shared/conversation/index.js";
-import {
-  authorizationModeToPermission,
-  permissionToAuthorizationMode,
-  type ConversationAuthorizationSelection,
-} from "../../lib/conversation-authorization.js";
+import { inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
 import { buildConversationWorkCellViewModel, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { loadPreviewContent } from "../../lib/previews.js";
 
@@ -81,7 +83,10 @@ export interface ConversationHomeSendInput {
   readonly message: string;
   readonly project: ConversationHomeProjectSelection;
   readonly model: ConversationHomeModelSelection;
-  readonly authorization: ConversationAuthorizationSelection;
+  readonly authorization: {
+    readonly permissionMode: SessionPermissionMode;
+    readonly permissionPreset: PermissionPreset;
+  };
   readonly replaceMessages: (messages: readonly ConversationHomeMessage[]) => void;
   readonly upsertMessage: (message: ConversationHomeMessage) => void;
   readonly failMessage: (message: string) => void;
@@ -137,7 +142,8 @@ export function ConversationHome({
   const [modelSearch, setModelSearch] = useState("");
   const [selectedProviderPresetId, setSelectedProviderPresetId] = useState(initialProviderPresetId.trim());
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<ProviderThinkingMode>(initialThinkingLevel);
-  const [authorizationMode, setAuthorizationMode] = useState(() => permissionToAuthorizationMode(initialPermissionMode, initialPermissionPreset));
+  const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => initialPermissionPreset ?? inferPermissionPreset(initialPermissionMode));
+  const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [project, setProject] = useState<ConversationHomeProjectSelection>(() => ({
     projectPath: initialProjectPath.trim() || undefined,
     projectLabel: initialProjectLabel.trim() || undefined,
@@ -145,6 +151,7 @@ export function ConversationHome({
   const folderPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const thinkingPickerRef = useRef<HTMLDivElement>(null);
+  const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const visibleCommands = useMemo(() => slashCommands.slice(0, 4), [slashCommands]);
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
@@ -187,7 +194,25 @@ export function ConversationHome({
       ].join(" ").toLowerCase().includes(normalizedModelSearch)
     );
   }, [modelOptions, normalizedModelSearch]);
+  const composerInputParts = useMemo(
+    () => parseComposerInputParts(draft, {
+      cwd: project.projectPath,
+      slashCommands,
+    }),
+    [draft, project.projectPath, slashCommands],
+  );
   const effectiveProjectLabel = project.projectLabel || (project.projectPath ? summarizePathLabel(project.projectPath) : "");
+
+  function toggleMessageFeedback(messageId: string, feedback: "up" | "down"): void {
+    setMessageFeedbackById((current) => {
+      if (current[messageId] === feedback) {
+        const next = { ...current };
+        delete next[messageId];
+        return next;
+      }
+      return { ...current, [messageId]: feedback };
+    });
+  }
   const sendBusy = sending || localSending;
 
   useEffect(() => {
@@ -216,7 +241,7 @@ export function ConversationHome({
   }, [initialProviderPresetId, initialThinkingLevel]);
 
   useEffect(() => {
-    setAuthorizationMode(permissionToAuthorizationMode(initialPermissionMode, initialPermissionPreset));
+    setSelectedPermissionPreset(initialPermissionPreset ?? inferPermissionPreset(initialPermissionMode));
   }, [initialPermissionMode, initialPermissionPreset]);
 
   useEffect(() => {
@@ -265,6 +290,14 @@ export function ConversationHome({
     }
   }, [selectedThinkingLevel, thinkingEnabled, thinkingMenuOptions]);
 
+  useEffect(() => {
+    if (!sendBusy) {
+      return;
+    }
+    setModelMenuOpen(false);
+    setThinkingMenuOpen(false);
+  }, [sendBusy]);
+
   async function submitDraft(): Promise<void> {
     const trimmedDraft = draft.trim();
     if (!trimmedDraft) {
@@ -303,7 +336,10 @@ export function ConversationHome({
           providerPresetId,
           ...(thinkingEnabled && selectedThinkingLevel !== "off" ? { thinkingLevel: selectedThinkingLevel } : {}),
         },
-        authorization: authorizationModeToPermission(authorizationMode),
+        authorization: {
+          permissionMode: permissionModeForPreset(selectedPermissionPreset),
+          permissionPreset: selectedPermissionPreset,
+        },
         replaceMessages: (nextMessages) => setMessages(nextMessages),
         upsertMessage: (message) => setMessages((current) => upsertConversationHomeMessage(current, message)),
         failMessage: (message) => {
@@ -324,11 +360,15 @@ export function ConversationHome({
     }
   }
 
-  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void submitDraft();
     }
+  }
+
+  function handleComposerPaste(_event: ClipboardEvent<HTMLDivElement>): void {
+    setNotice("");
   }
 
   function insertSkill(command: ComposerSlashCommandOption): void {
@@ -371,6 +411,9 @@ export function ConversationHome({
   }
 
   function selectModel(option: ConversationHomeModelOption): void {
+    if (sendBusy) {
+      return;
+    }
     setSelectedProviderPresetId(option.id);
     setSelectedThinkingLevel("off");
     setThinkingMenuOpen(false);
@@ -380,6 +423,9 @@ export function ConversationHome({
   }
 
   function selectThinkingLevel(level: ProviderThinkingMode): void {
+    if (sendBusy) {
+      return;
+    }
     setSelectedThinkingLevel(level);
     setThinkingMenuOpen(false);
     setNotice("");
@@ -387,23 +433,34 @@ export function ConversationHome({
 
   const composerNode = (
     <>
-      <div className="conversation-home-composer" aria-label={t("New conversation composer")}>
-        <div className="conversation-home-composer-body">
-          <textarea
-            value={draft}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              setNotice("");
-            }}
-            onKeyDown={handleComposerKeyDown}
-            placeholder={t("Message Ling Stack... (type / for commands)")}
-            aria-label={t("Conversation message")}
-            rows={3}
-          />
-        </div>
-
-        <div className="conversation-home-toolbar">
-          <div className="conversation-home-tools">
+      <ConversationComposerShell
+        surface="normal_conversation"
+        density="floating"
+        className="conversation-home-composer"
+        ariaLabel={t("New conversation composer")}
+        toolbarClassName="conversation-home-toolbar"
+        leftToolsClassName="conversation-home-tools"
+        rightToolsClassName="conversation-home-right-tools"
+        inputNode={(
+          <div className="conversation-home-composer-body">
+            <TokenizedComposerInput
+              ref={composerInputRef}
+              value={draft}
+              parts={composerInputParts}
+              onChange={(value) => {
+                setDraft(value);
+                setNotice("");
+              }}
+              onKeyDown={handleComposerKeyDown}
+              onPaste={handleComposerPaste}
+              onSelect={() => undefined}
+              placeholder={t("Message Ling Stack... (type / for commands)")}
+              ariaLabel={t("Conversation message")}
+            />
+          </div>
+        )}
+        leftToolsNode={(
+          <>
             <div
               className="conversation-skill-launcher"
               onMouseEnter={() => setSkillMenuVisible(true)}
@@ -439,9 +496,16 @@ export function ConversationHome({
                 </div>
               ) : null}
             </div>
-            <ConversationAuthorizationMenu mode={authorizationMode} onModeChange={setAuthorizationMode} />
-          </div>
-          <div className="conversation-home-right-tools">
+            <ComposerPermissionMenu
+              preset={selectedPermissionPreset}
+              disabled={sendBusy}
+              disabledReason={t("Permission is locked while the current message is running.")}
+              onPresetChange={setSelectedPermissionPreset}
+            />
+          </>
+        )}
+        rightToolsNode={(
+          <>
             {thinkingEnabled ? (
               <div className="conversation-thinking-picker" ref={thinkingPickerRef}>
                 <button
@@ -451,6 +515,7 @@ export function ConversationHome({
                   title={thinkingButtonTitle}
                   aria-haspopup="listbox"
                   aria-expanded={thinkingMenuOpen}
+                  disabled={sendBusy}
                   onClick={() => setThinkingMenuOpen((current) => !current)}
                 >
                   <Brain size={15} />
@@ -486,6 +551,7 @@ export function ConversationHome({
                 aria-label={t("Selected model {label}", { label: activeModelLabel })}
                 aria-haspopup="listbox"
                 aria-expanded={modelMenuOpen}
+                disabled={sendBusy}
                 onClick={() => setModelMenuOpen((current) => !current)}
               >
                 <span>{activeModelLabel}</span>
@@ -532,10 +598,10 @@ export function ConversationHome({
             <button className="conversation-home-send" type="button" onClick={() => void submitDraft()} aria-label={t("Send")} disabled={sendBusy}>
               <ArrowUp size={17} />
             </button>
-          </div>
-        </div>
-        {notice ? <div className="conversation-home-notice" role="status">{notice}</div> : null}
-      </div>
+          </>
+        )}
+        feedbackNode={notice ? <div className="conversation-home-notice" role="status">{notice}</div> : null}
+      />
       <div className="conversation-folder-row">
         <div className="conversation-folder-picker" ref={folderPickerRef}>
           <button
@@ -603,6 +669,7 @@ export function ConversationHome({
             renderItem={(message) => {
               const workCell = workCellByMessageId.get(message.id);
               const workCellRun = workCell ? runById.get(workCell.model.anchorRunId) : undefined;
+              const messageFeedback = messageFeedbackById[message.id];
               return (
                 <MessageRow
                   className={normalConversationMessageClassName(message)}
@@ -633,6 +700,22 @@ export function ConversationHome({
                           label: t("Copy message"),
                           icon: <Copy size={14} />,
                           copyText: message.content,
+                        },
+                        {
+                          id: "like",
+                          kind: "like",
+                          label: t("Like response"),
+                          icon: <ThumbsUp size={14} />,
+                          selected: messageFeedback === "up",
+                          onClick: () => toggleMessageFeedback(message.id, "up"),
+                        },
+                        {
+                          id: "dislike",
+                          kind: "dislike",
+                          label: t("Dislike response"),
+                          icon: <ThumbsDown size={14} />,
+                          selected: messageFeedback === "down",
+                          onClick: () => toggleMessageFeedback(message.id, "down"),
                         },
                       ]}
                     />

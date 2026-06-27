@@ -2147,6 +2147,87 @@ button.message-local-file-link {
   color: var(--danger);
 }
 
+.message-action-bar-hover-focus {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-1px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.conversation-message-row:hover .message-action-bar-hover-focus,
+.conversation-message-row:focus-within .message-action-bar-hover-focus,
+.message-action-bar-always,
+.message-action-bar-critical {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.message-action-bar .message-footer-action {
+  position: relative;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.message-action-bar .message-footer-action:hover:not(:disabled),
+.message-action-bar .message-footer-action:focus-visible,
+.message-action-bar .message-footer-action.selected {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.message-action-bar .message-footer-action span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+}
+
+.message-action-bar .message-footer-action[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: max-content;
+  max-width: 180px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  color: var(--text);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+  white-space: nowrap;
+}
+
+.message-action-bar .message-footer-action:hover::after,
+.message-action-bar .message-footer-action:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .artifact-preview-drawer {
   position: fixed;
   inset: 0;
@@ -9180,6 +9261,124 @@ code,
 .composer-status-list {
   display: grid;
   gap: 6px;
+}
+
+.conversation-composer {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  overflow: visible;
+}
+
+.conversation-composer:focus-within {
+  border-color: var(--accent-border);
+  box-shadow:
+    0 0 0 1px var(--accent-border),
+    var(--shadow-panel);
+}
+
+.conversation-composer-density-floating {
+  padding: 0;
+}
+
+.conversation-composer-input-zone {
+  min-width: 0;
+}
+
+.conversation-composer-toolbar {
+  min-width: 0;
+}
+
+.conversation-composer-left-tools,
+.conversation-composer-right-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conversation-composer-right-tools {
+  justify-content: flex-end;
+}
+
+.conversation-composer-tool-button,
+.conversation-composer .conversation-authorization-trigger {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1;
+}
+
+.conversation-composer-tool-button:hover:not(:disabled),
+.conversation-composer-tool-button:focus-visible,
+.conversation-composer .conversation-authorization-trigger:hover:not(:disabled),
+.conversation-composer .conversation-authorization-trigger:focus-visible {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.conversation-composer .conversation-authorization-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-composer .conversation-authorization-trigger .expanded {
+  transform: rotate(180deg);
+}
+
+.conversation-composer .conversation-authorization-menu.disabled {
+  opacity: 0.7;
+}
+
+.conversation-composer .conversation-authorization-popover {
+  width: 258px;
+}
+
+.conversation-composer .conversation-authorization-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  align-items: center;
+  justify-content: stretch;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 31px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.conversation-composer .conversation-authorization-option:hover,
+.conversation-composer .conversation-authorization-option:focus-visible,
+.conversation-composer .conversation-authorization-option.selected {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.conversation-composer .conversation-authorization-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-panel.channel-composer {
