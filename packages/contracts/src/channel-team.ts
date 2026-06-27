@@ -124,8 +124,18 @@ export interface TeamRuntimePlan {
   readonly id: string;
   readonly channelId: string;
   readonly turnId: string;
+  readonly turnMode: ChannelTeamTurnMode;
   readonly attentionPlanId?: string;
+  readonly maxObservers: number;
+  readonly totalTimeoutMs: number;
+  readonly perAgentTimeoutMs: number;
+  readonly allowLateNotes: boolean;
+  readonly allowFallbackProvider: boolean;
+  readonly maxReadLeases: number;
+  readonly budgetClass: "low" | "normal" | "high";
   readonly observers: readonly AgentObserverPlan[];
+  readonly lateObserverIds: readonly string[];
+  readonly skippedObserverIds: readonly string[];
   readonly constraints: readonly string[];
   readonly createdAt: string;
 }
@@ -286,6 +296,15 @@ export interface ChannelTeamMetricsProjectionResponse {
   readonly metrics: ChannelTeamMetricsProjection;
 }
 
+export interface ChannelTeamShadowArtifactGuardrails {
+  readonly authority: "shadow";
+  readonly canMutateProtocol: false;
+  readonly canMutateMemory: false;
+  readonly canMutateSkills: false;
+  readonly canChangeRuntimeAuthority: false;
+  readonly requiresExplicitApply: true;
+}
+
 export type ChannelTeamPatternStatus = "candidate" | "provisional" | "approved" | "expired" | "rejected";
 
 export type ChannelTeamPatternCreatedBy = "system" | "ai-draft" | "local-user";
@@ -308,6 +327,7 @@ export interface ChannelTeamPattern {
   readonly sourceRefs: readonly ChannelTeamEvidenceSourceRef[];
   readonly status: ChannelTeamPatternStatus;
   readonly createdBy: ChannelTeamPatternCreatedBy;
+  readonly guardrails: ChannelTeamShadowArtifactGuardrails;
   readonly provisionalEffect?: ChannelTeamProvisionalRuleEffect;
   readonly provisionalRationale?: string;
   readonly verifyBeforeUse: boolean;
@@ -375,6 +395,7 @@ export interface ChannelTeamSnapshot {
   readonly channelId: string;
   readonly reason: string;
   readonly createdBy: ChannelTeamSnapshotCreatedBy;
+  readonly guardrails: ChannelTeamShadowArtifactGuardrails;
   readonly state: ChannelTeamSnapshotState;
   readonly createdAt: string;
 }
@@ -407,6 +428,7 @@ export interface ChannelTeamSnapshotDiff {
   readonly baseSnapshotId: string;
   readonly targetSnapshotId: string;
   readonly entries: readonly ChannelTeamSnapshotDiffEntry[];
+  readonly guardrails: ChannelTeamShadowArtifactGuardrails;
   readonly restoreRequiresExplicitApply: true;
 }
 
@@ -449,6 +471,7 @@ export interface ChannelTeamEvaluationRun {
   readonly workspaceId: string;
   readonly channelId: string;
   readonly snapshotId?: string;
+  readonly guardrails: ChannelTeamShadowArtifactGuardrails;
   readonly cases: readonly ChannelTeamEvaluationCase[];
   readonly results: readonly ChannelTeamEvaluationCaseResult[];
   readonly summary: ChannelTeamEvaluationSummary;
@@ -577,6 +600,19 @@ export interface AuthorityLedgerEntry {
   readonly sourceRefs: readonly ChannelTeamEvidenceSourceRef[];
   readonly createdAt: string;
   readonly expiresAt?: string;
+}
+
+export interface ChannelTeamAuthorityLedgerProjection {
+  readonly channelId: string;
+  readonly generatedAt: string;
+  readonly entries: readonly AuthorityLedgerEntry[];
+  readonly note: string;
+}
+
+export interface ChannelTeamAuthorityLedgerResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly ledger: ChannelTeamAuthorityLedgerProjection;
 }
 
 export interface ChannelTeamEvidenceItem {

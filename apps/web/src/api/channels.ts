@@ -35,6 +35,8 @@ import type {
   ChannelProtocolCandidateReviewRequest,
   ChannelProtocolCanvasResponse,
   ChannelProtocolDraftStatus,
+  ChannelTeamExpertsProjectionResponse,
+  ChannelTeamMetricsProjectionResponse,
   ChannelWorkflowCancelResponse,
   ChannelWorkflowListResponse,
   ChannelWorkflowMutationResponse,
@@ -515,6 +517,23 @@ export async function listChannelCollaborationCards(
   options: { readonly limit?: number } = {},
 ): Promise<ChannelCollaborationCardListResponse> {
   return daemonClient.listChannelCollaborationCards(cwd, channelId, options);
+}
+
+export async function getChannelTeamExpertsProjection(
+  cwd: string,
+  channelId: string,
+  turnId: string,
+  options: { readonly limit?: number } = {},
+): Promise<ChannelTeamExpertsProjectionResponse> {
+  return daemonClient.getChannelTeamExpertsProjection(cwd, channelId, turnId, options);
+}
+
+export async function getChannelTeamMetricsProjection(
+  cwd: string,
+  channelId: string,
+  options: { readonly limit?: number } = {},
+): Promise<ChannelTeamMetricsProjectionResponse> {
+  return daemonClient.getChannelTeamMetricsProjection(cwd, channelId, options);
 }
 
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {

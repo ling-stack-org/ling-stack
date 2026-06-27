@@ -78,9 +78,6 @@ function addActionTypeTriggers(triggers: Map<string, string>, actionType: Approv
   if (actionType === "credential_change" || actionType === "provider_change") {
     triggers.set("credential_or_provider_change", "Credential, auth, provider secret, or provider configuration change requires risk review.");
   }
-  if (actionType === "git_push") {
-    triggers.set("git_push", "Git push requires risk review before changing remote history or branches.");
-  }
 }
 
 function addScopeTriggers(triggers: Map<string, string>, scopes: readonly ExecutionScope[]): void {

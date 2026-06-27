@@ -17,7 +17,11 @@ import {
   renderLingAgentTurnEnvelopeSearchText,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
-import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
+import { runChannelObserverBusForTurn } from "./observer-bus.js";
+import {
+  recordProviderContextLengthObservation,
+  recordProviderRuntimeAvailabilityIncident,
+} from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 import { buildChannelWebContext, prependChannelWebContext } from "./web-tools.js";
 import {
@@ -42,6 +46,7 @@ export async function createAiChannelReply(input: {
   readonly secretResolver: SecretResolver;
   readonly webFetch?: typeof globalThis.fetch;
   readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
+  readonly teamObserverBusEnabled?: boolean;
   readonly completionMode?: "background" | "inline";
   readonly stream?: {
     readonly onReady: (message: ChannelMessage) => void;
@@ -133,6 +138,7 @@ async function completeAiChannelReply(input: {
   readonly secretResolver: SecretResolver;
   readonly webFetch?: typeof globalThis.fetch;
   readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
+  readonly teamObserverBusEnabled?: boolean;
   readonly pending: ChannelMessage;
   readonly supervised: ReturnType<typeof startRuntimeWorkUnit>;
   readonly teammate: ReturnType<typeof resolveAiTeammateReference>;
@@ -175,6 +181,28 @@ async function completeAiChannelReply(input: {
       channel: input.channel,
       sourceMessage: input.sourceMessage,
     });
+    try {
+      runChannelObserverBusForTurn({
+        enabled: input.teamObserverBusEnabled === true,
+        store: input.store,
+        channel: input.channel,
+        sourceMessageId: input.sourceMessage.id,
+        turnEnvelope,
+        now: input.now,
+      });
+    } catch (error) {
+      input.store.appendRuntimeEvent({
+        workUnitId: input.supervised.workUnit.id,
+        attemptId: input.supervised.attempt.id,
+        type: "work_unit_progress",
+        actor: "system",
+        ts: new Date().toISOString(),
+        data: {
+          channelTeamObserverBus: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
     const memoryRecall = input.store.recallMemory({
       teammateId: input.canonicalTeammateId,
       channelId: input.channel.id,
@@ -351,16 +379,26 @@ async function completeAiChannelReply(input: {
       if (!isContextLengthError(error)) {
         throw error;
       }
+      const observedAt = new Date().toISOString();
+      const providerPreset = discussionContextPack.providerPresetId ? input.store.getProviderPreset(discussionContextPack.providerPresetId) : undefined;
       recordProviderContextLengthObservation({
-        providerPreset: discussionContextPack.providerPresetId ? input.store.getProviderPreset(discussionContextPack.providerPresetId) : undefined,
+        providerPreset,
         contextPack: discussionContextPack,
-        now: new Date().toISOString(),
+        now: observedAt,
+      });
+      recordProviderRuntimeAvailabilityIncident({
+        store: input.store,
+        providerPreset,
+        providerPresetId: discussionContextPack.providerPresetId,
+        code: "context_length_error",
+        error,
+        now: observedAt,
       });
       const compaction = compactChannelDiscussionForNoToolsRetry({
         store: input.store,
         channel: input.channel,
         sourceMessage: input.sourceMessage,
-        now: new Date().toISOString(),
+        now: observedAt,
       });
       discussionContextPack = buildChannelReplyContextPack({
         store: input.store,
@@ -441,6 +479,13 @@ async function completeAiChannelReply(input: {
     return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    recordProviderRuntimeAvailabilityIncident({
+      store: input.store,
+      providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
+      providerPresetId: input.providerPresetId,
+      error,
+      now: new Date().toISOString(),
+    });
     const blocked = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
       body: `AI teammate is blocked: ${message}`,
       status: "blocked",

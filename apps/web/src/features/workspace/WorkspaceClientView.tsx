@@ -53,7 +53,14 @@ import { LingDaemonError } from "@ling-stack/api-client";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, getLingTrace, listLingThreads, listLingThreadTurns, listLingTraces, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
-import { createChannelWorktree, handoffChannelWorkspace, listChannelCollaborationCards, refreshChannelWorkspace } from "../../api/channels.js";
+import {
+  createChannelWorktree,
+  getChannelTeamExpertsProjection,
+  getChannelTeamMetricsProjection,
+  handoffChannelWorkspace,
+  listChannelCollaborationCards,
+  refreshChannelWorkspace,
+} from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -209,6 +216,7 @@ import type {
   ChannelMessage,
   ChannelMessageFileRef,
   ChannelMessageRouteDecision,
+  ChannelTeamMetricsProjection,
   ChannelExecutionProposal,
   UpdateChannelExecutionProposalRequest,
   ChannelWorkflow,
@@ -222,6 +230,7 @@ import type {
   WorkflowContextInspectSummary,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
+  FoldedExpertsReadModel,
   MemoryObject,
   ProviderPreset,
   ResourceLease,
@@ -257,6 +266,8 @@ import { ChannelWorkBoard } from "../work-board/ChannelWorkBoard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
+import { ChannelTeamExpertsSummary } from "./ChannelTeamExpertsSummary.js";
+import { ChannelTeamMetricsPanel } from "./ChannelTeamMetricsPanel.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
@@ -444,6 +455,17 @@ interface PendingChannelSendPreview {
   readonly requestAiReply: boolean;
   readonly autoReplyMode: Channel["autoReplyMode"];
   readonly createdAt: string;
+}
+
+interface ChannelTeamExpertsState {
+  readonly channelId: string;
+  readonly turnId: string;
+  readonly experts: FoldedExpertsReadModel;
+}
+
+interface ChannelTeamMetricsState {
+  readonly channelId: string;
+  readonly metrics: ChannelTeamMetricsProjection;
 }
 
 interface MessageFeedAnchorSnapshot {
@@ -1191,6 +1213,12 @@ export function WorkspaceClientView({
     readonly status: "idle" | "loaded" | "error";
     readonly cards: readonly CollaborationTaskCardModel[];
   }>({ channelId: "", signature: "", status: "idle", cards: [] });
+  const [channelTeamExpertsState, setChannelTeamExpertsState] = useState<ChannelTeamExpertsState | undefined>();
+  const [channelTeamExpertsExpanded, setChannelTeamExpertsExpanded] = useState(false);
+  const [channelTeamMetricsState, setChannelTeamMetricsState] = useState<ChannelTeamMetricsState | undefined>();
+  const [channelTeamMetricsLoading, setChannelTeamMetricsLoading] = useState(false);
+  const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
+  const [channelTeamMetricsRefreshKey, setChannelTeamMetricsRefreshKey] = useState(0);
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
@@ -1977,6 +2005,75 @@ export function WorkspaceClientView({
       usedMemoryEvents,
     ],
   );
+  const latestChannelTeamExpertsTurn = useMemo(
+    () => [...conversationTurnProjection.turns].reverse().find((turn) => turn.blocks.length > 0),
+    [conversationTurnProjection.turns],
+  );
+  const latestChannelTeamExpertsTurnId = latestChannelTeamExpertsTurn?.sourceMessage.id ?? "";
+  const latestChannelTeamExpertsSignature = latestChannelTeamExpertsTurn
+    ? conversationTurnRenderSignature(latestChannelTeamExpertsTurn)
+    : "";
+  useEffect(() => {
+    setChannelTeamExpertsExpanded(false);
+  }, [latestChannelTeamExpertsTurnId, selectedChannelId]);
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId || !latestChannelTeamExpertsTurnId) {
+      setChannelTeamExpertsState(undefined);
+      return;
+    }
+    let cancelled = false;
+    void getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, latestChannelTeamExpertsTurnId, { limit: 8 })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setChannelTeamExpertsState({
+          channelId: response.channelId,
+          turnId: response.turnId,
+          experts: response.experts,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChannelTeamExpertsState(undefined);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, latestChannelTeamExpertsSignature, latestChannelTeamExpertsTurnId, selectedChannelId]);
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId || sidePanelView !== "settings" || !sidePanelOpen) {
+      return;
+    }
+    let cancelled = false;
+    setChannelTeamMetricsLoading(true);
+    setChannelTeamMetricsError("");
+    void getChannelTeamMetricsProjection(workspaceCwd, selectedChannelId, { limit: 250 })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setChannelTeamMetricsState({ channelId: response.channelId, metrics: response.metrics });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setChannelTeamMetricsError(error instanceof Error ? error.message : String(error));
+        setChannelTeamMetricsState(undefined);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setChannelTeamMetricsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelTeamMetricsRefreshKey, cwd, selectedChannelId, sidePanelOpen, sidePanelView]);
   const selectedChannelBranchActivityScope = useMemo<BranchConversationActivityScope | undefined>(() => {
     if (!selectedChannelBranchRootThreadId) {
       return undefined;
@@ -3352,7 +3449,7 @@ export function WorkspaceClientView({
     : sidePanelView === "context"
       ? inspectorMode === "runtime" ? runtimeLoading : channelProtocolLoading
       : sidePanelView === "settings"
-          ? channelsLoading || channelTeammateMembershipsLoading
+          ? channelsLoading || channelTeammateMembershipsLoading || channelTeamMetricsLoading
           : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || durableWorkItemsLoading || tasksLoading;
 
   function refreshSidePanel(): void {
@@ -3374,6 +3471,7 @@ export function WorkspaceClientView({
       onRefreshChannels();
       onRefreshAiCouncils();
       onRefreshChannelCouncil();
+      setChannelTeamMetricsRefreshKey((current) => current + 1);
       return;
     }
   }
@@ -4530,6 +4628,9 @@ export function WorkspaceClientView({
     const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
     const copyText = conversationTurnAssistantCopyText(turn);
     const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
+    const teamExperts = channelTeamExpertsState?.channelId === selectedChannelId && channelTeamExpertsState.turnId === turn.sourceMessage.id
+      ? channelTeamExpertsState.experts
+      : undefined;
 
     return (
       <MessageRow
@@ -4546,6 +4647,20 @@ export function WorkspaceClientView({
               block,
               context: transcriptContext,
             }))}
+            {teamExperts ? (
+              <ChannelTeamExpertsSummary
+                experts={teamExperts}
+                expanded={channelTeamExpertsExpanded}
+                onToggleExpanded={() => setChannelTeamExpertsExpanded((current) => !current)}
+                labels={{
+                  experts: t("Experts"),
+                  active: t("active"),
+                  done: t("done"),
+                  delayed: t("delayed"),
+                  unavailable: t("unavailable"),
+                }}
+              />
+            ) : null}
           </div>
         )}
         actionsNode={(
@@ -5862,6 +5977,37 @@ export function WorkspaceClientView({
   const sidePanelTitle = createTaskOpen && sidePanelView === "task"
       ? t("New task")
       : t(channelSidePanelLabel(sidePanelView));
+  const channelTeamMetricsPanel = channelTeamMetricsState?.channelId === selectedChannelId ? (
+    <ChannelTeamMetricsPanel
+      metrics={channelTeamMetricsState.metrics}
+      labels={{
+        title: t("Team metrics"),
+        subtitle: t("Read-only team activity and evidence"),
+        health: t("Health"),
+        active: t("Active"),
+        delayed: t("Delayed"),
+        unavailable: t("Unavailable"),
+        riskReview: t("Risk review"),
+        learningQueue: t("Learning queue"),
+        agentActivity: t("Agent activity"),
+        noAgentActivity: t("No agent evidence yet"),
+      }}
+    />
+  ) : channelTeamMetricsError ? (
+    <section className="channel-settings-card channel-team-metrics-panel" aria-label={t("Team metrics")}>
+      <div className="inline-error compact">
+        <CircleAlert size={14} />
+        {t("Team metrics could not be loaded")}
+      </div>
+    </section>
+  ) : channelTeamMetricsLoading ? (
+    <section className="channel-settings-card channel-team-metrics-panel" aria-label={t("Team metrics")}>
+      <div className="activity-feed-status" role="status">
+        <Loader2 className="spin" size={14} />
+        <span>{t("Loading team metrics...")}</span>
+      </div>
+    </section>
+  ) : null;
   const sidePanelContent = sidePanelView === "context" ? (
     <div className="channel-protocol-tab-content">
       <ChannelInspector
@@ -5918,6 +6064,7 @@ export function WorkspaceClientView({
       {channelNotificationPanel}
       {channelCouncilPanel}
       {channelTeammateManager}
+      {channelTeamMetricsPanel}
       {channelManagementPanel}
     </div>
   ) : (

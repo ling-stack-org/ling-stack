@@ -11,6 +11,7 @@ import { buildContextPack, resolveProviderContextBudget } from "../dist/features
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope } from "../dist/features/channels/ling-agent-turn-envelope.js";
+import { availabilityIncidentInputForProviderRuntimeFailure } from "../dist/features/channels/provider-runtime-observations.js";
 import { linkBodyExtractorV1 } from "../dist/features/channels/materialization/extractors/link-body.js";
 import { officeExtractorV1 } from "../dist/features/channels/materialization/extractors/office.js";
 import { pdfExtractorV1 } from "../dist/features/channels/materialization/extractors/pdf.js";
@@ -32,23 +33,63 @@ async function readDocxFixtureBytes() {
 }
 
 test("health exposes channel auto_route capability", async () => {
-  const disabledDaemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false, intentSelector: false } });
+  const disabledDaemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false, intentSelector: false, teamObserverBus: false } });
   try {
     const health = await getJson(`${disabledDaemon.url}/health`);
     assert.equal(health.features.channels.autoRoute, false);
     assert.equal(health.features.channels.intentSelector, false);
+    assert.equal(health.features.channels.teamObserverBus, false);
   } finally {
     await disabledDaemon.close();
   }
 
-  const enabledDaemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: true, intentSelector: true } });
+  const enabledDaemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: true, intentSelector: true, teamObserverBus: true } });
   try {
     const health = await getJson(`${enabledDaemon.url}/health`);
     assert.equal(health.features.channels.autoRoute, true);
     assert.equal(health.features.channels.intentSelector, true);
+    assert.equal(health.features.channels.teamObserverBus, true);
   } finally {
     await enabledDaemon.close();
   }
+});
+
+test("provider runtime availability mapper records transient failures only", () => {
+  const providerPreset = {
+    id: "provider_static",
+    kind: "glm",
+    displayName: "Static Chat",
+    providerId: "static-chat",
+    model: "static-model",
+    api: "google-generative-ai",
+  };
+
+  const quota = availabilityIncidentInputForProviderRuntimeFailure({
+    providerPreset,
+    code: "rate_limited",
+    message: "Too many requests",
+    now: "2026-06-27T00:00:00.000Z",
+  });
+  assert.equal(quota?.kind, "quota");
+  assert.equal(quota?.state, "rate_limited");
+  assert.equal(quota?.providerPresetId, "provider_static");
+  assert.equal(quota?.modelSignature?.model, "static-model");
+  assert.equal(quota?.expiresAt, "2026-06-27T00:20:00.000Z");
+
+  const network = availabilityIncidentInputForProviderRuntimeFailure({
+    providerPreset,
+    error: Object.assign(new Error("fetch failed: EAI_AGAIN"), { code: "network_failed" }),
+    now: "2026-06-27T00:00:00.000Z",
+  });
+  assert.equal(network?.kind, "network");
+  assert.equal(network?.state, "offline");
+
+  const promptLeak = availabilityIncidentInputForProviderRuntimeFailure({
+    providerPreset,
+    error: new Error("Runner echoed internal channel context instead of an assistant reply."),
+    now: "2026-06-27T00:00:00.000Z",
+  });
+  assert.equal(promptLeak, undefined);
 });
 
 test("channel branches follow archive restore and delete lifecycle", async () => {
@@ -86,9 +127,19 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
       body: "Message in prompt cleanup branch",
     });
     const firstBranchMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(branch.rootThreadId)}`);
-    assert.deepEqual(firstBranchMessages.messages.map((message) => message.body), ["Message in model routing branch"]);
+    assert.deepEqual(
+      firstBranchMessages.messages
+        .filter((message) => message.authorType === "local-user")
+        .map((message) => message.body),
+      ["Message in model routing branch"],
+    );
     const secondBranchMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(secondBranch.rootThreadId)}`);
-    assert.deepEqual(secondBranchMessages.messages.map((message) => message.body), ["Message in prompt cleanup branch"]);
+    assert.deepEqual(
+      secondBranchMessages.messages
+        .filter((message) => message.authorType === "local-user")
+        .map((message) => message.body),
+      ["Message in prompt cleanup branch"],
+    );
 
     const store = stores.find((item) => item.paths.cwd === cwd);
     assert.ok(store);
@@ -1909,6 +1960,327 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
     assert.match(runner.runs[0].task.prompt, /Response language: follow_user \(source=default\)/);
     assert.match(runner.runs[0].task.prompt, /Current teammate: Designer \(id: teammate_builtin_designer, role: designer\)/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /Channel teammates \(configured roster/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel discussion records provider runtime failures as availability incidents only", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-provider-runtime-incident-"));
+  const rateLimitError = Object.assign(new Error("Too many requests"), { code: "rate_limited" });
+  const runner = new ScriptedRunner([rateLimitError]);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer 看一下这个实现边界",
+      mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked");
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const availability = store.listAvailabilityIncidents({
+      providerPresetId: provider.id,
+      now: new Date().toISOString(),
+      limit: 10,
+    });
+    assert.equal(availability.length, 1);
+    assert.equal(availability[0].kind, "quota");
+    assert.equal(availability[0].state, "rate_limited");
+    assert.equal(availability[0].agentId, undefined);
+    assert.deepEqual(store.listReliabilityIncidents({ agentId: teammateId, capabilityScope: "code", limit: 10 }), []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel observer bus stays inert when the feature flag is disabled", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-off-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { teamObserverBus: false } });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer 看一下这个实现边界",
+      mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const store = stores.get(cwd);
+    assert.ok(store);
+    assert.deepEqual(store.listChannelTeamEvidenceItems({ channelId: channel.id, limit: 10 }), []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel observer bus writes bounded relevance evidence without visible observer messages", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-on-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { teamObserverBus: true } });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer 看一下这个实现边界",
+      mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    assert.deepEqual(listed.messages.map((message) => message.id), [created.message.id, created.aiReply.id]);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const evidence = store.listChannelTeamEvidenceItems({
+      channelId: channel.id,
+      turnId: created.message.id,
+      kind: "agent_relevance_card",
+      limit: 10,
+    });
+    assert.equal(evidence.length, 1);
+    assert.equal(evidence[0].agentId, teammateId);
+    assert.equal(evidence[0].visibility, "internal");
+    assert.equal(evidence[0].status, "completed");
+    assert.equal(evidence[0].sourceRefs.some((sourceRef) => sourceRef.type === "message" && sourceRef.id === created.message.id), true);
+    assert.match(evidence[0].summary, /Engineer/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel observer bus skips unavailable observers without blocking the main reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-unavailable-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { teamObserverBus: true } });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.createAvailabilityIncident(
+      {
+        id: "incident_observer_engineer_overloaded",
+        agentId: teammateId,
+        providerPresetId: provider.id,
+        state: "overloaded",
+        kind: "overload",
+        severity: "medium",
+        summary: "Observer provider is temporarily overloaded.",
+        observedAt: "2026-06-27T00:00:00.000Z",
+        expiresAt: "2026-06-28T00:10:00.000Z",
+      },
+      "2026-06-27T00:00:00.000Z",
+    );
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer 看一下这个实现边界",
+      mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    assert.deepEqual(listed.messages.map((message) => message.id), [created.message.id, created.aiReply.id]);
+    assert.deepEqual(
+      store.listChannelTeamEvidenceItems({
+        channelId: channel.id,
+        turnId: created.message.id,
+        kind: "agent_relevance_card",
+        limit: 10,
+      }),
+      [],
+    );
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel observer bus applies provider-level availability incidents to matching observers", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-provider-unavailable-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { teamObserverBus: true } });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.createAvailabilityIncident(
+      {
+        id: "incident_provider_rate_limited",
+        providerPresetId: provider.id,
+        state: "rate_limited",
+        kind: "quota",
+        severity: "medium",
+        summary: "Provider quota is temporarily exhausted.",
+        observedAt: "2026-06-27T00:00:00.000Z",
+        expiresAt: "2026-06-28T00:10:00.000Z",
+      },
+      "2026-06-27T00:00:00.000Z",
+    );
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer 看一下这个实现边界",
+      mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    assert.deepEqual(
+      store.listChannelTeamEvidenceItems({
+        channelId: channel.id,
+        turnId: created.message.id,
+        kind: "agent_relevance_card",
+        limit: 10,
+      }),
+      [],
+    );
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel observer bus ignores expired provider-level availability incidents", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-provider-expired-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { teamObserverBus: true } });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.createAvailabilityIncident(
+      {
+        id: "incident_provider_expired_outage",
+        providerPresetId: provider.id,
+        state: "offline",
+        kind: "network",
+        severity: "medium",
+        summary: "Provider network outage already expired.",
+        observedAt: "2026-06-26T00:00:00.000Z",
+        expiresAt: "2026-06-26T00:10:00.000Z",
+      },
+      "2026-06-26T00:00:00.000Z",
+    );
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer 看一下这个实现边界",
+      mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const evidence = store.listChannelTeamEvidenceItems({
+      channelId: channel.id,
+      turnId: created.message.id,
+      kind: "agent_relevance_card",
+      limit: 10,
+    });
+    assert.equal(evidence.length, 1);
+    assert.equal(evidence[0].agentId, teammateId);
+    assert.equal(evidence[0].status, "completed");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

@@ -62,6 +62,8 @@ export interface MockState {
   channelWorkflowSteps: unknown[];
   channelProtocolDrafts: unknown[];
   channelPlaybookCandidates: unknown[];
+  channelTeamExpertsByTurn: Record<string, unknown>;
+  channelTeamMetricsByChannel: Record<string, unknown>;
   aiTeammates: unknown[];
   aiCouncils: unknown[];
   aiCouncilMembers: unknown[];
@@ -940,6 +942,8 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelWorkflowSteps: [],
     channelProtocolDrafts: [],
     channelPlaybookCandidates: [],
+    channelTeamExpertsByTurn: {},
+    channelTeamMetricsByChannel: {},
     aiTeammates: [],
     aiCouncils: [createMockAiCouncil()],
     aiCouncilMembers: createMockAiCouncilMembers(),
@@ -5481,6 +5485,58 @@ function summarizeMockConversationTitle(message: string): string {
   return oneLine.length > 48 ? `${oneLine.slice(0, 45)}...` : oneLine || "New conversation";
 }
 
+function buildEmptyMockFoldedExperts(channelId: string, turnId: string): Record<string, unknown> {
+  return {
+    channelId,
+    turnId,
+    totalCount: 0,
+    activeCount: 0,
+    completedCount: 0,
+    delayedCount: 0,
+    unavailableCount: 0,
+    adoptedCount: 0,
+    rejectedCount: 0,
+    statusCounts: {},
+    chips: [],
+    entries: [],
+  };
+}
+
+function buildEmptyMockTeamMetrics(channelId: string): Record<string, unknown> {
+  return {
+    channelId,
+    generatedAt: "2026-05-25T00:18:00.000Z",
+    summary: {
+      healthState: "healthy",
+      totalEvidenceCount: 0,
+      activeEvidenceCount: 0,
+      delayedEvidenceCount: 0,
+      unavailableEvidenceCount: 0,
+      reliabilityIncidentCount: 0,
+      availabilityIncidentCount: 0,
+    },
+    agents: [],
+    attention: {
+      activeAgentCount: 0,
+      evidenceKindCounts: {},
+      evidenceStatusCounts: {},
+    },
+    riskReview: {
+      riskSignalCount: 0,
+      dissentSignalCount: 0,
+      openReliabilityIncidentCount: 0,
+      openCriticalReliabilityIncidentCount: 0,
+    },
+    learningQueue: {
+      recommendationEvidenceCount: 0,
+      adoptedEvidenceCount: 0,
+      rejectedEvidenceCount: 0,
+      provisionalRuleCount: 0,
+      note: "Pattern Store is inspect-only in mock data.",
+    },
+  };
+}
+
 export async function mockDaemon(
   page: Page,
   state: MockState,
@@ -8201,6 +8257,37 @@ export async function handleDaemonRoute(
       await route.fulfill({ json: { ...buildMockChannelCollaborationProtocolResponse(channelId, channel), draft: cancelled } });
       return;
     }
+  }
+  const channelTeamExpertsMatch = /^\/channels\/([^/]+)\/team-experts$/.exec(path);
+  if (channelTeamExpertsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelTeamExpertsMatch[1]);
+    const turnId = url.searchParams.get("turnId");
+    if (!turnId) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: "turnId query parameter is required" } });
+      return;
+    }
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const experts = state.channelTeamExpertsByTurn[`${channelId}:${turnId}`] ??
+      state.channelTeamExpertsByTurn[turnId] ??
+      buildEmptyMockFoldedExperts(channelId, turnId);
+    await route.fulfill({ json: { cwd, channelId, turnId, experts } });
+    return;
+  }
+  const channelTeamMetricsMatch = /^\/channels\/([^/]+)\/team-metrics$/.exec(path);
+  if (channelTeamMetricsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelTeamMetricsMatch[1]);
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const metrics = state.channelTeamMetricsByChannel[channelId] ?? buildEmptyMockTeamMetrics(channelId);
+    await route.fulfill({ json: { cwd, channelId, metrics } });
+    return;
   }
   const channelBranchesMatch = /^\/channels\/([^/]+)\/branches(?:\/([^/]+))?$/.exec(path);
   if (channelBranchesMatch) {

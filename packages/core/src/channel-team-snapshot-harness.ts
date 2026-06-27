@@ -1,3 +1,4 @@
+import { channelTeamShadowArtifactGuardrails } from "./channel-team-types.js";
 import type {
   ChannelTeamEvaluationCase,
   ChannelTeamEvaluationRun,
@@ -26,6 +27,7 @@ export function diffChannelTeamSnapshots(
       ...diffValue("availabilityIncidentIds", base.state.availabilityIncidentIds, target.state.availabilityIncidentIds),
       ...diffValue("messageCount", base.state.messageCount, target.state.messageCount),
     ],
+    guardrails: channelTeamShadowArtifactGuardrails,
     restoreRequiresExplicitApply: true,
   };
 }

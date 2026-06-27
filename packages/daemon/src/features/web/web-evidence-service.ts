@@ -78,6 +78,7 @@ export interface BuildWebEvidenceContextInput {
   readonly resolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly promptHeader?: string;
   readonly promptInstruction?: string;
+  readonly allowPublicSearchFallback?: boolean;
   readonly onProgress?: (event: WebEvidenceProgressEvent) => void;
 }
 
@@ -282,6 +283,20 @@ async function runPlannedProviderWebSearch(
       lastBlockedReason = searchContext.reason ?? WEB_SEARCH_DEGRADED_REASON;
     } else {
       lastBlockedReason = searchContext.reason;
+    }
+
+    if (input.allowPublicSearchFallback === false) {
+      const status = searchContext.status === "blocked" && !searchContext.result ? "blocked" : "degraded";
+      emitWebEvidenceProgress(input.onProgress, {
+        type: "web_search_completed",
+        query,
+        attempt: index + 1,
+        total: queries.length,
+        status,
+        sourceCount: 0,
+        reason: searchContext.reason ?? (status === "degraded" ? WEB_SEARCH_DEGRADED_REASON : undefined),
+      });
+      continue;
     }
 
     const publicSearchContext = await runPublicSearchFallback({

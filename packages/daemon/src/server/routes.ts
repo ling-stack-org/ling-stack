@@ -279,7 +279,7 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "team-experts" | "team-metrics" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council";
+  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council";
   readonly branchId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
@@ -364,6 +364,7 @@ export function parseChannelRoute(
       segments[2] === "collaboration-cards" ||
       segments[2] === "team-experts" ||
       segments[2] === "team-metrics" ||
+      segments[2] === "team-authority-ledger" ||
       segments[2] === "team-patterns" ||
       segments[2] === "team-snapshots" ||
       segments[2] === "team-evaluations" ||

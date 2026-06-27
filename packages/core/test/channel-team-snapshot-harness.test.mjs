@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   buildChannelTeamEvaluationRunInput,
+  channelTeamShadowArtifactGuardrails,
   createSqliteRunStore,
   diffChannelTeamSnapshots,
   resolveRuntimePaths,
@@ -59,9 +60,15 @@ test("channel team snapshots persist diffable reversible state without restoring
     );
 
     const diff = diffChannelTeamSnapshots(before, after);
+    assert.deepEqual(before.guardrails, channelTeamShadowArtifactGuardrails);
+    assert.deepEqual(after.guardrails, channelTeamShadowArtifactGuardrails);
+    assert.deepEqual(diff.guardrails, channelTeamShadowArtifactGuardrails);
     assert.equal(diff.restoreRequiresExplicitApply, true);
     assert.deepEqual(diff.entries.map((entry) => entry.path), ["activeProvisionalRuleIds", "patternIds", "messageCount"]);
     assert.deepEqual(store.listChannelTeamSnapshots({ channelId: channel.id }).map((snapshot) => snapshot.id), [after.id, before.id]);
+    assert.deepEqual(store.listChannelCollaborationProtocolDrafts({ channelId: channel.id, limit: 10 }), []);
+    assert.deepEqual(store.listMemoryObjects({ limit: 10 }), []);
+    assert.deepEqual(store.listSkillCandidates({ limit: 10 }), []);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -73,6 +80,7 @@ test("channel team evaluation harness records synthetic risk-review expectations
   const store = createSqliteRunStore(cwd);
   try {
     const channel = store.createChannel({ name: "Evaluation Channel", boundPath: cwd }, "2026-06-26T00:00:00.000Z");
+    const beforeProtocol = store.getChannelCollaborationProtocolOverride(channel.id);
     const input = buildChannelTeamEvaluationRunInput({
       channelId: channel.id,
       now: "2026-06-26T00:01:00.000Z",
@@ -93,10 +101,19 @@ test("channel team evaluation harness records synthetic risk-review expectations
     });
     const evaluation = store.createChannelTeamEvaluationRun(input, "2026-06-26T00:02:00.000Z");
 
+    assert.deepEqual(evaluation.guardrails, channelTeamShadowArtifactGuardrails);
+    assert.equal(evaluation.guardrails.canMutateProtocol, false);
+    assert.equal(evaluation.guardrails.canMutateMemory, false);
+    assert.equal(evaluation.guardrails.canMutateSkills, false);
+    assert.equal(evaluation.guardrails.canChangeRuntimeAuthority, false);
     assert.equal(evaluation.summary.totalCount, 2);
     assert.equal(evaluation.summary.failedCount, 0);
     assert.deepEqual(evaluation.results.map((result) => result.observedRiskReviewStatus), ["required", "not_required"]);
     assert.deepEqual(store.listChannelTeamEvaluationRuns({ channelId: channel.id }).map((run) => run.id), [evaluation.id]);
+    assert.equal(store.getChannelCollaborationProtocolOverride(channel.id), beforeProtocol);
+    assert.deepEqual(store.listChannelCollaborationProtocolDrafts({ channelId: channel.id, limit: 10 }), []);
+    assert.deepEqual(store.listMemoryObjects({ limit: 10 }), []);
+    assert.deepEqual(store.listSkillCandidates({ limit: 10 }), []);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

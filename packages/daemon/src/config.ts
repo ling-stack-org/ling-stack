@@ -16,6 +16,7 @@ export interface DaemonConfig {
 export interface ChannelFeatureConfig {
   readonly autoRoute?: boolean;
   readonly intentSelector?: boolean;
+  readonly teamObserverBus?: boolean;
 }
 
 export interface RuntimeToolFeatureConfig {
@@ -135,6 +136,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     channels: {
       autoRoute: config.channels?.autoRoute ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_AUTO_ROUTE, false),
       intentSelector: config.channels?.intentSelector ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_INTENT_SELECTOR, true),
+      teamObserverBus: config.channels?.teamObserverBus ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TEAM_OBSERVER_BUS, false),
     },
   };
 }

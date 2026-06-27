@@ -99,3 +99,58 @@ test("sqlite channel team lifecycle incidents keep reliability and availability 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("sqlite run store exposes channel team incident create and list methods", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-team-run-store-lifecycle-"));
+  try {
+    const store = createSqliteRunStore(cwd);
+    try {
+      const reliability = store.createReliabilityIncident(
+        {
+          id: "incident_run_store_reliability",
+          agentId: "teammate_builtin_qa",
+          capabilityScope: "testing",
+          kind: "low_quality",
+          severity: "medium",
+          summary: "Regression review missed a failing case.",
+          sourceRefs: [{ type: "message", id: "message_quality_1" }],
+          expiresAt: "2026-07-26T00:00:00.000Z",
+        },
+        "2026-06-26T00:03:00.000Z",
+      );
+      const availability = store.createAvailabilityIncident(
+        {
+          id: "incident_run_store_availability",
+          agentId: "teammate_builtin_qa",
+          providerPresetId: "provider_test",
+          state: "overloaded",
+          kind: "overload",
+          severity: "medium",
+          summary: "Provider returned overload while scheduling observer.",
+          observedAt: "2026-06-26T00:04:00.000Z",
+          expiresAt: "2026-06-26T00:20:00.000Z",
+        },
+        "2026-06-26T00:04:00.000Z",
+      );
+
+      assert.equal(reliability.id, "incident_run_store_reliability");
+      assert.equal(availability.id, "incident_run_store_availability");
+      assert.deepEqual(
+        store.listReliabilityIncidents({ agentId: "teammate_builtin_qa", capabilityScope: "testing" }).map((incident) => incident.id),
+        ["incident_run_store_reliability"],
+      );
+      assert.deepEqual(
+        store.listAvailabilityIncidents({
+          agentId: "teammate_builtin_qa",
+          providerPresetId: "provider_test",
+          now: "2026-06-26T00:05:00.000Z",
+        }).map((incident) => incident.id),
+        ["incident_run_store_availability"],
+      );
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

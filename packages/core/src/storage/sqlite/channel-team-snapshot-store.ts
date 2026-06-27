@@ -2,6 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import {
   channelTeamSnapshotCreatedByValues,
+  channelTeamShadowArtifactGuardrails,
   createChannelTeamEvaluationRunId,
   createChannelTeamSnapshotId,
   type ChannelTeamEvaluationRun,
@@ -41,6 +42,7 @@ export class SqliteChannelTeamSnapshotStore {
       channelId: input.channelId,
       reason: input.reason,
       createdBy: input.createdBy ?? "system",
+      guardrails: channelTeamShadowArtifactGuardrails,
       state: input.state,
       createdAt: now,
     };
@@ -98,6 +100,7 @@ export class SqliteChannelTeamSnapshotStore {
       workspaceId: DEFAULT_WORKSPACE_ID,
       channelId: input.channelId,
       snapshotId: input.snapshotId,
+      guardrails: channelTeamShadowArtifactGuardrails,
       cases: input.cases,
       results: input.results,
       summary: input.summary,

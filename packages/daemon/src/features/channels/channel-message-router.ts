@@ -30,7 +30,10 @@ import {
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
-import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
+import {
+  recordProviderContextLengthObservation,
+  recordProviderRuntimeAvailabilityIncident,
+} from "./provider-runtime-observations.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -445,16 +448,26 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
     if (!isContextLengthError(error)) {
       throw error;
     }
+    const observedAt = new Date().toISOString();
+    const providerPreset = contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined;
     recordProviderContextLengthObservation({
-      providerPreset: contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined,
+      providerPreset,
       contextPack,
-      now: new Date().toISOString(),
+      now: observedAt,
+    });
+    recordProviderRuntimeAvailabilityIncident({
+      store: input.store,
+      providerPreset,
+      providerPresetId: contextPack.providerPresetId,
+      code: "context_length_error",
+      error,
+      now: observedAt,
     });
     const compaction = compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
-      now: new Date().toISOString(),
+      now: observedAt,
     });
     contextPack = buildChannelAutoRouteContextPack({
       store: input.store,

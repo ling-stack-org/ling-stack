@@ -132,6 +132,148 @@ test("channel header hides empty governance review queue while notifications loa
   await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
 });
 
+test("channel team experts fold into latest turn and metrics stay in settings", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    {
+      id: "msg_team_source",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "请审阅多 agent 协作边界。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:18:00.000Z",
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    },
+    {
+      id: "msg_team_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_team_source",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "主回复保持干净，团队证据折叠展示。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:18:01.000Z",
+      updatedAt: "2026-05-25T00:18:01.000Z",
+    },
+  ];
+  state.channelTeamExpertsByTurn["channel_engineering:msg_team_source"] = {
+    channelId: "channel_engineering",
+    turnId: "msg_team_source",
+    totalCount: 4,
+    activeCount: 1,
+    completedCount: 2,
+    delayedCount: 0,
+    unavailableCount: 1,
+    adoptedCount: 0,
+    rejectedCount: 0,
+    statusCounts: { pending: 1, completed: 2, unavailable: 1 },
+    chips: [
+      { agentId: "architect", status: "completed", evidenceCount: 1, evidenceGrade: "inspected", latestSummary: "Architect checked boundaries.", updatedAt: "2026-05-25T00:18:02.000Z" },
+      { agentId: "designer", status: "pending", evidenceCount: 1, evidenceGrade: "observed", latestSummary: "Designer is reviewing interaction edge cases.", updatedAt: "2026-05-25T00:18:03.000Z" },
+      { agentId: "security", status: "unavailable", evidenceCount: 1, evidenceGrade: "observed", latestSummary: "Security provider is temporarily unavailable.", updatedAt: "2026-05-25T00:18:04.000Z" },
+      { agentId: "qa", status: "completed", evidenceCount: 1, evidenceGrade: "verified", latestSummary: "QA verified folded presentation.", updatedAt: "2026-05-25T00:18:05.000Z" },
+    ],
+    entries: [
+      {
+        id: "evidence_architect",
+        agentId: "architect",
+        kind: "specialist_note",
+        status: "completed",
+        visibility: "folded_evidence",
+        evidenceGrade: "inspected",
+        summary: "Architect checked boundaries.",
+        concerns: [],
+        recommendations: ["Keep Ling Agent as decision owner."],
+        sourceRefs: [{ type: "message", id: "msg_team_source" }],
+        createdAt: "2026-05-25T00:18:02.000Z",
+        updatedAt: "2026-05-25T00:18:02.000Z",
+      },
+    ],
+    latestUpdatedAt: "2026-05-25T00:18:05.000Z",
+  };
+  state.channelTeamMetricsByChannel.channel_engineering = {
+    channelId: "channel_engineering",
+    generatedAt: "2026-05-25T00:18:06.000Z",
+    summary: {
+      healthState: "attention_needed",
+      totalEvidenceCount: 4,
+      activeEvidenceCount: 1,
+      delayedEvidenceCount: 0,
+      unavailableEvidenceCount: 1,
+      reliabilityIncidentCount: 0,
+      availabilityIncidentCount: 1,
+      latestUpdatedAt: "2026-05-25T00:18:05.000Z",
+    },
+    agents: [
+      {
+        agentId: "architect",
+        evidenceCount: 1,
+        completedCount: 1,
+        delayedCount: 0,
+        unavailableCount: 0,
+        adoptedCount: 0,
+        rejectedCount: 0,
+        reliabilityIncidentCount: 0,
+        latestSummary: "Architect checked boundaries.",
+        latestUpdatedAt: "2026-05-25T00:18:02.000Z",
+      },
+    ],
+    attention: {
+      activeAgentCount: 4,
+      evidenceKindCounts: { specialist_note: 4 },
+      evidenceStatusCounts: { pending: 1, completed: 2, unavailable: 1 },
+    },
+    riskReview: {
+      riskSignalCount: 1,
+      dissentSignalCount: 0,
+      openReliabilityIncidentCount: 0,
+      openCriticalReliabilityIncidentCount: 0,
+    },
+    learningQueue: {
+      recommendationEvidenceCount: 1,
+      adoptedEvidenceCount: 0,
+      rejectedEvidenceCount: 0,
+      provisionalRuleCount: 0,
+      note: "Pattern Store is inspect-only here.",
+    },
+  };
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByText("主回复保持干净，团队证据折叠展示。")).toBeVisible();
+  const experts = feed.locator(".channel-team-experts-summary");
+  await expect(experts).toContainText("1 active");
+  await expect(experts).toContainText("2 done");
+  await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
+
+  await experts.getByRole("button", { name: /Experts/ }).click();
+  await expect(feed.getByText("Architect checked boundaries.")).toBeVisible();
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settings = page.locator(".channel-side-panel");
+  await expect(settings.getByLabel("Team metrics")).toContainText("attention needed");
+  await expect(settings.getByLabel("Team metrics")).toContainText("Architect checked boundaries.");
+});
+
 test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });

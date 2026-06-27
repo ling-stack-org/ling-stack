@@ -1,10 +1,20 @@
 # Channel Team Operating System Task Plan - 2026-06-26
 
-Status: planning checklist for future implementation
+Status: historical planning checklist; superseded for current implementation by the
+2026-06-27 remediation plan
 Date: 2026-06-26
 
 Source design:
 [Channel Team Operating System](channel-team-operating-system.md).
+
+Post-implementation audit:
+[Channel Team Operating System Remediation Plan - 2026-06-27](channel-team-operating-system-remediation-plan-2026-06-27.md).
+
+Current implementation rule:
+
+- Do not execute the PR sequence in this file literally after the 2026-06-27 audit.
+- Use the remediation plan as the current implementation source of truth.
+- Keep this file only as the historical product-intent checklist and guardrail source.
 
 This document is intentionally temporary. It captures the implementation checklist from
 the 2026-06-26 design discussion so future implementation work does not drift from the
