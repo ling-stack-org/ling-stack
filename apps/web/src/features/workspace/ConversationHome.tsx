@@ -5,6 +5,7 @@ import {
   Brain,
   Check,
   ChevronDown,
+  Copy,
   File,
   FileText,
   Folder,
@@ -15,8 +16,9 @@ import {
   Search,
   Table2,
 } from "lucide-react";
-import { useI18n } from "../../i18n.js";
-import type { ConversationTranscriptStatus, PermissionPreset, ProviderThinkingMode, SessionPermissionMode } from "../../types.js";
+import { artifactContentUrl } from "../../api.js";
+import { useI18n, type Translate } from "../../i18n.js";
+import type { ConversationTranscriptStatus, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode } from "../../types.js";
 import { ConversationAuthorizationMenu } from "./ConversationAuthorizationMenu.js";
 import {
   AvatarInitial,
@@ -24,6 +26,8 @@ import {
 import {
   ConversationFeed,
   ConversationShell,
+  ConversationWorkCell,
+  MessageActionBar,
   MessageRow,
   type MessageRowAuthorType,
 } from "../../shared/conversation/index.js";
@@ -32,6 +36,8 @@ import {
   permissionToAuthorizationMode,
   type ConversationAuthorizationSelection,
 } from "../../lib/conversation-authorization.js";
+import { buildConversationWorkCellViewModel, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { loadPreviewContent } from "../../lib/previews.js";
 
 export interface ConversationHomeProjectSelection {
   readonly projectPath?: string;
@@ -54,12 +60,21 @@ export interface ConversationHomeModelSelection {
 
 export interface ConversationHomeMessage {
   readonly id: string;
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly runId?: string;
   readonly role: "user" | "assistant" | "system";
   readonly authorLabel?: string;
   readonly content: string;
   readonly status?: ConversationTranscriptStatus;
   readonly createdAt: string;
   readonly updatedAt?: string;
+}
+
+export interface ConversationHomeDetailContext {
+  readonly threadId?: string;
+  readonly turns: readonly LingTurn[];
+  readonly runs: readonly RunSession[];
 }
 
 export interface ConversationHomeSendInput {
@@ -81,12 +96,14 @@ export function ConversationHome({
   initialThinkingLevel = "off",
   initialPermissionMode,
   initialPermissionPreset,
+  detailContext,
   defaultProviderLabel,
   defaultProviderPresetId,
   modelOptions,
   slashCommands,
   onChooseProjectDirectory,
   sending = false,
+  onOpenRun,
   onSendConversation,
 }: {
   readonly initialDraft?: string;
@@ -97,12 +114,14 @@ export function ConversationHome({
   readonly initialThinkingLevel?: ProviderThinkingMode;
   readonly initialPermissionMode?: SessionPermissionMode;
   readonly initialPermissionPreset?: PermissionPreset;
+  readonly detailContext?: ConversationHomeDetailContext;
   readonly defaultProviderLabel: string;
   readonly defaultProviderPresetId: string;
   readonly modelOptions: readonly ConversationHomeModelOption[];
   readonly slashCommands: readonly ComposerSlashCommandOption[];
   readonly onChooseProjectDirectory: () => Promise<ConversationHomeProjectSelection | undefined>;
   readonly sending?: boolean;
+  readonly onOpenRun?: (runId: string) => void;
   readonly onSendConversation: (input: ConversationHomeSendInput) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
@@ -137,6 +156,18 @@ export function ConversationHome({
   const thinkingEnabled = thinkingMenuOptions.some((mode) => mode !== "off");
   const activeThinkingLabel = thinkingModeLabel(selectedThinkingLevel, t);
   const thinkingOff = selectedThinkingLevel === "off";
+  const runById = useMemo(
+    () => new Map((detailContext?.runs ?? []).map((run) => [run.id, run])),
+    [detailContext?.runs],
+  );
+  const workCellByMessageId = useMemo(
+    () => buildNormalConversationWorkCellMap({
+      messages,
+      detailContext,
+      t,
+    }),
+    [detailContext, messages, t],
+  );
   const thinkingButtonLabel = thinkingOff
     ? t("Thinking off")
     : t("Thinking {label}", { label: activeThinkingLabel });
@@ -569,18 +600,46 @@ export function ConversationHome({
             items={messages}
             emptyLabel={t("No conversation messages yet")}
             getItemId={(message) => message.id}
-            renderItem={(message) => (
-              <MessageRow
-                className={normalConversationMessageClassName(message)}
-                authorType={conversationMessageAuthorType(message)}
-                avatar={conversationMessageAvatar(message)}
-                authorName={conversationMessageAuthorName(message, t)}
-                createdAtLabel={formatConversationTimeLabel(message.createdAt)}
-                body={message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
-                bodyCompact
-                bodyStreaming={message.status === "running" || message.status === "pending"}
-              />
-            )}
+            renderItem={(message) => {
+              const workCell = workCellByMessageId.get(message.id);
+              const workCellRun = workCell ? runById.get(workCell.model.anchorRunId) : undefined;
+              return (
+                <MessageRow
+                  className={normalConversationMessageClassName(message)}
+                  authorType={conversationMessageAuthorType(message)}
+                  avatar={conversationMessageAvatar(message)}
+                  authorName={conversationMessageAuthorName(message, t)}
+                  createdAtLabel={formatConversationTimeLabel(message.createdAt)}
+                  body={message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
+                  bodyCompact
+                  bodyStreaming={message.status === "running" || message.status === "pending"}
+                  workCellNode={workCell ? (
+                    <ConversationWorkCell
+                      model={workCell.model}
+                      cwd={workCellRun?.cwd ?? project.projectPath}
+                      detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
+                      onOpenRun={onOpenRun}
+                      loadPreview={loadPreviewContent}
+                    />
+                  ) : null}
+                  actionsNode={message.role === "assistant" && message.content ? (
+                    <MessageActionBar
+                      surface="normal_conversation"
+                      className="normal-conversation-message-actions"
+                      actions={[
+                        {
+                          id: "copy",
+                          kind: "copy",
+                          label: t("Copy message"),
+                          icon: <Copy size={14} />,
+                          copyText: message.content,
+                        },
+                      ]}
+                    />
+                  ) : null}
+                />
+              );
+            }}
           />
         )}
         composerNode={<div className="normal-conversation-composer-stack">{composerNode}</div>}
@@ -655,6 +714,43 @@ function upsertConversationHomeMessage(
     ? messages.map((item) => (conversationHomeMessageMergeKey(item) === messageKey ? message : item))
     : [...messages, message];
   return [...next].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function buildNormalConversationWorkCellMap(input: {
+  readonly messages: readonly ConversationHomeMessage[];
+  readonly detailContext: ConversationHomeDetailContext | undefined;
+  readonly t: Translate;
+}): ReadonlyMap<string, { readonly model: ConversationWorkCellViewModel }> {
+  const detailContext = input.detailContext;
+  if (!detailContext) {
+    return new Map();
+  }
+  const runById = new Map(detailContext.runs.map((run) => [run.id, run]));
+  const cells = new Map<string, { readonly model: ConversationWorkCellViewModel }>();
+  for (const message of input.messages) {
+    if (message.role !== "assistant" || !message.runId) {
+      continue;
+    }
+    const run = runById.get(message.runId);
+    const threadId = run?.threadId ?? message.threadId ?? detailContext.threadId;
+    if (!run || !threadId) {
+      continue;
+    }
+    const model = buildConversationWorkCellViewModel({
+      threadId,
+      runs: [run],
+      turns: detailContext.turns,
+      allowRunThreadFallback: true,
+      approvals: [],
+      artifactsByRun: {},
+      t: input.t,
+      artifactHref: (artifact) => artifactContentUrl(artifact.id, run.cwd),
+    });
+    if (model) {
+      cells.set(message.id, { model });
+    }
+  }
+  return cells;
 }
 
 function conversationHomeMessageMergeKey(message: ConversationHomeMessage): string {

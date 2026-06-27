@@ -774,6 +774,85 @@ button.artifact-action-link {
   font-size: 11px;
 }
 
+.source-icon-stack-item.status-degraded,
+.message-evidence-web-status.degraded {
+  color: var(--warning);
+}
+
+.source-icon-stack-item.status-blocked,
+.message-evidence-web-status.blocked {
+  color: var(--danger);
+}
+
+.teammate-avatar-stack {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+
+.teammate-avatar-stack-item,
+.teammate-avatar-stack-overflow {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 760;
+  line-height: 1;
+  letter-spacing: 0;
+  overflow: hidden;
+}
+
+.teammate-avatar-stack-item:first-child {
+  margin-left: 0;
+}
+
+.teammate-avatar-stack-item > * {
+  width: 100%;
+  height: 100%;
+}
+
+.teammate-avatar-stack-overflow {
+  width: auto;
+  min-width: 18px;
+  margin-left: 4px;
+  border-radius: 999px;
+  padding: 0 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.teammate-avatar-stack-sm .teammate-avatar-stack-item,
+.teammate-avatar-stack-sm .teammate-avatar-stack-overflow {
+  width: 18px;
+  height: 18px;
+}
+
+.teammate-avatar-stack-xs .teammate-avatar-stack-item,
+.teammate-avatar-stack-xs .teammate-avatar-stack-overflow {
+  width: 16px;
+  height: 16px;
+  font-size: 8px;
+}
+
+.teammate-avatar-stack-md .teammate-avatar-stack-item,
+.teammate-avatar-stack-md .teammate-avatar-stack-overflow {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+
 .message-evidence-web-status {
   display: inline-grid;
   place-items: center;

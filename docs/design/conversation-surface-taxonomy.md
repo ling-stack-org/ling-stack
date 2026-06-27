@@ -11,6 +11,7 @@ Related docs:
 - [Thread-First Work History](thread-first-work-history.md)
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
+- [Conversation Surface Contract](conversation-surface-contract.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 
@@ -243,6 +244,31 @@ Shared channel governance may still apply to branch and topic surfaces:
 
 Private teammate memory remains private by default. It can influence teammate behavior only
 through the memory policy boundary defined in the Channel Context Processing Layer.
+
+## Shared UI Contract
+
+The taxonomy defines product ownership. The shared component and capability contract is
+defined in [Conversation Surface Contract](conversation-surface-contract.md).
+
+Implementation rule:
+
+```text
+taxonomy decides what the surface means
+surface policy decides what the surface may show
+shared conversation components decide how it renders
+```
+
+This means:
+
+- normal conversation, channel, teammate private chat, and run/thread detail should use
+  shared message rows, feed, empty state, action bar, evidence, source, attachment, and
+  compact work primitives;
+- channel-only policy still controls teammate activity, topic reply, channel roster, and
+  teammate mention routing;
+- private chat still forbids `@` routing and public channel leakage even when it reuses
+  the same shared components;
+- work cells and evidence are not run-thread-only UI. They can appear in normal
+  conversation and private chat when actual work or evidence exists.
 
 ## Future Session Product Boundary
 

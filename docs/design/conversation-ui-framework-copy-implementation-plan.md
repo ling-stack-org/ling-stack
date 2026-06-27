@@ -12,6 +12,8 @@ Related docs:
 - [Conversation UI Design Conformance Recovery Plan](conversation-ui-design-conformance-recovery-plan.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Conversation Surface Contract](conversation-surface-contract.md)
+- [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
 - [Ling Agent Session Implementation Plan](ling-agent-session-implementation-plan.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
@@ -27,6 +29,15 @@ design contract because main-feed inline detail still exposed Context Pack, prov
 metadata, workflow ids, and raw artifact paths. Do not continue with Slice 3 until
 [Conversation UI Design Conformance Recovery Plan](conversation-ui-design-conformance-recovery-plan.md)
 R1-R3 pass.
+
+Implementation note, 2026-06-28: PR #273 landed the first shared conversation UI slice.
+Normal conversation now uses a conversation page after first send, teammate private chat
+uses the shared message row and empty state, and channel teammate activity sits above the
+assistant action row. The next implementation must not continue as screenshot-only style
+tweaks. It should follow [Conversation Surface Contract](conversation-surface-contract.md)
+and its detailed
+[Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
+before adding more capability parity.
 
 This plan turns the conversation UI design into an implementation sequence. The goal is
 not to add another runtime system. The goal is to insert a semantic Web UI layer between
@@ -72,6 +83,18 @@ raw event log
 right drawer duplicate
 Ling Agent completion duplicate
 ```
+
+## Current Slice Status
+
+| Slice | Status | Notes |
+| --- | --- | --- |
+| Shared conversation UI baseline | Landed | PR #273 unified normal conversation, channel assistant turn ordering, private chat row treatment, and shared empty states |
+| Conversation Surface Contract | Current next slice | Formalize shared action bar, avatar/source stacks, surface policy, compact evidence/work parity, and regression invariants |
+| Capability parity | Next after contract | Normal conversation and private chat should render evidence/work/source blocks when actual data exists |
+| Package extraction | Deferred | Start only after Web surfaces consume the same stable contracts |
+
+Do not start package extraction before normal conversation, channel, and private chat
+agree on the same action, evidence, source, empty state, and work-cell primitives.
 
 ## Source Of Truth
 

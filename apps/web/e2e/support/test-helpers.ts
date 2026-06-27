@@ -1,6 +1,7 @@
 export {
   channelEventFilterToggle,
   channelEventFilters,
+  openEngineeringChannel,
   openChannelChatTools,
   openChannelContextPanel,
   openNewTaskPanel,

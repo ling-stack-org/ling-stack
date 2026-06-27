@@ -442,7 +442,48 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
       createdAt: "2026-05-29T00:10:01.000Z",
     },
   ];
+  state.runs = [
+    {
+      id: "run_private_acceptance",
+      status: "succeeded",
+      cwd,
+      taskId: "direct:private_acceptance",
+      providerPresetId: "provider_local",
+      providerName: "local-relay",
+      providerModel: "gpt-5.5",
+      taskSnapshot: {
+        id: "direct:private_acceptance",
+        title: "Private acceptance criteria",
+        prompt: "Summarize private workspace acceptance criteria.",
+      },
+      providerSnapshot: {},
+      requestSnapshot: {},
+      eventLogPath: ".ling-stack/sessions/run_private_acceptance.jsonl",
+      threadId: "thread_private_acceptance",
+      createdAt: "2026-05-29T00:09:00.000Z",
+      startedAt: "2026-05-29T00:09:00.000Z",
+      updatedAt: "2026-05-29T00:09:30.000Z",
+      endedAt: "2026-05-29T00:09:30.000Z",
+    },
+    ...state.runs,
+  ];
   state.teammateDirectMessages = [
+    {
+      id: "tdmsg_2",
+      workspaceId: "workspace_default",
+      threadId: `tdthread_${teammateId}`,
+      teammateId,
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: "Private acceptance criteria summary.",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      linkedRunId: "run_private_acceptance",
+      createdAt: "2026-05-29T00:09:30.000Z",
+      updatedAt: "2026-05-29T00:09:30.000Z",
+    },
     {
       id: "tdmsg_pending_reply",
       workspaceId: "workspace_default",
@@ -527,6 +568,9 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const privateFeed = page.getByLabel("Private message feed", { exact: true });
   await expect(privateFeed).toBeVisible();
   await expect(privateFeed.locator(".message-feed-virtualizer")).toBeVisible();
+  const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria summary." });
+  await expect(linkedRunPrivateRow.locator(".conversation-work-cell")).toHaveCount(1);
+  await expect(linkedRunPrivateRow.locator(".message-reply-button")).toHaveCount(0);
   await expect(page.getByLabel("Conversation context")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Show details" })).toBeVisible();
   await page.getByRole("button", { name: "Show details" }).click();
@@ -571,12 +615,16 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateMessageRow.locator("header")).toHaveCount(0);
   await expect(privateMessageRow.locator(".status-badge")).toHaveCount(0);
   await expect(privateMessageRow.getByRole("link", { name: "private-notes.md" })).toHaveAttribute("href", /\/attachments\/tpatt_1\/content/);
+  const privateActions = privateMessageRow.locator(".teammate-message-actions.message-action-bar");
+  await expect(privateActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
+  await expect(privateActions.locator('[data-tooltip="Create task"]')).toHaveCount(1);
+  await expect(privateActions.locator('[data-tooltip="Reply in topic"]')).toHaveCount(0);
   const blockedPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "AI teammate is blocked: No provider preset is selected for this teammate." });
   await expect(blockedPrivateRow).toHaveClass(/message-bubble-chat-blocked/);
   await expect(blockedPrivateRow).toHaveClass(/message-bubble-peer/);
   await expect(blockedPrivateRow.locator(".status-badge")).toHaveCount(0);
   await expect(page.getByLabel("Conversation context").getByText("Private acceptance memory")).toBeVisible();
-  await expect.poll(() => state.teammateDirectMessages.length).toBe(3);
+  await expect.poll(() => state.teammateDirectMessages.length).toBe(4);
   await expect.poll(() => {
     const message = state.teammateDirectMessages.find((item) =>
       isRecord(item) && item.body === "Please refine the private workspace acceptance criteria."

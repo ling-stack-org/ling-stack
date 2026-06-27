@@ -1,0 +1,811 @@
+# Conversation Surface Contract
+
+Status: active design contract for the shared conversation UI
+Date: 2026-06-28
+Scope: normal conversation, channel root, channel branch, topic reply, teammate private
+chat, run/thread detail, and future Desktop/PC conversation renderers
+
+Related docs:
+
+- [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
+- [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
+- [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
+- [Channel Workspace Design](channel-workspace.md)
+- [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
+- [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
+
+## Purpose
+
+This document is the shared conversation UI contract after the first shared surface slice
+landed in PR #273.
+
+The goal is to stop normal conversation, channel chat, private chat, and run/thread
+detail from re-implementing their own message rows, empty states, evidence display,
+source display, action bars, and width rules. The surfaces can still differ in policy and
+surrounding chrome, but they must consume the same conversation primitives and state
+vocabulary.
+
+This is a product and implementation contract. Future UI work should change this
+document first when it changes shared behavior.
+
+## Shipped Baseline
+
+The current shared UI slice established these baseline decisions:
+
+- normal conversation created from the home composer moves into a conversation page
+  after the first message instead of continuing as a home hero layout,
+- teammate private chat uses the shared message row and empty-state treatment instead of
+  a separate bubble surface,
+- normal conversation preserves `threadId`, `turnId`, and `runId` from the transcript so
+  compact work can attach to the owning assistant row,
+- normal conversation renders a compact work cell only when that assistant row has a
+  `runId` that maps to a real `RunSession`,
+- teammate private chat renders a compact work cell only when an AI message has a
+  `linkedRunId` that maps to a real run in the selected teammate scope,
+- channel assistant turns keep teammate collaboration content above the copy, feedback,
+  and topic-reply action row,
+- evidence/source panels are quieter and avoid duplicate labels when no real source or
+  search evidence exists,
+- shared empty states are centered inside the feed viewport,
+- `MessageActionBar`, `SourceIconStack`, and `TeammateAvatarStack` are shared Web
+  primitives rather than page-local one-offs,
+- surface policy defaults and action filtering live in `@ling-stack/conversation-ui-core`
+  and are re-exported through the Web shared conversation API,
+- "Expert" copy is no longer the product vocabulary for teammates.
+
+The slice does not finish the full contract. Remaining work is evidence projection for
+normal conversations, shared file/reference capability blocks, safe `turnId` or
+thread-level work projection, and optional React package extraction after Web adapter
+props stabilize.
+
+## Vocabulary
+
+| Term | Meaning |
+| --- | --- |
+| Surface | The product context rendering a conversation: normal, channel, topic, private, run/thread |
+| Shell | The layout frame that owns feed height, composer placement, and optional status/drawer slots |
+| Feed | The scrollable transcript viewport |
+| Message row | A user, assistant, teammate, coordinator, or system message |
+| Turn | One user request and the assistant/work objects that answer it |
+| Capability block | Evidence, source, file, approval, work cell, attachment, or preview attached to a turn |
+| Policy | Surface-specific permissions that decide which capability blocks are visible or actionable |
+| Chrome | App shell around the conversation: drawer, header, teammate roster, settings, floating activity |
+
+The same component can render different surfaces, but surface policy decides what the
+component is allowed to show.
+
+## Hard Rules
+
+1. Shared components do not mean identical surfaces. They mean the same primitives,
+   states, spacing tokens, and capability contracts.
+2. Normal conversation, channel, private chat, and run/thread detail must not invent
+   separate message row or empty state systems.
+3. A capability block renders only when real evidence exists. Do not show "web search",
+   "sources", "files", or "context" rows as decorative placeholders.
+4. The message action row is the last visual layer of the current message/turn. Team
+   activity, evidence, references, and work cells sit above it.
+5. Private chat is one-to-one. It must not expose `@` teammate routing or invite other
+   teammates into the private thread.
+6. Channel is the only default multi-teammate collaboration surface. Normal conversation
+   can show selected model/assistant work, but not channel teammate rosters by default.
+7. Topic reply is channel-specific. Do not show topic-reply controls in normal
+   conversation or teammate private chat.
+8. Work cells and evidence are shared capabilities, not run-thread-only UI. Surface
+   policy decides whether they are inline, collapsed, or routed to detail.
+9. Raw ids, provider metadata, token counts, workflow packet names, and JSON payloads are
+   not default feed copy. They belong in expanded evidence or developer raw detail.
+10. Surface-specific CSS may position the shared components, but must not redefine their
+    product semantics.
+
+## Surface Capability Matrix
+
+| Capability | Normal conversation | Channel root | Channel branch | Topic reply | Teammate private chat | Run/thread detail |
+| --- | --- | --- | --- | --- | --- | --- |
+| User/assistant messages | Yes | Yes | Yes | Yes | Yes | Yes |
+| Shared `MessageRow` | Required | Required | Required | Required | Required | Required |
+| Attachments | Yes | Yes | Yes | Limited | Yes | Yes |
+| File references | Yes | Yes | Yes | Limited | Yes | Yes |
+| Web/search source icons | When actual search occurred | When actual search occurred | When actual search occurred | When actual search occurred | When actual search occurred | When actual search occurred |
+| Evidence bundle | Yes, compact | Yes, compact | Yes, compact | Compact, attached to source | Yes, compact/private | Rich |
+| Work cell | Yes, compact | Yes | Yes | Only if promoted | Yes, compact/private | Rich |
+| Approval state | Yes | Yes | Yes | Only if promoted | Yes | Yes |
+| Multi-teammate activity | No by default | Yes | Yes | No by default | No | Only if linked from channel work |
+| Teammate avatar stack | No by default | Yes | Yes | No by default | Selected teammate only | Contextual |
+| `@` teammate routing | No by default | Yes | Yes | No by default | No | No by default |
+| Topic reply action | No | Yes | Yes | Nested only | No | No |
+| Raw runtime detail | Detail only | Developer/detail only | Developer/detail only | No by default | Detail only | Yes |
+
+## Component Contract
+
+### ConversationShell
+
+Owns:
+
+- feed viewport height,
+- composer placement,
+- optional header slot,
+- optional status strip slot,
+- optional floating activity/drawer slot,
+- shared max-width and alignment rules.
+
+Does not own:
+
+- channel membership,
+- teammate settings,
+- provider selection,
+- daemon fetching,
+- route state,
+- app-level side navigation.
+
+Rules:
+
+- feed and composer align to the same text column,
+- normal conversation, channel, and private chat use the same width rhythm unless the
+  surrounding chrome compresses them,
+- empty state is centered inside the feed area,
+- shell must not add marketing/landing content after the first message exists.
+
+### ConversationFeed And ConversationVirtualFeed
+
+Own:
+
+- scrolling,
+- loading older rows,
+- empty state placement,
+- scroll-to-latest affordance,
+- virtual row placement when needed.
+
+Rules:
+
+- entering a conversation opens at latest,
+- loading older messages preserves scroll position,
+- active/streaming rows update in place,
+- virtualized and non-virtualized feeds must preserve row width and action placement,
+- empty state copy is surface-specific, but the visual component is shared.
+
+### MessageRow
+
+Owns:
+
+- actor avatar or spacer,
+- message body,
+- attachment strip,
+- compact evidence/source hooks,
+- blocked/failed note,
+- footer action anchor.
+
+Rules:
+
+- local user messages align right,
+- assistant/teammate/coordinator messages align left,
+- repeated actor names are hidden when they add no information,
+- avatar size is compact and close to body text scale,
+- AI labels are not repeated when the teammate avatar and surface already identify the
+  speaker,
+- streaming updates mutate one row, not multiple bubbles,
+- blocked and failed rows remain visible with an actionable reason.
+
+### MessageActionBar
+
+Owns:
+
+- copy,
+- feedback,
+- retry or regenerate where policy allows,
+- topic reply where policy allows,
+- focus/hover visibility,
+- inline success/error feedback for the action itself.
+
+Rules:
+
+- action row is visually below body, evidence, sources, and teammate activity,
+- action row is hidden until hover/focus unless the action is state-critical,
+- icon-only actions require `aria-label`, `title`, and keyboard reachability,
+- duplicate page-local copy/reply buttons must be removed when the shared action bar is
+  present.
+
+### TeammateAvatarStack
+
+Owns:
+
+- compact visual list of participating teammates,
+- overflow count such as `+4`,
+- tooltip/detail trigger when supported.
+
+Rules:
+
+- use actual teammate avatars when available,
+- fall back to stable initials only when no avatar exists,
+- no outer decorative frame around normal circular avatars,
+- overflow count must have spacing and must not visually stick to the last avatar,
+- product copy should say teammates only when text is necessary; the avatar stack can
+  stand alone in compact rows.
+
+### SourceIconStack
+
+Owns:
+
+- collapsed icons for web, file, memory, tool, artifact, and app sources,
+- overflow count,
+- tooltip labels,
+- opening the expanded evidence/source menu when supported.
+
+Rules:
+
+- no visible border around normal source icons unless the icon is the active/focused
+  control,
+- stack icons like teammate avatars instead of scattering them across the row,
+- render only when an actual source exists,
+- do not render a `web_search` text label when no web search ran.
+
+### EvidenceBundlePanel
+
+Owns:
+
+- collapsed evidence summary,
+- expandable sections,
+- severity state,
+- structured evidence item rendering.
+
+Rules:
+
+- collapsed summary is short text or icon stack, not a mini dashboard,
+- approval needed, blocked, failed, and permission denied must be visible before expand,
+- memory/file/web/tool sections appear only when used,
+- raw provider/runtime metadata stays in expanded or developer detail,
+- evidence is attached to the owning turn, not duplicated in a right drawer by default.
+
+### WorkCell
+
+Owns:
+
+- compact active/completed work state,
+- operation rows,
+- teammate activity spans,
+- approval/blocked/failed state,
+- artifact/file/check summary.
+
+Rules:
+
+- one user task gets one default visible work object,
+- running state mutates to terminal state in place,
+- channel teammate activity belongs above the message action row,
+- normal conversation and private chat may render compact work cells when actual work
+  happened,
+- run/thread detail can render the richest version of the same work contract.
+
+## Surface Policies
+
+### Normal Conversation
+
+Normal conversation is the post-send page created from the home composer.
+
+Required behavior:
+
+- switch away from the home hero layout after the first message,
+- render user and assistant rows through shared components,
+- show compact evidence/work/source blocks when actual data exists,
+- align user and assistant rows to the shared conversation width,
+- keep composer anchored to the conversation page.
+
+Must not:
+
+- show channel teammate roster by default,
+- show topic-reply controls,
+- require opening run thread detail just to see basic evidence,
+- keep home-only visual copy after messages exist.
+
+### Channel Root And Channel Branch
+
+Channel surfaces own multi-teammate collaboration.
+
+Required behavior:
+
+- show teammate activity in the turn when teammates contributed,
+- place teammate activity above the action row,
+- support topic reply only where channel policy allows,
+- preserve channel branch context as a separate lane,
+- use "teammate" copy, not "expert" copy.
+
+Must not:
+
+- duplicate work summary as both card and raw run row,
+- show source/evidence rows with no source/evidence,
+- leak branch messages into root context.
+
+### Topic Reply
+
+Topic reply is a lightweight side conversation attached to a channel message.
+
+Required behavior:
+
+- attach replies to the source message,
+- avoid default auto-reply fan-out,
+- show compact evidence only if the topic reply actually used evidence.
+
+Must not:
+
+- become a channel branch,
+- expose global channel teammate activity by default,
+- appear in normal conversation or private chat controls.
+
+### Teammate Private Chat
+
+Private chat is direct user-to-teammate conversation.
+
+Required behavior:
+
+- use shared message row, empty state, evidence, attachment, and action primitives,
+- preserve selected teammate identity,
+- show compact evidence/work when the private teammate used memory, tools, files, or
+  approvals,
+- keep private chat empty state centered.
+
+Must not:
+
+- expose `@` teammate routing,
+- show other teammate avatar stacks,
+- automatically publish private memory or private evidence into channel context,
+- bypass approvals for side effects.
+
+### Run/Thread Detail
+
+Run/thread detail is the rich inspection surface for durable work.
+
+Required behavior:
+
+- render the richest version of the same work/evidence contract,
+- preserve raw/debug affordances for developer/support use,
+- link back to the owning conversation turn.
+
+Must not:
+
+- be the only place normal conversations can see evidence,
+- duplicate the same terminal result in both feed and detail as two separate product
+  objects,
+- redefine shared message row or action bar behavior.
+
+## State Contract
+
+All surfaces use the same state vocabulary:
+
+| State | Meaning | UI rule |
+| --- | --- | --- |
+| `empty` | no messages in this surface | centered shared empty state |
+| `loading` | first page loading | centered loading affordance |
+| `loading_older` | older messages loading | top loader that preserves scroll |
+| `ready` | committed row | normal row |
+| `thinking` | assistant/model has accepted the turn but no text is final | one pending row or compact status, not multiple placeholders |
+| `streaming` | text is arriving | mutate same row |
+| `running` | work/tool/run is active | mutate same work cell |
+| `waiting_for_approval` | user action required | visible state-critical action |
+| `blocked` | cannot proceed without fix/confirmation | visible reason and next action |
+| `failed` | terminal failure | visible reason and retry path when safe |
+| `cancelled` | user or policy stopped it | neutral stopped state |
+| `succeeded` | terminal success | quiet terminal state |
+
+Do not invent page-local labels such as `complete-card`, `experts-running`, or
+`web_search_pending` as UI state. Those may be implementation details inside evidence,
+but the shared renderer receives the common state vocabulary.
+
+## Data Contract
+
+The Web can continue deriving this from existing stores during the next slice, but the
+view model should converge toward this shape:
+
+```ts
+type ConversationSurfaceKind =
+  | "normal_conversation"
+  | "channel_root"
+  | "channel_branch"
+  | "topic_reply"
+  | "teammate_direct"
+  | "run_thread";
+
+type ConversationCapabilityKind =
+  | "attachment"
+  | "file_reference"
+  | "web_source"
+  | "memory_source"
+  | "tool_source"
+  | "artifact"
+  | "approval"
+  | "work_cell"
+  | "teammate_activity";
+
+interface ConversationSurfacePolicy {
+  readonly surface: ConversationSurfaceKind;
+  readonly allowTopicReply: boolean;
+  readonly allowTeammateMentions: boolean;
+  readonly allowMultiTeammateActivity: boolean;
+  readonly showChannelRoster: boolean;
+  readonly evidenceMode: "none" | "compact" | "rich";
+  readonly workCellMode: "none" | "compact" | "rich";
+  readonly rawDetailMode: "hidden" | "developer" | "rich";
+}
+
+interface ConversationTurnView {
+  readonly id: string;
+  readonly surface: ConversationSurfaceKind;
+  readonly userMessageId?: string;
+  readonly rows: readonly ConversationRowView[];
+  readonly capabilities: readonly ConversationCapabilityView[];
+  readonly actions: readonly ConversationActionView[];
+  readonly status: ConversationTurnStatus;
+}
+```
+
+Policy is explicit. Components should not infer policy from route name, message text, or
+whether `threadId` is present.
+
+## Detailed Surface View Contract
+
+Shared conversation UI should receive an already-scoped surface view. It should not fetch
+daemon state, resolve channel membership, inspect teammate settings, or guess context from
+message text.
+
+Target shape:
+
+```ts
+interface ConversationSurfaceView {
+  readonly surface: ConversationSurfaceKind;
+  readonly ownerId: string;
+  readonly policy: ConversationSurfacePolicy;
+  readonly rows: readonly ConversationRowView[];
+  readonly emptyState: ConversationEmptyStateView;
+  readonly composer?: ConversationComposerView;
+  readonly floatingActivity?: ConversationFloatingActivityView;
+}
+
+interface ConversationRowView {
+  readonly id: string;
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly runId?: string;
+  readonly role: "user" | "assistant" | "system" | "teammate" | "coordinator";
+  readonly authorId?: string;
+  readonly authorLabel?: string;
+  readonly body: string;
+  readonly status: ConversationTurnStatus;
+  readonly createdAt: string;
+  readonly updatedAt?: string;
+  readonly attachments?: readonly ConversationCapabilityView[];
+  readonly evidence?: ConversationEvidenceView;
+  readonly workCell?: ConversationWorkCellView;
+  readonly teammateActivity?: ConversationTeammateActivityView;
+  readonly actions?: readonly ConversationActionView[];
+}
+```
+
+Current Web implementation state:
+
+- `ConversationTranscriptMessage` already carries `threadId`, `turnId`, and `runId`.
+- `ConversationDetailResponse` already carries `turns`, `runs`, and `messages`.
+- `AppShell` preserves `threadId`, `turnId`, and `runId` when it maps transcript
+  messages into `ConversationHomeMessage`.
+- `ConversationHome` receives `ConversationHomeDetailContext` with the selected
+  `threadId`, `turns`, and `runs`.
+- The first compact-work pass intentionally attaches work by exact `message.runId`
+  only. `threadId` is used to anchor an already-matched run, not to attach every run in
+  the thread to every assistant message.
+- Turn-level and thread-level fallback remain future projector work. They require an
+  explicit turn-run relation and tests that prove the UI will not duplicate a thread's
+  work cell under multiple assistant rows.
+
+Without a row-level run or future explicit turn-run relation, the correct default is to
+render no compact work/evidence block.
+
+## Capability Rendering Gates
+
+Capability blocks render only when the surface view provides real capability data.
+
+| Capability | Minimum required data | Render when absent |
+| --- | --- | --- |
+| Source icon stack | At least one source item with kind and label, and either an actual source reference or a state reason | Render nothing |
+| Web source | Search/open-url evidence with result URL, query, citation, or blocked/degraded reason | Render nothing, including no `web_search` label |
+| File reference | File path, uploaded file id, artifact id, or composer file reference | Render nothing |
+| Memory evidence | Used memory event, memory source id, or promoted note reference | Render nothing |
+| Tool evidence | Tool call/run event/evidence item tied to the row turn or run | Render nothing |
+| Work cell | Run, workflow, approval, artifact, check, or operation state tied to `turnId`, `runId`, or `threadId` | Render nothing |
+| Teammate activity | Channel-scoped teammate span tied to the current channel turn | Render nothing outside channel surfaces |
+| Approval state | Approval/checkpoint requiring action or showing terminal result | Render nothing unless tied to the row turn or run |
+
+Do not synthesize capability blocks from assistant prose, markdown headings, fixed
+templates, or inferred keywords. Copy can mention that a tool was used, but the UI block
+needs structured data.
+
+## Row Ordering Contract
+
+Every assistant, teammate, coordinator, and system row follows the same slot order:
+
+```text
+avatar / author affordance
+  -> body
+  -> attachments
+  -> compact work cell
+  -> evidence/source summary
+  -> teammate activity
+  -> blocked/failed/approval state
+  -> action bar
+```
+
+Rules:
+
+- the action bar is always the last visual layer of the row or turn,
+- status-critical approval/blocked controls remain visible even when ordinary actions are
+  hover/focus only,
+- teammate activity is channel-only by default and sits above the action bar,
+- evidence and work cells stay attached to the owning turn instead of moving into a
+  default right drawer duplicate,
+- a row can omit any slot whose data is missing.
+
+## Normal Conversation Detailed Design
+
+Normal conversation is the simplest product surface, not the least capable surface.
+
+Required data path for Slice 2B:
+
+```text
+ConversationDetailResponse.messages
+  -> preserve threadId / turnId / runId in ConversationHomeMessage
+  -> build maps from ConversationDetailResponse.turns and runs
+  -> attach compact work only when a row has runId that matches a real run
+  -> preserve turnId/threadId for future explicit projector matching
+  -> render through shared MessageRow, EvidenceBundlePanel, WorkCell, SourceIconStack,
+     and MessageActionBar policy
+```
+
+Current first-pass matching:
+
+1. `message.runId` must match `RunSession.id`.
+2. The matched run must have a usable `threadId`, or the selected conversation
+   `threadId` must provide the anchor.
+3. `message.turnId` is preserved for future projector work, but does not currently attach
+   a run by itself.
+4. `message.threadId` is preserved for ownership and future detail linking, but must not
+   be used as a broad per-row fallback that duplicates all thread runs.
+
+Rendering rules:
+
+- user messages remain right-aligned and do not show teammate avatar stacks,
+- assistant rows can show copy/feedback only when the action state exists,
+- compact work/evidence appears only when matched to real detail data,
+- normal conversation does not show topic reply,
+- normal conversation does not show channel roster or multi-teammate collaboration by
+  default,
+- the empty state is shared, but copy is normal-conversation specific.
+
+If no `runs` or evidence records exist for a plain answer, the normal conversation renders
+only the message rows. That is correct.
+
+## Channel Detailed Design
+
+Channel is the default multi-teammate collaboration surface.
+
+Required behavior:
+
+- root and branch messages share the same row primitives,
+- branch selection changes the scoped feed, not the shared renderer,
+- topic reply exists only through channel policy,
+- teammate avatar/activity stacks render only when channel turn data contains real
+  teammate participation,
+- channel root must not absorb branch-root messages,
+- channel branch must not clone channel settings or teammate policy.
+
+Channel can use richer local orchestration data than normal conversation, but the
+rendered blocks must still use shared primitives. Page-local channel code can build the
+view model; it should not redefine action bars, source stacks, or message row semantics.
+
+## Teammate Private Chat Detailed Design
+
+Private chat is a one-to-one surface with the selected teammate.
+
+Required behavior:
+
+- preserve selected teammate identity in the row avatar/header,
+- render compact evidence/work only for that private thread and selected teammate,
+- never show `@` teammate routing,
+- never show other teammate avatar stacks,
+- never auto-promote private evidence into channel context,
+- keep create-task actions scoped to the selected teammate and approval policy.
+
+Current first-pass matching:
+
+1. the row must be an AI teammate message,
+2. the row must carry `linkedRunId`,
+3. `linkedRunId` must match a real `RunSession`,
+4. the run must have `threadId`,
+5. if the run carries `teammateId`, it must equal the selected teammate id.
+
+Private chat may use the same capability blocks as normal conversation, but the scope is
+stricter. A private row cannot import channel evidence unless the user explicitly linked
+or promoted that evidence.
+
+## Run/Thread Detail Detailed Design
+
+Run/thread detail is the rich inspection mode for the same underlying capability data.
+
+Required behavior:
+
+- show rich work cell, rich evidence, raw detail, run events, artifacts, and approvals,
+- link back to the owning conversation row or turn,
+- keep raw provider/runtime detail out of the main feed by default,
+- avoid duplicating the final answer as a second product object.
+
+Run/thread detail can render more data than compact surfaces, but it must not own a
+separate visual language for message rows, source icons, action bars, or empty states.
+
+## Empty State Contract
+
+Empty states use a shared visual component with surface-specific copy.
+
+| Surface | Primary empty-state meaning | Copy boundary |
+| --- | --- | --- |
+| Normal conversation | The user has not sent a message in this conversation | Direct assistant conversation, no teammate roster |
+| Channel root | The channel has no root messages yet | Team room and channel collaboration |
+| Channel branch | The branch lane has no messages yet | Focused lane under the current channel |
+| Topic reply | The message has no side replies yet | Lightweight message-level discussion |
+| Teammate private chat | The user has not chatted with this teammate yet | One-to-one teammate conversation |
+| Run/thread detail | The thread has no visible run detail yet | Work history or inspection state |
+
+Rules:
+
+- empty state is centered inside the feed viewport,
+- private and channel empty states share layout but not copy,
+- empty state must not render channel teammate rosters in private or normal surfaces,
+- empty state must not expose actions the surface policy forbids.
+
+## Package Extraction Readiness
+
+Do not extract shared packages until these conditions are true in Web:
+
+- normal conversation, channel, and private chat consume the same action policy helper,
+- `MessageActionBar`, `SourceIconStack`, and `TeammateAvatarStack` have stable props,
+- compact evidence/work view models are no longer page-local guesses,
+- tests cover policy filtering and absence gates for real vs missing capability data,
+- no extracted component imports daemon route modules, channel stores, teammate settings,
+  or app shell navigation.
+
+The first package should contain pure contracts and policy helpers. React extraction
+should come after at least two Web surfaces use the same props without adapter-specific
+exceptions.
+
+## Visual Contract
+
+Shared visual rules:
+
+- message column and composer align,
+- user messages align with the same right edge as assistant rows' content column,
+- avatars are compact and actual where available,
+- icon stacks overlap cleanly with stable spacing,
+- no redundant "teammate" label when the avatar stack already occupies that slot,
+- no decorative border around ordinary avatar/source icons,
+- action bars appear on hover/focus and remain keyboard reachable,
+- status-critical controls remain visible,
+- titles in evidence/source rows may use semantic accent color, but the surface must not
+  collapse into a one-note palette,
+- text must not overlap or require horizontal scrolling outside code/log blocks.
+
+## Regression Contract
+
+Every future slice touching conversation UI should keep or add focused tests for:
+
+- normal conversation switches to conversation surface after send,
+- normal conversation row width matches the shared shell,
+- private chat empty state shares the centered conversation empty state,
+- private chat does not expose `@` teammate routing,
+- channel teammate activity renders above the action row,
+- assistant action row remains the final visual layer of the turn,
+- source icons render only for actual sources,
+- `web_search` text does not render when no search occurred,
+- avatar/source overflow counts do not collide with the stack,
+- copy/feedback/topic actions are hover/focus reachable,
+- evidence/work cells render in compact mode outside run/thread detail,
+- reduced or missing avatar data falls back to stable initials without broken layout.
+
+## Implementation Slice Status
+
+### Slice 2A: Contract And Component Boundary
+
+Goal: make the shared component boundary explicit before more visual work.
+
+Detailed execution plan:
+
+- [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
+
+Work:
+
+- `MessageActionBar` is formalized as the shared policy-filtered row action primitive,
+- `TeammateAvatarStack` is formalized as the shared compact teammate identity stack,
+- `SourceIconStack` is formalized as the shared compact source identity stack,
+- align `ConversationFeed` and `ConversationVirtualFeed` props around shared labels,
+- document and test surface policy defaults.
+
+Acceptance:
+
+- normal conversation, channel, and private chat import the same action/avatar/source
+  primitives,
+- no surface-specific action row duplicates copy/reply/feedback,
+- policy tests prove private chat cannot render channel-only controls.
+
+Status: implemented in the current branch.
+
+### Slice 2B: Capability Parity
+
+Goal: make shared capabilities available where the product says they exist.
+
+Work:
+
+- normal conversation renders compact work cells from exact `message.runId` matches,
+- private chat renders compact work cells from exact `linkedRunId` matches scoped to the
+  selected teammate,
+- make file/reference/source blocks use shared primitives,
+- keep run/thread detail as rich mode rather than a separate product model.
+
+Acceptance:
+
+- normal conversation can show evidence/work without navigating to run detail,
+- private chat can show evidence/work for the selected teammate only,
+- channel still owns multi-teammate collaboration.
+
+Status: first-pass compact work is implemented. Evidence projection and file/reference
+capability parity remain follow-up work and must still obey the real-data rendering gate.
+
+### Slice 2C: Visual Regression Guard
+
+Goal: stop repeated screenshot-driven drift.
+
+Work:
+
+- add fixture-like E2E states for normal, channel, private, empty, evidence, source,
+  teammate activity, action row, and overflow icons,
+- add selectors for shared primitives,
+- keep screenshots optional until fixture stability is good, but enforce DOM and layout
+  invariants now.
+
+Acceptance:
+
+- tests fail if action row moves above teammate activity,
+- tests fail if private chat grows `@` routing,
+- tests fail if source rows render with no sources,
+- tests fail if normal conversation stays in home layout after send.
+
+Status: focused DOM/E2E regression coverage is implemented for the touched normal,
+channel, private, action, source, and linked-run paths.
+
+### Slice 3: Package Extraction
+
+Goal: make Web and future Desktop/PC consume the same conversation semantics.
+
+Work:
+
+- pure surface policy and action filtering live in `packages/conversation-ui-core`,
+- move app-agnostic React components to `packages/conversation-ui-react`,
+- keep daemon fetching, routing, membership, settings, and policy outside the package.
+
+Acceptance:
+
+- fixture transcript data can render without channel app state,
+- package imports do not reach into daemon/API route modules,
+- Desktop can start from the same transcript contract instead of copying Web logic.
+
+Status: core-only extraction is implemented. React component extraction remains deferred
+until Web adapter props stabilize.
+
+## Open Decisions
+
+No blocker remains for Slice 2A, the current 2B first pass, the focused Slice 2C guard,
+or the core-only Slice 3 extraction.
+
+Deferred decisions:
+
+- whether the right floating activity panel becomes a shared shell slot or remains
+  channel-only until the next visual pass,
+- whether `turnId` fallback can be enabled after an explicit turn-run relation and
+  regression tests exist,
+- whether thread-level work belongs under one selected row, a separate thread summary
+  strip, or only run/thread detail,
+- exact timing and public API of `packages/conversation-ui-react`,
+- whether screenshot regression becomes mandatory in CI or stays local/manual until the
+  fixtures stabilize.

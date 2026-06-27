@@ -111,6 +111,12 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationPage.getByRole("textbox", { name: "Conversation message" })).toHaveValue("");
   await expect(conversationPage.getByLabel("Conversation messages")).toContainText("Plan launch");
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
+  const assistantRow = conversationPage.locator(".normal-conversation-message-row.ai-teammate").first();
+  await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(1);
+  await expect(assistantRow.locator(".normal-conversation-message-actions.message-action-bar")).toHaveCount(1);
+  await expect(assistantRow.locator(".message-reply-button")).toHaveCount(0);
+  await expect(assistantRow.locator(".teammate-avatar-stack")).toHaveCount(0);
+  await expect(assistantRow.locator(".source-icon-stack")).toHaveCount(0);
   const messageThread = conversationPage.getByLabel("Conversation messages");
   const threadWidthBeforeHover = await messageThread.evaluate((element) => element.getBoundingClientRect().width);
   await expect.poll(() => messageThread.evaluate((element) => getComputedStyle(element).scrollbarWidth)).toBe("none");

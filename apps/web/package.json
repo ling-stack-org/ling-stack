@@ -5,15 +5,16 @@
   "private": true,
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json && vite build",
-    "typecheck": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json --noEmit",
+    "build": "corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json && vite build",
+    "typecheck": "corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json --noEmit",
     "preview": "vite preview --host 127.0.0.1",
     "lint": "node scripts/check-appshell-imports.mjs",
     "test": "echo \"tests not configured yet\"",
-    "test:e2e": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && playwright test"
+    "test:e2e": "corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && playwright test"
   },
   "dependencies": {
     "@ling-stack/api-client": "workspace:*",
+    "@ling-stack/conversation-ui-core": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/core": "workspace:*",
     "@tanstack/react-virtual": "^3.14.2",

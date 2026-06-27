@@ -846,7 +846,18 @@ export function channelEventFilterToggle(scope: Page | Locator): Locator {
   return scope.getByRole("button", { name: channelEventFilterToggleLabel });
 }
 
+export async function openEngineeringChannel(page: Page): Promise<void> {
+  if (await page.getByLabel("Channel message feed").isVisible().catch(() => false)) {
+    return;
+  }
+  const engineeringChannel = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).first();
+  await expect(engineeringChannel).toBeVisible();
+  await engineeringChannel.click();
+  await expect(page.getByLabel("Channel message feed")).toBeVisible();
+}
+
 export async function openChannelChatTools(page: Page): Promise<void> {
+  await openEngineeringChannel(page);
   const searchInput = page.getByPlaceholder(/Search activity|搜索动态/).first();
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (await searchInput.isVisible().catch(() => false)) {
