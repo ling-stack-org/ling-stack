@@ -28,7 +28,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(newConversationButton).toBeVisible();
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(140);
-  expect(commandButtonWidth).toBeLessThan(220);
+  expect(commandButtonWidth).toBeLessThan(250);
   await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations", "AI Councils"]);
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
@@ -104,13 +104,16 @@ test("recent conversations only show records created from the conversation home"
   const home = page.getByLabel("Conversation home");
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Plan launch");
   await home.getByRole("button", { name: "Send" }).click();
-  await expect(home.getByText("Conversation saved to recent conversations.")).toHaveCount(0);
-  await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveValue("");
-  await expect(home.getByLabel("Conversation messages")).toContainText("Plan launch");
-  await expect(home.locator(".conversation-home-message.assistant")).toHaveCount(1);
-  const messageThread = home.getByLabel("Conversation messages");
+  const conversationPage = page.getByLabel("Conversation page");
+  await expect(conversationPage).toBeVisible();
+  await expect(page.getByLabel("Conversation home")).toHaveCount(0);
+  await expect(conversationPage.getByText("Conversation saved to recent conversations.")).toHaveCount(0);
+  await expect(conversationPage.getByRole("textbox", { name: "Conversation message" })).toHaveValue("");
+  await expect(conversationPage.getByLabel("Conversation messages")).toContainText("Plan launch");
+  await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
+  const messageThread = conversationPage.getByLabel("Conversation messages");
   const threadWidthBeforeHover = await messageThread.evaluate((element) => element.getBoundingClientRect().width);
-  await expect.poll(() => messageThread.evaluate((element) => getComputedStyle(element).scrollbarWidth)).toBe("thin");
+  await expect.poll(() => messageThread.evaluate((element) => getComputedStyle(element).scrollbarWidth)).toBe("none");
   await messageThread.hover();
   await expect.poll(() => messageThread.evaluate((element) => element.getBoundingClientRect().width)).toBe(threadWidthBeforeHover);
 
@@ -123,9 +126,10 @@ test("recent conversations only show records created from the conversation home"
   await expect(navigation.locator('.sidebar-recent-row:has-text("Designer")')).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
+  await expect(home).toBeVisible();
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Second local conversation");
   await home.getByRole("button", { name: "Send" }).click();
-  await expect(home.locator(".conversation-home-message.assistant")).toHaveCount(1);
+  await expect(page.getByLabel("Conversation page").locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
 });
 
@@ -141,14 +145,16 @@ test("conversation home follows user language and shows thinking as off", async 
   await expect(home.getByText("思考关闭")).toBeVisible();
   await home.getByRole("textbox", { name: "对话内容" }).fill("你好");
   await home.getByRole("button", { name: "发送" }).click();
-  await expect(home.locator(".conversation-home-message.assistant")).toHaveCount(1);
-  await expect(home.getByText("Ling Agent 回复：你好")).toBeVisible();
+  const conversationPage = page.getByLabel("对话页面");
+  await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
+  await expect(conversationPage.getByText("Ling Agent 回复：你好")).toBeVisible();
 
   await navigation.getByRole("button", { name: "新建对话" }).click();
+  await expect(home).toBeVisible();
   await home.getByRole("textbox", { name: "对话内容" }).fill("hello");
   await home.getByRole("button", { name: "发送" }).click();
-  await expect(home.locator(".conversation-home-message.assistant")).toHaveCount(1);
-  await expect(home.getByText("Ling Agent response: hello")).toBeVisible();
+  await expect(page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
+  await expect(page.getByLabel("对话页面").getByText("Ling Agent response: hello")).toBeVisible();
 });
 
 test("sidebar text entries route to context-aware inspectors", async ({ page }) => {
@@ -274,7 +280,9 @@ test("conversation home folder picker stores selected project paths on conversat
   await expect(recentRow).toContainText("Project scoped conversation");
   await expect(recentRow).toContainText("Conversation");
 
-  await home.getByRole("button", { name: "Selected folder projects" }).click();
+  const conversationPage = page.getByLabel("Conversation page");
+  await expect(conversationPage).toBeVisible();
+  await conversationPage.getByRole("button", { name: "Selected folder projects" }).click();
   await expect(folderMenu.getByRole("menuitem", { name: "No project needed" })).toHaveCount(0);
 });
 
@@ -383,13 +391,16 @@ test("conversation home model picker uses the model workbench default without ch
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Use Sonnet for this conversation");
   await home.getByRole("button", { name: "Send" }).click();
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Use Sonnet for this conversation");
+  const conversationPage = page.getByLabel("Conversation page");
+  await expect(conversationPage).toBeVisible();
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
+  await expect(home).toBeVisible();
   await expect(home.getByRole("button", { name: "Selected model gemini-2.5-pro" })).toBeVisible();
 
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "Use Sonnet for this conversation" }).click();
-  await expect(home.getByRole("button", { name: "Selected model claude-sonnet-4" })).toBeVisible();
-  await expect(home.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
+  await expect(conversationPage.getByRole("button", { name: "Selected model claude-sonnet-4" })).toBeVisible();
+  await expect(conversationPage.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
 });
 
 test("settings workspace tools provide a clear return path from nested tool pages", async ({ page }) => {

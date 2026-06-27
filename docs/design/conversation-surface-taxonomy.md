@@ -1,7 +1,8 @@
 # Conversation Surface Taxonomy
 
-Status: design boundary for channel, branch, topic reply, private chat, and future session surfaces
+Status: design boundary for normal conversation, channel, branch, topic reply, private chat, and future session surfaces
 Date: 2026-06-25
+Last updated: 2026-06-28
 
 Related docs:
 
@@ -18,6 +19,7 @@ Related docs:
 Ling now has several conversation-like surfaces that look similar in the UI but must not
 share the same product meaning:
 
+- a normal conversation started from the home composer,
 - a channel root conversation,
 - a channel branch,
 - a topic reply under one channel message,
@@ -33,6 +35,7 @@ not blur channel messages, channel branches, topic replies, private chats, and
 The existing architecture is still the right shape:
 
 ```text
+NormalConversation owns a user-started assistant conversation from the home composer.
 Channel owns the room and shared governance.
 ChannelBranch owns a named lane inside that room.
 ChannelMessage owns visible chat records.
@@ -48,6 +51,7 @@ should be a user-facing view over `LingThread`, scoped to one owner surface.
 
 | Surface | User-facing meaning | Primary storage | Scope owner | Default visibility |
 | --- | --- | --- | --- | --- |
+| Normal conversation | The conversation created after sending from the home composer | `LingThread` + turn/message/evidence records | User + selected workspace | Private to the user unless explicitly shared/promoted |
 | Channel root | The main shared room for a project or work area | `Channel` + root `ChannelMessage` rows | `Channel` | Public inside the channel |
 | Channel branch | A named lane under one channel, such as `test` or `Model routing fix` | `ChannelBranch.rootThreadId` + `LingThread` + branch-scoped `ChannelMessage.threadId` rows | Parent `Channel` | Public inside the channel, filtered to the branch |
 | Topic reply | A lightweight side discussion under one message | `ChannelMessage.threadId = sourceMessage.id` | Source `ChannelMessage` | Public inside the channel, nested under the source message |
@@ -55,6 +59,30 @@ should be a user-facing view over `LingThread`, scoped to one owner surface.
 | Work/session thread | A durable unit the user can resume, fork, audit, or search | `LingThread` and related turn/run/evidence tables | Depends on owning surface | Shown through the owning surface and Work History |
 
 ## Ownership Rules
+
+### Normal Conversation
+
+The home screen is only the pre-send entry surface. After the user sends the first message
+from the home composer, Ling creates or opens a normal conversation and switches from the
+home landing layout into the conversation page layout.
+
+Normal conversation is that post-send conversation page. It is not a channel, not a
+private teammate chat, and not only a run detail page. It owns the user's direct assistant
+conversation and should use the same conversation capability blocks as other surfaces:
+
+- user and assistant messages,
+- attachments and file references,
+- evidence blocks when memory, web, files, tools, or context were actually used,
+- compact work cells when the conversation triggers runs, approvals, file changes, or
+  long-running work,
+- detailed work/evidence drill-down through the linked `LingThread` or work history view.
+
+Normal conversation must not:
+
+- keep rendering as the home landing/hero layout after the first message exists,
+- show channel teammate rosters or multi-teammate collaboration activity by default,
+- expose topic-reply controls that only make sense inside channels,
+- pretend a run thread is the only place where work cells or evidence can appear.
 
 ### Channel
 
@@ -125,6 +153,18 @@ Private chat is a separate surface for user-to-teammate conversation. It can inf
 teammate's behavior through private memory policy, but it is not public channel context by
 default.
 
+Private chat is one-to-one with the selected teammate. It must not support `@` mentions that
+route the message to other teammates or invite other teammates into the same private thread.
+If the user needs multi-teammate discussion, the UI should route them to a channel,
+channel branch, or explicit workflow surface.
+
+Private chat can still render common conversation capability blocks:
+
+- attachments and file references,
+- compact evidence when the selected teammate used memory, web, files, tools, or context,
+- compact work cells when the private chat creates or continues work,
+- approval or blocked-state rows when a side effect requires confirmation.
+
 Private chat must not:
 
 - appear in channel context unless explicitly referenced or promoted,
@@ -169,6 +209,7 @@ Default Ling reply behavior should follow the surface:
 
 | Surface | Ordinary Ling reply default | Rationale |
 | --- | --- | --- |
+| Normal conversation | Allowed inside that conversation | The user explicitly started a direct assistant conversation from the home composer |
 | Channel root | Allowed by channel routing policy | Root channel is the main collaboration conversation |
 | Channel branch | Allowed by channel routing policy, scoped to branch `rootThreadId` | Branch is a focused lane, not a silent side panel |
 | Topic reply | Suppressed by default | Side replies are lightweight and should not fan out automatically |
@@ -185,6 +226,7 @@ Context assembly must be scoped before selecting recent messages:
 
 | Active surface | Default recent conversation scope |
 | --- | --- |
+| Normal conversation | That conversation's `LingThread` turns plus explicitly linked workspace/file/context evidence |
 | Channel root | Root channel messages and their attached root topic replies, excluding channel branch lanes |
 | Channel branch | Messages where `threadId = ChannelBranch.rootThreadId` |
 | Topic reply | Source message plus messages where `threadId = sourceMessage.id` |
@@ -217,6 +259,8 @@ Sessions
     task/workflow session
   Private sessions
     teammate direct session
+  Normal conversations
+    home composer conversation
   Automation sessions
     automation heartbeat thread
 ```
@@ -231,6 +275,9 @@ policy, or memory scopes. Those stay on their owning surface.
 - Do not make a channel branch inherit or clone channel configuration.
 - Do not use topic replies as branch navigation.
 - Do not show private chat content in public channel context unless explicitly promoted.
+- Do not allow private chat `@` mentions to route to other teammates.
+- Do not treat work cells or evidence as run-thread-only UI; normal conversation and
+  private chat can render them when real work or evidence exists.
 - Do not create a new session store while `LingThread` can represent the continuity object.
 - Do not decide auto-reply behavior from `threadId` presence alone.
 - Do not query channel root context as "all channel messages" once branches exist.
@@ -244,5 +291,5 @@ architecture failure. The fix should be scoped:
 2. Treat `ChannelBranch.rootThreadId` as branch-root conversation scope.
 3. Keep topic replies suppressed unless explicitly enabled.
 4. Keep root channel feeds from absorbing branch-root messages.
-5. Add regression tests for root channel, channel branch, topic reply, and private chat
-   context boundaries.
+5. Add regression tests for normal conversation, root channel, channel branch, topic reply,
+   and private chat context boundaries.

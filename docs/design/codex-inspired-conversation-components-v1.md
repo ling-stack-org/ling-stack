@@ -232,7 +232,7 @@ Rules:
 The UI may derive this model from existing records before adding any new durable table.
 
 ```ts
-type ConversationSurface = "channel" | "teammate_direct" | "run_thread";
+type ConversationSurface = "normal_conversation" | "channel" | "teammate_direct" | "run_thread";
 
 type ConversationActorKind =
   | "local_user"
@@ -290,11 +290,14 @@ Rules:
   teammate owns the work.
 - `status` must use the shared state vocabulary; do not invent page-local labels.
 - `body` is user-facing summary text, not raw JSON payload or event log text.
+- Capability blocks are shared across surfaces. Evidence, work cells, approvals, file
+  changes, and attachments are not run-thread-only features; surface policy decides whether
+  they render inline, collapsed, floating, or in detail.
 
 ## ConversationFeed
 
-Purpose: one scrollable transcript component for channel chat, private chat, and run
-thread views.
+Purpose: one scrollable transcript component for normal conversation, channel chat,
+private chat, and run thread views.
 
 ### Layout
 
@@ -316,7 +319,8 @@ Rules:
 - loading older items preserves visual scroll position,
 - if the user scrolls away from the latest item, show a centered floating down-arrow,
 - no visible scrollbar is preferred on desktop, but keyboard scrolling must still work,
-- channel and private chat must use the same max text column and composer alignment.
+- normal conversation, channel, and private chat must use consistent max text column and
+  composer alignment while allowing surface-specific surrounding chrome.
 
 ### Props
 
@@ -823,6 +827,49 @@ Settings page:
 The drawer is the place to inspect and drill down. It is not a second main page inside
 the channel.
 
+## Normal Conversation Surface Detail
+
+The home composer screen is the pre-send entry state. Once the user sends the first
+message, the app should create or open a normal conversation and switch into a conversation
+page layout.
+
+Normal conversation is that post-send page. It is the default direct assistant
+conversation, not a channel and not only a run detail page.
+
+### Default Feed
+
+Show:
+
+- human messages,
+- Ling assistant replies,
+- attachments and file references,
+- compact evidence only when memory, web, files, tools, or context were actually used,
+- compact work cells only when the conversation triggers runs, approvals, file changes, or
+  long-running work.
+
+Do not show by default:
+
+- channel teammate rosters,
+- multi-teammate collaboration activity,
+- topic reply controls,
+- raw run timelines or provider logs.
+
+### Post-Send Layout
+
+After the first message is sent, the UI should leave the home landing layout and render a
+clean transcript page:
+
+- the sent user message and assistant response align to the same text column as the
+  composer,
+- the composer remains anchored below the transcript without excessive vertical gap,
+- the home hero/title should no longer dominate the page once real messages exist,
+- evidence and work cells are folded inline below the relevant turn, not detached as
+  unrelated cards.
+
+This is a known design edge to validate visually; the current post-send layout can look
+too much like the empty home state with messages inserted above the composer. That is not
+the target state.
+
 ## Channel Surface Detail
 
 ### Default Feed
@@ -917,6 +964,16 @@ Private chat uses the same `MessageRow`:
 - Used Memory as compact evidence,
 - streamed reply updates same row,
 - blocked provider response stays in row with reason.
+
+Private chat is one-to-one with the selected teammate. It must not expose `@` mention
+routing to other teammates or imply that other teammates can join the same private thread.
+If the user needs multi-teammate discussion, route to channel, branch, or workflow.
+
+Private chat can still show shared capability blocks:
+
+- compact evidence when the selected teammate used memory, web, files, tools, or context,
+- compact work cells when the private conversation creates or continues work,
+- approval or blocked-state rows when side effects require confirmation.
 
 ### Context Rail
 
@@ -1014,8 +1071,9 @@ into page-specific layouts.
 
 | Surface | Shared primitives required | Must validate |
 | --- | --- | --- |
+| Normal conversation | `ConversationFeed`, `MessageRow`, shared `MessageComposer`, evidence bundle, compact work cell | post-send layout no longer looks like empty home state with messages pasted in; evidence/work render only when real data exists |
 | Channel chat | `ConversationVirtualFeed`, `MessageRow`, `ConversationSummaryRow`, `ConversationStatusStrip`, `RightDrawer` | left drawer unchanged, no raw event spam, evidence collapsed |
-| Private chat | `ConversationFeed`, `MessageRow`, shared `MessageComposer`, attachment strip | composer width matches channel, empty state centered, streaming row mutates in place |
+| Private chat | `ConversationFeed`, `MessageRow`, shared `MessageComposer`, attachment strip, evidence bundle, compact work cell | composer width matches channel, empty state centered, streaming row mutates in place, no `@` teammate routing |
 | Single-agent settings | center settings shell, effective skill rows | private chat does not show settings tabs, persona cannot grant permissions |
 | Workspace Skill Library | global settings shell, import draft rows, skill definition rows | definitions are global, bindings are per teammate, blocked reasons remain visible |
 | Run thread | `ConversationSummaryRow`, evidence bundle, resume composer | linked runs read as summaries, raw timeline is one level down |
@@ -1026,8 +1084,11 @@ into page-specific layouts.
 Targeted browser checks after implementation should assert:
 
 - selecting private chat does not replace or resize the left drawer,
+- sending from the home composer produces a normal conversation transcript whose messages,
+  composer, evidence, and work cells share one readable column,
 - switching between channel and private chat keeps composer geometry stable,
 - empty private chat state is vertically centered,
+- private chat composer does not offer `@` routing to other teammates,
 - stream send creates one user row and one mutable teammate row,
 - channel feed has message footer actions without visible text clutter,
 - run detail has at least one collapsed evidence toggle,

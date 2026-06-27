@@ -4,7 +4,6 @@ import { useI18n } from "../../../i18n.js";
 import type { MessageWebEvidence } from "../../../types.js";
 import {
   ConversationEvidenceBundlePanel,
-  type ConversationEvidenceItem,
   type ConversationEvidenceSection,
 } from "./ConversationEvidenceBundlePanel.js";
 
@@ -24,6 +23,7 @@ export function MessageEvidencePanel({
   defaultOpen,
 }: MessageEvidencePanelProps): JSX.Element | null {
   const { t } = useI18n();
+  const renderableWebEvidence = hasRenderableWebEvidence(webEvidence) ? webEvidence : undefined;
   const sections: ConversationEvidenceSection[] = [];
   if (memoryContent) {
     sections.push({
@@ -33,16 +33,16 @@ export function MessageEvidencePanel({
       content: memoryContent,
     });
   }
-  sections.push(...buildWebEvidenceSections(webEvidence, t));
+  sections.push(...buildWebEvidenceSections(renderableWebEvidence, t));
   if (sections.length === 0) {
     return null;
   }
-  const resolvedDefaultOpen = defaultOpen ?? shouldOpenMessageEvidenceByDefault(webEvidence);
+  const resolvedDefaultOpen = defaultOpen ?? shouldOpenMessageEvidenceByDefault(renderableWebEvidence);
   return (
     <ConversationEvidenceBundlePanel
       label={t("Message evidence")}
       bundle={{
-        summary: messageEvidenceSummary(Boolean(memoryContent), webEvidence, t),
+        summary: messageEvidenceSummary(Boolean(memoryContent), renderableWebEvidence, t),
         sections,
       }}
       defaultOpen={resolvedDefaultOpen}
@@ -55,75 +55,31 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
     return [];
   }
   const sections: ConversationEvidenceSection[] = [];
-  const searchItems: ConversationEvidenceItem[] = [
-    {
-      id: "status",
-      label: t("Status"),
-      value: <span className={`conversation-evidence-status ${webEvidence.status}`}>{t(webEvidence.status)}</span>,
-      icon: webEvidence.status === "available" ? <Globe2 size={12} /> : <ShieldAlert size={12} />,
-    },
-  ];
-  if (webEvidence.query) {
-    searchItems.push({
-      id: "query",
-      label: "web_search",
-      value: <code className="conversation-evidence-code">{webEvidence.query}</code>,
-      icon: <Search size={12} />,
-    });
-  }
-  if (webEvidence.queries && webEvidence.queries.length > 0) {
-    searchItems.push({
-      id: "queries",
-      label: t("Search queries"),
-      value: (
-        <span className="conversation-evidence-code-list">
-          {webEvidence.queries.map((query, index) => (
-            <code key={`${index}-${query}`} className="conversation-evidence-code">{query}</code>
-          ))}
-        </span>
-      ),
-      icon: <Search size={12} />,
-    });
-  }
-  if (webEvidence.provider) {
-    searchItems.push({
-      id: "provider",
-      label: t("Provider"),
-      value: webEvidence.provider.displayName,
-      meta: webEvidence.provider.adapterId,
-    });
-  }
   if (webEvidence.reason) {
-    searchItems.push({
-      id: "blocked-reason",
+    sections.push({
+      id: "web-reason",
       label: webEvidence.status === "blocked" ? t("Blocked reason") : t("Degraded reason"),
-      className: "conversation-evidence-item-wide",
-      value: <span className="conversation-evidence-reason">{webEvidence.reason}</span>,
-      icon: <ShieldAlert size={12} />,
+      className: "conversation-evidence-section-reason-only",
+      icon: <ShieldAlert size={13} />,
+      items: [{
+        id: "blocked-reason",
+        label: webEvidence.status === "blocked" ? t("Blocked reason") : t("Degraded reason"),
+        className: "conversation-evidence-item-wide",
+        value: <span className="conversation-evidence-reason">{webEvidence.reason}</span>,
+        icon: <ShieldAlert size={12} />,
+      }],
     });
   }
-  searchItems.push({
-    id: "source-count",
-    label: t("Sources"),
-    value: t("{count} sources", { count: webEvidence.sources.length }),
-    icon: <Link2 size={12} />,
-  });
-  sections.push({
-    id: "web-search",
-    label: "web_search",
-    summary: webEvidenceSearchSummary(webEvidence, t),
-    icon: webEvidence.status === "available" ? <Search size={13} /> : <ShieldAlert size={13} />,
-    items: searchItems,
-  });
 
   if (webEvidence.sources.length > 0) {
     sections.push({
       id: "web-sources",
       label: t("Sources"),
-      summary: t("{count} sources", { count: webEvidence.sources.length }),
+      className: "conversation-evidence-section-compact-list",
       icon: <Link2 size={13} />,
       items: webEvidence.sources.map((source, index) => ({
         id: `source-${index}`,
+        className: "conversation-evidence-source-item",
         label: source.title || sourceHost(source.url),
         value: (
           <a className="conversation-evidence-link" href={source.url} target="_blank" rel="noreferrer">
@@ -158,6 +114,10 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
   }
 
   return sections;
+}
+
+function hasRenderableWebEvidence(webEvidence: MessageWebEvidence | undefined): webEvidence is MessageWebEvidence {
+  return Boolean(webEvidence?.reason || webEvidence?.sources.length || webEvidence?.readUrls.length);
 }
 
 function messageEvidenceSummary(hasMemory: boolean, webEvidence: MessageWebEvidence | undefined, t: Translate): ReactNode {
@@ -207,16 +167,6 @@ function webEvidenceSummaryText(webEvidence: MessageWebEvidence, t: Translate): 
     webParts.push(`open_url ${webEvidence.readUrls.length} URLs`);
   }
   return webParts.join(" / ") || "web evidence";
-}
-
-function webEvidenceSearchSummary(webEvidence: MessageWebEvidence, t: Translate): string {
-  if (webEvidence.status === "blocked") {
-    return t("blocked");
-  }
-  if (webEvidence.status === "degraded") {
-    return t("degraded");
-  }
-  return t("{count} sources", { count: webEvidence.sources.length });
 }
 
 function shouldOpenMessageEvidenceByDefault(webEvidence: MessageWebEvidence | undefined): boolean {

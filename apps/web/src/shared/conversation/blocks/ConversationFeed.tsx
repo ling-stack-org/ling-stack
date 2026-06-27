@@ -4,10 +4,12 @@ import { ConversationEmptyState } from "./ConversationEmptyState.js";
 export interface ConversationFeedProps<TItem> {
   readonly className?: string;
   readonly emptyClassName?: string;
+  readonly ariaLabel?: string;
   readonly items: readonly TItem[];
   readonly loading?: boolean;
   readonly dayLabel?: string;
   readonly emptyLabel: string;
+  readonly emptyDescription?: string;
   readonly emptyIcon?: ReactNode;
   readonly getItemId: (item: TItem) => string;
   readonly renderItem: (item: TItem) => ReactNode;
@@ -16,10 +18,12 @@ export interface ConversationFeedProps<TItem> {
 export function ConversationFeed<TItem>({
   className,
   emptyClassName,
+  ariaLabel,
   items,
   loading = false,
   dayLabel,
   emptyLabel,
+  emptyDescription,
   emptyIcon,
   getItemId,
   renderItem,
@@ -27,12 +31,12 @@ export function ConversationFeed<TItem>({
   const rootClassName = [className ?? "conversation-feed", items.length === 0 ? "empty" : ""].filter(Boolean).join(" ");
 
   return (
-    <div className={rootClassName}>
+    <div className={rootClassName} aria-label={ariaLabel}>
       {dayLabel ? <div className="teammate-chat-day-separator conversation-day-separator">{dayLabel}</div> : null}
       {loading ? (
         <ConversationEmptyState className={emptyClassName} label={emptyLabel} loading />
       ) : items.length === 0 ? (
-        <ConversationEmptyState className={emptyClassName} icon={emptyIcon} label={emptyLabel} />
+        <ConversationEmptyState className={emptyClassName} icon={emptyIcon} label={emptyLabel} description={emptyDescription} />
       ) : (
         items.map((item) => <Fragment key={getItemId(item)}>{renderItem(item)}</Fragment>)
       )}

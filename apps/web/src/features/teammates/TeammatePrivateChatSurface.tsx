@@ -22,9 +22,9 @@ import {
   ConversationShell,
   ConversationVirtualFeed,
   ConversationViewProvider,
-  MessageBubble,
   MessageEvidencePanel,
   MessageFooterActions,
+  MessageRow,
 } from "../../shared/conversation/index.js";
 import type {
   AiTeammate,
@@ -195,7 +195,6 @@ export function TeammatePrivateChatSurface({
               const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";
               const blockedMessage = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
               const recoveredHistoricalProviderFailure = providerRecovered && isHistoricalProviderPreflightMessage(message);
-              const systemMessage = message.authorType === "system";
               const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : localUserDisplayName;
               const messageBody = pendingAiReply && !message.body.trim()
                 ? t("AI teammate is replying...")
@@ -205,10 +204,10 @@ export function TeammatePrivateChatSurface({
                     ? t("Historical model check failed. The model is available now; resend or continue the chat.")
                     : message.body;
               return (
-                <MessageBubble
-                  className={`teammate-message-row ${message.authorType}`}
-                  tone={systemMessage ? "system" : blockedMessage ? "chat-blocked" : "chat"}
-                  side={message.authorType === "local-user" ? "end" : "start"}
+                <MessageRow
+                  className={`teammate-message-row ${message.authorType}${blockedMessage ? " blocked" : ""}`}
+                  authorType={message.authorType}
+                  tone={blockedMessage ? "chat-blocked" : undefined}
                   avatar={
                     message.authorType === "ai-teammate"
                       ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
@@ -216,13 +215,12 @@ export function TeammatePrivateChatSurface({
                         ? <AvatarInitial label="S" tone="violet" />
                         : <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />
                   }
-                  author={authorName}
-                  time={formatDateTime(message.createdAt)}
+                  authorName={authorName}
+                  createdAtLabel={formatDateTime(message.createdAt)}
                   body={messageBody}
                   bodyCwd={cwd}
                   bodyCompact
-                  showOwnAuthor={message.authorType === "local-user"}
-                  pending={pendingAiReply}
+                  bodyStreaming={pendingAiReply}
                   attachmentsNode={message.attachmentIds.length > 0 ? (
                     <ConversationAttachmentStrip
                       className="teammate-message-attachments"
@@ -259,7 +257,7 @@ export function TeammatePrivateChatSurface({
                     />
                   ) : null}
                   errorNode={message.errorMessage && message.status !== "cancelled" && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
-                  action={(
+                  actionsNode={(
                     <MessageFooterActions
                       className="teammate-message-actions"
                       actions={[

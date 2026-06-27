@@ -15,6 +15,7 @@ export interface ConversationVirtualFeedProps<TItem> {
   readonly empty?: boolean;
   readonly loadingLabel: string;
   readonly emptyLabel: string;
+  readonly emptyDescription?: string;
   readonly emptyIcon?: ReactNode;
   readonly totalSize: number;
   readonly virtualRows: readonly VirtualItem[];
@@ -47,6 +48,7 @@ export function ConversationVirtualFeed<TItem>({
   empty = false,
   loadingLabel,
   emptyLabel,
+  emptyDescription,
   emptyIcon,
   totalSize,
   virtualRows,
@@ -117,7 +119,7 @@ export function ConversationVirtualFeed<TItem>({
         {showLoadingState ? (
           <ConversationEmptyState className="client-empty-state" label={loadingLabel} loading />
         ) : empty ? (
-          <ConversationEmptyState className="client-empty-state message-feed-empty-state" icon={emptyIcon} label={emptyLabel} />
+          <ConversationEmptyState className="client-empty-state message-feed-empty-state" icon={emptyIcon} label={emptyLabel} description={emptyDescription} />
         ) : (
           <div className="message-feed-virtualizer" style={{ height: `${totalSize}px` }}>
             {virtualRows.map((virtualRow) => {

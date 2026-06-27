@@ -264,7 +264,7 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
   await expect(experts).toContainText("2 done");
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
 
-  await experts.getByRole("button", { name: /Experts/ }).click();
+  await experts.getByRole("button", { name: /Teammates/ }).click();
   await expect(feed.getByText("Architect checked boundaries.")).toBeVisible();
 
   await page.getByRole("button", { name: "More channel views" }).click();
@@ -1693,35 +1693,84 @@ test("channel message feed renders web evidence inline with sources and blocked 
       createdAt: "2026-06-24T00:21:00.000Z",
       updatedAt: "2026-06-24T00:21:00.000Z",
     },
+    {
+      id: "msg_web_evidence_configured_only",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "engineer",
+      body: "Configured web search but no actual evidence.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      webEvidence: {
+        status: "available",
+        query: "OpenAI news today",
+        provider: {
+          adapterId: "openai-chat-completions-web-search",
+          providerPresetId: "provider_chat_search",
+          displayName: "Custom OpenAI-compatible",
+        },
+        sources: [],
+        readUrls: [],
+        updatedAt: "2026-06-24T00:21:30.000Z",
+      },
+      createdAt: "2026-06-24T00:21:30.000Z",
+      updatedAt: "2026-06-24T00:21:30.000Z",
+    },
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
 
   const feed = page.getByLabel("Channel message feed");
   const sourcedReply = feed.locator(".channel-message-row").filter({ hasText: "Web-backed reply with source." });
+  const sourcedActions = sourcedReply.locator(".channel-message-ai-actions");
+  await expect(sourcedActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
+  await expect(sourcedActions.locator('[data-tooltip="Like response"]')).toHaveCount(1);
+  await expect(sourcedActions.locator('[data-tooltip="Dislike response"]')).toHaveCount(1);
+  await expect(sourcedActions.locator('[data-tooltip="Reply in topic"]')).toHaveCount(1);
   const sourcedEvidence = sourcedReply.getByLabel("Message evidence");
-  await expect(sourcedEvidence.getByRole("button", { name: /web_search 1 sources/ })).toBeVisible();
-  await sourcedEvidence.getByRole("button").click();
-  await expect(sourcedEvidence).toContainText("web_search");
-  await expect(sourcedEvidence).toContainText("latest Ling Stack release");
+  const sourcedToggle = sourcedEvidence.getByRole("button");
+  await expect(sourcedToggle).toBeVisible();
+  await sourcedToggle.click();
   await expect(sourcedEvidence).toContainText("Ling release note");
   await expect(sourcedEvidence).toContainText("example.com");
   await expect(sourcedEvidence).toContainText("open_url");
+  await expect(sourcedEvidence).not.toContainText("latest Ling Stack release");
+  await expect(sourcedEvidence).not.toContainText("OpenAI Responses + Web Search");
 
   const degradedReply = feed.locator(".channel-message-row").filter({ hasText: "Degraded web reply." });
   const degradedEvidence = degradedReply.getByLabel("Message evidence");
-  await expect(degradedEvidence.getByRole("button", { name: /web_search degraded/ })).toBeVisible();
-  await degradedEvidence.getByRole("button").click();
-  await expect(degradedEvidence).toContainText("Search queries");
-  await expect(degradedEvidence).toContainText("AI news today");
+  const degradedToggle = degradedEvidence.getByRole("button");
+  await expect(degradedToggle).toBeVisible();
+  await expect(degradedToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(degradedEvidence).toContainText("Degraded reason");
   await expect(degradedEvidence).toContainText("web_search backend returned a summary but no source URLs.");
+  await expect(degradedEvidence).not.toContainText("Search queries");
+  await expect(degradedEvidence).not.toContainText("AI news today");
+  await expect(degradedEvidence).not.toContainText("Provider");
+  await expect(degradedEvidence).not.toContainText("Chat Completions Search Relay");
 
   const blockedReply = feed.locator(".channel-message-row").filter({ hasText: "Blocked web reply." });
   const blockedEvidence = blockedReply.getByLabel("Message evidence");
-  await expect(blockedEvidence.getByRole("button", { name: /web_search blocked/ })).toBeVisible();
-  await blockedEvidence.getByRole("button").click();
+  const blockedToggle = blockedEvidence.getByRole("button");
+  await expect(blockedToggle).toBeVisible();
+  await expect(blockedToggle).toHaveAttribute("aria-expanded", "true");
   await expect(blockedEvidence).toContainText("Blocked reason");
   await expect(blockedEvidence).toContainText("Current selected Ling provider does not support realtime web search.");
+  await expect(blockedEvidence).not.toContainText("latest Ling Stack release");
+
+  const configuredOnlyReply = feed.locator(".channel-message-row").filter({ hasText: "Configured web search but no actual evidence." });
+  await expect(configuredOnlyReply).toBeVisible();
+  await expect(configuredOnlyReply.getByLabel("Message evidence")).toHaveCount(0);
+  await expect(configuredOnlyReply).not.toContainText("OpenAI news today");
+  await expect(configuredOnlyReply).not.toContainText("Custom OpenAI-compatible");
+  await expect(configuredOnlyReply).not.toContainText("openai-chat-completions-web-search");
 });
 
 test("conversation turn transcript renders coordinator web evidence in the main chat", async ({ page }) => {
@@ -1780,20 +1829,21 @@ test("conversation turn transcript renders coordinator web evidence in the main 
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
 
   const turn = page.locator('[data-conversation-turn-id="conversation-turn:msg_web_turn_user"]');
   await expect(turn).toBeVisible();
   await expect(turn).toContainText("Here is the AI news summary.");
   const evidence = turn.getByLabel("Message evidence");
-  const toggle = evidence.getByRole("button", { name: /web_search degraded/ });
+  const toggle = evidence.getByRole("button");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(evidence).toContainText("Search queries");
-  await expect(evidence).toContainText("AI latest news");
-  await expect(evidence).toContainText("Provider");
-  await expect(evidence).toContainText("Chat Completions Search Relay");
   await expect(evidence).toContainText("Degraded reason");
   await expect(evidence).toContainText("web_search backend returned text but no citation/source metadata.");
-  await expect(evidence).toContainText("0 sources");
+  await expect(evidence).not.toContainText("Search queries");
+  await expect(evidence).not.toContainText("AI latest news");
+  await expect(evidence).not.toContainText("Provider");
+  await expect(evidence).not.toContainText("Chat Completions Search Relay");
+  await expect(evidence).not.toContainText("0 sources");
 });
 
 test("channel settings manage workspace binding and header badge", async ({ page }) => {
@@ -4674,6 +4724,17 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
   await expect(assistantTranscript).toHaveCount(1);
   await expect(assistantTranscript).toContainText("产品策略分析登录页 smoke 的目标范围，仅输出结论");
   await expect(assistantTranscript).toContainText("协作队友：产品策略、QA");
+  await expect.poll(() =>
+    assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
+      const childClasses = Array.from(element.children).map((child) => child.className.toString());
+      const expertIndex = childClasses.findIndex((className) => className.includes("channel-team-experts-summary"));
+      const actionsIndex = childClasses.findIndex((className) => className.includes("channel-message-row-footer-stack"));
+      return {
+        actionsIsLast: actionsIndex === childClasses.length - 1,
+        expertBeforeActions: expertIndex >= 0 && actionsIndex >= 0 && expertIndex < actionsIndex,
+      };
+    }),
+  ).toEqual({ actionsIsLast: true, expertBeforeActions: true });
   await expect(feed).not.toContainText("确认需求：");
   await expect(feed).not.toContainText("完成：");
   await expect(feed).not.toContainText("Confirm requirement");

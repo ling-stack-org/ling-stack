@@ -2026,7 +2026,7 @@
 }
 
 .teammate-message-list.message-feed-empty {
-  padding-bottom: 0;
+  padding-block: 0;
 }
 
 .teammate-message-row .avatar-initial,
@@ -3983,7 +3983,7 @@
 }
 
 .teammate-workspace.chat-mode .teammate-message-list.message-feed-empty {
-  padding-bottom: 0;
+  padding-block: 0;
 }
 
 .teammate-chat-day-separator {
@@ -3991,25 +3991,6 @@
   color: var(--text-soft);
   font-size: 11px;
   line-height: 16px;
-}
-
-.teammate-workspace.chat-mode .teammate-message-list > .client-empty-state.message-feed-empty-state {
-  display: grid;
-  align-items: center;
-  gap: 7px;
-  min-height: 100%;
-  margin: 0;
-  padding: 0 0 clamp(96px, 16vh, 170px);
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.teammate-workspace.chat-mode .teammate-message-list > .client-empty-state.message-feed-empty-state svg {
-  width: 15px;
-  height: 15px;
 }
 
 .teammate-workspace.chat-mode .teammate-message-row .avatar-initial,

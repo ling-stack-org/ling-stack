@@ -14,6 +14,7 @@ export interface ConversationEvidenceItem {
 export interface ConversationEvidenceSection {
   readonly id: string;
   readonly label: string;
+  readonly className?: string;
   readonly summary?: string;
   readonly icon?: ReactNode;
   readonly items?: readonly ConversationEvidenceItem[];
@@ -49,7 +50,11 @@ export function ConversationEvidenceBundlePanel({
     <EvidenceDisclosure className={className} label={label} summary={summary} defaultOpen={defaultOpen}>
       <div className="conversation-evidence-bundle">
         {sections.map((section) => (
-          <section key={section.id} className="conversation-evidence-section" aria-label={section.label}>
+          <section
+            key={section.id}
+            className={["conversation-evidence-section", section.className].filter(Boolean).join(" ")}
+            aria-label={section.label}
+          >
             <header>
               <span>
                 {section.icon}
