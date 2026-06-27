@@ -2,6 +2,7 @@ import type {
   ChannelAttachment,
   ChannelAttachmentListResponse,
   ChannelAttachmentMutationResponse,
+  ConversationAttachment,
   PreviewContentResponse,
   TeammatePrivateAttachment,
 } from "../types.js";
@@ -38,7 +39,7 @@ export async function deleteAttachment(cwd: string, attachmentId: string): Promi
   await daemonClient.deleteChannelAttachment(cwd, attachmentId);
 }
 
-export function attachmentContentUrl(attachment: ChannelAttachment | TeammatePrivateAttachment, cwd?: string): string {
+export function attachmentContentUrl(attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment, cwd?: string): string {
   return daemonClient.attachmentContentUrl(attachment.id, cwd);
 }
 
@@ -51,9 +52,10 @@ export async function previewAttachmentContent(
   attachmentId: string,
   options: {
     readonly maxBytes?: number;
-    readonly scope?: "channel" | "teammate_private";
+    readonly scope?: "channel" | "teammate_private" | "conversation";
     readonly channelId?: string;
     readonly teammateId?: string;
+    readonly threadId?: string;
   } = {},
 ): Promise<PreviewContentResponse> {
   return daemonClient.previewAttachmentContent(cwd, attachmentId, options);

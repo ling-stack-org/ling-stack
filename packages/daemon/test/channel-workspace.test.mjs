@@ -2468,6 +2468,51 @@ test("channel message stream emits visible deltas into a durable AI reply", asyn
   }
 });
 
+test("conversation stream materializes uploaded attachments into the run prompt", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-attachment-"));
+  const runner = new ScriptedRunner(["Attachment received"]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const attachment = (await postJson(`${daemon.url}/conversations/attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "notes.txt",
+      contentBase64: Buffer.from("Alpha decision: keep the shared composer contract.").toString("base64"),
+    })).attachment;
+
+    const response = await fetch(`${daemon.url}/conversations/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "Summarize the attached note.",
+        attachmentIds: [attachment.id],
+        providerPresetId: provider.id,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    const initialReady = events.find((event) => event.event === "ready" && event.data.userMessage);
+    assert.ok(initialReady);
+    assert.equal(initialReady.data.userMessage.attachments[0].id, attachment.id);
+    assert.equal(initialReady.data.userMessage.attachments[0].fileName, "notes.txt");
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].task.prompt, /Attached files:/);
+    assert.match(runner.runs[0].task.prompt, /Alpha decision: keep the shared composer contract\./);
+
+    const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
+    const userMessage = detail.messages.find((message) => message.id === initialReady.data.userMessage.id);
+    assert.equal(userMessage.attachments[0].id, attachment.id);
+
+    const preview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(attachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=conversation&threadId=${encodeURIComponent(initialReady.data.thread.id)}`);
+    assert.equal(preview.kind, "plain_text");
+    assert.match(preview.text, /Alpha decision/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel message stream does not expose hidden task proposal blocks", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-stream-proposal-"));
   const runner = new ScriptedRunner([

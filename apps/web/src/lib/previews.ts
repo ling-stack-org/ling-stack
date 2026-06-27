@@ -1,5 +1,5 @@
 import { previewArtifactContent, previewAttachmentContent } from "../api.js";
-import type { PreviewContentKind, PreviewContentResponse, RunArtifact, ChannelAttachment, TeammatePrivateAttachment } from "../types.js";
+import type { PreviewContentKind, PreviewContentResponse, RunArtifact, ChannelAttachment, ConversationAttachment, TeammatePrivateAttachment } from "../types.js";
 
 export type PreviewRequest =
   | {
@@ -13,9 +13,10 @@ export type PreviewRequest =
     readonly cwd: string;
     readonly attachmentId: string;
     readonly maxBytes?: number;
-    readonly scope?: "channel" | "teammate_private";
+    readonly scope?: "channel" | "teammate_private" | "conversation";
     readonly channelId?: string;
     readonly teammateId?: string;
+    readonly threadId?: string;
   };
 
 export async function loadPreviewContent(request: PreviewRequest): Promise<PreviewContentResponse> {
@@ -27,6 +28,7 @@ export async function loadPreviewContent(request: PreviewRequest): Promise<Previ
     scope: request.scope,
     channelId: request.channelId,
     teammateId: request.teammateId,
+    threadId: request.threadId,
   });
 }
 
@@ -34,7 +36,7 @@ export function artifactCanPreview(artifact: RunArtifact): boolean {
   return artifact.type !== "video";
 }
 
-export function attachmentCanPreview(attachment: ChannelAttachment | TeammatePrivateAttachment): boolean {
+export function attachmentCanPreview(attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment): boolean {
   return attachment.kind !== "office" && attachment.kind !== "pdf";
 }
 

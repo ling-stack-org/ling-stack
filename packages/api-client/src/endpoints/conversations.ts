@@ -1,6 +1,9 @@
 import type {
+  ConversationAttachmentListResponse,
+  ConversationAttachmentMutationResponse,
   ConversationDetailResponse,
   ConversationStreamRequest,
+  CreateConversationAttachmentRequest,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
@@ -15,6 +18,14 @@ export const conversationEndpoints = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     });
+  },
+
+  async listConversationAttachments(this: LingDaemonEndpointContext, cwd: string, threadId?: string, limit: number = 100): Promise<ConversationAttachmentListResponse> {
+    return this._get("/conversations/attachments", { cwd, ...(threadId ? { threadId } : {}), limit: String(limit) });
+  },
+
+  async createConversationAttachment(this: LingDaemonEndpointContext, cwd: string, input: CreateConversationAttachmentRequest): Promise<ConversationAttachmentMutationResponse> {
+    return this._post("/conversations/attachments", { cwd }, input);
   },
 };
 

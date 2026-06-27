@@ -155,6 +155,42 @@ test("recent conversations only show records created from the conversation home"
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
 });
 
+test("normal conversation composer sends and replays uploaded attachments", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const home = page.getByLabel("Conversation home");
+  const homeComposer = home.locator(".conversation-composer");
+  await expect(homeComposer).toHaveClass(/conversation-composer-surface-normal_conversation/);
+  await expect(homeComposer.getByRole("button", { name: /Selected permission preset/ })).toBeVisible();
+  await expect(homeComposer.getByRole("button", { name: /Selected model/ })).toBeVisible();
+  await expect(homeComposer.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
+
+  await homeComposer.locator('input[type="file"]').setInputFiles({
+    name: "brief.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Launch scope\n- concise answer\n", "utf8"),
+  });
+  await expect(homeComposer.getByLabel("Pending message assets")).toContainText("brief.txt");
+
+  await home.getByRole("textbox", { name: "Conversation message" }).fill("Review this brief");
+  await home.getByRole("button", { name: "Send" }).click();
+
+  const conversationPage = page.getByLabel("Conversation page");
+  await expect(conversationPage).toBeVisible();
+  await expect(conversationPage.locator(".conversation-composer")).toHaveClass(/conversation-composer-surface-normal_conversation/);
+  await expect(conversationPage.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
+  const messages = conversationPage.getByLabel("Conversation messages");
+  await expect(messages).toContainText("Review this brief");
+  await expect(messages.locator(".conversation-attachment-chip")).toContainText("brief.txt");
+  await expect(conversationPage.locator(".composer-preview-strip")).toHaveCount(0);
+});
+
 test("conversation home follows user language and shows thinking as off", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];

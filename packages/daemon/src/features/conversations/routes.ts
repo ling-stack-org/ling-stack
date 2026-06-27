@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
+  type ConversationAttachment,
   type LingThread,
   type LingTurn,
   type RunEventEnvelope,
@@ -9,6 +10,8 @@ import {
   type RunStore,
 } from "@ling-stack/core";
 import type {
+  ConversationAttachmentListResponse,
+  ConversationAttachmentMutationResponse,
   ConversationDetailResponse,
   ConversationStreamRequest,
   ConversationTranscriptMessage,
@@ -22,12 +25,16 @@ import type {
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { readJsonBody } from "../../shared/request.js";
+import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
+import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
 import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
+import { parseChannelAttachmentRequest } from "../channels/schemas.js";
+import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
+import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -44,6 +51,7 @@ export async function handleConversationStream(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   startRun: StartConversationRun,
+  imageVisionSummarizer?: LingImageVisionSummarizer,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for conversation stream` });
@@ -61,15 +69,23 @@ export async function handleConversationStream(
     const store = storeRegistry.getStore(workspaceCwd);
     const now = new Date().toISOString();
     const thread = resolveConversationThread(store, input, now);
+    const turnInstruction = input.message.trim() || "User attached files.";
     const turn = store.createLingTurn({
       threadId: thread.id,
       kind: thread.metadata?.lastTurnId ? "manual_followup" : "initial_request",
-      title: conversationTitle(input.message),
-      userInstruction: input.message.trim(),
+      title: conversationTitle(turnInstruction),
+      userInstruction: turnInstruction,
       teammateId: LING_AGENT_ID,
       createdByActor: "local-user",
     }, now);
-    const userMessage = createUserTranscriptMessage(thread, turn);
+    const conversationAttachments = assignConversationAttachments(store, input.attachmentIds ?? [], thread.id, turn.id);
+    const attachmentMaterializations = await materializeInlineConversationAttachments({
+      store,
+      attachments: conversationAttachments,
+      now,
+      imageVisionSummarizer,
+    });
+    const userMessage = createUserTranscriptMessage(thread, turn, conversationAttachments);
     let assistantMessage = createAssistantTranscriptMessage(thread, turn, undefined, "", "running", now);
     let runId = "";
     let closed = false;
@@ -158,8 +174,73 @@ export async function handleConversationStream(
 
     writeSseHead(response);
     safeWrite("ready", { thread, turn, userMessage, assistantMessage });
-    const runRequest = buildConversationRunRequest({ workspaceCwd, thread, turn, input });
+    const runRequest = buildConversationRunRequest({
+      workspaceCwd,
+      thread,
+      turn,
+      input,
+      attachments: conversationAttachments,
+      attachmentMaterializations,
+    });
     await startRun(runRequest, streamSink);
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleConversationAttachmentsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const threadId = url.searchParams.get("threadId")?.trim() || undefined;
+    if (threadId) {
+      assertConversationThread(store, threadId);
+    }
+
+    if (request.method === "GET") {
+      const body: ConversationAttachmentListResponse = {
+        cwd,
+        threadId,
+        attachments: store.listConversationAttachments({
+          threadId,
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      };
+      writeJson(response, 200, body);
+      return;
+    }
+
+    if (request.method === "POST") {
+      const rawBody = await readJsonBody(request, Math.max(config.maxBodyBytes, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES));
+      const input = parseChannelAttachmentRequest(rawBody);
+      const requestedThreadId = readOptionalString(readRecord(rawBody), "threadId")?.trim() || threadId;
+      if (requestedThreadId) {
+        assertConversationThread(store, requestedThreadId);
+      }
+      const attachment = persistConversationAttachment(store, {
+        ...input,
+        threadId: requestedThreadId,
+      });
+      const body: ConversationAttachmentMutationResponse = { attachment };
+      writeJson(response, 201, body);
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for conversation attachments` });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -204,8 +285,8 @@ export function buildConversationDetail(store: RunStore, cwd: string, thread: Li
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const runByTurnId = new Map(runLinks.map((link) => [link.turnId, store.getRun(link.runId)]));
   const messages = turns.flatMap((turn) => {
-    const user = createUserTranscriptMessage(thread, turn);
     const run = runByTurnId.get(turn.id);
+    const user = createUserTranscriptMessage(thread, turn, conversationAttachmentsFromRunSnapshot(store, run));
     return run ? [user, assistantMessageFromRun(store, thread, turn, run)] : [user];
   });
   const latestRun = runs[runs.length - 1];
@@ -232,8 +313,12 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
     throw new Error("Conversation request must be a JSON object.");
   }
   const message = readString(value, "message").trim();
-  if (!message) {
-    throw new Error("message is required.");
+  const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
+  if (!message && attachmentIds.length === 0) {
+    throw new Error("message or attachmentIds is required.");
+  }
+  if (attachmentIds.length > 10) {
+    throw new Error("A conversation message can reference at most 10 attachments.");
   }
   const providerPresetId = readString(value, "providerPresetId").trim();
   if (!providerPresetId) {
@@ -242,6 +327,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
   return {
     threadId: readOptionalString(value, "threadId")?.trim() || undefined,
     message,
+    attachmentIds: normalizeStringList(attachmentIds),
     projectPath: readOptionalString(value, "projectPath")?.trim() || undefined,
     providerPresetId,
     thinkingLevel: readThinkingLevel(readOptionalString(value, "thinkingLevel")),
@@ -278,6 +364,8 @@ function buildConversationRunRequest(input: {
   readonly thread: LingThread;
   readonly turn: LingTurn;
   readonly input: ConversationStreamRequest;
+  readonly attachments: readonly ConversationAttachment[];
+  readonly attachmentMaterializations: ReadonlyMap<string, ConversationAttachmentMaterialization>;
 }): RunRequest {
   return {
     workspaceCwd: input.workspaceCwd,
@@ -285,7 +373,7 @@ function buildConversationRunRequest(input: {
     task: {
       id: conversationRunTaskId(input.turn.id),
       title: input.turn.title,
-      prompt: buildConversationRunPrompt(input.input.message, input.input.responseLanguage),
+      prompt: buildConversationRunPrompt(input.input.message, input.input.responseLanguage, input.attachments, input.attachmentMaterializations),
     },
     threadId: input.thread.id,
     turnId: input.turn.id,
@@ -295,15 +383,21 @@ function buildConversationRunRequest(input: {
     permissionPreset: input.input.permissionPreset,
     permissionMode: input.input.permissionMode,
     thinkingLevel: input.input.thinkingLevel,
+    conversationAttachmentIds: input.attachments.map((attachment) => attachment.id),
     idempotencyKey: input.input.idempotencyKey ?? `conversation:${input.turn.id}`,
   };
 }
 
-function createUserTranscriptMessage(thread: LingThread, turn: LingTurn): ConversationTranscriptMessage {
+function createUserTranscriptMessage(
+  thread: LingThread,
+  turn: LingTurn,
+  attachments: readonly ConversationAttachment[] = [],
+): ConversationTranscriptMessage {
   return {
     id: `conversation-user:${turn.id}`,
     role: "user",
     content: turn.userInstruction,
+    ...(attachments.length > 0 ? { attachments } : {}),
     status: statusFromTurn(turn),
     threadId: thread.id,
     turnId: turn.id,
@@ -470,7 +564,86 @@ function resolveConversationResponseLanguage(responseLanguage: ResponseLanguageP
     : inferUserLanguage(message);
 }
 
-function buildConversationRunPrompt(message: string, responseLanguage: ResponseLanguagePreference | undefined): string {
+function buildConversationRunPrompt(
+  message: string,
+  responseLanguage: ResponseLanguagePreference | undefined,
+  attachments: readonly ConversationAttachment[],
+  materializations: ReadonlyMap<string, ConversationAttachmentMaterialization>,
+): string {
   const trimmedMessage = message.trim();
-  return `${trimmedMessage}\n\n${responseLanguageInstruction(resolveConversationResponseLanguage(responseLanguage, trimmedMessage))}`;
+  const parts = [
+    trimmedMessage || "User attached files.",
+    renderConversationAttachmentsForPrompt(attachments, materializations),
+    responseLanguageInstruction(resolveConversationResponseLanguage(responseLanguage, trimmedMessage)),
+  ].filter((part) => part.trim());
+  return parts.join("\n\n");
+}
+
+function renderConversationAttachmentsForPrompt(
+  attachments: readonly ConversationAttachment[],
+  materializations: ReadonlyMap<string, ConversationAttachmentMaterialization>,
+): string {
+  if (attachments.length === 0) {
+    return "";
+  }
+  return [
+    "Attached files:",
+    ...attachments.map((attachment, index) => {
+      const materialization = materializations.get(attachment.id);
+      const header = `- ${index + 1}. ${attachment.fileName} (${attachment.kind}, ${attachment.contentType}, ${attachment.sizeBytes} bytes, materialization=${materialization?.status ?? "metadata_only"})`;
+      if (materialization?.status === "available" && materialization.contentText?.trim()) {
+        return `${header}\n  Content${materialization.truncated ? " (truncated)" : ""}:\n${indentAttachmentContent(materialization.contentText)}`;
+      }
+      return header;
+    }),
+    "Use only the listed attachment content. Do not infer unseen file contents.",
+  ].join("\n");
+}
+
+function indentAttachmentContent(content: string): string {
+  return content.trim().split(/\r?\n/).map((line) => `  ${line}`).join("\n");
+}
+
+function assignConversationAttachments(
+  store: RunStore,
+  attachmentIds: readonly string[],
+  threadId: string,
+  turnId: string,
+): ConversationAttachment[] {
+  return normalizeStringList(attachmentIds).map((attachmentId) => {
+    const existing = store.getConversationAttachment(attachmentId);
+    if (!existing) {
+      throw new HttpError(404, "conversation_attachment_not_found", `Conversation attachment not found: ${attachmentId}`);
+    }
+    if (existing.threadId && existing.threadId !== threadId) {
+      throw new HttpError(409, "conversation_attachment_thread_mismatch", `Conversation attachment belongs to a different thread: ${attachmentId}`);
+    }
+    if (existing.turnId && existing.turnId !== turnId) {
+      throw new HttpError(409, "conversation_attachment_already_used", `Conversation attachment was already used: ${attachmentId}`);
+    }
+    const assigned = store.assignConversationAttachment({ attachmentId, threadId, turnId });
+    if (!assigned) {
+      throw new HttpError(404, "conversation_attachment_not_found", `Conversation attachment not found: ${attachmentId}`);
+    }
+    return assigned;
+  });
+}
+
+function conversationAttachmentsFromRunSnapshot(store: RunStore, run: RunSession | undefined): readonly ConversationAttachment[] {
+  const snapshot = readRecord(run?.requestSnapshot);
+  const attachmentIds = readOptionalStringArray(snapshot, "conversationAttachmentIds") ?? readOptionalStringArray(snapshot, "attachmentIds") ?? [];
+  return normalizeStringList(attachmentIds)
+    .map((attachmentId) => store.getConversationAttachment(attachmentId))
+    .filter((attachment): attachment is ConversationAttachment => Boolean(attachment));
+}
+
+function assertConversationThread(store: RunStore, threadId: string): void {
+  const thread = store.getLingThread(threadId);
+  if (!thread || thread.kind !== "conversation") {
+    throw new HttpError(404, "conversation_not_found", `Conversation not found: ${threadId}`);
+  }
+}
+
+function normalizeStringList(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }

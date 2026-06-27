@@ -19,6 +19,7 @@ import type {
 
 export interface ConversationSendInput {
   readonly message: string;
+  readonly attachmentIds?: readonly string[];
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: ProviderThinkingMode;
@@ -120,6 +121,7 @@ export function useConversationDomain(input: {
       const response = await streamConversation(workspaceCwd, {
         threadId: selectedConversationThreadId || undefined,
         message: message.message,
+        attachmentIds: message.attachmentIds,
         projectPath: message.projectPath,
         providerPresetId: message.providerPresetId,
         thinkingLevel: normalizeThinkingLevel(message.thinkingLevel),

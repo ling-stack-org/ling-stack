@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, extname, isAbsolute, join, resolve as resolvePath } from "node:path";
-import type { ChannelAttachment, ChannelAttachmentKind, RunStore, TeammatePrivateAttachment } from "@ling-stack/core";
+import type { ChannelAttachment, ChannelAttachmentKind, ConversationAttachment, RunStore, TeammatePrivateAttachment } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { isPathInsideRoot, normalizeArtifactPath } from "../../shared/path.js";
@@ -17,6 +17,10 @@ export const CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES = 40 * 1024 * 1024;
 
 export type PersistTeammatePrivateAttachmentInput = ChannelAttachmentRequest & {
   readonly scope: "teammate_direct_thread" | "teammate_profile_avatar";
+  readonly threadId?: string;
+};
+
+export type PersistConversationAttachmentInput = ChannelAttachmentRequest & {
   readonly threadId?: string;
 };
 
@@ -90,7 +94,8 @@ export async function handleChannelAttachmentItem(
     const store = storeRegistry.getStore(cwd);
     const attachment = store.getChannelAttachment(route.attachmentId);
     const privateAttachment = attachment ? undefined : store.getTeammatePrivateAttachment(route.attachmentId);
-    const resolvedAttachment = attachment ?? privateAttachment;
+    const conversationAttachment = attachment || privateAttachment ? undefined : store.getConversationAttachment(route.attachmentId);
+    const resolvedAttachment = attachment ?? privateAttachment ?? conversationAttachment;
     if (!resolvedAttachment) {
       writeJson(response, 404, { error: "attachment_not_found", message: `Attachment not found: ${route.attachmentId}` });
       return;
@@ -125,6 +130,8 @@ export async function handleChannelAttachmentItem(
           store.updateAiTeammate(owner.id, { avatarImageAttachmentId: null }, new Date().toISOString());
         }
         store.deleteTeammatePrivateAttachment(route.attachmentId);
+      } else if (conversationAttachment) {
+        store.deleteConversationAttachment(route.attachmentId);
       }
       writeJson(response, 200, { ok: true });
       return;
@@ -139,11 +146,12 @@ export async function handleChannelAttachmentItem(
   }
 }
 
-function attachmentPreviewScopeMatches(url: URL, attachment: ChannelAttachment | TeammatePrivateAttachment): boolean {
+function attachmentPreviewScopeMatches(url: URL, attachment: ChannelAttachment | TeammatePrivateAttachment | ConversationAttachment): boolean {
   const scope = url.searchParams.get("scope");
   const channelId = url.searchParams.get("channelId");
   const teammateId = url.searchParams.get("teammateId");
-  if ("scope" in attachment) {
+  const threadId = url.searchParams.get("threadId");
+  if ("teammateId" in attachment) {
     if (scope && scope !== "teammate_private") {
       return false;
     }
@@ -151,6 +159,16 @@ function attachmentPreviewScopeMatches(url: URL, attachment: ChannelAttachment |
       return false;
     }
     return !teammateId || teammateId === attachment.teammateId;
+  }
+
+  if (!("channelId" in attachment)) {
+    if (scope && scope !== "conversation") {
+      return false;
+    }
+    if (channelId || teammateId) {
+      return false;
+    }
+    return !threadId || threadId === attachment.threadId;
   }
 
   if (scope && scope !== "channel") {
@@ -240,6 +258,43 @@ export function persistTeammatePrivateAttachment(
   });
 }
 
+export function persistConversationAttachment(
+  store: RunStore,
+  input: PersistConversationAttachmentInput,
+): ConversationAttachment {
+  const safeFileName = sanitizeAttachmentFileName(input.fileName);
+  const inferred = inferChannelAttachmentKind(safeFileName, input.contentType);
+  const content = Buffer.from(input.contentBase64, "base64");
+  if (content.byteLength === 0) {
+    throw new Error("Attachment content is empty");
+  }
+  if (content.byteLength > CHANNEL_ATTACHMENT_MAX_BYTES) {
+    throw new Error(`Attachment exceeds ${CHANNEL_ATTACHMENT_MAX_BYTES} bytes`);
+  }
+
+  const now = new Date().toISOString();
+  const storageName = `${formatTimestampSlug(now)}-${safeFileName}`;
+  const scopeDir = input.threadId ? `threads/${input.threadId}` : "pending";
+  const relativePath = normalizeArtifactPath(join("conversations", scopeDir, storageName));
+  const absoluteDir = resolvePath(store.paths.attachmentsDir, "conversations", scopeDir);
+  const absolutePath = resolvePath(store.paths.attachmentsDir, relativePath);
+  if (!isPathInsideRoot(store.paths.attachmentsDir, absolutePath)) {
+    throw new Error("Attachment content path is outside .ling-stack/attachments");
+  }
+  mkdirSync(absoluteDir, { recursive: true });
+  writeFileSync(absolutePath, content);
+
+  return store.createConversationAttachment({
+    threadId: input.threadId,
+    kind: inferred.kind,
+    fileName: safeFileName,
+    contentType: inferred.contentType,
+    sizeBytes: content.byteLength,
+    path: relativePath,
+    createdAt: now,
+  });
+}
+
 function sanitizeAttachmentFileName(fileName: string): string {
   const trimmed = fileName.trim();
   if (trimmed !== basename(trimmed) || trimmed.includes("\\") || trimmed.includes("/")) {
@@ -306,7 +361,7 @@ function textContentTypeForExtension(extension: string): string {
   return "text/plain; charset=utf-8";
 }
 
-function handleGetAttachmentContent(response: ServerResponse, store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): void {
+function handleGetAttachmentContent(response: ServerResponse, store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment | ConversationAttachment): void {
   let contentPath: string;
   try {
     contentPath = resolveAttachmentContentPath(store, attachment);
@@ -344,7 +399,7 @@ function handleGetAttachmentContent(response: ServerResponse, store: RunStore, a
   }
 }
 
-function handleGetAttachmentPreview(response: ServerResponse, url: URL, store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): void {
+function handleGetAttachmentPreview(response: ServerResponse, url: URL, store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment | ConversationAttachment): void {
   let contentPath: string;
   try {
     contentPath = resolveAttachmentContentPath(store, attachment);
@@ -372,7 +427,7 @@ function handleGetAttachmentPreview(response: ServerResponse, url: URL, store: R
   }
 }
 
-export function deleteAttachmentContent(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): void {
+export function deleteAttachmentContent(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment | ConversationAttachment): void {
   try {
     unlinkSync(resolveAttachmentContentPath(store, attachment));
   } catch {
@@ -388,7 +443,7 @@ export function deleteAttachmentPath(store: RunStore, path: string): void {
   }
 }
 
-export function resolveAttachmentContentPath(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): string {
+export function resolveAttachmentContentPath(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment | ConversationAttachment): string {
   return resolveAttachmentPath(store, attachment.path);
 }
 

@@ -178,6 +178,8 @@ const CHANNEL_TEAM_PATTERNS_MIGRATION_VERSION = 83;
 const CHANNEL_TEAM_PATTERNS_MIGRATION_NAME = "create_channel_team_patterns";
 const CHANNEL_TEAM_SNAPSHOTS_MIGRATION_VERSION = 84;
 const CHANNEL_TEAM_SNAPSHOTS_MIGRATION_NAME = "create_channel_team_snapshots_and_evaluations";
+const CONVERSATION_ATTACHMENTS_MIGRATION_VERSION = 85;
+const CONVERSATION_ATTACHMENTS_MIGRATION_NAME = "create_conversation_attachments";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3065,6 +3067,36 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasLingTurnsMigration) {
         context.recordMigration(LING_TURNS_MIGRATION_VERSION, LING_TURNS_MIGRATION_NAME);
+      }
+    }
+
+    const hasConversationAttachmentsMigration = context.hasMigration(CONVERSATION_ATTACHMENTS_MIGRATION_VERSION);
+    if (!hasConversationAttachmentsMigration || !context.hasTable("conversation_attachments")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_attachments (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          thread_id TEXT,
+          turn_id TEXT,
+          kind TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(thread_id) REFERENCES ling_threads(id) ON DELETE CASCADE,
+          FOREIGN KEY(turn_id) REFERENCES ling_turns(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_attachments_thread_created
+        ON conversation_attachments(thread_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_attachments_turn_created
+        ON conversation_attachments(turn_id, created_at);
+      `);
+      if (!hasConversationAttachmentsMigration) {
+        context.recordMigration(CONVERSATION_ATTACHMENTS_MIGRATION_VERSION, CONVERSATION_ATTACHMENTS_MIGRATION_NAME);
       }
     }
 

@@ -1066,6 +1066,24 @@ export function channelAttachmentSelectSql(whereClause: string): string {
   `;
 }
 
+export function conversationAttachmentSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      thread_id,
+      turn_id,
+      kind,
+      file_name,
+      content_type,
+      size_bytes,
+      path,
+      created_at
+    FROM conversation_attachments
+    ${whereClause}
+  `;
+}
+
 export function channelLinkPreviewSelectSql(whereClause: string): string {
   return `
     SELECT

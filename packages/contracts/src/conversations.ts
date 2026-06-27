@@ -1,3 +1,4 @@
+import type { ChannelAttachmentKind } from "./channels.js";
 import type { PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode } from "./shared.js";
 import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunEventEnvelope, RunSession } from "./runtime.js";
@@ -13,6 +14,7 @@ export interface ConversationTranscriptMessage {
   readonly authorId?: string;
   readonly authorLabel?: string;
   readonly content: string;
+  readonly attachments?: readonly ConversationAttachment[];
   readonly status: ConversationTranscriptStatus;
   readonly threadId: string;
   readonly turnId?: string;
@@ -24,6 +26,7 @@ export interface ConversationTranscriptMessage {
 export interface ConversationStreamRequest {
   readonly threadId?: string;
   readonly message: string;
+  readonly attachmentIds?: readonly string[];
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: RunThinkingLevel;
@@ -78,4 +81,34 @@ export interface ConversationDetailResponse {
     readonly permissionPreset?: PermissionPreset;
     readonly permissionMode?: SessionPermissionMode;
   };
+}
+
+export interface ConversationAttachment {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly kind: ChannelAttachmentKind;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly path: string;
+  readonly createdAt: string;
+}
+
+export interface CreateConversationAttachmentRequest {
+  readonly fileName: string;
+  readonly contentType?: string;
+  readonly contentBase64: string;
+  readonly threadId?: string;
+}
+
+export interface ConversationAttachmentListResponse {
+  readonly cwd: string;
+  readonly threadId?: string;
+  readonly attachments: readonly ConversationAttachment[];
+}
+
+export interface ConversationAttachmentMutationResponse {
+  readonly attachment: ConversationAttachment;
 }

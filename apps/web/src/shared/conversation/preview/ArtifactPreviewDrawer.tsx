@@ -18,9 +18,10 @@ export type ArtifactPreviewRequest =
     readonly cwd: string;
     readonly attachmentId: string;
     readonly maxBytes?: number;
-    readonly scope?: "channel" | "teammate_private";
+    readonly scope?: "channel" | "teammate_private" | "conversation";
     readonly channelId?: string;
     readonly teammateId?: string;
+    readonly threadId?: string;
   };
 
 export type ArtifactPreviewLoader = (request: ArtifactPreviewRequest) => Promise<PreviewContentResponse>;

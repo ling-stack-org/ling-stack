@@ -92,6 +92,8 @@ import type {
   ChannelCouncilPolicy,
   ChannelUpdateInput,
   CloneAiCouncilInput,
+  AssignConversationAttachmentInput,
+  ConversationAttachment,
   CreateChannelAttachmentInput,
   CreateChannelBranchInput,
   CreateChannelCollaborationProtocolDraftInput,
@@ -109,6 +111,7 @@ import type {
   CreateChannelIntentDecisionInput,
   CreateChannelLinkPreviewInput,
   CreateChannelMessageInput,
+  CreateConversationAttachmentInput,
   CreateAiCouncilInput,
   CreateAiTeammateInput,
   CreateTeammateDirectLinkPreviewInput,
@@ -137,6 +140,7 @@ import type {
   ListChannelLinkPreviewsOptions,
   ListChannelMessagesOptions,
   ListChannelMessageRouteDecisionsOptions,
+  ListConversationAttachmentsOptions,
   ListTeammatePrivateAttachmentsOptions,
   ListTeammateDirectLinkPreviewsOptions,
   ListTeammateDirectReplyInterventionsOptions,
@@ -1261,6 +1265,11 @@ export interface RunStore {
   getChannelAttachment(id: string): ChannelAttachment | undefined;
   listChannelAttachments(options: ListChannelAttachmentsOptions): ChannelAttachment[];
   deleteChannelAttachment(id: string): boolean;
+  createConversationAttachment(input: CreateConversationAttachmentInput): ConversationAttachment;
+  getConversationAttachment(id: string): ConversationAttachment | undefined;
+  listConversationAttachments(options: ListConversationAttachmentsOptions): ConversationAttachment[];
+  assignConversationAttachment(input: AssignConversationAttachmentInput): ConversationAttachment | undefined;
+  deleteConversationAttachment(id: string): boolean;
   createChannelLinkPreview(input: CreateChannelLinkPreviewInput, now: string): ChannelLinkPreview;
   getChannelLinkPreview(id: string): ChannelLinkPreview | undefined;
   listChannelLinkPreviews(options: ListChannelLinkPreviewsOptions): ChannelLinkPreview[];

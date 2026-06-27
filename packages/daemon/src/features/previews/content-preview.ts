@@ -3,6 +3,7 @@ import { basename, extname } from "node:path";
 import { TextDecoder } from "node:util";
 import type {
   ChannelAttachment,
+  ConversationAttachment,
   PreviewContentKind,
   PreviewContentResponse,
   PreviewFileRef,
@@ -21,7 +22,7 @@ export interface BuildArtifactPreviewInput {
 }
 
 export interface BuildAttachmentPreviewInput {
-  readonly attachment: ChannelAttachment | TeammatePrivateAttachment;
+  readonly attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment;
   readonly contentPath: string;
   readonly maxBytes?: number;
   readonly imageUrl?: string;
@@ -65,7 +66,9 @@ export function buildAttachmentPreview(input: BuildAttachmentPreviewInput): Prev
   const ref: PreviewFileRef = {
     id: input.attachment.id,
     source: "attachment",
-    scope: "scope" in input.attachment ? "teammate_private" : "channel",
+    scope: "teammateId" in input.attachment
+      ? "teammate_private"
+      : "channelId" in input.attachment ? "channel" : "conversation",
     label: input.attachment.fileName,
     displayPath: input.attachment.fileName,
     contentType: input.attachment.contentType,
@@ -205,7 +208,7 @@ function inferArtifactPreviewKind(artifact: RunArtifact): PreviewContentKind {
   return inferTextualPreviewKind(artifact.path, artifact.contentType);
 }
 
-function inferAttachmentPreviewKind(attachment: ChannelAttachment | TeammatePrivateAttachment): PreviewContentKind {
+function inferAttachmentPreviewKind(attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment): PreviewContentKind {
   if (attachment.kind === "image") {
     return "image";
   }

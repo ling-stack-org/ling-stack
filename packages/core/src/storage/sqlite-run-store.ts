@@ -94,6 +94,8 @@ import {
   type ChannelWorkflowStepStatus,
   type ChannelWorkflowStatus,
   type CloneAiCouncilInput,
+  type AssignConversationAttachmentInput,
+  type ConversationAttachment,
   type CreateAiCouncilInput,
   type CreateAiTeammateInput,
   type CreateChannelAttachmentInput,
@@ -111,6 +113,7 @@ import {
   type CreateChannelMessageRouteDecisionInput,
   type CreateChannelWorkflowInput,
   type CreateChannelWorkflowStepInput,
+  type CreateConversationAttachmentInput,
   type CreateWorkflowHandoffIntentInput,
   type CreateWorkflowSelectorDecisionInput,
   type CreateTeammateDirectLinkPreviewInput,
@@ -137,6 +140,7 @@ import {
   type ListChannelMessageRouteDecisionsOptions,
   type ListChannelWorkflowsOptions,
   type ListChannelWorkflowStepsOptions,
+  type ListConversationAttachmentsOptions,
   type ListWorkflowHandoffIntentsOptions,
   type ListWorkflowSelectorDecisionsOptions,
   type ListTeammateDirectLinkPreviewsOptions,
@@ -467,6 +471,7 @@ import { SqliteChannelRouteDecisionStore } from "./sqlite/channel-route-decision
 import { SqliteChannelIntentDecisionStore } from "./sqlite/channel-intent-decision-store.js";
 import { SqliteChannelProposalStore } from "./sqlite/channel-proposal-store.js";
 import { SqliteChannelAssetStore } from "./sqlite/channel-asset-store.js";
+import { SqliteConversationAssetStore } from "./sqlite/conversation-asset-store.js";
 import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-store.js";
 import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
@@ -537,6 +542,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
   private readonly channelProposals: SqliteChannelProposalStore;
   private readonly channelAssets: SqliteChannelAssetStore;
+  private readonly conversationAssets: SqliteConversationAssetStore;
   private readonly channelCollaborations: SqliteChannelCollaborationStore;
   private readonly channelProtocols: SqliteChannelProtocolStore;
   private readonly channelPlaybooks: SqliteChannelPlaybookStore;
@@ -802,6 +808,13 @@ export class SqliteRunStore implements RunStore {
     this.channelAssets = new SqliteChannelAssetStore(
       { database: this.database },
       { hasChannel: (id) => Boolean(this.getChannel(id)) },
+    );
+    this.conversationAssets = new SqliteConversationAssetStore(
+      { database: this.database },
+      {
+        hasLingThread: (id) => Boolean(this.getLingThread(id)),
+        hasLingTurn: (id) => Boolean(this.getLingTurn(id)),
+      },
     );
     this.channelCollaborations = new SqliteChannelCollaborationStore(
       { database: this.database },
@@ -2052,6 +2065,26 @@ export class SqliteRunStore implements RunStore {
 
   deleteChannelAttachment(id: string): boolean {
     return this.channelAssets.deleteChannelAttachment(id);
+  }
+
+  createConversationAttachment(input: CreateConversationAttachmentInput): ConversationAttachment {
+    return this.conversationAssets.createConversationAttachment(input);
+  }
+
+  getConversationAttachment(id: string): ConversationAttachment | undefined {
+    return this.conversationAssets.getConversationAttachment(id);
+  }
+
+  listConversationAttachments(options: ListConversationAttachmentsOptions): ConversationAttachment[] {
+    return this.conversationAssets.listConversationAttachments(options);
+  }
+
+  assignConversationAttachment(input: AssignConversationAttachmentInput): ConversationAttachment | undefined {
+    return this.conversationAssets.assignConversationAttachment(input);
+  }
+
+  deleteConversationAttachment(id: string): boolean {
+    return this.conversationAssets.deleteConversationAttachment(id);
   }
 
   createChannelLinkPreview(input: CreateChannelLinkPreviewInput, now: string): ChannelLinkPreview {
