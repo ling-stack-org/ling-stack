@@ -1,9 +1,10 @@
 import type { ClipboardEvent, DragEvent, KeyboardEvent, RefObject, UIEvent } from "react";
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
 import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Plus, Square, X } from "lucide-react";
-import { attachmentContentUrl } from "../../api.js";
-import { useI18n } from "../../i18n.js";
+import { artifactContentUrl, attachmentContentUrl } from "../../api.js";
+import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import { buildConversationWorkCellViewModel, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
   AvatarInitial,
@@ -20,16 +21,18 @@ import {
   ConversationAttachmentStrip,
   ConversationGuidanceStrip,
   ConversationShell,
+  ConversationWorkCell,
   ConversationVirtualFeed,
   ConversationViewProvider,
+  MessageActionBar,
   MessageEvidencePanel,
-  MessageFooterActions,
   MessageRow,
 } from "../../shared/conversation/index.js";
 import type {
   AiTeammate,
   Channel,
   MemoryObject,
+  RunSession,
   TeammateDirectLinkPreview,
   TeammateDirectMessage,
   TeammateDirectReplyIntervention,
@@ -60,6 +63,7 @@ export function TeammatePrivateChatSurface({
   privateMessageFeedVirtualRows,
   usedMemoryEvents,
   memoryById,
+  runs,
   providerRecovered,
   privateAttachmentById,
   creatingTask,
@@ -89,6 +93,7 @@ export function TeammatePrivateChatSurface({
   onCancelPrivateFeedAutoFollow,
   onScrollToLatest,
   onCopyMessageText,
+  onOpenRun,
   onCreateTaskFromMessage,
   onPromoteDirectGuidance,
   onCancelDirectGuidance,
@@ -116,6 +121,7 @@ export function TeammatePrivateChatSurface({
   readonly privateMessageFeedVirtualRows: readonly VirtualItem[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
+  readonly runs: readonly RunSession[];
   readonly providerRecovered: boolean;
   readonly privateAttachmentById: ReadonlyMap<string, TeammatePrivateAttachment>;
   readonly creatingTask: boolean;
@@ -148,6 +154,7 @@ export function TeammatePrivateChatSurface({
   readonly onCancelPrivateFeedAutoFollow: () => void;
   readonly onScrollToLatest: () => void;
   readonly onCopyMessageText: (text: string) => void;
+  readonly onOpenRun?: (runId: string) => void;
   readonly onCreateTaskFromMessage: (message: TeammateDirectMessage) => void | Promise<void>;
   readonly onPromoteDirectGuidance: (interventionId: string) => void | Promise<void>;
   readonly onCancelDirectGuidance: (interventionId: string) => void | Promise<void>;
@@ -166,6 +173,12 @@ export function TeammatePrivateChatSurface({
 }): JSX.Element {
   const { t } = useI18n();
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
+  const privateWorkCellByMessageId = buildPrivateWorkCellMap({
+    messages: visibleMessages,
+    teammateId: teammate.id,
+    runs,
+    t,
+  });
   return (
     <ConversationShell
       className="teammate-private-chat"
@@ -203,6 +216,8 @@ export function TeammatePrivateChatSurface({
                   : recoveredHistoricalProviderFailure
                     ? t("Historical model check failed. The model is available now; resend or continue the chat.")
                     : message.body;
+              const workCell = privateWorkCellByMessageId.get(message.id);
+              const workCellRun = workCell ? runs.find((run) => run.id === workCell.model.anchorRunId) : undefined;
               return (
                 <MessageRow
                   className={`teammate-message-row ${message.authorType}${blockedMessage ? " blocked" : ""}`}
@@ -247,6 +262,15 @@ export function TeammatePrivateChatSurface({
                         }))}
                     />
                   ) : null}
+                  workCellNode={workCell ? (
+                    <ConversationWorkCell
+                      model={workCell.model}
+                      cwd={workCellRun?.cwd ?? cwd.trim()}
+                      detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
+                      onOpenRun={onOpenRun}
+                      loadPreview={loadPreviewContent}
+                    />
+                  ) : null}
                   evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
                     <MessageEvidencePanel
                       memoryContent={messageUsedMemoryEvents.length > 0 ? (
@@ -258,17 +282,20 @@ export function TeammatePrivateChatSurface({
                   ) : null}
                   errorNode={message.errorMessage && message.status !== "cancelled" && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
                   actionsNode={(
-                    <MessageFooterActions
+                    <MessageActionBar
+                      surface="teammate_direct"
                       className="teammate-message-actions"
                       actions={[
                         {
                           id: "copy",
+                          kind: "copy",
                           label: t("Copy message"),
                           icon: <Copy size={14} />,
                           onClick: () => onCopyMessageText(message.body),
                         },
                         {
                           id: "create-task",
+                          kind: "create_task",
                           label: t("Create task"),
                           icon: creatingTask ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
                           className: "secondary-button compact-button",
@@ -419,4 +446,39 @@ export function TeammatePrivateChatSurface({
       )}
     />
   );
+}
+
+function buildPrivateWorkCellMap(input: {
+  readonly messages: readonly TeammateDirectMessage[];
+  readonly teammateId: string;
+  readonly runs: readonly RunSession[];
+  readonly t: Translate;
+}): ReadonlyMap<string, { readonly model: ConversationWorkCellViewModel }> {
+  const runById = new Map(input.runs.map((run) => [run.id, run]));
+  const cells = new Map<string, { readonly model: ConversationWorkCellViewModel }>();
+  for (const message of input.messages) {
+    if (message.authorType !== "ai-teammate" || !message.linkedRunId) {
+      continue;
+    }
+    const run = runById.get(message.linkedRunId);
+    if (!run?.threadId) {
+      continue;
+    }
+    if (run.teammateId && run.teammateId !== input.teammateId) {
+      continue;
+    }
+    const model = buildConversationWorkCellViewModel({
+      threadId: run.threadId,
+      runs: [run],
+      allowRunThreadFallback: true,
+      approvals: [],
+      artifactsByRun: {},
+      t: input.t,
+      artifactHref: (artifact) => artifactContentUrl(artifact.id, run.cwd),
+    });
+    if (model) {
+      cells.set(message.id, { model });
+    }
+  }
+  return cells;
 }

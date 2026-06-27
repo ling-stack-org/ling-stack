@@ -23,6 +23,9 @@ importers:
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@ling-stack/conversation-ui-core':
+        specifier: workspace:*
+        version: link:../../packages/conversation-ui-core
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -74,6 +77,8 @@ importers:
         version: link:../../apps/web
 
   packages/contracts: {}
+
+  packages/conversation-ui-core: {}
 
   packages/core:
     dependencies:

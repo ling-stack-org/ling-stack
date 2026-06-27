@@ -21,6 +21,7 @@ export interface MessageRowProps {
   readonly bodyStreaming?: boolean;
   readonly bodyNode?: ReactNode;
   readonly attachmentsNode?: ReactNode;
+  readonly workCellNode?: ReactNode;
   readonly evidenceNode?: ReactNode;
   readonly errorNode?: ReactNode;
   readonly actionsNode?: ReactNode;
@@ -42,6 +43,7 @@ export function MessageRow({
   bodyStreaming = false,
   bodyNode,
   attachmentsNode,
+  workCellNode,
   evidenceNode,
   errorNode,
   actionsNode,
@@ -87,6 +89,7 @@ export function MessageRow({
         )}
         {resolvedBodyNode}
         {attachmentsNode}
+        {workCellNode}
         {evidenceNode}
         {errorNode}
         {actionsNode}

@@ -13,6 +13,7 @@ import {
 import {
   channelEventFilterToggle,
   channelEventFilters,
+  openEngineeringChannel,
   openChannelChatTools,
   openTaskFromAttentionQueue,
   readScrollState,
@@ -263,6 +264,13 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
   await expect(experts).toContainText("1 active");
   await expect(experts).toContainText("2 done");
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
+  const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据折叠展示。" });
+  await expect(assistantTranscript.locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);
+  const assistantTurnOrder = await assistantTranscript.evaluate((element) =>
+    Array.from(element.children).map((child) => (child as HTMLElement).className)
+  );
+  expect(assistantTurnOrder.some((className) => className.includes("channel-team-experts-summary"))).toBe(true);
+  expect(assistantTurnOrder.at(-1)).toContain("channel-message-row-footer-stack");
 
   await experts.getByRole("button", { name: /Teammates/ }).click();
   await expect(feed.getByText("Architect checked boundaries.")).toBeVisible();
@@ -603,6 +611,7 @@ test("progress popover shows active context source groups and opens source detai
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Engineer" });
   await expect(workCell).toBeVisible();
@@ -808,6 +817,7 @@ test("channel composer does not render the resource lease active work strip", as
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composer = page.getByLabel("Channel composer");
   await expect(composer).toBeVisible();
@@ -1737,6 +1747,8 @@ test("channel message feed renders web evidence inline with sources and blocked 
   const sourcedEvidence = sourcedReply.getByLabel("Message evidence");
   const sourcedToggle = sourcedEvidence.getByRole("button");
   await expect(sourcedToggle).toBeVisible();
+  await expect(sourcedToggle.locator(".source-icon-stack")).toHaveCount(1);
+  await expect(sourcedToggle.locator(".source-icon-stack a")).toHaveCount(0);
   await sourcedToggle.click();
   await expect(sourcedEvidence).toContainText("Ling release note");
   await expect(sourcedEvidence).toContainText("example.com");
@@ -1768,6 +1780,7 @@ test("channel message feed renders web evidence inline with sources and blocked 
   const configuredOnlyReply = feed.locator(".channel-message-row").filter({ hasText: "Configured web search but no actual evidence." });
   await expect(configuredOnlyReply).toBeVisible();
   await expect(configuredOnlyReply.getByLabel("Message evidence")).toHaveCount(0);
+  await expect(configuredOnlyReply.locator(".source-icon-stack")).toHaveCount(0);
   await expect(configuredOnlyReply).not.toContainText("OpenAI news today");
   await expect(configuredOnlyReply).not.toContainText("Custom OpenAI-compatible");
   await expect(configuredOnlyReply).not.toContainText("openai-chat-completions-web-search");
@@ -5896,6 +5909,7 @@ test("channel run artifacts stay isolated without default drawer leakage", async
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await page.getByRole("button", { name: "More channel views" }).click();
   const viewMenu = page.getByRole("menu", { name: "More channel views" });
@@ -5939,6 +5953,7 @@ test("channel review source stays in conversation instead of the legacy context 
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await page.getByRole("button", { name: "More channel views" }).click();
   const viewMenu = page.getByRole("menu", { name: "More channel views" });

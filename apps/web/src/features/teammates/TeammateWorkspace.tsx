@@ -78,6 +78,7 @@ import type {
   McpServer,
   McpTool,
   ProviderPreset,
+  RunSession,
   SkillImportDraft,
   SkillRegistryEntry,
   SkillSourceSnapshot,
@@ -164,6 +165,7 @@ export function TeammateWorkspace({
   userProfile,
   providers,
   channels,
+  runs,
   skillPack,
   onUpdateTeammate,
   onTeammateUpdated,
@@ -173,6 +175,7 @@ export function TeammateWorkspace({
   onRefreshTeammates,
   onRefreshChannels,
   onRefreshTasks,
+  onOpenRun,
   onBackToWorkspaceTools,
 }: {
   readonly cwd: string;
@@ -180,6 +183,7 @@ export function TeammateWorkspace({
   readonly userProfile?: UserProfile;
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
+  readonly runs: readonly RunSession[];
   readonly skillPack: SkillPack | undefined;
   readonly onUpdateTeammate: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<AiTeammate>;
   readonly onTeammateUpdated?: (teammate: AiTeammate) => void;
@@ -189,6 +193,7 @@ export function TeammateWorkspace({
   readonly onRefreshTeammates?: () => MaybePromise<void>;
   readonly onRefreshChannels?: () => MaybePromise<void>;
   readonly onRefreshTasks?: (channelId: string) => MaybePromise<void>;
+  readonly onOpenRun?: (runId: string) => void;
   readonly onBackToWorkspaceTools?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -1950,6 +1955,7 @@ export function TeammateWorkspace({
           privateMessageFeedVirtualRows={privateMessageFeedVirtualRows}
           usedMemoryEvents={usedMemoryEvents}
           memoryById={memoryById}
+          runs={runs}
           providerRecovered={providerRecovered}
           privateAttachmentById={privateAttachmentById}
           creatingTask={creatingTask}
@@ -1979,6 +1985,7 @@ export function TeammateWorkspace({
           onCancelPrivateFeedAutoFollow={cancelPrivateFeedAutoFollow}
           onScrollToLatest={scrollPrivateFeedToLatest}
           onCopyMessageText={copyMessageText}
+          onOpenRun={onOpenRun}
           onCreateTaskFromMessage={createTaskFromMessage}
           onPromoteDirectGuidance={promoteDirectGuidance}
           onCancelDirectGuidance={cancelDirectGuidance}

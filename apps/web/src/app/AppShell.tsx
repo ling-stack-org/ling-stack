@@ -933,6 +933,9 @@ export function AppShell(): JSX.Element {
   const selectedConversationMessages = useMemo<readonly ConversationHomeMessage[]>(
     () => (selectedConversationDetail?.messages ?? []).map((message) => ({
       id: message.id,
+      threadId: message.threadId,
+      turnId: message.turnId,
+      runId: message.runId,
       role: message.role,
       authorLabel: message.authorLabel,
       content: message.content,
@@ -1991,12 +1994,18 @@ export function AppShell(): JSX.Element {
                   initialThinkingLevel={selectedConversationDetail?.defaults.thinkingLevel ?? "off"}
                   initialPermissionMode={selectedConversationDetail?.defaults.permissionMode ?? workspaceSettings?.defaultPermissionMode}
                   initialPermissionPreset={selectedConversationDetail?.defaults.permissionPreset ?? workspaceSettings?.defaultPermissionPreset}
+                  detailContext={selectedConversationDetail ? {
+                    threadId: selectedConversationDetail.thread.id,
+                    turns: selectedConversationDetail.turns,
+                    runs: selectedConversationDetail.runs,
+                  } : undefined}
                   defaultProviderLabel={defaultConversationProviderLabel}
                   defaultProviderPresetId={defaultConversationProviderPresetId}
                   modelOptions={conversationModelOptions}
                   slashCommands={slashCommands}
                   onChooseProjectDirectory={chooseConversationProjectDirectory}
                   sending={conversationStreamBusy}
+                  onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,
@@ -2050,6 +2059,7 @@ export function AppShell(): JSX.Element {
                 userProfile={userProfile}
                 providers={providers}
                 channels={channels}
+                runs={runs}
                 skillPack={builtinSkillPack}
                 onUpdateTeammate={updateAiTeammateSettings}
                 onTeammateUpdated={upsertAiTeammate}
@@ -2062,6 +2072,7 @@ export function AppShell(): JSX.Element {
                 onRefreshTeammates={() => refreshAiTeammates(form.cwd.trim())}
                 onRefreshChannels={() => refreshChannels()}
                 onRefreshTasks={(channelId) => refreshTasks(channelId)}
+                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                   />
                 ) : activeView === "teammates" ? (
                   <AiTeammatesPage
@@ -2554,6 +2565,9 @@ function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode 
 function homeMessageFromTranscript(message: ConversationTranscriptMessage): ConversationHomeMessage {
   return {
     id: message.id,
+    threadId: message.threadId,
+    turnId: message.turnId,
+    runId: message.runId,
     role: message.role,
     authorLabel: message.authorLabel,
     content: message.content,

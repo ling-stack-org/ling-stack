@@ -9,6 +9,9 @@ export { ConversationStatusStrip, type ConversationStatusAction, type Conversati
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
 export { ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
+export { MessageActionBar, type MessageActionBarAction, type MessageActionBarProps, type MessageActionKind } from "./feedback/MessageActionBar.js";
+export { SourceIconStack, type SourceIconKind, type SourceIconStackItem, type SourceIconStackProps } from "./identity/SourceIconStack.js";
+export { TeammateAvatarStack, type TeammateAvatarStackItem, type TeammateAvatarStackProps } from "./identity/TeammateAvatarStack.js";
 export { ConversationViewProvider, useOptionalConversationViewStore, type ConversationViewProviderProps } from "./view-store/conversation-view-provider.js";
 export { TranscriptBlockView, transcriptBlockViewKey, type TranscriptBlockViewProps } from "./blocks/TranscriptBlockView.js";
 export { EvidenceDisclosure, type EvidenceDisclosureProps } from "./blocks/EvidenceDisclosure.js";
@@ -64,6 +67,17 @@ export {
   type TranscriptExpandedDetail,
 } from "./transcript/index.js";
 export { parseLocalFileReference, parseMessageBody, splitInlineTokens, type LocalFileReference, type MessageBodyBlock, type MessageInlineToken } from "./tokens/message-body.js";
+export type {
+  ConversationEvidenceMode,
+  ConversationRawDetailMode,
+  ConversationSurfaceKind,
+  ConversationSurfacePolicy,
+  ConversationWorkCellMode,
+} from "./tokens/conversation-surface-policy.js";
+export {
+  getConversationSurfacePolicy,
+  mergeConversationSurfacePolicy,
+} from "./tokens/conversation-surface-policy.js";
 export type {
   ConversationAction,
   ConversationActorKind,

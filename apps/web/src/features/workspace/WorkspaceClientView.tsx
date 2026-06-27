@@ -184,8 +184,8 @@ import {
   FileRefChip,
   MessageBodyRenderer,
   MessageBubble,
+  MessageActionBar,
   MessageEvidencePanel,
-  MessageFooterActions,
   MessageRow,
   RightDrawer,
   TranscriptBlockView,
@@ -4700,36 +4700,41 @@ export function WorkspaceClientView({
 
   function renderChannelAiMessageActions(message: ChannelMessage, copyText: string): ReactNode {
     const feedback = channelMessageFeedbackById[message.id];
+    const surface = selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
     return (
       <div className="channel-message-row-footer-stack">
-        <MessageFooterActions
+        <MessageActionBar
+          surface={surface}
           className="channel-message-ai-actions"
           actions={[
             {
               id: "copy",
+              kind: "copy",
               label: t("Copy message"),
               icon: <Copy size={14} />,
               copyText,
             },
             {
               id: "like",
+              kind: "like",
               label: t("Like response"),
               icon: <ThumbsUp size={14} />,
-              className: feedback === "up" ? "selected" : "",
+              selected: feedback === "up",
               onClick: () => toggleChannelMessageFeedback(message.id, "up"),
             },
             {
               id: "dislike",
+              kind: "dislike",
               label: t("Dislike response"),
               icon: <ThumbsDown size={14} />,
-              className: feedback === "down" ? "selected" : "",
+              selected: feedback === "down",
               onClick: () => toggleChannelMessageFeedback(message.id, "down"),
             },
             {
               id: "reply",
+              kind: "reply_topic",
               label: t("Reply in topic"),
               icon: <Reply size={14} />,
-              className: "message-reply-button",
               onClick: () => openThreadForMessage(message),
             },
           ]}

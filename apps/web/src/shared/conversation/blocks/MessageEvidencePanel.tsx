@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Globe2, Link2, Search, ShieldAlert } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
 import type { MessageWebEvidence } from "../../../types.js";
+import { SourceIconStack, type SourceIconStackItem } from "../identity/SourceIconStack.js";
 import {
   ConversationEvidenceBundlePanel,
   type ConversationEvidenceSection,
@@ -147,7 +148,7 @@ function messageEvidenceSummary(hasMemory: boolean, webEvidence: MessageWebEvide
 function webEvidenceSummaryNode(webEvidence: MessageWebEvidence, t: Translate): ReactNode {
   const fallback = webEvidenceSummaryText(webEvidence, t);
   if (webEvidence.status === "available" && webEvidence.sources.length > 0) {
-    return <WebSourceIconStack sources={webEvidence.sources} label={fallback} />;
+    return <SourceIconStack sources={webSourceIconItems(webEvidence)} label={fallback} />;
   }
   return <WebEvidenceStatusIcon webEvidence={webEvidence} label={fallback} />;
 }
@@ -173,37 +174,17 @@ function shouldOpenMessageEvidenceByDefault(webEvidence: MessageWebEvidence | un
   return webEvidence?.status === "blocked" || webEvidence?.status === "degraded";
 }
 
-function WebSourceIconStack({
-  sources,
-  label,
-}: {
-  readonly sources: MessageWebEvidence["sources"];
-  readonly label: string;
-}): JSX.Element {
-  const visibleSources = sources.slice(0, 4);
-  const overflowCount = sources.length - visibleSources.length;
-  return (
-    <span className="message-evidence-source-stack" title={label} aria-label={label}>
-      {visibleSources.map((source, index) => {
-        const host = sourceHost(source.url);
-        return (
-          <span
-            key={`${index}-${source.url}`}
-            className={`message-evidence-source-icon tone-${index % 5}`}
-            title={source.title ? `${source.title} · ${host}` : host}
-            aria-hidden="true"
-          >
-            <Globe2 size={15} strokeWidth={1.9} />
-          </span>
-        );
-      })}
-      {overflowCount > 0 ? (
-        <span className="message-evidence-source-overflow" aria-hidden="true">
-          +{overflowCount}
-        </span>
-      ) : null}
-    </span>
-  );
+function webSourceIconItems(webEvidence: MessageWebEvidence): readonly SourceIconStackItem[] {
+  return webEvidence.sources.map((source, index) => {
+    const host = sourceHost(source.url);
+    return {
+      id: `web-source-${index}-${source.url}`,
+      kind: "web",
+      label: source.title || host,
+      title: source.title ? `${source.title} · ${host}` : host,
+      status: webEvidence.status,
+    };
+  });
 }
 
 function WebEvidenceStatusIcon({

@@ -15,6 +15,9 @@ extends this component model for message body rendering, local file links, artif
 previews, and diff/file-change evidence.
 [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md) defines the merged
 main-agent and multi-agent projection model used by the channel feed.
+[Conversation Surface Contract](conversation-surface-contract.md) is the current shared
+component and capability contract across normal conversation, channel, private chat, and
+run/thread detail.
 
 The Codex-style pattern to borrow is not the terminal look. It is the information shape:
 
@@ -46,6 +49,17 @@ Existing code already has partial pieces:
 
 The next implementation should extract common primitives instead of continuing to
 duplicate page-specific rows and layout rules.
+
+Implementation status, 2026-06-28:
+
+- normal conversation now moves to a shared conversation page after the first home
+  composer send;
+- teammate private chat now uses shared message rows and shared empty-state treatment;
+- channel teammate activity renders above the assistant action row;
+- the remaining gap is not another one-off visual polish pass. The next slice is the
+  explicit [Conversation Surface Contract](conversation-surface-contract.md): action bar,
+  teammate avatar stack, source icon stack, compact evidence/work capability parity, and
+  regression fixtures.
 
 ## Component Tree
 
@@ -89,6 +103,30 @@ apps/web/src/shared/conversation/
 
 `MessageComposer` can remain in `shared/components` until it gains enough
 conversation-specific behavior to move.
+
+After the shared surface slice, the next local structure should converge toward:
+
+```text
+apps/web/src/shared/conversation/
+  blocks/
+    MessageRow.tsx
+    MessageEvidencePanel.tsx
+    ConversationEvidenceBundlePanel.tsx
+    ConversationEmptyState.tsx
+  feedback/
+    CopyActionButton.tsx
+    MessageActionBar.tsx
+  identity/
+    TeammateAvatarStack.tsx
+    SourceIconStack.tsx
+  transcript/
+    ConversationFeed.tsx
+    ConversationVirtualFeed.tsx
+    conversation-surface-policy.ts
+```
+
+Do not move files just to satisfy this layout. Use it when the next implementation slice
+touches the relevant component boundary.
 
 ## Codex-Inspired Cell Model
 
