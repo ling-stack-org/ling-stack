@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   buildChannelTeamPatternCandidateFromEvidence,
+  channelTeamShadowArtifactGuardrails,
   createSqliteRunStore,
   isActiveChannelTeamProvisionalRule,
   resolveRuntimePaths,
@@ -76,6 +77,7 @@ test("channel team patterns store candidates and TTL-bound provisional rules wit
     const candidate = store.createChannelTeamPattern(candidateInput, "2026-06-26T00:03:00.000Z");
     assert.equal(candidate.status, "candidate");
     assert.equal(candidate.verifyBeforeUse, true);
+    assert.deepEqual(candidate.guardrails, channelTeamShadowArtifactGuardrails);
 
     const provisional = store.createChannelTeamPattern(
       {
@@ -94,6 +96,11 @@ test("channel team patterns store candidates and TTL-bound provisional rules wit
     );
 
     assert.equal(isActiveChannelTeamProvisionalRule(provisional, "2026-06-26T12:00:00.000Z"), true);
+    assert.deepEqual(provisional.guardrails, channelTeamShadowArtifactGuardrails);
+    assert.equal(provisional.guardrails.canMutateProtocol, false);
+    assert.equal(provisional.guardrails.canMutateMemory, false);
+    assert.equal(provisional.guardrails.canMutateSkills, false);
+    assert.equal(provisional.guardrails.canChangeRuntimeAuthority, false);
     assert.deepEqual(
       store.listActiveChannelTeamProvisionalRules({
         channelId: channel.id,
@@ -119,6 +126,9 @@ test("channel team patterns store candidates and TTL-bound provisional rules wit
       [provisional.id, candidate.id],
     );
     assert.equal(store.getChannelCollaborationProtocolOverride(channel.id), beforeProtocol);
+    assert.deepEqual(store.listChannelCollaborationProtocolDrafts({ channelId: channel.id, limit: 10 }), []);
+    assert.deepEqual(store.listMemoryObjects({ limit: 10 }), []);
+    assert.deepEqual(store.listSkillCandidates({ limit: 10 }), []);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

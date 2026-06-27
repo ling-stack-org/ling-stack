@@ -28,6 +28,69 @@ test("agent lifecycle keeps provider availability separate from agent quality", 
   assert.deepEqual(lifecycle.activeReliabilityIncidentIds, []);
 });
 
+test("agent lifecycle applies provider-level availability without degrading quality", () => {
+  const lifecycle = deriveAgentLifecycleState({
+    agentId: "teammate_builtin_engineer",
+    capabilityScope: "code",
+    now: "2026-06-26T00:10:00.000Z",
+    reliabilityIncidents: [],
+    availabilityIncidents: [
+      {
+        id: "availability_provider_overload",
+        providerPresetId: "provider_static",
+        state: "overloaded",
+        kind: "overload",
+        severity: "medium",
+        summary: "Provider is overloaded.",
+        observedAt: "2026-06-26T00:00:00.000Z",
+        expiresAt: "2026-06-26T00:30:00.000Z",
+      },
+      {
+        id: "availability_provider_expired",
+        providerPresetId: "provider_static",
+        state: "offline",
+        kind: "network",
+        severity: "medium",
+        summary: "Expired provider outage.",
+        observedAt: "2026-06-25T00:00:00.000Z",
+        expiresAt: "2026-06-25T00:05:00.000Z",
+      },
+    ],
+  });
+
+  assert.equal(lifecycle.qualityState, "active");
+  assert.equal(lifecycle.availabilityState, "overloaded");
+  assert.equal(lifecycle.reviewerEligible, false);
+  assert.equal(lifecycle.highRiskReviewerEligible, false);
+  assert.deepEqual(lifecycle.activeAvailabilityIncidentIds, ["availability_provider_overload"]);
+  assert.deepEqual(lifecycle.activeReliabilityIncidentIds, []);
+});
+
+test("agent lifecycle ignores expired provider availability incidents", () => {
+  const lifecycle = deriveAgentLifecycleState({
+    agentId: "teammate_builtin_engineer",
+    capabilityScope: "code",
+    now: "2026-06-26T00:10:00.000Z",
+    reliabilityIncidents: [],
+    availabilityIncidents: [
+      {
+        id: "availability_provider_expired",
+        providerPresetId: "provider_static",
+        state: "offline",
+        kind: "network",
+        severity: "medium",
+        summary: "Expired provider outage.",
+        observedAt: "2026-06-25T00:00:00.000Z",
+        expiresAt: "2026-06-25T00:05:00.000Z",
+      },
+    ],
+  });
+
+  assert.equal(lifecycle.qualityState, "active");
+  assert.equal(lifecycle.availabilityState, "healthy");
+  assert.deepEqual(lifecycle.activeAvailabilityIncidentIds, []);
+});
+
 test("agent lifecycle degrades scoped quality from active reliability incidents", () => {
   const lifecycle = deriveAgentLifecycleState({
     agentId: "teammate_builtin_security",

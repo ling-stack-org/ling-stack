@@ -29,7 +29,10 @@ import {
   turnEnvelopeHasUserInput,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
-import { recordProviderContextLengthObservation } from "./provider-runtime-observations.js";
+import {
+  recordProviderContextLengthObservation,
+  recordProviderRuntimeAvailabilityIncident,
+} from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 import { extractFileTargetCandidate, resolveExecutableFileTarget } from "./target-resolver.js";
 
@@ -483,16 +486,26 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     if (!isContextLengthError(error)) {
       throw error;
     }
+    const observedAt = new Date().toISOString();
+    const providerPreset = contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined;
     recordProviderContextLengthObservation({
-      providerPreset: contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined,
+      providerPreset,
       contextPack,
-      now: new Date().toISOString(),
+      now: observedAt,
+    });
+    recordProviderRuntimeAvailabilityIncident({
+      store: input.store,
+      providerPreset,
+      providerPresetId: contextPack.providerPresetId,
+      code: "context_length_error",
+      error,
+      now: observedAt,
     });
     const compaction = compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
-      now: new Date().toISOString(),
+      now: observedAt,
     });
     contextPack = buildChannelIntentSelectorContextPack({
       store: input.store,

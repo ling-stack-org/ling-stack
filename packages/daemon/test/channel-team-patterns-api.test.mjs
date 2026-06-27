@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { createSqliteRunStore } from "../../core/dist/index.js";
+import { channelTeamShadowArtifactGuardrails, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 
 test("channel team patterns API creates and lists inspect-only patterns", async () => {
@@ -35,6 +35,7 @@ test("channel team patterns API creates and lists inspect-only patterns", async 
     assert.equal(created.body.channelId, channel.id);
     assert.equal(created.body.pattern.status, "provisional");
     assert.equal(created.body.pattern.provisionalEffect, "attention_ordering");
+    assert.deepEqual(created.body.pattern.guardrails, channelTeamShadowArtifactGuardrails);
 
     const listed = await getJson(`${baseUrl}/channels/${encodeURIComponent(channel.id)}/team-patterns?cwd=${encodeURIComponent(cwd)}&status=provisional&limit=10`);
     assert.equal(listed.cwd, cwd);
@@ -52,6 +53,15 @@ test("channel team patterns API creates and lists inspect-only patterns", async 
     const missingChannel = await getRequest(`${baseUrl}/channels/missing_channel/team-patterns?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(missingChannel.status, 404);
     assert.equal(missingChannel.body.error, "channel_not_found");
+
+    const verificationStore = createSqliteRunStore(cwd);
+    try {
+      assert.deepEqual(verificationStore.listChannelCollaborationProtocolDrafts({ channelId: channel.id, limit: 10 }), []);
+      assert.deepEqual(verificationStore.listMemoryObjects({ limit: 10 }), []);
+      assert.deepEqual(verificationStore.listSkillCandidates({ limit: 10 }), []);
+    } finally {
+      verificationStore.close();
+    }
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });

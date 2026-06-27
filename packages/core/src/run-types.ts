@@ -42,10 +42,12 @@ import type {
   ChannelTeamPattern,
   ChannelTeamSnapshot,
   ChannelTeamEvaluationRun,
+  CreateAvailabilityIncidentInput,
   CreateChannelTeamEvidenceItemInput,
   CreateChannelTeamEvaluationRunInput,
   CreateChannelTeamPatternInput,
   CreateChannelTeamSnapshotInput,
+  CreateReliabilityIncidentInput,
   FoldedExpertsReadModel,
   ListActiveChannelTeamProvisionalRulesOptions,
   ListAvailabilityIncidentsOptions,
@@ -987,7 +989,9 @@ export interface RunStore {
     now: string,
   ): ChannelTeamEvidenceItem | undefined;
   listFoldedChannelTeamEvidenceForTurn(options: ListFoldedChannelTeamEvidenceForTurnOptions): FoldedExpertsReadModel;
+  createReliabilityIncident(input: CreateReliabilityIncidentInput, now: string): ReliabilityIncident;
   listReliabilityIncidents(options?: ListReliabilityIncidentsOptions): ReliabilityIncident[];
+  createAvailabilityIncident(input: CreateAvailabilityIncidentInput, now: string): AvailabilityIncident;
   listAvailabilityIncidents(options?: ListAvailabilityIncidentsOptions): AvailabilityIncident[];
   createChannelTeamPattern(input: CreateChannelTeamPatternInput, now: string): ChannelTeamPattern;
   getChannelTeamPattern(id: string): ChannelTeamPattern | undefined;

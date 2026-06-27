@@ -38,6 +38,7 @@ import { handleChannelMessagesCollection, handleChannelMessageStream } from "../
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import { handleChannelTeamExpertsProjection } from "../features/channels/team-experts.js";
 import { handleChannelTeamMetricsProjection } from "../features/channels/team-metrics.js";
+import { handleChannelTeamAuthorityLedger } from "../features/channels/team-authority-ledger.js";
 import { handleChannelTeamPatterns } from "../features/channels/team-patterns.js";
 import {
   handleChannelTeamEvaluations,
@@ -352,6 +353,7 @@ export async function routeRequest(
         channels: {
           autoRoute: config.channels.autoRoute === true,
           intentSelector: config.channels.intentSelector === true,
+          teamObserverBus: config.channels.teamObserverBus === true,
         },
         transports: {
           providerWebSocketFallback: config.transports.providerWebSocketFallback === true,
@@ -1553,6 +1555,7 @@ export async function routeRequest(
           webFetch: context.webFetch,
           webResolveHostAddresses: context.webResolveHostAddresses,
           ...input,
+          teamObserverBusEnabled: config.channels.teamObserverBus === true,
         }),
         (input) => confirmAndOrchestrateChannelProposal({
           store: input.store,
@@ -1578,6 +1581,7 @@ export async function routeRequest(
           webFetch: context.webFetch,
           webResolveHostAddresses: context.webResolveHostAddresses,
           ...input,
+          teamObserverBusEnabled: config.channels.teamObserverBus === true,
         }),
         (input) => confirmAndOrchestrateChannelProposal({
           store: input.store,
@@ -1639,6 +1643,10 @@ export async function routeRequest(
     }
     if (channelRoute.action === "team-metrics") {
       await handleChannelTeamMetricsProjection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "team-authority-ledger") {
+      await handleChannelTeamAuthorityLedger(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "team-patterns") {

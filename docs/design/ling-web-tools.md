@@ -250,6 +250,9 @@ The slice intentionally reuses the existing provider secret system:
 - Ling does not read a separate daemon-level `OPENAI_API_KEY` as a hidden fallback.
 - No new key is created.
 - No secret is persisted by this feature.
+- Shared channel replies may use the public fallback when no citation-producing backend is
+  available. Private teammate direct replies disable this fallback and block without a
+  network fetch unless a real Ling web-search backend is configured.
 - The public fallback uses no provider key and does not send configured model secrets.
 - Provider adapters may map Ling's generic `web_search` capability to vendor-specific search or grounding APIs, but each adapter must define its request and citation contract explicitly.
 
@@ -257,8 +260,10 @@ The slice intentionally reuses the existing provider secret system:
 
 | Failure | Behavior |
 | --- | --- |
-| No global `web_search` backend is configured | Try `ling-public-web-search`; if it returns no URLs, inject blocked/degraded web-search status. |
-| Backend provider declares `web_search` but no Ling adapter supports its protocol | Try `ling-public-web-search`; if it returns no URLs, inject blocked/degraded web-search status. |
+| No global `web_search` backend is configured in a shared channel reply | Try `ling-public-web-search`; if it returns no URLs, inject blocked/degraded web-search status. |
+| No global `web_search` backend is configured in a private teammate direct reply | Block `web_search` without fetching; inject a blocked status and reason into the private reply prompt. |
+| Backend provider declares `web_search` but no Ling adapter supports its protocol in a shared channel reply | Try `ling-public-web-search`; if it returns no URLs, inject blocked/degraded web-search status. |
+| Backend provider declares `web_search` but no Ling adapter supports its protocol in a private teammate direct reply | Block `web_search` without fetching; do not silently send the private query to public fallback. |
 | Backend provider key is missing | Try `ling-public-web-search`; if it returns no URLs, report the configured backend key problem. |
 | OpenAI request fails | Inject sanitized HTTP/network error; continue ordinary reply. |
 | Backend returns text without citation/source metadata | Try `ling-public-web-search`; if it returns URLs, mark evidence `available` with public sources; otherwise include summary, mark the event `degraded`, show provider/reason inline, and do not treat it as current evidence. |

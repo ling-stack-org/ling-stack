@@ -17,6 +17,39 @@ test("channel team risk review is not required for ordinary medium-risk file edi
   assert.deepEqual(decision.triggerCodes, []);
 });
 
+test("channel team risk review is not required for ordinary branch pushes", () => {
+  const decision = buildChannelTeamRiskReviewDecision({
+    actionType: "git_push",
+    risk: "high",
+    payload: {
+      type: "bash",
+      cwd: "/workspace/demo",
+      command: "git push origin feature/team-runtime-governor",
+      riskFlags: [],
+    },
+  });
+
+  assert.equal(decision.status, "not_required");
+  assert.deepEqual(decision.triggerCodes, []);
+});
+
+test("channel team risk review catches protected branch pushes", () => {
+  const decision = buildChannelTeamRiskReviewDecision({
+    actionType: "git_push",
+    risk: "high",
+    payload: {
+      type: "bash",
+      cwd: "/workspace/demo",
+      command: "git push origin main",
+      riskFlags: [],
+    },
+  });
+
+  assert.equal(decision.status, "required");
+  assert.equal(decision.risk, "high");
+  assert.deepEqual(decision.triggerCodes, ["protected_branch_push"]);
+});
+
 test("channel team risk review catches destructive and remote-history shell actions", () => {
   const decision = buildChannelTeamRiskReviewDecision({
     actionType: "git_push",
@@ -31,7 +64,7 @@ test("channel team risk review catches destructive and remote-history shell acti
 
   assert.equal(decision.status, "required");
   assert.equal(decision.risk, "critical");
-  assert.deepEqual(decision.triggerCodes, ["critical_risk", "git_push", "git_force_push", "protected_branch_push"]);
+  assert.deepEqual(decision.triggerCodes, ["critical_risk", "git_force_push", "protected_branch_push"]);
   assert.match(decision.reasons.join(" "), /Force push/);
 });
 

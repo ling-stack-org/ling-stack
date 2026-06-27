@@ -35,10 +35,12 @@ import type {
   ChannelTeamEvaluationRun,
   ChannelTeamPattern,
   ChannelTeamSnapshot,
+  CreateAvailabilityIncidentInput,
   CreateChannelTeamEvaluationRunInput,
   CreateChannelTeamEvidenceItemInput,
   CreateChannelTeamPatternInput,
   CreateChannelTeamSnapshotInput,
+  CreateReliabilityIncidentInput,
   FoldedExpertsReadModel,
   ListActiveChannelTeamProvisionalRulesOptions,
   ListAvailabilityIncidentsOptions,
@@ -1408,8 +1410,16 @@ export class SqliteRunStore implements RunStore {
     return this.channelTeamEvidence.listFoldedChannelTeamEvidenceForTurn(options);
   }
 
+  createReliabilityIncident(input: CreateReliabilityIncidentInput, now: string): ReliabilityIncident {
+    return this.channelTeamLifecycle.createReliabilityIncident(input, now);
+  }
+
   listReliabilityIncidents(options: ListReliabilityIncidentsOptions = {}): ReliabilityIncident[] {
     return this.channelTeamLifecycle.listReliabilityIncidents(options);
+  }
+
+  createAvailabilityIncident(input: CreateAvailabilityIncidentInput, now: string): AvailabilityIncident {
+    return this.channelTeamLifecycle.createAvailabilityIncident(input, now);
   }
 
   listAvailabilityIncidents(options: ListAvailabilityIncidentsOptions = {}): AvailabilityIncident[] {

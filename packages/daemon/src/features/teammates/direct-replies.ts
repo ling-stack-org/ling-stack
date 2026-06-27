@@ -180,6 +180,7 @@ export async function createAiTeammateDirectReply(input: {
       resolveHostAddresses: input.webResolveHostAddresses,
       promptHeader: "Ling web context:",
       promptInstruction: "Use this web context only as cited evidence for the current private reply. Do not claim access to web pages beyond the included results.",
+      allowPublicSearchFallback: false,
       onProgress: (progress) => {
         recordDirectWebEvidenceProgress({
           store: input.store,

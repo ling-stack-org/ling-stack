@@ -546,6 +546,7 @@ test("workflow proposal context view maps supported source refs for shaping evid
   const sourceMessage = createMessage({ id: "msg_current", body: "继续处理上面的 workflow" });
   const store = {
     listRunInterventions: () => [],
+    listChannelBranches: () => [],
     listChannelMessages: () => [
       createMessage({ id: "msg_previous", body: "先实现这个功能" }),
       sourceMessage,

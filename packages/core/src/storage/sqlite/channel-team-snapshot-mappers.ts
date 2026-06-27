@@ -1,6 +1,7 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
   channelTeamSnapshotCreatedByValues,
+  channelTeamShadowArtifactGuardrails,
   type ChannelTeamEvaluationCase,
   type ChannelTeamEvaluationCaseResult,
   type ChannelTeamEvaluationRun,
@@ -24,6 +25,7 @@ export function mapChannelTeamSnapshot(row: Record<string, SQLOutputValue>): Cha
     channelId: readString(row, "channel_id"),
     reason: readString(row, "reason"),
     createdBy: readChannelTeamSnapshotCreatedBy(row, "created_by"),
+    guardrails: channelTeamShadowArtifactGuardrails,
     state: parseJsonObject(readString(row, "state_json")) as unknown as ChannelTeamSnapshotState,
     createdAt: readString(row, "created_at"),
   };
@@ -35,6 +37,7 @@ export function mapChannelTeamEvaluationRun(row: Record<string, SQLOutputValue>)
     workspaceId: readString(row, "workspace_id"),
     channelId: readString(row, "channel_id"),
     snapshotId: readNullableString(row, "snapshot_id"),
+    guardrails: channelTeamShadowArtifactGuardrails,
     cases: parseJson(readString(row, "cases_json")) as readonly ChannelTeamEvaluationCase[],
     results: parseJson(readString(row, "results_json")) as readonly ChannelTeamEvaluationCaseResult[],
     summary: parseJsonObject(readString(row, "summary_json")) as unknown as ChannelTeamEvaluationSummary,

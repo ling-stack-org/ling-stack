@@ -2,6 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import {
   channelTeamPatternCreatedByValues,
   channelTeamPatternStatuses,
+  channelTeamShadowArtifactGuardrails,
   channelTeamProvisionalRuleEffects,
   type ChannelTeamPattern,
   type ChannelTeamPatternCreatedBy,
@@ -30,6 +31,7 @@ export function mapChannelTeamPattern(row: Record<string, SQLOutputValue>): Chan
     sourceRefs: parseChannelTeamEvidenceSourceRefs(readString(row, "source_refs_json")),
     status: readChannelTeamPatternStatus(row, "status"),
     createdBy: readChannelTeamPatternCreatedBy(row, "created_by"),
+    guardrails: channelTeamShadowArtifactGuardrails,
     provisionalEffect: readNullableChannelTeamProvisionalRuleEffect(row, "provisional_effect"),
     provisionalRationale: readNullableString(row, "provisional_rationale"),
     verifyBeforeUse: readBoolean(row, "verify_before_use"),

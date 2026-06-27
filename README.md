@@ -44,6 +44,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Ling Agent Session implementation plan](docs/design/ling-agent-session-implementation-plan.md)
 - [Channel Team Operating System](docs/design/channel-team-operating-system.md)
 - [Channel Team Operating System task plan - 2026-06-26](docs/design/channel-team-operating-system-task-plan-2026-06-26.md)
+- [Channel Team Operating System remediation plan - 2026-06-27](docs/design/channel-team-operating-system-remediation-plan-2026-06-27.md)
 - [Input Materialization Detailed Design](docs/design/input-materialization-detailed-design.md)
 - [Ling Web Tools](docs/design/ling-web-tools.md)
 - [Web E2E Acceptance Matrix](docs/design/web-e2e-acceptance-matrix.md)

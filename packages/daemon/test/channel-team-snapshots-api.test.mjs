@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { createSqliteRunStore } from "../../core/dist/index.js";
+import { channelTeamShadowArtifactGuardrails, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 
 test("channel team snapshots and evaluations API persist reversible replay records", async () => {
@@ -31,6 +31,7 @@ test("channel team snapshots and evaluations API persist reversible replay recor
       createdBy: "local-user",
     });
     assert.equal(first.status, 201);
+    assert.deepEqual(first.body.snapshot.guardrails, channelTeamShadowArtifactGuardrails);
     assert.equal(first.body.snapshot.state.messageCount, 1);
 
     const second = await postJson(`${baseUrl}/channels/${encodeURIComponent(channel.id)}/team-snapshots?cwd=${encodeURIComponent(cwd)}`, {
@@ -42,6 +43,7 @@ test("channel team snapshots and evaluations API persist reversible replay recor
     assert.deepEqual(listed.snapshots.map((snapshot) => snapshot.id), [second.body.snapshot.id, first.body.snapshot.id]);
 
     const diff = await getJson(`${baseUrl}/channels/${encodeURIComponent(channel.id)}/team-snapshots?cwd=${encodeURIComponent(cwd)}&baseSnapshotId=${encodeURIComponent(first.body.snapshot.id)}&targetSnapshotId=${encodeURIComponent(second.body.snapshot.id)}`);
+    assert.deepEqual(diff.diff.guardrails, channelTeamShadowArtifactGuardrails);
     assert.equal(diff.diff.restoreRequiresExplicitApply, true);
 
     const evaluation = await postJson(`${baseUrl}/channels/${encodeURIComponent(channel.id)}/team-evaluations?cwd=${encodeURIComponent(cwd)}`, {
@@ -56,11 +58,21 @@ test("channel team snapshots and evaluations API persist reversible replay recor
       ],
     });
     assert.equal(evaluation.status, 201);
+    assert.deepEqual(evaluation.body.evaluation.guardrails, channelTeamShadowArtifactGuardrails);
     assert.equal(evaluation.body.evaluation.summary.failedCount, 0);
     assert.equal(evaluation.body.evaluation.summary.totalCount, 2);
 
     const evaluations = await getJson(`${baseUrl}/channels/${encodeURIComponent(channel.id)}/team-evaluations?cwd=${encodeURIComponent(cwd)}&limit=5`);
     assert.deepEqual(evaluations.evaluations.map((run) => run.id), [evaluation.body.evaluation.id]);
+
+    const verificationStore = createSqliteRunStore(cwd);
+    try {
+      assert.deepEqual(verificationStore.listChannelCollaborationProtocolDrafts({ channelId: channel.id, limit: 10 }), []);
+      assert.deepEqual(verificationStore.listMemoryObjects({ limit: 10 }), []);
+      assert.deepEqual(verificationStore.listSkillCandidates({ limit: 10 }), []);
+    } finally {
+      verificationStore.close();
+    }
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });

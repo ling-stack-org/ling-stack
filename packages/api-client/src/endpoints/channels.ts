@@ -53,6 +53,7 @@ import type {
   ChannelWorkspaceMutationResponse,
   ChannelWorkspaceResponse,
   ChannelCollaborationCardListResponse,
+  ChannelTeamAuthorityLedgerResponse,
   ChannelTeamExpertsProjectionResponse,
   ChannelTeamMetricsProjectionResponse,
   ChannelTeamPatternResponse,
@@ -583,6 +584,14 @@ export const channelEndpoints = {
       options: { readonly limit?: number } = {},
     ): Promise<ChannelTeamMetricsProjectionResponse> {
       return this._get(`/channels/${encodeURIComponent(channelId)}/team-metrics`, { cwd, limit: options.limit });
+    },
+
+  async getChannelTeamAuthorityLedger(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      options: { readonly limit?: number } = {},
+    ): Promise<ChannelTeamAuthorityLedgerResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/team-authority-ledger`, { cwd, limit: options.limit });
     },
 
   async listChannelTeamPatterns(this: LingDaemonEndpointContext,
