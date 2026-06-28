@@ -4,6 +4,7 @@ import {
   Activity,
   Archive,
   ArrowDown,
+  ArrowLeft,
   AtSign,
   Bell,
   BellOff,
@@ -280,7 +281,7 @@ import { ChannelTeamMetricsPanel } from "./ChannelTeamMetricsPanel.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
-type ChannelDrawerRootView = Extract<ChannelSidePanelView, "settings">;
+type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
@@ -394,7 +395,7 @@ interface MessageFeedShortcutEvent {
   preventDefault(): void;
 }
 
-const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["settings"];
+const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["context"];
 const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
 const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "blocked", "failed", "pending"];
 const channelNotificationLevels: readonly ChannelNotificationLevel[] = ["all", "mentions", "muted"];
@@ -1135,8 +1136,9 @@ export function WorkspaceClientView({
   const selectedChannelWorkspace = selectedChannel ? resolveChannelWorkspaceBinding(selectedChannel, cwd) : undefined;
   const selectedChannelExecutionPath = selectedChannel && selectedChannelWorkspace ? resolveChannelWorkspaceExecutionPath(selectedChannelWorkspace, selectedChannel, cwd) : "";
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
-  const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "settings");
+  const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "context");
   const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
+  const [channelSettingsPageOpen, setChannelSettingsPageOpen] = useState(false);
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
@@ -1735,7 +1737,7 @@ export function WorkspaceClientView({
           id: "open-settings",
           label: t("Settings"),
           icon: <SlidersHorizontal size={14} />,
-          onClick: () => openSidePanelView("settings"),
+          onClick: openChannelSettingsPage,
         },
       ]}
     />
@@ -2049,7 +2051,7 @@ export function WorkspaceClientView({
   }, [cwd, latestChannelTeamExpertsSignature, latestChannelTeamExpertsTurnId, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || sidePanelView !== "settings" || !sidePanelOpen) {
+    if (!workspaceCwd || !selectedChannelId || !channelSettingsPageOpen) {
       return;
     }
     let cancelled = false;
@@ -2077,7 +2079,7 @@ export function WorkspaceClientView({
     return () => {
       cancelled = true;
     };
-  }, [channelTeamMetricsRefreshKey, cwd, selectedChannelId, sidePanelOpen, sidePanelView]);
+  }, [channelSettingsPageOpen, channelTeamMetricsRefreshKey, cwd, selectedChannelId]);
   const selectedChannelBranchActivityScope = useMemo<BranchConversationActivityScope | undefined>(() => {
     if (!selectedChannelBranchRootThreadId) {
       return undefined;
@@ -2633,8 +2635,9 @@ export function WorkspaceClientView({
     setActivityToolsOpen(false);
     setPendingChannelSendPreview(undefined);
     setAttentionProgressExpanded(true);
-    setSidePanelView("settings");
+    setSidePanelView("context");
     setSidePanelOpen(false);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(false);
     setSelectedApprovalId("");
     setCreateTaskOpen(false);
@@ -2666,6 +2669,7 @@ export function WorkspaceClientView({
     setCreateTaskOpen(false);
     setSidePanelView("task");
     setSidePanelOpen(true);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(false);
   }, [selectedTask, selectedTaskId]);
 
@@ -2673,6 +2677,7 @@ export function WorkspaceClientView({
     setCreateTaskOpen(false);
     setSidePanelView("task");
     setSidePanelOpen(true);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(false);
     onSelectTask(taskId);
   }
@@ -2814,6 +2819,7 @@ export function WorkspaceClientView({
     setInspectorMode(mode);
     setSidePanelView("context");
     setSidePanelOpen(true);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(false);
     if (mode === "runtime") {
       onRefreshRuntime();
@@ -2827,6 +2833,7 @@ export function WorkspaceClientView({
     setChannelMoreOpen(false);
     onSelectTask("");
     setSidePanelOpen(false);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(channelHasProgressContent);
     setAttentionProgressExpanded(true);
     setAttentionQueueExpanded(true);
@@ -2839,6 +2846,7 @@ export function WorkspaceClientView({
     setActivityDrilldownItemId("");
     onSelectTask("");
     setSidePanelOpen(false);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(false);
     setCreateTaskOpen(false);
     setActiveWorkThreadId("");
@@ -2880,6 +2888,7 @@ export function WorkspaceClientView({
     setSelectedApprovalId(approval?.id ?? "");
     setConversationDetailOverlay({ kind: "approval" });
     setSidePanelOpen(false);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -3353,6 +3362,7 @@ export function WorkspaceClientView({
     setCreateTaskOpen(true);
     setSidePanelView("task");
     setSidePanelOpen(true);
+    setChannelSettingsPageOpen(false);
     setActivityToolsOpen(false);
     setProgressPopoverOpen(false);
     setTeammateManagerOpen(false);
@@ -3448,12 +3458,13 @@ export function WorkspaceClientView({
     });
   }
 
+  const channelSettingsLoading = channelsLoading || channelTeammateMembershipsLoading || channelTeamMetricsLoading;
   const sidePanelLoading = sidePanelView === "task"
       ? tasksLoading
     : sidePanelView === "context"
       ? inspectorMode === "runtime" ? runtimeLoading : channelProtocolLoading
-      : sidePanelView === "settings"
-          ? channelsLoading || channelTeammateMembershipsLoading || channelTeamMetricsLoading
+    : sidePanelView === "settings"
+          ? channelSettingsLoading
           : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || durableWorkItemsLoading || tasksLoading;
 
   function refreshSidePanel(): void {
@@ -5872,9 +5883,39 @@ export function WorkspaceClientView({
   );
   const channelHasProgressContent = attentionProgressRows.length > 0;
 
+  function refreshChannelSettingsPage(): void {
+    onRefreshChannels();
+    onRefreshAiCouncils();
+    onRefreshChannelCouncil();
+    setChannelTeamMetricsRefreshKey((current) => current + 1);
+  }
+
+  function openChannelSettingsPage(): void {
+    setChannelSettingsPageOpen(true);
+    setSidePanelOpen(false);
+    setCreateTaskOpen(false);
+    setConversationDetailOverlay(undefined);
+    setProgressPopoverOpen(false);
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setTeammateManagerOpen(false);
+    onChannelCreateOpenChange(false);
+    refreshChannelSettingsPage();
+  }
+
+  function closeChannelSettingsPage(): void {
+    setChannelSettingsPageOpen(false);
+  }
+
   function openSidePanelView(view: ChannelSidePanelView): void {
+    if (view === "settings") {
+      openChannelSettingsPage();
+      return;
+    }
     setSidePanelView(view);
     setSidePanelOpen(true);
+    setChannelSettingsPageOpen(false);
     setConversationDetailOverlay(undefined);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
@@ -5883,10 +5924,6 @@ export function WorkspaceClientView({
     setTeammateManagerOpen(false);
     if (view === "context") {
       onRefreshChannelProtocol();
-    } else if (view === "settings") {
-      onRefreshChannels();
-      onRefreshAiCouncils();
-      onRefreshChannelCouncil();
     } else {
       onRefreshTasks();
       onRefreshChannelActivity();
@@ -5898,6 +5935,7 @@ export function WorkspaceClientView({
     setSelectedSourceDetail({ summary, groupId: group.id });
     setConversationDetailOverlay({ kind: "sources" });
     setSidePanelOpen(false);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -5911,6 +5949,7 @@ export function WorkspaceClientView({
     });
     setConversationDetailOverlay({ kind: "sources" });
     setSidePanelOpen(false);
+    setChannelSettingsPageOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -6064,6 +6103,15 @@ export function WorkspaceClientView({
       </div>
     </section>
   ) : null;
+  const channelSettingsContent = (
+    <div className="channel-settings-stack">
+      {channelNotificationPanel}
+      {channelCouncilPanel}
+      {channelTeammateManager}
+      {channelTeamMetricsPanel}
+      {channelManagementPanel}
+    </div>
+  );
   const sidePanelContent = sidePanelView === "context" ? (
     <div className="channel-protocol-tab-content">
       <ChannelInspector
@@ -6115,14 +6163,6 @@ export function WorkspaceClientView({
         onReconcileWorkUnit={onReconcileWorkUnit}
       />
     </div>
-  ) : sidePanelView === "settings" ? (
-    <div className="channel-settings-stack">
-      {channelNotificationPanel}
-      {channelCouncilPanel}
-      {channelTeammateManager}
-      {channelTeamMetricsPanel}
-      {channelManagementPanel}
-    </div>
   ) : (
     <section className="task-detail-panel inline-task-detail-panel" aria-label={sidePanelTitle}>
       {taskDetailContent}
@@ -6151,12 +6191,13 @@ export function WorkspaceClientView({
       )}
     </ConversationDetailOverlay>
   ) : null;
-  const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !sidePanelOpen && channelHasProgressContent;
+  const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !sidePanelOpen && !channelSettingsPageOpen && channelHasProgressContent;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
     setTeammateManagerOpen(nextOpen);
     if (nextOpen) {
+      setChannelSettingsPageOpen(false);
       setProgressPopoverOpen(false);
     }
     setWorkspaceSettingsOpen(false);
@@ -6176,7 +6217,7 @@ export function WorkspaceClientView({
               <button
                 className={`channel-workspace-badge ${selectedChannelWorkspace.mode} ${selectedChannelWorkspace.status}`}
                 type="button"
-                onClick={() => openSidePanelView("settings")}
+                onClick={openChannelSettingsPage}
                 title={selectedChannelExecutionPath}
               >
                 {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 13)}
@@ -6218,6 +6259,7 @@ export function WorkspaceClientView({
 	                      setActivityFiltersExpanded(false);
 	                      setChannelMoreOpen(false);
 	                      setSidePanelOpen(false);
+                        setChannelSettingsPageOpen(false);
 	                      setTeammateManagerOpen(false);
 	                    }}
 	                  >
@@ -6304,13 +6346,13 @@ export function WorkspaceClientView({
             </button>
           ) : null}
           <button
-            className={sidePanelOpen && sidePanelView === "settings" ? "icon-button active task-toolbar-settings" : "icon-button task-toolbar-settings"}
+            className={channelSettingsPageOpen ? "icon-button active task-toolbar-settings" : "icon-button task-toolbar-settings"}
             type="button"
-            aria-expanded={sidePanelOpen && sidePanelView === "settings"}
+            aria-expanded={channelSettingsPageOpen}
             aria-label={t("Settings")}
             title={t("Settings")}
             onClick={() => {
-              openSidePanelView("settings");
+              openChannelSettingsPage();
               onChannelCreateOpenChange(false);
             }}
           >
@@ -6327,6 +6369,7 @@ export function WorkspaceClientView({
                 return;
               }
               setSidePanelOpen(false);
+              setChannelSettingsPageOpen(false);
               setCreateTaskOpen(false);
               setChannelMoreOpen(false);
               setActivityToolsOpen(false);
@@ -6349,12 +6392,7 @@ export function WorkspaceClientView({
                 setProgressPopoverOpen(false);
                 return;
               }
-              if (sidePanelView === "context") {
-                setSidePanelView("settings");
-              }
-              setSidePanelOpen(true);
-              setProgressPopoverOpen(false);
-              setActivityToolsOpen(false);
+              openSidePanelView(sidePanelView === "settings" ? "context" : sidePanelView);
             }}
           >
             {sidePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
@@ -6475,10 +6513,34 @@ export function WorkspaceClientView({
       <div
         className={[
           "task-workbench-main",
-          sidePanelOpen ? "with-channel-side-panel" : "",
+          channelSettingsPageOpen ? "channel-settings-main" : "",
+          !channelSettingsPageOpen && sidePanelOpen ? "with-channel-side-panel" : "",
           progressPopoverVisible ? "progress-open" : "",
         ].filter(Boolean).join(" ")}
       >
+        {channelSettingsPageOpen ? (
+          <section className="channel-settings-page" aria-label={t("Channel settings")}>
+            <div className="channel-settings-page-head">
+              <button className="secondary-button compact-button channel-settings-back-button" type="button" onClick={closeChannelSettingsPage}>
+                <ArrowLeft size={15} />
+                {t("Back to channel")}
+              </button>
+              <div className="channel-settings-page-title">
+                <span>
+                  <SlidersHorizontal size={16} />
+                  <strong>{t("Channel settings")}</strong>
+                </span>
+                <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
+              </div>
+              <button className="secondary-button compact-button channel-settings-refresh-button" type="button" onClick={refreshChannelSettingsPage} disabled={!selectedChannelId || channelSettingsLoading}>
+                {channelSettingsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                {t("Refresh")}
+              </button>
+            </div>
+            {channelSettingsContent}
+          </section>
+        ) : (
+          <>
         <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>
           <div className="activity-shell">
 	              <div className={activeThreadRoot ? "activity-chat-layout with-thread" : "activity-chat-layout"}>
@@ -6896,6 +6958,8 @@ export function WorkspaceClientView({
             {sidePanelContent}
           </RightDrawer>
         ) : null}
+          </>
+        )}
       </div>
     </div>
   );

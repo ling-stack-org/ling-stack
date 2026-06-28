@@ -611,12 +611,13 @@
   width: 100%;
 }
 
-.normal-conversation-message-row:not(.local-user) {
-  grid-template-columns: 30px minmax(0, min(720px, 78%));
+.normal-conversation-feed .normal-conversation-message-row:not(.local-user) {
+  grid-template-columns: minmax(0, min(720px, 78%));
 }
 
-.normal-conversation-message-row.local-user {
-  grid-template-columns: minmax(0, min(640px, 78%)) 30px;
+.normal-conversation-feed .normal-conversation-message-row.local-user {
+  grid-template-columns: minmax(0, min(640px, 78%));
+  justify-content: end;
 }
 
 .normal-conversation-message-row > .message-content {
