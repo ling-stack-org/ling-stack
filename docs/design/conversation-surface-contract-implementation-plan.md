@@ -14,6 +14,7 @@ Related docs:
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
+- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
 
 ## Goal
 
@@ -22,8 +23,9 @@ The conversation surface contract should land in ordered slices.
 Slice 2A turns the shared conversation UI contract into concrete Web component
 boundaries. Slice 2B makes compact evidence/work capability parity real for normal
 conversation and private chat. Slice 2C locks the shared behavior with focused
-regression tests. Slice 3 extracts packages only after Web consumers prove the contracts
-are stable.
+regression tests. Slice 3 extracts packages after the Web consumers prove the contracts
+are stable; that condition is now satisfied for the first-wave React conversation
+components.
 
 The previous baseline already made normal conversation, channel assistant turns, and
 teammate private chat share more visual primitives. This plan should not restart visual
@@ -99,13 +101,14 @@ Slice 2C focused regression checks are implemented for the touched surfaces:
   reply.
 - channel coverage asserts the shared action/source behavior from Slice 2A.
 
-Slice 3 has started with a core-only package extraction:
+Slice 3 has implemented core-only package extraction and first-wave React package
+extraction:
 
 - `packages/conversation-ui-core` owns pure surface policy and action filtering types.
 - Web re-exports those helpers from
   `apps/web/src/shared/conversation/tokens/conversation-surface-policy.ts`.
-- React components are still Web-local. Do not extract `conversation-ui-react` until the
-  view-model adapter props stabilize.
+- first-wave React components moved to `packages/conversation-ui-react`; Web adapters
+  keep daemon fetching, route state, and surface-specific business logic.
 
 Composer unification is now a separate follow-up design track:
 
@@ -950,12 +953,19 @@ Minimum manual checks:
 
 ## Slice 3 Detailed Plan: Package Extraction
 
-Package extraction is split into core-first and React-later.
+Decision update, 2026-06-28: package extraction is no longer a future-only topic.
+The core package already exists, and the first React package extraction creates
+`packages/conversation-ui-react` for the shared React conversation surface.
 
-The core-first part has started because surface policy and action filtering are pure
-data. React extraction is still deferred. It should start only after Slice 2B and 2C
-prove that Web surfaces can share stable view-model props without leaking app shell,
-channel store, teammate store, or daemon fetching concerns into a package API.
+The extraction remains conservative. It must move stable conversation rendering and
+composer primitives out of the Web app without moving app state, daemon fetching,
+routing, channel membership, teammate settings, or permission persistence into the
+package API.
+
+The detailed execution source of truth for package extraction is
+[Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md).
+This section records the slice-level contract; the package plan records exact file
+migration, required refactors, dependency guards, and validation commands.
 
 ### First Extractable Package
 
@@ -1021,25 +1031,75 @@ Package:
 packages/conversation-ui-react
 ```
 
-Allowed contents after stabilization:
+Status: active next extraction slice.
 
+Allowed first-wave contents:
+
+- `ConversationShell`,
+- `ConversationFeed`,
+- `ConversationEmptyState`,
+- `MessageRow`,
+- `MessageBubble`,
+- `MessageBodyRenderer`,
 - `MessageActionBar`,
+- `ConversationComposerShell`,
+- `TokenizedComposerInput`,
+- `ComposerPermissionMenu`, if it remains prop-only,
+- `ConversationStatusStrip`,
+- `ConversationGuidanceStrip`,
 - `SourceIconStack`,
 - `TeammateAvatarStack`,
-- purely presentational evidence/work primitives that do not import app state.
+- composer helper React hooks that are DOM/React-specific and do not import Web app
+  state.
+
+Allowed second-wave contents after dependency audit:
+
+- `ConversationAttachmentStrip`,
+- `EvidenceDisclosure`,
+- `FileRefChip`,
+- `CodeBlock`,
+- `DiffCodeBlock`,
+- `DiffFileSummary`,
+- `DiffViewer`,
+- presentational `ConversationWorkCell` renderer after its view model types are
+  app-agnostic.
+
+Do not move in the first React package slice:
+
+- `ArtifactPreviewDrawer`,
+- `ImageCompareViewer`,
+- `RightDrawer`,
+- `AppShell`,
+- sidebar or navigation components,
+- settings, providers, automation, media, teammate management, or channel
+  configuration components,
+- any component that directly imports daemon clients, app route modules, workspace
+  state, channel stores, teammate stores, or `localStorage`.
 
 Rules:
 
 - React package depends on `conversation-ui-core`,
+- React package may depend on `react`, `react-dom` types, and `lucide-react`,
 - React package accepts view models and callbacks only,
 - Web owns data fetching and route state,
+- Web injects surface-specific composer buttons through slots:
+  - channel injects attach, mention, authorization, send/stop/follow-up,
+  - normal conversation injects attach, authorization, thinking/model pickers, send,
+  - private chat injects attach, authorization, direct-guidance send/stop,
+- channel-only `@` routing, normal-conversation model selection, and private-chat
+  no-model-picker behavior are policy/adaptor responsibilities, not hard-coded
+  package globals,
 - Desktop/PC can adopt the same props without copying Web page code.
 
 Acceptance:
 
 - fixture transcript renders without channel app state,
-- package components do not import `apps/web/src/domains/*`,
+- package components do not import `apps/web/src/*`,
+- package components do not import `@ling-stack/api-client` or `@ling-stack/core`,
 - Web call sites need only thin adapters from app state to shared view models.
+- all three Web surfaces keep the same composer shell visual contract:
+  `12px` radius, `8px` padding, shared background token, shared ambient/focus shadow,
+  and `76px` default tokenized input height on post-send/docked surfaces.
 
 ## Implementation Sequencing
 
@@ -1048,16 +1108,21 @@ Recommended order from the current branch state:
 1. Re-run the focused Slice 2A/2B/2C checks against the final branch state.
 2. Merge the current shared primitives, conservative compact work, and
    `conversation-ui-core` package together if the diff remains scoped.
-3. Add evidence/source gates only where current contracts expose real structured data.
-4. Add explicit turn-run projector tests before enabling `turnId` fallback.
-5. Add explicit thread-level summary tests before enabling any `threadId` fallback.
-6. Extract `conversation-ui-react` only after core extraction proves useful and Web
-   adapters stop changing.
+3. Create `packages/conversation-ui-react` with package metadata, TypeScript build, and
+   public exports.
+4. Move first-wave composer, message, feed, action, status, guidance, source, and avatar
+   components into `conversation-ui-react`.
+5. Keep `apps/web/src/shared/conversation` as a temporary compatibility re-export only
+   if it materially reduces diff risk; otherwise migrate Web imports directly.
+6. Move pure composer parsing and slash helper types to `conversation-ui-core` when they
+   have no DOM or React dependency.
+7. Add evidence/source gates only where current contracts expose real structured data.
+8. Add explicit turn-run projector tests before enabling `turnId` fallback.
+9. Add explicit thread-level summary tests before enabling any `threadId` fallback.
 
-Combining the current 2B first-pass and core-only Slice 3 is acceptable because the core
-package contains only pure policy/action filtering. Do not combine React component
-extraction with 2B capability expansion. The risk is not TypeScript complexity. The risk
-is locking unstable Web adapter shapes into a package API too early.
+Do not combine React component extraction with unrelated capability expansion. The risk is
+not TypeScript complexity. The risk is locking Web adapter state, daemon calls, or route
+assumptions into a package API.
 
 ## Unresolved Decisions
 
@@ -1081,6 +1146,6 @@ Open for Slice 2B:
 
 Open for Slice 3:
 
-- `packages/conversation-ui-react` name and public component list,
 - whether screenshot regression becomes mandatory in CI before extraction,
-- whether Desktop needs the React package or only the core view model contracts first.
+- whether Desktop consumes `conversation-ui-react` directly or wraps it with a
+  desktop-specific renderer shell.

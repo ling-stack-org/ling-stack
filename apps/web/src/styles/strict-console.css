@@ -1188,6 +1188,21 @@
   color: var(--text);
 }
 
+:root[data-theme="dark"] .workspace .conversation-composer {
+  box-shadow: var(--composer-ambient-shadow);
+}
+
+:root[data-theme="dark"] .workspace .conversation-composer:focus-within {
+  box-shadow: var(--composer-ambient-focus-shadow);
+}
+
+:root[data-theme="dark"] .workspace .composer-panel.channel-composer,
+:root[data-theme="dark"] .workspace .normal-conversation-page .conversation-home-composer,
+:root[data-theme="dark"] .workspace .teammate-direct-composer {
+  border-color: var(--border);
+  background-color: var(--surface-panel-strong);
+}
+
 :root[data-theme="dark"] .workspace :is(
   h1,
   h2,

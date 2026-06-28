@@ -4043,28 +4043,35 @@
 
 .teammate-workspace.chat-mode .teammate-direct-composer {
   align-self: end;
-  margin: 10px 10px 12px;
-  padding: 9px;
+  justify-self: center;
+  width: min(960px, calc(100% - 20px));
+  margin: 10px auto 14px;
+  padding: 8px;
   border-color: var(--border);
   border-radius: 12px;
-  background: var(--surface-panel);
-  box-shadow: none;
+  background: var(--surface-panel-strong);
+  box-shadow: var(--composer-ambient-shadow);
+}
+
+.teammate-workspace.chat-mode .teammate-direct-composer:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: var(--composer-ambient-focus-shadow);
 }
 
 .teammate-workspace.chat-mode .teammate-direct-composer .composer-drop-zone {
-  min-height: 96px;
+  min-height: 76px;
 }
 
 .teammate-workspace.chat-mode .teammate-direct-composer .composer-drop-zone textarea {
-  min-height: 96px;
-  padding: 8px 9px 2px;
+  min-height: 76px;
+  padding: 7px 8px 2px;
   color: var(--text-strong);
   font-size: 13px;
 }
 
 .teammate-workspace.chat-mode .teammate-direct-composer .tokenized-composer-input {
-  min-height: 96px;
-  padding: 8px 9px 2px;
+  min-height: 76px;
+  padding: 7px 8px 2px;
   color: var(--text-strong);
   font-size: 13px;
 }

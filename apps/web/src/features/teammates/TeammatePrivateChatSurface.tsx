@@ -49,7 +49,7 @@ import type {
   PermissionPreset,
   SessionPermissionMode,
 } from "../../types.js";
-import { inferPermissionPreset } from "../../lib/session-permissions.js";
+import { conversationPermissionPresetMenuOptions, inferPermissionPreset } from "../../lib/session-permissions.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import {
   directFileRefLabel,
@@ -414,6 +414,7 @@ export function TeammatePrivateChatSurface({
                     <MessageActionBar
                       surface="teammate_direct"
                       className="teammate-message-actions"
+                      copiedLabel={t("Copied")}
                       actions={[
                         {
                           id: "copy",
@@ -613,8 +614,10 @@ export function TeammatePrivateChatSurface({
                 </label>
                 <ComposerPermissionMenu
                   preset={selectedPermissionPreset}
+                  options={conversationPermissionPresetMenuOptions(t)}
                   disabled={permissionLocked}
                   disabledReason={t("Permission is locked while the private reply is running.")}
+                  fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
                   onPresetChange={setSelectedPermissionPreset}
                 />
               </>

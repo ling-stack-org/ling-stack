@@ -13,6 +13,7 @@ Related docs:
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
+- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
 - [Channel Workspace Design](channel-workspace.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
@@ -58,8 +59,8 @@ The current shared UI slice established these baseline decisions:
 
 The slice does not finish the full contract. Remaining work is evidence projection for
 normal conversations, shared file/reference capability blocks, safe `turnId` or
-thread-level work projection, and optional React package extraction after Web adapter
-props stabilize.
+thread-level work projection, and the active first-wave `conversation-ui-react`
+extraction.
 
 ## Vocabulary
 
@@ -732,7 +733,8 @@ Rules:
 
 ## Package Extraction Readiness
 
-Do not extract shared packages until these conditions are true in Web:
+Shared package extraction can start when these conditions are true in Web. They are now
+true enough for first-wave composer/message/feed/action/identity/feedback components:
 
 - normal conversation, channel, and private chat consume the same action policy helper,
 - normal conversation, channel, and private chat consume the same composer root props or
@@ -907,8 +909,14 @@ Acceptance:
 - package imports do not reach into daemon/API route modules,
 - Desktop can start from the same transcript contract instead of copying Web logic.
 
-Status: core-only extraction is implemented. React component extraction remains deferred
-until Web adapter props stabilize.
+Status: core-only extraction and first-wave React component extraction are implemented.
+`packages/conversation-ui-react` owns first-wave shared
+composer/message/feed/action/identity/feedback primitives, while Web adapters remain in
+`apps/web`.
+
+Detailed package boundaries, component migration map, renderer-slot strategy, dependency
+guards, and validation commands are defined in
+[Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md).
 
 ## Open Decisions
 
@@ -923,6 +931,8 @@ Deferred decisions:
   regression tests exist,
 - whether thread-level work belongs under one selected row, a separate thread summary
   strip, or only run/thread detail,
-- exact timing and public API of `packages/conversation-ui-react`,
+- whether second-wave components such as `ConversationWorkCell`, evidence previews,
+  file chips, and code/diff renderers are dependency-clean enough for
+  `packages/conversation-ui-react`,
 - whether screenshot regression becomes mandatory in CI or stays local/manual until the
   fixtures stabilize.

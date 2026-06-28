@@ -9,9 +9,9 @@ export { createAttachmentPreviewUrl, createLocalComposerAssetId, pendingAssetLab
 export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
 export { SettingsToolReturnRow } from "./SettingsToolReturnRow.js";
 export { StatusBadge } from "./StatusBadge.js";
-export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "../conversation/composer/TokenizedComposerInput.js";
+export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "@ling-stack/conversation-ui-react";
 export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
 export { UserProfileAvatar } from "./UserProfileAvatar.js";
-export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "../conversation/composer/composer-input-parts.js";
-export { filterSlashCommandPickerOptions, findActiveSlashCommand, insertSlashCommandToken, type ActiveSlashCommandPicker } from "../conversation/composer/slash-command-picker.js";
+export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "@ling-stack/conversation-ui-core";
+export { filterSlashCommandPickerOptions, findActiveSlashCommand, insertSlashCommandToken, type ActiveSlashCommandPicker } from "@ling-stack/conversation-ui-core";
 export { parseComposerSlashIntent, type ComposerSlashIntent } from "./composer-slash-intents.js";

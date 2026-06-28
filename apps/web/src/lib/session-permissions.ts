@@ -1,3 +1,4 @@
+import type { ConversationPermissionPresetOption } from "@ling-stack/conversation-ui-core";
 import type { ApprovalPolicy, ApprovalPolicyFormState, ApprovalToolDecision, EffectiveRunPolicySnapshot, PermissionPreset, SessionPermissionMode, ToolName } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { allTools, riskyTools } from "./tools.js";
@@ -89,6 +90,15 @@ export function inferPermissionPreset(mode: SessionPermissionMode | undefined): 
 
 export function permissionPresetRequiresConfirmation(preset: PermissionPreset | undefined): boolean {
   return preset === "full_access";
+}
+
+export function conversationPermissionPresetMenuOptions(t: Translate): readonly ConversationPermissionPresetOption[] {
+  return permissionPresetOptions.map((preset) => ({
+    preset,
+    label: permissionPresetLabel(preset, t),
+    description: permissionPresetDescription(preset, t),
+    requiresConfirmation: permissionPresetRequiresConfirmation(preset),
+  }));
 }
 
 export function buildLocalEffectivePolicyPreview(input: {

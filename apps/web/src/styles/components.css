@@ -9273,14 +9273,22 @@ code,
   gap: 6px;
   min-width: 0;
   padding: 8px;
+  box-shadow: var(--composer-ambient-shadow);
   overflow: visible;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.composer-panel.conversation-composer {
+  box-shadow: var(--composer-ambient-shadow);
 }
 
 .conversation-composer:focus-within {
   border-color: var(--accent-border);
-  box-shadow:
-    0 0 0 1px var(--accent-border),
-    var(--shadow-panel);
+  box-shadow: var(--composer-ambient-focus-shadow);
+}
+
+.composer-panel.conversation-composer:focus-within {
+  box-shadow: var(--composer-ambient-focus-shadow);
 }
 
 .conversation-composer-density-floating {
@@ -9392,11 +9400,12 @@ code,
   border-color: var(--border);
   border-radius: 12px;
   background: var(--surface-panel-strong);
+  box-shadow: var(--composer-ambient-shadow);
 }
 
 .composer-panel.channel-composer:focus-within {
   border-color: var(--accent-border);
-  box-shadow: 0 0 0 1px var(--accent-border);
+  box-shadow: var(--composer-ambient-focus-shadow);
 }
 
 .composer-primary-actions {
