@@ -1,9 +1,12 @@
 # Channel Workspace v1.24 Right Drawer Workspace
 
-Status: superseded on 2026-06-16 for drawer progress and context ownership. The current
-right drawer root pages are Files and Settings; active progress belongs to the floating
-popover, durable progress belongs to the transcript, and context/source detail is opened
-only from explicit detail or developer-debug affordances.
+Status: superseded on 2026-06-16 for drawer progress and context ownership, then
+superseded again on 2026-06-29 by
+[Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+for cross-surface dock ownership. The current right drawer root pages are Files and
+Settings; active progress belongs to the floating popover, durable progress belongs to
+the transcript, and context/source detail is opened only from explicit detail or
+developer-debug affordances.
 
 ## Summary
 

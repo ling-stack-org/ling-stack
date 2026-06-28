@@ -15,6 +15,8 @@ Related docs:
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
 - [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
+- [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+- [Conversation Right Dock Workspace Tools Implementation Plan](conversation-right-dock-workspace-tools-implementation-plan.md)
 
 ## Goal
 
@@ -40,6 +42,7 @@ Do not include these in Slice 2A:
 - package extraction into `packages/conversation-ui-core` or
   `packages/conversation-ui-react`,
 - right floating activity panel redesign,
+- shared Right Dock implementation beyond the explicit Right Dock plan,
 - Desktop/PC renderer work,
 - daemon storage changes,
 - new transcript persistence model,

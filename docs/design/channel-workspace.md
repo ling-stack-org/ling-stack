@@ -38,6 +38,7 @@ Related docs:
 - [Channel Workspace v1.26 Channel Branches](channel-workspace-v1.26.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
+- [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
 - [Channel And Agent Governance Notifications](channel-and-agent-governance-notifications.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
