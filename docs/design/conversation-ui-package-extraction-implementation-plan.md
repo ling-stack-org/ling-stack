@@ -14,6 +14,8 @@ Related docs:
 - [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
 - [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
+- [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+- [Conversation Right Dock Workspace Tools Implementation Plan](conversation-right-dock-workspace-tools-implementation-plan.md)
 
 ## Goal
 
@@ -87,6 +89,7 @@ packages/conversation-ui-core/src/
   renderer-registry.ts
   action-policy.ts
   evidence-view-model.ts
+  dock-types.ts
 ```
 
 Allowed:
@@ -309,7 +312,7 @@ These components stay Web-local until their imports are clean:
 | `FileRefChip` | Workspace/file opening behavior is app-owned. |
 | `CodeBlock` / `DiffCodeBlock` / `DiffViewer` | Current highlighting, diff parsing, copy feedback, and deferral utilities need dependency cleanup. |
 | `ArtifactPreviewDrawer` / `ImageCompareViewer` | App preview/lightbox ownership and image compare data are not first-wave package concerns. |
-| `RightDrawer` | App shell utility, not conversation UI kit. |
+| `RightDrawer` | Current app shell utility. Future dock primitives are package candidates only after the Web-local `RightDockShell` is used by at least two surfaces, per [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md). |
 | `view-store/*` | Keep local until Desktop needs the same reconciliation store. |
 
 ## Implementation Slices

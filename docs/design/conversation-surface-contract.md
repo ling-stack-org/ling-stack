@@ -17,6 +17,7 @@ Related docs:
 - [Channel Workspace Design](channel-workspace.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
+- [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
 
 ## Purpose
 
@@ -95,6 +96,9 @@ evidence primitives
 
 composer primitives
   -> shell, tokenized input, toolbar, permission menu, preview strip, status/guidance slots
+
+workspace dock primitives
+  -> right dock shell, launcher, page header, page stack, review queue, evidence/files/tool pages
 ```
 
 Normal conversation, channel, and teammate private chat are not three UI systems. They
@@ -140,6 +144,9 @@ message/composer/evidence model.
 12. Channel is the only default surface with teammate `@` routing in the composer.
     Normal conversation and teammate private chat must not show `@` placeholder copy,
     mention buttons, or mention pickers.
+13. Right-side workspace tools must use the shared Right Dock model. Channel, normal
+    conversation, and teammate private chat may expose different pages, but they must not
+    fork separate drawer, review, or evidence UI systems.
 
 ## Surface Capability Matrix
 
@@ -158,6 +165,7 @@ message/composer/evidence model.
 | `@` teammate routing | No by default | Yes | Yes | No by default | No | No by default |
 | Topic reply action | No | Yes | Yes | Nested only | No | No |
 | Raw runtime detail | Detail only | Developer/detail only | Developer/detail only | No by default | Detail only | Yes |
+| Right Dock shell | Yes | Yes | Yes | No by default | Yes | Optional rich detail |
 
 ## Composer Capability Matrix
 
