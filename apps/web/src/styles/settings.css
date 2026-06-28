@@ -41,13 +41,13 @@
 
 .settings-layout {
   display: grid;
-  grid-template-columns: 306px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-expanded-width, 306px) minmax(0, 1fr);
   align-items: stretch;
   gap: 0;
-  width: calc(100% + 40px);
+  width: 100%;
   max-width: none;
-  min-height: calc(100vh - 40px);
-  margin: -20px;
+  min-height: 100%;
+  margin: 0;
   background: var(--surface-panel);
 }
 
@@ -63,6 +63,40 @@
   border-right: 1px solid var(--border);
   border-radius: 0;
   background: var(--surface-sidebar);
+}
+
+.settings-app-return-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 18px;
+  text-align: left;
+}
+
+.settings-app-return-button:hover {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.settings-app-return-button svg {
+  flex: 0 0 auto;
+}
+
+.settings-app-return-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-section-group {

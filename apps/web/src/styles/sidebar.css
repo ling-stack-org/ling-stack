@@ -1,6 +1,6 @@
 /* Codex-style global sidebar shell. Keep this file focused on shell chrome only. */
 :root {
-  --sidebar-expanded-width: 252px;
+  --sidebar-expanded-width: 306px;
   --sidebar-collapsed-width: 52px;
 }
 
@@ -117,10 +117,28 @@
 }
 
 .channel-left-drawer .channel-sidebar-switch {
+  display: grid;
+  place-items: center;
   justify-self: end;
   width: 32px;
   height: 32px;
+  padding: 0;
+  border: 0;
   border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.channel-left-drawer .channel-sidebar-switch:hover,
+.channel-left-drawer .channel-sidebar-switch:focus-visible {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.channel-left-drawer .channel-sidebar-switch svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.25;
 }
 
 .sidebar-command-button {
@@ -135,10 +153,10 @@
   min-height: 32px;
   margin-left: 0;
   padding: 0 10px;
-  border: 1px solid var(--accent-strong);
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: var(--accent-strong);
-  color: var(--surface-panel);
+  background: var(--surface-selected);
+  color: var(--text-strong);
   font-size: 11px;
   font-weight: 680;
   text-align: left;
@@ -152,6 +170,7 @@
 
 .sidebar-command-button:hover,
 .sidebar-command-button:focus-visible {
+  border-color: var(--text-strong);
   background: var(--text-strong);
   color: var(--surface-panel);
 }
@@ -209,6 +228,14 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-scroll-region::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .channel-left-drawer .sidebar-section,
@@ -240,14 +267,14 @@
 }
 
 .channel-left-drawer .sidebar-section-toggle {
-  display: inline-grid;
-  grid-template-columns: minmax(0, auto) 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 14px;
   align-items: center;
-  justify-content: start;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
+  width: 100%;
   height: 22px;
-  padding: 0 2px;
+  padding: 0 4px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -259,6 +286,7 @@
 
 .channel-left-drawer .sidebar-section-toggle:hover,
 .channel-left-drawer .sidebar-section-toggle:focus-visible {
+  background: var(--surface-hover);
   color: var(--text-muted);
 }
 
@@ -270,8 +298,22 @@
 }
 
 .channel-left-drawer .sidebar-section-chevron {
+  justify-self: end;
   color: currentColor;
-  transition: transform 120ms ease;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+}
+
+.channel-left-drawer .sidebar-section:hover > .sidebar-section-title .sidebar-section-chevron,
+.channel-left-drawer .sidebar-section:focus-within > .sidebar-section-title .sidebar-section-chevron,
+.channel-left-drawer .sidebar-section-title:hover .sidebar-section-chevron,
+.channel-left-drawer .sidebar-section-title:focus-within .sidebar-section-chevron {
+  opacity: 1;
+  visibility: visible;
 }
 
 .channel-left-drawer .sidebar-section-chevron.collapsed {
@@ -544,32 +586,231 @@
   padding: 0;
 }
 
+.app-shell.channel-sidebar-collapsed .sidebar-scroll-region {
+  display: flex;
+  flex-direction: column;
+  align-content: start;
+  align-self: stretch;
+  align-items: center;
+  justify-items: center;
+  gap: 18px;
+  height: 100%;
+  min-height: 0;
+  margin: 0 -8px;
+  padding: 2px 8px 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .primary-nav {
+  justify-items: center;
+  gap: 8px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section:first-of-type,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section:last-of-type {
+  justify-items: center;
+  gap: 6px;
+  width: 36px;
+  overflow: visible;
+  transition: gap 160ms ease;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-title {
+  display: grid;
+  justify-content: center;
+  height: 24px;
+  min-height: 24px;
+  width: 36px;
+  padding: 0;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-toggle {
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-soft);
+  box-shadow: none;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-toggle:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-toggle:focus-visible {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+  transform: translateX(2px);
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-heading {
+  display: none;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-chevron {
+  justify-self: center;
+  width: 13px;
+  height: 13px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-list,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section:first-of-type .sidebar-section-list,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section:last-of-type .sidebar-section-list {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: 44px;
+  margin: 0 -4px;
+  padding: 2px 4px;
+  overflow: visible;
+  animation: sidebar-rail-section-in 170ms ease-out both;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-section-body {
+  display: grid;
+  justify-items: center;
+  width: 44px;
+  margin: 0 -4px;
+  overflow: visible;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-section-body > .sidebar-section-list {
+  max-height: var(--sidebar-rail-section-open-height, 960px);
+  margin: 0;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: top center;
+  visibility: visible;
+  transition:
+    max-height 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 170ms ease,
+    padding 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 0s;
+  will-change: max-height, opacity, transform;
+  animation: none;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-preview {
+  display: grid;
+  justify-items: center;
+  width: 44px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translateY(7px) scale(0.96);
+  transform-origin: top center;
+  visibility: hidden;
+  transition:
+    max-height 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 170ms ease,
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 240ms;
+  will-change: max-height, opacity, transform;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section.collapsed .sidebar-rail-section-body > .sidebar-section-list {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-7px) scale(0.98);
+  visibility: hidden;
+  transition-delay: 0s, 0s, 0s, 0s, 240ms;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section.collapsed .sidebar-rail-preview {
+  max-height: var(--sidebar-rail-section-preview-height, 136px);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  visibility: visible;
+  transition-delay: 0s, 0s, 0s, 0s;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 36px;
+  padding: 1px 0 3px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack > * + * {
+  margin-top: -7px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack-avatar,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack-icon,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack-more {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack-more {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack-avatar > .avatar-initial,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack-avatar > .teammate-avatar-image.compact,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-stack .sidebar-channel-avatar {
+  border: 0;
+  box-shadow: none;
+}
+
 .app-shell.channel-sidebar-collapsed .channel-sidebar-switch {
   justify-self: center;
+  background: var(--surface-selected);
+  color: var(--text-strong);
+  box-shadow: 0 8px 18px rgba(17, 17, 17, 0.08);
 }
 
 .app-shell.channel-sidebar-collapsed .sidebar-command-button {
   justify-self: center;
   margin-left: 0;
+  border-color: transparent;
   border-radius: var(--radius-md);
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-command-button:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-command-button:focus-visible {
+  border-color: var(--text-strong);
+  background: var(--text-strong);
+  color: var(--surface-panel);
 }
 
 .app-shell.channel-sidebar-collapsed .sidebar-brand-copy,
 .app-shell.channel-sidebar-collapsed .sidebar-command-button span,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item span,
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-toggle,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row span:not(.avatar-initial):not(.channel-mention):not(.channel-unread),
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main span:not(.sidebar-channel-avatar):not(.channel-mention):not(.channel-unread),
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-recent-copy,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button-label,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-inbox-alert span:not(.status-dot) {
   display: none;
-}
-
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-title {
-  justify-content: center;
-  height: 8px;
-  padding: 0;
 }
 
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-menu {
@@ -599,14 +840,62 @@
 }
 
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-channel-avatar {
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  font-size: 11px;
 }
 
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .teammate-avatar-image.compact,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .avatar-initial {
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-shell,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-command-button,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .channel-sidebar-switch,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-brand-button {
+  position: relative;
+  z-index: 0;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+  will-change: transform;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item:focus-visible,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row:focus-visible,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-shell:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-shell:focus-within,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button:focus-visible,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-command-button:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-command-button:focus-visible,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .channel-sidebar-switch:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .channel-sidebar-switch:focus-visible,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-brand-button:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-brand-button:focus-visible {
+  z-index: 5;
+  background: var(--surface-panel);
+  color: var(--text-strong);
+  box-shadow: 0 10px 24px rgba(17, 17, 17, 0.14);
+  transform: translateX(5px);
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-command-button:hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-command-button:focus-visible {
+  border-color: var(--text-strong);
+  background: var(--text-strong);
+  color: var(--surface-panel);
 }
 
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .channel-mention {
@@ -624,6 +913,17 @@
   position: absolute;
   right: 6px;
   top: 6px;
+}
+
+@keyframes sidebar-rail-section-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .sidebar-hover-tooltip {
@@ -690,6 +990,199 @@
     justify-items: center;
   }
 
+  .app-shell.channel-drawer-shell .sidebar-scroll-region {
+    display: flex;
+    flex-direction: column;
+    align-content: start;
+    align-self: stretch;
+    align-items: center;
+    justify-items: center;
+    gap: 18px;
+    height: 100%;
+    min-height: 0;
+    margin: 0 -8px;
+    padding: 2px 8px 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .primary-nav {
+    justify-items: center;
+    gap: 8px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section:first-of-type,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section:last-of-type {
+    justify-items: center;
+    gap: 6px;
+    width: 36px;
+    overflow: visible;
+    transition: gap 160ms ease;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-title {
+    display: grid;
+    justify-content: center;
+    height: 24px;
+    min-height: 24px;
+    width: 36px;
+    padding: 0;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-toggle {
+    display: grid;
+    grid-template-columns: 1fr;
+    place-items: center;
+    width: 28px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-soft);
+    box-shadow: none;
+    transition:
+      background-color 140ms ease,
+      color 140ms ease,
+      transform 140ms ease;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-toggle:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-toggle:focus-visible {
+    background: var(--surface-selected);
+    color: var(--text-strong);
+    transform: translateX(2px);
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-heading {
+    display: none;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-chevron {
+    justify-self: center;
+    width: 13px;
+    height: 13px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-list,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section:first-of-type .sidebar-section-list,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section:last-of-type .sidebar-section-list {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    width: 44px;
+    margin: 0 -4px;
+    padding: 2px 4px;
+    overflow: visible;
+    animation: sidebar-rail-section-in 170ms ease-out both;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-section-body {
+    display: grid;
+    justify-items: center;
+    width: 44px;
+    margin: 0 -4px;
+    overflow: visible;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-section-body > .sidebar-section-list {
+    max-height: var(--sidebar-rail-section-open-height, 960px);
+    margin: 0;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    transform-origin: top center;
+    visibility: visible;
+    transition:
+      max-height 260ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 170ms ease,
+      padding 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0s;
+    will-change: max-height, opacity, transform;
+    animation: none;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-preview {
+    display: grid;
+    justify-items: center;
+    width: 44px;
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transform: translateY(7px) scale(0.96);
+    transform-origin: top center;
+    visibility: hidden;
+    transition:
+      max-height 260ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 170ms ease,
+      transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 240ms;
+    will-change: max-height, opacity, transform;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section.collapsed .sidebar-rail-section-body > .sidebar-section-list {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-7px) scale(0.98);
+    visibility: hidden;
+    transition-delay: 0s, 0s, 0s, 0s, 240ms;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section.collapsed .sidebar-rail-preview {
+    max-height: var(--sidebar-rail-section-preview-height, 136px);
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    visibility: visible;
+    transition-delay: 0s, 0s, 0s, 0s;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 36px;
+    padding: 1px 0 3px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack > * + * {
+    margin-top: -7px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack-avatar,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack-icon,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack-more {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+    font-size: 10px;
+    font-weight: 760;
+    line-height: 1;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack-more {
+    background: var(--surface-selected);
+    color: var(--text-strong);
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack-avatar > .avatar-initial,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack-avatar > .teammate-avatar-image.compact,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-rail-stack .sidebar-channel-avatar {
+    border: 0;
+    box-shadow: none;
+  }
+
   .app-shell.channel-drawer-shell .sidebar-brand-button,
   .app-shell.channel-drawer-shell .channel-sidebar-switch,
   .app-shell.channel-drawer-shell .sidebar-command-button,
@@ -715,18 +1208,12 @@
   .app-shell.channel-drawer-shell .sidebar-brand-copy,
   .app-shell.channel-drawer-shell .sidebar-command-button span,
   .app-shell.channel-drawer-shell .channel-left-drawer .nav-item span,
-  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-title > span:first-child,
   .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row span:not(.avatar-initial):not(.channel-mention):not(.channel-unread),
   .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-main span:not(.sidebar-channel-avatar):not(.channel-mention):not(.channel-unread),
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-recent-copy,
   .app-shell.channel-drawer-shell .channel-left-drawer .config-button-label,
   .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-inbox-alert span:not(.status-dot) {
     display: none;
-  }
-
-  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-title {
-    justify-content: center;
-    height: 8px;
-    padding: 0;
   }
 
   .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-menu,
@@ -751,8 +1238,67 @@
 
   .app-shell.channel-drawer-shell .channel-left-drawer .teammate-avatar-image.compact,
   .app-shell.channel-drawer-shell .channel-left-drawer .avatar-initial {
-    width: 20px;
-    height: 20px;
+    width: 26px;
+    height: 26px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-channel-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 9px;
+    font-size: 11px;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .nav-item,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-main,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-shell,
+  .app-shell.channel-drawer-shell .channel-left-drawer .config-button,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-command-button,
+  .app-shell.channel-drawer-shell .channel-left-drawer .channel-sidebar-switch,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-brand-button {
+    position: relative;
+    z-index: 0;
+    transition:
+      transform 140ms ease,
+      box-shadow 140ms ease,
+      background-color 140ms ease,
+      color 140ms ease;
+    will-change: transform;
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .nav-item:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .nav-item:focus-visible,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row:focus-visible,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-shell:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-shell:focus-within,
+  .app-shell.channel-drawer-shell .channel-left-drawer .config-button:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .config-button:focus-visible,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-command-button:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-command-button:focus-visible,
+  .app-shell.channel-drawer-shell .channel-left-drawer .channel-sidebar-switch:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .channel-sidebar-switch:focus-visible,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-brand-button:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-brand-button:focus-visible {
+    z-index: 5;
+    background: var(--surface-panel);
+    color: var(--text-strong);
+    box-shadow: 0 10px 24px rgba(17, 17, 17, 0.14);
+    transform: translateX(5px);
+  }
+
+  .app-shell.channel-drawer-shell .sidebar-command-button {
+    border-color: transparent;
+    background: var(--surface-selected);
+    color: var(--text-strong);
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-command-button:hover,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-command-button:focus-visible {
+    border-color: var(--text-strong);
+    background: var(--text-strong);
+    color: var(--surface-panel);
   }
 
   .app-shell.channel-drawer-shell .channel-left-drawer .channel-mention {
@@ -815,4 +1361,31 @@
   .teammate-workspace.chat-mode {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.app-shell.settings-fullscreen-shell,
+.app-shell.settings-fullscreen-shell.inspector-hidden,
+.app-shell.settings-fullscreen-shell.inspector-collapsed,
+.app-shell.settings-fullscreen-shell.channel-drawer-shell,
+.app-shell.settings-fullscreen-shell.channel-drawer-shell.inspector-hidden,
+.app-shell.settings-fullscreen-shell.channel-sidebar-collapsed.inspector-collapsed {
+  grid-template-areas: "workspace";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.app-shell.settings-fullscreen-shell > .workspace.workspace-settings-surface {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.app-shell.settings-fullscreen-shell .settings-layout {
+  min-height: 100dvh;
+}
+
+.app-shell.settings-fullscreen-shell .settings-section-nav {
+  min-height: 100dvh;
 }

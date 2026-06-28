@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  ArrowLeft,
   Archive,
   Bot,
   CircleAlert,
@@ -190,6 +191,7 @@ export function SettingsPage({
   onOpenProviders,
   onOpenTeammates,
   onOpenWorkBoard,
+  onBackToApplication,
 }: {
   readonly cwd: string;
   readonly policy: ApprovalPolicy | undefined;
@@ -276,6 +278,7 @@ export function SettingsPage({
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
   readonly onOpenWorkBoard: () => void;
+  readonly onBackToApplication?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [externalWorkToken, setExternalWorkToken] = useState("");
@@ -426,6 +429,12 @@ export function SettingsPage({
   return (
     <div className="settings-layout">
       <nav className="settings-section-nav" aria-label={t("Settings sections")}>
+        {onBackToApplication ? (
+          <button className="settings-app-return-button" type="button" onClick={onBackToApplication}>
+            <ArrowLeft size={17} />
+            <span>{t("Back to app")}</span>
+          </button>
+        ) : null}
         {settingsSectionGroups.map((group, groupIndex) => (
           <div key={group.heading ?? `primary-${groupIndex}`} className="settings-section-group">
             {group.heading ? <span className="settings-section-group-label">{t(group.heading)}</span> : null}
