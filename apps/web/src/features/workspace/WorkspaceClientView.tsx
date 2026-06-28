@@ -6208,70 +6208,102 @@ export function WorkspaceClientView({
 
   return (
     <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
-      <header className="channel-header task-workbench-header">
+      <header className={channelSettingsPageOpen ? "channel-header task-workbench-header settings-page-header" : "channel-header task-workbench-header"}>
         <div className="channel-title-area">
-          <div className="channel-title-line">
-            <span className="channel-title-icon" aria-hidden="true">#</span>
-            <h1>{selectedChannel?.name ?? "Engineering"}</h1>
-            {selectedChannelWorkspace ? (
-              <button
-                className={`channel-workspace-badge ${selectedChannelWorkspace.mode} ${selectedChannelWorkspace.status}`}
-                type="button"
-                onClick={openChannelSettingsPage}
-                title={selectedChannelExecutionPath}
-              >
-                {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 13)}
-                <span>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</span>
-                <small>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
+          {channelSettingsPageOpen ? (
+            <div className="channel-settings-header-line">
+              <button className="channel-settings-top-back" type="button" onClick={closeChannelSettingsPage}>
+                <ArrowLeft size={16} />
+                {t("Back to channel")}
               </button>
-            ) : null}
-            <div className="channel-more-wrap" ref={channelMoreRef}>
-              <button
-                className={channelMoreOpen ? "icon-button channel-more-button active" : "icon-button channel-more-button"}
-                type="button"
-                aria-expanded={channelMoreOpen}
-                aria-label={t("More channel views")}
-                title={t("More channel views")}
-                onClick={() => setChannelMoreOpen((current) => !current)}
-              >
-                <MoreHorizontal size={17} />
-              </button>
-              {channelMoreOpen ? (
-                <div className="channel-more-menu" role="menu" aria-label={t("More channel views")}>
-	                  {channelSidePanelRootViews.map((view) => (
-	                    <button
-	                      key={view}
-	                      className={sidePanelOpen && sidePanelView === view ? "channel-more-item active" : "channel-more-item"}
+              <div className="channel-settings-header-title">
+                <span>
+                  <SlidersHorizontal size={17} />
+                  <strong>{t("Channel settings")}</strong>
+                </span>
+                <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
+              </div>
+            </div>
+          ) : (
+            <div className="channel-title-line">
+              <span className="channel-title-icon" aria-hidden="true">#</span>
+              <h1>{selectedChannel?.name ?? "Engineering"}</h1>
+              {selectedChannelWorkspace ? (
+                <button
+                  className={`channel-workspace-badge ${selectedChannelWorkspace.mode} ${selectedChannelWorkspace.status}`}
+                  type="button"
+                  onClick={openChannelSettingsPage}
+                  title={selectedChannelExecutionPath}
+                >
+                  {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 13)}
+                  <span>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</span>
+                  <small>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
+                </button>
+              ) : null}
+              <div className="channel-more-wrap" ref={channelMoreRef}>
+                <button
+                  className={channelMoreOpen ? "icon-button channel-more-button active" : "icon-button channel-more-button"}
+                  type="button"
+                  aria-expanded={channelMoreOpen}
+                  aria-label={t("More channel views")}
+                  title={t("More channel views")}
+                  onClick={() => setChannelMoreOpen((current) => !current)}
+                >
+                  <MoreHorizontal size={17} />
+                </button>
+                {channelMoreOpen ? (
+                  <div className="channel-more-menu" role="menu" aria-label={t("More channel views")}>
+                    <button
+                      className={channelSettingsPageOpen ? "channel-more-item active" : "channel-more-item"}
                       type="button"
                       role="menuitem"
-                      onClick={() => openSidePanelView(view)}
+                      onClick={openChannelSettingsPage}
                     >
-                      {channelSidePanelIcon(view, 15)}
-	                      <span>{t(channelSidePanelLabel(view))}</span>
-	                    </button>
-	                  ))}
-	                  <button
-	                    className={activityToolsOpen ? "channel-more-item active" : "channel-more-item"}
-	                    type="button"
-	                    role="menuitem"
-	                    onClick={() => {
-	                      setActivityToolsOpen(true);
-	                      setActivityFiltersExpanded(false);
-	                      setChannelMoreOpen(false);
-	                      setSidePanelOpen(false);
+                      <SlidersHorizontal size={15} />
+                      <span>{t("Settings")}</span>
+                    </button>
+                    {channelSidePanelRootViews.map((view) => (
+                      <button
+                        key={view}
+                        className={sidePanelOpen && sidePanelView === view ? "channel-more-item active" : "channel-more-item"}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => openSidePanelView(view)}
+                      >
+                        {channelSidePanelIcon(view, 15)}
+                        <span>{t(channelSidePanelLabel(view))}</span>
+                      </button>
+                    ))}
+                    <button
+                      className={activityToolsOpen ? "channel-more-item active" : "channel-more-item"}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActivityToolsOpen(true);
+                        setActivityFiltersExpanded(false);
+                        setChannelMoreOpen(false);
+                        setSidePanelOpen(false);
                         setChannelSettingsPageOpen(false);
-	                      setTeammateManagerOpen(false);
-	                    }}
-	                  >
-	                    <SlidersHorizontal size={15} />
-	                    <span>{t("Filter channel events")}</span>
-	                  </button>
-	                </div>
-	              ) : null}
-	            </div>
-	          </div>
+                        setTeammateManagerOpen(false);
+                      }}
+                    >
+                      <SlidersHorizontal size={15} />
+                      <span>{t("Filter channel events")}</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
         </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
+          {channelSettingsPageOpen ? (
+            <button className="secondary-button compact-button channel-settings-refresh-button" type="button" onClick={refreshChannelSettingsPage} disabled={!selectedChannelId || channelSettingsLoading}>
+              {channelSettingsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+              {t("Refresh")}
+            </button>
+          ) : (
+            <>
           {channelHeaderTeammateCount > 0 ? (
             <button
               ref={teammateManagerButtonRef}
@@ -6346,19 +6378,6 @@ export function WorkspaceClientView({
             </button>
           ) : null}
           <button
-            className={channelSettingsPageOpen ? "icon-button active task-toolbar-settings" : "icon-button task-toolbar-settings"}
-            type="button"
-            aria-expanded={channelSettingsPageOpen}
-            aria-label={t("Settings")}
-            title={t("Settings")}
-            onClick={() => {
-              openChannelSettingsPage();
-              onChannelCreateOpenChange(false);
-            }}
-          >
-            <SlidersHorizontal size={15} />
-          </button>
-          <button
             className={progressPopoverVisible ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
             type="button"
             aria-label={t("Progress")}
@@ -6397,6 +6416,8 @@ export function WorkspaceClientView({
           >
             {sidePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
           </button>
+            </>
+          )}
         </div>
         {progressPopoverVisible ? (
           <div className="channel-progress-popover">
@@ -6520,23 +6541,6 @@ export function WorkspaceClientView({
       >
         {channelSettingsPageOpen ? (
           <section className="channel-settings-page" aria-label={t("Channel settings")}>
-            <div className="channel-settings-page-head">
-              <button className="secondary-button compact-button channel-settings-back-button" type="button" onClick={closeChannelSettingsPage}>
-                <ArrowLeft size={15} />
-                {t("Back to channel")}
-              </button>
-              <div className="channel-settings-page-title">
-                <span>
-                  <SlidersHorizontal size={16} />
-                  <strong>{t("Channel settings")}</strong>
-                </span>
-                <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
-              </div>
-              <button className="secondary-button compact-button channel-settings-refresh-button" type="button" onClick={refreshChannelSettingsPage} disabled={!selectedChannelId || channelSettingsLoading}>
-                {channelSettingsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-                {t("Refresh")}
-              </button>
-            </div>
             {channelSettingsContent}
           </section>
         ) : (

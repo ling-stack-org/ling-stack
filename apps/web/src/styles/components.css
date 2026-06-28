@@ -5210,6 +5210,11 @@ code,
   padding: 0 18px;
 }
 
+.task-workbench-header.settings-page-header {
+  min-height: 58px;
+  padding: 0 22px;
+}
+
 .channel-title-area {
   min-width: 0;
 }
@@ -5225,6 +5230,67 @@ code,
   font-size: 15px;
   font-weight: 650;
   line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-settings-header-line,
+.channel-settings-header-title,
+.channel-settings-header-title span,
+.channel-settings-top-back {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.channel-settings-header-line {
+  gap: 16px;
+}
+
+.channel-settings-top-back {
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px 0 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.channel-settings-top-back:hover {
+  background: var(--surface-selected);
+}
+
+.channel-settings-header-title {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.channel-settings-header-title span {
+  gap: 7px;
+  color: var(--text);
+}
+
+.channel-settings-header-title strong {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-settings-header-title small {
+  overflow: hidden;
+  max-width: min(360px, 44vw);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6141,7 +6207,7 @@ code,
 
 .channel-settings-page {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   height: 100%;
