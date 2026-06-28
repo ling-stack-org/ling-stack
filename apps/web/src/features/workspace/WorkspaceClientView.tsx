@@ -131,6 +131,7 @@ import {
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
   buildLocalEffectivePolicyPreview,
+  conversationPermissionPresetMenuOptions,
   formatToolDecisionGroups,
   inferPermissionPreset,
   permissionModeForPreset,
@@ -4693,6 +4694,7 @@ export function WorkspaceClientView({
         <MessageActionBar
           surface={surface}
           className="channel-message-ai-actions"
+          copiedLabel={t("Copied")}
           actions={[
             {
               id: "copy",
@@ -5529,8 +5531,10 @@ export function WorkspaceClientView({
           </button>
           <ComposerPermissionMenu
             preset={channelComposerPermissionPreset}
+            options={conversationPermissionPresetMenuOptions(t)}
             disabled={channelComposerPermissionLocked}
             disabledReason={t("Permission is locked while this channel run or message is active.")}
+            fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
             onPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
           />
         </>

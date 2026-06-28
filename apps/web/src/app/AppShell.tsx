@@ -75,7 +75,6 @@ import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammat
 import { readDataString } from "../lib/data.js";
 import { getStartupStatus, refreshStartupStatus } from "../api/startup.js";
 import { getUserProfile } from "../api/profile.js";
-import { selectWorkspaceDirectory } from "../api/workspace-directory.js";
 import {
   getChannelCouncilPolicy,
   updateChannelCouncilPolicy,
@@ -1143,29 +1142,6 @@ export function AppShell(): JSX.Element {
     setActiveSidebarTarget("workspace");
   }
 
-  async function chooseConversationProjectDirectory(): Promise<{ readonly projectPath?: string; readonly projectLabel?: string } | undefined> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage(t("Local workspace is not ready."));
-      return undefined;
-    }
-
-    try {
-      const response = await selectWorkspaceDirectory(workspaceCwd);
-      if (response.cancelled) {
-        return undefined;
-      }
-      setErrorMessage("");
-      return {
-        projectPath: response.path,
-        projectLabel: response.label,
-      };
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return undefined;
-    }
-  }
-
   function selectRecentConversation(conversation: SidebarRecentConversation): void {
     setSettingsReturnSection("");
     setThreadPageTargetId("");
@@ -2005,7 +1981,6 @@ export function AppShell(): JSX.Element {
                   modelOptions={conversationModelOptions}
                   slashCommands={slashCommands}
                   workspaceCwd={form.cwd}
-                  onChooseProjectDirectory={chooseConversationProjectDirectory}
                   sending={conversationStreamBusy}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                   onSendConversation={async (input) => {

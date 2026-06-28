@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FocusEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import {
   ArrowUp,
@@ -8,11 +8,8 @@ import {
   Copy,
   File,
   FileText,
-  Folder,
-  FolderPlus,
   Loader2,
   PackagePlus,
-  Paperclip,
   Plus,
   Presentation,
   Search,
@@ -50,7 +47,7 @@ import {
   MessageRow,
   type MessageRowAuthorType,
 } from "../../shared/conversation/index.js";
-import { inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
+import { conversationPermissionPresetMenuOptions, inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
 import { buildConversationWorkCellViewModel, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 
@@ -121,7 +118,6 @@ export function ConversationHome({
   defaultProviderPresetId,
   modelOptions,
   slashCommands,
-  onChooseProjectDirectory,
   workspaceCwd,
   sending = false,
   onOpenRun,
@@ -141,7 +137,6 @@ export function ConversationHome({
   readonly modelOptions: readonly ConversationHomeModelOption[];
   readonly slashCommands: readonly ComposerSlashCommandOption[];
   readonly workspaceCwd: string;
-  readonly onChooseProjectDirectory: () => Promise<ConversationHomeProjectSelection | undefined>;
   readonly sending?: boolean;
   readonly onOpenRun?: (runId: string) => void;
   readonly onSendConversation: (input: ConversationHomeSendInput) => Promise<void>;
@@ -153,9 +148,6 @@ export function ConversationHome({
   const [notice, setNotice] = useState("");
   const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
-  const [skillMenuVisible, setSkillMenuVisible] = useState(false);
-  const [folderMenuOpen, setFolderMenuOpen] = useState(false);
-  const [folderPickerBusy, setFolderPickerBusy] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
@@ -168,7 +160,6 @@ export function ConversationHome({
     projectPath: initialProjectPath.trim() || undefined,
     projectLabel: initialProjectLabel.trim() || undefined,
   }));
-  const folderPickerRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const thinkingPickerRef = useRef<HTMLDivElement>(null);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
@@ -180,7 +171,6 @@ export function ConversationHome({
       .filter((id): id is string => Boolean(id)),
     [pendingAttachments],
   );
-  const visibleCommands = useMemo(() => slashCommands.slice(0, 4), [slashCommands]);
   const slashCommandPickerOptions = useMemo(
     () => filterSlashCommandPickerOptions(slashCommands, slashPicker),
     [slashCommands, slashPicker],
@@ -233,7 +223,6 @@ export function ConversationHome({
     }),
     [draft, project.projectPath, slashCommands],
   );
-  const effectiveProjectLabel = project.projectLabel || (project.projectPath ? summarizePathLabel(project.projectPath) : "");
 
   function toggleMessageFeedback(messageId: string, feedback: "up" | "down"): void {
     setMessageFeedbackById((current) => {
@@ -261,7 +250,6 @@ export function ConversationHome({
       projectPath: initialProjectPath.trim() || undefined,
       projectLabel: initialProjectLabel.trim() || undefined,
     });
-    setFolderMenuOpen(false);
   }, [initialProjectLabel, initialProjectPath]);
 
   useEffect(() => {
@@ -277,27 +265,24 @@ export function ConversationHome({
   }, [initialPermissionMode, initialPermissionPreset]);
 
   useEffect(() => {
-    if (!folderMenuOpen && !modelMenuOpen && !thinkingMenuOpen) {
+    if (!modelMenuOpen && !thinkingMenuOpen) {
       return undefined;
     }
 
     function handlePointerDown(event: PointerEvent): void {
       const target = event.target as Node | null;
       if (
-        folderPickerRef.current?.contains(target) ||
         modelPickerRef.current?.contains(target) ||
         thinkingPickerRef.current?.contains(target)
       ) {
         return;
       }
-      setFolderMenuOpen(false);
       setModelMenuOpen(false);
       setThinkingMenuOpen(false);
     }
 
     function handleKeyDown(event: globalThis.KeyboardEvent): void {
       if (event.key === "Escape") {
-        setFolderMenuOpen(false);
         setModelMenuOpen(false);
         setThinkingMenuOpen(false);
       }
@@ -309,7 +294,7 @@ export function ConversationHome({
       document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [folderMenuOpen, modelMenuOpen, thinkingMenuOpen]);
+  }, [modelMenuOpen, thinkingMenuOpen]);
 
   useEffect(() => {
     if (!thinkingEnabled) {
@@ -454,17 +439,6 @@ export function ConversationHome({
     setNotice("");
   }
 
-  function insertSkill(command: ComposerSlashCommandOption): void {
-    setDraft((current) => {
-      const suffix = current.trim() ? ` ${current.trim()}` : "";
-      return `/${command.id}${suffix}`;
-    });
-    setSlashPicker(undefined);
-    setSlashActiveIndex(0);
-    setSkillMenuVisible(false);
-    setNotice("");
-  }
-
   function updateSlashPicker(value: string, caret: number): void {
     setSlashPicker(findActiveSlashCommand(value, caret));
     setSlashActiveIndex(0);
@@ -495,34 +469,9 @@ export function ConversationHome({
     focusComposerAt(inserted.caret);
   }
 
-  function handleSkillLauncherBlur(event: FocusEvent<HTMLDivElement>): void {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      setSkillMenuVisible(false);
-    }
-  }
-
   function applyShortcut(prompt: string): void {
     setDraft(prompt);
     setNotice("");
-  }
-
-  async function chooseNewProject(): Promise<void> {
-    if (folderPickerBusy) {
-      return;
-    }
-    setFolderPickerBusy(true);
-    setNotice("");
-    try {
-      const selection = await onChooseProjectDirectory();
-      if (selection?.projectPath) {
-        setProject(selection);
-      }
-      setFolderMenuOpen(false);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : t("Folder picker unavailable."));
-    } finally {
-      setFolderPickerBusy(false);
-    }
   }
 
   async function attachConversationFiles(files: FileList | readonly File[]): Promise<void> {
@@ -672,7 +621,7 @@ export function ConversationHome({
         leftToolsNode={(
           <>
             <label className="icon-button composer-tool-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
-              <Paperclip size={16} />
+              <Plus size={17} />
               <input
                 type="file"
                 multiple
@@ -686,45 +635,12 @@ export function ConversationHome({
                 }}
               />
             </label>
-            <div
-              className="conversation-skill-launcher"
-              onMouseEnter={() => setSkillMenuVisible(true)}
-              onMouseLeave={() => setSkillMenuVisible(false)}
-              onFocus={() => setSkillMenuVisible(true)}
-              onBlur={handleSkillLauncherBlur}
-            >
-              <button
-                type="button"
-                aria-label={t("Skills")}
-                title={t("Skills")}
-                aria-haspopup="listbox"
-                aria-expanded={skillMenuVisible}
-              >
-                <Plus size={15} />
-              </button>
-              {skillMenuVisible ? (
-                <div className="conversation-skill-popover" role="listbox" aria-label={t("Skill menu")}>
-                  <div className="conversation-skill-tabs" aria-hidden="true">
-                    <span>{t("Skills")}</span>
-                    <span>{t("AI teammates")}</span>
-                  </div>
-                  <div className="conversation-skill-list">
-                    {visibleCommands.length > 0 ? visibleCommands.map((command) => (
-                      <button key={command.id} type="button" onClick={() => insertSkill(command)}>
-                        <span>/{command.id}</span>
-                        <small>{command.label}</small>
-                      </button>
-                    )) : (
-                      <span className="conversation-skill-empty">{t("No visible skills")}</span>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-            </div>
             <ComposerPermissionMenu
               preset={selectedPermissionPreset}
+              options={conversationPermissionPresetMenuOptions(t)}
               disabled={sendBusy}
               disabledReason={t("Permission is locked while the current message is running.")}
+              fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
               onPresetChange={setSelectedPermissionPreset}
             />
           </>
@@ -833,55 +749,6 @@ export function ConversationHome({
         )}
         feedbackNode={notice ? <div className="conversation-home-notice" role="status">{notice}</div> : null}
       />
-      <div className="conversation-folder-row">
-        <div className="conversation-folder-picker" ref={folderPickerRef}>
-          <button
-            className="conversation-folder-trigger"
-            type="button"
-            aria-label={effectiveProjectLabel ? t("Selected folder {label}", { label: effectiveProjectLabel }) : t("Select folder")}
-            aria-haspopup="menu"
-            aria-expanded={folderMenuOpen}
-            title={project.projectPath}
-            onClick={() => setFolderMenuOpen((current) => !current)}
-          >
-            <Folder size={16} />
-            <span>{effectiveProjectLabel || t("Select folder")}</span>
-            <ChevronDown className={folderMenuOpen ? "expanded" : ""} size={13} />
-          </button>
-          {folderMenuOpen ? (
-            <div className="conversation-folder-popover" role="menu" aria-label={t("Project folder options")}>
-              {project.projectPath ? (
-                <>
-                  <span className="conversation-folder-section-label">{t("Recent")}</span>
-                  <button
-                    className="conversation-folder-option has-tooltip"
-                    type="button"
-                    role="menuitem"
-                    onClick={() => setFolderMenuOpen(false)}
-                  >
-                    <Folder size={15} />
-                    <span className="conversation-folder-option-copy">
-                      <strong>{effectiveProjectLabel}</strong>
-                      <small>{project.projectPath}</small>
-                    </span>
-                    <span className="conversation-folder-tooltip" role="tooltip">{project.projectPath}</span>
-                  </button>
-                </>
-              ) : null}
-              <button
-                className="conversation-folder-option"
-                type="button"
-                role="menuitem"
-                disabled={folderPickerBusy}
-                onClick={() => void chooseNewProject()}
-              >
-                <FolderPlus size={15} />
-                <span>{folderPickerBusy ? t("Selecting project...") : t("Choose new project")}</span>
-              </button>
-            </div>
-          ) : null}
-        </div>
-      </div>
     </>
   );
 
@@ -946,6 +813,7 @@ export function ConversationHome({
                     <MessageActionBar
                       surface="normal_conversation"
                       className="normal-conversation-message-actions"
+                      copiedLabel={t("Copied")}
                       actions={[
                         {
                           id: "copy",
@@ -1021,12 +889,6 @@ export function ConversationHome({
       </div>
     </section>
   );
-}
-
-function summarizePathLabel(path: string): string {
-  const normalizedPath = path.replace(/[\\/]+$/u, "");
-  const label = normalizedPath.split(/[\\/]/u).filter(Boolean).at(-1);
-  return label || path;
 }
 
 function modelTriggerLabel(option: ConversationHomeModelOption): string {

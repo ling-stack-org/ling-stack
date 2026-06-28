@@ -26,6 +26,7 @@ Source docs:
 
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
+- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
 - [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
@@ -410,23 +411,26 @@ Evidence:
 
 ## P12. Package Extraction Gate
 
-- [x] Do not extract `packages/conversation-ui-core` until channel and private chat share
-  stable Web-local APIs.
-- [x] Define the future core package scope: headless types, renderer registry contracts,
+- [x] Gate condition passed for first-wave package extraction: channel, normal
+  conversation, and private chat share stable Web-local composer/message/feed/action
+  primitives.
+- [x] Define the core package scope: headless types, renderer registry contracts,
   action contracts, token names, command-output folding, grouping helpers, and preview
   metadata helpers.
-- [x] Do not extract `packages/conversation-ui-react` until React components are
-  app-agnostic.
+- [x] Define the active `packages/conversation-ui-react` first-wave scope:
+  composer shell, tokenized input, message/feed primitives, action bar, source/avatar
+  stacks, status strip, and guidance strip.
 - [x] Keep daemon/API client, route state, app shell, membership, settings, and private
   memory policy outside shared UI packages.
 
 Acceptance:
 
-- [x] No package extraction happens in this slice; Web-local internal modularization is
-  complete first.
-- [x] Future shared UI packages must not import daemon routes, API clients, or app shell
+- [x] `packages/conversation-ui-core` exists for pure policy/action filtering.
+- [x] Create `packages/conversation-ui-react` in the next slice and move only first-wave
+  app-agnostic components.
+- [x] Shared UI packages must not import daemon routes, API clients, or app shell
   modules.
-- [x] Web still owns channel/private assembly after extraction.
+- [x] Web still owns channel/normal/private assembly after extraction.
 
 Evidence:
 
@@ -434,16 +438,19 @@ Evidence:
   `packages/conversation-ui-core` and `packages/conversation-ui-react` ownership and
   exclusions.
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
-  defines the package extraction sequence and keeps extraction after shared Web-local
-  APIs stabilize.
+  defines the active first-wave `conversation-ui-react` extraction sequence.
+- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
+  defines the exact component migration map, slot refactors, dependency guards, and
+  validation commands for that next slice, and now records the first-wave implementation
+  status.
 - P11 now places Web-local primitives under app-agnostic internal areas without creating
   a misleading package boundary.
 
 ## P13. Desktop And Future PC Surface Sync Gate
 
 - [x] Define that Desktop consumes `ConversationTranscript` snapshot/delta from daemon.
-- [x] Define that Desktop uses future `conversation-ui-core` semantics.
-- [x] Define that Desktop reuses future `conversation-ui-react` where practical for
+- [x] Define that Desktop uses `conversation-ui-core` semantics.
+- [x] Define that Desktop reuses `conversation-ui-react` where practical for
   Electron/Tauri renderer.
 - [x] Define that Desktop may map tokens to native visual treatment, but must not fork
   transcript semantics.

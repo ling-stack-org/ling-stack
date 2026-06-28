@@ -1,24 +1,79 @@
+export {
+  ComposerPermissionMenu,
+  ConversationComposerShell,
+  ConversationEmptyState,
+  ConversationFeed,
+  ConversationGuidanceStrip,
+  ConversationShell,
+  ConversationStatusStrip,
+  CopyActionButton,
+  MessageActionBar,
+  MessageBodyRenderer,
+  MessageBubble,
+  MessageRow,
+  SourceIconStack,
+  TeammateAvatarStack,
+  TokenizedComposerInput,
+  type ComposerPermissionMenuProps,
+  type ConversationComposerDensity,
+  type ConversationComposerShellProps,
+  type ConversationComposerSurface,
+  type ConversationEmptyStateProps,
+  type ConversationFeedProps,
+  type ConversationGuidanceItem,
+  type ConversationGuidanceStripProps,
+  type ConversationShellProps,
+  type ConversationStatusAction,
+  type ConversationStatusMetaItem,
+  type ConversationStatusStripProps,
+  type CopyActionButtonProps,
+  type MessageActionBarAction,
+  type MessageActionBarProps,
+  type MessageActionKind,
+  type MessageBodyRendererProps,
+  type MessageBubbleProps,
+  type MessageBubbleTone,
+  type MessageRowAuthorType,
+  type MessageRowProps,
+  type SourceIconKind,
+  type SourceIconStackItem,
+  type SourceIconStackProps,
+  type TeammateAvatarStackItem,
+  type TeammateAvatarStackProps,
+  type TokenizedComposerInputHandle,
+  type TokenizedComposerInputProps,
+} from "@ling-stack/conversation-ui-react";
+export {
+  composerSlashCommandParts,
+  composerUrlReferenceParts,
+  composerWorkspaceFileParts,
+  filterSlashCommandPickerOptions,
+  findActiveSlashCommand,
+  insertSlashCommandToken,
+  parseComposerInputParts,
+  parseLocalFileReference,
+  parseMessageBody,
+  removeComposerInputRawToken,
+  serializeComposerInputParts,
+  splitInlineTokens,
+  type ActiveSlashCommandPicker,
+  type ComposerInputPart,
+  type LocalFileReference,
+  type MessageBodyBlock,
+  type MessageInlineToken,
+} from "@ling-stack/conversation-ui-core";
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
-export { ConversationEmptyState, type ConversationEmptyStateProps } from "./blocks/ConversationEmptyState.js";
 export { ConversationEvidenceBundlePanel, type ConversationEvidenceBundle, type ConversationEvidenceBundlePanelProps, type ConversationEvidenceItem, type ConversationEvidenceSection } from "./blocks/ConversationEvidenceBundlePanel.js";
-export { ConversationFeed, type ConversationFeedProps } from "./blocks/ConversationFeed.js";
-export { ConversationGuidanceStrip, type ConversationGuidanceItem } from "./feedback/ConversationGuidanceStrip.js";
 export { MessageEvidencePanel } from "./blocks/MessageEvidencePanel.js";
-export { ConversationShell, type ConversationShellProps } from "./blocks/ConversationShell.js";
-export { ConversationStatusStrip, type ConversationStatusAction, type ConversationStatusMetaItem, type ConversationStatusStripProps } from "./feedback/ConversationStatusStrip.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
 export { ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
-export { MessageActionBar, type MessageActionBarAction, type MessageActionBarProps, type MessageActionKind } from "./feedback/MessageActionBar.js";
-export { SourceIconStack, type SourceIconKind, type SourceIconStackItem, type SourceIconStackProps } from "./identity/SourceIconStack.js";
-export { TeammateAvatarStack, type TeammateAvatarStackItem, type TeammateAvatarStackProps } from "./identity/TeammateAvatarStack.js";
 export { ConversationViewProvider, useOptionalConversationViewStore, type ConversationViewProviderProps } from "./view-store/conversation-view-provider.js";
 export { TranscriptBlockView, transcriptBlockViewKey, type TranscriptBlockViewProps } from "./blocks/TranscriptBlockView.js";
 export { EvidenceDisclosure, type EvidenceDisclosureProps } from "./blocks/EvidenceDisclosure.js";
 export { ArtifactPreview, type ArtifactPreviewProps } from "./preview/ArtifactPreview.js";
 export { ArtifactPreviewDrawer, type ArtifactPreviewDrawerProps } from "./preview/ArtifactPreviewDrawer.js";
 export { CodeBlock, type CodeBlockProps } from "./blocks/CodeBlock.js";
-export { CopyActionButton, type CopyActionButtonProps } from "./feedback/CopyActionButton.js";
 export { DiffCodeBlock, type DiffCodeBlockProps } from "./blocks/DiffCodeBlock.js";
 export { DiffFileSummary, type DiffFileSummaryProps } from "./blocks/DiffFileSummary.js";
 export { DiffViewer, type DiffViewerProps } from "./blocks/DiffViewer.js";
@@ -26,10 +81,7 @@ export { FileChangeEvidencePanel, type FileChangeEvidencePanelProps } from "./bl
 export { FileRefChip, type FileRefChipProps } from "./blocks/FileRefChip.js";
 export { ImageCompareViewer, type ImageCompareViewerProps } from "./preview/ImageCompareViewer.js";
 export { LocalFileLink, type LocalFileLinkProps } from "./blocks/LocalFileLink.js";
-export { MessageBodyRenderer, type MessageBodyRendererProps } from "./blocks/MessageBodyRenderer.js";
-export { MessageBubble, type MessageBubbleProps, type MessageBubbleTone } from "./blocks/MessageBubble.js";
 export { MessageFooterActions, type MessageFooterAction, type MessageFooterActionsProps } from "./blocks/MessageFooterActions.js";
-export { MessageRow, type MessageRowAuthorType, type MessageRowProps } from "./blocks/MessageRow.js";
 export { OperationBubble, type OperationBubbleProps } from "./blocks/OperationBubble.js";
 export { OperationBubbleActions, type OperationBubbleActionsProps } from "./blocks/OperationBubbleActions.js";
 export { OperationBubbleBody, type OperationBubbleBodyProps } from "./blocks/OperationBubbleBody.js";
@@ -42,11 +94,6 @@ export { useConversationSpanView, type ConversationSpanViewState } from "./view-
 export { useConversationViewReconciliation } from "./view-store/use-conversation-view-reconciliation.js";
 export type { ConversationViewRetainKeys } from "./view-store/conversation-view-store.js";
 export { RightDrawer, type RightDrawerNavItem, type RightDrawerProps } from "./blocks/RightDrawer.js";
-export { ComposerPermissionMenu, type ComposerPermissionMenuProps } from "./composer/ComposerPermissionMenu.js";
-export { ConversationComposerShell, type ConversationComposerDensity, type ConversationComposerShellProps, type ConversationComposerSurface } from "./composer/ConversationComposerShell.js";
-export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "./composer/TokenizedComposerInput.js";
-export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer/composer-input-parts.js";
-export { filterSlashCommandPickerOptions, findActiveSlashCommand, insertSlashCommandToken, type ActiveSlashCommandPicker } from "./composer/slash-command-picker.js";
 export {
   conversationTranscriptFixtures,
   createTranscriptBlockRendererRegistry,
@@ -69,7 +116,6 @@ export {
   type TranscriptDisplayLineTone,
   type TranscriptExpandedDetail,
 } from "./transcript/index.js";
-export { parseLocalFileReference, parseMessageBody, splitInlineTokens, type LocalFileReference, type MessageBodyBlock, type MessageInlineToken } from "./tokens/message-body.js";
 export type {
   ConversationEvidenceMode,
   ConversationRawDetailMode,

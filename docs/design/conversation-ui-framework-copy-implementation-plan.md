@@ -14,6 +14,7 @@ Related docs:
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
+- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
 - [Ling Agent Session Implementation Plan](ling-agent-session-implementation-plan.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
@@ -91,10 +92,11 @@ Ling Agent completion duplicate
 | Shared conversation UI baseline | Landed | PR #273 unified normal conversation, channel assistant turn ordering, private chat row treatment, and shared empty states |
 | Conversation Surface Contract | Current next slice | Formalize shared action bar, avatar/source stacks, surface policy, compact evidence/work parity, and regression invariants |
 | Capability parity | Next after contract | Normal conversation and private chat should render evidence/work/source blocks when actual data exists |
-| Package extraction | Deferred | Start only after Web surfaces consume the same stable contracts |
+| Package extraction | First wave implemented | `conversation-ui-core` exists; `conversation-ui-react` now owns first-wave shared conversation React components |
 
-Do not start package extraction before normal conversation, channel, and private chat
-agree on the same action, evidence, source, empty state, and work-cell primitives.
+Do not use package extraction to move app state. Normal conversation, channel, and
+private chat should keep their adapters, daemon calls, route state, model/provider
+selection, and direct-guidance behavior outside shared UI packages.
 
 ## Source Of Truth
 
@@ -446,6 +448,11 @@ Type: package extraction and cross-surface reuse.
 Goal: let normal conversation, Channel, teammate private chat, run/thread detail, and
 future Desktop/PC render the same conversation semantics without duplicating UI logic.
 
+Detailed implementation source of truth:
+[Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md).
+This section keeps the framework-level intent; the package plan owns exact first-wave
+files, required dependency refactors, import guards, and validation commands.
+
 Current anchors:
 
 - `apps/web/src/shared/conversation/` already acts as a Web-local conversation component
@@ -479,13 +486,31 @@ packages/conversation-ui-react
 
 `packages/conversation-ui-react` owns:
 
-- React transcript renderer;
-- block renderers for coordinator message, operation, agent activity, approval, artifact,
-  source summary, requirement shaping, decision needed, final result, and raw/debug ref;
-- composer primitives;
-- action bars, inline feedback, preview/lightbox components, image compare viewer,
-  code/diff renderers;
+- React transcript/conversation renderers;
+- first-wave composer primitives:
+  `ConversationComposerShell`, `TokenizedComposerInput`, and prop-only
+  `ComposerPermissionMenu`;
+- first-wave message/feed primitives:
+  `ConversationShell`, `ConversationFeed`, `ConversationEmptyState`, `MessageRow`,
+  `MessageBubble`, `MessageBodyRenderer`, and `MessageActionBar`;
+- first-wave identity/feedback primitives:
+  `SourceIconStack`, `TeammateAvatarStack`, `ConversationStatusStrip`, and
+  `ConversationGuidanceStrip`;
+- second-wave candidates only after dependency audit:
+  `ConversationAttachmentStrip`, `EvidenceDisclosure`, `FileRefChip`, `CodeBlock`,
+  `DiffCodeBlock`, `DiffFileSummary`, `DiffViewer`, and presentational
+  `ConversationWorkCell`;
 - accessibility/focus helpers that are browser/React-specific.
+
+`packages/conversation-ui-react` does not own:
+
+- `ArtifactPreviewDrawer`,
+- `ImageCompareViewer`,
+- `RightDrawer`,
+- app shell, sidebar, settings, provider, automation, media, teammate management, or
+  channel configuration components,
+- daemon/API calls, route state, model/provider fetching, channel routing, or teammate
+  settings.
 
 Apps keep:
 
@@ -502,9 +527,11 @@ Implementation order:
    entrypoints and token names.
 3. Move pure types/helpers into `packages/conversation-ui-core` once both surfaces use
    them.
-4. Move React components into `packages/conversation-ui-react` only after imports are
-   app-agnostic.
-5. Add Desktop renderer smoke fixtures against the shared transcript contract before
+4. Create `packages/conversation-ui-react` and move first-wave React components once
+   imports are app-agnostic.
+5. Keep `apps/web/src/shared/conversation` as a temporary re-export layer only when it
+   reduces migration risk.
+6. Add Desktop renderer smoke fixtures against the shared transcript contract before
    Desktop-specific styling diverges.
 
 Acceptance:

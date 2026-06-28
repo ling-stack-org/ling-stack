@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -53,6 +53,41 @@ async function readMessageFeedEmptyStateGeometry(page: Page, feedLabel: string):
       deltaX: Math.round((emptyRect.left + emptyRect.width / 2) - (feedRect.left + feedRect.width / 2)),
       deltaY: Math.round((emptyRect.top + emptyRect.height / 2) - (feedRect.top + feedRect.height / 2)),
     };
+  });
+}
+
+async function readComposerGeometry(page: Page, selector: string): Promise<{ backgroundColor: string; borderRadius: string; boxShadow: string; height: number; inputHeight: number; padding: string; width: number }> {
+  return page.locator(selector).evaluate((composer) => {
+    const input = composer.querySelector<HTMLElement>(".tokenized-composer-input");
+    const rect = composer.getBoundingClientRect();
+    const inputRect = input?.getBoundingClientRect();
+    const style = getComputedStyle(composer);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderRadius: style.borderRadius,
+      boxShadow: style.boxShadow,
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      inputHeight: Math.round(inputRect?.height ?? 0),
+      padding: style.padding,
+    };
+  });
+}
+
+async function replaceTokenizedComposerValue(input: Locator, value: string): Promise<void> {
+  await input.evaluate((element, nextValue) => {
+    element.textContent = nextValue;
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, data: nextValue, inputType: "insertText" }));
+  }, value);
+  await expect(input).toHaveAttribute("data-value", value);
+  await input.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    (element as HTMLElement).focus();
   });
 }
 
@@ -179,6 +214,7 @@ test("channel and private chat empty message states share conversation visuals",
   await expect(channelFeed.getByText("No channel messages yet")).toBeVisible();
   const channelEmptyVisuals = await readMessageFeedEmptyStateVisuals(page, "Channel message feed");
   const channelEmptyGeometry = await readMessageFeedEmptyStateGeometry(page, "Channel message feed");
+  const channelComposerGeometry = await readComposerGeometry(page, ".channel-composer");
   expect(Math.abs(channelEmptyGeometry.deltaX)).toBeLessThanOrEqual(1);
   expect(Math.abs(channelEmptyGeometry.deltaY)).toBeLessThanOrEqual(1);
 
@@ -187,10 +223,20 @@ test("channel and private chat empty message states share conversation visuals",
   await expect(privateFeed.getByText("No private messages yet")).toBeVisible();
   const privateEmptyVisuals = await readMessageFeedEmptyStateVisuals(page, "Private message feed");
   const privateEmptyGeometry = await readMessageFeedEmptyStateGeometry(page, "Private message feed");
+  const privateComposerGeometry = await readComposerGeometry(page, ".teammate-direct-composer");
   expect(Math.abs(privateEmptyGeometry.deltaX)).toBeLessThanOrEqual(1);
   expect(Math.abs(privateEmptyGeometry.deltaY)).toBeLessThanOrEqual(1);
 
   expect(privateEmptyVisuals).toEqual(channelEmptyVisuals);
+  expect(privateComposerGeometry.width).toBe(channelComposerGeometry.width);
+  expect(privateComposerGeometry.backgroundColor).toBe(channelComposerGeometry.backgroundColor);
+  expect(privateComposerGeometry.borderRadius).toBe(channelComposerGeometry.borderRadius);
+  expect(privateComposerGeometry.padding).toBe(channelComposerGeometry.padding);
+  expect(privateComposerGeometry.inputHeight).toBe(channelComposerGeometry.inputHeight);
+  expect(privateComposerGeometry.height).toBeLessThanOrEqual(channelComposerGeometry.height);
+  expect(privateComposerGeometry.width).toBeLessThanOrEqual(960);
+  expect(channelComposerGeometry.boxShadow).not.toBe("none");
+  expect(privateComposerGeometry.boxShadow).not.toBe("none");
 });
 
 test("Ling Agent private chat renders workspace governance digest without source body", async ({ page }) => {
@@ -1207,7 +1253,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await page.getByRole("option", { name: /^\/review\b/ }).click();
   await expect(privateInput).toHaveAttribute("data-value", "/review ");
 
-  await privateInput.fill("Continue with only risks after this reply.");
+  await replaceTokenizedComposerValue(privateInput, "Continue with only risks after this reply.");
   await privateInput.press("Enter");
   await expect.poll(() => state.teammateDirectInterventions.map((item) => [item.mode, item.status, item.instruction])).toEqual([
     ["queue_followup", "queued", "Continue with only risks after this reply."],
@@ -1224,18 +1270,18 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await expect.poll(() => state.teammateDirectInterventions[0]?.status).toBe("cancelled");
 
   const guidanceAfterCancel = page.getByLabel("正在回复");
-  await privateInput.fill("Line one");
+  await replaceTokenizedComposerValue(privateInput, "Line one");
   await privateInput.press("Shift+Enter");
   await expect(privateInput).toHaveAttribute("data-value", "Line one\n");
   await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").length).toBe(0);
 
-  await privateInput.fill("Close only this queued guidance.");
+  await replaceTokenizedComposerValue(privateInput, "Close only this queued guidance.");
   await privateInput.press("Enter");
   await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").map((item) => item.instruction)).toEqual([
     "Close only this queued guidance.",
   ]);
   await expect(privateInput).toHaveAttribute("data-value", "");
-  await privateInput.fill("Keep this queued guidance.");
+  await replaceTokenizedComposerValue(privateInput, "Keep this queued guidance.");
   await privateInput.press("Enter");
   await expect.poll(() => state.teammateDirectInterventions.filter((item) => item.status === "queued").map((item) => item.instruction)).toEqual([
     "Close only this queued guidance.",
@@ -1258,7 +1304,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     return kept?.status;
   }).toBe("cancelled");
 
-  await privateInput.fill("Run this queued guidance immediately.");
+  await replaceTokenizedComposerValue(privateInput, "Run this queued guidance immediately.");
   await privateInput.press("Enter");
   await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");
   await guidanceAfterCancel.locator(".conversation-guidance-row").filter({ hasText: "Run this queued guidance immediately." }).getByRole("button", { name: "立即执行这条引导" }).click();

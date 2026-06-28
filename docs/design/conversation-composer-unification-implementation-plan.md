@@ -11,6 +11,7 @@ Related docs:
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
+- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
 - [Multi-Agent Slash Commands](multi-agent-slash-commands.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 
@@ -34,7 +35,7 @@ The complete target is a Conversation UI Kit:
 conversation-ui-core
   -> pure policy, permission, action, and view-model contracts
 
-shared conversation React primitives
+conversation-ui-react
   -> surface, feed, message, evidence, and composer rendering
 
 surface adapters
@@ -48,7 +49,7 @@ match the final architecture while keeping business ownership in adapters.
 | Area | Final target | First slice |
 | --- | --- | --- |
 | Core policy | `packages/conversation-ui-core` owns pure composer/surface policy | Add only the small helpers needed for capability filtering |
-| React package | future `packages/conversation-ui-react` can render from app-agnostic props | Keep React components Web-local under `apps/web/src/shared/conversation` |
+| React package | `packages/conversation-ui-react` renders app-agnostic conversation props | Extract first-wave composer/message/feed primitives now; keep adapters in Web |
 | Business state | adapters map resolved state into typed props | keep most state inline in current surface owners if extraction is too large |
 | Authorization | typed four-preset state with immutable active snapshot semantics | render shared control/slot and lock while active |
 | Model | normal conversation picker; channel/private read-only or absent | preserve current model paths; private remains no picker |
@@ -73,10 +74,11 @@ current slice plan:
 | 5 | Teammate private adapter | Private chat uses the shared composer, keeps direct guidance, blocks `@`, and has no model picker. |
 | 6 | Channel adapter | Channel uses the shared composer without losing `/`, `@`, files, approvals, active run stop/follow-up, or inline guidance. |
 | 7 | Tokenized input / preview / popover convergence | Input, pending assets, slash/mention popovers, and preview strips behave and look consistent. |
-| 8 | Delayed core/package extraction | Only after Web stabilizes: expand pure policy in `conversation-ui-core`, then consider `conversation-ui-react`. |
+| 8 | Core/React package extraction | Create `conversation-ui-react`, move first-wave shared composer/message/feed primitives, and keep app adapters Web-owned. |
 
-Do not invert Slice 8 into an early extraction. A premature React package would freeze
-guesses about active runs, private direct replies, and channel routing.
+Slice 8 starts after Slices 2-7 prove that channel, normal conversation, and private chat
+share the same composer shape. The extraction must not freeze active-run, private direct
+reply, or channel routing state into package APIs; those remain Web adapter concerns.
 
 ## Non-Goals
 
@@ -148,10 +150,11 @@ If adapter extraction would make the first slice too large, keep adapter logic i
 and only extract `ConversationComposer` plus shared types. Do not block the shared visual
 contract on perfect modularization.
 
-Do not create `packages/conversation-ui-react` in the first composer slice unless all
-three Web surfaces already consume the same stable props. A premature package API would
-freeze guesses about channel active runs, private direct replies, and model/provider
-ownership.
+The original first composer slice should not create `packages/conversation-ui-react`
+until all three Web surfaces consume stable props. That condition is now met for the
+first-wave composer shell and tokenized input. Package extraction may proceed, but active
+run handling, private direct replies, and model/provider ownership must stay in Web
+adapters.
 
 ## Slice 1: Shared Visual Shell
 
@@ -434,12 +437,19 @@ capability policies different.
 - Popovers share radius, border, shadow, row hover/focus, max height, and keyboard
   selection behavior.
 
-## Stage 8: Delayed Core Policy / React Package Extraction
+## Stage 8: Core Policy / React Package Extraction
 
 Goal: make future Desktop/PC reuse possible without freezing unstable Web assumptions.
 
-Only start this after channel, normal conversation, and teammate private chat all use the
-same Web-local component props and tests have covered the surface differences.
+Decision update, 2026-06-28: this implementation stage is now in progress. Channel,
+normal conversation, and teammate private chat have converged on the same Web-local
+composer shape, and the first React package extraction proceeds with strict dependency
+boundaries.
+
+The component-by-component extraction details are defined in
+[Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md).
+This Stage 8 section remains the composer-specific summary and must not diverge from the
+package plan.
 
 ### Work
 
@@ -455,18 +465,43 @@ same Web-local component props and tests have covered the surface differences.
   - all three surfaces enable authorization,
   - authorization lock state is derived from explicit active execution state, not from
     route names.
-- Consider a future `packages/conversation-ui-react` only after Web props stabilize:
-  - `ConversationComposer`,
+- Create `packages/conversation-ui-react` and move first-wave React components:
   - `ConversationComposerShell`,
-  - `ConversationComposerToolbar`,
+  - `TokenizedComposerInput`,
   - `ComposerPermissionMenu`,
-  - message/action/source primitives only after their props are stable.
+  - `ConversationShell`,
+  - `ConversationFeed`,
+  - `ConversationEmptyState`,
+  - `MessageRow`,
+  - `MessageBubble`,
+  - `MessageBodyRenderer`,
+  - `MessageActionBar`,
+  - `ConversationStatusStrip`,
+  - `ConversationGuidanceStrip`,
+  - `SourceIconStack`,
+  - `TeammateAvatarStack`.
+- Keep Web-owned slots for surface-specific controls:
+  - channel: attach, `@`, authorization, active run stop/follow-up, send,
+  - normal conversation: attach, authorization, thinking/model pickers, send,
+  - private chat: attach, authorization, direct guidance send/stop.
+- Keep `ConversationWorkCell`, attachment/evidence previews, code/diff rendering, and
+  file chips in a second-wave audit unless their props are already app-agnostic.
+- Do not move app-specific file pickers, model/provider fetching, channel routing,
+  teammate settings, run cancellation, or daemon calls into the package.
 
 ### Acceptance
 
 - `packages/conversation-ui-core` imports no React.
-- Future React package imports do not reach into `apps/web/src/app`, daemon clients,
+- `packages/conversation-ui-react` imports do not reach into `apps/web/src/app`,
+  daemon clients,
   route modules, or workspace domain hooks.
+- `packages/conversation-ui-react` imports neither `@ling-stack/api-client` nor
+  `@ling-stack/core`.
+- Web adapters keep the existing behavior differences:
+  - private chat cannot `@` teammates and cannot change teammate model,
+  - normal conversation can select model/thinking and cannot `@`,
+  - channel can `@` teammates and cannot select a model.
+- All three docked/post-send composers share the same shell visual contract.
 - Desktop/PC can consume package APIs with their own adapters.
 
 ## Detailed Type Contract
@@ -714,11 +749,11 @@ composer renders -> no console error/warn -> no framework overlay
 6. Move channel onto the shared shell while preserving current rich behavior.
 7. Converge tokenized input, preview strip, slash/mention popovers, and shared visual
    classes.
-8. Delay package extraction until Web props stabilize.
+8. Extract `conversation-ui-core`/`conversation-ui-react` after Web props stabilize.
 
 The order is intentionally conservative. Channel composer carries the most product
-behavior, so it is not the first behavior-heavy rewrite. Package extraction is also
-delayed because the adapter contracts are still proving themselves in Web.
+behavior, so it is not the first behavior-heavy rewrite. Package extraction now follows
+the Web convergence slices and should not absorb adapter state.
 
 ## Done Criteria
 
@@ -789,8 +824,9 @@ Coverage against the canonical delivery slices:
 - Slice 7 is implemented for Web-local parity: all three surfaces use tokenized input
   and shared preview/popover class families, and slash command picker behavior is shared
   through helper functions while picker state remains surface-owned.
-- Stage 8 is intentionally deferred. The existing `conversation-ui-core` package remains
-  pure policy; this slice does not expand it into a React package.
+- Stage 8 first-wave extraction is implemented. The existing `conversation-ui-core`
+  package remains pure policy/types/helpers; the new `conversation-ui-react` package
+  owns React rendering and composer interactions only.
 
 Deferred after this slice:
 
@@ -805,8 +841,9 @@ Deferred after this slice:
 - Strict scope requirements for attachment content/delete endpoints remain deferred for
   compatibility with existing channel and private attachment links. Conversation preview
   lookups already support `scope=conversation` plus `threadId`.
-- `conversation-ui-react` extraction remains deferred until the Web-local props have
-  stabilized across all three surfaces.
+- Second-wave `conversation-ui-react` migration remains deferred for WorkCell,
+  evidence/attachment previews, file chips, and code/diff renderers until their props
+  are dependency-audited.
 - Channel message action tests are synchronized with the newer shared `MessageActionBar`
   boundary: local user bubbles no longer expose the old hover-only meta reply button,
   while AI replies expose `Reply in topic` through the shared action bar.

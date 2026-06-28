@@ -4,6 +4,7 @@ import {
   createBaseState,
   createChatProvider,
   createMockTeammate,
+  cwd,
 } from "./support/mock-state";
 import {
   readSidebarSelection,
@@ -12,6 +13,21 @@ import {
 async function useEnglishLocale(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
+  });
+}
+
+async function readComposerGeometry(page: Page, selector: string): Promise<{ backgroundColor: string; borderRadius: string; boxShadow: string; inputHeight: number; padding: string }> {
+  return page.locator(selector).evaluate((composer) => {
+    const input = composer.querySelector<HTMLElement>(".tokenized-composer-input");
+    const inputRect = input?.getBoundingClientRect();
+    const style = getComputedStyle(composer);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderRadius: style.borderRadius,
+      boxShadow: style.boxShadow,
+      inputHeight: Math.round(inputRect?.height ?? 0),
+      padding: style.padding,
+    };
   });
 }
 
@@ -184,6 +200,12 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
   await expect(conversationPage.locator(".conversation-composer")).toHaveClass(/conversation-composer-surface-normal_conversation/);
+  await expect.poll(async () => readComposerGeometry(page, ".normal-conversation-page .conversation-composer")).toEqual(expect.objectContaining({
+    borderRadius: "12px",
+    inputHeight: 76,
+    padding: "8px",
+  }));
+  await expect.poll(async () => (await readComposerGeometry(page, ".normal-conversation-page .conversation-composer")).boxShadow).not.toBe("none");
   await expect(conversationPage.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
   const messages = conversationPage.getByLabel("Conversation messages");
   await expect(messages).toContainText("Review this brief");
@@ -267,7 +289,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
 });
 
-test("conversation home skill popover opens only from plus hover or focus", async ({ page }) => {
+test("conversation home uses plus as the single attachment entry and keeps slash commands text-driven", async ({ page }) => {
   await useEnglishLocale(page);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
@@ -277,34 +299,24 @@ test("conversation home skill popover opens only from plus hover or focus", asyn
 
   const home = page.getByLabel("Conversation home");
   await expect(home).toBeVisible();
+  const homeComposer = home.locator(".conversation-composer");
+  const attachTrigger = homeComposer.locator('label[aria-label="Attach files"]');
+  await expect(attachTrigger).toBeVisible();
+  await expect(attachTrigger).toHaveCount(1);
+  await expect(attachTrigger.locator('input[type="file"]')).toHaveCount(1);
+  await expect(homeComposer.getByRole("button", { name: "Skills" })).toHaveCount(0);
+  await expect(home.getByRole("button", { name: "Select folder" })).toHaveCount(0);
   await expect(page.locator(".conversation-skill-popover")).toHaveCount(0);
+  await expect(page.locator(".conversation-folder-popover")).toHaveCount(0);
 
-  const skillButton = home.getByRole("button", { name: "Skills" });
-  await skillButton.focus();
-  await expect(page.locator(".conversation-skill-popover")).toBeVisible();
-
-  await home.getByRole("textbox", { name: "Conversation message" }).focus();
-  await expect(page.locator(".conversation-skill-popover")).toHaveCount(0);
-
-  await skillButton.hover();
-  const popover = page.locator(".conversation-skill-popover");
-  await expect(popover).toBeVisible();
-  await expect.poll(() => popover.evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
-
-  const firstSkill = popover.locator(".conversation-skill-list button").first();
-  const commandText = await firstSkill.locator("span").innerText();
-  await firstSkill.click();
   const conversationInput = home.getByRole("textbox", { name: "Conversation message" });
-  await expect(conversationInput).toHaveAttribute("data-value", commandText);
-  await expect(page.locator(".conversation-skill-popover")).toHaveCount(0);
-
   await conversationInput.fill("/rev");
   await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
   await page.getByRole("option", { name: /^\/review\b/ }).click();
   await expect(conversationInput).toHaveAttribute("data-value", "/review ");
 });
 
-test("conversation home folder picker stores selected project paths on conversations", async ({ page }) => {
+test("conversation home sends with workspace cwd without a folder picker", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
@@ -317,25 +329,7 @@ test("conversation home folder picker stores selected project paths on conversat
   const home = page.getByLabel("Conversation home");
   await expect(home).toBeVisible();
   await expect(page.locator(".conversation-folder-popover")).toHaveCount(0);
-
-  await home.getByRole("button", { name: "Select folder" }).click();
-  const folderMenu = page.getByRole("menu", { name: "Project folder options" });
-  await expect(folderMenu).toBeVisible();
-  await expect(folderMenu.getByText("Recent")).toHaveCount(0);
-  await expect(folderMenu.getByRole("menuitem", { name: /Workspace default/ })).toHaveCount(0);
-  await expect(folderMenu.getByRole("menuitem", { name: "Choose new project" })).toBeVisible();
-  await expect(folderMenu.getByRole("menuitem", { name: "No project needed" })).toHaveCount(0);
-  await expect.poll(() => folderMenu.evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
-
-  await folderMenu.getByRole("menuitem", { name: "Choose new project" }).click();
-  await expect(page.locator(".conversation-folder-popover")).toHaveCount(0);
-  await expect(home.getByRole("button", { name: "Selected folder projects" })).toBeVisible();
-
-  await home.getByRole("button", { name: "Selected folder projects" }).click();
-  await expect(folderMenu.getByText("Recent")).toBeVisible();
-  await expect(folderMenu.getByRole("menuitem", { name: /projects/ })).toBeVisible();
-  await expect(folderMenu.getByRole("menuitem", { name: /Workspace default/ })).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await expect(home.getByRole("button", { name: "Select folder" })).toHaveCount(0);
 
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Project scoped conversation");
   await home.getByRole("button", { name: "Send" }).click();
@@ -346,8 +340,8 @@ test("conversation home folder picker stores selected project paths on conversat
 
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
-  await conversationPage.getByRole("button", { name: "Selected folder projects" }).click();
-  await expect(folderMenu.getByRole("menuitem", { name: "No project needed" })).toHaveCount(0);
+  await expect(conversationPage.getByRole("button", { name: /Selected folder/ })).toHaveCount(0);
+  await expect.poll(() => state.runs.at(-1)?.cwd).toBe(cwd);
 });
 
 test("conversation home model picker uses the model workbench default without changing it", async ({ page }) => {
