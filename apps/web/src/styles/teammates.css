@@ -3851,8 +3851,10 @@
 }
 
 .teammate-chat-status-row.conversation-status-strip {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
   min-height: 28px;
   padding: 0;
   overflow: hidden;
@@ -3861,7 +3863,11 @@
 }
 
 .teammate-chat-status-row .conversation-status-main {
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
 }
 
 .teammate-chat-status-row .conversation-status-title strong {
@@ -3869,7 +3875,15 @@
   line-height: 12px;
 }
 
+.teammate-chat-status-row .conversation-status-title {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  min-height: 18px;
+  overflow: hidden;
+}
+
 .teammate-chat-status-row .conversation-status-meta {
+  flex: 1 1 auto;
   gap: 4px;
   flex-wrap: nowrap;
   overflow: hidden;

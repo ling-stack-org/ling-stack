@@ -18,11 +18,10 @@ import {
   ThumbsUp,
   X,
 } from "lucide-react";
-import { artifactContentUrl, attachmentContentUrl, deleteAttachment, uploadConversationAttachment } from "../../api.js";
-import { useI18n, type Translate } from "../../i18n.js";
+import { attachmentContentUrl, deleteAttachment, uploadConversationAttachment } from "../../api.js";
+import { useI18n } from "../../i18n.js";
 import type { ConversationAttachment, ConversationTranscriptStatus, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode } from "../../types.js";
 import {
-  AvatarInitial,
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
   filterSlashCommandPickerOptions,
@@ -42,13 +41,11 @@ import {
   ConversationComposerShell,
   ConversationFeed,
   ConversationShell,
-  ConversationWorkCell,
   MessageActionBar,
   MessageRow,
   type MessageRowAuthorType,
 } from "../../shared/conversation/index.js";
 import { conversationPermissionPresetMenuOptions, inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
-import { buildConversationWorkCellViewModel, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 
 export interface ConversationHomeProjectSelection {
@@ -120,7 +117,6 @@ export function ConversationHome({
   slashCommands,
   workspaceCwd,
   sending = false,
-  onOpenRun,
   onSendConversation,
 }: {
   readonly initialDraft?: string;
@@ -188,14 +184,6 @@ export function ConversationHome({
   const runById = useMemo(
     () => new Map((detailContext?.runs ?? []).map((run) => [run.id, run])),
     [detailContext?.runs],
-  );
-  const workCellByMessageId = useMemo(
-    () => buildNormalConversationWorkCellMap({
-      messages,
-      detailContext,
-      t,
-    }),
-    [detailContext, messages, t],
   );
   const thinkingButtonLabel = thinkingOff
     ? t("Thinking off")
@@ -765,17 +753,16 @@ export function ConversationHome({
             emptyLabel={t("No conversation messages yet")}
             getItemId={(message) => message.id}
             renderItem={(message) => {
-              const workCell = workCellByMessageId.get(message.id);
-              const workCellRun = workCell ? runById.get(workCell.model.anchorRunId) : undefined;
               const messageFeedback = messageFeedbackById[message.id];
+              const linkedRun = message.runId ? runById.get(message.runId) : undefined;
+              const errorText = normalConversationMessageErrorText(message, linkedRun?.status);
               return (
                 <MessageRow
                   className={normalConversationMessageClassName(message)}
                   authorType={conversationMessageAuthorType(message)}
-                  avatar={conversationMessageAvatar(message)}
                   authorName={conversationMessageAuthorName(message, t)}
                   createdAtLabel={formatConversationTimeLabel(message.createdAt)}
-                  body={message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
+                  body={errorText ? "" : message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
                   bodyCompact
                   bodyStreaming={message.status === "running" || message.status === "pending"}
                   attachmentsNode={message.attachments && message.attachments.length > 0 ? (
@@ -800,15 +787,7 @@ export function ConversationHome({
                       loadPreview={loadPreviewContent}
                     />
                   ) : null}
-                  workCellNode={workCell ? (
-                    <ConversationWorkCell
-                      model={workCell.model}
-                      cwd={workCellRun?.cwd ?? project.projectPath}
-                      detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
-                      onOpenRun={onOpenRun}
-                      loadPreview={loadPreviewContent}
-                    />
-                  ) : null}
+                  errorNode={errorText ? <div className="inline-error compact-inline-error normal-conversation-message-error" role="alert">{errorText}</div> : null}
                   actionsNode={message.role === "assistant" && message.content ? (
                     <MessageActionBar
                       surface="normal_conversation"
@@ -914,43 +893,6 @@ function upsertConversationHomeMessage(
   return [...next].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-function buildNormalConversationWorkCellMap(input: {
-  readonly messages: readonly ConversationHomeMessage[];
-  readonly detailContext: ConversationHomeDetailContext | undefined;
-  readonly t: Translate;
-}): ReadonlyMap<string, { readonly model: ConversationWorkCellViewModel }> {
-  const detailContext = input.detailContext;
-  if (!detailContext) {
-    return new Map();
-  }
-  const runById = new Map(detailContext.runs.map((run) => [run.id, run]));
-  const cells = new Map<string, { readonly model: ConversationWorkCellViewModel }>();
-  for (const message of input.messages) {
-    if (message.role !== "assistant" || !message.runId) {
-      continue;
-    }
-    const run = runById.get(message.runId);
-    const threadId = run?.threadId ?? message.threadId ?? detailContext.threadId;
-    if (!run || !threadId) {
-      continue;
-    }
-    const model = buildConversationWorkCellViewModel({
-      threadId,
-      runs: [run],
-      turns: detailContext.turns,
-      allowRunThreadFallback: true,
-      approvals: [],
-      artifactsByRun: {},
-      t: input.t,
-      artifactHref: (artifact) => artifactContentUrl(artifact.id, run.cwd),
-    });
-    if (model) {
-      cells.set(message.id, { model });
-    }
-  }
-  return cells;
-}
-
 function conversationHomeMessageMergeKey(message: ConversationHomeMessage): string {
   const assistantMatch = /^conversation-assistant:([^:]+)/u.exec(message.id);
   if (assistantMatch?.[1]) {
@@ -1020,14 +962,14 @@ function conversationMessageAuthorName(message: ConversationHomeMessage, t: (key
   return conversationAuthorLabel(message.authorLabel || "Ling Agent", t);
 }
 
-function conversationMessageAvatar(message: ConversationHomeMessage): JSX.Element | undefined {
+function normalConversationMessageErrorText(message: ConversationHomeMessage, runStatus?: RunSession["status"]): string {
   if (message.role === "user") {
-    return <AvatarInitial label="Y" tone="default" />;
+    return "";
   }
-  if (message.role === "system") {
-    return <AvatarInitial label="S" tone="violet" />;
+  if (message.status !== "blocked" && message.status !== "failed" && runStatus !== "failed" && runStatus !== "cancelled") {
+    return "";
   }
-  return <AvatarInitial label="L" tone="violet" />;
+  return message.content.trim();
 }
 
 function normalConversationMessageClassName(message: ConversationHomeMessage): string {
