@@ -1,4 +1,36 @@
 export type {
+  ConversationAction,
+  ConversationActorKind,
+  ConversationAttachmentRef,
+  ConversationItem,
+  ConversationItemKind,
+  ConversationStatus,
+  ConversationSurface,
+} from "./conversation-types.js";
+export type {
+  ConversationAgentActivitySpan,
+  ConversationAgentActivitySpanKind,
+  ConversationArtifactStripItem,
+  ConversationArtifactStripItemKind,
+  ConversationOperationCellDraft,
+  ConversationOperationCellMode,
+  ConversationOperationCellSourceKind,
+  ConversationOperationCellStatus,
+  ConversationOperationCellViewModel,
+  ConversationOperationKind,
+  ConversationWorkCellBranch,
+  ConversationWorkCellDetailsModel,
+  ConversationWorkCellEvidenceLink,
+  ConversationWorkCellGroup,
+  ConversationWorkCellGroupKind,
+  ConversationWorkCellRow,
+  ConversationWorkCellRowDetailLine,
+  ConversationWorkCellRowTone,
+  ConversationWorkCellStat,
+  ConversationWorkCellViewModel,
+} from "./work-cell-view-model.js";
+export { normalizeConversationOperationCell } from "./work-cell-view-model.js";
+export type {
   ConversationEvidenceMode,
   ConversationRawDetailMode,
   ConversationSurfaceKind,

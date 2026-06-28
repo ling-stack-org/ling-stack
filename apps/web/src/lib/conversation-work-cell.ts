@@ -1,156 +1,55 @@
-import type { ApprovalRequest, ChannelWorkflow, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
+import {
+  normalizeConversationOperationCell,
+  type ConversationAgentActivitySpan,
+  type ConversationArtifactStripItem,
+  type ConversationOperationCellMode,
+  type ConversationOperationCellSourceKind,
+  type ConversationOperationCellStatus,
+  type ConversationOperationCellViewModel,
+  type ConversationOperationKind,
+  type ConversationWorkCellDetailsModel,
+  type ConversationWorkCellEvidenceLink,
+  type ConversationWorkCellGroup,
+  type ConversationWorkCellGroupKind,
+  type ConversationWorkCellRow,
+  type ConversationWorkCellRowDetailLine,
+  type ConversationWorkCellRowTone,
+  type ConversationWorkCellViewModel,
+} from "@ling-stack/conversation-ui-core";
+import type { ApprovalRequest, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
 
-export type ConversationWorkCellMode = "active" | "completed";
-export type ConversationWorkCellStatus = RunSession["status"] | LingTurn["status"] | ChannelWorkflow["status"];
-export type ConversationOperationCellSourceKind = "run_thread" | "workflow" | "collaboration_task";
-export type ConversationOperationKind =
-  | "plan"
-  | "read"
-  | "edit"
-  | "run_command"
-  | "search"
-  | "approval"
-  | "verify"
-  | "handoff"
-  | "watch";
-export type ConversationWorkCellGroupKind = "changed" | "checked" | "context" | "evidence" | "attention";
-export type ConversationWorkCellRowTone = "neutral" | "running" | "waiting" | "success" | "failed";
+export {
+  normalizeConversationOperationCell,
+};
+export type {
+  ConversationAgentActivitySpan,
+  ConversationAgentActivitySpanKind,
+  ConversationArtifactStripItem,
+  ConversationArtifactStripItemKind,
+  ConversationOperationCellMode,
+  ConversationOperationCellSourceKind,
+  ConversationOperationCellStatus,
+  ConversationOperationCellViewModel,
+  ConversationOperationKind,
+  ConversationWorkCellBranch,
+  ConversationWorkCellDetailsModel,
+  ConversationWorkCellEvidenceLink,
+  ConversationWorkCellGroup,
+  ConversationWorkCellGroupKind,
+  ConversationWorkCellRow,
+  ConversationWorkCellRowDetailLine,
+  ConversationWorkCellRowTone,
+  ConversationWorkCellStat,
+  ConversationWorkCellViewModel,
+} from "@ling-stack/conversation-ui-core";
 
-export interface ConversationWorkCellStat {
-  readonly id: string;
-  readonly label: string;
-  readonly value: string;
-}
-
-export interface ConversationWorkCellRow {
-  readonly id: string;
-  readonly kind?: ConversationOperationKind;
-  readonly presentation?: "default" | "shell";
-  readonly title: string;
-  readonly description?: string;
-  readonly meta?: string;
-  readonly commandText?: string;
-  readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
-  readonly tone?: ConversationWorkCellRowTone;
-}
-
-export interface ConversationWorkCellRowDetailLine {
-  readonly kind?: "text" | "code";
-  readonly text: string;
-}
-
-export type ConversationAgentActivitySpanKind = "agent" | "overflow";
-
-export interface ConversationAgentActivitySpan {
-  readonly id: string;
-  readonly participantId?: string;
-  readonly kind?: ConversationAgentActivitySpanKind;
-  readonly label: string;
-  readonly summary?: string;
-  readonly meta?: string;
-  readonly tone?: ConversationWorkCellRowTone;
-  readonly stateLabel?: string;
-  readonly latestRow?: ConversationWorkCellRow;
-  readonly rows: readonly ConversationWorkCellRow[];
-}
-
-/** @deprecated Use ConversationAgentActivitySpan. */
-export type ConversationWorkCellBranch = ConversationAgentActivitySpan;
-
-export interface ConversationWorkCellEvidenceLink {
-  readonly id: string;
-  readonly label: string;
-  readonly meta?: string;
-  readonly href?: string;
-  readonly artifactId?: string;
-  readonly artifactType?: RunArtifact["type"];
-  readonly contentType?: string;
-  readonly sizeBytes?: number;
-  readonly previewKind?: "file" | "image";
-  readonly previewable?: boolean;
-}
-
-export type ConversationArtifactStripItemKind = "artifact" | "changed" | "checked" | "attention" | "approval";
-
-export interface ConversationArtifactStripItem {
-  readonly id: string;
-  readonly kind: ConversationArtifactStripItemKind;
-  readonly label: string;
-  readonly tone?: ConversationWorkCellRowTone;
-  readonly href?: string;
-  readonly artifactId?: string;
-  readonly artifactType?: RunArtifact["type"];
-  readonly contentType?: string;
-  readonly sizeBytes?: number;
-  readonly previewKind?: "file" | "image";
-  readonly previewable?: boolean;
-}
-
-export interface ConversationWorkCellGroup {
-  readonly id: ConversationWorkCellGroupKind;
-  readonly label: string;
-  readonly summary: string;
-  readonly rows: readonly ConversationWorkCellRow[];
-}
-
-export interface ConversationOperationCellViewModel {
-  readonly id: string;
-  readonly sourceKind: ConversationOperationCellSourceKind;
-  readonly threadId: string;
-  readonly turnId?: string;
-  readonly anchorRunId: string;
-  readonly runIds: readonly string[];
-  readonly mode: ConversationWorkCellMode;
-  readonly status: ConversationWorkCellStatus;
-  readonly presentation?: "default" | "collaboration_task";
-  readonly kicker?: string;
-  readonly showDiagnostics?: boolean;
-  readonly title: string;
-  readonly summary: string;
-  readonly stats: readonly ConversationWorkCellStat[];
-  readonly operationRows: readonly ConversationWorkCellRow[];
-  readonly agentSpans: readonly ConversationAgentActivitySpan[];
-  /** @deprecated Use agentSpans. Kept while call sites migrate. */
-  readonly agentBranches: readonly ConversationWorkCellBranch[];
-  readonly terminalReportRows: readonly ConversationWorkCellRow[];
-  /** @deprecated Use operationRows. Kept while call sites migrate. */
-  readonly activeRows: readonly ConversationWorkCellRow[];
-  /** @deprecated Use agentSpans. Kept while call sites migrate. */
-  readonly branchRows?: readonly ConversationWorkCellBranch[];
-  /** @deprecated Use terminalReportRows. Kept while call sites migrate. */
-  readonly finalReportRows?: readonly ConversationWorkCellRow[];
-  readonly groups: readonly ConversationWorkCellGroup[];
-  readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
-  readonly artifactStripItems: readonly ConversationArtifactStripItem[];
-  readonly updatedAt: string;
-}
-
-export type ConversationWorkCellViewModel = ConversationOperationCellViewModel;
-
-type ConversationOperationCellDraft =
-  Omit<ConversationOperationCellViewModel, "agentSpans" | "activeRows" | "branchRows" | "finalReportRows"> &
-  Partial<Pick<ConversationOperationCellViewModel, "agentSpans" | "activeRows" | "branchRows" | "finalReportRows">>;
-
-export function normalizeConversationOperationCell(
-  draft: ConversationOperationCellDraft,
-): ConversationOperationCellViewModel {
-  const agentSpans = draft.agentSpans ?? draft.agentBranches;
-  return {
-    ...draft,
-    agentSpans,
-    activeRows: draft.activeRows ?? draft.operationRows,
-    branchRows: draft.branchRows ?? agentSpans,
-    finalReportRows: draft.finalReportRows ?? draft.terminalReportRows,
-  };
-}
-
-export interface ConversationWorkCellDetailsModel {
-  readonly groups: readonly ConversationWorkCellGroup[];
-  readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
-}
+/** @deprecated Use ConversationOperationCellMode from @ling-stack/conversation-ui-core. */
+export type ConversationWorkCellMode = ConversationOperationCellMode;
+/** @deprecated Use ConversationOperationCellStatus from @ling-stack/conversation-ui-core. */
+export type ConversationWorkCellStatus = ConversationOperationCellStatus;
 
 export function buildConversationArtifactStripItems(input: {
   readonly groups: readonly ConversationWorkCellGroup[];

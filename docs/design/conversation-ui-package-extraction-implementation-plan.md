@@ -75,6 +75,8 @@ packages/conversation-ui-core/src/
   slash-command-picker.ts
   message-body.ts
   permission-policy.ts
+  conversation-types.ts
+  work-cell-view-model.ts
 ```
 
 Later core candidates:
@@ -85,7 +87,6 @@ packages/conversation-ui-core/src/
   renderer-registry.ts
   action-policy.ts
   evidence-view-model.ts
-  work-cell-view-model.ts
 ```
 
 Allowed:
@@ -302,7 +303,7 @@ These components stay Web-local until their imports are clean:
 
 | Component | Reason to defer |
 | --- | --- |
-| `ConversationWorkCell` | Depends on run/work models that still need app-agnostic view-model types. |
+| `ConversationWorkCell` | Renderer and builders still depend on Web run/work evidence, preview loading, i18n, and view-store behavior. App-agnostic view-model types live in `conversation-ui-core`. |
 | `ConversationAttachmentStrip` | Needs attachment/file scope and preview behavior audit. |
 | `EvidenceDisclosure` / evidence panels | Evidence visibility policy still differs by surface and data availability. |
 | `FileRefChip` | Workspace/file opening behavior is app-owned. |
@@ -419,9 +420,10 @@ Implemented in the first-wave package extraction slice:
 - created `packages/conversation-ui-react` with package metadata, TypeScript build,
   public exports, React peer dependencies, and `lucide-react` dependency,
 - expanded `packages/conversation-ui-core` with pure composer input parsing, slash
-  command picker helpers, message-body parsing, and permission preset metadata,
-- added core tests for composer token parsing, slash picker insertion, token removal, and
-  permission confirmation derivation,
+  command picker helpers, message-body parsing, shared message/action item types,
+  work cell view-model types, and permission preset metadata,
+- added core tests for composer token parsing, slash picker insertion, token removal,
+  work cell view-model alias normalization, and permission confirmation derivation,
 - moved first-wave React primitives into `@ling-stack/conversation-ui-react`:
   `ConversationShell`, `ConversationFeed`, `ConversationEmptyState`, `MessageRow`,
   `MessageBubble`, `MessageBodyRenderer`, `MessageActionBar`,
@@ -432,6 +434,9 @@ Implemented in the first-wave package extraction slice:
   `session-permissions` import, no app route/API imports, and no app store imports,
 - switched Web shared conversation/component compatibility entrypoints to re-export
   first-wave package components and core pure helpers,
+- switched Web conversation item/action token types and work cell view-model types to
+  source from `@ling-stack/conversation-ui-core` while keeping Web builders/renderers
+  local,
 - updated Web package scripts so build/typecheck/e2e build `conversation-ui-react`
   before the Web app.
 
