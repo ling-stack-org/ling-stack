@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Eye, LockKeyhole, Shield, ShieldCheck, SlidersHorizontal } from "lucide-react";
-import { useState, type FocusEvent } from "react";
+import { useEffect, useRef, useState, type FocusEvent } from "react";
 import { useI18n } from "../../../i18n.js";
 import {
   permissionPresetDescription,
@@ -31,9 +31,40 @@ export function ComposerPermissionMenu({
 }: ComposerPermissionMenuProps): JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const ActiveIcon = disabled ? LockKeyhole : permissionPresetIcon[preset];
   const activeLabel = permissionPresetLabel(preset, t);
   const activeDescription = disabled && disabledReason ? disabledReason : permissionPresetDescription(preset, t);
+
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+    }
+  }, [disabled]);
+
+  useEffect(() => {
+    if (!open || typeof document === "undefined") {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target as Node | null;
+      if (target && menuRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
 
   function handleBlur(event: FocusEvent<HTMLDivElement>): void {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -62,18 +93,8 @@ export function ComposerPermissionMenu({
 
   return (
     <div
+      ref={menuRef}
       className={disabled ? "conversation-authorization-menu disabled" : "conversation-authorization-menu"}
-      onMouseEnter={() => {
-        if (!disabled) {
-          setOpen(true);
-        }
-      }}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => {
-        if (!disabled) {
-          setOpen(true);
-        }
-      }}
       onBlur={handleBlur}
     >
       <button
@@ -85,6 +106,11 @@ export function ComposerPermissionMenu({
         aria-disabled={disabled}
         disabled={disabled}
         title={activeDescription}
+        onClick={() => {
+          if (!disabled) {
+            setOpen((currentOpen) => !currentOpen);
+          }
+        }}
       >
         <ActiveIcon size={15} />
         <span>{activeLabel}</span>

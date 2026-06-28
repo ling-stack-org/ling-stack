@@ -150,6 +150,16 @@ const defaultForm: RunFormState = {
   permissionPreset: "custom",
 };
 
+type SettingsReturnTarget = {
+  readonly activeView: ViewId;
+  readonly activeSidebarTarget: SidebarTarget;
+  readonly selectedChannelId: string;
+  readonly selectedChannelBranchId: string;
+  readonly selectedTaskId: string;
+  readonly taskRunProviderId: string;
+  readonly threadPageTargetId: string;
+};
+
 export function AppShell(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const { preference: themePreference, setPreference: setThemePreference } = useTheme();
@@ -164,6 +174,7 @@ export function AppShell(): JSX.Element {
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
   const [settingsReturnSection, setSettingsReturnSection] = useState<"" | "workspace-tools">("");
+  const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
   const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
@@ -1124,8 +1135,52 @@ export function AppShell(): JSX.Element {
     handleDomainEvent,
   });
 
+  function activateSettingsView(): void {
+    setChannelCreateOpen(false);
+    setActiveView("settings");
+    setActiveSidebarTarget("settings");
+  }
+
+  function openSettingsView(): void {
+    setSettingsReturnSection("");
+    if (activeView !== "settings") {
+      settingsReturnTargetRef.current = {
+        activeView,
+        activeSidebarTarget,
+        selectedChannelId,
+        selectedChannelBranchId,
+        selectedTaskId,
+        taskRunProviderId,
+        threadPageTargetId,
+      };
+    }
+    activateSettingsView();
+  }
+
+  function returnFromSettingsView(): void {
+    const target = settingsReturnTargetRef.current;
+    settingsReturnTargetRef.current = undefined;
+    setSettingsReturnSection("");
+    if (!target || target.activeView === "settings") {
+      setActiveView("workspace");
+      setActiveSidebarTarget("workspace");
+      return;
+    }
+    setSelectedChannelId(target.selectedChannelId);
+    setSelectedChannelBranchId(target.selectedChannelBranchId);
+    setSelectedTaskId(target.selectedTaskId);
+    setTaskRunProviderId(target.taskRunProviderId);
+    setThreadPageTargetId(target.threadPageTargetId);
+    setActiveView(target.activeView);
+    setActiveSidebarTarget(target.activeSidebarTarget);
+  }
+
   function openPlainViewWithoutSettingsReturn(view: ViewId): void {
     setSettingsReturnSection("");
+    if (view === "settings") {
+      openSettingsView();
+      return;
+    }
     openPlainView(view);
   }
 
@@ -1165,7 +1220,7 @@ export function AppShell(): JSX.Element {
 
   function returnToWorkspaceTools(): void {
     setSettingsReturnSection("");
-    openPlainView("settings");
+    activateSettingsView();
   }
 
   function openTeammateCreatePanel(): void {
@@ -1694,6 +1749,7 @@ export function AppShell(): JSX.Element {
     openRunDiagnosticsView();
   }
 
+  const settingsFullscreen = activeView === "settings";
   const showInspector = !["workspace", "providers", "teammates", "councils", "runs", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
@@ -1704,6 +1760,7 @@ export function AppShell(): JSX.Element {
     "app-shell",
     "channel-drawer-shell",
     activeView === "workspace" ? "channel-daylight-shell" : "",
+    settingsFullscreen ? "settings-fullscreen-shell" : "",
     !channelSidebarOpen ? "channel-sidebar-collapsed" : "",
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
@@ -1711,6 +1768,7 @@ export function AppShell(): JSX.Element {
 
   return (
     <main className={shellClassName}>
+      {!settingsFullscreen ? (
       <SidebarNavigation
         activeSidebarTarget={navigationActiveSidebarTarget}
         channels={channels}
@@ -1753,6 +1811,7 @@ export function AppShell(): JSX.Element {
         channelDrawerOpen={channelSidebarOpen}
         onChannelDrawerOpenChange={setChannelSidebarOpen}
       />
+      ) : null}
       <section
         className={
           activeView === "workspace"
@@ -1769,6 +1828,8 @@ export function AppShell(): JSX.Element {
                 ? "workspace workspace-automations-surface"
               : activeView === "media"
                 ? "workspace workspace-generation-surface"
+              : activeView === "settings"
+                ? "workspace workspace-settings-surface"
               : "workspace"
         }
       >
@@ -2326,6 +2387,7 @@ export function AppShell(): JSX.Element {
                     latestPluginApplyResult={latestPluginApplyResult}
                     latestPluginRuntimePreview={latestPluginRuntimePreview}
                     latestPluginNotice={latestPluginNotice}
+                    onBackToApplication={returnFromSettingsView}
                     workspaceDefaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                     workspaceDefaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                     permissionMode={form.permissionMode}

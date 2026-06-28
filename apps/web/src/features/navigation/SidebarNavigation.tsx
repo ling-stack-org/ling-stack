@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type FocusEvent as ReactFocusEvent,
   type FormEvent,
@@ -141,7 +142,13 @@ export function SidebarNavigation({
   useEffect(() => {
     if (!collapsedTooltipsEnabled) {
       setSidebarTooltip(null);
+      return;
     }
+    setCollapsedSections({
+      channels: false,
+      teammates: false,
+      recent: false,
+    });
   }, [collapsedTooltipsEnabled]);
 
   function showSidebarTooltip(label: string, element: HTMLElement): void {
@@ -248,6 +255,8 @@ export function SidebarNavigation({
         sectionId="channels"
         title={t("Channels")}
         collapsed={collapsedSections.channels}
+        railCollapsed={collapsedTooltipsEnabled}
+        railCollapsedPreview={renderChannelRailPreview(channels)}
         onToggleCollapsed={toggleSection}
         menuLabel={t("Channel actions")}
         menuOpen={openSectionMenu === "channels"}
@@ -392,6 +401,8 @@ export function SidebarNavigation({
         sectionId="teammates"
         title={t("AI Teammates")}
         collapsed={collapsedSections.teammates}
+        railCollapsed={collapsedTooltipsEnabled}
+        railCollapsedPreview={renderTeammateRailPreview(visibleTeammates, cwd)}
         onToggleCollapsed={toggleSection}
         menuLabel={t("AI teammate actions")}
         menuOpen={openSectionMenu === "teammates"}
@@ -441,6 +452,8 @@ export function SidebarNavigation({
         sectionId="recent"
         title={t("Recent conversations")}
         collapsed={collapsedSections.recent}
+        railCollapsed={collapsedTooltipsEnabled}
+        railCollapsedPreview={renderRecentRailPreview(recentConversations)}
         onToggleCollapsed={toggleSection}
       >
         {recentConversations.length === 0 ? (
@@ -517,6 +530,8 @@ function SidebarSection({
   sectionId,
   title,
   collapsed,
+  railCollapsed = false,
+  railCollapsedPreview,
   onToggleCollapsed,
   menuLabel,
   menuOpen,
@@ -527,6 +542,8 @@ function SidebarSection({
   readonly sectionId: SidebarSectionId;
   readonly title: string;
   readonly collapsed: boolean;
+  readonly railCollapsed?: boolean;
+  readonly railCollapsedPreview?: ReactNode;
   readonly onToggleCollapsed: (sectionId: SidebarSectionId) => void;
   readonly menuLabel?: string;
   readonly menuOpen?: boolean;
@@ -534,13 +551,48 @@ function SidebarSection({
   readonly menuItems?: readonly SidebarSectionMenuItem[];
   readonly children: ReactNode;
 }): JSX.Element {
+  const menuRef = useRef<HTMLSpanElement | null>(null);
+  const sectionClassName = [
+    "sidebar-section",
+    `sidebar-section-${sectionId}`,
+    railCollapsed ? "rail-collapsed" : "",
+    collapsed ? "collapsed" : "expanded",
+  ].filter(Boolean).join(" ");
+
+  useEffect(() => {
+    const closeMenu = onMenuOpenChange;
+    if (!menuOpen || !closeMenu || typeof document === "undefined") {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target as Node | null;
+      if (target && menuRef.current?.contains(target)) {
+        return;
+      }
+      closeMenu?.(false);
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        closeMenu?.(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuOpen, onMenuOpenChange]);
+
   return (
-    <section className="sidebar-section">
+    <section className={sectionClassName}>
       <div className="sidebar-section-title">
         <button
           className="sidebar-section-toggle"
           type="button"
+          aria-label={title}
           aria-expanded={!collapsed}
+          title={title}
           onClick={() => onToggleCollapsed(sectionId)}
         >
           <span className="sidebar-section-heading">{title}</span>
@@ -548,10 +600,8 @@ function SidebarSection({
         </button>
         {menuItems && menuItems.length > 0 && menuLabel && onMenuOpenChange ? (
           <span
+            ref={menuRef}
             className={menuOpen ? "sidebar-section-menu open" : "sidebar-section-menu"}
-            onMouseEnter={() => onMenuOpenChange(true)}
-            onMouseLeave={() => onMenuOpenChange(false)}
-            onFocus={() => onMenuOpenChange(true)}
             onBlur={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                 onMenuOpenChange(false);
@@ -572,7 +622,6 @@ function SidebarSection({
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               onClick={() => onMenuOpenChange(!menuOpen)}
-              onMouseDown={(event) => event.preventDefault()}
             >
               <MoreHorizontal size={14} />
             </button>
@@ -601,7 +650,12 @@ function SidebarSection({
           </span>
         ) : null}
       </div>
-      {collapsed ? null : <div className="sidebar-section-list">{children}</div>}
+      {railCollapsed ? (
+        <div className="sidebar-rail-section-body">
+          {railCollapsedPreview ? <div className="sidebar-rail-preview" aria-hidden={!collapsed}>{railCollapsedPreview}</div> : null}
+          <div className="sidebar-section-list" aria-hidden={collapsed}>{children}</div>
+        </div>
+      ) : collapsed ? null : <div className="sidebar-section-list">{children}</div>}
     </section>
   );
 }
@@ -614,6 +668,55 @@ interface SidebarSectionMenuItem {
   readonly disabledLabel?: string;
   readonly danger?: boolean;
   readonly onSelect: () => void;
+}
+
+function renderChannelRailPreview(channels: readonly Channel[]): JSX.Element {
+  const visibleChannels = channels.slice(0, 4);
+  const previewChannels = visibleChannels.length > 0 ? visibleChannels : [];
+  const extraCount = channels.length - visibleChannels.length;
+  return (
+    <span className="sidebar-rail-stack" aria-hidden="true">
+      {previewChannels.length > 0 ? previewChannels.map((channel) => {
+        const channelAvatar = channelAvatarMeta(channel);
+        return (
+          <span key={channel.id} className={`sidebar-channel-avatar ${channelAvatar.tone}`}>
+            {channelAvatar.label}
+          </span>
+        );
+      }) : <span className="sidebar-rail-stack-icon"><Hash size={14} /></span>}
+      {extraCount > 0 ? <span className="sidebar-rail-stack-more">+{extraCount}</span> : null}
+    </span>
+  );
+}
+
+function renderTeammateRailPreview(teammates: readonly AiTeammate[], cwd: string): JSX.Element {
+  const visibleTeammates = teammates.slice(0, 5);
+  const extraCount = teammates.length - visibleTeammates.length;
+  return (
+    <span className="sidebar-rail-stack" aria-hidden="true">
+      {visibleTeammates.length > 0 ? visibleTeammates.map((teammate) => (
+        <span key={teammate.id} className="sidebar-rail-stack-avatar">
+          <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
+        </span>
+      )) : <span className="sidebar-rail-stack-icon"><Bot size={14} /></span>}
+      {extraCount > 0 ? <span className="sidebar-rail-stack-more">+{extraCount}</span> : null}
+    </span>
+  );
+}
+
+function renderRecentRailPreview(conversations: readonly SidebarRecentConversation[]): JSX.Element {
+  const visibleConversations = conversations.slice(0, 3);
+  const extraCount = conversations.length - visibleConversations.length;
+  return (
+    <span className="sidebar-rail-stack" aria-hidden="true">
+      {(visibleConversations.length > 0 ? visibleConversations : [{ id: "empty" }]).map((conversation) => (
+        <span key={conversation.id} className="sidebar-rail-stack-icon">
+          <MessageSquare size={15} />
+        </span>
+      ))}
+      {extraCount > 0 ? <span className="sidebar-rail-stack-more">+{extraCount}</span> : null}
+    </span>
+  );
 }
 
 function NavItem({

@@ -210,6 +210,30 @@ export function AiTeammatesPage({
     };
   }, [isCreateOpen]);
 
+  useEffect(() => {
+    if (!openTeammateMenuId || typeof document === "undefined") {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target as Element | null;
+      if (target?.closest(".teammate-row-menu")) {
+        return;
+      }
+      setOpenTeammateMenuId("");
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setOpenTeammateMenuId("");
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openTeammateMenuId]);
+
   function selectTemplate(template: AiTeammateTemplate): void {
     setSelectedTemplateId(template.id);
     setDraftName(t(template.name));
@@ -552,9 +576,6 @@ export function AiTeammatesPage({
                         ) : null}
                         <span
                           className={openTeammateMenuId === draft.id ? "teammate-row-menu hover-action-menu open" : "teammate-row-menu hover-action-menu"}
-                          onMouseEnter={() => setOpenTeammateMenuId(draft.id)}
-                          onMouseLeave={() => setOpenTeammateMenuId("")}
-                          onFocus={() => setOpenTeammateMenuId(draft.id)}
                           onBlur={(event) => {
                             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                               setOpenTeammateMenuId("");
@@ -567,7 +588,8 @@ export function AiTeammatesPage({
                             aria-label={t("Teammate actions")}
                             title={t("Teammate actions")}
                             aria-haspopup="menu"
-                            onMouseDown={(event) => event.preventDefault()}
+                            aria-expanded={openTeammateMenuId === draft.id}
+                            onClick={() => setOpenTeammateMenuId((currentId) => currentId === draft.id ? "" : draft.id)}
                           >
                             <MoreHorizontal size={16} />
                           </button>
