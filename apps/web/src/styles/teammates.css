@@ -1999,11 +1999,47 @@
   overflow: hidden;
 }
 
+.teammate-private-chat.with-right-dock {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.teammate-private-chat.with-right-dock > .message-feed-wrap {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.teammate-private-chat.with-right-dock > .conversation-guidance-strip {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.teammate-private-chat.with-right-dock > .teammate-direct-composer {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.teammate-private-chat.with-right-dock > .right-dock {
+  grid-column: 2;
+  grid-row: 1 / 4;
+  align-self: stretch;
+}
+
 .teammate-private-chat .message-feed-wrap {
   position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .teammate-private-chat.with-right-dock {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .teammate-private-chat.with-right-dock > .right-dock {
+    display: none;
+  }
 }
 
 .teammate-message-list {

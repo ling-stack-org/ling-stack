@@ -47,6 +47,17 @@ import {
 } from "../../shared/conversation/index.js";
 import { conversationPermissionPresetMenuOptions, inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
+import {
+  WorkspaceRightDock,
+  mergeDockFileItems,
+  mergeEvidenceGroups,
+  projectAttachmentsToFileItems,
+  projectFilesToEvidenceGroup,
+  projectMessagesToReviewItems,
+  projectRunsToEvidenceGroup,
+  projectRunsToReviewItems,
+  type RightDockMessageProjectionInput,
+} from "./right-dock/index.js";
 
 export interface ConversationHomeProjectSelection {
   readonly projectPath?: string;
@@ -184,6 +195,39 @@ export function ConversationHome({
   const runById = useMemo(
     () => new Map((detailContext?.runs ?? []).map((run) => [run.id, run])),
     [detailContext?.runs],
+  );
+  const conversationDockMessages = useMemo<readonly RightDockMessageProjectionInput[]>(
+    () => messages.map((message) => ({
+      id: message.id,
+      title: message.role === "assistant" ? t("Assistant message") : message.role === "user" ? t("User message") : t("System message"),
+      body: message.content,
+      status: conversationDockMessageStatus(message.status),
+      errorMessage: normalConversationMessageErrorText(message, message.runId ? runById.get(message.runId)?.status : undefined) || undefined,
+      runId: message.runId,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+    })),
+    [messages, runById, t],
+  );
+  const conversationDockFileItems = useMemo(
+    () => mergeDockFileItems(
+      projectAttachmentsToFileItems(messages.flatMap((message) => message.attachments ?? []), t),
+    ),
+    [messages, t],
+  );
+  const conversationDockEvidenceGroups = useMemo(
+    () => mergeEvidenceGroups(
+      projectRunsToEvidenceGroup(detailContext?.runs ?? [], t),
+      projectFilesToEvidenceGroup(conversationDockFileItems, t),
+    ),
+    [conversationDockFileItems, detailContext?.runs, t],
+  );
+  const conversationDockReviewItems = useMemo(
+    () => [
+      ...projectRunsToReviewItems(detailContext?.runs ?? [], t),
+      ...projectMessagesToReviewItems(conversationDockMessages, t),
+    ],
+    [conversationDockMessages, detailContext?.runs, t],
   );
   const thinkingButtonLabel = thinkingOff
     ? t("Thinking off")
@@ -743,7 +787,7 @@ export function ConversationHome({
   if (messages.length > 0) {
     return (
       <ConversationShell
-        className="normal-conversation-page"
+        className="normal-conversation-page with-right-dock"
         ariaLabel={t("Conversation page")}
         feedNode={(
           <ConversationFeed
@@ -826,6 +870,19 @@ export function ConversationHome({
           />
         )}
         composerNode={<div className="normal-conversation-composer-stack">{composerNode}</div>}
+        sideNode={(
+          <WorkspaceRightDock
+            surface="normal_conversation"
+            open
+            ariaLabel={t("Conversation workspace dock")}
+            className="normal-conversation-right-dock"
+            launcherTitle={t("Conversation tools")}
+            launcherSubtitle={t("Review, evidence, and files")}
+            reviewItems={conversationDockReviewItems}
+            evidenceGroups={conversationDockEvidenceGroups}
+            fileItems={conversationDockFileItems}
+          />
+        )}
       />
     );
   }
@@ -960,6 +1017,23 @@ function conversationMessageAuthorName(message: ConversationHomeMessage, t: (key
     return t("System");
   }
   return conversationAuthorLabel(message.authorLabel || "Ling Agent", t);
+}
+
+function conversationDockMessageStatus(
+  status: ConversationHomeMessage["status"],
+): RightDockMessageProjectionInput["status"] | undefined {
+  switch (status) {
+    case "pending":
+    case "running":
+    case "failed":
+    case "blocked":
+    case "cancelled":
+      return status;
+    case "succeeded":
+      return "ready";
+    case undefined:
+      return undefined;
+  }
 }
 
 function normalConversationMessageErrorText(message: ConversationHomeMessage, runStatus?: RunSession["status"]): string {

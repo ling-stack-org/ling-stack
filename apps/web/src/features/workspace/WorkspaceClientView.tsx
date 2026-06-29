@@ -195,7 +195,6 @@ import {
   MessageActionBar,
   MessageEvidencePanel,
   MessageRow,
-  RightDrawer,
   TranscriptBlockView,
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
@@ -204,6 +203,22 @@ import {
   type ConversationViewRetainKeys,
   type ConversationWorkCellDetailsState,
 } from "../../shared/conversation/index.js";
+import {
+  WorkspaceRightDock,
+  mergeDockFileItems,
+  mergeEvidenceGroups,
+  projectApprovalsToEvidenceGroup,
+  projectApprovalsToReviewItems,
+  projectArtifactsToFileItems,
+  projectChannelAttachmentsToFileItems,
+  projectFileRefsToFileItems,
+  projectFilesToEvidenceGroup,
+  projectMessagesToReviewItems,
+  projectRunsToEvidenceGroup,
+  projectRunsToReviewItems,
+  projectWebEvidenceToEvidenceGroup,
+  type RightDockMessageProjectionInput,
+} from "./right-dock/index.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -6112,7 +6127,7 @@ export function WorkspaceClientView({
       {channelManagementPanel}
     </div>
   );
-  const sidePanelContent = sidePanelView === "context" ? (
+  const channelContextDockContent = (
     <div className="channel-protocol-tab-content">
       <ChannelInspector
         cwd={cwd}
@@ -6163,11 +6178,73 @@ export function WorkspaceClientView({
         onReconcileWorkUnit={onReconcileWorkUnit}
       />
     </div>
-  ) : (
+  );
+  const sidePanelContent = sidePanelView === "context" ? channelContextDockContent : (
     <section className="task-detail-panel inline-task-detail-panel" aria-label={sidePanelTitle}>
       {taskDetailContent}
     </section>
   );
+  const channelApprovals = useMemo(() => {
+    return approvals.filter((approval) => {
+      const approvalChannelId = approval.channelId
+        ?? (approval.runId ? runById.get(approval.runId)?.channelId : undefined)
+        ?? (approval.taskId ? taskChannelById.get(approval.taskId) : undefined);
+      return approvalChannelId === selectedChannelId;
+    });
+  }, [approvals, runById, selectedChannelId, taskChannelById]);
+  const channelDockMessages = useMemo<readonly RightDockMessageProjectionInput[]>(
+    () => channelMessages.map((message) => ({
+      id: message.id,
+      title: message.kind === "ai_reply" ? t("AI reply") : message.authorType === "local-user" ? t("User message") : t("Channel message"),
+      body: message.body,
+      status: message.status,
+      errorMessage: message.errorMessage,
+      runId: message.linkedRunId,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+      webEvidence: message.webEvidence,
+      fileRefs: message.fileRefs,
+    })),
+    [channelMessages, t],
+  );
+  const channelDockFileItems = useMemo(
+    () => mergeDockFileItems(
+      projectChannelAttachmentsToFileItems(channelAttachments, t),
+      projectFileRefsToFileItems(channelMessages.flatMap((message) => message.fileRefs)),
+      projectArtifactsToFileItems(channelArtifactsByRun),
+    ),
+    [channelArtifactsByRun, channelAttachments, channelMessages, t],
+  );
+  const channelDockEvidenceGroups = useMemo(
+    () => mergeEvidenceGroups(
+      projectRunsToEvidenceGroup(channelRuns, t),
+      projectApprovalsToEvidenceGroup(channelApprovals, t),
+      projectWebEvidenceToEvidenceGroup(channelDockMessages, t),
+      projectFilesToEvidenceGroup(channelDockFileItems, t),
+    ),
+    [channelApprovals, channelDockFileItems, channelDockMessages, channelRuns, t],
+  );
+  const channelDockReviewItems = useMemo(
+    () => [
+      ...projectApprovalsToReviewItems(channelApprovals, t),
+      ...projectRunsToReviewItems(channelRuns, t),
+      ...projectMessagesToReviewItems(channelDockMessages, t),
+    ],
+    [channelApprovals, channelDockMessages, channelRuns, t],
+  );
+  const channelDockActivityCount = attentionProgressRows.length
+    + (channelTeamMetricsState?.channelId === selectedChannelId ? channelTeamMetricsState.metrics.attention.activeAgentCount : 0);
+  const channelDockActivityNode = (
+    <div className="right-dock-activity-stack">
+      {channelTeamMetricsPanel}
+      {channelContextDockContent}
+    </div>
+  );
+  const channelDockForcedDetail = sidePanelView === "task" ? {
+    id: "channel-task-detail",
+    title: sidePanelTitle,
+    node: sidePanelContent,
+  } : undefined;
   const conversationDetailOverlayNode = conversationDetailOverlay ? (
     <ConversationDetailOverlay
       title={conversationDetailOverlay.kind === "approval" ? t("Approval details") : t("Context sources")}
@@ -6925,43 +7002,41 @@ export function WorkspaceClientView({
               ) : null}
             </div>
         </section>
-        {sidePanelOpen ? (
-          <RightDrawer
-            className="channel-side-panel"
-            ariaLabel={sidePanelTitle}
-            title={sidePanelTitle}
-            icon={channelSidePanelIcon(sidePanelView, 16)}
-            actions={(
-              <>
-                {sidePanelView !== "settings" ? (
-                  <button
-                    className="icon-button"
-                    type="button"
-                    onClick={openCreateTaskPanel}
-                    disabled={!selectedChannelId}
-                    aria-label={t("New task")}
-                    title={t("New task")}
-                  >
-                    <Plus size={15} />
-                  </button>
-                ) : null}
-                <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
-                  {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+        <WorkspaceRightDock
+          surface="channel"
+          open={sidePanelOpen}
+          ariaLabel={t("Channel workspace dock")}
+          className="channel-side-panel"
+          launcherTitle={t("Workspace tools")}
+          launcherSubtitle={selectedChannel?.name ? `#${selectedChannel.name}` : undefined}
+          reviewItems={channelDockReviewItems}
+          evidenceGroups={channelDockEvidenceGroups}
+          fileItems={channelDockFileItems}
+          includeActivity
+          activityNode={channelDockActivityNode}
+          activityCount={channelDockActivityCount}
+          forcedDetail={channelDockForcedDetail}
+          actions={(
+            <>
+              {sidePanelView !== "settings" ? (
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={openCreateTaskPanel}
+                  disabled={!selectedChannelId}
+                  aria-label={t("New task")}
+                  title={t("New task")}
+                >
+                  <Plus size={15} />
                 </button>
-              </>
-            )}
-            navLabel={t("Workspace utility pages")}
-            navItems={channelSidePanelRootViews.map((view) => ({
-              id: view,
-              label: t(channelSidePanelLabel(view)),
-              icon: channelSidePanelIcon(view, 16),
-              active: sidePanelView === view,
-              onSelect: () => openSidePanelView(view),
-            }))}
-          >
-            {sidePanelContent}
-          </RightDrawer>
-        ) : null}
+              ) : null}
+              <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
+                {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              </button>
+            </>
+          )}
+          onClose={() => setSidePanelOpen(false)}
+        />
           </>
         )}
       </div>

@@ -13,3 +13,24 @@ export { CopyActionButton, type CopyActionButtonProps } from "./feedback/CopyAct
 export { MessageActionBar, type MessageActionBarAction, type MessageActionBarProps, type MessageActionKind } from "./feedback/MessageActionBar.js";
 export { SourceIconStack, type SourceIconKind, type SourceIconStackItem, type SourceIconStackProps } from "./identity/SourceIconStack.js";
 export { TeammateAvatarStack, type TeammateAvatarStackItem, type TeammateAvatarStackProps } from "./identity/TeammateAvatarStack.js";
+export {
+  DockEmptyState,
+  DockLauncher,
+  DockPageHeader,
+  EvidencePage,
+  FilesPage,
+  ReviewQueuePage,
+  RightDockShell,
+  ToolPlaceholderPage,
+  type DockEmptyStateProps,
+  type DockLauncherPageItem,
+  type DockLauncherProps,
+  type DockPageHeaderProps,
+  type DockReviewFilter,
+  type EvidencePageProps,
+  type FilesPageProps,
+  type ReviewQueuePageProps,
+  type RightDockPageManifest,
+  type RightDockShellProps,
+  type ToolPlaceholderPageProps,
+} from "./dock/index.js";

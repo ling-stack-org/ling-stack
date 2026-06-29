@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
 import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Plus, Send, Square, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import { artifactContentUrl, attachmentContentUrl } from "../../api.js";
@@ -58,6 +58,19 @@ import {
   teammateDirectInterventionModeLabel,
   teammateDirectInterventionStatusLabel,
 } from "./teammate-workspace-utils.js";
+import {
+  WorkspaceRightDock,
+  mergeDockFileItems,
+  mergeEvidenceGroups,
+  projectAttachmentsToFileItems,
+  projectFileRefsToFileItems,
+  projectFilesToEvidenceGroup,
+  projectMessagesToReviewItems,
+  projectRunsToEvidenceGroup,
+  projectRunsToReviewItems,
+  projectWebEvidenceToEvidenceGroup,
+  type RightDockMessageProjectionInput,
+} from "../workspace/right-dock/index.js";
 
 type ComposerFileReferencePart = Extract<ComposerInputPart, { readonly type: "workspace_file" }>;
 
@@ -202,6 +215,43 @@ export function TeammatePrivateChatSurface({
     runs,
     t,
   });
+  const privateDockMessages = useMemo<readonly RightDockMessageProjectionInput[]>(
+    () => visibleMessages.map((message) => ({
+      id: message.id,
+      title: message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "local-user" ? t("User message") : t("System message"),
+      body: message.body,
+      status: message.status,
+      errorMessage: message.errorMessage,
+      runId: message.linkedRunId,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+      webEvidence: message.webEvidence,
+      fileRefs: message.fileRefs,
+    })),
+    [teammate.displayName, t, visibleMessages],
+  );
+  const privateDockFileItems = useMemo(
+    () => mergeDockFileItems(
+      projectAttachmentsToFileItems([...privateAttachmentById.values()], t),
+      projectFileRefsToFileItems(visibleMessages.flatMap((message) => message.fileRefs)),
+    ),
+    [privateAttachmentById, t, visibleMessages],
+  );
+  const privateDockEvidenceGroups = useMemo(
+    () => mergeEvidenceGroups(
+      projectRunsToEvidenceGroup(runs, t),
+      projectWebEvidenceToEvidenceGroup(privateDockMessages, t),
+      projectFilesToEvidenceGroup(privateDockFileItems, t),
+    ),
+    [privateDockFileItems, privateDockMessages, runs, t],
+  );
+  const privateDockReviewItems = useMemo(
+    () => [
+      ...projectRunsToReviewItems(runs, t),
+      ...projectMessagesToReviewItems(privateDockMessages, t),
+    ],
+    [privateDockMessages, runs, t],
+  );
   const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
   const slashCommandPickerOptions = filterSlashCommandPickerOptions(slashCommands, slashPicker);
   const privateComposerCurrentSendIcon = privateComposerSending
@@ -291,7 +341,7 @@ export function TeammatePrivateChatSurface({
 
   return (
     <ConversationShell
-      className="teammate-private-chat"
+      className="teammate-private-chat with-right-dock"
       ariaLabel={t("Private chat")}
       feedNode={(
         <ConversationViewProvider surfaceId={`teammate:${teammate.id}`}>
@@ -636,6 +686,19 @@ export function TeammatePrivateChatSurface({
             )}
           />
         </>
+      )}
+      sideNode={(
+        <WorkspaceRightDock
+          surface="teammate_direct"
+          open={visibleMessages.length > 0}
+          ariaLabel={t("Private chat workspace dock")}
+          className="teammate-private-right-dock"
+          launcherTitle={t("Private chat tools")}
+          launcherSubtitle={teammate.displayName}
+          reviewItems={privateDockReviewItems}
+          evidenceGroups={privateDockEvidenceGroups}
+          fileItems={privateDockFileItems}
+        />
       )}
     />
   );
