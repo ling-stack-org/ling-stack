@@ -263,8 +263,9 @@ export function WorkspaceRightDock({
           clearReviewLabel={t("Clear")}
           detailEmptyTitle={t("Select a review item")}
           detailEmptyDescription={t("Choose an item to inspect code, fallback state, or approval context.")}
+          detailPresentation="accordion"
+          renderItemDetail={(item) => <DockReviewItemDetail item={item} cwd={cwd} compact />}
           onFilterChange={setReviewFilter}
-          onOpenItem={(item) => pushDetail(`review:${item.id}`, reviewDetailTitle(item), reviewDetailSubtitle(item))}
         />
       ),
     },
@@ -466,9 +467,11 @@ export function WorkspaceRightDock({
 function DockReviewItemDetail({
   item,
   cwd,
+  compact = false,
 }: {
   readonly item: DockReviewItem;
   readonly cwd?: string;
+  readonly compact?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const isApprovalGate = item.kind === "approval_gate";
@@ -477,8 +480,8 @@ function DockReviewItemDetail({
   const showChangeFallback = item.kind === "code_change" && !hasPreview && !canLoadArtifactPreview;
 
   return (
-    <article className={`right-dock-review-detail ${item.kind ?? "generic"}`}>
-      {item.codePreview ? <DockReviewDetailTop item={item} preview={item.codePreview} /> : null}
+    <article className={`right-dock-review-detail ${compact ? "compact" : ""} ${item.kind ?? "generic"}`}>
+      {item.codePreview && !compact ? <DockReviewDetailTop item={item} preview={item.codePreview} /> : null}
       {item.codePreview ? <DockReviewCodePreview item={item} preview={item.codePreview} /> : null}
       {item.artifactRef && cwd && !hasPreview ? (
         <DockReviewArtifactPreview
@@ -486,6 +489,7 @@ function DockReviewItemDetail({
           cwd={cwd}
           fallbackTitle={item.title}
           fallbackReason={item.reason}
+          compact={compact}
         />
       ) : null}
 
@@ -582,11 +586,13 @@ function DockReviewArtifactPreview({
   cwd,
   fallbackTitle,
   fallbackReason,
+  compact = false,
 }: {
   readonly artifactRef: DockReviewArtifactRef;
   readonly cwd: string;
   readonly fallbackTitle: string;
   readonly fallbackReason: string;
+  readonly compact?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
@@ -648,7 +654,7 @@ function DockReviewArtifactPreview({
     };
     return (
       <>
-        <DockReviewDetailTop item={previewItem} preview={preview} />
+        {!compact ? <DockReviewDetailTop item={previewItem} preview={preview} /> : null}
         <DockReviewCodePreview item={previewItem} preview={preview} />
       </>
     );
