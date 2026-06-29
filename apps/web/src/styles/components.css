@@ -5216,6 +5216,7 @@ code,
   --channel-progress-panel-layout-width: 0px;
   --channel-side-panel-handle-width: 8px;
   --channel-side-panel-layout-handle-width: 0px;
+  --channel-progress-popover-right: 18px;
   --channel-right-dock-motion-duration: 620ms;
   --channel-right-dock-motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
@@ -5224,6 +5225,12 @@ code,
   min-width: 0;
   width: 100%;
   max-width: 100%;
+}
+
+.task-workbench-window.progress-open.with-channel-side-panel {
+  --channel-progress-popover-right: calc(
+    18px + var(--channel-side-panel-layout-handle-width) + var(--channel-right-dock-layout-width)
+  );
 }
 
 .task-workbench-main.progress-panel-expanded {
@@ -10146,7 +10153,7 @@ code,
 .channel-progress-popover {
   position: absolute;
   top: 62px;
-  right: 18px;
+  right: var(--channel-progress-popover-right, 18px);
   z-index: 25;
   width: var(--channel-progress-popover-width);
   max-height: min(720px, calc(100dvh - 86px));
