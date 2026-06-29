@@ -7,6 +7,24 @@
   overflow: auto;
 }
 
+@property --channel-right-dock-layout-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --channel-side-panel-layout-handle-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --channel-progress-panel-layout-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -5208,11 +5226,6 @@ code,
   max-width: 100%;
 }
 
-.task-workbench-window.channel-right-dock-expanded {
-  --channel-right-dock-layout-width: var(--channel-right-dock-width);
-  --channel-side-panel-layout-handle-width: var(--channel-side-panel-handle-width);
-}
-
 .task-workbench-main.progress-panel-expanded {
   --channel-progress-panel-layout-width: var(--channel-progress-panel-track-width);
 }
@@ -6152,6 +6165,9 @@ code,
 }
 
 .task-workbench-main {
+  --channel-right-dock-layout-width: 0px;
+  --channel-side-panel-layout-handle-width: 0px;
+  --channel-progress-panel-layout-width: 0px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
@@ -6161,7 +6177,7 @@ code,
   overflow: hidden;
   transition:
     padding-right var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
-    grid-template-columns var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease);
+    --channel-progress-panel-layout-width var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease);
 }
 
 .task-workbench-main.with-channel-side-panel {
@@ -6665,10 +6681,7 @@ code,
   cursor: col-resize;
   touch-action: none;
   opacity: 1;
-  transition:
-    opacity 140ms ease,
-    width var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
-    min-width var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease);
+  transition: opacity 140ms ease;
 }
 
 .task-workbench-main.channel-right-dock-collapsed .channel-side-panel-resize-handle {
