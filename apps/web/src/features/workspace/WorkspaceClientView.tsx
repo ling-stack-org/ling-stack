@@ -375,12 +375,18 @@ function easeChannelDockMotion(progress: number): number {
     : 1 - ((-2 * progress + 2) ** 3) / 2;
 }
 
-function setChannelRightDockLayoutVariables(element: HTMLElement | null, dockWidth: number, handleWidth: number): void {
-  if (!element) {
-    return;
+function setChannelRightDockLayoutVariables(
+  elements: readonly (HTMLElement | null)[],
+  dockWidth: number,
+  handleWidth: number,
+): void {
+  for (const element of elements) {
+    if (!element) {
+      continue;
+    }
+    element.style.setProperty("--channel-right-dock-layout-width", `${dockWidth}px`);
+    element.style.setProperty("--channel-side-panel-layout-handle-width", `${handleWidth}px`);
   }
-  element.style.setProperty("--channel-right-dock-layout-width", `${dockWidth}px`);
-  element.style.setProperty("--channel-side-panel-layout-handle-width", `${handleWidth}px`);
 }
 
 function clampChannelRightDockWidth(width: number, containerWidth: number, viewportWidth: number): number {
@@ -1358,7 +1364,7 @@ export function WorkspaceClientView({
   useLayoutEffect(() => {
     const targetDockWidth = channelRightDockExpanded ? channelRightDockWidth : 0;
     const targetHandleWidth = channelRightDockExpanded ? channelRightDockResizeHandleWidth : 0;
-    const layoutElement = taskWorkbenchMainRef.current;
+    const layoutElements = [taskWorkbenchWindowRef.current, taskWorkbenchMainRef.current];
 
     const runningFrameId = channelRightDockLayoutAnimationRef.current;
     if (runningFrameId !== undefined) {
@@ -1369,7 +1375,7 @@ export function WorkspaceClientView({
     if (channelRightDockResizing) {
       channelRightDockLayoutWidthRef.current = targetDockWidth;
       channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElement, targetDockWidth, targetHandleWidth);
+      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
       return undefined;
     }
 
@@ -1381,11 +1387,11 @@ export function WorkspaceClientView({
     if (Math.abs(dockDelta) < 0.5 && Math.abs(handleDelta) < 0.5) {
       channelRightDockLayoutWidthRef.current = targetDockWidth;
       channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElement, targetDockWidth, targetHandleWidth);
+      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
       return undefined;
     }
 
-    setChannelRightDockLayoutVariables(layoutElement, startDockWidth, startHandleWidth);
+    setChannelRightDockLayoutVariables(layoutElements, startDockWidth, startHandleWidth);
     const startedAt = globalThis.performance.now();
     const tick = (now: number): void => {
       const progress = Math.min(1, (now - startedAt) / channelRightDockTransitionMs);
@@ -1394,7 +1400,7 @@ export function WorkspaceClientView({
       const nextHandleWidth = startHandleWidth + handleDelta * eased;
       channelRightDockLayoutWidthRef.current = nextDockWidth;
       channelRightDockLayoutHandleWidthRef.current = nextHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElement, nextDockWidth, nextHandleWidth);
+      setChannelRightDockLayoutVariables(layoutElements, nextDockWidth, nextHandleWidth);
 
       if (progress < 1) {
         channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
@@ -1529,6 +1535,7 @@ export function WorkspaceClientView({
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const taskWorkbenchMainRef = useRef<HTMLDivElement | null>(null);
+  const taskWorkbenchWindowRef = useRef<HTMLDivElement | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
   const messageFeedPinnedToLatestRef = useRef(true);
   const messageFeedAutoFollowUntilRef = useRef(0);
@@ -6403,7 +6410,6 @@ export function WorkspaceClientView({
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
     setEnvironmentCommitDialogOpen(false);
-    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setWorkspaceSettingsOpen(false);
@@ -6425,7 +6431,6 @@ export function WorkspaceClientView({
     setChannelEnvironmentPageOpen(false);
     setEnvironmentCommitDialogOpen(false);
     setConversationDetailOverlay(undefined);
-    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setWorkspaceSettingsOpen(false);
@@ -6913,7 +6918,7 @@ export function WorkspaceClientView({
       - (channelRightDockVisible ? channelRightDockWidth : 0)
       - (channelRightDockVisible ? channelRightDockResizeHandleWidth : 0)
       - channelProgressPanelTrackWidth >= channelConversationComfortTrackWidth;
-  const progressPopoverCanRender = progressPopoverVisible && (!channelRightDockVisible || channelProgressPanelFits);
+  const progressPopoverCanRender = progressPopoverVisible;
   const progressPopoverInMainLayout = progressPopoverRendered && channelRightDockVisible && channelProgressPanelFits;
   const progressPopoverMotionClass = progressPopoverExpanded ? "is-popover-expanded" : "is-popover-collapsed";
   useEffect(() => {
@@ -6969,6 +6974,8 @@ export function WorkspaceClientView({
   );
   const taskWorkbenchWindowStyle = {
     "--channel-right-dock-width": `${channelRightDockWidth}px`,
+    "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
+    "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
   } as CSSProperties;
   const taskWorkbenchMainStyle = {
     "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
@@ -6992,6 +6999,7 @@ export function WorkspaceClientView({
 
   return (
     <div
+      ref={taskWorkbenchWindowRef}
       className={[
         "client-window task-workbench-window",
         channelRightDockVisible ? "with-channel-side-panel" : "",
@@ -7228,7 +7236,6 @@ export function WorkspaceClientView({
               if (sidePanelOpen) {
                 setSidePanelOpen(false);
                 setCreateTaskOpen(false);
-                setProgressPopoverOpen(false);
                 return;
               }
               openSidePanelView(sidePanelView === "settings" ? "context" : sidePanelView);

@@ -822,15 +822,27 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(popover).toContainText("+12");
   await expect(popover).toContainText("-3");
 
-  await popover.getByRole("button", { name: "Review" }).click();
   const dock = page.locator(".channel-side-panel");
+  await page.locator(".task-toolbar-panel").click();
+  await expect(dock).toBeVisible();
+  await expect(popover).toBeVisible();
+  await expect.poll(async () => {
+    const popoverBox = await popover.boundingBox();
+    const dockBox = await dock.boundingBox();
+    if (!popoverBox || !dockBox) {
+      return 999;
+    }
+    return Math.round(popoverBox.x + popoverBox.width - dockBox.x);
+  }).toBeLessThanOrEqual(-8);
+  await page.locator(".task-toolbar-panel").click();
+  await expect(dock).toHaveCount(0);
+  await expect(popover).toBeVisible();
+
+  await popover.getByRole("button", { name: "Review" }).click();
   await expect(dock).toBeVisible();
   await expect(dock.locator(".right-dock-head-page")).toContainText("Review");
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(320);
-  if (!(await popover.isVisible().catch(() => false))) {
-    await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
-  }
   await expect(popover).toBeVisible();
   await expect.poll(async () => {
     const popoverBox = await popover.boundingBox();
@@ -875,10 +887,11 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.mouse.move(860, expandedResizeHandleBox!.y + 40, { steps: 12 });
   await page.mouse.up();
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(840);
-  await expect(popover).toHaveCount(0);
+  await expect(popover).toBeVisible();
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(560);
   await page.locator(".task-toolbar-panel").click();
   await expect(dock).toHaveCount(0);
+  await expect(popover).toBeVisible();
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Environment" }).click();
