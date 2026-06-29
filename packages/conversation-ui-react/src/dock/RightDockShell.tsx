@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
 import type { DockPageKind, DockPageStackEntry, DockSurfaceKind } from "@ling-stack/conversation-ui-core";
 import { activeDockPage, createDockPageEntry } from "@ling-stack/conversation-ui-core";
-import { PanelRightClose, PanelRightOpen, X } from "lucide-react";
+import { ChevronLeft, PanelRightClose, PanelRightOpen, X } from "lucide-react";
 import { DockLauncher, type DockLauncherPageItem } from "./DockLauncher.js";
-import { DockPageHeader } from "./DockPageHeader.js";
 
 export interface RightDockPageManifest {
   readonly id: DockPageKind;
@@ -67,6 +66,7 @@ export function RightDockShell({
   const rootClassName = [
     "right-dock",
     `right-dock-${surface}`,
+    activeEntry ? "is-page-mode" : "",
     collapsed ? "is-collapsed" : "",
     className,
   ].filter(Boolean).join(" ");
@@ -74,12 +74,27 @@ export function RightDockShell({
   return (
     <aside className={rootClassName} aria-label={ariaLabel}>
       <div className="right-dock-head">
-        <span className="right-dock-head-title">
-          <strong>{activeEntry?.title ?? launcherTitle}</strong>
-          {(activeEntry?.subtitle ?? launcherSubtitle) ? <small>{activeEntry?.subtitle ?? launcherSubtitle}</small> : null}
-        </span>
+        {activeEntry && activeManifest ? (
+          <span className="right-dock-head-page">
+            {stack.length > 0 ? (
+              <button className="right-dock-back-button" type="button" onClick={onBack} aria-label={backLabel} title={backLabel}>
+                <ChevronLeft size={16} />
+              </button>
+            ) : null}
+            <span className="right-dock-page-title">
+              <strong>{activeEntry.title}</strong>
+              {activeEntry.subtitle ? <small>{activeEntry.subtitle}</small> : null}
+            </span>
+          </span>
+        ) : (
+          <span className="right-dock-head-title">
+            <strong>{launcherTitle}</strong>
+            {launcherSubtitle ? <small>{launcherSubtitle}</small> : null}
+          </span>
+        )}
         <span className="right-dock-head-actions">
-          {actions}
+          {activeEntry && activeManifest ? activeManifest.headerActions : null}
+          {!activeEntry || activeEntry.page !== "detail" ? actions : null}
           {onCollapsedChange ? (
             <button
               className="right-dock-icon-button"
@@ -100,20 +115,10 @@ export function RightDockShell({
       </div>
       {!collapsed ? (
         activeEntry && activeManifest ? (
-          <>
-            <DockPageHeader
-              title={activeEntry.title}
-              subtitle={activeEntry.subtitle}
-              canGoBack={stack.length > 0}
-              backLabel={backLabel}
-              actions={activeManifest.headerActions}
-              filters={activeManifest.headerFilters}
-              onBack={onBack}
-            />
-            <div className="right-dock-body right-dock-page-body">
-              {activeManifest.render(activeEntry)}
-            </div>
-          </>
+          <div className="right-dock-body right-dock-page-body">
+            {activeManifest.headerFilters ? <div className="right-dock-page-filters">{activeManifest.headerFilters}</div> : null}
+            {activeManifest.render(activeEntry)}
+          </div>
         ) : (
           <div className="right-dock-body">
             <DockLauncher
@@ -130,7 +135,7 @@ export function RightDockShell({
                 if (!manifest?.launcherItem || manifest.hiddenFromLauncher || manifest.launcherItem.disabled) {
                   return;
                 }
-                onNavigate(createDockPageEntry({ page, title: manifest.label }));
+                onNavigate(createDockPageEntry({ page, title: manifest.label, subtitle: manifest.launcherItem.statusLabel }));
               }}
             />
           </div>

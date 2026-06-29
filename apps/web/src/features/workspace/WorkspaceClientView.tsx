@@ -213,6 +213,7 @@ import {
   projectChannelAttachmentsToFileItems,
   projectFileRefsToFileItems,
   projectFilesToEvidenceGroup,
+  projectFilesToReviewItems,
   projectMessagesToReviewItems,
   projectRunsToEvidenceGroup,
   projectRunsToReviewItems,
@@ -6229,8 +6230,9 @@ export function WorkspaceClientView({
       ...projectApprovalsToReviewItems(channelApprovals, t),
       ...projectRunsToReviewItems(channelRuns, t),
       ...projectMessagesToReviewItems(channelDockMessages, t),
+      ...projectFilesToReviewItems(channelDockFileItems, t),
     ],
-    [channelApprovals, channelDockMessages, channelRuns, t],
+    [channelApprovals, channelDockFileItems, channelDockMessages, channelRuns, t],
   );
   const channelDockActivityCount = attentionProgressRows.length
     + (channelTeamMetricsState?.channelId === selectedChannelId ? channelTeamMetricsState.metrics.attention.activeAgentCount : 0);
@@ -7007,6 +7009,7 @@ export function WorkspaceClientView({
           open={sidePanelOpen}
           ariaLabel={t("Channel workspace dock")}
           className="channel-side-panel"
+          cwd={cwd.trim()}
           launcherTitle={t("Workspace tools")}
           launcherSubtitle={selectedChannel?.name ? `#${selectedChannel.name}` : undefined}
           reviewItems={channelDockReviewItems}

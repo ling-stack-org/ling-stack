@@ -31,6 +31,66 @@ the same dock primitives while preserving surface-specific policy:
 This is a staged Web implementation. Package extraction happens only after at least two
 surfaces prove the same component API.
 
+## 2026-06-29 Implementation Update
+
+The first shared dock slice is now package-backed rather than Web-local:
+
+- `packages/conversation-ui-core/src/dock-types.ts` owns dock page/review/evidence/file
+  view-model types.
+- `packages/conversation-ui-react/src/dock/*` owns the reusable dock shell, launcher,
+  review queue, evidence page, files page, and placeholders.
+- `apps/web/src/features/workspace/right-dock/WorkspaceRightDock.tsx` is the Web adapter
+  for channel, normal conversation, and teammate private chat.
+
+Current review workbench behavior:
+
+- review rows are compact: title, severity dot, and one short status/action pill;
+- secondary row copy is hidden by default to reduce visual noise;
+- review uses a page-stack model: list page first, explicit row click pushes a detail
+  page;
+- diff artifacts use `DockReviewItem.artifactRef` and load real preview text through the
+  existing artifact preview API;
+- missing preview content renders an honest fallback row, never fake diff hunks;
+- review packet actions are hidden until durable packet handlers exist.
+
+Correction from the first visual pass:
+
+- the implementation must target the real ~340px right dock, not the wider Product
+  Design mock canvas;
+- summary cards, permanent packet footers, long artifact paths, and approval-form copy
+  are not allowed in the narrow dock default state;
+- the code preview must preserve source structure with horizontal scrolling instead of
+  wrapping code lines;
+- diff prefix and gutter should not duplicate each other. Add/delete meaning is carried
+  by the gutter mark plus row color, while the source column remains readable.
+
+V5 visual target correction:
+
+- V3 remains only the structural correction: list page -> detail page through the
+  shared page stack. The final visual target for review detail is
+  `tmp/product-design/right-dock-review-diff-v5/index.html`.
+- Channel review dock targets `368px` when viewport space allows it, so the V5 mock's
+  two-column `780px` layout must be adapted into a single detail page.
+- List rows expose path labels and real `+/-` stats. If stats come from a diff artifact,
+  the Web adapter loads the preview once and caches the parsed code preview by review id.
+- Detail pages render the V5 structure adapted for the narrow dock: file header, change
+  minimap, display-mode chips, dark diff card, one line-number gutter, gutter mark,
+  source column, note marker column, folded unchanged-context rows, inline review notes,
+  and compact fallback cards.
+- Code color should match the V5 code palette: code background `#101211`, diff head
+  `#151816`, code border `#30362f`, hunk blue, add green, delete red, keyword purple,
+  function orange, and string green.
+- Source token color comes from Shiki using `github-dark-default` first. The Web adapter
+  keeps a lightweight fallback renderer so unsupported languages or Shiki load failures
+  do not break review display.
+- Review is not approval. Inline notes can mention blockers, but approval decisions stay
+  in the approval surface. The send-review packet action remains disabled/hidden until
+  durable packet persistence exists.
+- Detail pages hide unrelated global actions such as "new task".
+
+Future implementation work should build on this package API rather than creating new
+Web-local dock primitives.
+
 ## Reference Implementation Notes
 
 Use these references only to resolve implementation ambiguity:
@@ -60,7 +120,7 @@ conversation contract, the Ling contract wins.
 
 ## File Layout
 
-Start Web-local:
+Original Web-local plan, now superseded by the package-backed implementation above:
 
 ```text
 apps/web/src/shared/conversation/dock/
@@ -271,9 +331,62 @@ export type DockReviewGroup =
   | "runtime"
   | "channel_protocol";
 
+export type DockReviewKind =
+  | "approval_gate"
+  | "code_change"
+  | "runtime_issue"
+  | "evidence_gap"
+  | "message_issue"
+  | "protocol_signal";
+
+export type DockReviewCodeLineKind =
+  | "add"
+  | "delete"
+  | "hunk"
+  | "meta"
+  | "context"
+  | "command";
+
+export interface DockReviewCodeLine {
+  readonly kind: DockReviewCodeLineKind;
+  readonly text: string;
+  readonly lineNumber?: number;
+  readonly oldLineNumber?: number;
+  readonly newLineNumber?: number;
+}
+
+export interface DockReviewChangeStats {
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+export type DockReviewInlineNoteSeverity = "suggestion" | "risk" | "blocker";
+
+export interface DockReviewInlineNote {
+  readonly id: string;
+  readonly severity: DockReviewInlineNoteSeverity;
+  readonly label?: string;
+  readonly authorLabel?: string;
+  readonly body: string;
+  readonly oldLineNumber?: number;
+  readonly newLineNumber?: number;
+  readonly lineKind?: DockReviewCodeLineKind;
+}
+
+export interface DockReviewCodePreview {
+  readonly title: string;
+  readonly language?: string;
+  readonly pathLabel?: string;
+  readonly lines: readonly DockReviewCodeLine[];
+  readonly stats?: DockReviewChangeStats;
+  readonly inlineNotes?: readonly DockReviewInlineNote[];
+  readonly truncated?: boolean;
+}
+
 export interface DockReviewItem {
   readonly id: string;
   readonly group: DockReviewGroup;
+  readonly kind?: DockReviewKind;
   readonly severity: Exclude<DockSeverity, "neutral">;
   readonly status: "pending" | "passed" | "blocked" | "failed";
   readonly title: string;
@@ -281,8 +394,11 @@ export interface DockReviewItem {
   readonly sourceLabel?: string;
   readonly actionLabel?: string;
   readonly timestampLabel?: string;
-  readonly onOpenDetail?: () => void;
-  readonly action?: React.ReactNode;
+  readonly pathLabel?: string;
+  readonly stats?: DockReviewChangeStats;
+  readonly codePreview?: DockReviewCodePreview;
+  readonly facts?: readonly { readonly label: string; readonly value: string; readonly tone?: DockSeverity }[];
+  readonly artifactRef?: DockReviewArtifactRef;
 }
 
 export interface ReviewQueuePageProps {
@@ -313,6 +429,12 @@ Rules:
 - No fake "review passed" row if no review projection ran.
 - High-risk actions use existing approval callbacks; the page does not create new
   permission behavior.
+- `approval_gate` rows explain the permission gate and route users to the approval
+  surface. They do not embed the approval form in the review detail.
+- `code_change` rows should use `codePreview` when a diff, file, or command payload is
+  available. The preview uses the conversation code theme, not a separate palette.
+- Review comments are optional future work; high-risk decision reasons remain an
+  approval-only requirement.
 
 ### EvidencePage
 

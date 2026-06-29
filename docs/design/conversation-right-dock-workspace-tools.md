@@ -94,6 +94,36 @@ Ling's dock should be a conversation-adjacent workbench. The references inform d
 navigation, and review structure, but the product vocabulary remains Ling-specific:
 review, evidence, files, activity, browser evidence, terminal evidence, teammates.
 
+### Review Detail Visual Target
+
+The current review detail target is
+`tmp/product-design/right-dock-review-diff-v5/index.html`.
+
+The production dock is narrower than that mock, so Ling keeps the page-stack structure:
+review list first, row click opens one focused detail page. The detail page should still
+match V5's internal hierarchy:
+
+- file header with file type, filename, path, and real `+/-` stats;
+- file navigation minimap with green change, amber risk/note, red blocker, and gray
+  fallback segments;
+- display mode chips for `Unified`, `Split`, `Hide whitespace`, and note-focused review;
+- dark diff card with one line-number column, mark, source, and note marker columns;
+- folded unchanged context rows derived from hunk line-number gaps;
+- inline review notes attached to the changed line, not rendered as large cards below;
+- fallback preview cards for loading or unavailable artifacts without fake hunks.
+
+The code palette is intentionally code-themed and borrowed from the V5 mock: `#101211`
+background, `#151816` header, `#30362f` border, blue hunk rows, green additions, red
+deletions, purple keywords, orange function identifiers, and green strings.
+
+Syntax color should come from Shiki tokens, not from ad hoc regex styling. Ling still
+owns the review-specific layers around the code: diff row background, line-number
+gutter, `+/-` mark, note marker, inline note placement, folded context rows, and
+fallback cards.
+
+Review remains separate from approval. A blocker note can inform the Ling Agent team
+flow, but permission approval continues to live in the approval surface.
+
 ## Non-Goals
 
 First implementation must not:
@@ -117,10 +147,27 @@ available.
 | Launcher | The dock home page showing available tools and counts. |
 | Page | A dock tool surface such as Review, Evidence, Files, Terminal, or Browser. |
 | Page stack | Navigation model: launcher -> page -> detail -> nested detail. |
-| Review item | A user-actionable or inspectable item requiring review, confirmation, or traceability. |
+| Review item | An inspectable change, runtime issue, evidence gap, or risk signal. It can link to an approval, but it is not itself the approval control. |
+| Approval item | A permission gate that authorizes a real action such as shell, edit, write, external send, deploy, provider change, or credential change. |
 | Evidence item | A source, run event, file reference, search result, shell snapshot, or audit row. |
 | Placeholder page | A real page entry with honest empty state and no fake content. |
 | Surface adapter | Web code that maps channel/conversation/private-chat state into dock props. |
+
+### Review vs Approval
+
+The dock `Review` page is a review workbench, not the approval form.
+
+- Review answers: what changed, what failed, what evidence is missing, and what should be
+  inspected before trusting the result.
+- Approval answers: whether Ling may execute a high-risk action.
+- Review detail must not require a decision reason. Comments are optional future review
+  annotations.
+- Approval detail may require a reason for high/critical approvals because it writes an
+  execution audit decision and may unblock real side effects.
+- A review row can show an `Approval gate` signal and route the user to the approval
+  surface, but the dock should not present the approval card as if it were code review.
+- Code-oriented review detail uses the shared conversation code theme: mono type, diff
+  add/remove colors, hunk/meta rows, and compact changed-file summaries.
 
 ## Surface Capability Matrix
 
@@ -169,7 +216,9 @@ Rules:
 
 ### ReviewQueuePage
 
-The Review page is Ling's unified review inbox. It is broader than code diff review.
+The Review page is Ling's review workbench. It is broader than code diff review, but
+file/diff review is the primary visual model. Approval gates appear as related risk
+signals, not as the whole page.
 
 Review groups:
 
@@ -193,6 +242,7 @@ ReviewQueuePage
   Summary row: Needs action 2, Warnings 1, Clean 5
   Group: Needs action
     row -> severity dot, title, short reason, source, action chip
+    detail -> code-themed preview, review facts, evidence links, related approval signal
   Group: Passed / Clean
     collapsed by default
 ```
@@ -201,11 +251,94 @@ Rules:
 
 - High-risk review items may be actionable.
 - Low-risk passed items stay collapsed.
-- A review item opens a detail page in the page stack; it does not expand into a giant
-  card inside the list.
+- A review item selects the current detail inside the Review workbench. On narrow docks
+  the list and detail stack vertically; on wider docks they may split into list/detail
+  columns.
 - Review state must be honest: if no review data exists, show a clean empty state.
 - The dock must not block the conversation unless the underlying approval policy blocks
   execution.
+- Approval actions stay in the approval surface. Review detail can describe the gate but
+  should not require a high-risk decision reason.
+- Code preview rows must use real diff/file/command payloads. If a review item only has
+  artifact metadata, the detail loads the artifact through the preview API. If preview
+  content is unavailable, show an honest compact fallback row and do not synthesize fake
+  diff hunks.
+
+### Implemented Review Workbench Notes
+
+The first Web implementation uses `ReviewQueuePage` from
+`@ling-stack/conversation-ui-react` and shared dock view models from
+`@ling-stack/conversation-ui-core`.
+
+Implemented behavior:
+
+- visible review rows show title, severity dot, and one short status/action pill only;
+- row reasons, artifact paths, and command previews are hidden from the default row and
+  remain available through title/detail;
+- selected review detail lives in the review page instead of requiring a second click
+  into a separate detail route;
+- diff artifacts carry `artifactRef` and load real preview text through the existing
+  artifact preview API;
+- if preview loading fails or returns no text, the UI shows `Preview unavailable` rather
+  than a fabricated patch;
+- bottom review action bar is present but its buttons stay disabled until durable review
+  packet handlers are wired.
+
+### Narrow Dock Correction
+
+The channel, normal conversation, and teammate private-chat right dock is usually about
+`340px` wide. A wide `780px` design mock must not be treated as the production target.
+
+For the narrow dock:
+
+- do not render summary cards above the review list; use one compact status line instead;
+- do not show disabled review-packet actions. If review packets are not wired, hide the
+  action buttons rather than showing inert chrome;
+- code previews should preserve code structure with horizontal scroll instead of wrapping
+  source lines into unreadable fragments;
+- code preview headers show the useful artifact/file title first. Long run artifact paths
+  move to `title`/tooltip-level detail;
+- selected item detail stays below the list in narrow docks. A two-column list/detail
+  layout is allowed only when the dock container is actually wide enough.
+
+### Production Review Dock Correction
+
+The production Review page must be optimized for the real dock, not the presentation
+mock. The V4/V5 mock remains the visual language reference: compact file list, colored
+diff, inline risk placement, and no approval-form language. The production target is a
+single narrow workbench:
+
+```text
+Header: Back + Review
+Filters: All / Needs action / Risk / Runtime / Changes
+Status card: 2 Pending · +42 -7
+Rows: severity dot · short title · path · one compact diff/stat chip
+Detail: a separate page-stack entry, not inline under the list
+Code preview: file strip · dark diff card · single line-number column · horizontal scroll
+```
+
+Rules:
+
+- remove the wide mock's permanent packet/action footer until review packet persistence
+  exists;
+- remove large summary cards and dense explanatory copy from the production dock;
+- the production interaction follows the V3 prototype's two-state model: review list
+  first, click a row to enter review detail. Do not show the list and full diff stacked
+  together inside the 340-368px dock;
+- channel list pages may keep channel-level quick actions such as new task and refresh;
+  review detail pages hide unrelated global actions and keep only back, title, and close;
+- channel review dock width should target the V3 list dock size, `368px`, when viewport
+  space allows it;
+- keep review separate from approval: review can point to an approval gate, but it must
+  not ask for an approval reason or look like an approval form;
+- code or diff is the primary object. If real preview text is unavailable, show a compact
+  loading/unavailable row and do not synthesize fake code;
+- diff artifact previews may be read once by the Web adapter to derive real row stats and
+  share the loaded preview between list and detail. Do not fabricate `+/-` counts;
+- use color and placement first, short labels second. Do not repeat the same risk meaning
+  in dot, title, subtitle, badge, and footer at the same time;
+- the dock may use horizontal scrolling inside code blocks. It must not wrap source into
+  unreadable fragments to avoid horizontal scroll.
 
 ### EvidencePage
 

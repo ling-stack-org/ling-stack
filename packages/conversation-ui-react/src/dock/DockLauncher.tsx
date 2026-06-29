@@ -13,17 +13,11 @@ export interface DockLauncherProps {
 }
 
 export function DockLauncher({
-  title,
-  subtitle,
   items,
   onOpenPage,
 }: DockLauncherProps): JSX.Element {
   return (
     <div className="right-dock-launcher">
-      <div className="right-dock-launcher-head">
-        <strong>{title}</strong>
-        {subtitle ? <small>{subtitle}</small> : null}
-      </div>
       <div className="right-dock-launcher-list">
         {items.map((item) => (
           <button
@@ -44,7 +38,6 @@ export function DockLauncher({
               {item.description ? <small>{item.description}</small> : null}
             </span>
             <span className="right-dock-launcher-status">
-              {typeof item.count === "number" && item.count > 0 ? <strong>{item.count}</strong> : null}
               {item.statusLabel ? <small>{item.statusLabel}</small> : null}
             </span>
           </button>
