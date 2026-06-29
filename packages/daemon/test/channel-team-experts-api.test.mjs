@@ -23,6 +23,21 @@ test("channel team experts API exposes a compact folded projection", async () =>
       summary: "Security verified the risky action boundary.",
       sourceRefs: [{ type: "turn", id: "turn_demo" }],
       now: "2026-06-26T00:01:00.000Z",
+      expiresAt: null,
+    }),
+    "2026-06-26T00:01:00.000Z",
+  );
+  store.createChannelTeamEvidenceItem(
+    buildSpecialistNoteEvidenceInput({
+      id: "channel_team_note_expired_architect",
+      channelId: channel.id,
+      turnId: "turn_demo",
+      agentId: "teammate_builtin_architect",
+      evidenceGrade: "inspected",
+      summary: "Architect historical note is retained for transcript display.",
+      sourceRefs: [{ type: "turn", id: "turn_demo" }],
+      now: "2026-06-26T00:01:00.000Z",
+      expiresAt: "2000-01-01T00:00:00.000Z",
     }),
     "2026-06-26T00:01:00.000Z",
   );
@@ -43,6 +58,10 @@ test("channel team experts API exposes a compact folded projection", async () =>
     assert.equal(response.experts.completedCount, 1);
     assert.deepEqual(response.experts.chips.map((chip) => chip.agentId), ["teammate_builtin_security"]);
     assert.equal(response.experts.entries[0].summary, "Security verified the risky action boundary.");
+
+    const historicalResponse = await getJson(`${baseUrl}/channels/${encodeURIComponent(channel.id)}/team-experts?cwd=${encodeURIComponent(cwd)}&turnId=turn_demo&includeExpired=true`);
+    assert.equal(historicalResponse.experts.totalCount, 2);
+    assert.ok(historicalResponse.experts.entries.some((entry) => entry.summary === "Architect historical note is retained for transcript display."));
 
     const missingTurn = await requestJson(`${baseUrl}/channels/${encodeURIComponent(channel.id)}/team-experts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(missingTurn.status, 400);

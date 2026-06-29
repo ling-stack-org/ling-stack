@@ -523,7 +523,7 @@ export async function getChannelTeamExpertsProjection(
   cwd: string,
   channelId: string,
   turnId: string,
-  options: { readonly limit?: number } = {},
+  options: { readonly includeExpired?: boolean; readonly limit?: number } = {},
 ): Promise<ChannelTeamExpertsProjectionResponse> {
   return daemonClient.getChannelTeamExpertsProjection(cwd, channelId, turnId, options);
 }
