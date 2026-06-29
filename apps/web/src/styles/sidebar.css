@@ -1,7 +1,7 @@
 /* Codex-style global sidebar shell. Keep this file focused on shell chrome only. */
 :root {
-  --sidebar-expanded-width: 306px;
-  --sidebar-collapsed-width: 52px;
+  --sidebar-expanded-width: 240px;
+  --sidebar-collapsed-width: 48px;
   --sidebar-rail-motion-duration: 520ms;
   --sidebar-rail-motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -1782,6 +1782,7 @@
   }
 
   .task-workbench-main.with-channel-side-panel .channel-side-panel,
+  .task-workbench-main.with-channel-side-panel .channel-side-panel-resize-handle,
   .activity-chat-layout.with-thread > .thread-reply-panel,
   .teammate-workspace.chat-mode > .teammate-context-panel {
     display: none;
