@@ -47,6 +47,7 @@ import type {
   ChannelWorkflowStepStartResponse,
   ChannelWorkflowTemplateMutationResponse,
   ChannelWorkspaceCreateWorktreeRequest,
+  ChannelWorkspaceGitStatusResponse,
   ChannelWorkspaceHandoffRequest,
   ChannelWorkspaceMutationResponse,
   ChannelWorkspaceResponse,
@@ -246,6 +247,10 @@ export async function deleteChannel(cwd: string, channelId: string): Promise<voi
 
 export async function getChannelWorkspace(cwd: string, channelId: string): Promise<ChannelWorkspaceResponse> {
   return daemonClient.getChannelWorkspace(cwd, channelId);
+}
+
+export async function getChannelWorkspaceGitStatus(cwd: string, channelId: string): Promise<ChannelWorkspaceGitStatusResponse> {
+  return daemonClient.getChannelWorkspaceGitStatus(cwd, channelId);
 }
 
 export async function createChannelWorktree(

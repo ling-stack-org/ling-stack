@@ -23,6 +23,7 @@ import {
   ToolPlaceholderPage,
   type DockEvidenceGroupView,
   type DockFileItem,
+  type DockPageKind,
   type DockPageStackEntry,
   type DockReviewArtifactRef,
   type DockReviewCodeLine,
@@ -39,6 +40,11 @@ export interface WorkspaceRightDockForcedDetail {
   readonly title: string;
   readonly subtitle?: string;
   readonly node: ReactNode;
+}
+
+export interface WorkspaceRightDockPageRequest {
+  readonly page: DockPageKind;
+  readonly nonce: number;
 }
 
 export interface WorkspaceRightDockProps {
@@ -58,6 +64,8 @@ export interface WorkspaceRightDockProps {
   readonly activityCount?: number;
   readonly actions?: ReactNode;
   readonly forcedDetail?: WorkspaceRightDockForcedDetail;
+  readonly pageRequest?: WorkspaceRightDockPageRequest;
+  readonly onPageRequestConsumed?: (nonce: number) => void;
   readonly onClose?: () => void;
   readonly onCollapsedChange?: (collapsed: boolean) => void;
 }
@@ -79,6 +87,8 @@ export function WorkspaceRightDock({
   activityCount = 0,
   actions,
   forcedDetail,
+  pageRequest,
+  onPageRequestConsumed,
   onClose,
   onCollapsedChange,
 }: WorkspaceRightDockProps): JSX.Element | null {
@@ -433,6 +443,24 @@ export function WorkspaceRightDock({
     terminalEvidenceCount,
     terminalGroups,
   ]);
+
+  useEffect(() => {
+    if (!open || forcedDetail || !pageRequest) {
+      return;
+    }
+    const manifest = pages.find((candidate) => candidate.id === pageRequest.page);
+    if (!manifest?.launcherItem || manifest.hiddenFromLauncher || manifest.launcherItem.disabled) {
+      return;
+    }
+    setStack([
+      createDockPageEntry({
+        page: pageRequest.page,
+        title: manifest.label,
+        subtitle: manifest.launcherItem.statusLabel,
+      }),
+    ]);
+    onPageRequestConsumed?.(pageRequest.nonce);
+  }, [forcedDetail, onPageRequestConsumed, open, pageRequest, pages]);
 
   return (
     <RightDockShell

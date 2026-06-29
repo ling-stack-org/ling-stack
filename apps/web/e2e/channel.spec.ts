@@ -172,6 +172,41 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
       createdAt: "2026-05-25T00:18:01.000Z",
       updatedAt: "2026-05-25T00:18:01.000Z",
     },
+    {
+      id: "msg_team_followup",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "继续讨论部署边界。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:19:00.000Z",
+      updatedAt: "2026-05-25T00:19:00.000Z",
+    },
+    {
+      id: "msg_team_followup_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_team_followup",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "后续回复没有团队证据。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:19:01.000Z",
+      updatedAt: "2026-05-25T00:19:01.000Z",
+    },
   ];
   state.channelTeamExpertsByTurn["channel_engineering:msg_team_source"] = {
     channelId: "channel_engineering",
@@ -260,14 +295,21 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed.getByText("主回复保持干净，团队证据折叠展示。")).toBeVisible();
+  await expect(feed.getByText("后续回复没有团队证据。")).toBeVisible();
   const experts = feed.locator(".channel-team-experts-summary");
+  await expect(experts).toHaveCount(1);
   await expect(experts).toContainText("1 active");
   await expect(experts).toContainText("2 done");
-  await expect.poll(() => state.channelTeamExpertsRequests.at(-1)).toMatchObject({
-    channelId: "channel_engineering",
-    turnId: "msg_team_source",
-    includeExpired: true,
-  });
+  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
+    request.channelId === "channel_engineering" &&
+    request.turnId === "msg_team_source" &&
+    request.includeExpired === true
+  )).toBe(true);
+  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
+    request.channelId === "channel_engineering" &&
+    request.turnId === "msg_team_followup" &&
+    request.includeExpired === true
+  )).toBe(true);
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
   const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据折叠展示。" });
   await expect(assistantTranscript.locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);
@@ -659,6 +701,269 @@ test("progress popover shows active context source groups and opens source detai
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 
+test("channel environment surface shows read-only context and opens review", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [
+    {
+      id: "run_environment",
+      status: "succeeded",
+      cwd,
+      taskId: "task_environment",
+      channelId: "channel_engineering",
+      providerPresetId: "provider_local",
+      providerName: "local-relay",
+      providerModel: "gpt-5.5",
+      taskSnapshot: { id: "task_environment", title: "Prepare environment diff" },
+      providerSnapshot: { provider: "local-relay", model: "gpt-5.5" },
+      requestSnapshot: { cwd, providerPresetId: "provider_local" },
+      eventLogPath: ".ling-stack/sessions/run_environment.jsonl",
+      createdAt: "2026-06-29T00:00:30.000Z",
+      startedAt: "2026-06-29T00:00:31.000Z",
+      endedAt: "2026-06-29T00:00:59.000Z",
+      updatedAt: "2026-06-29T00:00:59.000Z",
+    },
+  ];
+  state.approvals = [];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? {
+          ...channel,
+          workspaceBinding: {
+            mode: "managed_worktree",
+            status: "ready",
+            executionPath: `${cwd}/.ling-stack/worktrees/channels/channel_engineering`,
+            worktreePath: `${cwd}/.ling-stack/worktrees/channels/channel_engineering`,
+            branchName: "ling/channel-environment",
+            baseBranch: "main",
+            updatedAt: "2026-06-29T00:00:00.000Z",
+            checkedAt: "2026-06-29T00:00:00.000Z",
+          },
+        }
+      : channel
+  );
+  state.artifactsByRun = {
+    run_environment: [
+      {
+        id: "artifact_environment_diff",
+        runId: "run_environment",
+        type: "diff",
+        path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+        title: "Workspace environment diff",
+        contentType: "text/x-diff; charset=utf-8",
+        createdAt: "2026-06-29T00:01:00.000Z",
+      },
+    ],
+  };
+  state.channelWorkspaceGitStatusByChannel.channel_engineering = {
+    state: "dirty",
+    cwd: `${cwd}/.ling-stack/worktrees/channels/channel_engineering`,
+    repoRoot: `${cwd}/.ling-stack/worktrees/channels/channel_engineering`,
+    branchName: "ling/channel-environment",
+    upstream: "main",
+    headSha: "abc1234",
+    changedFileCount: 1,
+    stagedFileCount: 0,
+    unstagedFileCount: 1,
+    untrackedFileCount: 0,
+    conflictedFileCount: 0,
+    additions: 12,
+    deletions: 3,
+    files: [
+      {
+        path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+        indexStatus: " ",
+        worktreeStatus: "M",
+        kind: "modified",
+        staged: false,
+        unstaged: true,
+        untracked: false,
+      },
+    ],
+    checkedAt: "2026-06-29T00:01:00.000Z",
+  };
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  const popover = page.locator(".channel-progress-popover");
+  await expect(popover).toBeVisible();
+  await expect(popover).toContainText("Environment");
+  await expect(popover).toContainText("Changes");
+  await expect(popover).toContainText("Review");
+  await expect(popover).toContainText("Local environment");
+  await expect(popover).toContainText("Working branch");
+  await expect(popover).toContainText("Commit or push");
+  await expect(popover).toContainText("1 changed file");
+  await expect(popover).toContainText("+12");
+  await expect(popover).toContainText("-3");
+
+  await popover.getByRole("button", { name: "Review" }).click();
+  const dock = page.locator(".channel-side-panel");
+  await expect(dock).toBeVisible();
+  await expect(dock.locator(".right-dock-head-page")).toContainText("Review");
+  await expect(dock).toContainText("Workspace environment diff");
+  await page.locator(".task-toolbar-panel").click();
+  await expect(dock).toHaveCount(0);
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toBeVisible();
+  await expect(environmentPage).toContainText("Local environment");
+  await expect(environmentPage).toContainText("Worktree");
+  await expect(environmentPage).toContainText("ling/channel-environment");
+  await expect(environmentPage).toContainText("1 changed file");
+  await expect(environmentPage).toContainText("+12");
+  await expect(environmentPage).toContainText("-3");
+  await expect(environmentPage).toContainText("1 review item");
+  await expect(environmentPage).toContainText("No browser evidence");
+  await expect(environmentPage).toContainText("No sources");
+
+  await environmentPage.locator(".channel-environment-section.commit").getByRole("button", { name: "Open" }).click();
+  const dialog = page.getByRole("dialog", { name: "Commit or push" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("first version is read-only");
+  await expect(dialog.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Commit and push" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Push", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await environmentPage.getByRole("button", { name: "View review" }).click();
+  await expect(page.locator(".channel-environment-page")).toHaveCount(0);
+  await expect(page.locator(".channel-side-panel .right-dock-head-page")).toContainText("Review");
+});
+
+test("channel environment labels review-only items as review instead of changes", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.approvals = [];
+  state.channelMessages = [];
+  state.artifactsByRun = {};
+  state.runs = [
+    {
+      id: "run_environment_failed",
+      status: "failed",
+      cwd,
+      taskId: "task_environment_failed",
+      channelId: "channel_engineering",
+      providerPresetId: "provider_local",
+      providerName: "local-relay",
+      providerModel: "gpt-5.5",
+      errorMessage: "Provider overloaded",
+      taskSnapshot: { id: "task_environment_failed", title: "Review runtime issue" },
+      providerSnapshot: { provider: "local-relay", model: "gpt-5.5" },
+      requestSnapshot: { cwd, providerPresetId: "provider_local" },
+      eventLogPath: ".ling-stack/sessions/run_environment_failed.jsonl",
+      createdAt: "2026-06-29T00:02:30.000Z",
+      startedAt: "2026-06-29T00:02:31.000Z",
+      endedAt: "2026-06-29T00:02:59.000Z",
+      updatedAt: "2026-06-29T00:02:59.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  const environmentSection = page.locator(".channel-progress-popover .attention-environment-section");
+  await expect(environmentSection).toBeVisible();
+  await expect(environmentSection).toContainText("Review");
+  await expect(environmentSection).toContainText("1 review item");
+  await expect(environmentSection).not.toContainText("Changes");
+  await expect(environmentSection).not.toContainText("+0 -0");
+});
+
+test("channel environment shows clean git state without review rows", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [];
+  state.approvals = [];
+  state.channelMessages = [];
+  state.artifactsByRun = {};
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  const environmentSection = page.locator(".channel-progress-popover .attention-environment-section");
+  await expect(environmentSection).toBeVisible();
+  await expect(environmentSection).not.toContainText("Changes");
+  await expect(environmentSection).not.toContainText("Review");
+
+  await page.locator(".task-toolbar-panel").click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toContainText("No code changes");
+  await expect(environmentPage).toContainText("No review items");
+});
+
+test("channel environment shows not-git-repo without fake clean state", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [];
+  state.approvals = [];
+  state.channelMessages = [];
+  state.artifactsByRun = {};
+  state.channelWorkspaceGitStatusByChannel.channel_engineering = {
+    state: "not_git_repo",
+    cwd,
+    changedFileCount: 0,
+    stagedFileCount: 0,
+    unstagedFileCount: 0,
+    untrackedFileCount: 0,
+    conflictedFileCount: 0,
+    files: [],
+    checkedAt: "2026-06-29T00:03:00.000Z",
+    unavailableReason: "Selected channel workspace is not a Git repository.",
+  };
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toContainText("Not a Git repository");
+  await expect(environmentPage).not.toContainText("No code changes");
+});
+
+test("channel environment treats git transport failure as unavailable", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [];
+  state.approvals = [];
+  state.channelMessages = [];
+  state.artifactsByRun = {};
+  state.channelWorkspaceGitStatusByChannel.channel_engineering = {
+    fail: true,
+    status: 503,
+    message: "Git status overloaded",
+  };
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toContainText("Git status unavailable");
+  await expect(environmentPage).not.toContainText("No code changes");
+});
+
 test("conversation motion respects reduced motion preference", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.addInitScript(() => {
@@ -854,6 +1159,7 @@ test("wide channel progress popover keeps the accepted HTML spacing", async ({ p
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await page.locator(".task-toolbar-progress").click();

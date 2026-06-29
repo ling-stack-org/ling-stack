@@ -6205,7 +6205,8 @@ code,
   background: var(--surface-panel);
 }
 
-.channel-settings-page {
+.channel-settings-page,
+.channel-environment-page {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   min-width: 0;
@@ -6213,6 +6214,217 @@ code,
   height: 100%;
   overflow: hidden;
   background: var(--surface-panel);
+}
+
+.channel-environment-stack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  width: min(1120px, 100%);
+  min-height: 0;
+  margin: 0 auto;
+  padding: 18px 24px 28px;
+  overflow: auto;
+}
+
+.channel-environment-section {
+  display: grid;
+  align-self: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel-strong) 70%, transparent);
+}
+
+.channel-environment-section.local,
+.channel-environment-section.changes,
+.channel-environment-section.commit {
+  grid-column: 1 / -1;
+}
+
+.channel-environment-section header,
+.channel-environment-section header span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.channel-environment-section header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.channel-environment-section header span {
+  gap: 7px;
+  color: var(--text);
+}
+
+.channel-environment-section header strong {
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 18px;
+}
+
+.channel-environment-section header small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-environment-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.channel-environment-row:not(:has(button)) {
+  grid-template-columns: 24px minmax(0, 1fr);
+}
+
+.channel-environment-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-muted);
+}
+
+.channel-environment-row-icon.ready,
+.channel-environment-row-icon.success {
+  color: var(--success);
+}
+
+.channel-environment-row-icon.info {
+  color: var(--accent-strong);
+}
+
+.channel-environment-row-icon.waiting,
+.channel-environment-row-icon.neutral {
+  color: var(--text-muted);
+}
+
+.channel-environment-row-icon.missing,
+.channel-environment-row-icon.blocked {
+  color: #a94e0e;
+}
+
+.channel-environment-row-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.channel-environment-row-copy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-environment-row-copy small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-environment-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.channel-environment-diff-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.channel-environment-diff-stat .add {
+  color: var(--success);
+}
+
+.channel-environment-diff-stat .del {
+  color: var(--danger);
+}
+
+.environment-commit-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.24);
+}
+
+.environment-commit-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(520px, 100%);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+}
+
+.environment-commit-dialog-head,
+.environment-commit-dialog-head span {
+  display: flex;
+  align-items: center;
+}
+
+.environment-commit-dialog-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.environment-commit-dialog-head span {
+  gap: 7px;
+}
+
+.environment-commit-message {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.environment-include-unstaged {
+  justify-content: start;
+}
+
+.environment-commit-dialog p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.environment-commit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .channel-settings-page-head {
@@ -6320,11 +6532,13 @@ code,
   }
 
   .channel-settings-page > .channel-settings-stack,
+  .channel-environment-stack,
   .channel-settings-page .channel-management-panel .channel-options-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .channel-settings-page > .channel-settings-stack {
+  .channel-settings-page > .channel-settings-stack,
+  .channel-environment-stack {
     padding: 14px;
   }
 }
@@ -9770,6 +9984,7 @@ code,
   transform: none;
 }
 
+.attention-environment-section,
 .attention-context-section,
 .attention-progress-preview {
   display: grid;
@@ -9786,6 +10001,8 @@ code,
   min-height: 28px;
 }
 
+.attention-environment-section + .attention-context-section,
+.attention-environment-section + .attention-progress-preview,
 .attention-context-section + .attention-progress-preview,
 .attention-context-section + .attention-queue-head,
 .attention-progress-preview + .attention-queue-head {
@@ -9801,6 +10018,7 @@ code,
   line-height: 20px;
 }
 
+.attention-environment-list,
 .attention-context-list,
 .attention-progress-list {
   display: grid;
@@ -9808,6 +10026,7 @@ code,
   min-width: 0;
 }
 
+.attention-environment-row,
 .attention-context-row,
 .attention-progress-row {
   display: grid;
@@ -9823,11 +10042,14 @@ code,
   text-align: left;
 }
 
+.attention-environment-row.interactive,
 .attention-context-row.interactive,
 .attention-progress-row.interactive {
   cursor: pointer;
 }
 
+.attention-environment-row.interactive:hover,
+.attention-environment-row.interactive:focus-visible,
 .attention-context-row.interactive:hover,
 .attention-context-row.interactive:focus-visible,
 .attention-progress-row.interactive:hover,
@@ -9854,6 +10076,10 @@ code,
   color: var(--success);
 }
 
+.attention-row-icon.info {
+  color: var(--accent-strong);
+}
+
 .attention-row-icon.running,
 .attention-row-icon.waiting {
   color: var(--accent-strong);
@@ -9867,6 +10093,7 @@ code,
   color: var(--danger);
 }
 
+.attention-environment-copy,
 .attention-context-copy,
 .attention-progress-copy {
   display: grid;
@@ -9874,6 +10101,7 @@ code,
   min-width: 0;
 }
 
+.attention-environment-copy small,
 .attention-context-copy small,
 .attention-progress-copy small {
   overflow: hidden;
@@ -9894,6 +10122,7 @@ code,
   line-height: 1.35;
 }
 
+.attention-environment-copy strong,
 .attention-context-copy strong,
 .attention-progress-copy strong {
   overflow: hidden;
