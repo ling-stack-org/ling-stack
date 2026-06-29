@@ -172,6 +172,41 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
       createdAt: "2026-05-25T00:18:01.000Z",
       updatedAt: "2026-05-25T00:18:01.000Z",
     },
+    {
+      id: "msg_team_followup",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "继续讨论部署边界。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:19:00.000Z",
+      updatedAt: "2026-05-25T00:19:00.000Z",
+    },
+    {
+      id: "msg_team_followup_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_team_followup",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "后续回复没有团队证据。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:19:01.000Z",
+      updatedAt: "2026-05-25T00:19:01.000Z",
+    },
   ];
   state.channelTeamExpertsByTurn["channel_engineering:msg_team_source"] = {
     channelId: "channel_engineering",
@@ -260,14 +295,21 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed.getByText("主回复保持干净，团队证据折叠展示。")).toBeVisible();
+  await expect(feed.getByText("后续回复没有团队证据。")).toBeVisible();
   const experts = feed.locator(".channel-team-experts-summary");
+  await expect(experts).toHaveCount(1);
   await expect(experts).toContainText("1 active");
   await expect(experts).toContainText("2 done");
-  await expect.poll(() => state.channelTeamExpertsRequests.at(-1)).toMatchObject({
-    channelId: "channel_engineering",
-    turnId: "msg_team_source",
-    includeExpired: true,
-  });
+  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
+    request.channelId === "channel_engineering" &&
+    request.turnId === "msg_team_source" &&
+    request.includeExpired === true
+  )).toBe(true);
+  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
+    request.channelId === "channel_engineering" &&
+    request.turnId === "msg_team_followup" &&
+    request.includeExpired === true
+  )).toBe(true);
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
   const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据折叠展示。" });
   await expect(assistantTranscript.locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);

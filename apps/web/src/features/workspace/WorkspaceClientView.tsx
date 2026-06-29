@@ -483,6 +483,11 @@ interface ChannelTeamExpertsState {
   readonly experts: FoldedExpertsReadModel;
 }
 
+interface ChannelTeamExpertsTurnTarget {
+  readonly turnId: string;
+  readonly signature: string;
+}
+
 interface ChannelTeamMetricsState {
   readonly channelId: string;
   readonly metrics: ChannelTeamMetricsProjection;
@@ -1234,8 +1239,8 @@ export function WorkspaceClientView({
     readonly status: "idle" | "loaded" | "error";
     readonly cards: readonly CollaborationTaskCardModel[];
   }>({ channelId: "", signature: "", status: "idle", cards: [] });
-  const [channelTeamExpertsState, setChannelTeamExpertsState] = useState<ChannelTeamExpertsState | undefined>();
-  const [channelTeamExpertsExpanded, setChannelTeamExpertsExpanded] = useState(false);
+  const [channelTeamExpertsByTurn, setChannelTeamExpertsByTurn] = useState<Readonly<Record<string, ChannelTeamExpertsState>>>({});
+  const [channelTeamExpertsExpandedByTurn, setChannelTeamExpertsExpandedByTurn] = useState<Readonly<Record<string, boolean>>>({});
   const [channelTeamMetricsState, setChannelTeamMetricsState] = useState<ChannelTeamMetricsState | undefined>();
   const [channelTeamMetricsLoading, setChannelTeamMetricsLoading] = useState(false);
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
@@ -2027,44 +2032,75 @@ export function WorkspaceClientView({
       usedMemoryEvents,
     ],
   );
-  const latestChannelTeamExpertsTurn = useMemo(
-    () => [...conversationTurnProjection.turns].reverse().find((turn) => turn.blocks.length > 0),
+  const channelTeamExpertsTurnTargets = useMemo<readonly ChannelTeamExpertsTurnTarget[]>(
+    () => conversationTurnProjection.turns
+      .filter((turn) => turn.blocks.length > 0)
+      .map((turn) => ({
+        turnId: turn.sourceMessage.id,
+        signature: conversationTurnRenderSignature(turn),
+      })),
     [conversationTurnProjection.turns],
   );
-  const latestChannelTeamExpertsTurnId = latestChannelTeamExpertsTurn?.sourceMessage.id ?? "";
-  const latestChannelTeamExpertsSignature = latestChannelTeamExpertsTurn
-    ? conversationTurnRenderSignature(latestChannelTeamExpertsTurn)
-    : "";
+  const channelTeamExpertsRequestSignature = useMemo(
+    () => channelTeamExpertsTurnTargets.map((turn) => `${turn.turnId}:${turn.signature}`).join("\n"),
+    [channelTeamExpertsTurnTargets],
+  );
   useEffect(() => {
-    setChannelTeamExpertsExpanded(false);
-  }, [latestChannelTeamExpertsTurnId, selectedChannelId]);
+    setChannelTeamExpertsExpandedByTurn({});
+  }, [selectedChannelId]);
+  useEffect(() => {
+    const activeTurnIds = new Set(channelTeamExpertsTurnTargets.map((turn) => turn.turnId));
+    setChannelTeamExpertsExpandedByTurn((current) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [turnId, expanded] of Object.entries(current)) {
+        if (activeTurnIds.has(turnId)) {
+          next[turnId] = expanded;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [channelTeamExpertsRequestSignature, channelTeamExpertsTurnTargets]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || !latestChannelTeamExpertsTurnId) {
-      setChannelTeamExpertsState(undefined);
+    if (!workspaceCwd || !selectedChannelId || channelTeamExpertsTurnTargets.length === 0) {
+      setChannelTeamExpertsByTurn({});
       return;
     }
     let cancelled = false;
-    void getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, latestChannelTeamExpertsTurnId, { includeExpired: true, limit: 8 })
-      .then((response) => {
+    void Promise.all(channelTeamExpertsTurnTargets.map(async ({ turnId }) => {
+      try {
+        const response = await getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, turnId, { includeExpired: true, limit: 8 });
+        return {
+          turnId,
+          state: {
+            channelId: response.channelId,
+            turnId: response.turnId,
+            experts: response.experts,
+          },
+        };
+      } catch {
+        return { turnId, state: undefined };
+      }
+    }))
+      .then((results) => {
         if (cancelled) {
           return;
         }
-        setChannelTeamExpertsState({
-          channelId: response.channelId,
-          turnId: response.turnId,
-          experts: response.experts,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setChannelTeamExpertsState(undefined);
+        const next: Record<string, ChannelTeamExpertsState> = {};
+        for (const result of results) {
+          if (result.state) {
+            next[result.turnId] = result.state;
+          }
         }
+        setChannelTeamExpertsByTurn(next);
       });
     return () => {
       cancelled = true;
     };
-  }, [cwd, latestChannelTeamExpertsSignature, latestChannelTeamExpertsTurnId, selectedChannelId]);
+  }, [channelTeamExpertsRequestSignature, channelTeamExpertsTurnTargets, cwd, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId || !channelSettingsPageOpen) {
@@ -4669,9 +4705,11 @@ export function WorkspaceClientView({
     const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
     const copyText = conversationTurnAssistantCopyText(turn);
     const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
-    const teamExperts = channelTeamExpertsState?.channelId === selectedChannelId && channelTeamExpertsState.turnId === turn.sourceMessage.id
-      ? channelTeamExpertsState.experts
+    const teamExpertsState = channelTeamExpertsByTurn[turn.sourceMessage.id];
+    const teamExperts = teamExpertsState?.channelId === selectedChannelId && teamExpertsState.turnId === turn.sourceMessage.id
+      ? teamExpertsState.experts
       : undefined;
+    const teamExpertsExpanded = channelTeamExpertsExpandedByTurn[turn.sourceMessage.id] ?? false;
 
     return (
       <MessageRow
@@ -4693,8 +4731,11 @@ export function WorkspaceClientView({
             {teamExperts ? (
               <ChannelTeamExpertsSummary
                 experts={teamExperts}
-                expanded={channelTeamExpertsExpanded}
-                onToggleExpanded={() => setChannelTeamExpertsExpanded((current) => !current)}
+                expanded={teamExpertsExpanded}
+                onToggleExpanded={() => setChannelTeamExpertsExpandedByTurn((current) => ({
+                  ...current,
+                  [turn.sourceMessage.id]: !(current[turn.sourceMessage.id] ?? false),
+                }))}
                 cwd={cwd}
                 resolveExpertTeammate={(agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId))}
                 labels={{
