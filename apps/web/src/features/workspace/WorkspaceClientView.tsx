@@ -355,6 +355,21 @@ type RequirementShapingRow = {
   readonly tone?: "neutral" | "attention" | "success";
 };
 const proposalStepActions: readonly ChannelProposalStepDraft["action"][] = ["coordinated", "consulted", "reviewed", "flagged_risk"];
+const channelRightDockMinWidth = 304;
+const channelRightDockMaxViewportRatio = 0.5;
+const channelRightDockMinChatWidth = 560;
+const channelRightDockResizeHandleWidth = 8;
+const channelRightDockTransitionMs = 620;
+const channelConversationComfortTrackWidth = 848;
+const channelProgressPanelTrackWidth = 304;
+
+function clampChannelRightDockWidth(width: number, containerWidth: number, viewportWidth: number): number {
+  const maxByContainer = Math.max(channelRightDockMinWidth, containerWidth - channelRightDockMinChatWidth - channelRightDockResizeHandleWidth);
+  const maxByViewport = Math.max(channelRightDockMinWidth, Math.floor(viewportWidth * channelRightDockMaxViewportRatio));
+  const effectiveMax = Math.min(maxByViewport, maxByContainer);
+  return Math.round(Math.max(channelRightDockMinWidth, Math.min(width, effectiveMax)));
+}
+
 type ThreadTurnsLoadState =
   | { readonly status: "not_loaded" }
   | { readonly status: "loading" }
@@ -1245,11 +1260,20 @@ export function WorkspaceClientView({
   const [environmentIncludeUnstaged, setEnvironmentIncludeUnstaged] = useState(true);
   const [channelGitStatusState, setChannelGitStatusState] = useState<ChannelGitStatusLoadState>({ status: "idle" });
   const [rightDockPageRequest, setRightDockPageRequest] = useState<WorkspaceRightDockPageRequest>();
+  const [channelRightDockWidth, setChannelRightDockWidth] = useState(channelRightDockMinWidth);
+  const [channelRightDockResizing, setChannelRightDockResizing] = useState(false);
+  const [channelRightDockRendered, setChannelRightDockRendered] = useState(() => Boolean(selectedTaskId));
+  const [channelRightDockExpanded, setChannelRightDockExpanded] = useState(() => Boolean(selectedTaskId));
+  const [taskWorkbenchMainWidth, setTaskWorkbenchMainWidth] = useState(0);
+  const channelRightDockOpenFrameRef = useRef<number | undefined>();
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
+  const [progressPopoverRendered, setProgressPopoverRendered] = useState(false);
+  const [progressPopoverExpanded, setProgressPopoverExpanded] = useState(false);
+  const progressPopoverOpenFrameRef = useRef<number | undefined>();
   const [governanceNotificationsOpen, setGovernanceNotificationsOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [conversationDetailOverlay, setConversationDetailOverlay] = useState<ConversationDetailOverlayState | undefined>();
@@ -1263,6 +1287,51 @@ export function WorkspaceClientView({
   const [activityFiltersExpanded, setActivityFiltersExpanded] = useState(false);
   const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
+  const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
+  const channelRightDockIntentOpen = !channelUtilityPageOpen && sidePanelOpen;
+
+  useEffect(() => {
+    if (channelRightDockIntentOpen) {
+      if (!channelRightDockRendered) {
+        setChannelRightDockExpanded(false);
+        setChannelRightDockRendered(true);
+        return undefined;
+      }
+
+      const firstFrameId = globalThis.requestAnimationFrame(() => {
+        const secondFrameId = globalThis.requestAnimationFrame(() => {
+          channelRightDockOpenFrameRef.current = undefined;
+          setChannelRightDockExpanded(true);
+        });
+        channelRightDockOpenFrameRef.current = secondFrameId;
+      });
+      channelRightDockOpenFrameRef.current = firstFrameId;
+      return () => {
+        const frameId = channelRightDockOpenFrameRef.current;
+        if (frameId !== undefined) {
+          globalThis.cancelAnimationFrame(frameId);
+          channelRightDockOpenFrameRef.current = undefined;
+        }
+      };
+    }
+
+    const frameId = channelRightDockOpenFrameRef.current;
+    if (frameId !== undefined) {
+      globalThis.cancelAnimationFrame(frameId);
+      channelRightDockOpenFrameRef.current = undefined;
+    }
+    setChannelRightDockExpanded(false);
+    if (!channelRightDockRendered) {
+      return undefined;
+    }
+    const timeoutId = globalThis.setTimeout(() => {
+      setChannelRightDockRendered(false);
+    }, channelRightDockTransitionMs);
+    return () => {
+      globalThis.clearTimeout(timeoutId);
+    };
+  }, [channelRightDockIntentOpen, channelRightDockRendered]);
+
   useEffect(() => {
     const channelId = selectedChannelId ?? "";
     const executionPath = selectedChannelExecutionPath.trim();
@@ -1378,6 +1447,7 @@ export function WorkspaceClientView({
   const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
+  const taskWorkbenchMainRef = useRef<HTMLDivElement | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
   const messageFeedPinnedToLatestRef = useRef(true);
   const messageFeedAutoFollowUntilRef = useRef(0);
@@ -1390,6 +1460,7 @@ export function WorkspaceClientView({
   const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>();
   const conversationBlockActionMenuRef = useRef<HTMLDivElement | null>(null);
   const composerResizeDragRef = useRef<{ readonly pointerId: number; readonly startY: number; readonly startHeight: number } | undefined>();
+  const channelRightDockResizeDragRef = useRef<{ readonly pointerId: number; readonly containerRight: number; readonly containerWidth: number; readonly viewportWidth: number } | undefined>();
   const messageFeedOlderLoadArmedRef = useRef(true);
   const messageFeedOlderLoadSnapshotRef = useRef<{ readonly anchorId: string; readonly anchorOffset: number } | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
@@ -1403,6 +1474,69 @@ export function WorkspaceClientView({
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
   const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
+
+  useEffect(() => {
+    const element = taskWorkbenchMainRef.current;
+    if (!element) {
+      return;
+    }
+    const updateWidth = (): void => {
+      const nextWidth = Math.round(element.getBoundingClientRect().width);
+      setTaskWorkbenchMainWidth((current) => current === nextWidth ? current : nextWidth);
+    };
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") {
+      globalThis.addEventListener("resize", updateWidth);
+      return () => {
+        globalThis.removeEventListener("resize", updateWidth);
+      };
+    }
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (taskWorkbenchMainWidth <= 0) {
+      return;
+    }
+    const viewportWidth = globalThis.innerWidth || taskWorkbenchMainWidth;
+    setChannelRightDockWidth((current) => {
+      const nextWidth = clampChannelRightDockWidth(current, taskWorkbenchMainWidth, viewportWidth);
+      return nextWidth === current ? current : nextWidth;
+    });
+  }, [taskWorkbenchMainWidth]);
+
+  useEffect(() => {
+    function handleGlobalChannelRightDockResizeMove(event: PointerEvent): void {
+      const drag = channelRightDockResizeDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      event.preventDefault();
+      setChannelRightDockWidth(clampChannelRightDockWidth(drag.containerRight - event.clientX, drag.containerWidth, drag.viewportWidth));
+    }
+
+    function handleGlobalChannelRightDockResizeEnd(event: PointerEvent): void {
+      const drag = channelRightDockResizeDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      channelRightDockResizeDragRef.current = undefined;
+      setChannelRightDockResizing(false);
+    }
+
+    globalThis.addEventListener("pointermove", handleGlobalChannelRightDockResizeMove, { passive: false });
+    globalThis.addEventListener("pointerup", handleGlobalChannelRightDockResizeEnd);
+    globalThis.addEventListener("pointercancel", handleGlobalChannelRightDockResizeEnd);
+    return () => {
+      globalThis.removeEventListener("pointermove", handleGlobalChannelRightDockResizeMove);
+      globalThis.removeEventListener("pointerup", handleGlobalChannelRightDockResizeEnd);
+      globalThis.removeEventListener("pointercancel", handleGlobalChannelRightDockResizeEnd);
+    };
+  }, []);
   const activeRun = activeRunId ? runById.get(activeRunId) : undefined;
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const taskChannelById = useMemo(() => new Map(tasks.map((task) => [task.id, task.channelId])), [tasks]);
@@ -4333,6 +4467,46 @@ export function WorkspaceClientView({
     composerResizeDragRef.current = undefined;
   }
 
+  function handleChannelRightDockResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    const rect = taskWorkbenchMainRef.current?.getBoundingClientRect();
+    const fallbackWidth = globalThis.innerWidth || channelRightDockMinWidth + channelRightDockMinChatWidth;
+    const viewportWidth = globalThis.innerWidth || rect?.right || fallbackWidth;
+    channelRightDockResizeDragRef.current = {
+      pointerId: event.pointerId,
+      containerRight: rect?.right ?? fallbackWidth,
+      containerWidth: rect?.width ?? fallbackWidth,
+      viewportWidth,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setChannelRightDockResizing(true);
+    setChannelRightDockWidth(clampChannelRightDockWidth((rect?.right ?? fallbackWidth) - event.clientX, rect?.width ?? fallbackWidth, viewportWidth));
+  }
+
+  function handleChannelRightDockResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const drag = channelRightDockResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    setChannelRightDockWidth(clampChannelRightDockWidth(drag.containerRight - event.clientX, drag.containerWidth, drag.viewportWidth));
+  }
+
+  function handleChannelRightDockResizePointerEnd(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const drag = channelRightDockResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    channelRightDockResizeDragRef.current = undefined;
+    setChannelRightDockResizing(false);
+  }
+
   function refreshChannelRunGuidanceSurfaces(): void {
     onRefreshChannelActivity();
     onRefreshTasks();
@@ -6649,9 +6823,72 @@ export function WorkspaceClientView({
       )}
     </ConversationDetailOverlay>
   ) : null;
-  const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
   const channelHasProgressPopoverContent = attentionProgressRows.length > 0 || channelEnvironmentSummary.popoverRows.length > 0;
-  const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !sidePanelOpen && !channelUtilityPageOpen && channelHasProgressPopoverContent;
+  const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !channelUtilityPageOpen && channelHasProgressPopoverContent;
+  const channelRightDockVisible = channelRightDockRendered;
+  const channelRightDockLayoutOpen = channelRightDockVisible && channelRightDockExpanded;
+  const channelProgressPanelFits = taskWorkbenchMainWidth > 0
+    && taskWorkbenchMainWidth
+      - (channelRightDockVisible ? channelRightDockWidth : 0)
+      - (channelRightDockVisible ? channelRightDockResizeHandleWidth : 0)
+      - channelProgressPanelTrackWidth >= channelConversationComfortTrackWidth;
+  const progressPopoverCanRender = progressPopoverVisible && (!channelRightDockVisible || channelProgressPanelFits);
+  const progressPopoverInMainLayout = progressPopoverRendered && channelRightDockVisible && channelProgressPanelFits;
+  const progressPopoverMotionClass = progressPopoverExpanded ? "is-popover-expanded" : "is-popover-collapsed";
+  useEffect(() => {
+    if (progressPopoverCanRender) {
+      if (!progressPopoverRendered) {
+        setProgressPopoverExpanded(false);
+        setProgressPopoverRendered(true);
+        return undefined;
+      }
+
+      const firstFrameId = globalThis.requestAnimationFrame(() => {
+        const secondFrameId = globalThis.requestAnimationFrame(() => {
+          progressPopoverOpenFrameRef.current = undefined;
+          setProgressPopoverExpanded(true);
+        });
+        progressPopoverOpenFrameRef.current = secondFrameId;
+      });
+      progressPopoverOpenFrameRef.current = firstFrameId;
+      return () => {
+        const frameId = progressPopoverOpenFrameRef.current;
+        if (frameId !== undefined) {
+          globalThis.cancelAnimationFrame(frameId);
+          progressPopoverOpenFrameRef.current = undefined;
+        }
+      };
+    }
+
+    const frameId = progressPopoverOpenFrameRef.current;
+    if (frameId !== undefined) {
+      globalThis.cancelAnimationFrame(frameId);
+      progressPopoverOpenFrameRef.current = undefined;
+    }
+    setProgressPopoverExpanded(false);
+    if (!progressPopoverRendered) {
+      return undefined;
+    }
+    const timeoutId = globalThis.setTimeout(() => {
+      setProgressPopoverRendered(false);
+    }, channelRightDockTransitionMs);
+    return () => {
+      globalThis.clearTimeout(timeoutId);
+    };
+  }, [progressPopoverCanRender, progressPopoverRendered]);
+  const progressPopoverNode = (
+    <ProgressPopover
+      expanded={attentionProgressExpanded}
+      onExpandedChange={setAttentionProgressExpanded}
+      progressRows={attentionProgressRows}
+      environmentSummary={channelEnvironmentSummary}
+      sourceSummary={activeProgressSourceSummary}
+      onOpenSourceGroup={openSourceGroupInConversationDetail}
+    />
+  );
+  const taskWorkbenchWindowStyle = (channelRightDockVisible
+    ? { "--channel-right-dock-width": `${channelRightDockWidth}px` }
+    : undefined) as CSSProperties | undefined;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
@@ -6669,7 +6906,17 @@ export function WorkspaceClientView({
   }
 
   return (
-    <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
+    <div
+      className={[
+        "client-window task-workbench-window",
+        channelRightDockVisible ? "with-channel-side-panel" : "",
+        channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
+        progressPopoverRendered ? "progress-open" : "",
+        progressPopoverRendered ? (progressPopoverExpanded ? "progress-expanded" : "progress-collapsed") : "",
+      ].filter(Boolean).join(" ")}
+      style={taskWorkbenchWindowStyle}
+      aria-label={t("Workspace")}
+    >
       <header className={channelUtilityPageOpen ? "channel-header task-workbench-header settings-page-header" : "channel-header task-workbench-header"}>
         <div className="channel-title-area">
           {channelSettingsPageOpen ? (
@@ -6865,7 +7112,7 @@ export function WorkspaceClientView({
             </button>
           ) : null}
           <button
-            className={progressPopoverVisible ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
+            className={progressPopoverRendered ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
             type="button"
             aria-label={t("Progress")}
             title={t("Progress")}
@@ -6874,7 +7121,6 @@ export function WorkspaceClientView({
                 setProgressPopoverOpen(false);
                 return;
               }
-              setSidePanelOpen(false);
               setChannelSettingsPageOpen(false);
               setChannelEnvironmentPageOpen(false);
               setEnvironmentCommitDialogOpen(false);
@@ -6908,16 +7154,9 @@ export function WorkspaceClientView({
             </>
           )}
         </div>
-        {progressPopoverVisible ? (
-          <div className="channel-progress-popover">
-            <ProgressPopover
-              expanded={attentionProgressExpanded}
-              onExpandedChange={setAttentionProgressExpanded}
-              progressRows={attentionProgressRows}
-              environmentSummary={channelEnvironmentSummary}
-              sourceSummary={activeProgressSourceSummary}
-              onOpenSourceGroup={openSourceGroupInConversationDetail}
-            />
+        {progressPopoverRendered && !progressPopoverInMainLayout ? (
+          <div className={`channel-progress-popover ${progressPopoverMotionClass}`}>
+            {progressPopoverNode}
           </div>
         ) : null}
       </header>
@@ -7033,12 +7272,17 @@ export function WorkspaceClientView({
       ) : null}
 
       <div
+        ref={taskWorkbenchMainRef}
         className={[
           "task-workbench-main",
           channelUtilityPageOpen ? "channel-settings-main" : "",
           channelEnvironmentPageOpen ? "channel-environment-main" : "",
-          !channelUtilityPageOpen && sidePanelOpen ? "with-channel-side-panel" : "",
-          progressPopoverVisible ? "progress-open" : "",
+          channelRightDockVisible ? "with-channel-side-panel" : "",
+          channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
+          progressPopoverInMainLayout ? "with-channel-progress-panel" : "",
+          progressPopoverInMainLayout ? (progressPopoverExpanded ? "progress-panel-expanded" : "progress-panel-collapsed") : "",
+          channelRightDockResizing ? "is-resizing-channel-side-panel" : "",
+          progressPopoverRendered ? "progress-open" : "",
         ].filter(Boolean).join(" ")}
       >
         {channelSettingsPageOpen ? (
@@ -7434,11 +7678,32 @@ export function WorkspaceClientView({
               ) : null}
             </div>
         </section>
+        {progressPopoverInMainLayout ? (
+          <aside className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`} aria-label={t("Progress")}>
+            {progressPopoverNode}
+          </aside>
+        ) : null}
+        {channelRightDockVisible ? (
+          <button
+            className="channel-side-panel-resize-handle"
+            type="button"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t("Resize workspace dock")}
+            title={t("Drag to resize workspace dock")}
+            tabIndex={channelRightDockExpanded ? 0 : -1}
+            onPointerDown={handleChannelRightDockResizePointerDown}
+            onPointerMove={handleChannelRightDockResizePointerMove}
+            onPointerUp={handleChannelRightDockResizePointerEnd}
+            onPointerCancel={handleChannelRightDockResizePointerEnd}
+            onLostPointerCapture={handleChannelRightDockResizePointerEnd}
+          />
+        ) : null}
         <WorkspaceRightDock
           surface="channel"
-          open={sidePanelOpen}
+          open={channelRightDockVisible}
           ariaLabel={t("Channel workspace dock")}
-          className="channel-side-panel"
+          className={`channel-side-panel ${channelRightDockExpanded ? "is-drawer-expanded" : "is-drawer-collapsed"}`}
           cwd={cwd.trim()}
           launcherTitle={t("Workspace tools")}
           launcherSubtitle={selectedChannel?.name ? `#${selectedChannel.name}` : undefined}

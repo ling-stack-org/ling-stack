@@ -703,6 +703,7 @@ test("progress popover shows active context source groups and opens source detai
 
 test("channel environment surface shows read-only context and opens review", async ({ page }) => {
   await useEnglishLocale(page);
+  await page.setViewportSize({ width: 1984, height: 1200 });
   const state = createBaseState({ approvalStatus: "expired" });
   state.tasks = [];
   state.runs = [
@@ -752,6 +753,20 @@ test("channel environment surface shows read-only context and opens review", asy
         path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
         title: "Workspace environment diff",
         contentType: "text/x-diff; charset=utf-8",
+        contentText: [
+          "diff --git a/apps/web/src/features/workspace/WorkspaceClientView.tsx b/apps/web/src/features/workspace/WorkspaceClientView.tsx",
+          "index 1111111..2222222 100644",
+          "--- a/apps/web/src/features/workspace/WorkspaceClientView.tsx",
+          "+++ b/apps/web/src/features/workspace/WorkspaceClientView.tsx",
+          "@@ -1,3 +1,4 @@",
+          " import React from \"react\";",
+          "-const oldLabel = \"Environment\";",
+          "+const newLabel = \"Environment\";",
+          "+const reviewPreview = true;",
+          " export function WorkspaceClientView() {",
+          "   return null;",
+          " }",
+        ].join("\n"),
         createdAt: "2026-06-29T00:01:00.000Z",
       },
     ],
@@ -787,10 +802,16 @@ test("channel environment surface shows read-only context and opens review", asy
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
+  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(250);
+  await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
 
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
+  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(290);
   await expect(popover).toContainText("Environment");
   await expect(popover).toContainText("Changes");
   await expect(popover).toContainText("Review");
@@ -805,7 +826,57 @@ test("channel environment surface shows read-only context and opens review", asy
   const dock = page.locator(".channel-side-panel");
   await expect(dock).toBeVisible();
   await expect(dock.locator(".right-dock-head-page")).toContainText("Review");
+  await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
+  await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(320);
+  if (!(await popover.isVisible().catch(() => false))) {
+    await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  }
+  await expect(popover).toBeVisible();
+  await expect.poll(async () => {
+    const popoverBox = await popover.boundingBox();
+    const dockBox = await dock.boundingBox();
+    if (!popoverBox || !dockBox) {
+      return 999;
+    }
+    return Math.round(popoverBox.x + popoverBox.width - dockBox.x);
+  }).toBeLessThanOrEqual(-8);
+  const defaultPopoverWithDockBox = await popover.boundingBox();
+  const defaultDockWithPopoverBox = await dock.boundingBox();
+  expect(defaultPopoverWithDockBox).not.toBeNull();
+  expect(defaultDockWithPopoverBox).not.toBeNull();
+  expect((defaultPopoverWithDockBox?.x ?? 0) + (defaultPopoverWithDockBox?.width ?? 0)).toBeLessThanOrEqual((defaultDockWithPopoverBox?.x ?? 0) - 8);
+  const resizeHandle = page.getByRole("separator", { name: "Resize workspace dock" });
+  await expect(resizeHandle).toBeVisible();
+  await expect(resizeHandle).toHaveCSS("cursor", "col-resize");
+  const initialDockBox = await dock.boundingBox();
+  expect(initialDockBox).not.toBeNull();
+  const resizeHandleBox = await resizeHandle.boundingBox();
+  expect(resizeHandleBox).not.toBeNull();
+  await page.mouse.move(resizeHandleBox!.x + resizeHandleBox!.width / 2, resizeHandleBox!.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(resizeHandleBox!.x - 130, resizeHandleBox!.y + 40, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => (await dock.boundingBox())?.width ?? 0).toBeGreaterThan((initialDockBox?.width ?? 0) + 80);
   await expect(dock).toContainText("Workspace environment diff");
+  const reviewSummaryRow = dock.locator(".right-dock-review-row", { hasText: "Workspace environment diff" });
+  const codePreview = dock.locator(".right-dock-code-preview");
+  await expect(codePreview).toBeVisible();
+  await expect(reviewSummaryRow).toHaveCount(0);
+  await expect(dock.locator(".right-dock-review-row")).toHaveCount(0);
+  await expect(codePreview.locator("pre")).toContainText("reviewPreview");
+  await codePreview.getByRole("button", { name: "Collapse code preview" }).click();
+  await expect(codePreview).toHaveClass(/collapsed/u);
+  await expect(codePreview.locator("pre")).toHaveCount(0);
+  await expect(codePreview).toContainText("Workspace environment diff");
+  const expandedResizeHandleBox = await resizeHandle.boundingBox();
+  expect(expandedResizeHandleBox).not.toBeNull();
+  await page.mouse.move(expandedResizeHandleBox!.x + expandedResizeHandleBox!.width / 2, expandedResizeHandleBox!.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(860, expandedResizeHandleBox!.y + 40, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(840);
+  await expect(popover).toHaveCount(0);
+  await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(560);
   await page.locator(".task-toolbar-panel").click();
   await expect(dock).toHaveCount(0);
 

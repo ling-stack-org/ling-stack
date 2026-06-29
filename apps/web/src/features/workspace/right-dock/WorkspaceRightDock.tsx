@@ -727,70 +727,73 @@ function DockReviewCodePreview({
   readonly preview: NonNullable<DockReviewItem["codePreview"]>;
 }): JSX.Element {
   const { t } = useI18n();
+  const [collapsed, setCollapsed] = useState(false);
   const primaryLabel = preview.title;
   const secondaryLabel = preview.pathLabel ?? preview.language;
   const stats = preview.stats ?? codePreviewStats(preview.lines);
   const notes = useMemo(() => inlineNotesForReviewItem(item, preview, t), [item, preview, t]);
   const rows = useMemo(() => codePreviewRenderRows(preview.lines, notes), [notes, preview.lines]);
   const highlightedLines = useShikiHighlightedCodeRows(preview, rows);
-  const blockerCount = notes.filter((note) => note.severity === "blocker").length;
+
+  useEffect(() => {
+    setCollapsed(false);
+  }, [item.id, preview.title]);
 
   return (
-    <figure className="right-dock-code-preview" data-language={preview.language ?? "text"}>
+    <figure className={collapsed ? "right-dock-code-preview collapsed" : "right-dock-code-preview"} data-language={preview.language ?? "text"}>
       <figcaption title={preview.pathLabel ?? preview.title}>
-        <span className="right-dock-code-title">{primaryLabel}</span>
-        {stats ? <span className="right-dock-code-stat"><span>+{stats.additions}</span><span>-{stats.deletions}</span></span> : null}
-        {secondaryLabel ? <small>{secondaryLabel}</small> : null}
+        <button
+          type="button"
+          className="right-dock-code-preview-toggle"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? t("Expand code preview") : t("Collapse code preview")}
+          onClick={() => setCollapsed((current) => !current)}
+        >
+          <span className="right-dock-code-title">{primaryLabel}</span>
+          {stats ? <span className="right-dock-code-stat"><span>+{stats.additions}</span><span>-{stats.deletions}</span></span> : null}
+          {secondaryLabel ? <small>{secondaryLabel}</small> : null}
+        </button>
       </figcaption>
-      <pre>
-        {rows.map((row) => {
-          if (row.type === "fold") {
-            return (
-              <span key={row.id} className="right-dock-code-fold">
-                <button type="button" aria-label={t("Show previous context")}>⌃</button>
-                <span>{row.label}</span>
-                <button type="button" aria-label={t("Show next context")}>⌄</button>
-              </span>
-            );
-          }
-          const note = row.note;
-          return (
-            <span key={row.id} className="right-dock-code-row-group">
-              <span className={[
-                "right-dock-code-line",
-                row.line.kind,
-                note ? "has-note" : "",
-                note?.severity === "blocker" ? "block-note" : "",
-              ].filter(Boolean).join(" ")}>
-                <span className="right-dock-code-number">{codeLineDisplayNumber(row.line)}</span>
-                <span className="right-dock-code-mark">{codeLineMark(row.line.kind)}</span>
-                <code>{renderCodeTokens(displayCodeLineText(row.line), highlightedLines[row.id])}</code>
-                <span className="right-dock-code-note-mark">{note ? "●" : ""}</span>
-              </span>
-              {note ? (
-                <span className={`right-dock-inline-note ${note.severity}`}>
-                  <span className="right-dock-note-pill">{inlineNoteLabel(note)}</span>
-                  <span>{note.body}</span>
-                  {note.authorLabel ? <span className="right-dock-note-author">{note.authorLabel}</span> : null}
+      {!collapsed ? (
+        <>
+          <pre>
+            {rows.map((row) => {
+              if (row.type === "fold") {
+                return (
+                  <span key={row.id} className="right-dock-code-fold">
+                    <button type="button" aria-label={t("Show previous context")}>⌃</button>
+                    <span>{row.label}</span>
+                    <button type="button" aria-label={t("Show next context")}>⌄</button>
+                  </span>
+                );
+              }
+              const note = row.note;
+              return (
+                <span key={row.id} className="right-dock-code-row-group">
+                  <span className={[
+                    "right-dock-code-line",
+                    row.line.kind,
+                    note ? "has-note" : "",
+                    note?.severity === "blocker" ? "block-note" : "",
+                  ].filter(Boolean).join(" ")}>
+                    <span className="right-dock-code-number">{codeLineDisplayNumber(row.line)}</span>
+                    <span className="right-dock-code-mark">{codeLineMark(row.line.kind)}</span>
+                    <code>{renderCodeTokens(displayCodeLineText(row.line), highlightedLines[row.id])}</code>
+                    <span className="right-dock-code-note-mark">{note ? "●" : ""}</span>
+                  </span>
+                  {note ? (
+                    <span className={`right-dock-inline-note ${note.severity}`}>
+                      <span className="right-dock-note-pill">{inlineNoteLabel(note)}</span>
+                      <span>{note.body}</span>
+                      {note.authorLabel ? <span className="right-dock-note-author">{note.authorLabel}</span> : null}
+                    </span>
+                  ) : null}
                 </span>
-              ) : null}
-            </span>
-          );
-        })}
-      </pre>
-      {preview.truncated ? <small className="right-dock-code-truncated">{t("Preview truncated")}</small> : null}
-      {notes.length > 0 ? (
-        <figcaption className="right-dock-review-packet-bar">
-          <span className="right-dock-review-action-copy">
-            <span className="right-dock-review-action-dot" aria-hidden="true" />
-            <strong>{notes.length} {t("review notes")}</strong>
-            <small>{blockerCount} {t("Blocker")}</small>
-          </span>
-          <span className="right-dock-review-action-buttons">
-            <button type="button" disabled>{t("Clear")}</button>
-            <button type="button" className="primary" disabled>{t("Send review")}</button>
-          </span>
-        </figcaption>
+              );
+            })}
+          </pre>
+          {preview.truncated ? <small className="right-dock-code-truncated">{t("Preview truncated")}</small> : null}
+        </>
       ) : null}
     </figure>
   );
@@ -957,7 +960,7 @@ function inlineNotesForReviewItem(
       severity: "suggestion",
       label: "QA",
       authorLabel: item.sourceLabel,
-      body: t("Review this changed line before sending it back to Ling Agent."),
+      body: t("Check whether this change matches the current goal and code context."),
       oldLineNumber: anchor.oldLineNumber,
       newLineNumber: anchor.newLineNumber,
       lineKind: anchor.kind,

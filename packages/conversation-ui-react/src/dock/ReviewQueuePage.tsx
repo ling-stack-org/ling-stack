@@ -117,11 +117,17 @@ export function ReviewQueuePage({
           <div className="right-dock-section">
             {visibleItems.map((item) => {
               const selected = Boolean(renderItemDetail) && selectedItemId === item.id;
+              if (useAccordionDetail) {
+                return (
+                  <div key={item.id} className="right-dock-review-accordion-item expanded">
+                    <div className="right-dock-review-inline-detail">
+                      {renderItemDetail?.(item)}
+                    </div>
+                  </div>
+                );
+              }
               return (
-                <div
-                  key={item.id}
-                  className={selected && useAccordionDetail ? "right-dock-review-accordion-item expanded" : "right-dock-review-accordion-item"}
-                >
+                <div key={item.id} className="right-dock-review-accordion-item">
                   <button
                     className={[
                       "right-dock-row",
@@ -135,10 +141,6 @@ export function ReviewQueuePage({
                     aria-current={selected ? "true" : undefined}
                     aria-expanded={renderItemDetail ? selected : undefined}
                     onClick={() => {
-                      if (useAccordionDetail) {
-                        setSelectedItemId((current) => current === item.id ? undefined : item.id);
-                        return;
-                      }
                       if (usePaneDetail) {
                         setSelectedItemId(item.id);
                         return;
@@ -163,11 +165,6 @@ export function ReviewQueuePage({
                       </span>
                     )}
                   </button>
-                  {useAccordionDetail && selected ? (
-                    <div className="right-dock-review-inline-detail">
-                      {renderItemDetail?.(item)}
-                    </div>
-                  ) : null}
                 </div>
               );
             })}
