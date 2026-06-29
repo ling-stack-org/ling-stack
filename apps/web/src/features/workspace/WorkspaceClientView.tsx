@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -362,6 +362,26 @@ const channelRightDockResizeHandleWidth = 8;
 const channelRightDockTransitionMs = 620;
 const channelConversationComfortTrackWidth = 848;
 const channelProgressPanelTrackWidth = 304;
+
+function easeChannelDockMotion(progress: number): number {
+  if (progress <= 0) {
+    return 0;
+  }
+  if (progress >= 1) {
+    return 1;
+  }
+  return progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - ((-2 * progress + 2) ** 3) / 2;
+}
+
+function setChannelRightDockLayoutVariables(element: HTMLElement | null, dockWidth: number, handleWidth: number): void {
+  if (!element) {
+    return;
+  }
+  element.style.setProperty("--channel-right-dock-layout-width", `${dockWidth}px`);
+  element.style.setProperty("--channel-side-panel-layout-handle-width", `${handleWidth}px`);
+}
 
 function clampChannelRightDockWidth(width: number, containerWidth: number, viewportWidth: number): number {
   const maxByContainer = Math.max(channelRightDockMinWidth, containerWidth - channelRightDockMinChatWidth - channelRightDockResizeHandleWidth);
@@ -1266,6 +1286,9 @@ export function WorkspaceClientView({
   const [channelRightDockExpanded, setChannelRightDockExpanded] = useState(() => Boolean(selectedTaskId));
   const [taskWorkbenchMainWidth, setTaskWorkbenchMainWidth] = useState(0);
   const channelRightDockOpenFrameRef = useRef<number | undefined>();
+  const channelRightDockLayoutAnimationRef = useRef<number | undefined>();
+  const channelRightDockLayoutWidthRef = useRef(selectedTaskId ? channelRightDockMinWidth : 0);
+  const channelRightDockLayoutHandleWidthRef = useRef(selectedTaskId ? channelRightDockResizeHandleWidth : 0);
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
@@ -1331,6 +1354,64 @@ export function WorkspaceClientView({
       globalThis.clearTimeout(timeoutId);
     };
   }, [channelRightDockIntentOpen, channelRightDockRendered]);
+
+  useLayoutEffect(() => {
+    const targetDockWidth = channelRightDockExpanded ? channelRightDockWidth : 0;
+    const targetHandleWidth = channelRightDockExpanded ? channelRightDockResizeHandleWidth : 0;
+    const layoutElement = taskWorkbenchMainRef.current;
+
+    const runningFrameId = channelRightDockLayoutAnimationRef.current;
+    if (runningFrameId !== undefined) {
+      globalThis.cancelAnimationFrame(runningFrameId);
+      channelRightDockLayoutAnimationRef.current = undefined;
+    }
+
+    if (channelRightDockResizing) {
+      channelRightDockLayoutWidthRef.current = targetDockWidth;
+      channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
+      setChannelRightDockLayoutVariables(layoutElement, targetDockWidth, targetHandleWidth);
+      return undefined;
+    }
+
+    const startDockWidth = channelRightDockLayoutWidthRef.current;
+    const startHandleWidth = channelRightDockLayoutHandleWidthRef.current;
+    const dockDelta = targetDockWidth - startDockWidth;
+    const handleDelta = targetHandleWidth - startHandleWidth;
+
+    if (Math.abs(dockDelta) < 0.5 && Math.abs(handleDelta) < 0.5) {
+      channelRightDockLayoutWidthRef.current = targetDockWidth;
+      channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
+      setChannelRightDockLayoutVariables(layoutElement, targetDockWidth, targetHandleWidth);
+      return undefined;
+    }
+
+    setChannelRightDockLayoutVariables(layoutElement, startDockWidth, startHandleWidth);
+    const startedAt = globalThis.performance.now();
+    const tick = (now: number): void => {
+      const progress = Math.min(1, (now - startedAt) / channelRightDockTransitionMs);
+      const eased = easeChannelDockMotion(progress);
+      const nextDockWidth = startDockWidth + dockDelta * eased;
+      const nextHandleWidth = startHandleWidth + handleDelta * eased;
+      channelRightDockLayoutWidthRef.current = nextDockWidth;
+      channelRightDockLayoutHandleWidthRef.current = nextHandleWidth;
+      setChannelRightDockLayoutVariables(layoutElement, nextDockWidth, nextHandleWidth);
+
+      if (progress < 1) {
+        channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
+      } else {
+        channelRightDockLayoutAnimationRef.current = undefined;
+      }
+    };
+
+    channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
+    return () => {
+      const frameId = channelRightDockLayoutAnimationRef.current;
+      if (frameId !== undefined) {
+        globalThis.cancelAnimationFrame(frameId);
+        channelRightDockLayoutAnimationRef.current = undefined;
+      }
+    };
+  }, [channelRightDockExpanded, channelRightDockResizing, channelRightDockWidth]);
 
   useEffect(() => {
     const channelId = selectedChannelId ?? "";
@@ -6886,9 +6967,13 @@ export function WorkspaceClientView({
       onOpenSourceGroup={openSourceGroupInConversationDetail}
     />
   );
-  const taskWorkbenchWindowStyle = (channelRightDockVisible
-    ? { "--channel-right-dock-width": `${channelRightDockWidth}px` }
-    : undefined) as CSSProperties | undefined;
+  const taskWorkbenchWindowStyle = {
+    "--channel-right-dock-width": `${channelRightDockWidth}px`,
+  } as CSSProperties;
+  const taskWorkbenchMainStyle = {
+    "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
+    "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
+  } as CSSProperties;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
@@ -7273,6 +7358,7 @@ export function WorkspaceClientView({
 
       <div
         ref={taskWorkbenchMainRef}
+        style={taskWorkbenchMainStyle}
         className={[
           "task-workbench-main",
           channelUtilityPageOpen ? "channel-settings-main" : "",
