@@ -86,3 +86,24 @@ export type {
   ConversationPermissionPreset,
   ConversationPermissionPresetOption,
 } from "./permission-policy.js";
+export {
+  activeDockPage,
+  createDockPageEntry,
+  popDockPage,
+  pushDockPage,
+  resetDockStack,
+} from "./dock-page-stack.js";
+export type {
+  DockEvidenceGroupView,
+  DockEvidenceItem,
+  DockEvidenceKind,
+  DockFileItem,
+  DockLauncherItem,
+  DockPageKind,
+  DockPageStackEntry,
+  DockReviewGroup,
+  DockReviewItem,
+  DockReviewStatus,
+  DockSeverity,
+  DockSurfaceKind,
+} from "./dock-types.js";

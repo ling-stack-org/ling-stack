@@ -4472,13 +4472,13 @@ test("progress popover owns workflow status while the right drawer avoids duplic
 
   await page.locator(".task-toolbar-panel").click();
   await expect(progressPopover).toHaveCount(0);
-  const panel = page.locator(".channel-side-panel");
-  await expect(panel).toHaveAttribute("aria-label", "Settings");
-  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Files" })).toHaveCount(0);
-  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Review" })).toHaveCount(0);
-  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Settings" })).toBeVisible();
-  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Progress" })).toHaveCount(0);
-  await expect(panel.locator(".right-drawer-nav").getByRole("button", { name: "Context" })).toHaveCount(0);
+  const panel = page.locator(".channel-side-panel.right-dock");
+  await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
+  await expect(panel).toContainText("Workspace tools");
+  await expect(panel).toContainText("Review");
+  await expect(panel).toContainText("Evidence");
+  await expect(panel).toContainText("Files");
+  await expect(panel).not.toContainText("Settings");
   await expect(panel.locator(".collaboration-task-card")).toHaveCount(0);
   await expect(panel).not.toContainText("Workflow evidence");
   await expect(panel).not.toContainText("Ship workflow UI");
@@ -5044,8 +5044,8 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
   await expect(progressPopover).not.toContainText("Older completed review");
   await page.getByRole("button", { name: "Show details" }).click();
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
-  const panel = page.locator(".channel-side-panel");
-  await expect(panel).toHaveAttribute("aria-label", "Settings");
+  const panel = page.locator(".channel-side-panel.right-dock");
+  await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(panel).not.toContainText("Current implementation");
   await expect(panel).not.toContainText("Completed docs review");
   await expect(panel).not.toContainText("Older completed review");
@@ -5175,8 +5175,8 @@ test("channel workspace utility panel follows dark theme surfaces", async ({ pag
   await expect(viewMenu.getByRole("menuitem", { name: "Settings" })).toBeVisible();
   await expect(viewMenu.getByRole("menuitem", { name: "Files" })).toHaveCount(0);
   await viewMenu.getByRole("menuitem", { name: "Settings" }).click();
-  const panel = page.locator(".channel-side-panel");
-  await expect(panel).toHaveAttribute("aria-label", "Settings");
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+  await expect(page.locator(".channel-settings-page")).toBeVisible();
   const utilityPanelLayout = await page.evaluate(() => {
     const panel = document.querySelector(".task-list-panel");
     const settings = document.querySelector(".channel-settings-stack");
@@ -5954,10 +5954,13 @@ test("channel review source stays in conversation instead of the legacy context 
   await expect(viewMenu.getByRole("menuitem", { name: "Settings" })).toBeVisible();
   await expect(viewMenu.getByRole("menuitem", { name: "Files" })).toHaveCount(0);
   await expect(viewMenu.getByRole("menuitem", { name: "Review" })).toHaveCount(0);
-  await expect(viewMenu.getByRole("menuitem", { name: "Context" })).toHaveCount(0);
+  await expect(viewMenu.getByRole("menuitem", { name: "Context" })).toBeVisible();
   await expect(viewMenu.getByRole("menuitem", { name: "Progress" })).toHaveCount(0);
   await viewMenu.getByRole("menuitem", { name: "Settings" }).click();
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Settings");
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+  await expect(page.locator(".channel-settings-page")).toBeVisible();
+  await page.getByRole("button", { name: "Back to channel" }).click();
+  await expect(page.getByLabel("Channel message feed")).toBeVisible();
 
   await openChannelChatTools(page);
   const summaryBubble = page.locator(".message-bubble").filter({ hasText: "Context summary" }).filter({ hasText: "Seed context summary" });
@@ -7003,8 +7006,8 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".channel-progress-popover")).toHaveCount(1);
   await page.getByRole("button", { name: "Show details" }).click();
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
-  const contextPanel = page.locator(".channel-side-panel");
-  await expect(contextPanel).toHaveAttribute("aria-label", "Settings");
+  const contextPanel = page.locator(".channel-side-panel.right-dock");
+  await expect(contextPanel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(contextPanel.getByLabel("Attention counts")).toHaveCount(0);
   await expect(contextPanel.getByLabel("Top attention items")).toHaveCount(0);
   await expect(contextPanel.locator(".attention-queue-item")).toHaveCount(0);
@@ -7323,6 +7326,7 @@ test("channel activity does not auto-render the progress popover", async ({ page
   }));
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.locator(".task-toolbar-progress .toolbar-count")).toHaveCount(0);
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
