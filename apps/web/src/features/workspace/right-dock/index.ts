@@ -1,4 +1,4 @@
-export { WorkspaceRightDock, type WorkspaceRightDockForcedDetail, type WorkspaceRightDockProps } from "./WorkspaceRightDock.js";
+export { WorkspaceRightDock, type WorkspaceRightDockForcedDetail, type WorkspaceRightDockPageRequest, type WorkspaceRightDockProps } from "./WorkspaceRightDock.js";
 export {
   mergeDockFileItems,
   mergeEvidenceGroups,

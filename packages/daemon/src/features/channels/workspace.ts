@@ -12,6 +12,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { buildUnavailableWorkspaceGitStatus, inspectWorkspaceGitStatus } from "./git-status.js";
 import {
   createManagedGitWorktree,
   inspectManagedWorktree,
@@ -51,7 +52,7 @@ export async function handleChannelWorkspace(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
-  action?: "create-worktree" | "handoff" | "refresh" | "cleanup",
+  action?: "create-worktree" | "handoff" | "refresh" | "cleanup" | "git-status",
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -70,6 +71,25 @@ export async function handleChannelWorkspace(
 
     if (!action && request.method === "GET") {
       writeJson(response, 200, buildChannelWorkspaceResponse(cwd, channel));
+      return;
+    }
+
+    if (action === "git-status" && request.method === "GET") {
+      const binding = channel.workspaceBinding ?? defaultChannelWorkspaceBinding(channel, cwd);
+      const channelWithBinding = { ...channel, workspaceBinding: binding };
+      const snapshot = createChannelWorkspaceSnapshot(channelWithBinding, cwd);
+      const ready = assertChannelWorkspaceReady(channelWithBinding, cwd);
+      const checkedAt = new Date().toISOString();
+      const gitStatus = ready.ok
+        ? await inspectWorkspaceGitStatus(ready.executionCwd, checkedAt)
+        : buildUnavailableWorkspaceGitStatus(snapshot.executionCwd, checkedAt, ready.message);
+      writeJson(response, 200, {
+        cwd,
+        channelId: channel.id,
+        binding,
+        snapshot,
+        gitStatus,
+      });
       return;
     }
 

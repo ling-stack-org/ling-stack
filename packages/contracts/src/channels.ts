@@ -60,6 +60,57 @@ export interface ChannelWorkspaceResponse {
   readonly snapshot: ChannelWorkspaceSnapshot;
 }
 
+export type WorkspaceGitStatusState = "clean" | "dirty" | "not_git_repo" | "unavailable" | "error";
+
+export type WorkspaceGitFileKind =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked"
+  | "conflicted"
+  | "unknown";
+
+export interface WorkspaceGitStatusFile {
+  readonly path: string;
+  readonly originalPath?: string;
+  readonly indexStatus: string;
+  readonly worktreeStatus: string;
+  readonly kind: WorkspaceGitFileKind;
+  readonly staged: boolean;
+  readonly unstaged: boolean;
+  readonly untracked: boolean;
+}
+
+export interface WorkspaceGitStatus {
+  readonly state: WorkspaceGitStatusState;
+  readonly cwd: string;
+  readonly repoRoot?: string;
+  readonly branchName?: string;
+  readonly upstream?: string;
+  readonly headSha?: string;
+  readonly changedFileCount: number;
+  readonly stagedFileCount: number;
+  readonly unstagedFileCount: number;
+  readonly untrackedFileCount: number;
+  readonly conflictedFileCount: number;
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly files: readonly WorkspaceGitStatusFile[];
+  readonly checkedAt: string;
+  readonly unavailableReason?: string;
+  readonly errorMessage?: string;
+}
+
+export interface ChannelWorkspaceGitStatusResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly binding: ChannelWorkspaceBinding;
+  readonly snapshot: ChannelWorkspaceSnapshot;
+  readonly gitStatus: WorkspaceGitStatus;
+}
+
 export interface ChannelWorkspaceCreateWorktreeRequest {
   readonly baseBranch?: string;
 }
