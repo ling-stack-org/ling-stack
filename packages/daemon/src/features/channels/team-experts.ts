@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { readOptionalIntegerQuery } from "../../shared/request.js";
+import { readOptionalBooleanQuery, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 
 export async function handleChannelTeamExpertsProjection(
@@ -38,6 +38,7 @@ export async function handleChannelTeamExpertsProjection(
       channelId,
       turnId,
       now: new Date().toISOString(),
+      includeExpired: readOptionalBooleanQuery(url, "includeExpired"),
       limit: readOptionalIntegerQuery(url, "limit", 1),
     });
     writeJson(response, 200, { cwd, channelId, turnId, experts });

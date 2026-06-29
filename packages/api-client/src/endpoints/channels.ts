@@ -575,9 +575,9 @@ export const channelEndpoints = {
       cwd: string,
       channelId: string,
       turnId: string,
-      options: { readonly limit?: number } = {},
+      options: { readonly includeExpired?: boolean; readonly limit?: number } = {},
     ): Promise<ChannelTeamExpertsProjectionResponse> {
-      return this._get(`/channels/${encodeURIComponent(channelId)}/team-experts`, { cwd, turnId, limit: options.limit });
+      return this._get(`/channels/${encodeURIComponent(channelId)}/team-experts`, { cwd, turnId, includeExpired: options.includeExpired, limit: options.limit });
     },
 
   async getChannelTeamMetricsProjection(this: LingDaemonEndpointContext,

@@ -63,6 +63,7 @@ export interface MockState {
   channelProtocolDrafts: unknown[];
   channelPlaybookCandidates: unknown[];
   channelTeamExpertsByTurn: Record<string, unknown>;
+  channelTeamExpertsRequests: Array<{ readonly channelId: string; readonly turnId: string; readonly includeExpired?: boolean }>;
   channelTeamMetricsByChannel: Record<string, unknown>;
   aiTeammates: unknown[];
   aiCouncils: unknown[];
@@ -955,6 +956,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelProtocolDrafts: [],
     channelPlaybookCandidates: [],
     channelTeamExpertsByTurn: {},
+    channelTeamExpertsRequests: [],
     channelTeamMetricsByChannel: {},
     aiTeammates: [],
     aiCouncils: [createMockAiCouncil()],
@@ -8324,6 +8326,11 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
       return;
     }
+    state.channelTeamExpertsRequests.push({
+      channelId,
+      turnId,
+      includeExpired: url.searchParams.get("includeExpired") === "true" ? true : url.searchParams.get("includeExpired") === "false" ? false : undefined,
+    });
     const experts = state.channelTeamExpertsByTurn[`${channelId}:${turnId}`] ??
       state.channelTeamExpertsByTurn[turnId] ??
       buildEmptyMockFoldedExperts(channelId, turnId);

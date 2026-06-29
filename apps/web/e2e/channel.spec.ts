@@ -263,6 +263,11 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
   const experts = feed.locator(".channel-team-experts-summary");
   await expect(experts).toContainText("1 active");
   await expect(experts).toContainText("2 done");
+  await expect.poll(() => state.channelTeamExpertsRequests.at(-1)).toMatchObject({
+    channelId: "channel_engineering",
+    turnId: "msg_team_source",
+    includeExpired: true,
+  });
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
   const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据折叠展示。" });
   await expect(assistantTranscript.locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);
@@ -277,9 +282,9 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
-  const settings = page.locator(".channel-side-panel");
-  await expect(settings.getByLabel("Team metrics")).toContainText("attention needed");
-  await expect(settings.getByLabel("Team metrics")).toContainText("Architect checked boundaries.");
+  const teamMetrics = page.getByRole("region", { name: "Team metrics" });
+  await expect(teamMetrics).toContainText("attention needed");
+  await expect(teamMetrics).toContainText("Architect checked boundaries.");
 });
 
 test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {

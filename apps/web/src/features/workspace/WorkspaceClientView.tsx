@@ -2029,7 +2029,7 @@ export function WorkspaceClientView({
       return;
     }
     let cancelled = false;
-    void getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, latestChannelTeamExpertsTurnId, { limit: 8 })
+    void getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, latestChannelTeamExpertsTurnId, { includeExpired: true, limit: 8 })
       .then((response) => {
         if (cancelled) {
           return;
