@@ -17,6 +17,7 @@ export interface ReviewQueuePageProps {
   readonly clearReviewLabel?: string;
   readonly detailEmptyTitle?: string;
   readonly detailEmptyDescription?: string;
+  readonly detailPresentation?: "pane" | "accordion";
   readonly renderItemDetail?: (item: DockReviewItem) => ReactNode;
   readonly onSendReviewPacket?: (items: readonly DockReviewItem[]) => void;
   readonly onClearReviewPacket?: () => void;
@@ -37,6 +38,7 @@ export function ReviewQueuePage({
   clearReviewLabel = "clear",
   detailEmptyTitle = "No item selected",
   detailEmptyDescription,
+  detailPresentation = "pane",
   renderItemDetail,
   onSendReviewPacket,
   onClearReviewPacket,
@@ -61,9 +63,11 @@ export function ReviewQueuePage({
   const blockerCount = items.filter((item) => item.status === "blocked" || item.status === "failed" || item.severity === "danger").length;
   const stats = reviewStats(items);
   const selectedItem = visibleItems.find((item) => item.id === selectedItemId) ?? visibleItems[0];
+  const useAccordionDetail = Boolean(renderItemDetail) && detailPresentation === "accordion";
+  const usePaneDetail = Boolean(renderItemDetail) && detailPresentation === "pane";
 
   useEffect(() => {
-    if (!renderItemDetail) {
+    if (!usePaneDetail) {
       return;
     }
     if (!visibleItems.length) {
@@ -73,10 +77,10 @@ export function ReviewQueuePage({
     if (!visibleItems.some((item) => item.id === selectedItemId)) {
       setSelectedItemId(visibleItems[0]?.id);
     }
-  }, [renderItemDetail, selectedItemId, visibleItems]);
+  }, [selectedItemId, usePaneDetail, visibleItems]);
 
   return (
-    <div className={renderItemDetail ? "right-dock-review-page right-dock-review-workbench" : "right-dock-review-page"}>
+    <div className={usePaneDetail ? "right-dock-review-page right-dock-review-workbench" : "right-dock-review-page"}>
       <section className="right-dock-review-list-pane">
         <div className="right-dock-filter-row" role="tablist" aria-label="Review filters">
           {filters.map((filter) => (
@@ -112,45 +116,59 @@ export function ReviewQueuePage({
         {visibleItems.length > 0 ? (
           <div className="right-dock-section">
             {visibleItems.map((item) => {
-              const selected = renderItemDetail && selectedItem?.id === item.id;
+              const selected = Boolean(renderItemDetail) && selectedItemId === item.id;
               return (
-                <button
+                <div
                   key={item.id}
-                  className={[
-                    "right-dock-row",
-                    "right-dock-review-row",
-                    selected ? "selected" : "",
-                    `right-dock-row-severity-${item.severity}`,
-                    `status-${item.status}`,
-                  ].filter(Boolean).join(" ")}
-                  type="button"
-                  title={reviewRowTitle(item)}
-                  aria-current={selected ? "true" : undefined}
-                  onClick={() => {
-                    if (renderItemDetail) {
-                      setSelectedItemId(item.id);
-                      return;
-                    }
-                    onOpenItem?.(item);
-                  }}
-                  disabled={!renderItemDetail && !onOpenItem}
+                  className={selected && useAccordionDetail ? "right-dock-review-accordion-item expanded" : "right-dock-review-accordion-item"}
                 >
-                  <span className="right-dock-row-dot" aria-hidden="true" />
-                  <span className="right-dock-row-copy">
-                    <strong>{item.title}</strong>
-                    <small>{item.pathLabel ?? item.reason}</small>
-                  </span>
-                  {item.stats ? (
-                    <span className="right-dock-diff-stat" title={`${item.stats.additions} additions, ${item.stats.deletions} deletions`}>
-                      <span className="add">+{item.stats.additions}</span>
-                      <span className="del">-{item.stats.deletions}</span>
+                  <button
+                    className={[
+                      "right-dock-row",
+                      "right-dock-review-row",
+                      selected ? "selected" : "",
+                      `right-dock-row-severity-${item.severity}`,
+                      `status-${item.status}`,
+                    ].filter(Boolean).join(" ")}
+                    type="button"
+                    title={reviewRowTitle(item)}
+                    aria-current={selected ? "true" : undefined}
+                    aria-expanded={renderItemDetail ? selected : undefined}
+                    onClick={() => {
+                      if (useAccordionDetail) {
+                        setSelectedItemId((current) => current === item.id ? undefined : item.id);
+                        return;
+                      }
+                      if (usePaneDetail) {
+                        setSelectedItemId(item.id);
+                        return;
+                      }
+                      onOpenItem?.(item);
+                    }}
+                    disabled={!renderItemDetail && !onOpenItem}
+                  >
+                    <span className="right-dock-row-dot" aria-hidden="true" />
+                    <span className="right-dock-row-copy">
+                      <strong>{item.title}</strong>
+                      <small>{item.pathLabel ?? item.reason}</small>
                     </span>
-                  ) : (
-                    <span className={["right-dock-row-state", `tone-${reviewTone(item)}`].join(" ")} title={reviewActionLabel(item)}>
-                      {reviewActionLabel(item)}
-                    </span>
-                  )}
-                </button>
+                    {item.stats ? (
+                      <span className="right-dock-diff-stat" title={`${item.stats.additions} additions, ${item.stats.deletions} deletions`}>
+                        <span className="add">+{item.stats.additions}</span>
+                        <span className="del">-{item.stats.deletions}</span>
+                      </span>
+                    ) : (
+                      <span className={["right-dock-row-state", `tone-${reviewTone(item)}`].join(" ")} title={reviewActionLabel(item)}>
+                        {reviewActionLabel(item)}
+                      </span>
+                    )}
+                  </button>
+                  {useAccordionDetail && selected ? (
+                    <div className="right-dock-review-inline-detail">
+                      {renderItemDetail?.(item)}
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </div>
@@ -158,10 +176,10 @@ export function ReviewQueuePage({
           <DockEmptyState title={emptyTitle} description={emptyDescription} />
         )}
       </section>
-      {renderItemDetail ? (
+      {usePaneDetail ? (
         <section className="right-dock-review-detail-pane">
           <div className="right-dock-review-detail-scroll">
-            {selectedItem ? renderItemDetail(selectedItem) : (
+            {selectedItem && renderItemDetail ? renderItemDetail(selectedItem) : (
               <DockEmptyState title={detailEmptyTitle} description={detailEmptyDescription} />
             )}
           </div>
