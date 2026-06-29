@@ -1,7 +1,9 @@
 import type {
+  DockReviewChangeStats,
   DockEvidenceGroupView,
   DockEvidenceItem,
   DockFileItem,
+  DockReviewCodeLine,
   DockReviewItem,
   DockReviewStatus,
   DockSeverity,
@@ -47,16 +49,26 @@ export function projectApprovalsToReviewItems(
     .filter((approval) => effectiveApprovalStatus(approval) !== "approved")
     .map((approval) => {
       const status = approvalStatusToReviewStatus(effectiveApprovalStatus(approval));
+      const codePreview = approvalCodePreview(approval, t);
       return {
         id: `approval:${approval.id}`,
         group: "action_required",
         severity: approvalRiskToSeverity(approval.risk),
         status,
+        kind: "approval_gate",
         title: approval.title || t("Approval required"),
         reason: approval.description || approval.actionType,
-        sourceLabel: t("Approval"),
-        actionLabel: status === "pending" ? t("Review") : t("Blocked"),
+        pathLabel: codePreview?.pathLabel,
+        sourceLabel: t("Approval gate"),
+        actionLabel: status === "pending" ? t("Resolve approval") : t("Blocked"),
         timestampLabel: formatMaybeDate(approval.createdAt),
+        stats: codePreview?.stats,
+        facts: [
+          { label: t("Risk"), value: t(approval.risk), tone: approvalRiskToSeverity(approval.risk) },
+          { label: t("Action"), value: t(approval.actionType) },
+          { label: t("Status"), value: t(effectiveApprovalStatus(approval)) },
+        ],
+        codePreview,
       };
     });
 }
@@ -73,11 +85,16 @@ export function projectRunsToReviewItems(
         group: "action_required",
         severity: "warning",
         status: "pending",
-        title: t("Run is waiting for approval"),
-        reason: run.providerModel || run.providerName,
-        sourceLabel: t("Run"),
-        actionLabel: t("Review"),
+      kind: "approval_gate",
+      title: t("Run is waiting for approval"),
+      reason: run.providerModel || run.providerName,
+        sourceLabel: t("Runtime gate"),
+        actionLabel: t("Inspect"),
         timestampLabel: formatMaybeDate(run.updatedAt),
+        facts: [
+          { label: t("Run"), value: run.id },
+          { label: t("Status"), value: t(run.status), tone: "warning" },
+        ],
       });
       continue;
     }
@@ -87,11 +104,16 @@ export function projectRunsToReviewItems(
         group: "runtime",
         severity: "danger",
         status: "failed",
-        title: t("Run failed"),
-        reason: run.errorMessage || run.providerModel || run.id,
+      kind: "runtime_issue",
+      title: t("Run failed"),
+      reason: run.errorMessage || run.providerModel || run.id,
         sourceLabel: t("Runtime"),
         actionLabel: t("Inspect"),
         timestampLabel: formatMaybeDate(run.updatedAt),
+        facts: [
+          { label: t("Run"), value: run.id },
+          { label: t("Status"), value: t(run.status), tone: "danger" },
+        ],
       });
       continue;
     }
@@ -101,11 +123,16 @@ export function projectRunsToReviewItems(
         group: "runtime",
         severity: "warning",
         status: "blocked",
-        title: t("Run was cancelled"),
-        reason: run.errorMessage || run.providerModel || run.id,
+      kind: "runtime_issue",
+      title: t("Run was cancelled"),
+      reason: run.errorMessage || run.providerModel || run.id,
         sourceLabel: t("Runtime"),
         actionLabel: t("Inspect"),
         timestampLabel: formatMaybeDate(run.updatedAt),
+        facts: [
+          { label: t("Run"), value: run.id },
+          { label: t("Status"), value: t(run.status), tone: "warning" },
+        ],
       });
     }
   }
@@ -127,14 +154,45 @@ export function projectMessagesToReviewItems(
       group: failed ? "runtime" : "evidence",
       severity: failed ? "danger" : "warning",
       status: failed ? "failed" : "blocked",
+      kind: failed ? "runtime_issue" : "evidence_gap",
       title: message.title,
       reason: message.errorMessage || truncateText(message.body || t("Message needs attention"), 120),
       sourceLabel: t("Message"),
       actionLabel: t("Inspect"),
       timestampLabel: formatMaybeDate(message.updatedAt ?? message.createdAt),
+      facts: [
+        { label: t("Message"), value: message.id },
+        { label: t("Status"), value: message.status ?? t("unknown"), tone: failed ? "danger" : "warning" },
+      ],
     });
   }
   return items;
+}
+
+export function projectFilesToReviewItems(
+  fileItems: readonly DockFileItem[],
+  t: Translate,
+): readonly DockReviewItem[] {
+  return fileItems
+    .filter((item) => item.kind === "change")
+    .slice(0, 20)
+    .map((item) => ({
+      id: `file-review:${item.id}`,
+      group: "files",
+      kind: "code_change",
+      severity: "info",
+      status: "pending",
+      title: item.name || t("Changed file"),
+      reason: item.pathLabel || t("File change needs review"),
+      pathLabel: item.pathLabel,
+      sourceLabel: t("File change"),
+      actionLabel: t("Changes"),
+      artifactRef: artifactRefFromFileItem(item),
+      facts: [
+        { label: t("Type"), value: t(item.kind) },
+        { label: t("Status"), value: item.status ? t(item.status) : t("unknown") },
+      ],
+    }));
 }
 
 export function projectRunsToEvidenceGroup(
@@ -354,6 +412,134 @@ function approvalStatusToReviewStatus(status: ApprovalRequest["status"]): DockRe
   }
 }
 
+function approvalCodePreview(approval: ApprovalRequest, t: Translate): DockReviewItem["codePreview"] {
+  const payload = asRecord(approval.payload);
+  if (!payload) {
+    return undefined;
+  }
+  const diffPreview = readString(payload, "diffPreview") ?? readString(payload, "diff") ?? readString(payload, "patch");
+  if (diffPreview) {
+    const lines = diffPreviewToLines(diffPreview);
+    return {
+      title: fileNameFromPath(readString(payload, "path") ?? readString(payload, "filePath") ?? approval.title ?? t("Payload preview")),
+      language: "diff",
+      pathLabel: readString(payload, "path") ?? readString(payload, "filePath"),
+      lines: lines.slice(0, 80),
+      stats: codeLineStats(lines),
+      truncated: lines.length > 80,
+    };
+  }
+
+  const command = readString(payload, "command") ?? readString(payload, "cmd");
+  if (command) {
+    const cwd = readString(payload, "cwd");
+    return {
+      title: t("Command preview"),
+      language: "shell",
+      pathLabel: cwd,
+      lines: [
+        ...(cwd ? [{ kind: "meta" as const, text: `cwd ${cwd}` }] : []),
+        ...command.split(/\s+&&\s+|\s*;\s*/u).filter(Boolean).slice(0, 12).map((part) => ({
+          kind: "command" as const,
+          text: part.trim(),
+        })),
+      ],
+      truncated: command.length > 800,
+    };
+  }
+
+  const path = readString(payload, "path") ?? readString(payload, "filePath");
+  const contentPreview = readString(payload, "contentPreview") ?? readString(payload, "content");
+  if (path || contentPreview) {
+    const previewLines = (contentPreview ?? path ?? "").split(/\r?\n/u).slice(0, 24);
+    return {
+      title: t("File preview"),
+      language: "text",
+      pathLabel: path,
+      lines: [
+        ...(path ? [{ kind: "meta" as const, text: path }] : []),
+        ...previewLines.map((line) => ({ kind: "context" as const, text: line || " " })),
+      ],
+      truncated: Boolean(contentPreview && contentPreview.split(/\r?\n/u).length > 24),
+    };
+  }
+
+  return undefined;
+}
+
+function diffPreviewToLines(diff: string): readonly DockReviewCodeLine[] {
+  const lines: DockReviewCodeLine[] = [];
+  let oldLine: number | undefined;
+  let newLine: number | undefined;
+  diff.split(/\r?\n/u).forEach((line, index) => {
+    const kind = diffLineKind(line);
+    if (kind === "hunk") {
+      const match = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?/u.exec(line);
+      oldLine = match ? Number(match[1]) : undefined;
+      newLine = match ? Number(match[2]) : undefined;
+      lines.push({ kind, text: line || " ", lineNumber: index + 1 });
+      return;
+    }
+    if (kind === "add") {
+      lines.push({ kind, text: line || " ", lineNumber: index + 1, newLineNumber: newLine });
+      if (newLine !== undefined) {
+        newLine += 1;
+      }
+      return;
+    }
+    if (kind === "delete") {
+      lines.push({ kind, text: line || " ", lineNumber: index + 1, oldLineNumber: oldLine });
+      if (oldLine !== undefined) {
+        oldLine += 1;
+      }
+      return;
+    }
+    if (kind === "context") {
+      lines.push({
+        kind,
+        text: line || " ",
+        lineNumber: index + 1,
+        oldLineNumber: oldLine,
+        newLineNumber: newLine,
+      });
+      if (oldLine !== undefined) {
+        oldLine += 1;
+      }
+      if (newLine !== undefined) {
+        newLine += 1;
+      }
+      return;
+    }
+    lines.push({ kind, text: line || " ", lineNumber: index + 1 });
+  });
+  return lines;
+}
+
+function diffLineKind(line: string): DockReviewCodeLine["kind"] {
+  if (line.startsWith("+") && !line.startsWith("+++")) {
+    return "add";
+  }
+  if (line.startsWith("-") && !line.startsWith("---")) {
+    return "delete";
+  }
+  if (line.startsWith("@@")) {
+    return "hunk";
+  }
+  if (line.startsWith("diff ") || line.startsWith("---") || line.startsWith("+++") || line.startsWith("index ")) {
+    return "meta";
+  }
+  return "context";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function readString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
 function fileKindLabel(kind: DockFileItem["kind"], t: Translate): string {
   switch (kind) {
     case "attachment":
@@ -365,6 +551,26 @@ function fileKindLabel(kind: DockFileItem["kind"], t: Translate): string {
     case "change":
       return t("Change");
   }
+}
+
+function artifactRefFromFileItem(item: DockFileItem): DockReviewItem["artifactRef"] {
+  const artifactPrefix = "artifact:";
+  if (!item.id.startsWith(artifactPrefix)) {
+    return undefined;
+  }
+  const type = item.status === "changed" || item.pathLabel?.endsWith(".diff") || item.pathLabel?.endsWith(".patch") ? "diff" : undefined;
+  return {
+    id: item.id.slice(artifactPrefix.length),
+    ...(type ? { type } : {}),
+    ...(item.pathLabel ? { path: item.pathLabel } : {}),
+    title: item.name,
+  };
+}
+
+function codeLineStats(lines: readonly DockReviewCodeLine[]): DockReviewChangeStats | undefined {
+  const additions = lines.filter((line) => line.kind === "add").length;
+  const deletions = lines.filter((line) => line.kind === "delete").length;
+  return additions > 0 || deletions > 0 ? { additions, deletions } : undefined;
 }
 
 function fileNameFromPath(path: string): string {

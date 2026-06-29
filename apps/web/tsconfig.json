@@ -3,6 +3,7 @@
     "allowSyntheticDefaultImports": true,
     "declaration": true,
     "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2022", "ESNext.Disposable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist-types",
