@@ -2138,10 +2138,10 @@ test("channel observer bus skips unavailable observers without blocking the main
         kind: "overload",
         severity: "medium",
         summary: "Observer provider is temporarily overloaded.",
-        observedAt: "2026-06-27T00:00:00.000Z",
-        expiresAt: "2026-06-28T00:10:00.000Z",
+        observedAt: "2099-06-27T00:00:00.000Z",
+        expiresAt: "2099-06-28T00:10:00.000Z",
       },
-      "2026-06-27T00:00:00.000Z",
+      "2099-06-27T00:00:00.000Z",
     );
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
@@ -2199,10 +2199,10 @@ test("channel observer bus applies provider-level availability incidents to matc
         kind: "quota",
         severity: "medium",
         summary: "Provider quota is temporarily exhausted.",
-        observedAt: "2026-06-27T00:00:00.000Z",
-        expiresAt: "2026-06-28T00:10:00.000Z",
+        observedAt: "2099-06-27T00:00:00.000Z",
+        expiresAt: "2099-06-28T00:10:00.000Z",
       },
-      "2026-06-27T00:00:00.000Z",
+      "2099-06-27T00:00:00.000Z",
     );
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
