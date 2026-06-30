@@ -294,7 +294,7 @@ Eligibility should mirror the inline runtime approval design:
   channel;
 - include `runtime_permission_request`, `bash`, `edit`, `write`, local run-owned MCP
   tool approvals, and active workflow-step gates;
-- exclude external work actions, paid media approvals, provider changes, credential
+- exclude external work actions, legacy media approvals, provider changes, credential
   changes, and approvals whose owning run is no longer visible;
 - when in doubt, leave the approval in Review Queue and show only a compact attention
   link in the conversation.

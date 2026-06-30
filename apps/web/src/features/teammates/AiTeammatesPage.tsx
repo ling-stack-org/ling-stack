@@ -31,7 +31,7 @@ import type {
   WorkflowStepTemplate,
 } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
-import { isMediaProvider, providerPreflightReady } from "../../lib/providers.js";
+import { isMediaProvider, providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
 import { MetaRow, SettingsToolReturnRow } from "../../shared/components/index.js";
 import type {
   AiCouncil,
@@ -440,7 +440,7 @@ export function AiTeammatesPage({
                       <option value="">{t("Select model")}</option>
                       {providerOptions.map((provider) => (
                         <option key={provider.id} value={provider.id}>
-                          {provider.displayName} / {provider.model}
+                          {providerModelRouteLabel(provider)}
                         </option>
                       ))}
                     </select>

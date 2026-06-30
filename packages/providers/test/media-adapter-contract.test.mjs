@@ -400,6 +400,77 @@ test("live media vendor transport calls Seedream image generation through the Op
   assert.deepEqual(capturedRequests[1].init.headers, {});
 });
 
+test("live media vendor transport calls OpenAI Images and stores b64 artifacts", async () => {
+  const capturedRequests = [];
+  const imageBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const openAIImageProvider = {
+    ...provider,
+    id: "provider_openai_image",
+    kind: "openai-compatible",
+    displayName: "OpenAI Image",
+    providerId: "custom-openai-compatible",
+    model: "gpt-image-2",
+    capabilities: ["image_generate"],
+  };
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://api.openai.test/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      httpClient: async (url, init) => {
+        capturedRequests.push({ url, init });
+        return jsonResponse(200, {
+          created: 1779537600,
+          data: [
+            {
+              b64_json: Buffer.from(imageBytes).toString("base64"),
+            },
+          ],
+          debug: {
+            echoedSecret: "test-key",
+          },
+        });
+      },
+    }),
+  });
+  const resolution = resolveMediaAdapter(registry, openAIImageProvider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_openai_image",
+    provider: openAIImageProvider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: { size: "1024x1024", n: 1, seed: 42, watermark: false },
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.errorCode, undefined);
+  assert.equal(result.artifacts.length, 3);
+  assert.match(result.artifacts[0].content ?? "", /Transport: live/);
+  assert.equal(result.artifacts[1].type, "json");
+  assert.match(result.artifacts[1].content ?? "", /live_openai_image_generate/);
+  assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
+  assert.equal(result.artifacts[2].type, "image");
+  assert.equal(result.artifacts[2].contentType, "image/png");
+  assert.deepEqual(result.artifacts[2].contentBytes, imageBytes);
+  assert.equal(capturedRequests.length, 1);
+  assert.equal(capturedRequests[0].url, "https://api.openai.test/v1/images/generations");
+  assert.equal(capturedRequests[0].init.headers.authorization, "Bearer test-key");
+  assert.deepEqual(JSON.parse(capturedRequests[0].init.body ?? "{}"), {
+    model: "gpt-image-2",
+    prompt: "Create a product mockup.",
+    response_format: "b64_json",
+    size: "1024x1024",
+    n: 1,
+    seed: 42,
+    watermark: false,
+  });
+});
+
 test("live media vendor transport reports a clear timeout error", async () => {
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: createLiveMediaVendorTransport({

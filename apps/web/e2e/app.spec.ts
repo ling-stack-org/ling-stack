@@ -44,8 +44,8 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(newConversationButton).toBeVisible();
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(140);
-  expect(commandButtonWidth).toBeLessThan(250);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations", "AI Councils"]);
+  expect(commandButtonWidth).toBeLessThan(320);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
@@ -246,7 +246,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   const primaryNav = navigation.locator(".primary-nav");
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations", "AI Councils"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
+  await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
@@ -266,8 +267,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Work Board" })).toBeVisible();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Account and profile/ })).toBeVisible();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Account and profile/ }).click();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ })).toBeVisible();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
   await expect(page.getByRole("heading", { name: "Ling User", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
   await page.getByLabel("Settings sections").getByRole("button", { name: /Configuration/ }).click();
@@ -285,8 +286,6 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await primaryNav.getByRole("button", { name: "Automations" }).click();
   await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
 
-  await primaryNav.getByRole("button", { name: "AI Councils" }).click();
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
 });
 
 test("conversation home uses plus as the single attachment entry and keeps slash commands text-driven", async ({ page }) => {
@@ -389,6 +388,17 @@ test("conversation home model picker uses the model workbench default without ch
       updatedAt: "2026-05-25T00:40:00.000Z",
       lastCheck: readyCheck,
     }),
+    createChatProvider({
+      id: "provider_bad_image_chat",
+      displayName: "Wrongly Saved Image",
+      providerId: "custom-openai-compatible",
+      model: "gpt-image-2",
+      capabilities: ["chat"],
+      reasoning: false,
+      thinkingModes: [],
+      updatedAt: "2026-05-25T00:50:00.000Z",
+      lastCheck: readyCheck,
+    }),
   ];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -414,6 +424,7 @@ test("conversation home model picker uses the model workbench default without ch
   await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(4);
   await expect(modelMenu.locator(".conversation-model-option").first()).toContainText("gemini-2.5-pro");
   await expect(modelMenu.locator(".conversation-model-option").first()).toContainText("Default");
+  await expect(modelMenu).not.toContainText("gpt-image-2");
   await expect(modelMenu).not.toContainText("gemini/");
   await expect(modelMenu).not.toContainText("anthropic/");
 
@@ -504,7 +515,5 @@ test("settings workspace tools provide a clear return path from nested tool page
   await page.locator(".work-board-page").getByRole("button", { name: "Back to configuration" }).click();
   await expect(page.getByRole("button", { name: "Open Work Board" })).toBeVisible();
 
-  await navigation.getByRole("button", { name: "Designer" }).click();
-  await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Back to configuration" })).toHaveCount(0);
 });

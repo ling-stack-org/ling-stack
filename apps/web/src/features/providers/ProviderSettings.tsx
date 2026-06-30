@@ -23,6 +23,7 @@ import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
   canWorkbenchBatchCheckProvider,
+  canUseGenerationProviderForOperation,
   canUseProviderForRun,
   customOpenAICompatibleForm,
   isWorkbenchNeedsConfigProvider,
@@ -39,6 +40,7 @@ import {
   providerLastCheckClass,
   providerLastCheckLabel,
   providerLastCheckTitle,
+  providerModelRouteLabel,
   providerNeedsSecret,
   providerPreflightReady,
   providerEffectiveBaseUrl,
@@ -328,28 +330,38 @@ export function ProviderSettings({
     setIsEditorOpen(false);
   }
 
+  async function handleImportSelectedModels(): Promise<void> {
+    setEditorErrorMessage("");
+    setEditorWarningMessage("");
+    if (selectedImportModels.length === 0) {
+      setEditorErrorMessage("Select at least one model.");
+      return;
+    }
+    const result = await onImportModels(selectedImportModels);
+    if (result.ok) {
+      closeProviderSheet();
+      return;
+    }
+    setEditorErrorMessage(result.errorMessage ?? "Import failed.");
+  }
+
   async function handleSaveProvider(): Promise<void> {
     setEditorErrorMessage("");
     setEditorWarningMessage("");
-    if (!editingProviderId && modelOptions.length > 0) {
-      if (selectedImportModels.length === 0) {
-        setEditorErrorMessage("Select at least one model.");
-        return;
-      }
-      const result = await onImportModels(selectedImportModels);
-      if (result.ok) {
-        closeProviderSheet();
-        return;
-      }
-      setEditorErrorMessage(result.errorMessage ?? "Import failed.");
-      return;
-    }
     const result = await onSave();
     if (result.ok) {
       closeProviderSheet();
       return;
     }
     setEditorErrorMessage(result.errorMessage ?? "Save failed.");
+  }
+
+  async function handlePrimaryProviderAction(): Promise<void> {
+    if (selectedImportModels.length > 0) {
+      await handleImportSelectedModels();
+      return;
+    }
+    await handleSaveProvider();
   }
 
   async function fetchProviderModels(): Promise<void> {
@@ -543,6 +555,9 @@ export function ProviderSettings({
                   const providerIsGenerationCapable = provider.capabilities.some((capability) =>
                     capability === "image_generate" || capability === "image_edit" || capability === "video_generate"
                   );
+                  const providerCanGenerate = (["image_generate", "image_edit", "video_generate"] as const).some((operation) =>
+                    canUseGenerationProviderForOperation(provider, operation)
+                  );
                   const providerIsChecking = checkingProviderIds.includes(provider.id);
                   const rowCheckResult = checkScope === "row" && checkedProviderId === provider.id ? checkResult : undefined;
                   const rowCheckMessage = rowCheckResult ? providerCheckDisplayMessage(rowCheckResult, provider, t) : "";
@@ -558,20 +573,24 @@ export function ProviderSettings({
                         : providerReady
                           ? t("Ready to use")
                           : providerIsGenerationCapable && !providerIsChatCapable
-                            ? t("Generation model")
+                            ? providerCanGenerate ? t("Ready to generate") : t("Generation model")
                           : canUseProviderForRun(provider)
                             ? t("needs check")
                             : providerRunBlockerLabel(provider, t);
                   const providerPrimaryStatusClass = providerMissingApiKey
                     ? "provider-state check-unknown"
-                    : providerSelectedForRun || providerReady || (providerIsGenerationCapable && !providerIsChatCapable)
+                    : providerSelectedForRun || providerReady || (providerIsGenerationCapable && !providerIsChatCapable && providerCanGenerate)
                       ? "provider-state run-ready"
-                      : provider.enabled
+                      : providerIsGenerationCapable && !providerIsChatCapable
+                        ? "provider-state check-unknown"
+                        : provider.enabled
                         ? "provider-state run-blocked"
                         : "provider-state disabled";
                   const providerStatusHint =
                     providerMissingApiKey || !provider.enabled || (!providerReady && providerIsChatCapable)
                       ? (providerRunPreflightBlocker(provider, t) ?? rowCheckGuidance)
+                      : providerIsGenerationCapable && !providerCanGenerate
+                        ? t("Real generation is not connected yet.")
                       : "";
                   const providerMainActionIsCheck = !providerMissingApiKey && !providerReady && canUseProviderForRun(provider);
                   return (
@@ -586,7 +605,7 @@ export function ProviderSettings({
                           </span>
                         </td>
                         <td>
-                          <span className="provider-model-name">{provider.model}</span>
+                          <span className="provider-model-name">{providerModelRouteLabel(provider, templates)}</span>
                           <div className="provider-meta-line provider-table-compat-line">
                             <span>{t("Capabilities")}: {providerCapabilityChipLabels(provider, t).join(" / ")}</span>
                             <span>{provider.lastCheck ? t("last check {time}", { time: formatDateTime(provider.lastCheck.checkedAt) }) : t("not checked")}</span>
@@ -963,45 +982,67 @@ export function ProviderSettings({
                   onChange={(event) => setModelSearch(event.target.value)}
                 />
               </label>
-              {!editingProviderId ? (
-                <span className="provider-model-bulk-actions">
-                  <small className="provider-model-selection-count">{t("{count} selected", { count: selectedModelIds.length })}</small>
-                  <button className="secondary-button compact-button" type="button" onClick={selectAllVisibleModels}>
-                    {t("Select visible")}
-                  </button>
-                  <button className="secondary-button compact-button" type="button" onClick={clearSelectedModels} disabled={selectedModelIds.length === 0}>
-                    {t("Clear selection")}
-                  </button>
-                </span>
-              ) : null}
+              <span className="provider-model-bulk-actions">
+                <small className="provider-model-selection-count">{t("{count} selected", { count: selectedModelIds.length })}</small>
+                <button className="secondary-button compact-button" type="button" onClick={selectAllVisibleModels}>
+                  {t("Select visible")}
+                </button>
+                <button className="secondary-button compact-button" type="button" onClick={clearSelectedModels} disabled={selectedModelIds.length === 0}>
+                  {t("Clear selection")}
+                </button>
+              </span>
             </div>
           ) : null}
           {modelOptions.length > 0 ? (
             <div className="provider-model-grid" aria-label={t("Available models")}>
               {visibleModelOptions.map((model) => {
-                const modelSelected = editingProviderId ? model.id === form.model : selectedModelIds.includes(model.id);
+                const modelCurrent = model.id === form.model;
+                const importSelected = selectedModelIds.includes(model.id);
+                const modelSelected = editingProviderId ? modelCurrent : importSelected;
+                const cardClassName = [
+                  "provider-model-card",
+                  modelSelected ? "selected" : "",
+                  editingProviderId && importSelected ? "import-selected" : "",
+                ].filter(Boolean).join(" ");
+                const activateModelRow = (): void => {
+                  if (editingProviderId) {
+                    selectProviderModel(model);
+                    return;
+                  }
+                  toggleImportModel(model);
+                };
                 return (
-                <button
+                <div
                   key={model.id}
-                  className={modelSelected ? "provider-model-card selected" : "provider-model-card"}
-                  type="button"
-                  onClick={() => {
-                    if (editingProviderId) {
-                      selectProviderModel(model);
+                  className={cardClassName}
+                  role="button"
+                  tabIndex={0}
+                  onClick={activateModelRow}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") {
                       return;
                     }
-                    toggleImportModel(model);
+                    event.preventDefault();
+                    activateModelRow();
                   }}
                 >
+                  <label className="provider-model-select-control" onClick={(event) => event.stopPropagation()}>
+                    <input
+                      aria-label={t("Select {model}", { model: model.displayName ?? model.id })}
+                      type="checkbox"
+                      checked={importSelected}
+                      onChange={() => toggleImportModel(model)}
+                    />
+                  </label>
                   <span className="provider-model-card-copy">
                     <strong>{model.displayName ?? model.id}</strong>
                     <small>{model.ownedBy ?? model.id}</small>
-                    <em>{providerCapabilityChipLabels(model, t).join(" / ")}</em>
+                    <em>{`${providerCapabilityChipLabels(model, t).join(" / ")} · ${providerModelCapabilitySourceLabel(model, t)}`}</em>
                   </span>
                   <span className={modelThinkingModes(model).length > 0 ? "provider-model-thinking-chip" : "provider-model-thinking-chip unsupported"}>
                     {providerModelThinkingLabel(model, t)}
                   </span>
-                </button>
+                </div>
                 );
               })}
             </div>
@@ -1072,14 +1113,27 @@ export function ProviderSettings({
           <button className="secondary-button" type="button" onClick={closeProviderSheet}>
             {t("Cancel")}
           </button>
+          {editingProviderId && selectedImportModels.length > 0 ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={isCheckingProviders}
+              onClick={() => void handleSaveProvider()}
+            >
+              <Save size={16} />
+              {t("Save current preset")}
+            </button>
+          ) : null}
           <button
             className="primary-button"
             type="button"
-            disabled={isCheckingProviders || (!editingProviderId && modelOptions.length > 0 && selectedImportModels.length === 0)}
-            onClick={() => void handleSaveProvider()}
+            disabled={isCheckingProviders}
+            onClick={() => void handlePrimaryProviderAction()}
           >
-            {isSaveChecking ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
-            {t(!editingProviderId && modelOptions.length > 0 ? "Save selected models" : "Save")}
+            {isSaveChecking ? <Loader2 className="spin" size={16} /> : selectedImportModels.length > 0 ? <Plus size={16} /> : <Save size={16} />}
+            {selectedImportModels.length > 0
+              ? t("Import selected models ({count})", { count: selectedImportModels.length })
+              : t("Save")}
           </button>
         </div>
         </div>
@@ -1203,6 +1257,25 @@ function providerModelThinkingLabel(
     return t("No thinking");
   }
   return t("Thinking: {modes}", { modes: modes.map((mode) => providerThinkingModeLabel(mode, t)).join(" / ") });
+}
+
+function providerModelCapabilitySourceLabel(
+  model: ProviderModelOption,
+  t: (key: string) => string,
+): string {
+  if (model.capabilitySource === "upstream") {
+    return t("Capability: provider");
+  }
+  if (model.capabilitySource === "model_catalog") {
+    return t("Capability: Ling catalog");
+  }
+  if (model.capabilitySource === "provider_template") {
+    return t("Capability: template");
+  }
+  if (model.capabilitySource === "user_override") {
+    return t("Capability: custom");
+  }
+  return t("Capability: unknown");
 }
 
 function modelThinkingModes(model: ProviderModelOption): readonly ProviderThinkingMode[] {

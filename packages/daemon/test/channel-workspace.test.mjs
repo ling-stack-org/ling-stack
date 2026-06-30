@@ -2138,10 +2138,10 @@ test("channel observer bus skips unavailable observers without blocking the main
         kind: "overload",
         severity: "medium",
         summary: "Observer provider is temporarily overloaded.",
-        observedAt: "2026-06-27T00:00:00.000Z",
-        expiresAt: "2026-06-28T00:10:00.000Z",
+        observedAt: "2099-06-27T00:00:00.000Z",
+        expiresAt: "2099-06-28T00:10:00.000Z",
       },
-      "2026-06-27T00:00:00.000Z",
+      "2099-06-27T00:00:00.000Z",
     );
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
@@ -2199,10 +2199,10 @@ test("channel observer bus applies provider-level availability incidents to matc
         kind: "quota",
         severity: "medium",
         summary: "Provider quota is temporarily exhausted.",
-        observedAt: "2026-06-27T00:00:00.000Z",
-        expiresAt: "2026-06-28T00:10:00.000Z",
+        observedAt: "2099-06-27T00:00:00.000Z",
+        expiresAt: "2099-06-28T00:10:00.000Z",
       },
-      "2026-06-27T00:00:00.000Z",
+      "2099-06-27T00:00:00.000Z",
     );
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
@@ -7663,6 +7663,7 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
       workspaceCwd: cwd,
       theme: "dark",
       locale: "zh-CN",
+      defaultProviderPresetId: "provider_default_chat",
       channelNotifications: { channel_one: "mentions" },
       channelActivityViews: { channel_one: [{ id: "custom:review", name: "Review" }] },
       skillGovernancePolicy: {
@@ -7676,17 +7677,21 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(patched.settings.workspaceCwd, cwd);
     assert.equal(patched.settings.theme, "dark");
     assert.equal(patched.settings.locale, "zh-CN");
+    assert.equal(patched.settings.defaultProviderPresetId, "provider_default_chat");
     assert.equal(patched.settings.channelNotifications.channel_one, "mentions");
     assert.equal(patched.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reopened = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(reopened.settings.theme, "dark");
+    assert.equal(reopened.settings.defaultProviderPresetId, "provider_default_chat");
     assert.equal(reopened.settings.channelActivityViews.channel_one[0].id, "custom:review");
     assert.equal(reopened.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reset = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      defaultProviderPresetId: null,
       skillGovernancePolicy: null,
     });
+    assert.equal(reset.settings.defaultProviderPresetId, undefined);
     assert.equal(reset.settings.skillGovernancePolicy.generationMode, "semi_auto");
   } finally {
     await daemon.close();

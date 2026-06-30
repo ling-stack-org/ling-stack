@@ -10,10 +10,16 @@ test("built-in media provider extensions include supported vendor adapters", () 
   const extensions = listBuiltinProviderExtensions();
   const ids = extensions.map((extension) => extension.manifest.id);
 
-  assert.deepEqual(ids, ["provider:media:jimeng", "provider:media:seedream", "provider:media:seedance"]);
+  assert.deepEqual(ids, [
+    "provider:media:openai",
+    "provider:media:openai-compatible",
+    "provider:media:jimeng",
+    "provider:media:seedream",
+    "provider:media:seedance",
+  ]);
   assert.deepEqual(
     extensions.map((extension) => extension.providerApi),
-    ["media-job", "media-job", "media-job"],
+    ["media-job", "media-job", "media-job", "media-job", "media-job"],
   );
 });
 

@@ -653,7 +653,7 @@ test("sqlite store creates and resolves media approval requests", async () => {
         actionType: "media_cost",
         risk: "high",
         title: "Approve media job cost",
-        description: "Seedream image_generate requires approval before live media execution.",
+        description: "Legacy media cost approval.",
         payload: {
           type: "media_cost",
           providerPresetId: "provider_seedream",

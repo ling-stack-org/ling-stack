@@ -22,6 +22,7 @@ export interface WorkspaceSettings {
   readonly theme?: "light" | "dark" | "system";
   readonly locale?: string;
   readonly responseLanguage?: ResponseLanguagePreference;
+  readonly defaultProviderPresetId?: string;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
   readonly channelNotifications?: Record<string, string>;
@@ -35,6 +36,7 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly theme?: "light" | "dark" | "system" | null;
   readonly locale?: string | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
+  readonly defaultProviderPresetId?: string | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;
   readonly defaultPermissionPreset?: PermissionPreset | null;
   readonly channelNotifications?: Record<string, string> | null;

@@ -1,4 +1,4 @@
-import { mediaModelKind } from "./provider-adapters.js";
+import { inferGenerationModelFamily } from "./provider-generation-models.js";
 import type {
   ProviderApi,
   ProviderCapability,
@@ -118,36 +118,6 @@ const providerModelCatalog: readonly ProviderModelCatalogEntry[] = [
     maxTokens: 4_096,
     confidence: "estimated",
   },
-  {
-    modelPattern: /(?:doubao-)?seedream/i,
-    providerIds: ["seedream"],
-    kinds: ["seedream", "openai-compatible"],
-    api: "media-job",
-    ownedBy: "volcengine",
-    input: ["text", "image"],
-    capabilities: ["image_generate", "image_edit"],
-    source: "model_catalog",
-  },
-  {
-    modelPattern: /(?:doubao-)?seedance/i,
-    providerIds: ["seedance"],
-    kinds: ["seedance", "openai-compatible"],
-    api: "media-job",
-    ownedBy: "volcengine",
-    input: ["text", "image"],
-    capabilities: ["video_generate"],
-    source: "model_catalog",
-  },
-  {
-    modelPattern: /jimeng/i,
-    providerIds: ["jimeng"],
-    kinds: ["jimeng", "openai-compatible"],
-    api: "media-job",
-    ownedBy: "volcengine",
-    input: ["text", "image"],
-    capabilities: ["image_generate", "image_edit"],
-    source: "model_catalog",
-  },
 ];
 
 export function enrichProviderModelOption(
@@ -158,32 +128,31 @@ export function enrichProviderModelOption(
   const upstreamThinkingModes = normalizeProviderThinkingModes(model.thinkingModes ?? upstreamThinkingSupport?.levels);
   const upstreamCapabilities = normalizeProviderCapabilities(model.capabilities);
   const upstreamInput = normalizeProviderInput(model.input);
-  const catalogEntry = findProviderModelCatalogEntry(model.id, context);
-  const mediaKind = mediaModelKind(model.id);
-  const inferredMedia = mediaKind ? mediaModelOptionDefaults(mediaKind) : undefined;
+  const generationFamily = inferGenerationModelFamily(model.id, context);
+  const catalogEntry = generationFamily ? undefined : findProviderModelCatalogEntry(model.id, context);
   const thinkingSupport = upstreamThinkingSupport ?? catalogEntry?.thinkingSupport;
   const thinkingModes = normalizeProviderThinkingModes(upstreamThinkingModes ?? thinkingSupport?.levels);
-  const api = model.api ?? inferredMedia?.api ?? catalogEntry?.api;
+  const api = model.api ?? generationFamily?.api ?? catalogEntry?.api;
   const capabilities = normalizeProviderCapabilities([
     ...(upstreamCapabilities ?? []),
-    ...((catalogEntry?.capabilities ?? inferredMedia?.capabilities) ?? []),
+    ...((generationFamily?.capabilities ?? catalogEntry?.capabilities) ?? []),
     ...(thinkingModes?.some((mode) => mode !== "off" && mode !== "auto") ? ["reasoning" as const] : []),
   ]);
 
   return omitUndefined({
     ...model,
-    displayName: model.displayName ?? catalogEntry?.displayName ?? inferredMedia?.displayName,
-    ownedBy: model.ownedBy ?? catalogEntry?.ownedBy ?? inferredMedia?.ownedBy,
+    displayName: model.displayName ?? generationFamily?.displayName ?? catalogEntry?.displayName,
+    ownedBy: model.ownedBy ?? generationFamily?.ownedBy ?? catalogEntry?.ownedBy,
     api,
-    input: upstreamInput ?? catalogEntry?.input ?? inferredMedia?.input ?? defaultModelInput(api ?? context.api),
+    input: upstreamInput ?? generationFamily?.input ?? catalogEntry?.input ?? defaultModelInput(api ?? context.api),
     capabilities: capabilities ?? defaultModelCapabilities(api ?? context.api),
     thinkingModes: thinkingModes ?? [],
     thinkingSupport,
     contextWindow: model.contextWindow ?? catalogEntry?.contextWindow,
     maxTokens: model.maxTokens ?? catalogEntry?.maxTokens,
-    supportedParameters: mergeStringArrays(model.supportedParameters, catalogEntry?.supportedParameters),
-    capabilitySource: model.capabilitySource ?? (catalogEntry ? catalogEntry.source ?? "model_catalog" : "conservative_default"),
-    capabilityConfidence: model.capabilityConfidence ?? catalogEntry?.confidence ?? (catalogEntry ? "known" : "conservative"),
+    supportedParameters: mergeStringArrays(model.supportedParameters, generationFamily?.supportedParameters, catalogEntry?.supportedParameters),
+    capabilitySource: model.capabilitySource ?? generationFamily?.capabilitySource ?? (catalogEntry ? catalogEntry.source ?? "model_catalog" : "conservative_default"),
+    capabilityConfidence: model.capabilityConfidence ?? generationFamily?.capabilityConfidence ?? catalogEntry?.confidence ?? (catalogEntry ? "known" : "conservative"),
   });
 }
 
@@ -236,7 +205,7 @@ function findProviderModelCatalogEntry(modelId: string, context: ProviderModelCa
     if (!entry.modelPattern.test(modelId)) {
       return false;
     }
-    if (entry.api && entry.api !== context.api) {
+    if (entry.api && entry.api !== context.api && entry.api !== "media-job") {
       return false;
     }
     const providerMatches = entry.providerIds?.some((candidate) => candidate.toLowerCase() === providerId) ?? false;
@@ -273,31 +242,6 @@ function defaultModelCapabilities(api: ProviderApi): readonly ProviderCapability
   return api === "media-job" ? [] : ["chat"];
 }
 
-function mediaModelOptionDefaults(kind: NonNullable<ReturnType<typeof mediaModelKind>>): ProviderModelOption {
-  if (kind === "seedance") {
-    return {
-      id: "seedance",
-      displayName: "Seedance",
-      ownedBy: "volcengine",
-      api: "media-job",
-      input: ["text", "image"],
-      capabilities: ["video_generate"],
-      capabilitySource: "model_catalog",
-      capabilityConfidence: "known",
-    };
-  }
-  return {
-    id: kind,
-    displayName: kind === "seedream" ? "Seedream" : "Jimeng Image",
-    ownedBy: "volcengine",
-    api: "media-job",
-    input: ["text", "image"],
-    capabilities: ["image_generate", "image_edit"],
-    capabilitySource: "model_catalog",
-    capabilityConfidence: "known",
-  };
-}
-
 function normalizeProviderInput(input: readonly ("text" | "image")[] | undefined): readonly ("text" | "image")[] | undefined {
   return mergeStringArrays(input, undefined) as readonly ("text" | "image")[] | undefined;
 }
@@ -307,13 +251,14 @@ function normalizeProviderCapabilities(input: readonly ProviderCapability[] | un
 }
 
 function mergeStringArrays(
-  first: readonly string[] | undefined,
-  second: readonly string[] | undefined,
+  ...arrays: readonly (readonly string[] | undefined)[]
 ): readonly string[] | undefined {
   const result: string[] = [];
-  for (const item of [...(first ?? []), ...(second ?? [])]) {
-    if (item && !result.includes(item)) {
-      result.push(item);
+  for (const array of arrays) {
+    for (const item of array ?? []) {
+      if (item && !result.includes(item)) {
+        result.push(item);
+      }
     }
   }
   return result.length > 0 ? result : undefined;

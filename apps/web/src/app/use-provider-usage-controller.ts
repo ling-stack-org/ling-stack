@@ -20,6 +20,8 @@ export function useProviderUsageController(input: {
   readonly setChannelEditForm: Dispatch<SetStateAction<ChannelFormState>>;
   readonly updateChannel: (cwd: string, channelId: string, channel: ChannelFormState) => Promise<unknown>;
   readonly refreshChannels: (cwd?: string) => Promise<void>;
+  readonly getWorkspaceDefaultProviderPresetId: () => string;
+  readonly clearWorkspaceDefaultProvider: () => Promise<void>;
 }): ProviderUsageController {
   async function clearProviderUsage(providerId: string): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
@@ -28,6 +30,9 @@ export function useProviderUsageController(input: {
     }
     if (input.form.providerPresetId === providerId) {
       input.setForm((current) => ({ ...current, providerPresetId: "" }));
+    }
+    if (input.getWorkspaceDefaultProviderPresetId() === providerId) {
+      await input.clearWorkspaceDefaultProvider();
     }
 
     const channelsUsingProvider = input.channels.filter((channel) => channel.defaultProviderPresetId === providerId);

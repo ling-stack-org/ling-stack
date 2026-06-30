@@ -19,6 +19,14 @@ export const defaultMediaJobForm: MediaJobFormState = {
   providerPresetId: "",
   operation: "image_generate",
   prompt: "",
+  size: "",
+  count: "",
+  seed: "",
+  ratio: "16:9",
+  duration: "5",
+  watermark: "",
+  imageUrl: "",
+  maskUrl: "",
   inputText: "",
 };
 

@@ -37,6 +37,7 @@ import {
 } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
+  ConversationWorkCell,
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationFeed,
@@ -46,6 +47,7 @@ import {
   type MessageRowAuthorType,
 } from "../../shared/conversation/index.js";
 import { conversationPermissionPresetMenuOptions, inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
+import { buildConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
   WorkspaceRightDock,
@@ -68,6 +70,7 @@ export interface ConversationHomeProjectSelection {
 export interface ConversationHomeModelOption {
   readonly id: string;
   readonly displayName: string;
+  readonly label?: string;
   readonly model: string;
   readonly providerId?: string;
   readonly enabled?: boolean;
@@ -129,6 +132,7 @@ export function ConversationHome({
   slashCommands,
   workspaceCwd,
   sending = false,
+  onOpenRun,
   onSendConversation,
 }: {
   readonly initialDraft?: string;
@@ -245,6 +249,7 @@ export function ConversationHome({
     return modelOptions.filter((option) =>
       [
         option.displayName,
+        option.label ?? "",
         option.model,
         option.providerId ?? "",
       ].join(" ").toLowerCase().includes(normalizedModelSearch)
@@ -802,6 +807,15 @@ export function ConversationHome({
               const messageFeedback = messageFeedbackById[message.id];
               const linkedRun = message.runId ? runById.get(message.runId) : undefined;
               const errorText = normalConversationMessageErrorText(message, linkedRun?.status);
+              const workCell = message.role === "assistant" && message.threadId && linkedRun ? buildConversationWorkCellViewModel({
+                threadId: message.threadId,
+                runs: detailContext?.runs ?? [linkedRun],
+                turns: detailContext?.turns,
+                allowRunThreadFallback: true,
+                approvals: [],
+                artifactsByRun: {},
+                t,
+              }) : undefined;
               return (
                 <MessageRow
                   className={normalConversationMessageClassName(message)}
@@ -830,6 +844,14 @@ export function ConversationHome({
                           maxBytes: 64_000,
                         } : undefined,
                       }))}
+                      loadPreview={loadPreviewContent}
+                    />
+                  ) : null}
+                  workCellNode={workCell ? (
+                    <ConversationWorkCell
+                      model={workCell}
+                      cwd={workspaceCwd.trim()}
+                      onOpenRun={onOpenRun}
                       loadPreview={loadPreviewContent}
                     />
                   ) : null}
@@ -931,7 +953,7 @@ export function ConversationHome({
 }
 
 function modelTriggerLabel(option: ConversationHomeModelOption): string {
-  return option.model;
+  return option.label?.trim() || option.model;
 }
 
 function createConversationHomeMessageId(): string {

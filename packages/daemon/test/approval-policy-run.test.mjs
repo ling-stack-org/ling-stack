@@ -1467,7 +1467,7 @@ test("provider check persists last check result", async () => {
     const checkResult = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(checkResult.ok, false);
     assert.equal(checkResult.code, "unsupported_live_probe");
-    assert.match(checkResult.message, /does not support a real check yet/);
+    assert.match(checkResult.message, /not connected a real generation adapter/);
 
     const fetched = await getJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(fetched.provider.lastCheck.ok, false);
@@ -1825,6 +1825,9 @@ test("provider model listing probes the endpoint with the provided API key", asy
         },
         input_modalities: ["text", "image"],
       },
+      { id: "gpt-image-2", object: "model", owned_by: "openai" },
+      { id: "black-forest-labs/flux-2-pro", object: "model", owned_by: "black-forest-labs" },
+      { id: "plain-image-output", object: "model", output_modalities: ["image"] },
     ],
   });
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -1845,7 +1848,13 @@ test("provider model listing probes the endpoint with the provided API key", asy
     assert.equal(openai.requests[0].method, "GET");
     assert.equal(openai.requests[0].path, "/v1/models");
     assert.equal(openai.requests[0].authorization, "Bearer model-list-secret");
-    assert.deepEqual(result.models.map((model) => model.id), ["cliproxy-gpt-4o", "gpt-5.5-codex"], JSON.stringify({ result, requests: openai.requests }));
+    assert.deepEqual(result.models.map((model) => model.id), [
+      "cliproxy-gpt-4o",
+      "gpt-5.5-codex",
+      "gpt-image-2",
+      "black-forest-labs/flux-2-pro",
+      "plain-image-output",
+    ], JSON.stringify({ result, requests: openai.requests }));
     const codexModel = result.models.find((model) => model.id === "gpt-5.5-codex");
     assert.deepEqual(codexModel.thinkingModes, ["low", "medium", "high", "xhigh"]);
     assert.deepEqual(codexModel.thinkingSupport.levels, ["low", "medium", "high", "xhigh"]);
@@ -1854,6 +1863,20 @@ test("provider model listing probes the endpoint with the provided API key", asy
     assert.equal(codexModel.maxTokens, 64000);
     assert.deepEqual(codexModel.supportedParameters, ["reasoning_effort", "tools", "response_format"]);
     assert.deepEqual(codexModel.input, ["text", "image"]);
+    const imageModel = result.models.find((model) => model.id === "gpt-image-2");
+    assert.equal(imageModel.api, "media-job");
+    assert.deepEqual(imageModel.input, ["text", "image"]);
+    assert.deepEqual(imageModel.capabilities, ["image_generate"]);
+    assert.deepEqual(imageModel.thinkingModes, []);
+    assert.equal(imageModel.capabilitySource, "model_catalog");
+    const fluxModel = result.models.find((model) => model.id === "black-forest-labs/flux-2-pro");
+    assert.equal(fluxModel.api, "media-job");
+    assert.deepEqual(fluxModel.capabilities, ["image_generate"]);
+    assert.equal(fluxModel.capabilitySource, "model_catalog");
+    const upstreamImageModel = result.models.find((model) => model.id === "plain-image-output");
+    assert.equal(upstreamImageModel.api, "media-job");
+    assert.deepEqual(upstreamImageModel.capabilities, ["image_generate"]);
+    assert.equal(upstreamImageModel.capabilitySource, "upstream");
     assert.equal(result.source, `${openai.url}/v1/models`);
     assert.doesNotMatch(JSON.stringify(result), /model-list-secret/);
   } finally {
@@ -1927,12 +1950,14 @@ test("provider model import creates and updates supplier model presets", async (
           capabilityConfidence: "known",
         },
         { id: "relay-image", capabilities: ["image_generate"], input: ["text", "image"], api: "media-job" },
+        { id: "gpt-image-2", capabilities: ["image_generate"], input: ["text", "image"], api: "media-job" },
+        { id: "black-forest-labs/flux-2-pro" },
       ],
     });
 
-    assert.equal(imported.createdCount, 2);
+    assert.equal(imported.createdCount, 4);
     assert.equal(imported.updatedCount, 0);
-    assert.equal(imported.providers.length, 2);
+    assert.equal(imported.providers.length, 4);
     assert.ok(imported.providers.every((provider) => provider.apiKeyConfigured));
     const relayGpt = imported.providers.find((provider) => provider.model === "relay-gpt");
     assert.equal(relayGpt.reasoning, true);
@@ -1941,6 +1966,17 @@ test("provider model import creates and updates supplier model presets", async (
     assert.equal(relayGpt.maxTokens, 8192);
     assert.deepEqual(relayGpt.compat.modelMetadata.supportedParameters, ["reasoning_effort"]);
     assert.equal(relayGpt.compat.modelMetadata.thinkingSupport.maxTokens, 8192);
+    const gptImage = imported.providers.find((provider) => provider.model === "gpt-image-2");
+    assert.equal(gptImage.api, "media-job");
+    assert.equal(gptImage.reasoning, false);
+    assert.deepEqual(gptImage.thinkingModes, []);
+    assert.deepEqual(gptImage.capabilities, ["image_generate"]);
+    assert.deepEqual(gptImage.compat.mediaVendorTransport, { mode: "live" });
+    const fluxImage = imported.providers.find((provider) => provider.model === "black-forest-labs/flux-2-pro");
+    assert.equal(fluxImage.api, "media-job");
+    assert.deepEqual(fluxImage.capabilities, ["image_generate"]);
+    assert.equal(fluxImage.compat.mediaVendorTransport, undefined);
+    assert.equal(fluxImage.compat.modelMetadata.capabilitySource, "model_catalog");
     assert.doesNotMatch(JSON.stringify(imported), /import-secret/);
 
     const updated = await postJson(`${daemon.url}/providers/import-models?cwd=${encodeURIComponent(cwd)}`, {
@@ -1963,9 +1999,114 @@ test("provider model import creates and updates supplier model presets", async (
     assert.equal(updated.providers[0].displayName, "中转站 · Relay GPT Updated");
 
     const listed = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(listed.providers.length, 2);
+    assert.equal(listed.providers.length, 4);
   } finally {
     await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("provider manual create and update auto-enable live transport for OpenAI Images", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-manual-openai-image-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_manual_openai_image",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const created = await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "Relay Image",
+      providerId: "relay",
+      model: "gpt-image-2",
+      api: "media-job",
+      baseUrl: "https://relay.example.com/v1",
+      apiKey: "manual-secret",
+      authHeader: true,
+      capabilities: ["image_generate"],
+      input: ["text", "image"],
+      compat: {},
+      enabled: true,
+    });
+
+    assert.deepEqual(created.provider.compat.mediaVendorTransport, { mode: "live" });
+    assert.doesNotMatch(JSON.stringify(created), /manual-secret/);
+
+    const patched = await patchJson(`${daemon.url}/providers/${encodeURIComponent(created.provider.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      model: "dall-e-3",
+      api: "media-job",
+      capabilities: ["image_generate"],
+      input: ["text", "image"],
+      compat: {},
+    });
+
+    assert.equal(patched.provider.model, "dall-e-3");
+    assert.deepEqual(patched.provider.compat.mediaVendorTransport, { mode: "live" });
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("legacy OpenAI Images media providers are normalized for listing, checks, and runs", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-legacy-openai-image-"));
+  const openai = await startMockOpenAICompatibleServer();
+  process.env.LING_STACK_TEST_OPENAI_IMAGE_KEY = "test-openai-image-key";
+  const now = "2026-06-30T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  const legacyProvider = store.createProviderPreset({
+    kind: "openai-compatible",
+    displayName: "Legacy Image Relay",
+    providerId: "relay",
+    model: "gpt-image-2",
+    api: "media-job",
+    baseUrl: `${openai.url}/v1`,
+    apiKeyRef: "env:LING_STACK_TEST_OPENAI_IMAGE_KEY",
+    authHeader: true,
+    input: ["text", "image"],
+    compat: {},
+    capabilities: ["image_generate"],
+    enabled: true,
+  }, now);
+  store.close();
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_legacy_openai_image",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const listed = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+    const listedProvider = listed.providers.find((provider) => provider.id === legacyProvider.id);
+    assert.deepEqual(listedProvider.compat.mediaVendorTransport, { mode: "live" });
+    assert.equal(listedProvider.apiKeyConfigured, true);
+
+    const check = await postJson(`${daemon.url}/providers/${encodeURIComponent(legacyProvider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(check.ok, true);
+    assert.equal(check.code, "static_check");
+    assert.match(check.message, /does not create an image/);
+    assert.equal(openai.requests.length, 0);
+
+    const createdJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: legacyProvider.id,
+      operation: "image_generate",
+      prompt: "Create an OpenAI Images artifact from a legacy provider.",
+      input: { size: "1024x1024" },
+    });
+    const firstRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(firstRun.mediaJob.status, "succeeded");
+    assert.equal(firstRun.approval, undefined);
+    const pendingApprovals = await listApprovals(daemon.url, cwd, { mediaJobId: createdJob.mediaJob.id, status: "pending" });
+    assert.equal(pendingApprovals.length, 0);
+    const executed = firstRun;
+    assert.equal(executed.mediaJob.status, "succeeded");
+    assert.equal(openai.requests.length, 1);
+    assert.equal(openai.requests[0].path, "/v1/images/generations");
+    assert.equal(openai.requests[0].authorization, "Bearer test-openai-image-key");
+    assert.equal(openai.requests[0].body.model, "gpt-image-2");
+  } finally {
+    delete process.env.LING_STACK_TEST_OPENAI_IMAGE_KEY;
+    await daemon.close();
+    await openai.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -2057,8 +2198,8 @@ test("media provider check runs a real Seedream image probe", async () => {
       apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
     });
     assert.equal(draftCheck.ok, true);
-    assert.equal(draftCheck.code, "static_check");
-    assert.equal(seedream.requests.length, 0);
+    assert.equal(draftCheck.code, "live_image_probe_ready");
+    assert.equal(seedream.requests.length, 2);
 
     const live = await createMediaProvider(daemon.url, cwd, {
       displayName: "Seedream Live Check",
@@ -2071,14 +2212,14 @@ test("media provider check runs a real Seedream image probe", async () => {
     assert.equal(liveCheck.ok, true);
     assert.equal(liveCheck.code, "live_image_probe_ready");
     assert.equal(liveCheck.message, "生成真实图片成功");
-    assert.equal(seedream.requests.length, 2);
-    assert.equal(seedream.requests[0].method, "POST");
-    assert.equal(seedream.requests[0].path, "/api/v3/images/generations");
-    assert.equal(seedream.requests[0].authorization, "Bearer test-key");
-    assert.equal(seedream.requests[0].body.model, "seedream");
-    assert.equal(seedream.requests[0].body.response_format, "url");
-    assert.equal(seedream.requests[1].method, "GET");
-    assert.equal(seedream.requests[1].path, "/generated/image-1.png");
+    assert.equal(seedream.requests.length, 4);
+    assert.equal(seedream.requests[2].method, "POST");
+    assert.equal(seedream.requests[2].path, "/api/v3/images/generations");
+    assert.equal(seedream.requests[2].authorization, "Bearer test-key");
+    assert.equal(seedream.requests[2].body.model, "seedream");
+    assert.equal(seedream.requests[2].body.response_format, "url");
+    assert.equal(seedream.requests[3].method, "GET");
+    assert.equal(seedream.requests[3].path, "/generated/image-1.png");
 
     const missingSecret = await createMediaProvider(daemon.url, cwd, {
       displayName: "Seedream Missing Secret",
@@ -2103,9 +2244,9 @@ test("media provider check runs a real Seedream image probe", async () => {
       compat: { mediaVendorTransport: { mode: "live" } },
     });
     const seedanceCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(seedance.provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(seedanceCheck.ok, false);
-    assert.equal(seedanceCheck.code, "unsupported_live_probe");
-    assert.match(seedanceCheck.message, /does not support a real check yet/);
+    assert.equal(seedanceCheck.ok, true);
+    assert.equal(seedanceCheck.code, "static_check");
+    assert.match(seedanceCheck.message, /does not create a video/);
   } finally {
     delete process.env.LING_STACK_TEST_MEDIA_KEY;
     await seedream.close();
@@ -2207,7 +2348,7 @@ test("media job API creates, lists, and shows queued jobs without running on cre
   }
 });
 
-test("media job run blocks static media providers from reporting fake success", async () => {
+test("media job API blocks static media providers from reporting fake success", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_run",
@@ -2216,23 +2357,24 @@ test("media job run blocks static media providers from reporting fake success", 
   }));
   try {
     const createdProvider = await createMediaProvider(daemon.url, cwd, {
-      displayName: "Seedream Static",
+      kind: "jimeng",
+      displayName: "Jimeng Static",
+      providerId: "jimeng",
+      model: "jimeng-image",
       capabilities: ["image_generate"],
     });
     const providerId = createdProvider.provider.id;
-    const createdJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+    const createdJob = await postJsonExpectError(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
       providerPresetId: providerId,
       operation: "image_generate",
       prompt: "Create a local static artifact.",
       input: { size: "1024x1024", apiKey: "sk-test_123456789" },
     });
 
-    const executed = await postJsonExpectError(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(executed.status, 400);
-    assert.equal(executed.body.error, "live_media_transport_required");
-    assert.match(executed.body.message, /当前没有可真实生成的模型/);
-    assert.equal(executed.body.mediaJob.status, "failed");
-    assert.deepEqual(executed.body.mediaJob.artifactIds, []);
+    assert.equal(createdJob.status, 400);
+    assert.equal(createdJob.body.error, "live_media_transport_required");
+    assert.match(createdJob.body.message, /当前没有可真实生成的模型/);
+    assert.equal(await mediaJobCount(daemon.url, cwd), 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2263,18 +2405,12 @@ test("media job live transport fails when the vendor response has no media artif
       input: { size: "1024x1024" },
     });
 
-    const gated = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(gated.mediaJob.status, "waiting_for_approval");
-    const approved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(gated.approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
-      reason: "approved for malformed vendor response smoke",
-    });
-    assert.equal(approved.approval.status, "approved");
-    assert.ok(["queued", "running", "failed"].includes(approved.mediaJob.status));
-
-    const executed = await waitForMediaJobStatus(daemon.url, cwd, createdJob.mediaJob.id, "failed");
+    const executed = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(executed.mediaJob.status, "failed");
     assert.match(executed.mediaJob.errorMessage, /did not include image URL data/);
     assert.deepEqual(executed.mediaJob.artifactIds, []);
+    const pendingApprovals = await listApprovals(daemon.url, cwd, { mediaJobId: createdJob.mediaJob.id, status: "pending" });
+    assert.equal(pendingApprovals.length, 0);
 
     const rerun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(rerun.mediaJob.status, "failed");
@@ -2287,10 +2423,10 @@ test("media job live transport fails when the vendor response has no media artif
   }
 });
 
-test("media job live transport calls Seedream image_generate through HTTP and links artifacts", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-live-gate-"));
+test("media job live transport calls Seedream image_generate directly and links artifacts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-live-direct-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
-    toolCallId: "tool_unused_media_job_live_gate",
+    toolCallId: "tool_unused_media_job_live_direct",
     toolName: "bash",
     input: { command: "echo unused" },
   }));
@@ -2298,7 +2434,7 @@ test("media job live transport calls Seedream image_generate through HTTP and li
   process.env.LING_STACK_TEST_MEDIA_KEY = "test-key";
   try {
     const createdProvider = await createMediaProvider(daemon.url, cwd, {
-      displayName: "Seedream Live Gate",
+      displayName: "Seedream Live Direct",
       capabilities: ["image_generate"],
       baseUrl: seedream.url,
       apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
@@ -2307,34 +2443,17 @@ test("media job live transport calls Seedream image_generate through HTTP and li
     const createdJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
       providerPresetId: createdProvider.provider.id,
       operation: "image_generate",
-      prompt: "Create a live gated artifact.",
+      prompt: "Create a live artifact.",
       input: { size: "2K" },
     });
 
     const firstRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(firstRun.mediaJob.status, "waiting_for_approval");
-    assert.equal(firstRun.approval.actionType, "media_cost");
-    assert.equal(firstRun.approval.mediaJobId, createdJob.mediaJob.id);
-    assert.equal(firstRun.approval.status, "pending");
-    assert.equal(firstRun.approval.payload.type, "media_cost");
-    assert.equal(firstRun.approval.payload.providerPresetId, createdProvider.provider.id);
-    assert.equal(firstRun.approval.payload.operation, "image_generate");
-    assert.equal(firstRun.approval.payload.promptPreview, "Create a live gated artifact.");
-    assert.deepEqual(firstRun.artifacts, []);
-
-    const repeatRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(repeatRun.mediaJob.status, "waiting_for_approval");
-    assert.equal(repeatRun.approval.id, firstRun.approval.id);
+    assert.equal(firstRun.mediaJob.status, "succeeded");
+    assert.equal(firstRun.approval, undefined);
     const pendingApprovals = await listApprovals(daemon.url, cwd, { mediaJobId: createdJob.mediaJob.id, status: "pending" });
-    assert.equal(pendingApprovals.length, 1);
+    assert.equal(pendingApprovals.length, 0);
 
-    const approved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(firstRun.approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
-      reason: "approved for live gate smoke",
-    });
-    assert.equal(approved.approval.status, "approved");
-    assert.ok(["queued", "running", "succeeded"].includes(approved.mediaJob.status));
-
-    const executed = await waitForMediaJobStatus(daemon.url, cwd, createdJob.mediaJob.id, "succeeded");
+    const executed = firstRun;
     const executedArtifacts = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(executed.mediaJob.status, "succeeded");
     assert.equal(executedArtifacts.artifacts.length, 3);
@@ -2343,7 +2462,7 @@ test("media job live transport calls Seedream image_generate through HTTP and li
     assert.equal(seedream.requests[0].authorization, "Bearer test-key");
     assert.deepEqual(seedream.requests[0].body, {
       model: "seedream",
-      prompt: "Create a live gated artifact.",
+      prompt: "Create a live artifact.",
       response_format: "url",
       size: "2K",
     });
@@ -2379,60 +2498,74 @@ test("media job live transport calls Seedream image_generate through HTTP and li
   }
 });
 
-test("media job live transport gate fails denied or expired media approvals", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-live-approval-fail-"));
+test("legacy media cost approvals do not block direct media job execution", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-legacy-approval-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
-    toolCallId: "tool_unused_media_job_approval_fail",
+    toolCallId: "tool_unused_media_job_legacy_approval",
     toolName: "bash",
     input: { command: "echo unused" },
   }));
+  const seedream = await startMockSeedreamServer();
   process.env.LING_STACK_TEST_MEDIA_KEY = "test-key";
   try {
     const createdProvider = await createMediaProvider(daemon.url, cwd, {
-      displayName: "Seedream Live Gate",
+      displayName: "Seedream Legacy Approval",
       capabilities: ["image_generate"],
-      baseUrl: "https://media.example.invalid",
+      baseUrl: seedream.url,
       apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
       compat: { mediaVendorTransport: { mode: "live" } },
     });
 
-    const deniedJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+    const legacyJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
       providerPresetId: createdProvider.provider.id,
       operation: "image_generate",
-      prompt: "Create a denied live artifact.",
+      prompt: "Create a legacy waiting artifact.",
+      input: { size: "1024x1024" },
     });
-    const deniedGate = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(deniedJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
-    const deniedDecision = await postJson(`${daemon.url}/approvals/${encodeURIComponent(deniedGate.approval.id)}/deny?cwd=${encodeURIComponent(cwd)}`, {
-      reason: "too expensive for this smoke",
-    });
-    assert.equal(deniedDecision.mediaJob.status, "failed");
-    assert.match(deniedDecision.mediaJob.errorMessage, /approval denied/);
 
-    const expiredJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
-      providerPresetId: createdProvider.provider.id,
-      operation: "image_generate",
-      prompt: "Create an expired live artifact.",
-    });
-    const expiredGate = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(expiredJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     const store = createSqliteRunStore(cwd);
+    let legacyApprovalId = "";
     try {
-      const expired = store.expireApprovalRequest(
-        expiredGate.approval.id,
-        { reason: "Approval request expired before a decision was received." },
-        "2026-05-24T00:30:00.000Z",
+      const waitingJob = store.updateMediaJobStatus(
+        legacyJob.mediaJob.id,
+        { status: "waiting_for_approval", errorMessage: null },
+        "2026-05-24T00:01:00.000Z",
       );
-      assert.ok(expired);
-      assert.equal(expired.status, "expired");
+      assert.ok(waitingJob);
+      assert.equal(waitingJob.status, "waiting_for_approval");
+      const approval = store.createApprovalRequest(
+        {
+          mediaJobId: legacyJob.mediaJob.id,
+          actionType: "media_cost",
+          risk: "high",
+          title: "Approve generation cost",
+          description: "Legacy media cost approval.",
+          payload: {
+            type: "media_cost",
+            providerPresetId: createdProvider.provider.id,
+            model: "seedream",
+            operation: "image_generate",
+            promptPreview: "Create a legacy waiting artifact.",
+          },
+          expiresAt: "2099-01-01T00:01:00.000Z",
+        },
+        "2026-05-24T00:01:00.000Z",
+      );
+      legacyApprovalId = approval.id;
     } finally {
       store.close();
     }
-    const expiredRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(expiredJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(expiredRun.mediaJob.status, "failed");
-    assert.match(expiredRun.mediaJob.errorMessage, /approval expired/);
-    assert.equal(expiredRun.approval.id, expiredGate.approval.id);
-    assert.deepEqual(expiredRun.artifacts, []);
+
+    const executed = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(legacyJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(executed.mediaJob.status, "succeeded");
+    assert.equal(executed.approval, undefined);
+    const pendingApprovals = await listApprovals(daemon.url, cwd, { mediaJobId: legacyJob.mediaJob.id, status: "pending" });
+    assert.equal(pendingApprovals.length, 1);
+    assert.equal(pendingApprovals[0].id, legacyApprovalId);
+    assert.equal(seedream.requests[0].path, "/images/generations");
   } finally {
     delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await seedream.close();
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -4079,6 +4212,14 @@ async function startMockOpenAICompatibleServer(options = {}) {
       response.end(JSON.stringify({
         object: "list",
         data: models,
+      }));
+      return;
+    }
+    if (request.method === "POST" && new URL(request.url ?? "/", "http://127.0.0.1").pathname.endsWith("/images/generations")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        created: 1,
+        data: [{ b64_json: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64") }],
       }));
       return;
     }

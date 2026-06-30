@@ -1,6 +1,6 @@
 # Seedream Live Smoke
 
-This smoke test verifies the live Seedream `image_generate` path without adding new provider behavior. It uses the existing media job API, `media_cost` approval gate, and artifact content endpoint.
+This smoke test verifies the live Seedream `image_generate` path without adding new provider behavior. It uses the existing media job API, generation runtime readiness checks, and artifact content endpoint.
 
 Do not paste real API keys into files, PR descriptions, logs, or docs. Keep `SEEDREAM_API_KEY` only in the current shell environment.
 
@@ -99,38 +99,9 @@ Copy the returned `mediaJob.id`:
 export MEDIA_JOB_ID=media_job_...
 ```
 
-## 4. Trigger Approval
+## 4. Execute The Live Run
 
-The first live run must not call Seedream. It should create a `media_cost` approval and move the job to `waiting_for_approval`:
-
-```bash
-curl -X POST "$DAEMON_URL/media-jobs/$MEDIA_JOB_ID/run?cwd=$CWD_ENCODED" \
-  -H 'content-type: application/json' \
-  -d '{}'
-```
-
-Expected response:
-
-- `mediaJob.status` is `waiting_for_approval`.
-- Response includes `approval.id`.
-- Response `artifacts` is empty.
-
-List or show the approval:
-
-```bash
-node packages/cli/dist/index.js approvals list --status pending --media-job-id "$MEDIA_JOB_ID"
-node packages/cli/dist/index.js approvals show approval_...
-```
-
-Approve it:
-
-```bash
-node packages/cli/dist/index.js approvals approve approval_... --reason "Manual Seedream live smoke"
-```
-
-## 5. Execute The Live Run
-
-Run the same media job again:
+Run the media job:
 
 ```bash
 curl -X POST "$DAEMON_URL/media-jobs/$MEDIA_JOB_ID/run?cwd=$CWD_ENCODED" \
@@ -143,9 +114,10 @@ Expected result:
 - `mediaJob.status` is `succeeded`.
 - `mediaJob.artifactIds` is non-empty.
 - Response artifacts include JSON metadata and at least one `image` artifact.
+- Response does not include an approval; new media jobs no longer create `media_cost` approval requests.
 - No returned artifact content or error message includes `SEEDREAM_API_KEY` or the raw key value.
 
-## 6. Verify Artifacts
+## 5. Verify Artifacts
 
 List artifacts:
 
@@ -174,7 +146,7 @@ curl -sS \
   "$DAEMON_URL/artifacts/$IMAGE_ARTIFACT_ID/content?cwd=$CWD_ENCODED"
 ```
 
-## 7. Optional Web Check
+## 6. Optional Web Check
 
 Start the Web UI:
 
@@ -193,8 +165,8 @@ Open Media Jobs and verify:
 
 - No `--skip-preflight` was used.
 - Provider check passed before execution.
-- First run created a `media_cost` approval instead of calling Seedream.
-- Approved second run called Seedream and finished `succeeded`.
+- The run called Seedream directly and finished `succeeded`.
+- No new `media_cost` approval was created.
 - Local artifacts include JSON metadata and image bytes.
 - Artifact content is served only through existing artifact APIs.
 - No secret value appears in artifacts, errors, PR notes, or docs.

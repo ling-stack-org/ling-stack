@@ -306,6 +306,7 @@ export function useProvidersDomain(input: {
         setProviderForm(defaultProviderForm);
       }
       input.clearSelectedProvider(providerId);
+      await input.clearProviderUsage(providerId);
       await refreshProviders();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);

@@ -4,12 +4,11 @@ import { basename, extname, resolve as resolvePath } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_WORKSPACE_ID,
+  normalizeProviderPresetForMediaRuntime,
   redactSecrets,
+  resolveMediaProviderRuntimeState,
   type ApprovalRequest,
-  type ApprovalStoreFacet,
   type ArtifactType,
-  type CreateApprovalRequestInput,
-  type ExternalWorkStoreFacet,
   type MediaJob,
   type MediaJobStatus,
   type MediaStoreFacet,
@@ -25,7 +24,6 @@ import {
 } from "@ling-stack/core";
 import {
   executeMediaJob as executeMediaAdapterJob,
-  resolveMediaVendorTransportGateConfig,
   type MediaExecutionArtifact,
 } from "@ling-stack/providers";
 import { HttpError } from "../../errors.js";
@@ -37,24 +35,14 @@ import { formatTimestampSlug } from "../../shared/time.js";
 import { resolveProviderSecret } from "../providers/secrets.js";
 import { assertMediaJobProvider, createMediaAdapterForProvider } from "./provider.js";
 
-const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
-const APPROVAL_PREVIEW_LIMIT = 1_200;
 const MEDIA_RUNTIME_SEMAPHORE_TTL_MS = 6 * 60 * 60 * 1000;
 
-type MediaApprovalExpirationStore =
-  ApprovalStoreFacet &
-  ExternalWorkStoreFacet &
-  RunExecutionStoreFacet &
-  RunStorePathsFacet &
-  RuntimeSupervisorStoreFacet;
 type MediaExecutionStore =
   MediaStoreFacet &
   ProviderStoreFacet &
-  ApprovalStoreFacet &
   RunExecutionStoreFacet &
   RuntimeSupervisorStoreFacet &
-  RunStorePathsFacet &
-  ExternalWorkStoreFacet;
+  RunStorePathsFacet;
 type MediaRuntimeStartStore =
   RuntimeSupervisorStoreFacet &
   RunStorePathsFacet &
@@ -98,19 +86,9 @@ export interface MediaRuntimeTerminalTransitionRequest {
 }
 
 export interface RunMediaJobHooks {
-  readonly expirePendingMediaApprovals: (
-    store: MediaApprovalExpirationStore,
-    mediaJobId: string,
-  ) => void;
   readonly startRuntimeWorkUnit: (input: MediaRuntimeStartRequest) => MediaRuntimeHandle;
   readonly transitionRuntimeWorkUnitTerminal: (input: MediaRuntimeTerminalTransitionRequest) => void;
 }
-
-type MediaCostApprovalGateResult =
-  | { readonly kind: "not_required" }
-  | { readonly kind: "approved"; readonly approval: ApprovalRequest }
-  | { readonly kind: "waiting_for_approval"; readonly mediaJob: MediaJob; readonly approval: ApprovalRequest }
-  | { readonly kind: "blocked"; readonly mediaJob: MediaJob; readonly approval: ApprovalRequest };
 
 export interface MediaJobExecutionResult {
   readonly statusCode: number;
@@ -196,14 +174,6 @@ export async function runMediaJobExecution(input: {
     }
     const mediaSecret = provider.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver) : undefined;
     const mediaSecretValues = [mediaSecret?.value];
-
-    const approvalGate = applyMediaCostApprovalGate(store, job, provider, input.hooks);
-    if (approvalGate.kind === "waiting_for_approval") {
-      return { statusCode: 200, body: { mediaJob: approvalGate.mediaJob, approval: approvalGate.approval, artifacts: [] } };
-    }
-    if (approvalGate.kind === "blocked") {
-      return { statusCode: 200, body: { mediaJob: approvalGate.mediaJob, approval: approvalGate.approval, artifacts: [] } };
-    }
 
     supervised = input.hooks.startRuntimeWorkUnit({
       store,
@@ -440,36 +410,44 @@ function resolveLiveMediaExecutionReadiness(
   operation: MediaJob["operation"],
   secretResolver: SecretResolver,
 ): { readonly ok: true } | { readonly ok: false; readonly code: string; readonly message: string } {
-  const gate = resolveMediaVendorTransportGateConfig(provider.compat);
-  if (!gate.ok) {
+  const normalizedProvider = normalizeProviderPresetForMediaRuntime(provider);
+  const state = resolveMediaProviderRuntimeState(normalizedProvider, operation);
+  if (state.reason === "live_transport_invalid") {
     return {
       ok: false,
-      code: gate.errorCode ?? "invalid_request",
-      message: gate.errorMessage ?? "生成模型真实生成配置无效，请在模型工作台重新保存。",
+      code: "invalid_request",
+      message: "生成模型真实生成配置无效，请在模型工作台重新保存。",
     };
   }
-  if (gate.config?.mode !== "live") {
+  if (state.reason === "live_transport_required") {
     return {
       ok: false,
       code: "live_media_transport_required",
       message: "当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。",
     };
   }
-  if (!provider.baseUrl) {
+  if (state.reason === "base_url_missing") {
     return { ok: false, code: "bad_request", message: "生成模型缺少 Base URL，请在模型工作台补充后重试。" };
   }
-  if (!provider.apiKeyRef) {
+  if (!normalizedProvider.apiKeyRef) {
     return { ok: false, code: "secret_missing", message: "生成模型缺少 API Key，请在模型工作台补充后重试。" };
   }
-  const secret = resolveProviderSecret(store, provider, secretResolver);
+  const secret = resolveProviderSecret(store, normalizedProvider, secretResolver);
   if (!secret.configured) {
     return { ok: false, code: "secret_missing", message: "生成模型 API Key 尚未配置，请在模型工作台保存密钥后重试。" };
   }
-  if (provider.kind !== "seedream" || operation !== "image_generate") {
+  if (state.reason === "unsupported_live_adapter" || !state.liveAdapterSupported) {
     return {
       ok: false,
       code: "unsupported_capability",
-      message: "当前只支持 Seedream 图片生成的真实执行，其他生成模型暂未接入真实生成。",
+      message: "当前只支持 OpenAI Images 图片生成、Seedream 图片生成和 Seedance 视频生成的真实执行，其他生成模型暂未接入真实生成。",
+    };
+  }
+  if (!state.canRun) {
+    return {
+      ok: false,
+      code: state.reason ?? "unsupported_capability",
+      message: "当前生成模型尚未满足真实生成条件，请在模型工作台检查配置。",
     };
   }
   return { ok: true };
@@ -486,82 +464,6 @@ function mediaExecutionHasRequiredArtifact(
     return artifacts.some((artifact) => artifact.type === "video" && artifact.contentBytes !== undefined);
   }
   return false;
-}
-
-function applyMediaCostApprovalGate(
-  store: MediaExecutionStore,
-  job: MediaJob,
-  provider: ProviderPreset,
-  hooks: RunMediaJobHooks,
-): MediaCostApprovalGateResult {
-  const gate = resolveMediaVendorTransportGateConfig(provider.compat);
-  if (!gate.ok || gate.config?.mode !== "live") {
-    return { kind: "not_required" };
-  }
-
-  hooks.expirePendingMediaApprovals(store, job.id);
-  const approvals = store
-    .listApprovalRequests({ mediaJobId: job.id, limit: 500 })
-    .filter((approval) => approval.actionType === "media_cost");
-
-  for (const approval of approvals) {
-    if (approval.status === "pending") {
-      return {
-        kind: "waiting_for_approval",
-        mediaJob: markMediaJobWaitingForApproval(store, job),
-        approval,
-      };
-    }
-    if (approval.status === "approved") {
-      return { kind: "approved", approval };
-    }
-    if (approval.status === "denied" || approval.status === "expired") {
-      return {
-        kind: "blocked",
-        mediaJob: failMediaJobForApprovalDecision(store, job, approval),
-        approval,
-      };
-    }
-  }
-
-  const approval = store.createApprovalRequest(createMediaCostApprovalInput(job, provider), new Date().toISOString());
-  return {
-    kind: "waiting_for_approval",
-    mediaJob: markMediaJobWaitingForApproval(store, job),
-    approval,
-  };
-}
-
-function createMediaCostApprovalInput(job: MediaJob, provider: ProviderPreset): CreateApprovalRequestInput {
-  return {
-    mediaJobId: job.id,
-    actionType: "media_cost",
-    risk: "high",
-    title: "Approve generation cost",
-    description: `${provider.displayName} ${job.operation} requires approval before live media execution.`,
-    payload: {
-      type: "media_cost",
-      providerPresetId: provider.id,
-      model: provider.model,
-      operation: job.operation,
-      promptPreview: truncatePreview(job.prompt),
-    },
-    expiresAt: new Date(Date.now() + APPROVAL_TIMEOUT_MS).toISOString(),
-  };
-}
-
-function markMediaJobWaitingForApproval(store: MediaStoreFacet, job: MediaJob): MediaJob {
-  if (job.status === "waiting_for_approval" && !job.errorMessage) {
-    return job;
-  }
-  return store.updateMediaJobStatus(
-    job.id,
-    {
-      status: "waiting_for_approval",
-      errorMessage: null,
-    },
-    new Date().toISOString(),
-  ) ?? job;
 }
 
 function failMediaJobForApprovalDecision(store: MediaStoreFacet, job: MediaJob, approval: ApprovalRequest): MediaJob {
@@ -679,10 +581,6 @@ function contentTypeForArtifactType(type: ArtifactType): string {
 function redactMediaArtifactContent(content: string, extraSecrets: readonly (string | undefined)[] = []): string {
   const redacted = redactSecrets(content, extraSecrets);
   return typeof redacted === "string" ? redacted : content;
-}
-
-function truncatePreview(value: string, limit = APPROVAL_PREVIEW_LIMIT): string {
-  return value.length > limit ? `${value.slice(0, limit)}...` : value;
 }
 
 function isRunnableMediaJobStatus(status: MediaJobStatus): boolean {

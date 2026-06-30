@@ -1,7 +1,6 @@
 import {
   builtinMediaModelCandidates,
   enrichProviderModelOption,
-  mediaModelKind,
   normalizeProviderThinkingModes,
   normalizeProviderThinkingSupport,
   normalizeProviderBaseUrlForAdapter,
@@ -9,6 +8,7 @@ import {
   providerApis,
   providerCapabilities,
   type ProviderApi,
+  type ProviderCapability,
   type ProviderModelListRequest,
   type ProviderModelListResponse,
   type ProviderModelOption,
@@ -240,24 +240,20 @@ function parseProviderModelOption(value: unknown, preset: ProviderPreset): Provi
   if (!id) {
     return undefined;
   }
-  const inferredMediaKind = mediaModelKind(id);
-  const inferredCapabilities = inferredMediaKind === "seedance"
-    ? ["video_generate"] as const
-    : inferredMediaKind
-      ? ["image_generate", "image_edit"] as const
-      : undefined;
+  const explicitApi = typeof value.api === "string" && providerApis.includes(value.api as ProviderApi)
+    ? value.api as ProviderApi
+    : undefined;
+  const explicitInput = parseProviderModelInput(value);
+  const explicitCapabilities = parseProviderModelCapabilities(value);
+  const hasUpstreamCapabilityMetadata = explicitApi !== undefined || explicitCapabilities !== undefined || hasProviderModelOutputMetadata(value);
   return enrichProviderModelOption(removeUndefined({
     id,
     displayName: typeof value.display_name === "string" ? value.display_name : typeof value.displayName === "string" ? value.displayName : undefined,
     ownedBy: typeof value.owned_by === "string" ? value.owned_by : typeof value.ownedBy === "string" ? value.ownedBy : undefined,
     createdAt: readProviderModelCreatedAt(value),
-    api: typeof value.api === "string" && providerApis.includes(value.api as ProviderApi)
-      ? value.api as ProviderApi
-      : inferredCapabilities
-        ? "media-job"
-        : undefined,
-    input: parseProviderModelInput(value) ?? (inferredCapabilities ? providerModelInputTypes : undefined),
-    capabilities: parseProviderModelStringArray(value.capabilities, providerCapabilities) ?? inferredCapabilities,
+    api: explicitApi ?? (explicitCapabilities?.some(isProviderGenerationCapability) ? "media-job" : undefined),
+    input: explicitInput ?? (explicitCapabilities?.some(isProviderGenerationCapability) ? providerModelInputTypes : undefined),
+    capabilities: explicitCapabilities,
     thinkingModes: parseProviderModelThinkingModes(value),
     thinkingSupport: parseProviderModelThinkingSupport(value),
     contextWindow: readPositiveInteger(
@@ -275,8 +271,8 @@ function parseProviderModelOption(value: unknown, preset: ProviderPreset): Provi
       value.output_token_limit,
     ),
     supportedParameters: parseProviderModelLooseStringArray(value.supported_parameters ?? value.supportedParameters),
-    capabilitySource: "upstream" as const,
-    capabilityConfidence: "known" as const,
+    capabilitySource: hasUpstreamCapabilityMetadata ? "upstream" as const : undefined,
+    capabilityConfidence: hasUpstreamCapabilityMetadata ? "known" as const : undefined,
   }), preset);
 }
 
@@ -294,11 +290,146 @@ function readProviderModelCreatedAt(value: Record<string, unknown>): string | un
 }
 
 function parseProviderModelInput(value: Record<string, unknown>): readonly ("text" | "image")[] | undefined {
+  const architecture = isRecord(value.architecture) ? value.architecture : undefined;
   return (
     parseProviderModelStringArray(value.input, providerModelInputTypes) ??
     parseProviderModelStringArray(value.input_modalities, providerModelInputTypes) ??
+    parseProviderModelStringArray(value.inputModalities, providerModelInputTypes) ??
+    parseProviderModelStringArray(architecture?.input_modalities, providerModelInputTypes) ??
+    parseProviderModelStringArray(architecture?.inputModalities, providerModelInputTypes) ??
     parseProviderModelModalities(value.modalities)
   );
+}
+
+function parseProviderModelCapabilities(value: Record<string, unknown>): readonly ProviderCapability[] | undefined {
+  const architecture = isRecord(value.architecture) ? value.architecture : undefined;
+  const metadata = isRecord(value.metadata) ? value.metadata : undefined;
+  const result: ProviderCapability[] = [];
+  appendProviderCapabilities(result, parseProviderModelStringArray(value.capabilities, providerCapabilities));
+  appendProviderCapabilities(result, parseProviderModelLooseCapabilities(value.capabilities));
+  appendProviderCapabilities(result, parseProviderModelLooseCapabilities(value.supported_capabilities));
+  appendProviderCapabilities(result, parseProviderModelLooseCapabilities(value.supportedCapabilities));
+  appendProviderCapabilities(result, parseProviderModelLooseCapabilities(value.features));
+  appendProviderCapabilities(result, parseProviderModelLooseCapabilities(metadata?.capabilities));
+  appendProviderCapabilities(result, parseProviderModelOutputCapabilities(value.output_modalities ?? value.outputModalities ?? architecture?.output_modalities ?? architecture?.outputModalities));
+  appendProviderCapabilities(result, parseProviderModelTaskCapabilities(value.pipeline_tag ?? value.pipelineTag ?? value.task ?? value.type ?? value.category));
+  appendProviderCapabilities(result, parseProviderModelTaskCapabilities(value.tags));
+  return result.length > 0 ? result : undefined;
+}
+
+function appendProviderCapabilities(target: ProviderCapability[], source: readonly ProviderCapability[] | undefined): void {
+  for (const capability of source ?? []) {
+    if (!target.includes(capability)) {
+      target.push(capability);
+    }
+  }
+}
+
+function parseProviderModelLooseCapabilities(value: unknown): readonly ProviderCapability[] | undefined {
+  const raw = parseProviderModelLooseStringArray(value);
+  if (!raw) {
+    return undefined;
+  }
+  const result: ProviderCapability[] = [];
+  for (const item of raw) {
+    const capability = normalizeProviderModelCapabilityToken(item);
+    if (capability && !result.includes(capability)) {
+      result.push(capability);
+    }
+  }
+  return result.length > 0 ? result : undefined;
+}
+
+function parseProviderModelOutputCapabilities(value: unknown): readonly ProviderCapability[] | undefined {
+  const raw = parseProviderModelLooseStringArray(value);
+  if (!raw) {
+    return undefined;
+  }
+  const result: ProviderCapability[] = [];
+  for (const item of raw) {
+    const normalized = normalizeLooseProviderModelToken(item);
+    if (["image", "output_image", "generated_image", "images"].includes(normalized) && !result.includes("image_generate")) {
+      result.push("image_generate");
+    }
+    if (["video", "output_video", "generated_video", "videos"].includes(normalized) && !result.includes("video_generate")) {
+      result.push("video_generate");
+    }
+    if (["text", "output_text", "message"].includes(normalized) && !result.includes("chat")) {
+      result.push("chat");
+    }
+  }
+  return result.length > 0 ? result : undefined;
+}
+
+function parseProviderModelTaskCapabilities(value: unknown): readonly ProviderCapability[] | undefined {
+  const raw = typeof value === "string" ? [value] : parseProviderModelLooseStringArray(value);
+  if (!raw) {
+    return undefined;
+  }
+  const result: ProviderCapability[] = [];
+  for (const item of raw) {
+    const capability = normalizeProviderModelCapabilityToken(item);
+    if (capability && !result.includes(capability)) {
+      result.push(capability);
+    }
+  }
+  return result.length > 0 ? result : undefined;
+}
+
+function normalizeProviderModelCapabilityToken(value: string): ProviderCapability | undefined {
+  const normalized = normalizeLooseProviderModelToken(value);
+  if (["chat", "completion", "text_generation", "text"].includes(normalized)) {
+    return "chat";
+  }
+  if (["tool_call", "tool_calling", "function_call", "function_calling", "tools"].includes(normalized)) {
+    return "tool_call";
+  }
+  if (["reasoning", "thinking"].includes(normalized)) {
+    return "reasoning";
+  }
+  if (["vision", "image_input", "input_image", "visual_understanding"].includes(normalized)) {
+    return "vision";
+  }
+  if (["text_to_image", "txt2img", "image_generation", "image_generate", "generate_image", "images_generation"].includes(normalized)) {
+    return "image_generate";
+  }
+  if (["image_to_image", "img2img", "image_edit", "image_editing", "edit_image", "inpainting", "outpainting"].includes(normalized)) {
+    return "image_edit";
+  }
+  if (["text_to_video", "video_generation", "video_generate", "generate_video"].includes(normalized)) {
+    return "video_generate";
+  }
+  if (["web_search", "search"].includes(normalized)) {
+    return "web_search";
+  }
+  if (["embedding", "embeddings"].includes(normalized)) {
+    return "embedding";
+  }
+  if (["tts", "text_to_speech"].includes(normalized)) {
+    return "tts";
+  }
+  if (["asr", "speech_to_text"].includes(normalized)) {
+    return "asr";
+  }
+  return undefined;
+}
+
+function normalizeLooseProviderModelToken(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function hasProviderModelOutputMetadata(value: Record<string, unknown>): boolean {
+  const architecture = isRecord(value.architecture) ? value.architecture : undefined;
+  return (
+    value.output_modalities !== undefined ||
+    value.outputModalities !== undefined ||
+    architecture?.output_modalities !== undefined ||
+    architecture?.outputModalities !== undefined
+  );
+}
+
+function isProviderGenerationCapability(capability: ProviderCapability): boolean {
+  return capability === "image_generate" || capability === "image_edit" || capability === "video_generate";
 }
 
 function parseProviderModelModalities(value: unknown): readonly ("text" | "image")[] | undefined {

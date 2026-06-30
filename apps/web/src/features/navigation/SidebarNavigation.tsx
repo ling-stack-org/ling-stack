@@ -16,7 +16,6 @@ import {
   Hash,
   Inbox,
   MessageSquare,
-  Network,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -129,9 +128,9 @@ export function SidebarNavigation({
   });
   const [sidebarTooltip, setSidebarTooltip] = useState<SidebarTooltipState | null>(null);
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
-  const inboxAriaLabel = pendingApprovalCount > 0
-    ? `${t("Review Queue")} · ${t("{count} pending approvals", { count: pendingApprovalCount })}`
-    : t("Review Queue");
+  const inboxTooltip = pendingApprovalCount > 0
+    ? `${t("Inbox")} · ${t("{count} pending approvals", { count: pendingApprovalCount })}`
+    : t("Inbox");
   const visibleTeammates = teammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
   const collapsedTooltipsEnabled = channelDrawer && !channelDrawerOpen;
   const branchesByChannel = new Map<string, readonly ChannelBranch[]>();
@@ -243,10 +242,9 @@ export function SidebarNavigation({
         </button>
 
         <nav className="primary-nav">
-          <NavItem icon={<Inbox />} label={t("Review Queue")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} tooltipProps={tooltipProps(inboxAriaLabel)} />
+          <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} tooltipProps={tooltipProps(inboxTooltip)} />
           <NavItem icon={<Database />} label={t("Image Generation")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} tooltipProps={tooltipProps(t("Image Generation"))} />
           <NavItem icon={<Timer />} label={t("Automations")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} tooltipProps={tooltipProps(t("Automations"))} />
-          <NavItem icon={<Network />} label={t("AI Councils")} active={activeSidebarTarget === "councils"} onClick={() => onOpenView("councils")} tooltipProps={tooltipProps(t("AI Councils"))} />
         </nav>
       </div>
 

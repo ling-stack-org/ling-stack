@@ -10,6 +10,16 @@ export function getMediaVendorAdapterDefinition(kind: string): MediaVendorAdapte
 
 export const defaultMediaVendorDefinitions: readonly MediaVendorAdapterDefinition[] = [
   {
+    kind: "openai",
+    displayName: "OpenAI Images",
+    capabilities: ["image_generate"],
+  },
+  {
+    kind: "openai-compatible",
+    displayName: "OpenAI-compatible Images",
+    capabilities: ["image_generate"],
+  },
+  {
     kind: "jimeng",
     displayName: "Jimeng",
     capabilities: ["image_generate", "image_edit"],

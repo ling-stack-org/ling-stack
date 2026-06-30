@@ -1,4 +1,5 @@
 import type { ProviderFormState, ProviderMutationRequest } from "../types.js";
+import { normalizeMediaProviderCompat } from "@ling-stack/core/provider-media-normalization";
 import { splitCsv } from "./shared.js";
 
 export function providerFormToPayload(form: ProviderFormState): ProviderMutationRequest {
@@ -27,8 +28,15 @@ export function providerFormToPayload(form: ProviderFormState): ProviderMutation
 
 export function providerFormCompat(form: ProviderFormState): Record<string, unknown> | undefined {
   const capabilities = splitCsv(form.capabilitiesText);
-  if (form.api === "media-job" && form.kind === "seedream" && capabilities.includes("image_generate")) {
-    return { mediaVendorTransport: { mode: "live" } };
+  const normalizedCompat = normalizeMediaProviderCompat({
+    kind: form.kind,
+    providerId: form.providerId,
+    model: form.model,
+    api: form.api,
+    capabilities,
+  });
+  if (normalizedCompat) {
+    return normalizedCompat;
   }
   if (form.api === "media-job") {
     return {};

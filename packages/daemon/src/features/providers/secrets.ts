@@ -1,5 +1,6 @@
 import {
   isSupportedSecretRef,
+  normalizeProviderPresetForMediaRuntime,
   type ProviderPreset,
   type ProviderPresetInput,
   type PublicProviderPreset,
@@ -134,9 +135,10 @@ export function readLocalProviderSecretProviderId(ref: string): string {
 }
 
 export function toPublicProviderPreset(store: ProviderStoreFacet, preset: ProviderPreset, secretResolver: SecretResolver): PublicProviderPreset {
-  const apiKeyStatus = preset.apiKeyRef ? providerSecretStatus(store, preset, secretResolver) : undefined;
+  const normalizedPreset = normalizeProviderPresetForMediaRuntime(preset);
+  const apiKeyStatus = normalizedPreset.apiKeyRef ? providerSecretStatus(store, normalizedPreset, secretResolver) : undefined;
   return {
-    ...preset,
+    ...normalizedPreset,
     apiKeyConfigured: apiKeyStatus?.configured ?? false,
     apiKeyStatus,
   };

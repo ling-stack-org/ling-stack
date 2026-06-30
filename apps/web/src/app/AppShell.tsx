@@ -106,7 +106,9 @@ import {
 } from "../domains/workspace/use-workspace-domain.js";
 import { defaultTools } from "../lib/tools.js";
 import {
+  canUseConversationProvider,
   customOpenAICompatibleForm,
+  providerModelRouteLabel,
   providerFormToTemplate,
   providerPreflightReady,
   sortProvidersForWorkbench,
@@ -384,8 +386,6 @@ export function AppShell(): JSX.Element {
     loading: automationsLoading,
     mutatingAutomationId,
     mutatingDraftId,
-    schedulers: automationSchedulers,
-    schedulerAction: automationSchedulerAction,
   } = automationsDomain.state;
   const {
     setSelectedAutomationId,
@@ -404,8 +404,6 @@ export function AppShell(): JSX.Element {
     archiveSelectedAutomation,
     setSelectedStatus,
     setSelectedSchedule,
-    startScheduler: startAutomationSchedulerAction,
-    stopScheduler: stopAutomationSchedulerAction,
     resetForCwd: resetAutomationsForCwd,
   } = automationsDomain.actions;
   const { clearProviderUsage } = useProviderUsageController({
@@ -418,6 +416,10 @@ export function AppShell(): JSX.Element {
     setChannelEditForm,
     updateChannel,
     refreshChannels,
+    getWorkspaceDefaultProviderPresetId: () => workspaceSettings?.defaultProviderPresetId ?? "",
+    clearWorkspaceDefaultProvider: async () => {
+      await patchWorkspaceSettings({ defaultProviderPresetId: null });
+    },
   });
   const providersDomain = useProvidersDomain({
     cwd: form.cwd.trim(),
@@ -862,7 +864,7 @@ export function AppShell(): JSX.Element {
       name: "",
       status: "active",
       boundPath: selectedChannel?.boundPath || workspaceCwd || current.boundPath,
-      defaultProviderPresetId: selectedChannel?.defaultProviderPresetId || form.providerPresetId || current.defaultProviderPresetId,
+      defaultProviderPresetId: selectedChannel?.defaultProviderPresetId || workspaceDefaultProviderPresetId || current.defaultProviderPresetId,
       defaultTeammateId: "",
       selectedTeammateIds: [],
       defaultResponderTeammateId: "",
@@ -915,31 +917,33 @@ export function AppShell(): JSX.Element {
       .slice(0, 5);
   }, [conversationThreads, t]);
   const conversationChatProviders = useMemo(
-    () => providers.filter((provider) => provider.api !== "media-job" && provider.capabilities.includes("chat")),
+    () => providers.filter(canUseConversationProvider),
     [providers],
   );
+  const workspaceDefaultProviderPresetId = workspaceSettings?.defaultProviderPresetId ?? form.providerPresetId;
   const sortedConversationProviders = useMemo(
-    () => sortProvidersForWorkbench(conversationChatProviders, form.providerPresetId),
-    [conversationChatProviders, form.providerPresetId],
+    () => sortProvidersForWorkbench(conversationChatProviders, workspaceDefaultProviderPresetId),
+    [conversationChatProviders, workspaceDefaultProviderPresetId],
   );
-  const configuredConversationDefaultProvider = conversationChatProviders.find((provider) => provider.id === form.providerPresetId);
+  const configuredConversationDefaultProvider = conversationChatProviders.find((provider) => provider.id === workspaceDefaultProviderPresetId);
   const defaultConversationProviderPresetId = configuredConversationDefaultProvider?.id || sortedConversationProviders[0]?.id || "";
   const conversationModelOptions = useMemo(
     () => sortProvidersForWorkbench(conversationChatProviders, defaultConversationProviderPresetId)
       .map((provider) => ({
         id: provider.id,
         displayName: provider.displayName,
+        label: providerModelRouteLabel(provider, providerTemplates),
         model: provider.model,
         providerId: provider.providerId,
         enabled: provider.enabled,
         thinkingModes: provider.thinkingModes ?? [],
       })),
-    [conversationChatProviders, defaultConversationProviderPresetId],
+    [conversationChatProviders, defaultConversationProviderPresetId, providerTemplates],
   );
   const defaultConversationProvider = conversationModelOptions.find((option) => option.id === defaultConversationProviderPresetId);
   const defaultConversationProviderLabel = defaultConversationProvider
-    ? defaultConversationProvider.model
-    : form.model;
+    ? defaultConversationProvider.label
+    : t("No chat model selected");
   const selectedConversationMessages = useMemo<readonly ConversationHomeMessage[]>(
     () => (selectedConversationDetail?.messages ?? []).map((message) => ({
       id: message.id,
@@ -1082,12 +1086,12 @@ export function AppShell(): JSX.Element {
     setChannelWorkflows,
     setChannelWorkflowSteps,
     setErrorMessage,
+    patchWorkspaceSettings,
     t,
     buildRerunRequest,
     buildTaskRunRequest,
     runWithRequest,
     checkProviderForRun,
-    clearProviderUsage,
     confirmChannelExecutionProposalWorkflow,
     deleteTask,
     updateChannel,
@@ -1753,7 +1757,7 @@ export function AppShell(): JSX.Element {
   const showInspector = !["workspace", "providers", "teammates", "councils", "runs", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
-    taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
+    taskRunProviderId || selectedChannelForRun?.defaultProviderPresetId || workspaceDefaultProviderPresetId || "";
   const navigationActiveSidebarTarget =
     activeView === "workspace" && selectedChannelId ? channelSidebarTarget(selectedChannelId) : activeSidebarTarget;
   const shellClassName = [
@@ -1900,7 +1904,7 @@ export function AppShell(): JSX.Element {
             channelTeammateMembershipsLoading={teammateChannelMembershipsLoading}
             channelTeammateSavingId={channelTeammateSavingId}
             taskRunProviderId={taskRunProviderId}
-            fallbackProviderId={form.providerPresetId}
+            fallbackProviderId={workspaceDefaultProviderPresetId}
             channelsLoading={channelsLoading}
             tasksLoading={tasksLoading}
             channelMessagesLoading={channelMessagesLoading}
@@ -1940,7 +1944,7 @@ export function AppShell(): JSX.Element {
               setTaskRunProviderId(providerId);
               const provider = providers.find((item) => item.id === providerId);
               if (provider) {
-                void applyProviderToRun(provider);
+                void applyProviderToRun(provider, { scope: "channel" });
               }
             }}
             onAddChannelTeammate={(teammateId) => addChannelTeammate(selectedChannelId, teammateId)}
@@ -2217,11 +2221,7 @@ export function AppShell(): JSX.Element {
                 isLoading={automationsLoading}
                 mutatingAutomationId={mutatingAutomationId}
                 mutatingDraftId={mutatingDraftId}
-                schedulers={automationSchedulers}
-                schedulerAction={automationSchedulerAction}
                 onRefresh={() => void refreshAutomations()}
-                onStartScheduler={() => void startAutomationSchedulerAction()}
-                onStopScheduler={() => void stopAutomationSchedulerAction()}
                 onCreateFromTemplate={createAutomationFromTemplate}
                 onCreateManualDraft={createManualDraft}
                 onCreateAutomation={createAutomationDefinition}
@@ -2263,7 +2263,7 @@ export function AppShell(): JSX.Element {
                 batchResult={providerBatchResult}
                 successMessage={providerSaveMessage}
                 successMessageTone={providerSaveMessageTone}
-                selectedProviderId={selectedProviderIdForRun}
+                selectedProviderId={workspaceDefaultProviderPresetId}
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
@@ -2280,8 +2280,8 @@ export function AppShell(): JSX.Element {
                 onDelete={(providerId) => void removeProvider(providerId)}
                 onCheck={(providerId) => void runProviderCheck(providerId)}
                 onCheckBatch={() => void runProviderBatchCheck()}
-                onUse={applyProviderToRun}
-                onStopUse={clearProviderFromRun}
+                onUse={(provider) => applyProviderToRun(provider, { scope: "workspace" })}
+                onStopUse={(provider) => clearProviderFromRun(provider, { scope: "workspace" })}
                 onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
                 onOpenRun={(runId) => {

@@ -1,12 +1,14 @@
 import {
   normalizeProviderBaseUrlForAdapter,
+  normalizeProviderPresetForMediaRuntime,
+  resolveMediaProviderRuntimeState,
   type ProviderCheckResult,
   type ProviderPreset,
   type ProviderStoreFacet,
   type ResolvedSecret,
   type SecretResolver,
 } from "@ling-stack/core";
-import { executeMediaJob as executeMediaAdapterJob, resolveMediaVendorTransportGateConfig } from "@ling-stack/providers";
+import { executeMediaJob as executeMediaAdapterJob } from "@ling-stack/providers";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { validateUrl } from "../../shared/validation.js";
 import { createMediaAdapterForProvider } from "../media/provider.js";
@@ -50,47 +52,7 @@ export async function checkProviderPreset(
   }
 
   if (preset.api === "media-job") {
-    if (preset.kind !== "seedream" || !preset.capabilities.includes("image_generate")) {
-      return {
-        ok: false,
-        code: "unsupported_live_probe",
-        message: `${preset.displayName} does not support a real check yet.`,
-        checkedAt,
-      };
-    }
-    const gate = resolveMediaVendorTransportGateConfig(preset.compat);
-    if (!gate.ok) {
-      return {
-        ok: false,
-        code: gate.errorCode ?? "invalid_request",
-        message: gate.errorMessage ?? "Invalid media vendor transport configuration.",
-        checkedAt,
-      };
-    }
-    if (gate.config?.mode === "live") {
-      if (!preset.baseUrl) {
-        return { ok: false, code: "bad_request", message: "baseUrl is required for live generation transport.", checkedAt };
-      }
-      if (!preset.apiKeyRef) {
-        return { ok: false, code: "secret_missing", message: "API key missing. Add an API key before enabling live generation transport.", checkedAt };
-      }
-      const secretStatus = providerSecretStatus(store, preset, secretResolver);
-      if (!secretStatus.configured) {
-        return {
-          ok: false,
-          code: secretStatus.errorCode ?? "secret_missing",
-          message: secretStatus.message ?? `API key missing: ${preset.apiKeyRef} is not configured.`,
-          checkedAt,
-        };
-      }
-      return await probeLiveSeedreamProvider(store, preset, checkedAt, secretResolver);
-    }
-    return {
-      ok: true,
-      code: "static_check",
-      message: "Generation model configuration is valid. Live generation transport is disabled by default and no generation request will be made.",
-      checkedAt,
-    };
+    return await checkMediaProviderPreset(store, normalizeProviderPresetForMediaRuntime(preset), checkedAt, secretResolver);
   }
 
   if (preset.api === "openai-codex-responses") {
@@ -112,6 +74,90 @@ export async function checkProviderPreset(
   }
 
   return await probeChatProvider(store, preset, checkedAt, secretResolver);
+}
+
+async function checkMediaProviderPreset(
+  store: ProviderStoreFacet,
+  preset: ProviderPreset,
+  checkedAt: string,
+  secretResolver: SecretResolver,
+): Promise<ProviderCheckResult> {
+  const operation = providerCheckOperation(preset);
+  const state = resolveMediaProviderRuntimeState(preset, operation);
+  if (!operation || state.reason === "not_generation_provider" || state.reason === "operation_unsupported") {
+    return {
+      ok: false,
+      code: "unsupported_capability",
+      message: `${preset.displayName} is not configured for generation tasks.`,
+      checkedAt,
+    };
+  }
+  if (state.reason === "live_transport_invalid") {
+    return {
+      ok: false,
+      code: "invalid_request",
+      message: "Invalid media vendor transport configuration.",
+      checkedAt,
+    };
+  }
+  if (state.reason === "base_url_missing") {
+    return { ok: false, code: "bad_request", message: "baseUrl is required for live generation transport.", checkedAt };
+  }
+  if (state.reason === "secret_missing") {
+    const secretStatus = preset.apiKeyRef ? providerSecretStatus(store, preset, secretResolver) : undefined;
+    return {
+      ok: false,
+      code: secretStatus?.errorCode ?? "secret_missing",
+      message: secretStatus?.message ?? "API key missing. Add an API key before enabling live generation transport.",
+      checkedAt,
+    };
+  }
+  if (state.reason === "live_transport_required" || state.reason === "unsupported_live_adapter") {
+    return {
+      ok: false,
+      code: "unsupported_live_probe",
+      message: "This generation model is recognized, but Ling has not connected a real generation adapter for this provider yet.",
+      checkedAt,
+    };
+  }
+  if (!state.canRun) {
+    return {
+      ok: false,
+      code: state.reason ?? "unsupported_capability",
+      message: `${preset.displayName} is not ready for generation tasks.`,
+      checkedAt,
+    };
+  }
+  if (state.familyId === "openai-images") {
+    return {
+      ok: true,
+      code: "static_check",
+      message: "OpenAI Images generation configuration is ready. The check does not create an image.",
+      checkedAt,
+    };
+  }
+  if (state.familyId === "volcengine-seedance") {
+    return {
+      ok: true,
+      code: "static_check",
+      message: "Seedance video generation configuration is ready. The check does not create a video.",
+      checkedAt,
+    };
+  }
+  return await probeLiveSeedreamProvider(store, preset, checkedAt, secretResolver);
+}
+
+function providerCheckOperation(preset: ProviderPreset): "image_generate" | "image_edit" | "video_generate" | undefined {
+  if (preset.capabilities.includes("image_generate")) {
+    return "image_generate";
+  }
+  if (preset.capabilities.includes("video_generate")) {
+    return "video_generate";
+  }
+  if (preset.capabilities.includes("image_edit")) {
+    return "image_edit";
+  }
+  return undefined;
 }
 
 async function probeChatProvider(

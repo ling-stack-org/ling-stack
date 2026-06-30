@@ -130,5 +130,13 @@ export interface MediaJobFormState {
   readonly providerPresetId: string;
   readonly operation: MediaOperation;
   readonly prompt: string;
+  readonly size: string;
+  readonly count: string;
+  readonly seed: string;
+  readonly ratio: string;
+  readonly duration: string;
+  readonly watermark: "" | "true" | "false";
+  readonly imageUrl: string;
+  readonly maskUrl: string;
   readonly inputText: string;
 }

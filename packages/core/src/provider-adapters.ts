@@ -1,4 +1,9 @@
 import type { ProviderApi, ProviderKind, ProviderModelOption } from "./provider-types.js";
+import {
+  inferGenerationModelFamily,
+  isKnownGenerationModel,
+  isOpenAIImagesGenerationModel,
+} from "./provider-generation-models.js";
 
 export type ProviderAdapterMediaKind = "seedream" | "seedance" | "jimeng";
 
@@ -88,8 +93,11 @@ export function normalizeProviderBaseUrlForAdapter(input: Pick<ProviderAdapterIn
 }
 
 export function isMediaOnlyModelId(modelId: string | undefined): boolean {
-  const normalized = normalizeModelIdForProtocol(modelId ?? "");
-  return isKnownSeedreamModel(normalized) || isKnownSeedanceModel(normalized) || isKnownJimengModel(normalized);
+  return isKnownGenerationModel(modelId);
+}
+
+export function isOpenAIImageModelId(modelId: string | undefined): boolean {
+  return isOpenAIImagesGenerationModel(modelId);
 }
 
 export function filterChatModelOptions(models: readonly ProviderModelOption[]): readonly ProviderModelOption[] {
@@ -107,14 +115,14 @@ export function filterMediaModelOptions(
 }
 
 export function mediaModelKind(modelId: string | undefined): ProviderAdapterMediaKind | undefined {
-  const normalized = normalizeModelIdForProtocol(modelId ?? "");
-  if (isKnownSeedreamModel(normalized)) {
+  const family = inferGenerationModelFamily(modelId)?.familyId;
+  if (family === "volcengine-seedream") {
     return "seedream";
   }
-  if (isKnownSeedanceModel(normalized)) {
+  if (family === "volcengine-seedance") {
     return "seedance";
   }
-  if (isKnownJimengModel(normalized)) {
+  if (family === "volcengine-jimeng") {
     return "jimeng";
   }
   return undefined;
@@ -131,20 +139,4 @@ function defaultProviderBaseUrl(input: Pick<ProviderAdapterInput, "api" | "kind"
     return "https://generativelanguage.googleapis.com/v1beta";
   }
   return "https://api.openai.com/v1";
-}
-
-function normalizeModelIdForProtocol(modelId: string): string {
-  return modelId.toLowerCase().replace(/[:/_.\s]+/g, "-");
-}
-
-function isKnownSeedreamModel(normalizedModelId: string): boolean {
-  return /(^|-)doubao-seedream(-|$)/.test(normalizedModelId) || /(^|-)seedream(-|$)/.test(normalizedModelId);
-}
-
-function isKnownSeedanceModel(normalizedModelId: string): boolean {
-  return /(^|-)seedance(-|$)/.test(normalizedModelId);
-}
-
-function isKnownJimengModel(normalizedModelId: string): boolean {
-  return /(^|-)jimeng(-|$)/.test(normalizedModelId);
 }

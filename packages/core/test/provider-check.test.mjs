@@ -3,7 +3,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { createSqliteRunStore, defaultProviderTemplates, filterMediaModelOptions } from "../dist/index.js";
+import {
+  createSqliteRunStore,
+  defaultProviderTemplates,
+  enrichProviderModelOption,
+  filterMediaModelOptions,
+  inferGenerationModelFamily,
+  normalizeMediaProviderCompat,
+  normalizeProviderPresetForMediaRuntime,
+  resolveGenerationProviderRuntimeState,
+  resolveMediaProviderRuntimeState,
+  shouldAutoEnableLiveMediaTransport,
+} from "../dist/index.js";
 
 test("default provider templates include Seedream live HTTP transport config", () => {
   const seedream = defaultProviderTemplates().find((template) => template.templateId === "seedream-image");
@@ -43,9 +54,42 @@ test("official provider templates expose fixed default base URLs", () => {
   assert.equal(byId.get("deepseek-dpv4")?.baseUrl, "https://api.deepseek.com");
   assert.equal(byId.get("minimax-chat")?.baseUrl, "https://api.minimax.io/v1");
   assert.equal(byId.get("glm-zhipu")?.baseUrl, "https://open.bigmodel.cn/api/paas/v4");
+  assert.equal(byId.get("alibaba-bailian-qwen")?.baseUrl, "https://dashscope.aliyuncs.com/compatible-mode/v1");
+  assert.equal(byId.get("moonshot-kimi")?.baseUrl, "https://api.moonshot.cn/v1");
+  assert.equal(byId.get("baidu-qianfan-ernie")?.baseUrl, "https://qianfan.baidubce.com/v2");
+  assert.equal(byId.get("tencent-hunyuan")?.baseUrl, "https://api.hunyuan.cloud.tencent.com/v1");
+  assert.equal(byId.get("siliconflow")?.baseUrl, "https://api.siliconflow.cn/v1");
+  assert.equal(byId.get("stepfun")?.baseUrl, "https://api.stepfun.com/v1");
+  assert.equal(byId.get("baichuan-ai")?.baseUrl, "https://api.baichuan-ai.com/v1");
+  assert.equal(byId.get("01ai-yi")?.baseUrl, "https://api.lingyiwanwu.com/v1");
   assert.equal(byId.get("seedream-image")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
   assert.equal(byId.get("jimeng-image")?.baseUrl, "https://visual.volcengineapi.com");
   assert.equal(byId.get("seedance-video")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
+});
+
+test("domestic OpenAI-compatible templates do not force reasoning support", () => {
+  const templates = defaultProviderTemplates();
+  const byId = new Map(templates.map((template) => [template.templateId, template]));
+  const domesticTemplateIds = [
+    "alibaba-bailian-qwen",
+    "moonshot-kimi",
+    "baidu-qianfan-ernie",
+    "tencent-hunyuan",
+    "siliconflow",
+    "stepfun",
+    "baichuan-ai",
+    "01ai-yi",
+  ];
+
+  for (const templateId of domesticTemplateIds) {
+    const template = byId.get(templateId);
+    assert.ok(template, templateId);
+    assert.equal(template.kind, "openai-compatible", templateId);
+    assert.equal(template.api, "openai-completions", templateId);
+    assert.deepEqual(template.capabilities, ["chat", "tool_call"], templateId);
+    assert.equal(template.reasoning, false, templateId);
+    assert.deepEqual(template.thinkingModes, [], templateId);
+  }
 });
 
 test("provider media model filtering respects the selected media provider", () => {
@@ -67,6 +111,160 @@ test("provider media model filtering respects the selected media provider", () =
   assert.deepEqual(filterMediaModelOptions(models, "jimeng").map((model) => model.id), [
     "jimeng-image",
   ]);
+});
+
+test("generation model catalog recognizes public image families without marking chat models", () => {
+  const cases = [
+    ["gpt-image-2", ["image_generate"]],
+    ["dall-e-3", ["image_generate"]],
+    ["google/imagen-4.0-generate", ["image_generate"]],
+    ["gemini-2.5-flash-image-preview", ["image_generate"]],
+    ["black-forest-labs/flux-2-pro", ["image_generate"]],
+    ["black-forest-labs/flux-kontext-pro", ["image_generate", "image_edit"]],
+    ["stability-ai/stable-diffusion-3.5-large", ["image_generate"]],
+    ["qwen-image-edit", ["image_generate", "image_edit"]],
+    ["ideogram-ai/ideogram-v3-quality", ["image_generate"]],
+    ["xai/grok-imagine", ["image_generate"]],
+  ];
+
+  for (const [modelId, capabilities] of cases) {
+    const inferred = inferGenerationModelFamily(modelId);
+    assert.ok(inferred, modelId);
+    assert.deepEqual(inferred.capabilities, capabilities, modelId);
+  }
+
+  assert.equal(inferGenerationModelFamily("gpt-5"), undefined);
+  assert.equal(inferGenerationModelFamily("claude-4-sonnet"), undefined);
+  assert.equal(inferGenerationModelFamily("gemini-2.5-pro"), undefined);
+});
+
+test("provider model enrichment uses catalog fallback only when upstream is silent", () => {
+  const context = {
+    kind: "openai-compatible",
+    providerId: "custom-openai-compatible",
+    api: "openai-completions",
+  };
+  const catalog = enrichProviderModelOption({ id: "black-forest-labs/flux-2-pro" }, context);
+
+  assert.equal(catalog.api, "media-job");
+  assert.deepEqual(catalog.input, ["text", "image"]);
+  assert.deepEqual(catalog.capabilities, ["image_generate"]);
+  assert.equal(catalog.capabilitySource, "model_catalog");
+  assert.equal(catalog.capabilityConfidence, "known");
+
+  const upstream = enrichProviderModelOption({
+    id: "plain-provider-image",
+    api: "media-job",
+    input: ["text", "image"],
+    capabilities: ["image_generate"],
+    capabilitySource: "upstream",
+    capabilityConfidence: "known",
+  }, context);
+
+  assert.equal(upstream.api, "media-job");
+  assert.deepEqual(upstream.capabilities, ["image_generate"]);
+  assert.equal(upstream.capabilitySource, "upstream");
+
+  const unknownVision = enrichProviderModelOption({ id: "gpt-5" }, context);
+  assert.notEqual(unknownVision.api, "media-job");
+  assert.ok(!unknownVision.capabilities.includes("image_generate"));
+});
+
+test("live media transport auto-enable is restricted to implemented image adapters", () => {
+  assert.equal(shouldAutoEnableLiveMediaTransport({
+    kind: "openai-compatible",
+    providerId: "custom-openai-compatible",
+    modelId: "gpt-image-2",
+    api: "media-job",
+    capabilities: ["image_generate"],
+  }), true);
+
+  assert.equal(shouldAutoEnableLiveMediaTransport({
+    kind: "seedream",
+    providerId: "seedream",
+    modelId: "doubao-seedream-5-0-260128",
+    api: "media-job",
+    capabilities: ["image_generate", "image_edit"],
+  }), true);
+
+  assert.equal(shouldAutoEnableLiveMediaTransport({
+    kind: "openai-compatible",
+    providerId: "relay",
+    modelId: "black-forest-labs/flux-2-pro",
+    api: "media-job",
+    capabilities: ["image_generate"],
+  }), false);
+});
+
+test("media provider normalization centralizes live runtime eligibility", () => {
+  const baseProvider = {
+    id: "provider_image",
+    kind: "openai-compatible",
+    displayName: "Relay Image",
+    providerId: "custom-openai-compatible",
+    model: "gpt-image-2",
+    api: "media-job",
+    baseUrl: "https://relay.example.com/v1",
+    apiKeyRef: "env:OPENAI_API_KEY",
+    headers: {},
+    authHeader: true,
+    input: ["text", "image"],
+    compat: {},
+    capabilities: ["image_generate"],
+    enabled: true,
+    createdAt: "2026-06-30T00:00:00.000Z",
+    updatedAt: "2026-06-30T00:00:00.000Z",
+  };
+
+  assert.deepEqual(normalizeMediaProviderCompat(baseProvider).mediaVendorTransport, { mode: "live" });
+  assert.deepEqual(normalizeProviderPresetForMediaRuntime(baseProvider).compat.mediaVendorTransport, { mode: "live" });
+  const openAIState = resolveGenerationProviderRuntimeState(baseProvider, "image_generate");
+  assert.equal(openAIState.canRun, true);
+  assert.equal(openAIState.uiCopyKey, "generation_runtime_ready");
+  assert.deepEqual(openAIState.supportedOperations, ["image_generate"]);
+
+  const dallE = { ...baseProvider, model: "dall-e-3" };
+  assert.deepEqual(normalizeMediaProviderCompat(dallE).mediaVendorTransport, { mode: "live" });
+
+  const seedream = {
+    ...baseProvider,
+    kind: "seedream",
+    providerId: "seedream",
+    model: "doubao-seedream-5-0-260128",
+    capabilities: ["image_generate", "image_edit"],
+  };
+  const seedreamState = resolveMediaProviderRuntimeState(seedream, "image_generate");
+  assert.deepEqual(normalizeMediaProviderCompat(seedream).mediaVendorTransport, { mode: "live" });
+  assert.equal(seedreamState.canRun, true);
+  assert.equal(resolveMediaProviderRuntimeState(seedream, "image_edit").reason, "unsupported_live_adapter");
+
+  const seedance = {
+    ...baseProvider,
+    kind: "seedance",
+    providerId: "seedance",
+    model: "doubao-seedance-1-0-pro-250528",
+    capabilities: ["video_generate"],
+  };
+  const seedanceState = resolveGenerationProviderRuntimeState(seedance, "video_generate");
+  assert.deepEqual(normalizeMediaProviderCompat(seedance).mediaVendorTransport, { mode: "live" });
+  assert.equal(seedanceState.canRun, true);
+  assert.deepEqual(seedanceState.supportedOperations, ["video_generate"]);
+
+  const flux = { ...baseProvider, model: "black-forest-labs/flux-2-pro", providerId: "relay" };
+  const fluxState = resolveMediaProviderRuntimeState(flux, "image_generate");
+  assert.equal(normalizeMediaProviderCompat(flux).mediaVendorTransport, undefined);
+  assert.equal(fluxState.canRun, false);
+  assert.equal(fluxState.reason, "live_transport_required");
+
+  const chatProvider = {
+    ...baseProvider,
+    model: "gpt-5",
+    api: "openai-completions",
+    capabilities: ["chat", "tool_call"],
+  };
+  const chatState = resolveMediaProviderRuntimeState(chatProvider, "image_generate");
+  assert.equal(chatState.canRun, false);
+  assert.equal(chatState.reason, "not_media_provider");
 });
 
 test("sqlite store persists provider check results", async () => {
