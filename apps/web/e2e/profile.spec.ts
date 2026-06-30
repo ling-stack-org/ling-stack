@@ -13,7 +13,7 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Account and profile/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
   await expect(page.getByRole("heading", { name: "Ling User", level: 1 })).toBeVisible();
 
   await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
@@ -116,46 +116,30 @@ test("workspace messages use the saved user profile identity", async ({ page }) 
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   const message = page.locator(".channel-message-row.local-user").filter({ hasText: "Profile identity should render in this message." });
-  await expect(message).toContainText("Tian Xiao");
+  await expect(message).toBeVisible();
+  await expect(message).not.toContainText("Tian Xiao");
   await expect(message).not.toContainText("local-user");
   await expect(message.locator(".user-profile-avatar")).toHaveAttribute("src", avatarDataUrl);
   await expect(message.locator(".avatar-initial")).toHaveCount(0);
-
-  const identity = message.locator(".message-row-own-identity");
-  await expect(identity).toContainText("Tian Xiao");
-  await expect(identity.locator(".user-profile-avatar")).toHaveAttribute("src", avatarDataUrl);
-
-  const identityLayout = await identity.evaluate((element) => {
-    const name = element.querySelector("strong");
-    const avatar = element.querySelector(".user-profile-avatar");
-    if (!(name instanceof HTMLElement) || !(avatar instanceof HTMLElement)) {
-      throw new Error("channel user identity row did not render name and avatar");
-    }
-    const nameRect = name.getBoundingClientRect();
-    const avatarRect = avatar.getBoundingClientRect();
-    return {
-      centerDelta: Math.abs((nameRect.top + nameRect.height / 2) - (avatarRect.top + avatarRect.height / 2)),
-      horizontalGap: avatarRect.left - nameRect.right,
-    };
-  });
-  expect(identityLayout.centerDelta).toBeLessThanOrEqual(4);
-  expect(identityLayout.horizontalGap).toBeGreaterThan(0);
+  await expect(message.locator(".message-row-own-identity")).toHaveCount(0);
 
   const messageLayout = await message.evaluate((element) => {
-    const identityElement = element.querySelector(".message-row-own-identity");
     const bodyElement = element.querySelector(".message-body-shell");
-    if (!(identityElement instanceof HTMLElement) || !(bodyElement instanceof HTMLElement)) {
-      throw new Error("channel user message did not render an identity row and body");
+    const avatarElement = element.querySelector(".user-profile-avatar");
+    if (!(bodyElement instanceof HTMLElement) || !(avatarElement instanceof HTMLElement)) {
+      throw new Error("channel user message did not render a body and avatar");
     }
-    const identityRect = identityElement.getBoundingClientRect();
     const bodyRect = bodyElement.getBoundingClientRect();
+    const avatarRect = avatarElement.getBoundingClientRect();
     return {
-      bodyTop: bodyRect.top,
-      identityBottom: identityRect.bottom,
+      centerDelta: Math.abs((bodyRect.top + bodyRect.height / 2) - (avatarRect.top + avatarRect.height / 2)),
+      horizontalGap: avatarRect.left - bodyRect.right,
     };
   });
-  expect(messageLayout.bodyTop).toBeGreaterThanOrEqual(messageLayout.identityBottom - 1);
+  expect(messageLayout.centerDelta).toBeLessThanOrEqual(24);
+  expect(messageLayout.horizontalGap).toBeGreaterThan(0);
 });
 
 test("private teammate chat messages use the saved user profile identity", async ({ page }) => {
@@ -191,43 +175,26 @@ test("private teammate chat messages use the saved user profile identity", async
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
   const message = page.getByLabel("Private chat", { exact: true }).locator(".teammate-message-row.local-user").filter({ hasText: "Private chat should render profile identity." });
-  await expect(message).toContainText("Tian Xiao");
+  await expect(message).toBeVisible();
+  await expect(message).not.toContainText("Tian Xiao");
   await expect(message).not.toContainText("You");
   await expect(message.locator(".user-profile-avatar")).toHaveAttribute("src", avatarDataUrl);
   await expect(message.locator(".avatar-initial")).toHaveCount(0);
-
-  const identity = message.locator(".message-own-identity");
-  await expect(identity).toContainText("Tian Xiao");
-  await expect(identity.locator(".user-profile-avatar")).toHaveAttribute("src", avatarDataUrl);
-
-  const identityLayout = await identity.evaluate((element) => {
-    const name = element.querySelector("strong");
-    const avatar = element.querySelector(".user-profile-avatar");
-    if (!(name instanceof HTMLElement) || !(avatar instanceof HTMLElement)) {
-      throw new Error("local user identity row did not render name and avatar");
-    }
-    const nameRect = name.getBoundingClientRect();
-    const avatarRect = avatar.getBoundingClientRect();
-    return {
-      centerDelta: Math.abs((nameRect.top + nameRect.height / 2) - (avatarRect.top + avatarRect.height / 2)),
-      horizontalGap: avatarRect.left - nameRect.right,
-    };
-  });
-  expect(identityLayout.centerDelta).toBeLessThanOrEqual(4);
-  expect(identityLayout.horizontalGap).toBeGreaterThan(0);
+  await expect(message.locator(".message-row-own-identity")).toHaveCount(0);
 
   const messageLayout = await message.evaluate((element) => {
-    const identityElement = element.querySelector(".message-own-identity");
     const bodyElement = element.querySelector(".message-body-shell");
-    if (!(identityElement instanceof HTMLElement) || !(bodyElement instanceof HTMLElement)) {
-      throw new Error("local user message did not render an identity row and body");
+    const avatarElement = element.querySelector(".user-profile-avatar");
+    if (!(bodyElement instanceof HTMLElement) || !(avatarElement instanceof HTMLElement)) {
+      throw new Error("local user message did not render a body and avatar");
     }
-    const identityRect = identityElement.getBoundingClientRect();
     const bodyRect = bodyElement.getBoundingClientRect();
+    const avatarRect = avatarElement.getBoundingClientRect();
     return {
-      bodyTop: bodyRect.top,
-      identityBottom: identityRect.bottom,
+      centerDelta: Math.abs((bodyRect.top + bodyRect.height / 2) - (avatarRect.top + avatarRect.height / 2)),
+      horizontalGap: avatarRect.left - bodyRect.right,
     };
   });
-  expect(messageLayout.bodyTop).toBeGreaterThanOrEqual(messageLayout.identityBottom - 1);
+  expect(messageLayout.centerDelta).toBeLessThanOrEqual(24);
+  expect(messageLayout.horizontalGap).toBeGreaterThan(0);
 });

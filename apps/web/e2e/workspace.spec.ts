@@ -9,6 +9,7 @@ import {
   isRecord,
 } from "./support/mock-state";
 import {
+  openEngineeringChannel,
   openNewTaskPanel,
   openTaskFromAttentionQueue,
 } from "./support/test-helpers";
@@ -23,6 +24,7 @@ test("workspace opens as a task workbench with task context in the inspector", a
   await useEnglishLocale(page);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Workspace task toolbar")).toBeVisible();
@@ -44,7 +46,8 @@ test("workspace task detail panel stays bounded without growing the page", async
 
   await expect(page.locator(".workbench-task-list")).toHaveCount(0);
   await expect(page.locator("article.task-detail .client-task-kicker")).toHaveCount(0);
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   await expect(page.getByLabel("Channel management")).toBeVisible();
   const metrics = await page.evaluate(() => {
     const sidePanel = document.querySelector(".channel-side-panel");
@@ -66,6 +69,7 @@ test("workspace path initializes from daemon default without showing the path fi
   const daemonCwd = "/tmp/daemon-default-workspace";
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), { defaultWorkspaceCwd: daemonCwd });
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.getByLabel("Workspace path")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
@@ -140,9 +144,10 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   await openNewTaskPanel(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
-  await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
-  await expect(providerSelect.locator("option").filter({ hasText: "Missing Key Gateway" })).toHaveCount(1);
-  await expect(providerSelect.locator("option").filter({ hasText: "Seedream Image" })).toHaveCount(0);
+  await expect(providerSelect.locator('option[value="provider_ready"]')).toHaveCount(1);
+  await expect(providerSelect.locator('option[value="provider_missing_key"]')).toHaveCount(1);
+  await expect(providerSelect.locator('option[value="provider_missing_key"]')).toHaveAttribute("disabled", "");
+  await expect(providerSelect.locator('option[value="provider_seedream"]')).toHaveCount(0);
   await expect(page.getByText("Generation-only models cannot run coding tasks.").first()).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
 

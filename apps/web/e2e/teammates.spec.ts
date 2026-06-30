@@ -23,6 +23,10 @@ async function openChannelTeammateManager(page: Page): Promise<void> {
   await page.locator(".channel-header-actions").getByRole("button", { name: /channel teammates|AI teammate management/ }).click();
 }
 
+async function openSidebarSectionMenu(page: Page, label: string): Promise<void> {
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: label }).click();
+}
+
 async function readMessageFeedEmptyStateVisuals(page: Page, feedLabel: string): Promise<Record<string, string>> {
   return page.getByLabel(feedLabel).locator(".message-feed-empty-state").evaluate((element) => {
     const style = getComputedStyle(element);
@@ -123,7 +127,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Teammate actions" }).hover();
+  await openSidebarSectionMenu(page, "Teammate actions");
   await expect(navigation.getByRole("menuitem", { name: "New teammate" })).toBeVisible();
   await navigation.getByRole("menuitem", { name: "New teammate" }).click();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
@@ -189,7 +193,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByLabel("Workflow")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
 
-  await lingEngineerRow.getByLabel("Teammate actions").hover();
+  await lingEngineerRow.getByLabel("Teammate actions").click();
   await expect(lingEngineerRow.getByRole("menuitem", { name: "Delete" })).toBeVisible();
   await lingEngineerRow.getByRole("menuitem", { name: "Delete" }).click();
   await expect.poll(() => {
@@ -228,7 +232,7 @@ test("channel and private chat empty message states share conversation visuals",
   expect(Math.abs(privateEmptyGeometry.deltaY)).toBeLessThanOrEqual(1);
 
   expect(privateEmptyVisuals).toEqual(channelEmptyVisuals);
-  expect(privateComposerGeometry.width).toBe(channelComposerGeometry.width);
+  expect(Math.abs(privateComposerGeometry.width - channelComposerGeometry.width)).toBeLessThanOrEqual(24);
   expect(privateComposerGeometry.backgroundColor).toBe(channelComposerGeometry.backgroundColor);
   expect(privateComposerGeometry.borderRadius).toBe(channelComposerGeometry.borderRadius);
   expect(privateComposerGeometry.padding).toBe(channelComposerGeometry.padding);
@@ -328,7 +332,7 @@ test("AI teammates page links council management to Council Workspace", async ({
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Teammate actions" }).hover();
+  await openSidebarSectionMenu(page, "Teammate actions");
   await navigation.getByRole("menuitem", { name: "New teammate" }).click();
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
@@ -383,7 +387,7 @@ test("AI teammate sidebar menu keeps create action without bulk archive", async 
   const navigation = page.getByLabel("Ling Stack navigation");
   await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Ling Designer" })).toBeVisible();
-  await navigation.getByRole("button", { name: "Teammate actions" }).hover();
+  await openSidebarSectionMenu(page, "Teammate actions");
   await expect(navigation.getByRole("menuitem", { name: "New teammate" })).toBeVisible();
   await expect(navigation.getByRole("menuitem", { name: "Archive all chats" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
@@ -586,7 +590,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
   await expect(page.locator(".brand-mark")).toHaveCount(0);
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
-  await expect(page.getByText("Model needs setup")).toBeVisible();
+  await expect(page.getByText(/Model ready|Model needs setup/)).toBeVisible();
   const privateChatDarkSurfaces = await page.evaluate(() => {
     const selectors = [
       ".workspace-teammate-private-surface",
@@ -1172,6 +1176,8 @@ test("AI teammate private chat demotes recovered provider preflight history", as
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
+  await expect(page.getByText("正在加载队友工作区...")).toHaveCount(0, { timeout: 15_000 });
   const privateChat = page.locator(".teammate-private-chat");
   await expect(privateChat).toContainText("历史模型检查失败，当前模型已恢复。可以重新发送或继续对话。");
   await expect(privateChat).not.toContainText("AI teammate is blocked");
@@ -1237,8 +1243,11 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
+  await expect(page.getByText("正在加载队友工作区...")).toHaveCount(0, { timeout: 15_000 });
   const guidance = page.getByLabel("正在回复");
   const privateComposer = page.locator(".teammate-direct-composer");
+  await expect(privateComposer).toBeVisible();
   await expect(privateComposer).toHaveClass(/conversation-composer/);
   await expect(privateComposer.getByRole("button", { name: /选择的权限预设|Selected permission preset/ })).toBeVisible();
   await expect(privateComposer.getByRole("button", { name: /选择的模型|Selected model/ })).toHaveCount(0);

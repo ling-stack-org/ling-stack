@@ -17,7 +17,8 @@ test("MCP settings creates servers without exposing secret values", async ({ pag
 
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工具接入" })).toHaveCount(0);
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: /MCP 工具服务/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /集成/ }).click();
+  await page.getByRole("tab", { name: /MCP 工具服务/ }).click();
   await expect(page.getByText("统一管理 MCP 工具服务，并按 AI 队友单独授权。").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "添加 MCP 服务" })).toBeVisible();
   await expect(page.getByText("没有 MCP 服务")).toBeVisible();

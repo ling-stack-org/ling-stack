@@ -41,8 +41,8 @@ export function parseMediaInput(inputText: string): Record<string, unknown> | un
   return parsed as Record<string, unknown>;
 }
 
-function assignTrimmedString(target: Record<string, unknown>, key: string, value: string): void {
-  const trimmed = value.trim();
+function assignTrimmedString(target: Record<string, unknown>, key: string, value: string | undefined): void {
+  const trimmed = (value ?? "").trim();
   if (trimmed) {
     target[key] = trimmed;
   }
@@ -51,10 +51,10 @@ function assignTrimmedString(target: Record<string, unknown>, key: string, value
 function assignNumber(
   target: Record<string, unknown>,
   key: string,
-  value: string,
+  value: string | undefined,
   options: { readonly integer?: boolean; readonly min?: number } = {},
 ): void {
-  const trimmed = value.trim();
+  const trimmed = (value ?? "").trim();
   if (!trimmed) {
     return;
   }

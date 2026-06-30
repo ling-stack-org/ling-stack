@@ -162,6 +162,8 @@ type SettingsReturnTarget = {
   readonly threadPageTargetId: string;
 };
 
+const narrowChannelDrawerQuery = "(max-width: 900px)";
+
 export function AppShell(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const { preference: themePreference, setPreference: setThemePreference } = useTheme();
@@ -177,7 +179,11 @@ export function AppShell(): JSX.Element {
   const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
   const [settingsReturnSection, setSettingsReturnSection] = useState<"" | "workspace-tools">("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
-  const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
+  const [channelSidebarOpen, setChannelSidebarOpen] = useState(() =>
+    typeof globalThis.matchMedia === "function"
+      ? !globalThis.matchMedia(narrowChannelDrawerQuery).matches
+      : true
+  );
   const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
   const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({
@@ -205,6 +211,20 @@ export function AppShell(): JSX.Element {
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
+  useEffect(() => {
+    if (typeof globalThis.matchMedia !== "function") {
+      return undefined;
+    }
+    const query = globalThis.matchMedia(narrowChannelDrawerQuery);
+    const syncNarrowDrawer = (): void => {
+      if (query.matches) {
+        setChannelSidebarOpen(false);
+      }
+    };
+    syncNarrowDrawer();
+    query.addEventListener("change", syncNarrowDrawer);
+    return () => query.removeEventListener("change", syncNarrowDrawer);
+  }, []);
   const {
     buildRerunRequest,
     buildRunRequest,
