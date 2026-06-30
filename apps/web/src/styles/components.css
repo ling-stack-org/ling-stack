@@ -3222,6 +3222,13 @@ button.message-local-file-link {
   animation: conversation-settle-in 180ms ease-out both;
 }
 
+.conversation-work-cell.completed,
+.conversation-work-cell.completed .conversation-work-cell-row,
+.conversation-work-cell.completed .conversation-work-cell-agent-span,
+.conversation-work-cell.completed .conversation-work-cell-artifact-row {
+  animation: none;
+}
+
 .conversation-work-cell.no-rail {
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
@@ -3938,6 +3945,10 @@ button.message-local-file-link {
   animation: conversation-locate-pulse 1400ms ease-out 1;
 }
 
+.conversation-work-cell.completed.conversation-work-cell-locate-pulse {
+  animation: conversation-locate-pulse 1400ms ease-out 1;
+}
+
 .conversation-work-cell-row.waiting .conversation-work-cell-row-icon {
   color: var(--conversation-status-waiting);
 }
@@ -4004,26 +4015,6 @@ button.message-local-file-link {
   gap: 2px;
   min-width: 0;
   padding-left: 23px;
-}
-
-.conversation-work-cell-detail-copy {
-  justify-self: start;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--conversation-border);
-  border-radius: 6px;
-  background: var(--conversation-bg);
-  color: var(--conversation-text-muted);
-}
-
-.conversation-work-cell-detail-copy:hover,
-.conversation-work-cell-detail-copy:focus-visible {
-  border-color: var(--conversation-focus-ring);
-  color: var(--conversation-text-strong);
 }
 
 .conversation-work-cell-row-copy small,
@@ -5214,7 +5205,6 @@ code,
   --channel-progress-popover-width: min(280px, calc(100vw - 420px));
   --channel-progress-panel-track-width: calc(var(--channel-progress-popover-width) + 24px);
   --channel-progress-panel-layout-width: 0px;
-  --channel-progress-inline-reserve-width: 0px;
   --channel-side-panel-handle-width: 8px;
   --channel-side-panel-layout-handle-width: 0px;
   --channel-progress-popover-right: 18px;
@@ -5226,12 +5216,6 @@ code,
   min-width: 0;
   width: 100%;
   max-width: 100%;
-}
-
-.task-workbench-window.progress-open.with-channel-side-panel {
-  --channel-progress-popover-right: calc(
-    18px + var(--channel-side-panel-layout-handle-width) + var(--channel-right-dock-layout-width)
-  );
 }
 
 .task-workbench-main.progress-panel-expanded {
@@ -5763,7 +5747,7 @@ code,
 }
 
 @media (min-width: 901px) {
-  .task-workbench-window:has(.channel-side-panel) > .workbench-settings-panel.channel-teammate-dock {
+  .task-workbench-window.with-channel-side-panel > .workbench-settings-panel.channel-teammate-dock {
     left: calc((100% - min(340px, calc(100vw - 320px))) / 2);
     width: min(640px, calc(100% - min(340px, calc(100vw - 320px)) - 108px));
     margin-right: 0;
@@ -6175,7 +6159,6 @@ code,
 .task-workbench-main {
   --channel-right-dock-layout-width: 0px;
   --channel-side-panel-layout-handle-width: 0px;
-  --channel-progress-panel-layout-width: 0px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
@@ -6199,30 +6182,12 @@ code,
     var(--channel-right-dock-layout-width);
 }
 
-@starting-style {
-  .task-workbench-main.with-channel-side-panel.channel-right-dock-expanded {
-    grid-template-columns: minmax(0, 1fr) 0px 0px;
-  }
-
-  .task-workbench-main.with-channel-side-panel.channel-right-dock-expanded.with-channel-progress-panel {
-    grid-template-columns: minmax(0, 1fr) 0px 0px 0px;
-  }
-
-  .task-workbench-main.channel-right-dock-expanded .channel-side-panel {
-    opacity: 0;
-    transform: translate3d(18px, 0, 0);
-  }
-
-  .task-workbench-main.channel-right-dock-expanded .channel-side-panel-resize-handle {
-    width: 0;
-    min-width: 0;
-    opacity: 0;
-  }
-
-  .task-workbench-main.with-channel-side-panel.with-channel-progress-panel.progress-panel-expanded .channel-progress-panel {
-    opacity: 0;
-    transform: translate3d(16px, 0, 0) scale(0.98);
-  }
+.task-workbench-main.with-channel-side-panel.is-resizing-channel-side-panel.with-channel-progress-panel {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--channel-progress-panel-layout-width)
+    var(--channel-side-panel-layout-handle-width)
+    var(--channel-right-dock-layout-width);
 }
 
 .task-workbench-main.with-channel-side-panel.is-resizing-channel-side-panel {
@@ -6240,49 +6205,9 @@ code,
   background: var(--surface-panel);
 }
 
-@media (min-width: 901px) and (max-width: 2055px) {
-  .app-shell:not(.channel-sidebar-collapsed) .task-workbench-main.progress-open {
-    padding-right: var(--channel-progress-inline-reserve-width);
-  }
-}
-
-@media (min-width: 901px) and (max-width: 1871px) {
-  .app-shell.channel-sidebar-collapsed .task-workbench-main.progress-open {
-    padding-right: 0;
-  }
-
-  .app-shell.channel-sidebar-collapsed .task-workbench-main.progress-open:not(.with-channel-side-panel) .channel-chat-panel {
-    justify-self: end;
-    width: min(1008px, calc(100% - var(--channel-progress-popover-width) - 12px));
-    margin-right: calc(var(--channel-progress-popover-width) + 12px);
-  }
-}
-
-@media (min-width: 1580px) {
-  .task-workbench-main.with-channel-side-panel.with-channel-progress-panel {
-    grid-template-columns:
-      minmax(0, 1fr)
-      var(--channel-progress-panel-layout-width)
-      var(--channel-side-panel-layout-handle-width)
-      var(--channel-right-dock-layout-width);
-  }
-}
-
-@media (max-width: 1579px) {
-  .task-workbench-main.with-channel-side-panel .channel-progress-panel {
-    display: none;
-  }
-}
-
-@media (min-width: 2000px) {
-  .app-shell.channel-sidebar-collapsed .task-workbench-main.progress-open:not(.with-channel-side-panel) .activity-chat-layout,
-  .app-shell.channel-sidebar-collapsed .task-workbench-main.progress-open:not(.with-channel-side-panel) .activity-shell .channel-composer {
-    transform: translateX(52px);
-  }
-}
-
 .task-list-panel,
 .task-detail-panel,
+.channel-side-panel-frame,
 .channel-side-panel {
   min-height: 0;
   min-width: 0;
@@ -6645,6 +6570,29 @@ code,
   }
 }
 
+.channel-side-panel-frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: end;
+  justify-content: end;
+  align-items: stretch;
+  width: var(--channel-right-dock-layout-width);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  contain: layout paint;
+  z-index: 3;
+}
+
+.channel-side-panel-frame > .channel-side-panel {
+  justify-self: end;
+}
+
+.task-workbench-main.channel-right-dock-collapsed .channel-side-panel-frame {
+  pointer-events: none;
+}
+
 .channel-side-panel {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -6656,19 +6604,19 @@ code,
   opacity: 1;
   transform: translate3d(0, 0, 0);
   transition:
-    opacity 160ms ease,
+    opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
     transform var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
     visibility 0s linear 0s;
   will-change: opacity, transform;
 }
 
 .task-workbench-main.channel-right-dock-collapsed .channel-side-panel {
-  opacity: 0;
+  opacity: 1;
   pointer-events: none;
-  transform: translate3d(18px, 0, 0);
-  visibility: hidden;
+  transform: translate3d(0, 0, 0);
+  visibility: visible;
   transition:
-    opacity 120ms ease,
+    opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
     transform var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
     visibility 0s linear var(--channel-right-dock-motion-duration);
 }
@@ -8737,11 +8685,11 @@ code,
 }
 
 @media (min-width: 901px) {
-  .task-workbench-window:has(.channel-side-panel) .task-workbench-header {
+  .task-workbench-window.with-channel-side-panel .task-workbench-header {
     margin-right: 0;
   }
 
-  .task-workbench-window:has(.channel-side-panel) > .workbench-settings-panel {
+  .task-workbench-window.with-channel-side-panel > .workbench-settings-panel {
     margin-right: 0;
   }
 
@@ -8750,9 +8698,19 @@ code,
     padding-right: 0;
   }
 
-  .task-workbench-main.with-channel-side-panel .channel-side-panel {
+  .task-workbench-main.with-channel-side-panel .channel-side-panel-frame {
     position: static;
-    width: auto;
+    width: var(--channel-right-dock-layout-width);
+  }
+
+  .task-workbench-main.with-channel-side-panel .channel-side-panel-frame .channel-side-panel {
+    width: var(--channel-right-dock-width);
+    max-width: var(--channel-right-dock-width);
+  }
+
+  .task-workbench-main.with-channel-side-panel.channel-right-dock-collapsed .channel-side-panel {
+    width: var(--channel-right-dock-width);
+    max-width: var(--channel-right-dock-width);
   }
 }
 
@@ -9830,7 +9788,6 @@ code,
   min-height: 0;
   height: 100%;
   padding-top: 0;
-  transition: transform 160ms ease;
 }
 
 .activity-chat-layout.with-thread {
@@ -10165,6 +10122,7 @@ code,
   box-shadow: 0 18px 45px rgba(15, 23, 42, 0.13);
   opacity: 1;
   transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: top right;
   visibility: visible;
   transition:
     opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
@@ -10176,7 +10134,7 @@ code,
 .channel-progress-popover.is-popover-collapsed {
   opacity: 0;
   pointer-events: none;
-  transform: translate3d(16px, -4px, 0) scale(0.98);
+  transform: translate3d(0, -4px, 0) scale(0.98);
   visibility: hidden;
   transition:
     opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
@@ -10194,11 +10152,7 @@ code,
 }
 
 .channel-progress-panel.channel-progress-popover.is-popover-collapsed {
-  transform: translate3d(16px, 0, 0) scale(0.98);
-}
-
-.task-workbench-main.progress-open .channel-progress-popover.is-popover-expanded {
-  transform: translate3d(0, 0, 0) scale(1);
+  transform: translate3d(0, 0, 0) scale(0.98);
 }
 
 .attention-environment-section,
@@ -10855,6 +10809,7 @@ code,
   min-height: 0;
   max-height: none;
   overflow-y: auto;
+  overflow-anchor: none;
   padding: 0 4px 18px;
   overscroll-behavior: contain;
   scrollbar-width: none;
@@ -11117,7 +11072,6 @@ code,
   align-self: center;
   width: min(var(--channel-conversation-width), calc(100% - 48px));
   margin-bottom: 14px;
-  transition: transform 160ms ease;
 }
 
 .activity-chat-main > .channel-composer {

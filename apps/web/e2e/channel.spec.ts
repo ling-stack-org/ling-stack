@@ -703,7 +703,7 @@ test("progress popover shows active context source groups and opens source detai
 
 test("channel environment surface shows read-only context and opens review", async ({ page }) => {
   await useEnglishLocale(page);
-  await page.setViewportSize({ width: 1984, height: 1200 });
+  await page.setViewportSize({ width: 2160, height: 1200 });
   const state = createBaseState({ approvalStatus: "expired" });
   state.tasks = [];
   state.runs = [
@@ -802,11 +802,30 @@ test("channel environment surface shows read-only context and opens review", asy
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await page.waitForTimeout(200);
   await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(250);
   await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  const readChatLayoutSnapshot = async () => page.evaluate(() => {
+    const chatLayout = document.querySelector<HTMLElement>(".activity-chat-layout");
+    const composer = document.querySelector<HTMLElement>(".activity-shell .channel-composer");
+    const main = document.querySelector<HTMLElement>(".task-workbench-main");
+    const chatPanel = document.querySelector<HTMLElement>(".channel-chat-panel");
+    const chatBox = chatLayout?.getBoundingClientRect();
+    return {
+      chatHeight: Math.round(chatBox?.height ?? 0),
+      chatTransform: chatLayout ? getComputedStyle(chatLayout).transform : "",
+      chatWidth: Math.round(chatBox?.width ?? 0),
+      chatX: Math.round(chatBox?.x ?? 0),
+      chatY: Math.round(chatBox?.y ?? 0),
+      composerTransform: composer ? getComputedStyle(composer).transform : "",
+      mainPaddingRight: main ? getComputedStyle(main).paddingRight : "",
+      panelMarginRight: chatPanel ? getComputedStyle(chatPanel).marginRight : "",
+    };
+  });
 
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
   const popover = page.locator(".channel-progress-popover");
@@ -823,8 +842,30 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(popover).toContainText("-3");
 
   const dock = page.locator(".channel-side-panel");
+  const chatLayout = page.locator(".activity-chat-layout");
+  const messageFeed = page.getByLabel("Channel message feed");
+  const feedScrollBeforeDock = await messageFeed.evaluate((node) => {
+    node.dataset.remountProbe = "right-dock-stable";
+    return Math.round(node.scrollTop);
+  });
+  const chatLayoutBeforeDock = await chatLayout.boundingBox();
+  expect(chatLayoutBeforeDock).not.toBeNull();
+  const chatSnapshotBeforeDock = await readChatLayoutSnapshot();
+  expect(chatSnapshotBeforeDock.chatTransform).toBe("none");
+  expect(chatSnapshotBeforeDock.composerTransform).toBe("none");
+  expect(chatSnapshotBeforeDock.mainPaddingRight).toBe("0px");
+  expect(chatSnapshotBeforeDock.panelMarginRight).toBe("0px");
   await page.locator(".task-toolbar-panel").click();
+  await page.waitForTimeout(160);
+  const chatLayoutDuringDockOpen = await chatLayout.boundingBox();
+  expect(chatLayoutDuringDockOpen).not.toBeNull();
+  expect(Math.abs((chatLayoutDuringDockOpen?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutDuringDockOpen?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
   await expect(dock).toBeVisible();
+  const chatLayoutAfterDockOpen = await chatLayout.boundingBox();
+  expect(chatLayoutAfterDockOpen).not.toBeNull();
+  expect(Math.abs((chatLayoutAfterDockOpen?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutAfterDockOpen?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
   await expect(popover).toBeVisible();
   await expect.poll(async () => {
     const popoverBox = await popover.boundingBox();
@@ -834,9 +875,61 @@ test("channel environment surface shows read-only context and opens review", asy
     }
     return Math.round(popoverBox.x + popoverBox.width - dockBox.x);
   }).toBeLessThanOrEqual(-8);
+  await expect.poll(async () => {
+    const popoverBox = await popover.boundingBox();
+    const chatBox = await chatLayout.boundingBox();
+    if (!popoverBox || !chatBox) {
+      return -999;
+    }
+    return Math.round(popoverBox.x - (chatBox.x + chatBox.width));
+  }).toBeGreaterThanOrEqual(8);
+  expect(await messageFeed.evaluate((node) => node.dataset.remountProbe)).toBe("right-dock-stable");
+  expect(Math.abs(await messageFeed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
   await page.locator(".task-toolbar-panel").click();
+  await page.waitForTimeout(160);
+  await expect(dock).toHaveCount(1);
+  const closingDockFrameBox = await page.locator(".channel-side-panel-frame").boundingBox();
+  expect(closingDockFrameBox).not.toBeNull();
+  expect(closingDockFrameBox?.width ?? 0).toBeGreaterThan(0);
+  expect(closingDockFrameBox?.width ?? 0).toBeLessThan(304);
+  const chatLayoutDuringDockClose = await chatLayout.boundingBox();
+  expect(chatLayoutDuringDockClose).not.toBeNull();
+  expect(Math.abs((chatLayoutDuringDockClose?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutDuringDockClose?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
   await expect(dock).toHaveCount(0);
+  const chatLayoutAfterDockClose = await chatLayout.boundingBox();
+  expect(chatLayoutAfterDockClose).not.toBeNull();
+  expect(Math.abs((chatLayoutAfterDockClose?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutAfterDockClose?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+  const chatSnapshotAfterDockClose = await readChatLayoutSnapshot();
+  expect(Math.abs(chatSnapshotAfterDockClose.chatX - chatSnapshotBeforeDock.chatX)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatY - chatSnapshotBeforeDock.chatY)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatWidth - chatSnapshotBeforeDock.chatWidth)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatHeight - chatSnapshotBeforeDock.chatHeight)).toBeLessThanOrEqual(1);
+  expect(chatSnapshotAfterDockClose.chatTransform).toBe("none");
+  expect(chatSnapshotAfterDockClose.composerTransform).toBe("none");
+  expect(chatSnapshotAfterDockClose.mainPaddingRight).toBe("0px");
+  expect(chatSnapshotAfterDockClose.panelMarginRight).toBe("0px");
+  expect(await messageFeed.evaluate((node) => node.dataset.remountProbe)).toBe("right-dock-stable");
+  expect(Math.abs(await messageFeed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
   await expect(popover).toBeVisible();
+
+  await page.locator(".task-toolbar-panel").click();
+  await expect(dock).toBeVisible();
+  await page.locator(".task-toolbar-panel").click();
+  await page.waitForTimeout(80);
+  await page.locator(".task-toolbar-panel").click();
+  await expect.poll(async () => Math.round((await page.locator(".channel-side-panel-frame").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
+  await expect(dock).toBeVisible();
+  await expect(page.locator(".task-toolbar-panel")).toHaveAttribute("aria-expanded", "true");
+  const chatLayoutAfterReopen = await chatLayout.boundingBox();
+  expect(chatLayoutAfterReopen).not.toBeNull();
+  expect(Math.abs((chatLayoutAfterReopen?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutAfterReopen?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await page.setViewportSize({ width: 1984, height: 1200 });
+  await page.waitForTimeout(200);
 
   await popover.getByRole("button", { name: "Review" }).click();
   await expect(dock).toBeVisible();
@@ -852,6 +945,14 @@ test("channel environment surface shows read-only context and opens review", asy
     }
     return Math.round(popoverBox.x + popoverBox.width - dockBox.x);
   }).toBeLessThanOrEqual(-8);
+  await expect.poll(async () => {
+    const popoverBox = await popover.boundingBox();
+    const chatBox = await chatLayout.boundingBox();
+    if (!popoverBox || !chatBox) {
+      return -999;
+    }
+    return Math.round(popoverBox.x - (chatBox.x + chatBox.width));
+  }).toBeGreaterThanOrEqual(8);
   const defaultPopoverWithDockBox = await popover.boundingBox();
   const defaultDockWithPopoverBox = await dock.boundingBox();
   expect(defaultPopoverWithDockBox).not.toBeNull();
@@ -887,7 +988,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.mouse.move(860, expandedResizeHandleBox!.y + 40, { steps: 12 });
   await page.mouse.up();
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(840);
-  await expect(popover).toBeVisible();
+  await expect(popover).toHaveCount(0);
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(560);
   await page.locator(".task-toolbar-panel").click();
   await expect(dock).toHaveCount(0);
@@ -3862,6 +3963,7 @@ test("phase 1 active single-agent transcript keeps one assistant turn while late
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".message-feed");
   let assistantTranscript = await expectSingleAssistantTranscript(feed);
@@ -4027,6 +4129,7 @@ test("phase 1 completed main-agent transcript keeps committed operation rows fol
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".message-feed");
   const assistantTranscript = await expectSingleAssistantTranscript(feed);
@@ -4047,6 +4150,18 @@ test("phase 1 completed main-agent transcript keeps committed operation rows fol
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Checks")).toContainText("Create login.html");
   await expect(workCell.getByLabel("Checks")).not.toContainText("succeeded");
+  await expect(workCell.locator(".conversation-work-cell-detail-copy")).toHaveCount(0);
+  await expectNoCompletedWorkCellAnimations(workCell);
+  await workCell.evaluate((node) => {
+    node.dataset.remountProbe = "completed-work-cell-stable";
+  });
+  const feedScrollBeforeDock = await feed.evaluate((node) => Math.round(node.scrollTop));
+  await page.locator(".task-toolbar-panel").click();
+  await expect(page.locator(".channel-side-panel")).toBeVisible();
+  await page.waitForTimeout(220);
+  await expectNoCompletedWorkCellAnimations(workCell);
+  expect(await workCell.evaluate((node) => node.dataset.remountProbe)).toBe("completed-work-cell-stable");
+  expect(Math.abs(await feed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
   await maybeCaptureR32Screenshot(page, "completed-single-agent-expanded");
 });
 
@@ -5422,6 +5537,7 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
   await page.locator(".task-toolbar-progress").click();
 
   const progressPopover = page.locator(".channel-progress-popover");
@@ -5432,8 +5548,7 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
   await expect(progressPopover).not.toContainText("Permission mode");
   await expect(progressPopover).not.toContainText("Completed docs review");
   await expect(progressPopover).not.toContainText("Older completed review");
-  await page.getByRole("button", { name: "Show details" }).click();
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await page.locator(".task-toolbar-panel").click();
   const panel = page.locator(".channel-side-panel.right-dock");
   await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(panel).not.toContainText("Current implementation");
@@ -7762,6 +7877,25 @@ async function expandOperationBubbleIfCollapsed(workCell: Locator): Promise<void
   if (await expandButton.count() > 0) {
     await expandButton.first().click();
   }
+}
+
+async function expectNoCompletedWorkCellAnimations(workCell: Locator): Promise<void> {
+  const animatedNodes = await workCell.evaluate((element) => {
+    const nodes = [
+      element,
+      ...Array.from(element.querySelectorAll<HTMLElement>(
+        ".conversation-work-cell-row, .conversation-work-cell-agent-span, .conversation-work-cell-artifact-row",
+      )),
+    ];
+    return nodes
+      .map((node) => ({
+        className: node.className.toString(),
+        animationName: getComputedStyle(node).animationName,
+        animationDuration: getComputedStyle(node).animationDuration,
+      }))
+      .filter((item) => item.animationName !== "none" && item.animationDuration !== "0s");
+  });
+  expect(animatedNodes).toEqual([]);
 }
 
 interface ConversationScreenshotViewport {

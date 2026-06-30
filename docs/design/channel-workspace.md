@@ -42,6 +42,7 @@ Related docs:
 - [Channel Workspace v1.28 Environment Git Status](channel-workspace-v1.28-environment-git-status.md)
 - [Channel Workspace v1.28 Environment Git Status Detailed Design](channel-workspace-v1.28-environment-git-status-detailed-design.md)
 - [Channel Workspace v1.28 Environment Git Status Implementation Plan](channel-workspace-v1.28-environment-git-status-implementation-plan.md)
+- [Channel Workspace v1.29 Layout Shell](channel-workspace-v1.29-layout-shell.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
