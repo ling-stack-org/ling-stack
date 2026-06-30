@@ -223,6 +223,17 @@ import {
   type RightDockMessageProjectionInput,
   type WorkspaceRightDockPageRequest,
 } from "./right-dock/index.js";
+import {
+  channelRightDockMinWidth,
+  channelRightDockMinChatWidth,
+  channelRightDockResizeHandleWidth,
+  channelRightDockTransitionMs,
+  channelRightDockUnmountDelayMs,
+  clampChannelRightDockWidth,
+  easeChannelDockMotion,
+  resolveChannelWorkspaceLayoutDecision,
+  resolveChannelWorkspaceLayoutTargets,
+} from "./layout/channel-workspace-layout.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -355,31 +366,11 @@ type RequirementShapingRow = {
   readonly tone?: "neutral" | "attention" | "success";
 };
 const proposalStepActions: readonly ChannelProposalStepDraft["action"][] = ["coordinated", "consulted", "reviewed", "flagged_risk"];
-const channelRightDockMinWidth = 304;
-const channelRightDockMaxViewportRatio = 0.5;
-const channelRightDockMinChatWidth = 560;
-const channelRightDockResizeHandleWidth = 8;
-const channelRightDockTransitionMs = 620;
-const channelProgressPanelTrackWidth = 304;
-const channelProgressAndDockSharedTrackWidth = channelProgressPanelTrackWidth + channelRightDockResizeHandleWidth;
-
-function easeChannelDockMotion(progress: number): number {
-  if (progress <= 0) {
-    return 0;
-  }
-  if (progress >= 1) {
-    return 1;
-  }
-  return progress < 0.5
-    ? 4 * progress * progress * progress
-    : 1 - ((-2 * progress + 2) ** 3) / 2;
-}
 
 function setChannelRightDockLayoutVariables(
   elements: readonly (HTMLElement | null)[],
   dockWidth: number,
   handleWidth: number,
-  progressReserveWidth: number,
 ): void {
   for (const element of elements) {
     if (!element) {
@@ -387,15 +378,15 @@ function setChannelRightDockLayoutVariables(
     }
     element.style.setProperty("--channel-right-dock-layout-width", `${dockWidth}px`);
     element.style.setProperty("--channel-side-panel-layout-handle-width", `${handleWidth}px`);
-    element.style.setProperty("--channel-progress-inline-reserve-width", `${progressReserveWidth}px`);
   }
 }
 
-function clampChannelRightDockWidth(width: number, containerWidth: number, viewportWidth: number): number {
-  const maxByContainer = Math.max(channelRightDockMinWidth, containerWidth - channelRightDockMinChatWidth - channelRightDockResizeHandleWidth);
-  const maxByViewport = Math.max(channelRightDockMinWidth, Math.floor(viewportWidth * channelRightDockMaxViewportRatio));
-  const effectiveMax = Math.min(maxByViewport, maxByContainer);
-  return Math.round(Math.max(channelRightDockMinWidth, Math.min(width, effectiveMax)));
+function readChannelLayoutVariable(element: HTMLElement | null, name: string, fallback: number): number {
+  if (!element) {
+    return fallback;
+  }
+  const value = Number.parseFloat(globalThis.getComputedStyle(element).getPropertyValue(name));
+  return Number.isFinite(value) ? value : fallback;
 }
 
 type ThreadTurnsLoadState =
@@ -1292,12 +1283,14 @@ export function WorkspaceClientView({
   const [channelRightDockResizing, setChannelRightDockResizing] = useState(false);
   const [channelRightDockRendered, setChannelRightDockRendered] = useState(() => Boolean(selectedTaskId));
   const [channelRightDockExpanded, setChannelRightDockExpanded] = useState(() => Boolean(selectedTaskId));
+  const [channelRightDockClosing, setChannelRightDockClosing] = useState(false);
   const [taskWorkbenchMainWidth, setTaskWorkbenchMainWidth] = useState(0);
   const channelRightDockOpenFrameRef = useRef<number | undefined>();
+  const channelRightDockUnmountTimeoutRef = useRef<number | undefined>();
   const channelRightDockLayoutAnimationRef = useRef<number | undefined>();
   const channelRightDockLayoutWidthRef = useRef(selectedTaskId ? channelRightDockMinWidth : 0);
   const channelRightDockLayoutHandleWidthRef = useRef(selectedTaskId ? channelRightDockResizeHandleWidth : 0);
-  const channelProgressInlineReserveWidthRef = useRef(0);
+  const channelRightDockMotionUntilRef = useRef(0);
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
@@ -1321,9 +1314,23 @@ export function WorkspaceClientView({
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
   const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
   const channelRightDockIntentOpen = !channelUtilityPageOpen && sidePanelOpen;
+  const channelRightDockVisible = channelRightDockIntentOpen || channelRightDockRendered || channelRightDockClosing;
+  const { progressPopoverCanUseMainLayout } = resolveChannelWorkspaceLayoutDecision({
+    mainWidth: taskWorkbenchMainWidth,
+    rightDockVisible: channelRightDockVisible,
+    rightDockWidth: channelRightDockWidth,
+  });
 
   useEffect(() => {
+    channelRightDockMotionUntilRef.current = Date.now() + channelRightDockUnmountDelayMs;
+    const pendingUnmountId = channelRightDockUnmountTimeoutRef.current;
+    if (pendingUnmountId !== undefined) {
+      globalThis.clearTimeout(pendingUnmountId);
+      channelRightDockUnmountTimeoutRef.current = undefined;
+    }
+
     if (channelRightDockIntentOpen) {
+      setChannelRightDockClosing(false);
       if (!channelRightDockRendered) {
         setChannelRightDockExpanded(false);
         setChannelRightDockRendered(true);
@@ -1357,19 +1364,27 @@ export function WorkspaceClientView({
       return undefined;
     }
     const timeoutId = globalThis.setTimeout(() => {
+      channelRightDockUnmountTimeoutRef.current = undefined;
       setChannelRightDockRendered(false);
-    }, channelRightDockTransitionMs);
+      setChannelRightDockClosing(false);
+    }, channelRightDockUnmountDelayMs);
+    channelRightDockUnmountTimeoutRef.current = timeoutId;
     return () => {
       globalThis.clearTimeout(timeoutId);
+      if (channelRightDockUnmountTimeoutRef.current === timeoutId) {
+        channelRightDockUnmountTimeoutRef.current = undefined;
+      }
     };
   }, [channelRightDockIntentOpen, channelRightDockRendered]);
 
   useLayoutEffect(() => {
-    const targetDockWidth = channelRightDockExpanded ? channelRightDockWidth : 0;
-    const targetHandleWidth = channelRightDockExpanded ? channelRightDockResizeHandleWidth : 0;
-    const targetProgressReserveWidth = progressPopoverRendered
-      ? Math.max(0, channelProgressAndDockSharedTrackWidth - targetDockWidth - targetHandleWidth)
-      : 0;
+    const {
+      dockWidth: targetDockWidth,
+      handleWidth: targetHandleWidth,
+    } = resolveChannelWorkspaceLayoutTargets({
+      rightDockExpanded: channelRightDockExpanded,
+      rightDockWidth: channelRightDockWidth,
+    });
     const layoutElements = [taskWorkbenchWindowRef.current, taskWorkbenchMainRef.current];
 
     const runningFrameId = channelRightDockLayoutAnimationRef.current;
@@ -1381,38 +1396,41 @@ export function WorkspaceClientView({
     if (channelRightDockResizing) {
       channelRightDockLayoutWidthRef.current = targetDockWidth;
       channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
-      channelProgressInlineReserveWidthRef.current = targetProgressReserveWidth;
-      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth, targetProgressReserveWidth);
+      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
       return undefined;
     }
 
-    const startDockWidth = channelRightDockLayoutWidthRef.current;
-    const startHandleWidth = channelRightDockLayoutHandleWidthRef.current;
-    const startProgressReserveWidth = channelProgressInlineReserveWidthRef.current;
+    const layoutSourceElement = taskWorkbenchMainRef.current ?? taskWorkbenchWindowRef.current;
+    const startDockWidth = readChannelLayoutVariable(
+      layoutSourceElement,
+      "--channel-right-dock-layout-width",
+      channelRightDockLayoutWidthRef.current,
+    );
+    const startHandleWidth = readChannelLayoutVariable(
+      layoutSourceElement,
+      "--channel-side-panel-layout-handle-width",
+      channelRightDockLayoutHandleWidthRef.current,
+    );
     const dockDelta = targetDockWidth - startDockWidth;
     const handleDelta = targetHandleWidth - startHandleWidth;
-    const progressReserveDelta = targetProgressReserveWidth - startProgressReserveWidth;
 
-    if (Math.abs(dockDelta) < 0.5 && Math.abs(handleDelta) < 0.5 && Math.abs(progressReserveDelta) < 0.5) {
+    if (Math.abs(dockDelta) < 0.5 && Math.abs(handleDelta) < 0.5) {
       channelRightDockLayoutWidthRef.current = targetDockWidth;
       channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
-      channelProgressInlineReserveWidthRef.current = targetProgressReserveWidth;
-      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth, targetProgressReserveWidth);
+      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
       return undefined;
     }
 
-    setChannelRightDockLayoutVariables(layoutElements, startDockWidth, startHandleWidth, startProgressReserveWidth);
+    setChannelRightDockLayoutVariables(layoutElements, startDockWidth, startHandleWidth);
     const startedAt = globalThis.performance.now();
     const tick = (now: number): void => {
       const progress = Math.min(1, (now - startedAt) / channelRightDockTransitionMs);
       const eased = easeChannelDockMotion(progress);
       const nextDockWidth = startDockWidth + dockDelta * eased;
       const nextHandleWidth = startHandleWidth + handleDelta * eased;
-      const nextProgressReserveWidth = startProgressReserveWidth + progressReserveDelta * eased;
       channelRightDockLayoutWidthRef.current = nextDockWidth;
       channelRightDockLayoutHandleWidthRef.current = nextHandleWidth;
-      channelProgressInlineReserveWidthRef.current = nextProgressReserveWidth;
-      setChannelRightDockLayoutVariables(layoutElements, nextDockWidth, nextHandleWidth, nextProgressReserveWidth);
+      setChannelRightDockLayoutVariables(layoutElements, nextDockWidth, nextHandleWidth);
 
       if (progress < 1) {
         channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
@@ -1429,7 +1447,7 @@ export function WorkspaceClientView({
         channelRightDockLayoutAnimationRef.current = undefined;
       }
     };
-  }, [channelRightDockExpanded, channelRightDockResizing, channelRightDockWidth, progressPopoverRendered]);
+  }, [channelRightDockExpanded, channelRightDockResizing, channelRightDockWidth]);
 
   useEffect(() => {
     const channelId = selectedChannelId ?? "";
@@ -2991,6 +3009,9 @@ export function WorkspaceClientView({
       messageFeedPinnedToLatestRef.current ||
       messageFeedOlderLoadSnapshotRef.current
     ) {
+      return undefined;
+    }
+    if (Date.now() < channelRightDockMotionUntilRef.current) {
       return undefined;
     }
     const frameId = globalThis.requestAnimationFrame(() => {
@@ -6456,6 +6477,19 @@ export function WorkspaceClientView({
     }
   }
 
+  function closeChannelRightDock(): void {
+    const pendingUnmountId = channelRightDockUnmountTimeoutRef.current;
+    if (pendingUnmountId !== undefined) {
+      globalThis.clearTimeout(pendingUnmountId);
+      channelRightDockUnmountTimeoutRef.current = undefined;
+    }
+    setChannelRightDockClosing(true);
+    setChannelRightDockRendered(true);
+    setChannelRightDockExpanded(false);
+    setSidePanelOpen(false);
+    setCreateTaskOpen(false);
+  }
+
   function openSourceGroupInConversationDetail(group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary): void {
     setSelectedSourceDetail({ summary, groupId: group.id });
     setConversationDetailOverlay({ kind: "sources" });
@@ -6923,10 +6957,9 @@ export function WorkspaceClientView({
   ) : null;
   const channelHasProgressPopoverContent = attentionProgressRows.length > 0 || channelEnvironmentSummary.popoverRows.length > 0;
   const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !channelUtilityPageOpen && channelHasProgressPopoverContent;
-  const channelRightDockVisible = channelRightDockRendered;
-  const channelRightDockLayoutOpen = channelRightDockVisible && channelRightDockExpanded;
-  const progressPopoverCanRender = progressPopoverVisible;
-  const progressPopoverInMainLayout = false;
+  const progressPopoverCanRender =
+    progressPopoverVisible && (!channelRightDockVisible || progressPopoverCanUseMainLayout);
+  const progressPopoverInMainLayout = progressPopoverCanRender && channelRightDockVisible && progressPopoverCanUseMainLayout;
   const progressPopoverMotionClass = progressPopoverExpanded ? "is-popover-expanded" : "is-popover-collapsed";
   useEffect(() => {
     if (progressPopoverCanRender) {
@@ -6983,12 +7016,10 @@ export function WorkspaceClientView({
     "--channel-right-dock-width": `${channelRightDockWidth}px`,
     "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
     "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
-    "--channel-progress-inline-reserve-width": `${channelProgressInlineReserveWidthRef.current}px`,
   } as CSSProperties;
   const taskWorkbenchMainStyle = {
     "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
     "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
-    "--channel-progress-inline-reserve-width": `${channelProgressInlineReserveWidthRef.current}px`,
   } as CSSProperties;
 
   function toggleChannelTeammateManager(): void {
@@ -7013,8 +7044,6 @@ export function WorkspaceClientView({
         "client-window task-workbench-window",
         channelRightDockVisible ? "with-channel-side-panel" : "",
         channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
-        progressPopoverRendered ? "progress-open" : "",
-        progressPopoverRendered ? (progressPopoverExpanded ? "progress-expanded" : "progress-collapsed") : "",
       ].filter(Boolean).join(" ")}
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
@@ -7236,26 +7265,25 @@ export function WorkspaceClientView({
             <ListChecks size={15} />
           </button>
           <button
-            className={sidePanelOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
+            className={channelRightDockIntentOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
             type="button"
-            aria-expanded={sidePanelOpen}
-            aria-label={sidePanelOpen ? t("Hide details") : t("Show details")}
-            title={sidePanelOpen ? t("Hide details") : t("Show details")}
+            aria-expanded={channelRightDockIntentOpen}
+            aria-label={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
+            title={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
             onClick={() => {
-              if (sidePanelOpen) {
-                setSidePanelOpen(false);
-                setCreateTaskOpen(false);
+              if (channelRightDockIntentOpen) {
+                closeChannelRightDock();
                 return;
               }
               openSidePanelView(sidePanelView === "settings" ? "context" : sidePanelView);
             }}
           >
-            {sidePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+            {channelRightDockIntentOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
           </button>
             </>
           )}
         </div>
-        {progressPopoverRendered && !progressPopoverInMainLayout ? (
+        {progressPopoverRendered && progressPopoverCanRender && !progressPopoverInMainLayout ? (
           <div className={`channel-progress-popover ${progressPopoverMotionClass}`}>
             {progressPopoverNode}
           </div>
@@ -7384,7 +7412,6 @@ export function WorkspaceClientView({
           progressPopoverInMainLayout ? "with-channel-progress-panel" : "",
           progressPopoverInMainLayout ? (progressPopoverExpanded ? "progress-panel-expanded" : "progress-panel-collapsed") : "",
           channelRightDockResizing ? "is-resizing-channel-side-panel" : "",
-          progressPopoverRendered ? "progress-open" : "",
         ].filter(Boolean).join(" ")}
       >
         {channelSettingsPageOpen ? (
@@ -7779,7 +7806,7 @@ export function WorkspaceClientView({
                 />
               ) : null}
             </div>
-        </section>
+	        </section>
         {progressPopoverInMainLayout ? (
           <aside className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`} aria-label={t("Progress")}>
             {progressPopoverNode}
@@ -7801,46 +7828,53 @@ export function WorkspaceClientView({
             onLostPointerCapture={handleChannelRightDockResizePointerEnd}
           />
         ) : null}
-        <WorkspaceRightDock
-          surface="channel"
-          open={channelRightDockVisible}
-          ariaLabel={t("Channel workspace dock")}
-          className={`channel-side-panel ${channelRightDockExpanded ? "is-drawer-expanded" : "is-drawer-collapsed"}`}
-          cwd={cwd.trim()}
-          launcherTitle={t("Workspace tools")}
-          launcherSubtitle={selectedChannel?.name ? `#${selectedChannel.name}` : undefined}
-          reviewItems={channelDockReviewItems}
-          evidenceGroups={channelDockEvidenceGroups}
-          fileItems={channelDockFileItems}
-          includeActivity
-          activityNode={channelDockActivityNode}
-          activityCount={channelDockActivityCount}
-          forcedDetail={channelDockForcedDetail}
-          pageRequest={rightDockPageRequest}
-          onPageRequestConsumed={(nonce) => {
-            setRightDockPageRequest((current) => current?.nonce === nonce ? undefined : current);
-          }}
-          actions={(
-            <>
-              {sidePanelView !== "settings" ? (
-                <button
-                  className="icon-button"
-                  type="button"
-                  onClick={openCreateTaskPanel}
-                  disabled={!selectedChannelId}
-                  aria-label={t("New task")}
-                  title={t("New task")}
-                >
-                  <Plus size={15} />
-                </button>
-              ) : null}
-              <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
-                {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-              </button>
-            </>
-          )}
-          onClose={() => setSidePanelOpen(false)}
-        />
+        {channelRightDockVisible ? (
+          <div
+            className="channel-side-panel-frame"
+            aria-hidden={channelRightDockExpanded ? undefined : true}
+          >
+            <WorkspaceRightDock
+              surface="channel"
+              open={channelRightDockVisible}
+              ariaLabel={t("Channel workspace dock")}
+              className={`channel-side-panel ${channelRightDockExpanded ? "is-drawer-expanded" : "is-drawer-collapsed"}`}
+              cwd={cwd.trim()}
+              launcherTitle={t("Workspace tools")}
+              launcherSubtitle={selectedChannel?.name ? `#${selectedChannel.name}` : undefined}
+              reviewItems={channelDockReviewItems}
+              evidenceGroups={channelDockEvidenceGroups}
+              fileItems={channelDockFileItems}
+              includeActivity
+              activityNode={channelDockActivityNode}
+              activityCount={channelDockActivityCount}
+              forcedDetail={channelDockForcedDetail}
+              pageRequest={rightDockPageRequest}
+              onPageRequestConsumed={(nonce) => {
+                setRightDockPageRequest((current) => current?.nonce === nonce ? undefined : current);
+              }}
+              actions={(
+                <>
+                  {sidePanelView !== "settings" ? (
+                    <button
+                      className="icon-button"
+                      type="button"
+                      onClick={openCreateTaskPanel}
+                      disabled={!selectedChannelId}
+                      aria-label={t("New task")}
+                      title={t("New task")}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  ) : null}
+                  <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
+                    {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                  </button>
+                </>
+              )}
+              onClose={closeChannelRightDock}
+            />
+          </div>
+        ) : null}
           </>
         )}
       </div>
