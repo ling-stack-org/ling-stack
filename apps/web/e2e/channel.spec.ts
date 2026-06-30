@@ -172,6 +172,41 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
       createdAt: "2026-05-25T00:18:01.000Z",
       updatedAt: "2026-05-25T00:18:01.000Z",
     },
+    {
+      id: "msg_team_followup",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "继续讨论部署边界。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:19:00.000Z",
+      updatedAt: "2026-05-25T00:19:00.000Z",
+    },
+    {
+      id: "msg_team_followup_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_team_followup",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "后续回复没有团队证据。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:19:01.000Z",
+      updatedAt: "2026-05-25T00:19:01.000Z",
+    },
   ];
   state.channelTeamExpertsByTurn["channel_engineering:msg_team_source"] = {
     channelId: "channel_engineering",
@@ -260,14 +295,21 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed.getByText("主回复保持干净，团队证据折叠展示。")).toBeVisible();
+  await expect(feed.getByText("后续回复没有团队证据。")).toBeVisible();
   const experts = feed.locator(".channel-team-experts-summary");
+  await expect(experts).toHaveCount(1);
   await expect(experts).toContainText("1 active");
   await expect(experts).toContainText("2 done");
-  await expect.poll(() => state.channelTeamExpertsRequests.at(-1)).toMatchObject({
-    channelId: "channel_engineering",
-    turnId: "msg_team_source",
-    includeExpired: true,
-  });
+  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
+    request.channelId === "channel_engineering" &&
+    request.turnId === "msg_team_source" &&
+    request.includeExpired === true
+  )).toBe(true);
+  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
+    request.channelId === "channel_engineering" &&
+    request.turnId === "msg_team_followup" &&
+    request.includeExpired === true
+  )).toBe(true);
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
   const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据折叠展示。" });
   await expect(assistantTranscript.locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);
@@ -659,6 +701,454 @@ test("progress popover shows active context source groups and opens source detai
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 
+test("channel environment surface shows read-only context and opens review", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.setViewportSize({ width: 2160, height: 1200 });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [
+    {
+      id: "run_environment",
+      status: "succeeded",
+      cwd,
+      taskId: "task_environment",
+      channelId: "channel_engineering",
+      providerPresetId: "provider_local",
+      providerName: "local-relay",
+      providerModel: "gpt-5.5",
+      taskSnapshot: { id: "task_environment", title: "Prepare environment diff" },
+      providerSnapshot: { provider: "local-relay", model: "gpt-5.5" },
+      requestSnapshot: { cwd, providerPresetId: "provider_local" },
+      eventLogPath: ".ling-stack/sessions/run_environment.jsonl",
+      createdAt: "2026-06-29T00:00:30.000Z",
+      startedAt: "2026-06-29T00:00:31.000Z",
+      endedAt: "2026-06-29T00:00:59.000Z",
+      updatedAt: "2026-06-29T00:00:59.000Z",
+    },
+  ];
+  state.approvals = [];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? {
+          ...channel,
+          workspaceBinding: {
+            mode: "managed_worktree",
+            status: "ready",
+            executionPath: `${cwd}/.ling-stack/worktrees/channels/channel_engineering`,
+            worktreePath: `${cwd}/.ling-stack/worktrees/channels/channel_engineering`,
+            branchName: "ling/channel-environment",
+            baseBranch: "main",
+            updatedAt: "2026-06-29T00:00:00.000Z",
+            checkedAt: "2026-06-29T00:00:00.000Z",
+          },
+        }
+      : channel
+  );
+  state.artifactsByRun = {
+    run_environment: [
+      {
+        id: "artifact_environment_diff",
+        runId: "run_environment",
+        type: "diff",
+        path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+        title: "Workspace environment diff",
+        contentType: "text/x-diff; charset=utf-8",
+        contentText: [
+          "diff --git a/apps/web/src/features/workspace/WorkspaceClientView.tsx b/apps/web/src/features/workspace/WorkspaceClientView.tsx",
+          "index 1111111..2222222 100644",
+          "--- a/apps/web/src/features/workspace/WorkspaceClientView.tsx",
+          "+++ b/apps/web/src/features/workspace/WorkspaceClientView.tsx",
+          "@@ -1,3 +1,4 @@",
+          " import React from \"react\";",
+          "-const oldLabel = \"Environment\";",
+          "+const newLabel = \"Environment\";",
+          "+const reviewPreview = true;",
+          " export function WorkspaceClientView() {",
+          "   return null;",
+          " }",
+        ].join("\n"),
+        createdAt: "2026-06-29T00:01:00.000Z",
+      },
+    ],
+  };
+  state.channelWorkspaceGitStatusByChannel.channel_engineering = {
+    state: "dirty",
+    cwd: `${cwd}/.ling-stack/worktrees/channels/channel_engineering`,
+    repoRoot: `${cwd}/.ling-stack/worktrees/channels/channel_engineering`,
+    branchName: "ling/channel-environment",
+    upstream: "main",
+    headSha: "abc1234",
+    changedFileCount: 1,
+    stagedFileCount: 0,
+    unstagedFileCount: 1,
+    untrackedFileCount: 0,
+    conflictedFileCount: 0,
+    additions: 12,
+    deletions: 3,
+    files: [
+      {
+        path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+        indexStatus: " ",
+        worktreeStatus: "M",
+        kind: "modified",
+        staged: false,
+        unstaged: true,
+        untracked: false,
+      },
+    ],
+    checkedAt: "2026-06-29T00:01:00.000Z",
+  };
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await page.waitForTimeout(200);
+  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(250);
+  await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  const readChatLayoutSnapshot = async () => page.evaluate(() => {
+    const chatLayout = document.querySelector<HTMLElement>(".activity-chat-layout");
+    const composer = document.querySelector<HTMLElement>(".activity-shell .channel-composer");
+    const main = document.querySelector<HTMLElement>(".task-workbench-main");
+    const chatPanel = document.querySelector<HTMLElement>(".channel-chat-panel");
+    const chatBox = chatLayout?.getBoundingClientRect();
+    return {
+      chatHeight: Math.round(chatBox?.height ?? 0),
+      chatTransform: chatLayout ? getComputedStyle(chatLayout).transform : "",
+      chatWidth: Math.round(chatBox?.width ?? 0),
+      chatX: Math.round(chatBox?.x ?? 0),
+      chatY: Math.round(chatBox?.y ?? 0),
+      composerTransform: composer ? getComputedStyle(composer).transform : "",
+      mainPaddingRight: main ? getComputedStyle(main).paddingRight : "",
+      panelMarginRight: chatPanel ? getComputedStyle(chatPanel).marginRight : "",
+    };
+  });
+
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  const popover = page.locator(".channel-progress-popover");
+  await expect(popover).toBeVisible();
+  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(290);
+  await expect(popover).toContainText("Environment");
+  await expect(popover).toContainText("Changes");
+  await expect(popover).toContainText("Review");
+  await expect(popover).toContainText("Local environment");
+  await expect(popover).toContainText("Working branch");
+  await expect(popover).toContainText("Commit or push");
+  await expect(popover).toContainText("1 changed file");
+  await expect(popover).toContainText("+12");
+  await expect(popover).toContainText("-3");
+
+  const dock = page.locator(".channel-side-panel");
+  const chatLayout = page.locator(".activity-chat-layout");
+  const messageFeed = page.getByLabel("Channel message feed");
+  const feedScrollBeforeDock = await messageFeed.evaluate((node) => {
+    node.dataset.remountProbe = "right-dock-stable";
+    return Math.round(node.scrollTop);
+  });
+  const chatLayoutBeforeDock = await chatLayout.boundingBox();
+  expect(chatLayoutBeforeDock).not.toBeNull();
+  const chatSnapshotBeforeDock = await readChatLayoutSnapshot();
+  expect(chatSnapshotBeforeDock.chatTransform).toBe("none");
+  expect(chatSnapshotBeforeDock.composerTransform).toBe("none");
+  expect(chatSnapshotBeforeDock.mainPaddingRight).toBe("0px");
+  expect(chatSnapshotBeforeDock.panelMarginRight).toBe("0px");
+  await page.locator(".task-toolbar-panel").click();
+  await page.waitForTimeout(160);
+  const chatLayoutDuringDockOpen = await chatLayout.boundingBox();
+  expect(chatLayoutDuringDockOpen).not.toBeNull();
+  expect(Math.abs((chatLayoutDuringDockOpen?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutDuringDockOpen?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+  await expect(dock).toBeVisible();
+  const chatLayoutAfterDockOpen = await chatLayout.boundingBox();
+  expect(chatLayoutAfterDockOpen).not.toBeNull();
+  expect(Math.abs((chatLayoutAfterDockOpen?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutAfterDockOpen?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+  await expect(popover).toBeVisible();
+  await expect.poll(async () => {
+    const popoverBox = await popover.boundingBox();
+    const dockBox = await dock.boundingBox();
+    if (!popoverBox || !dockBox) {
+      return 999;
+    }
+    return Math.round(popoverBox.x + popoverBox.width - dockBox.x);
+  }).toBeLessThanOrEqual(-8);
+  await expect.poll(async () => {
+    const popoverBox = await popover.boundingBox();
+    const chatBox = await chatLayout.boundingBox();
+    if (!popoverBox || !chatBox) {
+      return -999;
+    }
+    return Math.round(popoverBox.x - (chatBox.x + chatBox.width));
+  }).toBeGreaterThanOrEqual(8);
+  expect(await messageFeed.evaluate((node) => node.dataset.remountProbe)).toBe("right-dock-stable");
+  expect(Math.abs(await messageFeed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
+  await page.locator(".task-toolbar-panel").click();
+  await page.waitForTimeout(160);
+  await expect(dock).toHaveCount(1);
+  const closingDockFrameBox = await page.locator(".channel-side-panel-frame").boundingBox();
+  expect(closingDockFrameBox).not.toBeNull();
+  expect(closingDockFrameBox?.width ?? 0).toBeGreaterThan(0);
+  expect(closingDockFrameBox?.width ?? 0).toBeLessThan(304);
+  const chatLayoutDuringDockClose = await chatLayout.boundingBox();
+  expect(chatLayoutDuringDockClose).not.toBeNull();
+  expect(Math.abs((chatLayoutDuringDockClose?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutDuringDockClose?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+  await expect(dock).toHaveCount(0);
+  const chatLayoutAfterDockClose = await chatLayout.boundingBox();
+  expect(chatLayoutAfterDockClose).not.toBeNull();
+  expect(Math.abs((chatLayoutAfterDockClose?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutAfterDockClose?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+  const chatSnapshotAfterDockClose = await readChatLayoutSnapshot();
+  expect(Math.abs(chatSnapshotAfterDockClose.chatX - chatSnapshotBeforeDock.chatX)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatY - chatSnapshotBeforeDock.chatY)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatWidth - chatSnapshotBeforeDock.chatWidth)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatHeight - chatSnapshotBeforeDock.chatHeight)).toBeLessThanOrEqual(1);
+  expect(chatSnapshotAfterDockClose.chatTransform).toBe("none");
+  expect(chatSnapshotAfterDockClose.composerTransform).toBe("none");
+  expect(chatSnapshotAfterDockClose.mainPaddingRight).toBe("0px");
+  expect(chatSnapshotAfterDockClose.panelMarginRight).toBe("0px");
+  expect(await messageFeed.evaluate((node) => node.dataset.remountProbe)).toBe("right-dock-stable");
+  expect(Math.abs(await messageFeed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
+  await expect(popover).toBeVisible();
+
+  await page.locator(".task-toolbar-panel").click();
+  await expect(dock).toBeVisible();
+  await page.locator(".task-toolbar-panel").click();
+  await page.waitForTimeout(80);
+  await page.locator(".task-toolbar-panel").click();
+  await expect.poll(async () => Math.round((await page.locator(".channel-side-panel-frame").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
+  await expect(dock).toBeVisible();
+  await expect(page.locator(".task-toolbar-panel")).toHaveAttribute("aria-expanded", "true");
+  const chatLayoutAfterReopen = await chatLayout.boundingBox();
+  expect(chatLayoutAfterReopen).not.toBeNull();
+  expect(Math.abs((chatLayoutAfterReopen?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((chatLayoutAfterReopen?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await page.setViewportSize({ width: 1984, height: 1200 });
+  await page.waitForTimeout(200);
+
+  await popover.getByRole("button", { name: "Review" }).click();
+  await expect(dock).toBeVisible();
+  await expect(dock.locator(".right-dock-head-page")).toContainText("Review");
+  await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
+  await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(320);
+  await expect(popover).toBeVisible();
+  await expect.poll(async () => {
+    const popoverBox = await popover.boundingBox();
+    const dockBox = await dock.boundingBox();
+    if (!popoverBox || !dockBox) {
+      return 999;
+    }
+    return Math.round(popoverBox.x + popoverBox.width - dockBox.x);
+  }).toBeLessThanOrEqual(-8);
+  await expect.poll(async () => {
+    const popoverBox = await popover.boundingBox();
+    const chatBox = await chatLayout.boundingBox();
+    if (!popoverBox || !chatBox) {
+      return -999;
+    }
+    return Math.round(popoverBox.x - (chatBox.x + chatBox.width));
+  }).toBeGreaterThanOrEqual(8);
+  const defaultPopoverWithDockBox = await popover.boundingBox();
+  const defaultDockWithPopoverBox = await dock.boundingBox();
+  expect(defaultPopoverWithDockBox).not.toBeNull();
+  expect(defaultDockWithPopoverBox).not.toBeNull();
+  expect((defaultPopoverWithDockBox?.x ?? 0) + (defaultPopoverWithDockBox?.width ?? 0)).toBeLessThanOrEqual((defaultDockWithPopoverBox?.x ?? 0) - 8);
+  const resizeHandle = page.getByRole("separator", { name: "Resize workspace dock" });
+  await expect(resizeHandle).toBeVisible();
+  await expect(resizeHandle).toHaveCSS("cursor", "col-resize");
+  const initialDockBox = await dock.boundingBox();
+  expect(initialDockBox).not.toBeNull();
+  const resizeHandleBox = await resizeHandle.boundingBox();
+  expect(resizeHandleBox).not.toBeNull();
+  await page.mouse.move(resizeHandleBox!.x + resizeHandleBox!.width / 2, resizeHandleBox!.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(resizeHandleBox!.x - 130, resizeHandleBox!.y + 40, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => (await dock.boundingBox())?.width ?? 0).toBeGreaterThan((initialDockBox?.width ?? 0) + 80);
+  await expect(dock).toContainText("Workspace environment diff");
+  const reviewSummaryRow = dock.locator(".right-dock-review-row", { hasText: "Workspace environment diff" });
+  const codePreview = dock.locator(".right-dock-code-preview");
+  await expect(codePreview).toBeVisible();
+  await expect(reviewSummaryRow).toHaveCount(0);
+  await expect(dock.locator(".right-dock-review-row")).toHaveCount(0);
+  await expect(codePreview.locator("pre")).toContainText("reviewPreview");
+  await codePreview.getByRole("button", { name: "Collapse code preview" }).click();
+  await expect(codePreview).toHaveClass(/collapsed/u);
+  await expect(codePreview.locator("pre")).toHaveCount(0);
+  await expect(codePreview).toContainText("Workspace environment diff");
+  const expandedResizeHandleBox = await resizeHandle.boundingBox();
+  expect(expandedResizeHandleBox).not.toBeNull();
+  await page.mouse.move(expandedResizeHandleBox!.x + expandedResizeHandleBox!.width / 2, expandedResizeHandleBox!.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(860, expandedResizeHandleBox!.y + 40, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(840);
+  await expect(popover).toHaveCount(0);
+  await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(560);
+  await page.locator(".task-toolbar-panel").click();
+  await expect(dock).toHaveCount(0);
+  await expect(popover).toBeVisible();
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toBeVisible();
+  await expect(environmentPage).toContainText("Local environment");
+  await expect(environmentPage).toContainText("Worktree");
+  await expect(environmentPage).toContainText("ling/channel-environment");
+  await expect(environmentPage).toContainText("1 changed file");
+  await expect(environmentPage).toContainText("+12");
+  await expect(environmentPage).toContainText("-3");
+  await expect(environmentPage).toContainText("1 review item");
+  await expect(environmentPage).toContainText("No browser evidence");
+  await expect(environmentPage).toContainText("No sources");
+
+  await environmentPage.locator(".channel-environment-section.commit").getByRole("button", { name: "Open" }).click();
+  const dialog = page.getByRole("dialog", { name: "Commit or push" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("first version is read-only");
+  await expect(dialog.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Commit and push" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Push", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await environmentPage.getByRole("button", { name: "View review" }).click();
+  await expect(page.locator(".channel-environment-page")).toHaveCount(0);
+  await expect(page.locator(".channel-side-panel .right-dock-head-page")).toContainText("Review");
+});
+
+test("channel environment labels review-only items as review instead of changes", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.approvals = [];
+  state.channelMessages = [];
+  state.artifactsByRun = {};
+  state.runs = [
+    {
+      id: "run_environment_failed",
+      status: "failed",
+      cwd,
+      taskId: "task_environment_failed",
+      channelId: "channel_engineering",
+      providerPresetId: "provider_local",
+      providerName: "local-relay",
+      providerModel: "gpt-5.5",
+      errorMessage: "Provider overloaded",
+      taskSnapshot: { id: "task_environment_failed", title: "Review runtime issue" },
+      providerSnapshot: { provider: "local-relay", model: "gpt-5.5" },
+      requestSnapshot: { cwd, providerPresetId: "provider_local" },
+      eventLogPath: ".ling-stack/sessions/run_environment_failed.jsonl",
+      createdAt: "2026-06-29T00:02:30.000Z",
+      startedAt: "2026-06-29T00:02:31.000Z",
+      endedAt: "2026-06-29T00:02:59.000Z",
+      updatedAt: "2026-06-29T00:02:59.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  const environmentSection = page.locator(".channel-progress-popover .attention-environment-section");
+  await expect(environmentSection).toBeVisible();
+  await expect(environmentSection).toContainText("Review");
+  await expect(environmentSection).toContainText("1 review item");
+  await expect(environmentSection).not.toContainText("Changes");
+  await expect(environmentSection).not.toContainText("+0 -0");
+});
+
+test("channel environment shows clean git state without review rows", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [];
+  state.approvals = [];
+  state.channelMessages = [];
+  state.artifactsByRun = {};
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  const environmentSection = page.locator(".channel-progress-popover .attention-environment-section");
+  await expect(environmentSection).toBeVisible();
+  await expect(environmentSection).not.toContainText("Changes");
+  await expect(environmentSection).not.toContainText("Review");
+
+  await page.locator(".task-toolbar-panel").click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toContainText("No code changes");
+  await expect(environmentPage).toContainText("No review items");
+});
+
+test("channel environment shows not-git-repo without fake clean state", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [];
+  state.approvals = [];
+  state.channelMessages = [];
+  state.artifactsByRun = {};
+  state.channelWorkspaceGitStatusByChannel.channel_engineering = {
+    state: "not_git_repo",
+    cwd,
+    changedFileCount: 0,
+    stagedFileCount: 0,
+    unstagedFileCount: 0,
+    untrackedFileCount: 0,
+    conflictedFileCount: 0,
+    files: [],
+    checkedAt: "2026-06-29T00:03:00.000Z",
+    unavailableReason: "Selected channel workspace is not a Git repository.",
+  };
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toContainText("Not a Git repository");
+  await expect(environmentPage).not.toContainText("No code changes");
+});
+
+test("channel environment treats git transport failure as unavailable", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [];
+  state.approvals = [];
+  state.channelMessages = [];
+  state.artifactsByRun = {};
+  state.channelWorkspaceGitStatusByChannel.channel_engineering = {
+    fail: true,
+    status: 503,
+    message: "Git status overloaded",
+  };
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toContainText("Git status unavailable");
+  await expect(environmentPage).not.toContainText("No code changes");
+});
+
 test("conversation motion respects reduced motion preference", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.addInitScript(() => {
@@ -854,6 +1344,7 @@ test("wide channel progress popover keeps the accepted HTML spacing", async ({ p
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await page.locator(".task-toolbar-progress").click();
@@ -3472,6 +3963,7 @@ test("phase 1 active single-agent transcript keeps one assistant turn while late
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".message-feed");
   let assistantTranscript = await expectSingleAssistantTranscript(feed);
@@ -3637,6 +4129,7 @@ test("phase 1 completed main-agent transcript keeps committed operation rows fol
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".message-feed");
   const assistantTranscript = await expectSingleAssistantTranscript(feed);
@@ -3657,6 +4150,18 @@ test("phase 1 completed main-agent transcript keeps committed operation rows fol
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Checks")).toContainText("Create login.html");
   await expect(workCell.getByLabel("Checks")).not.toContainText("succeeded");
+  await expect(workCell.locator(".conversation-work-cell-detail-copy")).toHaveCount(0);
+  await expectNoCompletedWorkCellAnimations(workCell);
+  await workCell.evaluate((node) => {
+    node.dataset.remountProbe = "completed-work-cell-stable";
+  });
+  const feedScrollBeforeDock = await feed.evaluate((node) => Math.round(node.scrollTop));
+  await page.locator(".task-toolbar-panel").click();
+  await expect(page.locator(".channel-side-panel")).toBeVisible();
+  await page.waitForTimeout(220);
+  await expectNoCompletedWorkCellAnimations(workCell);
+  expect(await workCell.evaluate((node) => node.dataset.remountProbe)).toBe("completed-work-cell-stable");
+  expect(Math.abs(await feed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
   await maybeCaptureR32Screenshot(page, "completed-single-agent-expanded");
 });
 
@@ -5032,6 +5537,7 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
   await page.locator(".task-toolbar-progress").click();
 
   const progressPopover = page.locator(".channel-progress-popover");
@@ -5042,8 +5548,7 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
   await expect(progressPopover).not.toContainText("Permission mode");
   await expect(progressPopover).not.toContainText("Completed docs review");
   await expect(progressPopover).not.toContainText("Older completed review");
-  await page.getByRole("button", { name: "Show details" }).click();
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await page.locator(".task-toolbar-panel").click();
   const panel = page.locator(".channel-side-panel.right-dock");
   await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(panel).not.toContainText("Current implementation");
@@ -7372,6 +7877,25 @@ async function expandOperationBubbleIfCollapsed(workCell: Locator): Promise<void
   if (await expandButton.count() > 0) {
     await expandButton.first().click();
   }
+}
+
+async function expectNoCompletedWorkCellAnimations(workCell: Locator): Promise<void> {
+  const animatedNodes = await workCell.evaluate((element) => {
+    const nodes = [
+      element,
+      ...Array.from(element.querySelectorAll<HTMLElement>(
+        ".conversation-work-cell-row, .conversation-work-cell-agent-span, .conversation-work-cell-artifact-row",
+      )),
+    ];
+    return nodes
+      .map((node) => ({
+        className: node.className.toString(),
+        animationName: getComputedStyle(node).animationName,
+        animationDuration: getComputedStyle(node).animationDuration,
+      }))
+      .filter((item) => item.animationName !== "none" && item.animationDuration !== "0s");
+  });
+  expect(animatedNodes).toEqual([]);
 }
 
 interface ConversationScreenshotViewport {

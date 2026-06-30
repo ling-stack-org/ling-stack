@@ -3,7 +3,6 @@ import { CheckCircle2, ChevronDown, CircleAlert, Clock3, Eye, FileText, History,
 import { useI18n, type Translate } from "../../../i18n.js";
 import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
 import { ArtifactPreviewDrawer, type ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
-import { CopyActionButton } from "../feedback/CopyActionButton.js";
 import { OperationBubble } from "./OperationBubble.js";
 import { OperationBubbleActions } from "./OperationBubbleActions.js";
 import { OperationBubbleBody } from "./OperationBubbleBody.js";
@@ -714,10 +713,6 @@ function WorkCellRow({
   const displayMeta = displayableRowMeta(row.meta);
   const detailLines = displayableRowDetailLines(row.detailLines);
   const hasDetail = Boolean(displayDescription || detailLines.length > 0);
-  const detailCopyText = [
-    displayDescription,
-    ...detailLines.map((line) => line.text),
-  ].filter((line): line is string => Boolean(line)).join("\n");
   const rowClassName = [
     "conversation-work-cell-row",
     row.presentation === "shell" ? "shell" : "",
@@ -766,9 +761,6 @@ function WorkCellRow({
         )}
         {expanded && hasDetail ? (
           <div className="conversation-work-cell-row-detail conversation-work-cell-shell-detail">
-            {detailCopyText ? (
-              <CopyActionButton text={detailCopyText} label={t("Copy output")} className="conversation-work-cell-detail-copy" iconSize={12} />
-            ) : null}
             {displayDescription ? <small>{displayDescription}</small> : null}
             {detailLines.map((line, index) => (
               line.kind === "code"
@@ -816,9 +808,6 @@ function WorkCellRow({
       )}
       {expanded && hasDetail ? (
         <div className="conversation-work-cell-row-detail">
-          {detailCopyText ? (
-            <CopyActionButton text={detailCopyText} label={t("Copy details")} className="conversation-work-cell-detail-copy" iconSize={12} />
-          ) : null}
           {displayDescription ? <small>{displayDescription}</small> : null}
           {detailLines.map((line, index) => (
             line.kind === "code"

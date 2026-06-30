@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -58,6 +58,7 @@ import type { AiTeammateTemplate } from "@ling-stack/core";
 import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, getLingTrace, listLingThreads, listLingThreadTurns, listLingTraces, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
 import {
   createChannelWorktree,
+  getChannelWorkspaceGitStatus,
   getChannelTeamExpertsProjection,
   getChannelTeamMetricsProjection,
   handoffChannelWorkspace,
@@ -199,6 +200,7 @@ import {
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
   transcriptBlockViewKey,
+  type DockPageKind,
   type ConversationGuidanceItem,
   type ConversationViewRetainKeys,
   type ConversationWorkCellDetailsState,
@@ -213,12 +215,25 @@ import {
   projectChannelAttachmentsToFileItems,
   projectFileRefsToFileItems,
   projectFilesToEvidenceGroup,
+  projectFilesToReviewItems,
   projectMessagesToReviewItems,
   projectRunsToEvidenceGroup,
   projectRunsToReviewItems,
   projectWebEvidenceToEvidenceGroup,
   type RightDockMessageProjectionInput,
+  type WorkspaceRightDockPageRequest,
 } from "./right-dock/index.js";
+import {
+  channelRightDockMinWidth,
+  channelRightDockMinChatWidth,
+  channelRightDockResizeHandleWidth,
+  channelRightDockTransitionMs,
+  channelRightDockUnmountDelayMs,
+  clampChannelRightDockWidth,
+  easeChannelDockMotion,
+  resolveChannelWorkspaceLayoutDecision,
+  resolveChannelWorkspaceLayoutTargets,
+} from "./layout/channel-workspace-layout.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -282,6 +297,7 @@ import type {
   WorkItemView,
   WorkUnit,
   WorkspaceSettings,
+  WorkspaceGitStatus,
   UpdateWorkspaceSettingsRequest,
   UserProfile,
 } from "../../types.js";
@@ -326,6 +342,7 @@ interface ConversationBlockLongPressState {
 }
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
 type AttentionProgressTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
+type ChannelEnvironmentRowTone = AttentionProgressTone | "info";
 type ChannelProposalStepDraft = {
   readonly teammateId: string;
   readonly action: ChannelExecutionProposal["collaborationSteps"][number]["action"];
@@ -349,6 +366,29 @@ type RequirementShapingRow = {
   readonly tone?: "neutral" | "attention" | "success";
 };
 const proposalStepActions: readonly ChannelProposalStepDraft["action"][] = ["coordinated", "consulted", "reviewed", "flagged_risk"];
+
+function setChannelRightDockLayoutVariables(
+  elements: readonly (HTMLElement | null)[],
+  dockWidth: number,
+  handleWidth: number,
+): void {
+  for (const element of elements) {
+    if (!element) {
+      continue;
+    }
+    element.style.setProperty("--channel-right-dock-layout-width", `${dockWidth}px`);
+    element.style.setProperty("--channel-side-panel-layout-handle-width", `${handleWidth}px`);
+  }
+}
+
+function readChannelLayoutVariable(element: HTMLElement | null, name: string, fallback: number): number {
+  if (!element) {
+    return fallback;
+  }
+  const value = Number.parseFloat(globalThis.getComputedStyle(element).getPropertyValue(name));
+  return Number.isFinite(value) ? value : fallback;
+}
+
 type ThreadTurnsLoadState =
   | { readonly status: "not_loaded" }
   | { readonly status: "loading" }
@@ -362,6 +402,80 @@ interface AttentionProgressRow {
   readonly primary: string;
   readonly secondary?: string;
   readonly onOpen?: () => void;
+}
+
+interface ChannelEnvironmentWorkspace {
+  readonly mode: ChannelWorkspaceMode;
+  readonly modeLabel: string;
+  readonly status: ChannelWorkspaceBinding["status"];
+  readonly path: string;
+  readonly shortPath: string;
+  readonly errorMessage?: string;
+}
+
+type ChannelGitStatusLoadState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading"; readonly requestKey: string }
+  | { readonly status: "loaded"; readonly requestKey: string; readonly statusValue: WorkspaceGitStatus }
+  | { readonly status: "error"; readonly requestKey: string; readonly errorMessage: string };
+
+interface ChannelEnvironmentGitChanges {
+  readonly changedFileCount: number;
+  readonly stagedFileCount: number;
+  readonly unstagedFileCount: number;
+  readonly untrackedFileCount: number;
+  readonly conflictedFileCount: number;
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly label: string;
+}
+
+interface ChannelEnvironmentReviewSummary {
+  readonly reviewItemCount: number;
+  readonly actionItemCount: number;
+  readonly label: string;
+}
+
+interface ChannelEnvironmentGitStatus {
+  readonly branchName: string;
+  readonly baseBranch?: string;
+}
+
+interface ChannelEnvironmentEvidenceSummary {
+  readonly count: number;
+  readonly label: string;
+}
+
+interface ChannelEnvironmentOutputSummary {
+  readonly count: number;
+  readonly label: string;
+}
+
+interface ChannelEnvironmentPopoverRow {
+  readonly id: "changes" | "review" | "local" | "git-branch" | "commit-push";
+  readonly icon: ReactNode;
+  readonly label: string;
+  readonly value?: string;
+  readonly stats?: { readonly additions: number; readonly deletions: number };
+  readonly tone: ChannelEnvironmentRowTone;
+  readonly onOpen?: () => void;
+  readonly disabled?: boolean;
+  readonly disabledReason?: string;
+}
+
+interface ChannelEnvironmentSummary {
+  readonly workspace?: ChannelEnvironmentWorkspace;
+  readonly gitStatusLoadState: ChannelGitStatusLoadState;
+  readonly changes?: ChannelEnvironmentGitChanges;
+  readonly review?: ChannelEnvironmentReviewSummary;
+  readonly git?: ChannelEnvironmentGitStatus;
+  readonly browser?: ChannelEnvironmentEvidenceSummary;
+  readonly sources?: ChannelEnvironmentEvidenceSummary;
+  readonly output?: ChannelEnvironmentOutputSummary;
+  readonly commitAction?: {
+    readonly disabledReason: string;
+  };
+  readonly popoverRows: readonly ChannelEnvironmentPopoverRow[];
 }
 
 interface SelectedSourceDetailState {
@@ -480,6 +594,11 @@ interface ChannelTeamExpertsState {
   readonly channelId: string;
   readonly turnId: string;
   readonly experts: FoldedExpertsReadModel;
+}
+
+interface ChannelTeamExpertsTurnTarget {
+  readonly turnId: string;
+  readonly signature: string;
 }
 
 interface ChannelTeamMetricsState {
@@ -1154,11 +1273,32 @@ export function WorkspaceClientView({
   const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "context");
   const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
   const [channelSettingsPageOpen, setChannelSettingsPageOpen] = useState(false);
+  const [channelEnvironmentPageOpen, setChannelEnvironmentPageOpen] = useState(false);
+  const [environmentCommitDialogOpen, setEnvironmentCommitDialogOpen] = useState(false);
+  const [environmentCommitMessage, setEnvironmentCommitMessage] = useState("");
+  const [environmentIncludeUnstaged, setEnvironmentIncludeUnstaged] = useState(true);
+  const [channelGitStatusState, setChannelGitStatusState] = useState<ChannelGitStatusLoadState>({ status: "idle" });
+  const [rightDockPageRequest, setRightDockPageRequest] = useState<WorkspaceRightDockPageRequest>();
+  const [channelRightDockWidth, setChannelRightDockWidth] = useState(channelRightDockMinWidth);
+  const [channelRightDockResizing, setChannelRightDockResizing] = useState(false);
+  const [channelRightDockRendered, setChannelRightDockRendered] = useState(() => Boolean(selectedTaskId));
+  const [channelRightDockExpanded, setChannelRightDockExpanded] = useState(() => Boolean(selectedTaskId));
+  const [channelRightDockClosing, setChannelRightDockClosing] = useState(false);
+  const [taskWorkbenchMainWidth, setTaskWorkbenchMainWidth] = useState(0);
+  const channelRightDockOpenFrameRef = useRef<number | undefined>();
+  const channelRightDockUnmountTimeoutRef = useRef<number | undefined>();
+  const channelRightDockLayoutAnimationRef = useRef<number | undefined>();
+  const channelRightDockLayoutWidthRef = useRef(selectedTaskId ? channelRightDockMinWidth : 0);
+  const channelRightDockLayoutHandleWidthRef = useRef(selectedTaskId ? channelRightDockResizeHandleWidth : 0);
+  const channelRightDockMotionUntilRef = useRef(0);
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
+  const [progressPopoverRendered, setProgressPopoverRendered] = useState(false);
+  const [progressPopoverExpanded, setProgressPopoverExpanded] = useState(false);
+  const progressPopoverOpenFrameRef = useRef<number | undefined>();
   const [governanceNotificationsOpen, setGovernanceNotificationsOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [conversationDetailOverlay, setConversationDetailOverlay] = useState<ConversationDetailOverlayState | undefined>();
@@ -1172,6 +1312,188 @@ export function WorkspaceClientView({
   const [activityFiltersExpanded, setActivityFiltersExpanded] = useState(false);
   const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
+  const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
+  const channelRightDockIntentOpen = !channelUtilityPageOpen && sidePanelOpen;
+  const channelRightDockVisible = channelRightDockIntentOpen || channelRightDockRendered || channelRightDockClosing;
+  const { progressPopoverCanUseMainLayout } = resolveChannelWorkspaceLayoutDecision({
+    mainWidth: taskWorkbenchMainWidth,
+    rightDockVisible: channelRightDockVisible,
+    rightDockWidth: channelRightDockWidth,
+  });
+
+  useEffect(() => {
+    channelRightDockMotionUntilRef.current = Date.now() + channelRightDockUnmountDelayMs;
+    const pendingUnmountId = channelRightDockUnmountTimeoutRef.current;
+    if (pendingUnmountId !== undefined) {
+      globalThis.clearTimeout(pendingUnmountId);
+      channelRightDockUnmountTimeoutRef.current = undefined;
+    }
+
+    if (channelRightDockIntentOpen) {
+      setChannelRightDockClosing(false);
+      if (!channelRightDockRendered) {
+        setChannelRightDockExpanded(false);
+        setChannelRightDockRendered(true);
+        return undefined;
+      }
+
+      const firstFrameId = globalThis.requestAnimationFrame(() => {
+        const secondFrameId = globalThis.requestAnimationFrame(() => {
+          channelRightDockOpenFrameRef.current = undefined;
+          setChannelRightDockExpanded(true);
+        });
+        channelRightDockOpenFrameRef.current = secondFrameId;
+      });
+      channelRightDockOpenFrameRef.current = firstFrameId;
+      return () => {
+        const frameId = channelRightDockOpenFrameRef.current;
+        if (frameId !== undefined) {
+          globalThis.cancelAnimationFrame(frameId);
+          channelRightDockOpenFrameRef.current = undefined;
+        }
+      };
+    }
+
+    const frameId = channelRightDockOpenFrameRef.current;
+    if (frameId !== undefined) {
+      globalThis.cancelAnimationFrame(frameId);
+      channelRightDockOpenFrameRef.current = undefined;
+    }
+    setChannelRightDockExpanded(false);
+    if (!channelRightDockRendered) {
+      return undefined;
+    }
+    const timeoutId = globalThis.setTimeout(() => {
+      channelRightDockUnmountTimeoutRef.current = undefined;
+      setChannelRightDockRendered(false);
+      setChannelRightDockClosing(false);
+    }, channelRightDockUnmountDelayMs);
+    channelRightDockUnmountTimeoutRef.current = timeoutId;
+    return () => {
+      globalThis.clearTimeout(timeoutId);
+      if (channelRightDockUnmountTimeoutRef.current === timeoutId) {
+        channelRightDockUnmountTimeoutRef.current = undefined;
+      }
+    };
+  }, [channelRightDockIntentOpen, channelRightDockRendered]);
+
+  useLayoutEffect(() => {
+    const {
+      dockWidth: targetDockWidth,
+      handleWidth: targetHandleWidth,
+    } = resolveChannelWorkspaceLayoutTargets({
+      rightDockExpanded: channelRightDockExpanded,
+      rightDockWidth: channelRightDockWidth,
+    });
+    const layoutElements = [taskWorkbenchWindowRef.current, taskWorkbenchMainRef.current];
+
+    const runningFrameId = channelRightDockLayoutAnimationRef.current;
+    if (runningFrameId !== undefined) {
+      globalThis.cancelAnimationFrame(runningFrameId);
+      channelRightDockLayoutAnimationRef.current = undefined;
+    }
+
+    if (channelRightDockResizing) {
+      channelRightDockLayoutWidthRef.current = targetDockWidth;
+      channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
+      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
+      return undefined;
+    }
+
+    const layoutSourceElement = taskWorkbenchMainRef.current ?? taskWorkbenchWindowRef.current;
+    const startDockWidth = readChannelLayoutVariable(
+      layoutSourceElement,
+      "--channel-right-dock-layout-width",
+      channelRightDockLayoutWidthRef.current,
+    );
+    const startHandleWidth = readChannelLayoutVariable(
+      layoutSourceElement,
+      "--channel-side-panel-layout-handle-width",
+      channelRightDockLayoutHandleWidthRef.current,
+    );
+    const dockDelta = targetDockWidth - startDockWidth;
+    const handleDelta = targetHandleWidth - startHandleWidth;
+
+    if (Math.abs(dockDelta) < 0.5 && Math.abs(handleDelta) < 0.5) {
+      channelRightDockLayoutWidthRef.current = targetDockWidth;
+      channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
+      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
+      return undefined;
+    }
+
+    setChannelRightDockLayoutVariables(layoutElements, startDockWidth, startHandleWidth);
+    const startedAt = globalThis.performance.now();
+    const tick = (now: number): void => {
+      const progress = Math.min(1, (now - startedAt) / channelRightDockTransitionMs);
+      const eased = easeChannelDockMotion(progress);
+      const nextDockWidth = startDockWidth + dockDelta * eased;
+      const nextHandleWidth = startHandleWidth + handleDelta * eased;
+      channelRightDockLayoutWidthRef.current = nextDockWidth;
+      channelRightDockLayoutHandleWidthRef.current = nextHandleWidth;
+      setChannelRightDockLayoutVariables(layoutElements, nextDockWidth, nextHandleWidth);
+
+      if (progress < 1) {
+        channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
+      } else {
+        channelRightDockLayoutAnimationRef.current = undefined;
+      }
+    };
+
+    channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
+    return () => {
+      const frameId = channelRightDockLayoutAnimationRef.current;
+      if (frameId !== undefined) {
+        globalThis.cancelAnimationFrame(frameId);
+        channelRightDockLayoutAnimationRef.current = undefined;
+      }
+    };
+  }, [channelRightDockExpanded, channelRightDockResizing, channelRightDockWidth]);
+
+  useEffect(() => {
+    const channelId = selectedChannelId ?? "";
+    const executionPath = selectedChannelExecutionPath.trim();
+    if (!channelId || !executionPath || selectedChannelWorkspace?.status !== "ready") {
+      setChannelGitStatusState({ status: "idle" });
+      return;
+    }
+
+    let cancelled = false;
+    const requestKey = `${channelId}:${executionPath}`;
+    setChannelGitStatusState({ status: "loading", requestKey });
+    getChannelWorkspaceGitStatus(cwd, channelId)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setChannelGitStatusState({
+          status: "loaded",
+          requestKey,
+          statusValue: response.gitStatus,
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setChannelGitStatusState({
+          status: "error",
+          requestKey,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    channelEnvironmentPageOpen,
+    cwd,
+    progressPopoverOpen,
+    selectedChannelExecutionPath,
+    selectedChannelId,
+    selectedChannelWorkspace?.status,
+    selectedChannelWorkspace?.updatedAt,
+  ]);
   const [inspectorMode, setInspectorMode] = useState<ChannelInspectorMode>("brief");
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   const [teammateManagerOpen, setTeammateManagerOpen] = useState(false);
@@ -1233,8 +1555,8 @@ export function WorkspaceClientView({
     readonly status: "idle" | "loaded" | "error";
     readonly cards: readonly CollaborationTaskCardModel[];
   }>({ channelId: "", signature: "", status: "idle", cards: [] });
-  const [channelTeamExpertsState, setChannelTeamExpertsState] = useState<ChannelTeamExpertsState | undefined>();
-  const [channelTeamExpertsExpanded, setChannelTeamExpertsExpanded] = useState(false);
+  const [channelTeamExpertsByTurn, setChannelTeamExpertsByTurn] = useState<Readonly<Record<string, ChannelTeamExpertsState>>>({});
+  const [channelTeamExpertsExpandedByTurn, setChannelTeamExpertsExpandedByTurn] = useState<Readonly<Record<string, boolean>>>({});
   const [channelTeamMetricsState, setChannelTeamMetricsState] = useState<ChannelTeamMetricsState | undefined>();
   const [channelTeamMetricsLoading, setChannelTeamMetricsLoading] = useState(false);
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
@@ -1242,6 +1564,8 @@ export function WorkspaceClientView({
   const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
+  const taskWorkbenchMainRef = useRef<HTMLDivElement | null>(null);
+  const taskWorkbenchWindowRef = useRef<HTMLDivElement | null>(null);
   const messageFeedRef = useRef<HTMLDivElement | null>(null);
   const messageFeedPinnedToLatestRef = useRef(true);
   const messageFeedAutoFollowUntilRef = useRef(0);
@@ -1254,6 +1578,7 @@ export function WorkspaceClientView({
   const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>();
   const conversationBlockActionMenuRef = useRef<HTMLDivElement | null>(null);
   const composerResizeDragRef = useRef<{ readonly pointerId: number; readonly startY: number; readonly startHeight: number } | undefined>();
+  const channelRightDockResizeDragRef = useRef<{ readonly pointerId: number; readonly containerRight: number; readonly containerWidth: number; readonly viewportWidth: number } | undefined>();
   const messageFeedOlderLoadArmedRef = useRef(true);
   const messageFeedOlderLoadSnapshotRef = useRef<{ readonly anchorId: string; readonly anchorOffset: number } | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
@@ -1267,6 +1592,69 @@ export function WorkspaceClientView({
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
   const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
+
+  useEffect(() => {
+    const element = taskWorkbenchMainRef.current;
+    if (!element) {
+      return;
+    }
+    const updateWidth = (): void => {
+      const nextWidth = Math.round(element.getBoundingClientRect().width);
+      setTaskWorkbenchMainWidth((current) => current === nextWidth ? current : nextWidth);
+    };
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") {
+      globalThis.addEventListener("resize", updateWidth);
+      return () => {
+        globalThis.removeEventListener("resize", updateWidth);
+      };
+    }
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (taskWorkbenchMainWidth <= 0) {
+      return;
+    }
+    const viewportWidth = globalThis.innerWidth || taskWorkbenchMainWidth;
+    setChannelRightDockWidth((current) => {
+      const nextWidth = clampChannelRightDockWidth(current, taskWorkbenchMainWidth, viewportWidth);
+      return nextWidth === current ? current : nextWidth;
+    });
+  }, [taskWorkbenchMainWidth]);
+
+  useEffect(() => {
+    function handleGlobalChannelRightDockResizeMove(event: PointerEvent): void {
+      const drag = channelRightDockResizeDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      event.preventDefault();
+      setChannelRightDockWidth(clampChannelRightDockWidth(drag.containerRight - event.clientX, drag.containerWidth, drag.viewportWidth));
+    }
+
+    function handleGlobalChannelRightDockResizeEnd(event: PointerEvent): void {
+      const drag = channelRightDockResizeDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      channelRightDockResizeDragRef.current = undefined;
+      setChannelRightDockResizing(false);
+    }
+
+    globalThis.addEventListener("pointermove", handleGlobalChannelRightDockResizeMove, { passive: false });
+    globalThis.addEventListener("pointerup", handleGlobalChannelRightDockResizeEnd);
+    globalThis.addEventListener("pointercancel", handleGlobalChannelRightDockResizeEnd);
+    return () => {
+      globalThis.removeEventListener("pointermove", handleGlobalChannelRightDockResizeMove);
+      globalThis.removeEventListener("pointerup", handleGlobalChannelRightDockResizeEnd);
+      globalThis.removeEventListener("pointercancel", handleGlobalChannelRightDockResizeEnd);
+    };
+  }, []);
   const activeRun = activeRunId ? runById.get(activeRunId) : undefined;
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const taskChannelById = useMemo(() => new Map(tasks.map((task) => [task.id, task.channelId])), [tasks]);
@@ -2026,44 +2414,75 @@ export function WorkspaceClientView({
       usedMemoryEvents,
     ],
   );
-  const latestChannelTeamExpertsTurn = useMemo(
-    () => [...conversationTurnProjection.turns].reverse().find((turn) => turn.blocks.length > 0),
+  const channelTeamExpertsTurnTargets = useMemo<readonly ChannelTeamExpertsTurnTarget[]>(
+    () => conversationTurnProjection.turns
+      .filter((turn) => turn.blocks.length > 0)
+      .map((turn) => ({
+        turnId: turn.sourceMessage.id,
+        signature: conversationTurnRenderSignature(turn),
+      })),
     [conversationTurnProjection.turns],
   );
-  const latestChannelTeamExpertsTurnId = latestChannelTeamExpertsTurn?.sourceMessage.id ?? "";
-  const latestChannelTeamExpertsSignature = latestChannelTeamExpertsTurn
-    ? conversationTurnRenderSignature(latestChannelTeamExpertsTurn)
-    : "";
+  const channelTeamExpertsRequestSignature = useMemo(
+    () => channelTeamExpertsTurnTargets.map((turn) => `${turn.turnId}:${turn.signature}`).join("\n"),
+    [channelTeamExpertsTurnTargets],
+  );
   useEffect(() => {
-    setChannelTeamExpertsExpanded(false);
-  }, [latestChannelTeamExpertsTurnId, selectedChannelId]);
+    setChannelTeamExpertsExpandedByTurn({});
+  }, [selectedChannelId]);
+  useEffect(() => {
+    const activeTurnIds = new Set(channelTeamExpertsTurnTargets.map((turn) => turn.turnId));
+    setChannelTeamExpertsExpandedByTurn((current) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [turnId, expanded] of Object.entries(current)) {
+        if (activeTurnIds.has(turnId)) {
+          next[turnId] = expanded;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [channelTeamExpertsRequestSignature, channelTeamExpertsTurnTargets]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || !latestChannelTeamExpertsTurnId) {
-      setChannelTeamExpertsState(undefined);
+    if (!workspaceCwd || !selectedChannelId || channelTeamExpertsTurnTargets.length === 0) {
+      setChannelTeamExpertsByTurn({});
       return;
     }
     let cancelled = false;
-    void getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, latestChannelTeamExpertsTurnId, { includeExpired: true, limit: 8 })
-      .then((response) => {
+    void Promise.all(channelTeamExpertsTurnTargets.map(async ({ turnId }) => {
+      try {
+        const response = await getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, turnId, { includeExpired: true, limit: 8 });
+        return {
+          turnId,
+          state: {
+            channelId: response.channelId,
+            turnId: response.turnId,
+            experts: response.experts,
+          },
+        };
+      } catch {
+        return { turnId, state: undefined };
+      }
+    }))
+      .then((results) => {
         if (cancelled) {
           return;
         }
-        setChannelTeamExpertsState({
-          channelId: response.channelId,
-          turnId: response.turnId,
-          experts: response.experts,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setChannelTeamExpertsState(undefined);
+        const next: Record<string, ChannelTeamExpertsState> = {};
+        for (const result of results) {
+          if (result.state) {
+            next[result.turnId] = result.state;
+          }
         }
+        setChannelTeamExpertsByTurn(next);
       });
     return () => {
       cancelled = true;
     };
-  }, [cwd, latestChannelTeamExpertsSignature, latestChannelTeamExpertsTurnId, selectedChannelId]);
+  }, [channelTeamExpertsRequestSignature, channelTeamExpertsTurnTargets, cwd, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId || !channelSettingsPageOpen) {
@@ -2592,6 +3011,9 @@ export function WorkspaceClientView({
     ) {
       return undefined;
     }
+    if (Date.now() < channelRightDockMotionUntilRef.current) {
+      return undefined;
+    }
     const frameId = globalThis.requestAnimationFrame(() => {
       restoreMessageFeedVisibleAnchor();
     });
@@ -2653,6 +3075,8 @@ export function WorkspaceClientView({
     setSidePanelView("context");
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setSelectedApprovalId("");
     setCreateTaskOpen(false);
@@ -2685,6 +3109,8 @@ export function WorkspaceClientView({
     setSidePanelView("task");
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
   }, [selectedTask, selectedTaskId]);
 
@@ -2693,6 +3119,8 @@ export function WorkspaceClientView({
     setSidePanelView("task");
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     onSelectTask(taskId);
   }
@@ -2835,6 +3263,8 @@ export function WorkspaceClientView({
     setSidePanelView("context");
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     if (mode === "runtime") {
       onRefreshRuntime();
@@ -2849,7 +3279,9 @@ export function WorkspaceClientView({
     onSelectTask("");
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
-    setProgressPopoverOpen(channelHasProgressContent);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
+    setProgressPopoverOpen(channelHasProgressPopoverContent);
     setAttentionProgressExpanded(true);
     setAttentionQueueExpanded(true);
     setCreateTaskOpen(false);
@@ -2862,6 +3294,8 @@ export function WorkspaceClientView({
     onSelectTask("");
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setCreateTaskOpen(false);
     setActiveWorkThreadId("");
@@ -2904,6 +3338,8 @@ export function WorkspaceClientView({
     setConversationDetailOverlay({ kind: "approval" });
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -3378,6 +3814,8 @@ export function WorkspaceClientView({
     setSidePanelView("task");
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setActivityToolsOpen(false);
     setProgressPopoverOpen(false);
     setTeammateManagerOpen(false);
@@ -4150,6 +4588,46 @@ export function WorkspaceClientView({
     composerResizeDragRef.current = undefined;
   }
 
+  function handleChannelRightDockResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    const rect = taskWorkbenchMainRef.current?.getBoundingClientRect();
+    const fallbackWidth = globalThis.innerWidth || channelRightDockMinWidth + channelRightDockMinChatWidth;
+    const viewportWidth = globalThis.innerWidth || rect?.right || fallbackWidth;
+    channelRightDockResizeDragRef.current = {
+      pointerId: event.pointerId,
+      containerRight: rect?.right ?? fallbackWidth,
+      containerWidth: rect?.width ?? fallbackWidth,
+      viewportWidth,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setChannelRightDockResizing(true);
+    setChannelRightDockWidth(clampChannelRightDockWidth((rect?.right ?? fallbackWidth) - event.clientX, rect?.width ?? fallbackWidth, viewportWidth));
+  }
+
+  function handleChannelRightDockResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const drag = channelRightDockResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    setChannelRightDockWidth(clampChannelRightDockWidth(drag.containerRight - event.clientX, drag.containerWidth, drag.viewportWidth));
+  }
+
+  function handleChannelRightDockResizePointerEnd(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const drag = channelRightDockResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    channelRightDockResizeDragRef.current = undefined;
+    setChannelRightDockResizing(false);
+  }
+
   function refreshChannelRunGuidanceSurfaces(): void {
     onRefreshChannelActivity();
     onRefreshTasks();
@@ -4668,9 +5146,11 @@ export function WorkspaceClientView({
     const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
     const copyText = conversationTurnAssistantCopyText(turn);
     const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
-    const teamExperts = channelTeamExpertsState?.channelId === selectedChannelId && channelTeamExpertsState.turnId === turn.sourceMessage.id
-      ? channelTeamExpertsState.experts
+    const teamExpertsState = channelTeamExpertsByTurn[turn.sourceMessage.id];
+    const teamExperts = teamExpertsState?.channelId === selectedChannelId && teamExpertsState.turnId === turn.sourceMessage.id
+      ? teamExpertsState.experts
       : undefined;
+    const teamExpertsExpanded = channelTeamExpertsExpandedByTurn[turn.sourceMessage.id] ?? false;
 
     return (
       <MessageRow
@@ -4692,8 +5172,11 @@ export function WorkspaceClientView({
             {teamExperts ? (
               <ChannelTeamExpertsSummary
                 experts={teamExperts}
-                expanded={channelTeamExpertsExpanded}
-                onToggleExpanded={() => setChannelTeamExpertsExpanded((current) => !current)}
+                expanded={teamExpertsExpanded}
+                onToggleExpanded={() => setChannelTeamExpertsExpandedByTurn((current) => ({
+                  ...current,
+                  [turn.sourceMessage.id]: !(current[turn.sourceMessage.id] ?? false),
+                }))}
                 cwd={cwd}
                 resolveExpertTeammate={(agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId))}
                 labels={{
@@ -5896,8 +6379,6 @@ export function WorkspaceClientView({
     }),
     [channelContextSummaries, channelWorkflowSteps, runningWorkflowStepId, selectedTask, t],
   );
-  const channelHasProgressContent = attentionProgressRows.length > 0;
-
   function refreshChannelSettingsPage(): void {
     onRefreshChannels();
     onRefreshAiCouncils();
@@ -5907,6 +6388,8 @@ export function WorkspaceClientView({
 
   function openChannelSettingsPage(): void {
     setChannelSettingsPageOpen(true);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setSidePanelOpen(false);
     setCreateTaskOpen(false);
     setConversationDetailOverlay(undefined);
@@ -5923,6 +6406,53 @@ export function WorkspaceClientView({
     setChannelSettingsPageOpen(false);
   }
 
+  function openChannelEnvironmentPage(): void {
+    setChannelEnvironmentPageOpen(true);
+    setChannelSettingsPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
+    setSidePanelOpen(false);
+    setCreateTaskOpen(false);
+    setConversationDetailOverlay(undefined);
+    setProgressPopoverOpen(false);
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setTeammateManagerOpen(false);
+    onChannelCreateOpenChange(false);
+  }
+
+  function closeChannelEnvironmentPage(): void {
+    setChannelEnvironmentPageOpen(false);
+  }
+
+  function openEnvironmentCommitDialog(): void {
+    setEnvironmentCommitDialogOpen(true);
+    setProgressPopoverOpen(false);
+    setChannelMoreOpen(false);
+  }
+
+  function closeEnvironmentCommitDialog(): void {
+    setEnvironmentCommitDialogOpen(false);
+  }
+
+  function openRightDockPage(page: DockPageKind): void {
+    setSidePanelView("context");
+    setSidePanelOpen(true);
+    setCreateTaskOpen(false);
+    setConversationDetailOverlay(undefined);
+    setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setTeammateManagerOpen(false);
+    setRightDockPageRequest((current) => ({
+      page,
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+  }
+
   function openSidePanelView(view: ChannelSidePanelView): void {
     if (view === "settings") {
       openChannelSettingsPage();
@@ -5931,8 +6461,9 @@ export function WorkspaceClientView({
     setSidePanelView(view);
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setConversationDetailOverlay(undefined);
-    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setWorkspaceSettingsOpen(false);
@@ -5946,11 +6477,26 @@ export function WorkspaceClientView({
     }
   }
 
+  function closeChannelRightDock(): void {
+    const pendingUnmountId = channelRightDockUnmountTimeoutRef.current;
+    if (pendingUnmountId !== undefined) {
+      globalThis.clearTimeout(pendingUnmountId);
+      channelRightDockUnmountTimeoutRef.current = undefined;
+    }
+    setChannelRightDockClosing(true);
+    setChannelRightDockRendered(true);
+    setChannelRightDockExpanded(false);
+    setSidePanelOpen(false);
+    setCreateTaskOpen(false);
+  }
+
   function openSourceGroupInConversationDetail(group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary): void {
     setSelectedSourceDetail({ summary, groupId: group.id });
     setConversationDetailOverlay({ kind: "sources" });
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -5965,6 +6511,8 @@ export function WorkspaceClientView({
     setConversationDetailOverlay({ kind: "sources" });
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -6210,7 +6758,7 @@ export function WorkspaceClientView({
   const channelDockFileItems = useMemo(
     () => mergeDockFileItems(
       projectChannelAttachmentsToFileItems(channelAttachments, t),
-      projectFileRefsToFileItems(channelMessages.flatMap((message) => message.fileRefs)),
+      projectFileRefsToFileItems(channelMessages.flatMap((message) => message.fileRefs ?? [])),
       projectArtifactsToFileItems(channelArtifactsByRun),
     ),
     [channelArtifactsByRun, channelAttachments, channelMessages, t],
@@ -6229,9 +6777,148 @@ export function WorkspaceClientView({
       ...projectApprovalsToReviewItems(channelApprovals, t),
       ...projectRunsToReviewItems(channelRuns, t),
       ...projectMessagesToReviewItems(channelDockMessages, t),
+      ...projectFilesToReviewItems(channelDockFileItems, t),
     ],
-    [channelApprovals, channelDockMessages, channelRuns, t],
+    [channelApprovals, channelDockFileItems, channelDockMessages, channelRuns, t],
   );
+  const channelEnvironmentSummary = useMemo<ChannelEnvironmentSummary>(() => {
+    const workspace = selectedChannelWorkspace ? {
+      mode: selectedChannelWorkspace.mode,
+      modeLabel: t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode)),
+      status: selectedChannelWorkspace.status,
+      path: selectedChannelExecutionPath,
+      shortPath: shortWorkspacePath(selectedChannelExecutionPath, cwd),
+      errorMessage: selectedChannelWorkspace.errorMessage,
+    } satisfies ChannelEnvironmentWorkspace : undefined;
+    const loadedGitStatus = channelGitStatusState.status === "loaded" ? channelGitStatusState.statusValue : undefined;
+    const changes = loadedGitStatus && (loadedGitStatus.state === "dirty" || loadedGitStatus.changedFileCount > 0)
+      ? {
+        changedFileCount: loadedGitStatus.changedFileCount,
+        stagedFileCount: loadedGitStatus.stagedFileCount,
+        unstagedFileCount: loadedGitStatus.unstagedFileCount,
+        untrackedFileCount: loadedGitStatus.untrackedFileCount,
+        conflictedFileCount: loadedGitStatus.conflictedFileCount,
+        additions: loadedGitStatus.additions,
+        deletions: loadedGitStatus.deletions,
+        label: environmentChangesLabel(loadedGitStatus.changedFileCount, t),
+      } satisfies ChannelEnvironmentGitChanges
+      : undefined;
+    const review = channelDockReviewItems.length > 0 ? {
+      reviewItemCount: channelDockReviewItems.length,
+      actionItemCount: channelDockReviewItems.length,
+      label: environmentReviewLabel(channelDockReviewItems.length, t),
+    } satisfies ChannelEnvironmentReviewSummary : undefined;
+    const branchName = loadedGitStatus?.branchName?.trim() || selectedChannelWorkspace?.branchName?.trim();
+    const git = branchName ? {
+      branchName,
+      baseBranch: loadedGitStatus?.upstream ?? selectedChannelWorkspace?.baseBranch,
+    } satisfies ChannelEnvironmentGitStatus : undefined;
+    const browserCount = channelDockEvidenceGroups
+      .filter((group) => group.id === "browser")
+      .reduce((count, group) => count + group.items.length, 0);
+    const browser = browserCount > 0 ? {
+      count: browserCount,
+      label: browserCount === 1 ? t("1 browser item") : t("{count} browser items", { count: browserCount }),
+    } satisfies ChannelEnvironmentEvidenceSummary : undefined;
+    const evidenceSourceCount = channelDockEvidenceGroups
+      .filter((group) => group.id === "source")
+      .reduce((count, group) => count + group.items.length, 0);
+    const sourceCount = activeProgressSourceSummary?.sourceCount ?? evidenceSourceCount;
+    const sources = sourceCount > 0 ? {
+      count: sourceCount,
+      label: activeProgressSourceSummary
+        ? conversationContextSourceSummaryLabel(activeProgressSourceSummary, t)
+        : sourceCount === 1 ? t("1 source") : t("{count} sources", { count: sourceCount }),
+    } satisfies ChannelEnvironmentEvidenceSummary : undefined;
+    const outputCount = channelDockFileItems.filter((item) =>
+      item.kind === "artifact" ||
+      item.kind === "change" ||
+      item.status === "generated" ||
+      item.status === "changed"
+    ).length;
+    const output = {
+      count: outputCount,
+      label: outputCount === 0 ? t("No artifacts") : outputCount === 1 ? t("1 artifact") : t("{count} artifacts", { count: outputCount }),
+    } satisfies ChannelEnvironmentOutputSummary;
+    const commitAction = changes ? {
+      disabledReason: t("Commit and push require a daemon Git action and approval policy. This first version is read-only."),
+    } : undefined;
+    const changeDiffStats = changes && environmentChangesHaveDiffStats(changes)
+      ? { additions: changes.additions ?? 0, deletions: changes.deletions ?? 0 }
+      : undefined;
+    const popoverRows: ChannelEnvironmentPopoverRow[] = [];
+    if (changes) {
+      popoverRows.push({
+        id: "changes",
+        icon: <ListChecks size={18} />,
+        label: t("Changes"),
+        value: changeDiffStats ? `+${changeDiffStats.additions} -${changeDiffStats.deletions}` : changes.label,
+        stats: changeDiffStats,
+        tone: changes.conflictedFileCount > 0 ? "blocked" : "neutral",
+      });
+    }
+    if (review) {
+      popoverRows.push({
+        id: "review",
+        icon: <ListChecks size={18} />,
+        label: t("Review"),
+        value: review.label,
+        tone: "waiting",
+        onOpen: () => openRightDockPage("review"),
+      });
+    }
+    if (workspace) {
+      popoverRows.push({
+        id: "local",
+        icon: channelWorkspaceModeIcon(workspace.mode, 18),
+        label: t("Local environment"),
+        value: workspace.shortPath || workspace.path || workspace.modeLabel,
+        tone: workspace.status === "ready" ? "success" : workspace.status === "missing" || workspace.status === "blocked" ? "blocked" : "neutral",
+      });
+    }
+    if (git) {
+      popoverRows.push({
+        id: "git-branch",
+        icon: <GitBranch size={18} />,
+        label: t("Working branch"),
+        value: git.branchName,
+        tone: "info",
+      });
+    }
+    if (commitAction) {
+      popoverRows.push({
+        id: "commit-push",
+        icon: <SquareTerminal size={18} />,
+        label: t("Commit or push"),
+        value: t("Read-only shell"),
+        tone: "neutral",
+        onOpen: openEnvironmentCommitDialog,
+        disabledReason: commitAction.disabledReason,
+      });
+    }
+    return {
+      workspace,
+      gitStatusLoadState: channelGitStatusState,
+      changes,
+      review,
+      git,
+      browser,
+      sources,
+      output,
+      commitAction,
+      popoverRows,
+    };
+  }, [
+    activeProgressSourceSummary,
+    channelGitStatusState,
+    channelDockEvidenceGroups,
+    channelDockFileItems,
+    channelDockReviewItems,
+    cwd,
+    selectedChannelExecutionPath,
+    selectedChannelWorkspace,
+    t,
+  ]);
   const channelDockActivityCount = attentionProgressRows.length
     + (channelTeamMetricsState?.channelId === selectedChannelId ? channelTeamMetricsState.metrics.attention.activeAgentCount : 0);
   const channelDockActivityNode = (
@@ -6268,13 +6955,80 @@ export function WorkspaceClientView({
       )}
     </ConversationDetailOverlay>
   ) : null;
-  const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !sidePanelOpen && !channelSettingsPageOpen && channelHasProgressContent;
+  const channelHasProgressPopoverContent = attentionProgressRows.length > 0 || channelEnvironmentSummary.popoverRows.length > 0;
+  const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !channelUtilityPageOpen && channelHasProgressPopoverContent;
+  const progressPopoverCanRender =
+    progressPopoverVisible && (!channelRightDockVisible || progressPopoverCanUseMainLayout);
+  const progressPopoverInMainLayout = progressPopoverCanRender && channelRightDockVisible && progressPopoverCanUseMainLayout;
+  const progressPopoverMotionClass = progressPopoverExpanded ? "is-popover-expanded" : "is-popover-collapsed";
+  useEffect(() => {
+    if (progressPopoverCanRender) {
+      if (!progressPopoverRendered) {
+        setProgressPopoverExpanded(false);
+        setProgressPopoverRendered(true);
+        return undefined;
+      }
+
+      const firstFrameId = globalThis.requestAnimationFrame(() => {
+        const secondFrameId = globalThis.requestAnimationFrame(() => {
+          progressPopoverOpenFrameRef.current = undefined;
+          setProgressPopoverExpanded(true);
+        });
+        progressPopoverOpenFrameRef.current = secondFrameId;
+      });
+      progressPopoverOpenFrameRef.current = firstFrameId;
+      return () => {
+        const frameId = progressPopoverOpenFrameRef.current;
+        if (frameId !== undefined) {
+          globalThis.cancelAnimationFrame(frameId);
+          progressPopoverOpenFrameRef.current = undefined;
+        }
+      };
+    }
+
+    const frameId = progressPopoverOpenFrameRef.current;
+    if (frameId !== undefined) {
+      globalThis.cancelAnimationFrame(frameId);
+      progressPopoverOpenFrameRef.current = undefined;
+    }
+    setProgressPopoverExpanded(false);
+    if (!progressPopoverRendered) {
+      return undefined;
+    }
+    const timeoutId = globalThis.setTimeout(() => {
+      setProgressPopoverRendered(false);
+    }, channelRightDockTransitionMs);
+    return () => {
+      globalThis.clearTimeout(timeoutId);
+    };
+  }, [progressPopoverCanRender, progressPopoverRendered]);
+  const progressPopoverNode = (
+    <ProgressPopover
+      expanded={attentionProgressExpanded}
+      onExpandedChange={setAttentionProgressExpanded}
+      progressRows={attentionProgressRows}
+      environmentSummary={channelEnvironmentSummary}
+      sourceSummary={activeProgressSourceSummary}
+      onOpenSourceGroup={openSourceGroupInConversationDetail}
+    />
+  );
+  const taskWorkbenchWindowStyle = {
+    "--channel-right-dock-width": `${channelRightDockWidth}px`,
+    "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
+    "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
+  } as CSSProperties;
+  const taskWorkbenchMainStyle = {
+    "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
+    "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
+  } as CSSProperties;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
     setTeammateManagerOpen(nextOpen);
     if (nextOpen) {
       setChannelSettingsPageOpen(false);
+      setChannelEnvironmentPageOpen(false);
+      setEnvironmentCommitDialogOpen(false);
       setProgressPopoverOpen(false);
     }
     setWorkspaceSettingsOpen(false);
@@ -6284,8 +7038,17 @@ export function WorkspaceClientView({
   }
 
   return (
-    <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
-      <header className={channelSettingsPageOpen ? "channel-header task-workbench-header settings-page-header" : "channel-header task-workbench-header"}>
+    <div
+      ref={taskWorkbenchWindowRef}
+      className={[
+        "client-window task-workbench-window",
+        channelRightDockVisible ? "with-channel-side-panel" : "",
+        channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
+      ].filter(Boolean).join(" ")}
+      style={taskWorkbenchWindowStyle}
+      aria-label={t("Workspace")}
+    >
+      <header className={channelUtilityPageOpen ? "channel-header task-workbench-header settings-page-header" : "channel-header task-workbench-header"}>
         <div className="channel-title-area">
           {channelSettingsPageOpen ? (
             <div className="channel-settings-header-line">
@@ -6297,6 +7060,20 @@ export function WorkspaceClientView({
                 <span>
                   <SlidersHorizontal size={17} />
                   <strong>{t("Channel settings")}</strong>
+                </span>
+                <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
+              </div>
+            </div>
+          ) : channelEnvironmentPageOpen ? (
+            <div className="channel-settings-header-line">
+              <button className="channel-settings-top-back" type="button" onClick={closeChannelEnvironmentPage}>
+                <ArrowLeft size={16} />
+                {t("Back to channel")}
+              </button>
+              <div className="channel-settings-header-title">
+                <span>
+                  <Command size={17} />
+                  <strong>{t("Environment")}</strong>
                 </span>
                 <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
               </div>
@@ -6339,6 +7116,15 @@ export function WorkspaceClientView({
                       <SlidersHorizontal size={15} />
                       <span>{t("Settings")}</span>
                     </button>
+                    <button
+                      className={channelEnvironmentPageOpen ? "channel-more-item active" : "channel-more-item"}
+                      type="button"
+                      role="menuitem"
+                      onClick={openChannelEnvironmentPage}
+                    >
+                      <Command size={15} />
+                      <span>{t("Environment")}</span>
+                    </button>
                     {channelSidePanelRootViews.map((view) => (
                       <button
                         key={view}
@@ -6361,6 +7147,8 @@ export function WorkspaceClientView({
                         setChannelMoreOpen(false);
                         setSidePanelOpen(false);
                         setChannelSettingsPageOpen(false);
+                        setChannelEnvironmentPageOpen(false);
+                        setEnvironmentCommitDialogOpen(false);
                         setTeammateManagerOpen(false);
                       }}
                     >
@@ -6379,7 +7167,7 @@ export function WorkspaceClientView({
               {channelSettingsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
               {t("Refresh")}
             </button>
-          ) : (
+          ) : channelEnvironmentPageOpen ? null : (
             <>
           {channelHeaderTeammateCount > 0 ? (
             <button
@@ -6455,17 +7243,18 @@ export function WorkspaceClientView({
             </button>
           ) : null}
           <button
-            className={progressPopoverVisible ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
+            className={progressPopoverRendered ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
             type="button"
             aria-label={t("Progress")}
             title={t("Progress")}
             onClick={() => {
-              if (!channelHasProgressContent) {
+              if (!channelHasProgressPopoverContent) {
                 setProgressPopoverOpen(false);
                 return;
               }
-              setSidePanelOpen(false);
               setChannelSettingsPageOpen(false);
+              setChannelEnvironmentPageOpen(false);
+              setEnvironmentCommitDialogOpen(false);
               setCreateTaskOpen(false);
               setChannelMoreOpen(false);
               setActivityToolsOpen(false);
@@ -6476,35 +7265,27 @@ export function WorkspaceClientView({
             <ListChecks size={15} />
           </button>
           <button
-            className={sidePanelOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
+            className={channelRightDockIntentOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
             type="button"
-            aria-expanded={sidePanelOpen}
-            aria-label={sidePanelOpen ? t("Hide details") : t("Show details")}
-            title={sidePanelOpen ? t("Hide details") : t("Show details")}
+            aria-expanded={channelRightDockIntentOpen}
+            aria-label={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
+            title={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
             onClick={() => {
-              if (sidePanelOpen) {
-                setSidePanelOpen(false);
-                setCreateTaskOpen(false);
-                setProgressPopoverOpen(false);
+              if (channelRightDockIntentOpen) {
+                closeChannelRightDock();
                 return;
               }
               openSidePanelView(sidePanelView === "settings" ? "context" : sidePanelView);
             }}
           >
-            {sidePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+            {channelRightDockIntentOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
           </button>
             </>
           )}
         </div>
-        {progressPopoverVisible ? (
-          <div className="channel-progress-popover">
-            <ProgressPopover
-              expanded={attentionProgressExpanded}
-              onExpandedChange={setAttentionProgressExpanded}
-              progressRows={attentionProgressRows}
-              sourceSummary={activeProgressSourceSummary}
-              onOpenSourceGroup={openSourceGroupInConversationDetail}
-            />
+        {progressPopoverRendered && progressPopoverCanRender && !progressPopoverInMainLayout ? (
+          <div className={`channel-progress-popover ${progressPopoverMotionClass}`}>
+            {progressPopoverNode}
           </div>
         ) : null}
       </header>
@@ -6601,6 +7382,17 @@ export function WorkspaceClientView({
         </div>
       ) : null}
 
+      {environmentCommitDialogOpen ? (
+        <ChannelEnvironmentCommitDialog
+          message={environmentCommitMessage}
+          includeUnstaged={environmentIncludeUnstaged}
+          disabledReason={channelEnvironmentSummary.commitAction?.disabledReason ?? t("Commit and push require a daemon Git action and approval policy. This first version is read-only.")}
+          onMessageChange={setEnvironmentCommitMessage}
+          onIncludeUnstagedChange={setEnvironmentIncludeUnstaged}
+          onClose={closeEnvironmentCommitDialog}
+        />
+      ) : null}
+
       {errorMessage ? (
         <div className="inline-error">
           <CircleAlert size={17} />
@@ -6609,17 +7401,30 @@ export function WorkspaceClientView({
       ) : null}
 
       <div
+        ref={taskWorkbenchMainRef}
+        style={taskWorkbenchMainStyle}
         className={[
           "task-workbench-main",
-          channelSettingsPageOpen ? "channel-settings-main" : "",
-          !channelSettingsPageOpen && sidePanelOpen ? "with-channel-side-panel" : "",
-          progressPopoverVisible ? "progress-open" : "",
+          channelUtilityPageOpen ? "channel-settings-main" : "",
+          channelEnvironmentPageOpen ? "channel-environment-main" : "",
+          channelRightDockVisible ? "with-channel-side-panel" : "",
+          channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
+          progressPopoverInMainLayout ? "with-channel-progress-panel" : "",
+          progressPopoverInMainLayout ? (progressPopoverExpanded ? "progress-panel-expanded" : "progress-panel-collapsed") : "",
+          channelRightDockResizing ? "is-resizing-channel-side-panel" : "",
         ].filter(Boolean).join(" ")}
       >
         {channelSettingsPageOpen ? (
           <section className="channel-settings-page" aria-label={t("Channel settings")}>
             {channelSettingsContent}
           </section>
+        ) : channelEnvironmentPageOpen ? (
+          <ChannelEnvironmentPage
+            summary={channelEnvironmentSummary}
+            channelName={selectedChannel?.name}
+            onOpenReview={() => openRightDockPage("review")}
+            onOpenCommit={openEnvironmentCommitDialog}
+          />
         ) : (
           <>
         <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>
@@ -7001,42 +7806,75 @@ export function WorkspaceClientView({
                 />
               ) : null}
             </div>
-        </section>
-        <WorkspaceRightDock
-          surface="channel"
-          open={sidePanelOpen}
-          ariaLabel={t("Channel workspace dock")}
-          className="channel-side-panel"
-          launcherTitle={t("Workspace tools")}
-          launcherSubtitle={selectedChannel?.name ? `#${selectedChannel.name}` : undefined}
-          reviewItems={channelDockReviewItems}
-          evidenceGroups={channelDockEvidenceGroups}
-          fileItems={channelDockFileItems}
-          includeActivity
-          activityNode={channelDockActivityNode}
-          activityCount={channelDockActivityCount}
-          forcedDetail={channelDockForcedDetail}
-          actions={(
-            <>
-              {sidePanelView !== "settings" ? (
-                <button
-                  className="icon-button"
-                  type="button"
-                  onClick={openCreateTaskPanel}
-                  disabled={!selectedChannelId}
-                  aria-label={t("New task")}
-                  title={t("New task")}
-                >
-                  <Plus size={15} />
-                </button>
-              ) : null}
-              <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
-                {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-              </button>
-            </>
-          )}
-          onClose={() => setSidePanelOpen(false)}
-        />
+	        </section>
+        {progressPopoverInMainLayout ? (
+          <aside className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`} aria-label={t("Progress")}>
+            {progressPopoverNode}
+          </aside>
+        ) : null}
+        {channelRightDockVisible ? (
+          <button
+            className="channel-side-panel-resize-handle"
+            type="button"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t("Resize workspace dock")}
+            title={t("Drag to resize workspace dock")}
+            tabIndex={channelRightDockExpanded ? 0 : -1}
+            onPointerDown={handleChannelRightDockResizePointerDown}
+            onPointerMove={handleChannelRightDockResizePointerMove}
+            onPointerUp={handleChannelRightDockResizePointerEnd}
+            onPointerCancel={handleChannelRightDockResizePointerEnd}
+            onLostPointerCapture={handleChannelRightDockResizePointerEnd}
+          />
+        ) : null}
+        {channelRightDockVisible ? (
+          <div
+            className="channel-side-panel-frame"
+            aria-hidden={channelRightDockExpanded ? undefined : true}
+          >
+            <WorkspaceRightDock
+              surface="channel"
+              open={channelRightDockVisible}
+              ariaLabel={t("Channel workspace dock")}
+              className={`channel-side-panel ${channelRightDockExpanded ? "is-drawer-expanded" : "is-drawer-collapsed"}`}
+              cwd={cwd.trim()}
+              launcherTitle={t("Workspace tools")}
+              launcherSubtitle={selectedChannel?.name ? `#${selectedChannel.name}` : undefined}
+              reviewItems={channelDockReviewItems}
+              evidenceGroups={channelDockEvidenceGroups}
+              fileItems={channelDockFileItems}
+              includeActivity
+              activityNode={channelDockActivityNode}
+              activityCount={channelDockActivityCount}
+              forcedDetail={channelDockForcedDetail}
+              pageRequest={rightDockPageRequest}
+              onPageRequestConsumed={(nonce) => {
+                setRightDockPageRequest((current) => current?.nonce === nonce ? undefined : current);
+              }}
+              actions={(
+                <>
+                  {sidePanelView !== "settings" ? (
+                    <button
+                      className="icon-button"
+                      type="button"
+                      onClick={openCreateTaskPanel}
+                      disabled={!selectedChannelId}
+                      aria-label={t("New task")}
+                      title={t("New task")}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  ) : null}
+                  <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
+                    {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                  </button>
+                </>
+              )}
+              onClose={closeChannelRightDock}
+            />
+          </div>
+        ) : null}
           </>
         )}
       </div>
@@ -10552,22 +11390,28 @@ function ProgressPopover({
   expanded,
   onExpandedChange,
   progressRows,
+  environmentSummary,
   sourceSummary,
   onOpenSourceGroup,
 }: {
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly progressRows: readonly AttentionProgressRow[];
+  readonly environmentSummary?: ChannelEnvironmentSummary;
   readonly sourceSummary?: ConversationContextSourceSummary;
   readonly onOpenSourceGroup?: (group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
-  if (progressRows.length === 0) {
+  const environmentRows = environmentSummary?.popoverRows ?? [];
+  if (progressRows.length === 0 && environmentRows.length === 0 && (!sourceSummary || sourceSummary.sourceCount === 0)) {
     return null;
   }
   const sourceGroups = sourceSummary?.groups ?? [];
   return (
     <section className="attention-queue compact" aria-label={t("Progress")}>
+      {environmentRows.length > 0 ? (
+        <ChannelEnvironmentPopoverSection summary={environmentSummary!} />
+      ) : null}
       {sourceSummary && sourceSummary.sourceCount > 0 ? (
         <div className="attention-context-section" aria-label={t("Context source summary")}>
           <div className="attention-section-head">
@@ -10645,6 +11489,399 @@ function ProgressPopover({
       ) : null}
     </section>
   );
+}
+
+function ChannelEnvironmentPopoverSection({
+  summary,
+}: {
+  readonly summary: ChannelEnvironmentSummary;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="attention-environment-section" aria-label={t("Environment")}>
+      <div className="attention-section-head">
+        <strong>{t("Environment")}</strong>
+        <small>{summary.changes?.label ?? summary.review?.label ?? summary.workspace?.modeLabel}</small>
+      </div>
+      <div className="attention-environment-list">
+        {summary.popoverRows.map((row) => {
+          const content = (
+            <>
+              <span className={`attention-row-icon ${row.tone}`}>{row.icon}</span>
+              <span className="attention-environment-copy">
+                <strong>{row.label}</strong>
+                {row.stats ? (
+                  <ChannelEnvironmentDiffStat additions={row.stats.additions} deletions={row.stats.deletions} />
+                ) : row.value ? (
+                  <small title={row.value}>{row.value}</small>
+                ) : null}
+              </span>
+            </>
+          );
+          return row.onOpen ? (
+            <button
+              key={row.id}
+              className={`attention-environment-row ${row.tone} interactive`}
+              type="button"
+              onClick={row.onOpen}
+              aria-label={row.disabledReason ? `${row.label}. ${row.disabledReason}` : row.label}
+              title={row.disabledReason ?? row.value}
+            >
+              {content}
+            </button>
+          ) : (
+            <div key={row.id} className={`attention-environment-row ${row.tone}`} title={row.disabledReason ?? row.value}>
+              {content}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ChannelEnvironmentPage({
+  summary,
+  channelName,
+  onOpenReview,
+  onOpenCommit,
+}: {
+  readonly summary: ChannelEnvironmentSummary;
+  readonly channelName?: string;
+  readonly onOpenReview: () => void;
+  readonly onOpenCommit: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <section className="channel-environment-page" aria-label={t("Environment")}>
+      <div className="channel-environment-stack">
+        <section className="channel-environment-section local" aria-label={t("Local environment")}>
+          <header>
+            <span>
+              <Command size={15} />
+              <strong>{t("Local environment")}</strong>
+            </span>
+            <small>{channelName ? `#${channelName}` : t("Current channel")}</small>
+          </header>
+          {summary.workspace ? (
+            <div className="channel-environment-row">
+              <span className={`channel-environment-row-icon ${summary.workspace.status}`}>
+                <FolderOpen size={16} />
+              </span>
+              <span className="channel-environment-row-copy">
+                <strong>{summary.workspace.modeLabel}</strong>
+                <small title={summary.workspace.path}>{summary.workspace.path || t("No workspace path")}</small>
+                {summary.workspace.errorMessage ? <small className="danger-text">{summary.workspace.errorMessage}</small> : null}
+              </span>
+            </div>
+          ) : (
+            <div className="channel-environment-empty">{t("No local workspace is bound to this channel.")}</div>
+          )}
+        </section>
+
+        <section className="channel-environment-section changes" aria-label={t("Changes")}>
+          <header>
+            <span>
+              <ListChecks size={15} />
+              <strong>{t("Changes")}</strong>
+            </span>
+            {summary.changes
+              ? environmentChangesHaveDiffStats(summary.changes)
+                ? <ChannelEnvironmentDiffStat additions={summary.changes.additions ?? 0} deletions={summary.changes.deletions ?? 0} />
+                : <small>{summary.changes.label}</small>
+              : <small>{environmentGitStatusLabel(summary.gitStatusLoadState, t)}</small>}
+          </header>
+          {summary.changes ? (
+            <div className="channel-environment-row">
+              <span className="channel-environment-row-icon waiting">
+                <ListChecks size={16} />
+              </span>
+              <span className="channel-environment-row-copy">
+                <strong>{summary.changes.label}</strong>
+                <small>{environmentChangesDetail(summary.changes, t)}</small>
+              </span>
+            </div>
+          ) : (
+            <div className="channel-environment-empty">{environmentGitStatusEmptyMessage(summary.gitStatusLoadState, t)}</div>
+          )}
+        </section>
+
+        <section className="channel-environment-section review" aria-label={t("Review")}>
+          <header>
+            <span>
+              <ListChecks size={15} />
+              <strong>{t("Review")}</strong>
+            </span>
+            <small>{summary.review?.label ?? t("No review items")}</small>
+          </header>
+          {summary.review ? (
+            <div className="channel-environment-row interactive">
+              <span className="channel-environment-row-icon waiting">
+                <ListChecks size={16} />
+              </span>
+              <span className="channel-environment-row-copy">
+                <strong>{summary.review.label}</strong>
+                <small>{t("Open the Review page to inspect runtime issues, evidence gaps, and approval gates.")}</small>
+              </span>
+              <button className="secondary-button compact-button" type="button" onClick={onOpenReview}>
+                <ListChecks size={14} />
+                {t("View review")}
+              </button>
+            </div>
+          ) : (
+            <div className="channel-environment-empty">{t("No review items")}</div>
+          )}
+        </section>
+
+        <section className="channel-environment-section git" aria-label={t("Working branch")}>
+          <header>
+            <span>
+              <GitBranch size={15} />
+              <strong>{t("Working branch")}</strong>
+            </span>
+            <small>{summary.git?.branchName ?? t("Unavailable")}</small>
+          </header>
+          {summary.git ? (
+            <div className="channel-environment-row">
+              <span className="channel-environment-row-icon info">
+                <GitBranch size={16} />
+              </span>
+              <span className="channel-environment-row-copy">
+                <strong>{summary.git.branchName}</strong>
+                <small>{summary.git.baseBranch ? t("Base branch: {branch}", { branch: summary.git.baseBranch }) : t("Git branch from channel workspace binding.")}</small>
+              </span>
+            </div>
+          ) : (
+            <div className="channel-environment-empty">{t("Working branch unavailable")}</div>
+          )}
+        </section>
+
+        <section className="channel-environment-section commit" aria-label={t("Commit or push")}>
+          <header>
+            <span>
+              <SquareTerminal size={15} />
+              <strong>{t("Commit or push")}</strong>
+            </span>
+            <small>{t("Read-only shell")}</small>
+          </header>
+          <div className="channel-environment-row interactive">
+            <span className="channel-environment-row-icon neutral">
+              <SquareTerminal size={16} />
+            </span>
+            <span className="channel-environment-row-copy">
+              <strong>{t("Commit shell is disabled")}</strong>
+              <small>{summary.commitAction?.disabledReason ?? t("Commit and push require a daemon Git action and approval policy. This first version is read-only.")}</small>
+            </span>
+            <button className="secondary-button compact-button" type="button" onClick={onOpenCommit}>
+              {t("Open")}
+            </button>
+          </div>
+        </section>
+
+        <section className="channel-environment-section browser" aria-label={t("Browser")}>
+          <header>
+            <span>
+              <Search size={15} />
+              <strong>{t("Browser")}</strong>
+            </span>
+            <small>{summary.browser?.label ?? t("No browser evidence")}</small>
+          </header>
+          <div className="channel-environment-empty">{summary.browser?.label ?? t("No browser evidence")}</div>
+        </section>
+
+        <section className="channel-environment-section sources" aria-label={t("Sources")}>
+          <header>
+            <span>
+              <FileCheck2 size={15} />
+              <strong>{t("Sources")}</strong>
+            </span>
+            <small>{summary.sources?.label ?? t("No sources")}</small>
+          </header>
+          <div className="channel-environment-empty">{summary.sources?.label ?? t("No sources")}</div>
+        </section>
+
+        <section className="channel-environment-section output" aria-label={t("Output")}>
+          <header>
+            <span>
+              <Archive size={15} />
+              <strong>{t("Output")}</strong>
+            </span>
+            <small>{summary.output?.label ?? t("No artifacts")}</small>
+          </header>
+          <div className="channel-environment-empty">{summary.output?.label ?? t("No artifacts")}</div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function ChannelEnvironmentCommitDialog({
+  message,
+  includeUnstaged,
+  disabledReason,
+  onMessageChange,
+  onIncludeUnstagedChange,
+  onClose,
+}: {
+  readonly message: string;
+  readonly includeUnstaged: boolean;
+  readonly disabledReason: string;
+  readonly onMessageChange: (message: string) => void;
+  readonly onIncludeUnstagedChange: (include: boolean) => void;
+  readonly onClose: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+    globalThis.addEventListener("keydown", onKeyDown);
+    return () => globalThis.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  return (
+    <div
+      className="environment-commit-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <section className="environment-commit-dialog" role="dialog" aria-modal="true" aria-label={t("Commit or push")}>
+        <header className="environment-commit-dialog-head">
+          <span>
+            <SquareTerminal size={16} />
+            <strong>{t("Commit or push")}</strong>
+          </span>
+          <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close")} title={t("Close")}>
+            <X size={14} />
+          </button>
+        </header>
+        <label className="field">
+          <span>{t("Commit message")}</span>
+          <textarea
+            className="environment-commit-message"
+            value={message}
+            onChange={(event) => onMessageChange(event.target.value)}
+            placeholder={t("Describe the change")}
+          />
+        </label>
+        <label className="checkbox-row environment-include-unstaged">
+          <input
+            type="checkbox"
+            checked={includeUnstaged}
+            onChange={(event) => onIncludeUnstagedChange(event.target.checked)}
+          />
+          <span>{t("Include unstaged changes")}</span>
+        </label>
+        <p>{disabledReason}</p>
+        <div className="environment-commit-actions">
+          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Commit")}</button>
+          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Commit and push")}</button>
+          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Push")}</button>
+          <button className="secondary-button compact-button" type="button" onClick={onClose}>{t("Cancel")}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ChannelEnvironmentDiffStat({
+  additions,
+  deletions,
+}: {
+  readonly additions: number;
+  readonly deletions: number;
+}): JSX.Element {
+  return (
+    <span className="channel-environment-diff-stat" aria-label={`+${additions} -${deletions}`}>
+      <span className="add">+{additions}</span>
+      <span className="del">-{deletions}</span>
+    </span>
+  );
+}
+
+function environmentChangesHaveDiffStats(changes: ChannelEnvironmentGitChanges): boolean {
+  return typeof changes.additions === "number" && typeof changes.deletions === "number" && (changes.additions !== 0 || changes.deletions !== 0);
+}
+
+function environmentChangesLabel(changedFileCount: number, t: Translate): string {
+  if (changedFileCount === 1) {
+    return t("1 changed file");
+  }
+  return t("{count} changed files", { count: changedFileCount });
+}
+
+function environmentChangesDetail(changes: ChannelEnvironmentGitChanges, t: Translate): string {
+  const parts = [
+    changes.stagedFileCount > 0 ? t("{count} staged", { count: changes.stagedFileCount }) : "",
+    changes.unstagedFileCount > 0 ? t("{count} unstaged", { count: changes.unstagedFileCount }) : "",
+    changes.untrackedFileCount > 0 ? t("{count} untracked", { count: changes.untrackedFileCount }) : "",
+    changes.conflictedFileCount > 0 ? t("{count} conflicted", { count: changes.conflictedFileCount }) : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : t("Git working tree has local changes.");
+}
+
+function environmentReviewLabel(reviewItemCount: number, t: Translate): string {
+  if (reviewItemCount === 1) {
+    return t("1 review item");
+  }
+  return t("{count} review items", { count: reviewItemCount });
+}
+
+function environmentGitStatusLabel(state: ChannelGitStatusLoadState, t: Translate): string {
+  if (state.status === "loading") {
+    return t("Loading Git status");
+  }
+  if (state.status === "error") {
+    return t("Git status unavailable");
+  }
+  if (state.status !== "loaded") {
+    return t("Git status unavailable");
+  }
+  switch (state.statusValue.state) {
+    case "clean":
+      return t("No code changes");
+    case "not_git_repo":
+      return t("Not a Git repository");
+    case "unavailable":
+      return t("Git status unavailable");
+    case "error":
+      return t("Git status failed");
+    case "dirty":
+      return environmentChangesLabel(state.statusValue.changedFileCount, t);
+    default:
+      return t("Git status unavailable");
+  }
+}
+
+function environmentGitStatusEmptyMessage(state: ChannelGitStatusLoadState, t: Translate): string {
+  if (state.status === "loading") {
+    return t("Loading Git status");
+  }
+  if (state.status === "error") {
+    return t("Git status unavailable");
+  }
+  if (state.status !== "loaded") {
+    return t("Git status unavailable");
+  }
+  switch (state.statusValue.state) {
+    case "clean":
+      return t("No code changes");
+    case "not_git_repo":
+      return t("Not a Git repository");
+    case "unavailable":
+      return state.statusValue.unavailableReason ?? t("Git status unavailable");
+    case "error":
+      return state.statusValue.errorMessage ?? t("Git status failed");
+    case "dirty":
+      return environmentChangesLabel(state.statusValue.changedFileCount, t);
+    default:
+      return t("Git status unavailable");
+  }
 }
 
 function ActivityDrilldownDrawer({

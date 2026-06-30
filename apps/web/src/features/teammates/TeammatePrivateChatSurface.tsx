@@ -65,6 +65,7 @@ import {
   projectAttachmentsToFileItems,
   projectFileRefsToFileItems,
   projectFilesToEvidenceGroup,
+  projectFilesToReviewItems,
   projectMessagesToReviewItems,
   projectRunsToEvidenceGroup,
   projectRunsToReviewItems,
@@ -249,8 +250,9 @@ export function TeammatePrivateChatSurface({
     () => [
       ...projectRunsToReviewItems(runs, t),
       ...projectMessagesToReviewItems(privateDockMessages, t),
+      ...projectFilesToReviewItems(privateDockFileItems, t),
     ],
-    [privateDockMessages, runs, t],
+    [privateDockFileItems, privateDockMessages, runs, t],
   );
   const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
   const slashCommandPickerOptions = filterSlashCommandPickerOptions(slashCommands, slashPicker);
@@ -693,6 +695,7 @@ export function TeammatePrivateChatSurface({
           open={visibleMessages.length > 0}
           ariaLabel={t("Private chat workspace dock")}
           className="teammate-private-right-dock"
+          cwd={cwd.trim()}
           launcherTitle={t("Private chat tools")}
           launcherSubtitle={teammate.displayName}
           reviewItems={privateDockReviewItems}

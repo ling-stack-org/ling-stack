@@ -13,6 +13,12 @@ links, operation evidence, task/run process, approvals, checks, source summaries
 workflow/packet summaries. Those details belong in the main conversation page through
 inline expansion, in-turn previews, or explicit raw/debug detail.
 
+2026-06-29 environment extension: branch, change, commit/push, browser, and source
+environment rows are now specified in
+[Channel Workspace v1.27 Environment Surface](channel-workspace-v1.27-environment-surface.md).
+The v1.25 rule still stands: the Web client must not probe Git state directly, and the
+floating popover must stay a glanceable status surface rather than a persistent drawer.
+
 ## Summary
 
 v1.25 refines the channel progress popover by borrowing the strongest part of the Codex
@@ -360,9 +366,9 @@ Allowed current sources:
 - workflow/workflow step summaries,
 - existing external work CI triage read model.
 
-Future data may add branch, change count, and commit/push readiness, but only through a
-real workspace status source. The Web client should not shell out or infer Git state
-from paths.
+Future data may add branch, change count, and commit/push readiness through the v1.27
+Environment Surface, but only through a real workspace status source. The Web client
+should not shell out or infer Git state from paths.
 
 ### Data Mapping
 

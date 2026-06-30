@@ -36,6 +36,13 @@ Related docs:
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
 - [Channel Workspace v1.25 Codex-Inspired Attention Popover](channel-workspace-v1.25.md)
 - [Channel Workspace v1.26 Channel Branches](channel-workspace-v1.26.md)
+- [Channel Workspace v1.27 Environment Surface](channel-workspace-v1.27-environment-surface.md)
+- [Channel Workspace v1.27 Environment Surface Detailed Design](channel-workspace-v1.27-environment-surface-detailed-design.md)
+- [Channel Workspace v1.27 Environment Surface First Implementation Plan](channel-workspace-v1.27-environment-surface-implementation-plan.md)
+- [Channel Workspace v1.28 Environment Git Status](channel-workspace-v1.28-environment-git-status.md)
+- [Channel Workspace v1.28 Environment Git Status Detailed Design](channel-workspace-v1.28-environment-git-status-detailed-design.md)
+- [Channel Workspace v1.28 Environment Git Status Implementation Plan](channel-workspace-v1.28-environment-git-status-implementation-plan.md)
+- [Channel Workspace v1.29 Layout Shell](channel-workspace-v1.29-layout-shell.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
@@ -1921,6 +1928,17 @@ Current MVP implementation status:
   implementation. Archived channels and branches are recovered or permanently deleted from
   a Settings management surface, while the normal drawer only exposes reversible archive.
   The UI must not imply Git checkout, merge, push, or delete-branch operations,
+- v1.27 proposes a channel Environment surface: the floating progress popover may show
+  environment rows such as changes, local workspace, Git branch, commit/push affordance,
+  browser, and sources, while the channel `...` menu gains an Environment page that uses
+  the same full-page return pattern as Channel Settings. First implementation is
+  read-only: no browser-side Git probes, no real commit/push, and no conflation between
+  Ling channel branches and Git branches,
+- v1.28 proposes a daemon-backed, read-only Git status source for the Environment
+  surface. It fixes the v1.27 semantic gap by splitting real Git `Changes` from Ling
+  `Review` queue items: `Changes` comes only from daemon Git status, while `Review`
+  comes from right-dock Review projections. The Web client still must not run Git
+  directly, and commit/push remains disabled until a later approval-gated mutation slice,
 - the conversation surface taxonomy now fixes the naming boundary between channel root,
   channel branch, topic reply, teammate private chat, and future session views. Future
   session UI should be a `LingThread` view grouped by owner surface, not a new channel-like
@@ -2421,6 +2439,44 @@ Current MVP implementation status:
   exists.
 - [x] Add targeted browser checks for desktop, mobile, drawer-open, no-current-work, and
   Chinese-label popover states.
+
+### Phase 33.1: Channel Environment Surface
+
+- [x] Define the Environment surface design in
+  `docs/design/channel-workspace-v1.27-environment-surface.md`.
+- [x] Define implementation-level Environment surface detail in
+  `docs/design/channel-workspace-v1.27-environment-surface-detailed-design.md`.
+- [x] Define the first-version implementation plan in
+  `docs/design/channel-workspace-v1.27-environment-surface-implementation-plan.md`.
+- [x] Add Environment to the channel `...` menu using the same full-page return pattern
+  as Channel Settings.
+- [x] Add read-only Environment rows to the floating progress popover from existing
+  channel workspace, review, browser, source, and artifact projections.
+- [x] Make the Changes row open the right dock Review page.
+- [x] Add a centered commit/push modal shell without executing Git.
+- [x] Keep Git branch rows hidden unless a real workspace status source provides branch
+  data.
+- [x] Add focused browser checks for popover changes, Environment page open/back, Review
+  navigation, empty output/source states, and commit modal open/close.
+
+### Phase 33.2: Channel Environment Git Status
+
+- [x] Define the v1.28 Environment Git status design in
+  `docs/design/channel-workspace-v1.28-environment-git-status.md`.
+- [x] Define implementation-level v1.28 detail in
+  `docs/design/channel-workspace-v1.28-environment-git-status-detailed-design.md`.
+- [x] Define the v1.28 implementation plan in
+  `docs/design/channel-workspace-v1.28-environment-git-status-implementation-plan.md`.
+- [x] Add read-only `WorkspaceGitStatus` contract types and api-client method.
+- [x] Add daemon read-only Git status endpoint scoped to the selected channel execution
+  path.
+- [x] Parse branch, file counts, staged/unstaged/untracked/conflicted counts, and
+  additions/deletions when safely available.
+- [x] Load Git status in the channel Environment surface without browser-side Git probes.
+- [x] Split Environment `Changes` and `Review` rows so real Git changes never mix with
+  approval/runtime/evidence Review items.
+- [x] Add mock daemon and e2e coverage for dirty, clean, review-only, not-git-repo, and
+  unavailable states.
 
 ### Phase 34: Multi-Agent Orchestration Experience
 

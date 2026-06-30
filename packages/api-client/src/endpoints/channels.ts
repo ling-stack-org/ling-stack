@@ -49,6 +49,7 @@ import type {
   ChannelWorkflowStepStatus,
   ChannelWorkflowTemplateMutationResponse,
   ChannelWorkspaceCreateWorktreeRequest,
+  ChannelWorkspaceGitStatusResponse,
   ChannelWorkspaceHandoffRequest,
   ChannelWorkspaceMutationResponse,
   ChannelWorkspaceResponse,
@@ -257,6 +258,10 @@ export const channelEndpoints = {
 
   async getChannelWorkspace(this: LingDaemonEndpointContext, cwd: string, channelId: string): Promise<ChannelWorkspaceResponse> {
       return this._get(`/channels/${encodeURIComponent(channelId)}/workspace`, { cwd });
+    },
+
+  async getChannelWorkspaceGitStatus(this: LingDaemonEndpointContext, cwd: string, channelId: string): Promise<ChannelWorkspaceGitStatusResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/workspace/git-status`, { cwd });
     },
 
   async createChannelWorktree(this: LingDaemonEndpointContext,

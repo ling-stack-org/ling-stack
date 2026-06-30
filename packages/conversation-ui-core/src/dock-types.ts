@@ -47,16 +47,87 @@ export type DockReviewGroup =
 
 export type DockReviewStatus = "pending" | "passed" | "blocked" | "failed";
 
+export type DockReviewKind =
+  | "approval_gate"
+  | "code_change"
+  | "runtime_issue"
+  | "evidence_gap"
+  | "message_issue"
+  | "protocol_signal";
+
+export type DockReviewCodeLineKind =
+  | "add"
+  | "delete"
+  | "hunk"
+  | "meta"
+  | "context"
+  | "command";
+
+export interface DockReviewCodeLine {
+  readonly kind: DockReviewCodeLineKind;
+  readonly text: string;
+  readonly lineNumber?: number;
+  readonly oldLineNumber?: number;
+  readonly newLineNumber?: number;
+}
+
+export interface DockReviewChangeStats {
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+export type DockReviewInlineNoteSeverity = "suggestion" | "risk" | "blocker";
+
+export interface DockReviewInlineNote {
+  readonly id: string;
+  readonly severity: DockReviewInlineNoteSeverity;
+  readonly label?: string;
+  readonly authorLabel?: string;
+  readonly body: string;
+  readonly oldLineNumber?: number;
+  readonly newLineNumber?: number;
+  readonly lineKind?: DockReviewCodeLineKind;
+}
+
+export interface DockReviewCodePreview {
+  readonly title: string;
+  readonly language?: string;
+  readonly pathLabel?: string;
+  readonly lines: readonly DockReviewCodeLine[];
+  readonly stats?: DockReviewChangeStats;
+  readonly inlineNotes?: readonly DockReviewInlineNote[];
+  readonly truncated?: boolean;
+}
+
+export interface DockReviewFact {
+  readonly label: string;
+  readonly value: string;
+  readonly tone?: DockSeverity;
+}
+
+export interface DockReviewArtifactRef {
+  readonly id: string;
+  readonly type?: "file" | "diff" | "log" | "json" | "markdown" | "image" | "video";
+  readonly path?: string;
+  readonly title?: string;
+}
+
 export interface DockReviewItem {
   readonly id: string;
   readonly group: DockReviewGroup;
+  readonly kind?: DockReviewKind;
   readonly severity: Exclude<DockSeverity, "neutral">;
   readonly status: DockReviewStatus;
   readonly title: string;
   readonly reason: string;
+  readonly pathLabel?: string;
   readonly sourceLabel?: string;
   readonly actionLabel?: string;
   readonly timestampLabel?: string;
+  readonly stats?: DockReviewChangeStats;
+  readonly codePreview?: DockReviewCodePreview;
+  readonly facts?: readonly DockReviewFact[];
+  readonly artifactRef?: DockReviewArtifactRef;
 }
 
 export type DockEvidenceKind =

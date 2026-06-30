@@ -55,6 +55,7 @@ import {
   mergeEvidenceGroups,
   projectAttachmentsToFileItems,
   projectFilesToEvidenceGroup,
+  projectFilesToReviewItems,
   projectMessagesToReviewItems,
   projectRunsToEvidenceGroup,
   projectRunsToReviewItems,
@@ -230,8 +231,9 @@ export function ConversationHome({
     () => [
       ...projectRunsToReviewItems(detailContext?.runs ?? [], t),
       ...projectMessagesToReviewItems(conversationDockMessages, t),
+      ...projectFilesToReviewItems(conversationDockFileItems, t),
     ],
-    [conversationDockMessages, detailContext?.runs, t],
+    [conversationDockFileItems, conversationDockMessages, detailContext?.runs, t],
   );
   const thinkingButtonLabel = thinkingOff
     ? t("Thinking off")
@@ -898,6 +900,7 @@ export function ConversationHome({
             open
             ariaLabel={t("Conversation workspace dock")}
             className="normal-conversation-right-dock"
+            cwd={workspaceCwd.trim()}
             launcherTitle={t("Conversation tools")}
             launcherSubtitle={t("Review, evidence, and files")}
             reviewItems={conversationDockReviewItems}

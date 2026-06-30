@@ -9,7 +9,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -53,6 +53,7 @@ export interface MockState {
   teammateMcpBindings: MockTeammateMcpBinding[];
   channels: unknown[];
   channelBranches: unknown[];
+  channelWorkspaceGitStatusByChannel: Record<string, WorkspaceGitStatus | MockWorkspaceGitStatusFailure>;
   channelMessages: unknown[];
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
@@ -153,6 +154,12 @@ export interface MockState {
   executionActions: MockExecutionAction[];
   userProfile: UserProfile;
   workspaceSettings: Record<string, unknown>;
+}
+
+export interface MockWorkspaceGitStatusFailure {
+  readonly fail: true;
+  readonly status?: number;
+  readonly message?: string;
 }
 
 export interface MockLingThread {
@@ -376,6 +383,7 @@ export interface MockArtifact {
   type: string;
   path: string;
   title?: string;
+  contentText?: string;
   contentType?: string;
   sizeBytes?: number;
   compareBeforeImageUrl?: string;
@@ -946,6 +954,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
       },
     ],
     channelBranches: [],
+    channelWorkspaceGitStatusByChannel: {},
     channelMessages: [],
     channelMessageRouteDecisions: [],
     channelIntentDecisions: [],
@@ -8620,6 +8629,19 @@ export async function handleDaemonRoute(
       return;
     }
     const channel = state.channels[channelIndex] as Record<string, unknown>;
+    if (request.method() === "GET" && action === "git-status") {
+      const binding = readMockChannelWorkspaceBinding(channel);
+      const fixture = state.channelWorkspaceGitStatusByChannel[channelId];
+      if (isMockWorkspaceGitStatusFailure(fixture)) {
+        await route.fulfill({
+          status: fixture.status ?? 500,
+          json: { error: "mock_git_status_failed", message: fixture.message ?? "Mock Git status failed." },
+        });
+        return;
+      }
+      await route.fulfill({ json: buildMockChannelWorkspaceGitStatusResponse(channelId, channel, binding, fixture) });
+      return;
+    }
     if (request.method() === "GET" && !action) {
       const binding = readMockChannelWorkspaceBinding(channel);
       await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, channel, binding) });
@@ -11369,7 +11391,7 @@ export async function handleDaemonRoute(
     }
     await route.fulfill({
       contentType: artifact.contentType ?? "text/plain; charset=utf-8",
-      body: `${artifact.title ?? artifact.path ?? artifact.id}\n`,
+      body: artifact.contentText ?? `${artifact.title ?? artifact.path ?? artifact.id}\n`,
     });
     return;
   }
@@ -11409,7 +11431,7 @@ export async function handleDaemonRoute(
           previewable: true,
         },
         kind: image ? "image" : artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : "plain_text",
-        text: image ? undefined : `${artifact.title ?? artifact.path ?? artifact.id}\n`,
+        text: image ? undefined : artifact.contentText ?? `${artifact.title ?? artifact.path ?? artifact.id}\n`,
         imageUrl: image ? `/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}` : undefined,
         compare,
         truncated: false,
@@ -11515,6 +11537,50 @@ function buildMockChannelWorkspaceResponse(
       checkedAt: typeof binding.checkedAt === "string" ? binding.checkedAt : undefined,
     },
   };
+}
+
+function buildMockChannelWorkspaceGitStatusResponse(
+  channelId: string,
+  channel: Record<string, unknown>,
+  binding: Record<string, unknown>,
+  fixture: WorkspaceGitStatus | MockWorkspaceGitStatusFailure | undefined,
+): Record<string, unknown> {
+  const workspace = buildMockChannelWorkspaceResponse(channelId, channel, binding);
+  const snapshot = workspace.snapshot as Record<string, unknown>;
+  const executionCwd = typeof snapshot.executionCwd === "string" ? snapshot.executionCwd : cwd;
+  const gitStatus = fixture && !isMockWorkspaceGitStatusFailure(fixture)
+    ? {
+      ...fixture,
+      cwd: fixture.cwd || executionCwd,
+      checkedAt: fixture.checkedAt || "2026-06-29T00:00:00.000Z",
+    }
+    : buildMockCleanWorkspaceGitStatus(executionCwd, binding);
+  return {
+    ...workspace,
+    gitStatus,
+  };
+}
+
+function buildMockCleanWorkspaceGitStatus(executionCwd: string, binding: Record<string, unknown>): WorkspaceGitStatus {
+  return {
+    state: "clean",
+    cwd: executionCwd,
+    repoRoot: executionCwd,
+    branchName: typeof binding.branchName === "string" ? binding.branchName : undefined,
+    upstream: typeof binding.baseBranch === "string" ? binding.baseBranch : undefined,
+    headSha: "mock-head",
+    changedFileCount: 0,
+    stagedFileCount: 0,
+    unstagedFileCount: 0,
+    untrackedFileCount: 0,
+    conflictedFileCount: 0,
+    files: [],
+    checkedAt: "2026-06-29T00:00:00.000Z",
+  };
+}
+
+function isMockWorkspaceGitStatusFailure(value: unknown): value is MockWorkspaceGitStatusFailure {
+  return isRecord(value) && value.fail === true;
 }
 
 function readMockDirectWorkspaceBinding(thread: Record<string, unknown>): Record<string, unknown> {
