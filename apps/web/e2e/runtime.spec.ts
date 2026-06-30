@@ -14,16 +14,31 @@ import {
   readHorizontalOverflow,
 } from "./support/test-helpers";
 
-async function openRunDiagnostics(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Developer/ }).click();
-  await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
-}
-
-test("runtime diagnostics surface supervisor state and work unit controls", async ({ page }) => {
+test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
+});
+
+async function openRunDiagnostics(page: Page): Promise<void> {
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Data and maintenance/ }).click();
+  await page.getByLabel("Data and maintenance sections").getByRole("tab", { name: /Startup and diagnostics/ }).click();
+  await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
+  await expect(page.getByRole("heading", { name: "Run Diagnostics", level: 1 })).toBeVisible();
+}
+
+async function openChannelRuntimeDiagnostics(page: Page): Promise<void> {
+  await openChannelContextPanel(page);
+  const inspectorModes = page.getByLabel("Channel inspector modes");
+  if (!await inspectorModes.isVisible().catch(() => false)) {
+    await page.getByLabel("Channel workspace dock").getByRole("button", { name: "Activity" }).click();
+  }
+  await inspectorModes.getByRole("button", { name: "Runtime" }).click();
+  await expect(page.getByLabel("Runtime diagnostics")).toBeVisible();
+}
+
+test("runtime diagnostics surface supervisor state and work unit controls", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   state.runs = state.runs.map((run) => ({ ...run, workUnitId: "wu_running" }));
   const timeoutPolicy = {
@@ -169,8 +184,7 @@ test("runtime diagnostics surface supervisor state and work unit controls", asyn
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await openChannelContextPanel(page);
-  await page.getByRole("button", { name: "Runtime" }).click();
+  await openChannelRuntimeDiagnostics(page);
 
   const diagnostics = page.getByLabel("Runtime diagnostics");
   await expect(diagnostics).toContainText("runtime_e2e_shared");
@@ -358,9 +372,10 @@ test("failed provider runs route repair back to Model Workbench", async ({ page 
 
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
   await expect(page.getByText("Next: repair Auth Failed Gateway check failure")).toBeVisible();
-  const failedProviderRow = page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" });
+  const failedProviderRow = page.getByRole("row").filter({ hasText: "Auth Failed Gateway" });
   await expect(failedProviderRow).toContainText("auth failed");
-  await expect(failedProviderRow.getByRole("button", { name: "Edit" })).toBeVisible();
+  await expect(failedProviderRow.getByRole("button", { name: "Check" })).toBeVisible();
+  await expect(failedProviderRow.getByRole("button", { name: "More" })).toBeVisible();
 });
 
 test("run detail renders artifact rows from the daemon API", async ({ page }) => {
@@ -1066,7 +1081,7 @@ test("fork and run starts an explicit child branch run from work history", async
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
   await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
-  const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Task in progress" });
+  const workCell = page.getByRole("article", { name: "Task in progress" });
   await expect(workCell).toBeVisible();
   await expect(workCell).toContainText("Implement child branch immediately.");
 });

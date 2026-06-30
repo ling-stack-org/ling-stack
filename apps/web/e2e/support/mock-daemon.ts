@@ -788,7 +788,7 @@ export async function openTaskFromAttentionQueue(page: Page, title: string): Pro
     if (await showTaskInTranscript.count() > 0) {
       await showTaskInTranscript.click();
     }
-    await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
+    await expectTaskDetailPanel(page);
     return;
   }
   const openTask = workItem.getByRole("button", { name: "Open task" });
@@ -804,24 +804,61 @@ export async function openTaskFromAttentionQueue(page: Page, title: string): Pro
     await expect(approvalOverlay).toBeVisible();
     await approvalOverlay.getByRole("button", { name: "Open linked task" }).click();
   }
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
+  await expectTaskDetailPanel(page);
+}
+
+async function expectTaskDetailPanel(page: Page): Promise<void> {
+  await expect(page.locator(".channel-side-panel")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toBeVisible();
 }
 
 export async function openNewTaskPanel(page: Page): Promise<void> {
   await openChannelContextPanel(page);
+  const panel = page.locator(".channel-side-panel");
+  await panel.hover();
+  if (await clickVisibleNewTask(page)) {
+    return;
+  }
+  const backButton = panel.getByRole("button", { name: "Back" }).first();
+  if (await backButton.isVisible().catch(() => false)) {
+    await backButton.click();
+  }
+  if (await clickVisibleNewTask(page)) {
+    return;
+  }
+  const hideDetails = page.getByRole("button", { name: "Hide details" });
+  if (await hideDetails.isVisible().catch(() => false)) {
+    await hideDetails.click();
+    await expect(panel).toHaveCount(0);
+  }
+  await openChannelContextPanel(page);
   await page.locator(".channel-side-panel").hover();
-  await page.getByRole("button", { name: "New task" }).click();
+  const newTaskButton = page.getByRole("button", { name: "New task" }).first();
+  await expect(newTaskButton).toBeVisible();
+  await newTaskButton.click();
 }
 
 export async function openChannelContextPanel(page: Page): Promise<void> {
   const panel = page.locator(".channel-side-panel");
   const panelVisible = (await panel.count()) > 0 && await panel.isVisible().catch(() => false);
   const panelLabel = panelVisible ? await panel.getAttribute("aria-label") : "";
-  if (panelVisible && (panelLabel === "Context" || panelLabel === "Task detail")) {
+  const hasNewTaskAction = panelVisible && await panel.getByRole("button", { name: "New task" }).first().isVisible().catch(() => false);
+  if (panelVisible && (panelLabel === "Context" || panelLabel === "Task detail" || (panelLabel === "Channel workspace dock" && hasNewTaskAction))) {
     await panel.hover();
     return;
   }
   await openChannelChatTools(page);
+  const moreViewsButton = page.getByRole("button", { name: "More channel views" });
+  if (await moreViewsButton.isVisible().catch(() => false)) {
+    await moreViewsButton.click();
+    const contextItem = page.getByRole("menuitem", { name: "Context" });
+    if (await contextItem.isVisible().catch(() => false)) {
+      await contextItem.click();
+      await expect(panel).toBeVisible();
+      await panel.hover();
+      return;
+    }
+  }
   const showDetailsButton = page.getByRole("button", { name: "Show details" });
   if (await showDetailsButton.count() > 0 && await showDetailsButton.isVisible().catch(() => false)) {
     await showDetailsButton.click();
@@ -832,8 +869,17 @@ export async function openChannelContextPanel(page: Page): Promise<void> {
   const openContextButton = page.getByRole("button", { name: "Open context" }).first();
   await expect(openContextButton).toBeVisible();
   await openContextButton.click();
-  await expect(panel).toHaveAttribute("aria-label", "Context");
+  await expect(panel).toBeVisible();
   await panel.hover();
+}
+
+async function clickVisibleNewTask(page: Page): Promise<boolean> {
+  const newTaskButton = page.getByRole("button", { name: "New task" }).first();
+  if (!(await newTaskButton.isVisible().catch(() => false))) {
+    return false;
+  }
+  await newTaskButton.click();
+  return true;
 }
 
 export async function openChannelSidePanel(page: Page, name: "Settings"): Promise<void> {

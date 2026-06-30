@@ -227,14 +227,14 @@ export function TeammatePrivateChatSurface({
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
       webEvidence: message.webEvidence,
-      fileRefs: message.fileRefs,
+      fileRefs: message.fileRefs ?? [],
     })),
     [teammate.displayName, t, visibleMessages],
   );
   const privateDockFileItems = useMemo(
     () => mergeDockFileItems(
       projectAttachmentsToFileItems([...privateAttachmentById.values()], t),
-      projectFileRefsToFileItems(visibleMessages.flatMap((message) => message.fileRefs)),
+      projectFileRefsToFileItems(visibleMessages.flatMap((message) => message.fileRefs ?? [])),
     ),
     [privateAttachmentById, t, visibleMessages],
   );
@@ -417,12 +417,12 @@ export function TeammatePrivateChatSurface({
                   bodyCwd={cwd}
                   bodyCompact
                   bodyStreaming={pendingAiReply}
-                  attachmentsNode={message.attachmentIds.length > 0 ? (
+                  attachmentsNode={(message.attachmentIds ?? []).length > 0 ? (
                     <ConversationAttachmentStrip
                       className="teammate-message-attachments"
                       chipClassName="teammate-attachment-chip"
                       loadPreview={loadPreviewContent}
-                      attachments={message.attachmentIds
+                      attachments={(message.attachmentIds ?? [])
                         .map((id) => privateAttachmentById.get(id))
                         .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
                         .map((attachment) => ({

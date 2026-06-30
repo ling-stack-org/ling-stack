@@ -1,6 +1,7 @@
 export const channelRightDockMinWidth = 304;
 export const channelRightDockMaxViewportRatio = 0.5;
 export const channelRightDockMinChatWidth = 560;
+export const channelConversationTargetWidth = 800;
 export const channelRightDockResizeHandleWidth = 8;
 export const channelRightDockTransitionMs = 620;
 export const channelRightDockUnmountDelayMs = channelRightDockTransitionMs + 140;
@@ -13,6 +14,7 @@ export interface ChannelWorkspaceLayoutDecisionInput {
 }
 
 export interface ChannelWorkspaceLayoutDecision {
+  readonly progressPopoverCanFitMainLayout: boolean;
   readonly progressPopoverCanUseMainLayout: boolean;
 }
 
@@ -53,11 +55,14 @@ export function resolveChannelWorkspaceLayoutDecision({
   rightDockVisible,
   rightDockWidth,
 }: ChannelWorkspaceLayoutDecisionInput): ChannelWorkspaceLayoutDecision {
+  const progressPopoverCanFitMainLayout =
+    mainWidth - rightDockWidth - channelRightDockResizeHandleWidth - channelProgressPanelTrackWidth >= channelConversationTargetWidth;
   const progressPopoverCanUseMainLayout =
     rightDockVisible &&
-    mainWidth - rightDockWidth - channelRightDockResizeHandleWidth - channelProgressPanelTrackWidth >= channelRightDockMinChatWidth;
+    progressPopoverCanFitMainLayout;
 
   return {
+    progressPopoverCanFitMainLayout,
     progressPopoverCanUseMainLayout,
   };
 }

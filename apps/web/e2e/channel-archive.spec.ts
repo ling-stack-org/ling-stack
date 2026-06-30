@@ -12,6 +12,12 @@ async function useEnglishLocale(page: Page): Promise<void> {
   });
 }
 
+async function openArchivedItemsSettings(page: Page): Promise<void> {
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Data and maintenance/ }).click();
+  await page.getByRole("tab", { name: /Archived items/ }).click();
+}
+
 test("channel branch list shows real branches without default branch chrome", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -68,8 +74,7 @@ test("channel branch list shows real branches without default branch chrome", as
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
   await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe(quickSplitRootThreadId);
 
-  await navigation.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
+  await openArchivedItemsSettings(page);
   const archivedPanel = page.getByRole("region", { name: "Archived channels and branches" });
   await expect(archivedPanel).toContainText("Engineering / API cleanup");
   await expect(archivedPanel).toContainText("Engineering / Legacy split");
@@ -80,10 +85,10 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect.poll(() => mockBranchStatus(state, "API cleanup")).toBe("active");
   await expect(archivedPanel).not.toContainText("Engineering / API cleanup");
   await expect(archivedPanel).toContainText("Engineering / Legacy split");
+  await page.getByRole("button", { name: "Back to app" }).click();
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await expect(navigation.getByRole("button", { name: "API cleanup" })).toBeVisible();
-  await navigation.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
+  await openArchivedItemsSettings(page);
 
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toContain("Delete branch Legacy split?");
@@ -93,13 +98,13 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect.poll(() => mockBranchExists(state, "Legacy split")).toBe(false);
   await expect(archivedPanel).toContainText("No archived branches");
 
+  await page.getByRole("button", { name: "Back to app" }).click();
   await engineeringGroup.locator(".sidebar-row-main").click();
   await engineeringGroup.getByRole("button", { name: "Archive channel" }).click();
   await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("archived");
   await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
+  await openArchivedItemsSettings(page);
   await expect(archivedPanel).toContainText("Engineering");
   await expect(archivedPanel.getByRole("button", { name: "Restore" })).toBeVisible();
   await expect(archivedPanel.getByRole("button", { name: "Delete" })).toBeVisible();
@@ -126,7 +131,7 @@ test("channel sidebar menu keeps create action without bulk archive", async ({ p
   const navigation = page.getByLabel("Ling Stack navigation");
   await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Design" })).toBeVisible();
-  await navigation.getByRole("button", { name: "Channel actions" }).hover();
+  await navigation.getByRole("button", { name: "Channel actions" }).click();
   await expect(navigation.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await expect(navigation.getByRole("menuitem", { name: "Archive all channels" })).toHaveCount(0);
   await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("active");

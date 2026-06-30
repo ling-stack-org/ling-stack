@@ -35,7 +35,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByRole("button", { name: "返回应用" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toHaveCount(0);
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
   await expect(page.getByLabel("频道动态")).toBeVisible();
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("搜索动态")).toBeVisible();
@@ -45,7 +45,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
   await expect.poll(() => state.workspaceSettings.locale).toBe("zh-CN");
   await page.locator(".task-toolbar-progress").click();
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover")).toBeVisible();
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");
@@ -72,7 +72,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
   await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
   await page.locator(".task-toolbar-progress").click();
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover")).toBeVisible();
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");

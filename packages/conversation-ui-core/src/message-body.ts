@@ -176,7 +176,7 @@ export function splitInlineTokens(
       continue;
     }
 
-    if (isLocalPathStartBoundary(text[index - 1])) {
+    if (isLocalPathStartBoundary(text[index - 1]) && !isHtmlClosingTagPathStart(text, index)) {
       const localPath = readLocalPath(remaining, cwd);
       if (localPath) {
         tokens.push({ kind: "local_file", reference: localPath.reference });
@@ -347,6 +347,10 @@ function readLocalPath(text: string, cwd?: string): LocalPathMatch | undefined {
 
 function isLocalPathStartBoundary(previous: string | undefined): boolean {
   return previous === undefined || /\s/.test(previous) || "([{<\"'`|".includes(previous);
+}
+
+function isHtmlClosingTagPathStart(text: string, index: number): boolean {
+  return text[index - 1] === "<" && /^\/[A-Za-z][A-Za-z0-9:-]*\s*>/.test(text.slice(index));
 }
 
 function isLikelyLocalPath(value: string): boolean {

@@ -13,7 +13,6 @@ export {
   EvidencePage,
   FilesPage,
   MessageActionBar,
-  MessageBodyRenderer,
   MessageBubble,
   MessageRow,
   ReviewQueuePage,
@@ -45,7 +44,6 @@ export {
   type MessageActionBarAction,
   type MessageActionBarProps,
   type MessageActionKind,
-  type MessageBodyRendererProps,
   type MessageBubbleProps,
   type MessageBubbleTone,
   type MessageRowAuthorType,
@@ -109,6 +107,7 @@ export {
 } from "@ling-stack/conversation-ui-core";
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
 export { ConversationEvidenceBundlePanel, type ConversationEvidenceBundle, type ConversationEvidenceBundlePanelProps, type ConversationEvidenceItem, type ConversationEvidenceSection } from "./blocks/ConversationEvidenceBundlePanel.js";
+export { MessageBodyRenderer, type MessageBodyRendererProps } from "./blocks/MessageBodyRenderer.js";
 export { MessageEvidencePanel } from "./blocks/MessageEvidencePanel.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
