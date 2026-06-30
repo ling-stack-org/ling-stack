@@ -77,7 +77,7 @@ import {
 export interface ChannelActionsController {
   readonly saveChannel: () => Promise<void>;
   readonly saveDefaultChannel: () => Promise<void>;
-  readonly saveChannelEdit: (channelId: string) => Promise<void>;
+  readonly saveChannelEdit: (channelId: string, formOverride?: ChannelFormState) => Promise<void>;
   readonly saveChannelBranch: (channelId: string, name: string) => Promise<void>;
   readonly archiveSidebarChannel: (channelId: string) => Promise<void>;
   readonly archiveAllSidebarChannels: () => Promise<void>;
@@ -276,23 +276,24 @@ export function useChannelActionsController(input: {
     }
   }
 
-  async function saveChannelEdit(channelId: string): Promise<void> {
+  async function saveChannelEdit(channelId: string, formOverride?: ChannelFormState): Promise<void> {
+    const channelForm = formOverride ?? input.channelEditForm;
     if (!input.form.cwd.trim()) {
       input.setErrorMessage("本地工作区未就绪");
       return;
     }
-    if (!input.channelEditForm.name.trim()) {
+    if (!channelForm.name.trim()) {
       input.setErrorMessage("请输入 channel name");
       return;
     }
-    if (input.channelEditForm.allowedTools.length === 0) {
+    if (channelForm.allowedTools.length === 0) {
       input.setErrorMessage("请至少选择一个 allowed tool");
       return;
     }
 
     try {
       input.setErrorMessage("");
-      const response = await updateChannel(input.form.cwd.trim(), channelId, input.channelEditForm);
+      const response = await updateChannel(input.form.cwd.trim(), channelId, channelForm);
       input.setSelectedChannelId(response.channel.id);
       input.setTaskRunProviderId("");
       input.setChannelEditForm(channelToForm(response.channel, input.form.cwd));

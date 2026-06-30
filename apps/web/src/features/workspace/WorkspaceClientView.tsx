@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -32,6 +32,7 @@ import {
   MoreHorizontal,
   PanelRightClose,
   PanelRightOpen,
+  PencilLine,
   Pin,
   PinOff,
   Play,
@@ -1183,7 +1184,7 @@ export function WorkspaceClientView({
   readonly onOpenTeammates: () => void;
   readonly onRefreshChannels: () => void;
   readonly onCreateChannel: () => void;
-  readonly onSaveChannel: () => void;
+  readonly onSaveChannel: (formOverride?: ChannelFormState) => void | Promise<void>;
   readonly onCreateTask: () => void;
   readonly onCreateTaskFromSlashCommand: (input: {
     readonly title: string;
@@ -1295,6 +1296,9 @@ export function WorkspaceClientView({
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
+  const [channelRenameOpen, setChannelRenameOpen] = useState(false);
+  const [channelRenameName, setChannelRenameName] = useState("");
+  const [channelRenameSaving, setChannelRenameSaving] = useState(false);
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
   const [progressPopoverRendered, setProgressPopoverRendered] = useState(false);
   const [progressPopoverExpanded, setProgressPopoverExpanded] = useState(false);
@@ -6435,6 +6439,52 @@ export function WorkspaceClientView({
     setEnvironmentCommitDialogOpen(false);
   }
 
+  function openChannelRenameDialog(): void {
+    if (!selectedChannel) {
+      return;
+    }
+    setChannelRenameName(selectedChannel.name);
+    setChannelRenameOpen(true);
+    setChannelMoreOpen(false);
+    setEnvironmentCommitDialogOpen(false);
+    setConversationDetailOverlay(undefined);
+    setProgressPopoverOpen(false);
+    setActivityToolsOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setTeammateManagerOpen(false);
+    onChannelCreateOpenChange(false);
+  }
+
+  function closeChannelRenameDialog(): void {
+    if (channelRenameSaving) {
+      return;
+    }
+    setChannelRenameOpen(false);
+  }
+
+  async function submitChannelRename(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const nextName = channelRenameName.trim();
+    if (!selectedChannelId || !nextName || nextName === selectedChannel?.name || channelRenameSaving) {
+      return;
+    }
+
+    const nextForm = {
+      ...channelEditForm,
+      name: nextName,
+    };
+    setChannelRenameSaving(true);
+    onChannelEditFormChange(nextForm);
+    try {
+      await onSaveChannel(nextForm);
+      setChannelRenameOpen(false);
+    } catch {
+      // saveChannelEdit already publishes the user-facing error message.
+    } finally {
+      setChannelRenameSaving(false);
+    }
+  }
+
   function openRightDockPage(page: DockPageKind): void {
     setSidePanelView("context");
     setSidePanelOpen(true);
@@ -6623,7 +6673,7 @@ export function WorkspaceClientView({
             {channelsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
             {t("Refresh channels")}
           </button>
-          <button className="primary-button compact-button" type="button" onClick={onSaveChannel} disabled={!selectedChannelId}>
+          <button className="primary-button compact-button" type="button" onClick={() => void onSaveChannel()} disabled={!selectedChannelId}>
             <FileCheck2 size={14} />
             {t("Save channel")}
           </button>
@@ -6874,6 +6924,7 @@ export function WorkspaceClientView({
         label: t("Local environment"),
         value: workspace.shortPath || workspace.path || workspace.modeLabel,
         tone: workspace.status === "ready" ? "success" : workspace.status === "missing" || workspace.status === "blocked" ? "blocked" : "neutral",
+        onOpen: openChannelEnvironmentPage,
       });
     }
     if (git) {
@@ -7082,18 +7133,6 @@ export function WorkspaceClientView({
             <div className="channel-title-line">
               <span className="channel-title-icon" aria-hidden="true">#</span>
               <h1>{selectedChannel?.name ?? "Engineering"}</h1>
-              {selectedChannelWorkspace ? (
-                <button
-                  className={`channel-workspace-badge ${selectedChannelWorkspace.mode} ${selectedChannelWorkspace.status}`}
-                  type="button"
-                  onClick={openChannelSettingsPage}
-                  title={selectedChannelExecutionPath}
-                >
-                  {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 13)}
-                  <span>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</span>
-                  <small>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
-                </button>
-              ) : null}
               <div className="channel-more-wrap" ref={channelMoreRef}>
                 <button
                   className={channelMoreOpen ? "icon-button channel-more-button active" : "icon-button channel-more-button"}
@@ -7115,6 +7154,16 @@ export function WorkspaceClientView({
                     >
                       <SlidersHorizontal size={15} />
                       <span>{t("Settings")}</span>
+                    </button>
+                    <button
+                      className="channel-more-item"
+                      type="button"
+                      role="menuitem"
+                      onClick={openChannelRenameDialog}
+                      disabled={!selectedChannelId}
+                    >
+                      <PencilLine size={15} />
+                      <span>{t("Rename channel")}</span>
                     </button>
                     <button
                       className={channelEnvironmentPageOpen ? "channel-more-item active" : "channel-more-item"}
@@ -7294,6 +7343,17 @@ export function WorkspaceClientView({
         <section ref={teammateManagerPanelRef} className="workbench-settings-panel channel-teammate-dock" aria-label={t("AI teammate management")}>
           {channelTeammateManager}
         </section>
+      ) : null}
+
+      {channelRenameOpen ? (
+        <ChannelRenameDialog
+          value={channelRenameName}
+          currentName={selectedChannel?.name ?? ""}
+          saving={channelRenameSaving}
+          onValueChange={setChannelRenameName}
+          onSubmit={(event) => void submitChannelRename(event)}
+          onClose={closeChannelRenameDialog}
+        />
       ) : null}
 
       {channelCreateOpen ? (
@@ -11712,6 +11772,69 @@ function ChannelEnvironmentPage({
         </section>
       </div>
     </section>
+  );
+}
+
+function ChannelRenameDialog({
+  value,
+  currentName,
+  saving,
+  onValueChange,
+  onSubmit,
+  onClose,
+}: {
+  readonly value: string;
+  readonly currentName: string;
+  readonly saving: boolean;
+  readonly onValueChange: (value: string) => void;
+  readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  readonly onClose: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const trimmedValue = value.trim();
+  const submitDisabled = saving || !trimmedValue || trimmedValue === currentName;
+  return (
+    <div
+      className="channel-create-overlay channel-rename-overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <form className="channel-create-dialog channel-rename-dialog" role="dialog" aria-modal="true" aria-label={t("Rename channel")} onSubmit={onSubmit}>
+        <div className="channel-create-head">
+          <span>
+            <PencilLine size={16} />
+            <strong>{t("Rename channel")}</strong>
+          </span>
+          <button className="icon-button" type="button" onClick={onClose} aria-label={t("Cancel")} title={t("Cancel")} disabled={saving}>
+            <X size={14} />
+          </button>
+        </div>
+        <div className="channel-rename-body">
+          <label className="field wide">
+            <span>{t("Channel name")}</span>
+            <input
+              value={value}
+              onChange={(event) => onValueChange(event.target.value)}
+              autoFocus
+              disabled={saving}
+            />
+          </label>
+          <div className="channel-option-actions">
+            <button className="primary-button compact-button" type="submit" disabled={submitDisabled}>
+              {saving ? <Loader2 className="spin" size={14} /> : <FileCheck2 size={14} />}
+              {t("Confirm")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={onClose} disabled={saving}>
+              {t("Cancel")}
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
   );
 }
 

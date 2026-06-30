@@ -840,6 +840,16 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(popover).toContainText("1 changed file");
   await expect(popover).toContainText("+12");
   await expect(popover).toContainText("-3");
+  await popover.getByRole("button", { name: "Local environment" }).click();
+  const quickEnvironmentPage = page.locator(".channel-environment-page");
+  await expect(quickEnvironmentPage).toBeVisible();
+  await expect(quickEnvironmentPage).toContainText("Local environment");
+  await expect(quickEnvironmentPage).toContainText("Worktree");
+  await expect(quickEnvironmentPage).toContainText("ling/channel-environment");
+  await page.getByRole("button", { name: "Back to channel" }).click();
+  await expect(quickEnvironmentPage).toHaveCount(0);
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  await expect(popover).toBeVisible();
 
   const dock = page.locator(".channel-side-panel");
   const chatLayout = page.locator(".activity-chat-layout");
@@ -2355,18 +2365,19 @@ test("conversation turn transcript renders coordinator web evidence in the main 
   await expect(evidence).not.toContainText("0 sources");
 });
 
-test("channel settings manage workspace binding and header badge", async ({ page }) => {
+test("channel settings manage workspace binding", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "pending" });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
-  await expect(page.locator(".channel-workspace-badge")).toContainText("Local");
-  await expect(page.locator(".channel-workspace-badge")).toHaveAttribute("title", "/tmp/ling-stack-workspace");
+  await expect(page.locator(".channel-workspace-badge")).toHaveCount(0);
 
-  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   const details = page.getByLabel("Channel management");
   const workspaceControl = details.getByLabel("Channel workspace");
   await expect(workspaceControl).toContainText("Local");
@@ -2376,7 +2387,6 @@ test("channel settings manage workspace binding and header badge", async ({ page
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
   }).toBe("managed_worktree");
   await expect(workspaceControl).toContainText("Worktree");
-  await expect(page.locator(".channel-workspace-badge")).toContainText("Worktree");
 
   await workspaceControl.getByPlaceholder("External workspace path").fill("/tmp/external-channel-workspace");
   await workspaceControl.getByRole("button", { name: "Hand off to External" }).click();
@@ -2385,7 +2395,6 @@ test("channel settings manage workspace binding and header badge", async ({ page
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.executionPath : "";
   }).toBe("/tmp/external-channel-workspace");
   await expect(workspaceControl).toContainText("External");
-  await expect(page.locator(".channel-workspace-badge")).toContainText("External");
 
   await workspaceControl.getByRole("button", { name: "Hand off to Local" }).click();
   await expect.poll(() => {
@@ -2393,6 +2402,32 @@ test("channel settings manage workspace binding and header badge", async ({ page
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
   }).toBe("local");
   await expect(workspaceControl).toContainText("Local");
+});
+
+test("channel more menu renames the selected channel", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  const menu = page.getByRole("menu", { name: "More channel views" });
+  await menu.getByRole("menuitem", { name: "Rename channel" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Rename channel" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Channel name")).toHaveValue("Engineering");
+  await dialog.getByLabel("Channel name").fill("v0.1 Smoke");
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    return isRecord(channel) ? channel.name : "";
+  }).toBe("v0.1 Smoke");
+  await expect(page.getByRole("heading", { name: "v0.1 Smoke", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "v0.1 Smoke" })).toBeVisible();
 });
 
 test("paused channels disable task run actions", async ({ page }) => {

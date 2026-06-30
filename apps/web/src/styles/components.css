@@ -5710,6 +5710,11 @@ code,
   color: var(--text-strong);
 }
 
+.channel-more-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .channel-activity-tools {
   max-height: min(46vh, 420px);
   overflow: auto;
@@ -12649,6 +12654,17 @@ code,
   padding-top: 0;
 }
 
+.channel-rename-dialog {
+  width: min(420px, calc(100vw - 48px));
+  max-height: none;
+  overflow: visible;
+}
+
+.channel-rename-body {
+  display: grid;
+  gap: 14px;
+}
+
 .channel-create-teammates {
   display: grid;
   gap: 8px;
@@ -12695,52 +12711,6 @@ code,
 .channel-create-teammate small {
   color: var(--text-muted);
   font-size: 11px;
-}
-
-.channel-workspace-badge {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: min(220px, 28vw);
-  min-height: 22px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.channel-workspace-badge.ready {
-  border-color: var(--success-border);
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.channel-workspace-badge.missing,
-.channel-workspace-badge.blocked,
-.channel-workspace-badge.unsupported {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.channel-workspace-badge span,
-.channel-workspace-badge small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.channel-workspace-badge small {
-  min-width: 0;
-  color: inherit;
-  opacity: 0.8;
 }
 
 .channel-workspace-control {
