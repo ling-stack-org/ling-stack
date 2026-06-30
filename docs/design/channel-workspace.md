@@ -1600,11 +1600,13 @@ Current extraction state:
 - Extracted activity controller hook: `useChannelActivityController.ts`, covering
   channel activity item projection, audit filter/search state, saved-view persistence and
   migration, filter counts, custom saved-view actions, and activity drilldown selection.
-  `WorkspaceClientView.tsx` still owns feed visibility rules, activity row rendering, and
-  target-opening side effects. Saved-view initialization is scoped to selected-channel
-  settings so parent error rerenders do not reset the drilldown drawer; the selected
-  drilldown is also retained across transient activity refreshes so triage failure/retry
-  state stays local to the drawer.
+  `ChannelActivityWorkspace.tsx` now owns the Activity tab shell composition for activity
+  tools, branch tree, message feed, thread replies, and the drilldown drawer.
+  `WorkspaceClientView.tsx` still owns feed visibility rules, activity row rendering,
+  target-opening side effects, and the concrete prop wiring for child surfaces. Saved-view
+  initialization is scoped to selected-channel settings so parent error rerenders do not
+  reset the drilldown drawer; the selected drilldown is also retained across transient
+  activity refreshes so triage failure/retry state stays local to the drawer.
 - Extracted work-thread controller hook: `useChannelWorkThreadsController.ts`, covering
   channel branch loading, fallback branch derivation from runs, branch search/tree
   projection, active branch reset, and fork/archive/pin mutations. `WorkspaceClientView.tsx`

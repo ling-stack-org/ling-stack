@@ -136,11 +136,6 @@ import {
 } from "./ChannelEnvironmentSummary.js";
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
-import { ThreadReplyPanel } from "./ThreadReplyPanel.js";
-import {
-  ActivityDrilldownDrawer,
-} from "./ChannelActivityPanels.js";
-import { ChannelActivityToolsPanel } from "./ChannelActivityToolsPanel.js";
 import {
   NewTaskPanel,
   TaskDetailPanel,
@@ -237,10 +232,9 @@ import {
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
 import { ChannelComposer } from "./ChannelComposer.js";
-import { ChannelWorkThreadTree } from "./ChannelWorkThreadTree.js";
+import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import {
-  ChannelMessageFeed,
   conversationTurnRenderSignature,
   useChannelMessageFeed,
   type ChannelMessageFeedItem,
@@ -4859,231 +4853,215 @@ export function WorkspaceClientView({
           />
         ) : (
           <>
-        <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>
-          <div className="activity-shell">
-	              <div className={activeThreadRoot ? "activity-chat-layout with-thread" : "activity-chat-layout"}>
-	                <div className="activity-chat-main">
-                  {auditActivityVisible ? (
-                    <ChannelActivityToolsPanel
-                      search={activitySearch}
-                      categoryFilter={activityCategoryFilter}
-                      attentionFilter={activityAttentionFilter}
-                      savedViews={allActivitySavedViews}
-                      activeSavedViewId={activeActivityViewId}
-                      filtersExpanded={activityFiltersExpanded}
-                      savedViewCounts={savedViewCounts}
-                      selectedSavedView={selectedActivitySavedView}
-                      categoryCounts={activityCategoryCounts}
-                      attentionCounts={activityAttentionCounts}
-                      filtersActive={activityFiltersActive}
-                      customViewLimitReached={customViewLimitReached}
-                      onSavedViewSelect={applyActivityView}
-                      onSaveView={saveActivityView}
-                      onRenameView={renameActivityView}
-                      onDeleteView={deleteActivityView}
-                      onFiltersExpandedChange={setActivityFiltersExpanded}
-                      onSearchChange={setActivitySearch}
-                      onCategoryFilterChange={setActivityCategoryFilter}
-                      onAttentionFilterChange={setActivityAttentionFilter}
-                      onClearFilters={clearActivityFilters}
-                      channel={selectedChannel}
-                      tasks={tasks}
-                      runs={runs}
-                      approvals={approvals}
-                      workflowSteps={channelWorkflowSteps}
-                      externalActionDetails={externalActionDetails}
-                      externalWorkCiTriage={externalWorkCiTriage}
-                      artifactsByRun={channelArtifactsByRun}
-                      durableWorkItems={durableWorkItems}
-                      workBoardLoading={tasksLoading || approvalsLoading || channelActivityTransitionsLoading || durableWorkItemsLoading}
-                      onOpenTask={openTaskFromActivity}
-                      onOpenRun={openRunInPanel}
-                      onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
-                      onClaimWorkItem={onClaimWorkItem}
-                      onHeartbeatWorkItem={onHeartbeatWorkItem}
-                      onReleaseWorkItem={onReleaseWorkItem}
-                      onCompleteWorkItem={onCompleteWorkItem}
-                      onFailWorkItem={onFailWorkItem}
-                      busyWorkItemId={busyWorkItemId}
-                      ciTriageLoading={externalWorkCiTriageLoading}
-                      cwd={cwd}
-                      onRefreshCiTriage={onRefreshExternalWorkCiTriage}
-                    />
-                  ) : null}
-	                  {selectedChannelId && channelWorkThreadTreeVisible ? (
-	                    <ChannelWorkThreadTree
-                      selectedChannelId={selectedChannelId}
-                      activeWorkThreadId={activeWorkThreadId}
-                      visibleThreads={visibleChannelWorkThreads}
-                      rows={channelWorkThreadTreeRows}
-                      loading={channelWorkThreadsLoading}
-                      error={channelWorkThreadError}
-                      search={channelWorkThreadSearch}
-                      searchActive={channelWorkThreadSearchActive}
-                      rootThread={channelDiscussionRootThread}
-                      forkingWorkThreadId={forkingWorkThreadId}
-                      workThreadVisibilityId={workThreadVisibilityId}
-                      archiveConfirmWorkThreadId={archiveConfirmWorkThreadId}
-                      onSearchChange={setChannelWorkThreadSearch}
-                      onSelectThread={setActiveWorkThreadId}
-                      onForkMainBranch={() => void forkChannelMainBranch()}
-                      onForkThread={(thread) => void forkChannelWorkThread(thread)}
-                      onSetArchiveConfirmWorkThreadId={setArchiveConfirmWorkThreadId}
-                      onMutateThreadVisibility={(thread, action) => void mutateChannelWorkThreadVisibility(thread, action)}
-                    />
-                  ) : null}
-                  <ChannelMessageFeed
-                    surfaceId={`channel:${selectedChannel?.id ?? "none"}:${activeWorkThreadId || "root"}`}
-                    state={messageFeedState}
-                    ariaLabel={t("Channel message feed")}
-                    loading={channelMessagesLoading || channelProtocolLoading}
-                    empty={messageFeedEmpty}
-                    loadingLabel={t("Loading messages...")}
-                    emptyIcon={activeWorkThreadId ? <GitBranch /> : activityFiltersActive ? <Search /> : <MessageSquare />}
-                    emptyLabel={
-                      activeWorkThreadId
-                        ? t("No work recorded in this branch yet")
-                        : activityFiltersActive
-                        ? t("No activity matches these filters")
-                        : selectedChannel
-                          ? t("No channel messages yet")
-                          : t("Create a default channel to start the workspace loop.")
-                    }
-                    title={t("Alt+Up/Down focuses adjacent blocks. Ctrl+Shift+C copies the focused block.")}
-                    items={messageFeedItems}
-                    renderItem={messageRenderers.renderMessageFeedItem}
-                    onKeyDown={handleMessageFeedKeyDown}
-                    onPointerDown={handleMessageFeedPointerDown}
-                    onPointerMove={handleMessageFeedPointerMove}
-                    onPointerUp={handleMessageFeedPointerEnd}
-                    onPointerCancel={handleMessageFeedPointerEnd}
-                    onContextMenu={handleMessageFeedContextMenu}
-                    statusNode={
-                      <>
-                        {channelActivityTransitionsLoading ? (
-                          <div className="activity-feed-status" role="status">
-                            <Loader2 className="spin" size={14} />
-                            <span>{t("Loading activity events...")}</span>
-                          </div>
-                        ) : null}
-                        {channelActivityTransitionError ? (
-                          <div className="activity-feed-status warning" role="status">
-                            <CircleAlert size={14} />
-                            <span>{t("Some activity changes could not be loaded")}</span>
-                          </div>
-                        ) : null}
-                      </>
-                    }
-                    latestButtonNode={
-                      <>
-                        {conversationBackgroundToast ? (
-                          <button
-                            key={conversationBackgroundToast.id}
-                            className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
-                            type="button"
-                            onClick={messageFeedState.scrollToLatest}
-                            aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
-                          >
-                            <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
-                            <small>{t("Jump to latest")}</small>
-                          </button>
-                        ) : null}
-                        {conversationBlockFeedback ? (
-                          <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
-                            {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
-                            <span>{conversationBlockFeedback.message}</span>
-                          </div>
-                        ) : null}
-                        {messageFeedState.latestButtonVisible ? (
-                          <button
-                            className="message-feed-latest-button"
-                            type="button"
-                            onClick={messageFeedState.scrollToLatest}
-                            aria-label={t("Jump to latest message")}
-                          >
-                            <ArrowDown size={22} />
-                          </button>
-                        ) : null}
-                      </>
-                    }
-                  />
-                  {conversationBlockActionMenu ? (
-                    <div
-                      ref={conversationBlockActionMenuRef}
-                      className="conversation-block-action-menu"
-                      role="menu"
-                      aria-label={t("Conversation block actions")}
-                      style={{ left: conversationBlockActionMenu.x, top: conversationBlockActionMenu.y }}
-                    >
-                      <strong>{conversationBlockActionMenu.label}</strong>
-                      {conversationBlockActionMenu.feedback ? <small role="status" aria-live="polite">{conversationBlockActionMenu.feedback}</small> : null}
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          const block = messageFeedState.scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(conversationBlockActionMenu.blockId)}"]`);
-                          if (block) {
-                            void copyConversationBlock(block);
-                          }
-                        }}
-                      >
-                        <Copy size={13} />
-                        {t("Copy block")}
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          focusConversationBlockById(conversationBlockActionMenu.blockId);
-                        }}
-                      >
-                        <Search size={13} />
-                        {t("Focus block")}
-                      </button>
-                    </div>
-                  ) : null}
-                  {conversationDetailOverlayNode}
-                  {channelComposer}
-                </div>
-                {activeThreadRoot ? (
-                  <ThreadReplyPanel
-                    cwd={cwd}
-                    rootMessage={activeThreadRoot}
-                    replies={activeThreadMessages}
-                    teammates={teammateOptions}
-                    memoryById={memoryById}
-                    usedMemoryEvents={usedMemoryEvents}
-                    draft={threadReplyDraft}
-                    pending={threadReplyPending}
-                    error={threadReplyError}
-                    onDraftChange={(value) => {
-                      setThreadReplyDraft(value);
-                      setThreadReplyError("");
-                    }}
-                    onSend={() => void sendThreadReply()}
-                    onClose={() => {
-                      setActiveThreadId("");
-                      setThreadReplyDraft("");
-                      setThreadReplyError("");
-                    }}
-                    messageAuthorLabel={(message, threadTeammates) =>
-                      messageAuthorLabel(message, threadTeammates, t("Deleted teammate"), t("You"), allLocalTeammateById)}
-                  />
+        <ChannelActivityWorkspace
+          activityTools={auditActivityVisible ? {
+            search: activitySearch,
+            categoryFilter: activityCategoryFilter,
+            attentionFilter: activityAttentionFilter,
+            savedViews: allActivitySavedViews,
+            activeSavedViewId: activeActivityViewId,
+            filtersExpanded: activityFiltersExpanded,
+            savedViewCounts,
+            selectedSavedView: selectedActivitySavedView,
+            categoryCounts: activityCategoryCounts,
+            attentionCounts: activityAttentionCounts,
+            filtersActive: activityFiltersActive,
+            customViewLimitReached,
+            onSavedViewSelect: applyActivityView,
+            onSaveView: saveActivityView,
+            onRenameView: renameActivityView,
+            onDeleteView: deleteActivityView,
+            onFiltersExpandedChange: setActivityFiltersExpanded,
+            onSearchChange: setActivitySearch,
+            onCategoryFilterChange: setActivityCategoryFilter,
+            onAttentionFilterChange: setActivityAttentionFilter,
+            onClearFilters: clearActivityFilters,
+            channel: selectedChannel,
+            tasks,
+            runs,
+            approvals,
+            workflowSteps: channelWorkflowSteps,
+            externalActionDetails,
+            externalWorkCiTriage,
+            artifactsByRun: channelArtifactsByRun,
+            durableWorkItems,
+            workBoardLoading: tasksLoading || approvalsLoading || channelActivityTransitionsLoading || durableWorkItemsLoading,
+            onOpenTask: openTaskFromActivity,
+            onOpenRun: openRunInPanel,
+            onOpenApproval: (approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId)),
+            onClaimWorkItem,
+            onHeartbeatWorkItem,
+            onReleaseWorkItem,
+            onCompleteWorkItem,
+            onFailWorkItem,
+            busyWorkItemId,
+            ciTriageLoading: externalWorkCiTriageLoading,
+            cwd,
+            onRefreshCiTriage: onRefreshExternalWorkCiTriage,
+          } : undefined}
+          workThreadTree={selectedChannelId && channelWorkThreadTreeVisible ? {
+            selectedChannelId,
+            activeWorkThreadId,
+            visibleThreads: visibleChannelWorkThreads,
+            rows: channelWorkThreadTreeRows,
+            loading: channelWorkThreadsLoading,
+            error: channelWorkThreadError,
+            search: channelWorkThreadSearch,
+            searchActive: channelWorkThreadSearchActive,
+            rootThread: channelDiscussionRootThread,
+            forkingWorkThreadId,
+            workThreadVisibilityId,
+            archiveConfirmWorkThreadId,
+            onSearchChange: setChannelWorkThreadSearch,
+            onSelectThread: setActiveWorkThreadId,
+            onForkMainBranch: () => void forkChannelMainBranch(),
+            onForkThread: (thread) => void forkChannelWorkThread(thread),
+            onSetArchiveConfirmWorkThreadId: setArchiveConfirmWorkThreadId,
+            onMutateThreadVisibility: (thread, action) => void mutateChannelWorkThreadVisibility(thread, action),
+          } : undefined}
+          messageFeed={{
+            surfaceId: `channel:${selectedChannel?.id ?? "none"}:${activeWorkThreadId || "root"}`,
+            state: messageFeedState,
+            ariaLabel: t("Channel message feed"),
+            loading: channelMessagesLoading || channelProtocolLoading,
+            empty: messageFeedEmpty,
+            loadingLabel: t("Loading messages..."),
+            emptyIcon: activeWorkThreadId ? <GitBranch /> : activityFiltersActive ? <Search /> : <MessageSquare />,
+            emptyLabel: activeWorkThreadId
+              ? t("No work recorded in this branch yet")
+              : activityFiltersActive
+                ? t("No activity matches these filters")
+                : selectedChannel
+                  ? t("No channel messages yet")
+                  : t("Create a default channel to start the workspace loop."),
+            title: t("Alt+Up/Down focuses adjacent blocks. Ctrl+Shift+C copies the focused block."),
+            items: messageFeedItems,
+            renderItem: messageRenderers.renderMessageFeedItem,
+            onKeyDown: handleMessageFeedKeyDown,
+            onPointerDown: handleMessageFeedPointerDown,
+            onPointerMove: handleMessageFeedPointerMove,
+            onPointerUp: handleMessageFeedPointerEnd,
+            onPointerCancel: handleMessageFeedPointerEnd,
+            onContextMenu: handleMessageFeedContextMenu,
+            statusNode: (
+              <>
+                {channelActivityTransitionsLoading ? (
+                  <div className="activity-feed-status" role="status">
+                    <Loader2 className="spin" size={14} />
+                    <span>{t("Loading activity events...")}</span>
+                  </div>
                 ) : null}
-              </div>
-              {activityDrilldown ? (
-                <ActivityDrilldownDrawer
-                  drilldown={activityDrilldown}
-                  defaultTeammateId={selectedChannel?.defaultTeammateId}
-                  activeDecisionIds={channelDecisions.filter((decision) => decision.status === "active").map((decision) => decision.id)}
-                  onClose={() => setActivityDrilldownItemId("")}
-                  onOpenTarget={openActivityDrilldownTarget}
-                  onRunTriageAction={onRunActivityTriageAction}
-                  onOpenTriageResult={openActivityTriageResult}
-                />
-              ) : null}
+                {channelActivityTransitionError ? (
+                  <div className="activity-feed-status warning" role="status">
+                    <CircleAlert size={14} />
+                    <span>{t("Some activity changes could not be loaded")}</span>
+                  </div>
+                ) : null}
+              </>
+            ),
+            latestButtonNode: (
+              <>
+                {conversationBackgroundToast ? (
+                  <button
+                    key={conversationBackgroundToast.id}
+                    className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
+                    type="button"
+                    onClick={messageFeedState.scrollToLatest}
+                    aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
+                  >
+                    <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
+                    <small>{t("Jump to latest")}</small>
+                  </button>
+                ) : null}
+                {conversationBlockFeedback ? (
+                  <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
+                    {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
+                    <span>{conversationBlockFeedback.message}</span>
+                  </div>
+                ) : null}
+                {messageFeedState.latestButtonVisible ? (
+                  <button
+                    className="message-feed-latest-button"
+                    type="button"
+                    onClick={messageFeedState.scrollToLatest}
+                    aria-label={t("Jump to latest message")}
+                  >
+                    <ArrowDown size={22} />
+                  </button>
+                ) : null}
+              </>
+            ),
+          }}
+          conversationBlockActionMenuNode={conversationBlockActionMenu ? (
+            <div
+              ref={conversationBlockActionMenuRef}
+              className="conversation-block-action-menu"
+              role="menu"
+              aria-label={t("Conversation block actions")}
+              style={{ left: conversationBlockActionMenu.x, top: conversationBlockActionMenu.y }}
+            >
+              <strong>{conversationBlockActionMenu.label}</strong>
+              {conversationBlockActionMenu.feedback ? <small role="status" aria-live="polite">{conversationBlockActionMenu.feedback}</small> : null}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const block = messageFeedState.scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(conversationBlockActionMenu.blockId)}"]`);
+                  if (block) {
+                    void copyConversationBlock(block);
+                  }
+                }}
+              >
+                <Copy size={13} />
+                {t("Copy block")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  focusConversationBlockById(conversationBlockActionMenu.blockId);
+                }}
+              >
+                <Search size={13} />
+                {t("Focus block")}
+              </button>
             </div>
-	        </section>
+          ) : undefined}
+          conversationDetailOverlayNode={conversationDetailOverlayNode}
+          composerNode={channelComposer}
+          threadReply={activeThreadRoot ? {
+            cwd,
+            rootMessage: activeThreadRoot,
+            replies: activeThreadMessages,
+            teammates: teammateOptions,
+            memoryById,
+            usedMemoryEvents,
+            draft: threadReplyDraft,
+            pending: threadReplyPending,
+            error: threadReplyError,
+            onDraftChange: (value) => {
+              setThreadReplyDraft(value);
+              setThreadReplyError("");
+            },
+            onSend: () => void sendThreadReply(),
+            onClose: () => {
+              setActiveThreadId("");
+              setThreadReplyDraft("");
+              setThreadReplyError("");
+            },
+            messageAuthorLabel: (message, threadTeammates) =>
+              messageAuthorLabel(message, threadTeammates, t("Deleted teammate"), t("You"), allLocalTeammateById),
+          } : undefined}
+          drilldown={activityDrilldown ? {
+            drilldown: activityDrilldown,
+            defaultTeammateId: selectedChannel?.defaultTeammateId,
+            activeDecisionIds: channelDecisions.filter((decision) => decision.status === "active").map((decision) => decision.id),
+            onClose: () => setActivityDrilldownItemId(""),
+            onOpenTarget: openActivityDrilldownTarget,
+            onRunTriageAction: onRunActivityTriageAction,
+            onOpenTriageResult: openActivityTriageResult,
+          } : undefined}
+        />
         {progressPopoverInMainLayout ? (
           <aside className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`} aria-label={t("Progress")}>
             {progressPopoverNode}
