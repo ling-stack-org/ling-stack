@@ -5214,6 +5214,7 @@ code,
   --channel-progress-popover-width: min(280px, calc(100vw - 420px));
   --channel-progress-panel-track-width: calc(var(--channel-progress-popover-width) + 24px);
   --channel-progress-panel-layout-width: 0px;
+  --channel-progress-inline-reserve-width: 0px;
   --channel-side-panel-handle-width: 8px;
   --channel-side-panel-layout-handle-width: 0px;
   --channel-progress-popover-right: 18px;
@@ -6183,7 +6184,6 @@ code,
   padding: 0;
   overflow: hidden;
   transition:
-    padding-right var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
     --channel-progress-panel-layout-width var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease);
 }
 
@@ -6241,8 +6241,8 @@ code,
 }
 
 @media (min-width: 901px) and (max-width: 2055px) {
-  .app-shell:not(.channel-sidebar-collapsed) .task-workbench-main.progress-open:not(.with-channel-side-panel) {
-    padding-right: calc(var(--channel-progress-popover-width) + 24px);
+  .app-shell:not(.channel-sidebar-collapsed) .task-workbench-main.progress-open {
+    padding-right: var(--channel-progress-inline-reserve-width);
   }
 }
 

@@ -360,8 +360,8 @@ const channelRightDockMaxViewportRatio = 0.5;
 const channelRightDockMinChatWidth = 560;
 const channelRightDockResizeHandleWidth = 8;
 const channelRightDockTransitionMs = 620;
-const channelConversationComfortTrackWidth = 848;
 const channelProgressPanelTrackWidth = 304;
+const channelProgressAndDockSharedTrackWidth = channelProgressPanelTrackWidth + channelRightDockResizeHandleWidth;
 
 function easeChannelDockMotion(progress: number): number {
   if (progress <= 0) {
@@ -379,6 +379,7 @@ function setChannelRightDockLayoutVariables(
   elements: readonly (HTMLElement | null)[],
   dockWidth: number,
   handleWidth: number,
+  progressReserveWidth: number,
 ): void {
   for (const element of elements) {
     if (!element) {
@@ -386,6 +387,7 @@ function setChannelRightDockLayoutVariables(
     }
     element.style.setProperty("--channel-right-dock-layout-width", `${dockWidth}px`);
     element.style.setProperty("--channel-side-panel-layout-handle-width", `${handleWidth}px`);
+    element.style.setProperty("--channel-progress-inline-reserve-width", `${progressReserveWidth}px`);
   }
 }
 
@@ -1295,6 +1297,7 @@ export function WorkspaceClientView({
   const channelRightDockLayoutAnimationRef = useRef<number | undefined>();
   const channelRightDockLayoutWidthRef = useRef(selectedTaskId ? channelRightDockMinWidth : 0);
   const channelRightDockLayoutHandleWidthRef = useRef(selectedTaskId ? channelRightDockResizeHandleWidth : 0);
+  const channelProgressInlineReserveWidthRef = useRef(0);
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
@@ -1364,6 +1367,9 @@ export function WorkspaceClientView({
   useLayoutEffect(() => {
     const targetDockWidth = channelRightDockExpanded ? channelRightDockWidth : 0;
     const targetHandleWidth = channelRightDockExpanded ? channelRightDockResizeHandleWidth : 0;
+    const targetProgressReserveWidth = progressPopoverRendered
+      ? Math.max(0, channelProgressAndDockSharedTrackWidth - targetDockWidth - targetHandleWidth)
+      : 0;
     const layoutElements = [taskWorkbenchWindowRef.current, taskWorkbenchMainRef.current];
 
     const runningFrameId = channelRightDockLayoutAnimationRef.current;
@@ -1375,32 +1381,38 @@ export function WorkspaceClientView({
     if (channelRightDockResizing) {
       channelRightDockLayoutWidthRef.current = targetDockWidth;
       channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
+      channelProgressInlineReserveWidthRef.current = targetProgressReserveWidth;
+      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth, targetProgressReserveWidth);
       return undefined;
     }
 
     const startDockWidth = channelRightDockLayoutWidthRef.current;
     const startHandleWidth = channelRightDockLayoutHandleWidthRef.current;
+    const startProgressReserveWidth = channelProgressInlineReserveWidthRef.current;
     const dockDelta = targetDockWidth - startDockWidth;
     const handleDelta = targetHandleWidth - startHandleWidth;
+    const progressReserveDelta = targetProgressReserveWidth - startProgressReserveWidth;
 
-    if (Math.abs(dockDelta) < 0.5 && Math.abs(handleDelta) < 0.5) {
+    if (Math.abs(dockDelta) < 0.5 && Math.abs(handleDelta) < 0.5 && Math.abs(progressReserveDelta) < 0.5) {
       channelRightDockLayoutWidthRef.current = targetDockWidth;
       channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
+      channelProgressInlineReserveWidthRef.current = targetProgressReserveWidth;
+      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth, targetProgressReserveWidth);
       return undefined;
     }
 
-    setChannelRightDockLayoutVariables(layoutElements, startDockWidth, startHandleWidth);
+    setChannelRightDockLayoutVariables(layoutElements, startDockWidth, startHandleWidth, startProgressReserveWidth);
     const startedAt = globalThis.performance.now();
     const tick = (now: number): void => {
       const progress = Math.min(1, (now - startedAt) / channelRightDockTransitionMs);
       const eased = easeChannelDockMotion(progress);
       const nextDockWidth = startDockWidth + dockDelta * eased;
       const nextHandleWidth = startHandleWidth + handleDelta * eased;
+      const nextProgressReserveWidth = startProgressReserveWidth + progressReserveDelta * eased;
       channelRightDockLayoutWidthRef.current = nextDockWidth;
       channelRightDockLayoutHandleWidthRef.current = nextHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElements, nextDockWidth, nextHandleWidth);
+      channelProgressInlineReserveWidthRef.current = nextProgressReserveWidth;
+      setChannelRightDockLayoutVariables(layoutElements, nextDockWidth, nextHandleWidth, nextProgressReserveWidth);
 
       if (progress < 1) {
         channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
@@ -1417,7 +1429,7 @@ export function WorkspaceClientView({
         channelRightDockLayoutAnimationRef.current = undefined;
       }
     };
-  }, [channelRightDockExpanded, channelRightDockResizing, channelRightDockWidth]);
+  }, [channelRightDockExpanded, channelRightDockResizing, channelRightDockWidth, progressPopoverRendered]);
 
   useEffect(() => {
     const channelId = selectedChannelId ?? "";
@@ -6913,13 +6925,8 @@ export function WorkspaceClientView({
   const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !channelUtilityPageOpen && channelHasProgressPopoverContent;
   const channelRightDockVisible = channelRightDockRendered;
   const channelRightDockLayoutOpen = channelRightDockVisible && channelRightDockExpanded;
-  const channelProgressPanelFits = taskWorkbenchMainWidth > 0
-    && taskWorkbenchMainWidth
-      - (channelRightDockVisible ? channelRightDockWidth : 0)
-      - (channelRightDockVisible ? channelRightDockResizeHandleWidth : 0)
-      - channelProgressPanelTrackWidth >= channelConversationComfortTrackWidth;
   const progressPopoverCanRender = progressPopoverVisible;
-  const progressPopoverInMainLayout = progressPopoverRendered && channelRightDockVisible && channelProgressPanelFits;
+  const progressPopoverInMainLayout = false;
   const progressPopoverMotionClass = progressPopoverExpanded ? "is-popover-expanded" : "is-popover-collapsed";
   useEffect(() => {
     if (progressPopoverCanRender) {
@@ -6976,10 +6983,12 @@ export function WorkspaceClientView({
     "--channel-right-dock-width": `${channelRightDockWidth}px`,
     "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
     "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
+    "--channel-progress-inline-reserve-width": `${channelProgressInlineReserveWidthRef.current}px`,
   } as CSSProperties;
   const taskWorkbenchMainStyle = {
     "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
     "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
+    "--channel-progress-inline-reserve-width": `${channelProgressInlineReserveWidthRef.current}px`,
   } as CSSProperties;
 
   function toggleChannelTeammateManager(): void {
