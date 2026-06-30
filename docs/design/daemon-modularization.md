@@ -328,7 +328,7 @@ The router should preserve:
 | `providers` | presets, preflight checks, model list, provider secrets | generic secret store implementation |
 | `mcp` | server transport, checks, tool sync, tool access snapshots, tool call bridge | teammate binding policy outside MCP access |
 | `external-work` | workflow file parsing, GitHub/Linear import and poll, actions, CI triage, background scheduler | core work unit state machine |
-| `media` | media job execution, media cost approval, media artifacts | generic run artifact extraction; runtime terminal helpers |
+| `media` | media job execution, generation runtime readiness, media artifacts, legacy media approval compatibility | generic run artifact extraction; runtime terminal helpers |
 | `memory` | memory CRUD, recall, used-memory event listing | runner prompt assembly beyond memory prompt text |
 | `skills` | skill import drafts, registry projection, teammate skill binding validation | runner tool implementation |
 

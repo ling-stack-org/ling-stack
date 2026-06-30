@@ -125,7 +125,15 @@
   align-items: center;
   gap: 7px;
   padding: 0 14px 0 16px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--window-bg);
   font-weight: 650;
+}
+
+.automation-create-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .automation-create-caret {
@@ -438,7 +446,7 @@
 
 .automation-inbox-empty {
   min-height: 96px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 24px;
@@ -446,10 +454,33 @@
   border-top: 1px solid var(--border-subtle);
 }
 
+.automation-inbox-empty:not(.compact) {
+  justify-content: space-between;
+}
+
 .automation-inbox-empty.compact {
+  display: inline-flex;
   min-height: 54px;
   border-top: 0;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.automation-empty-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.automation-empty-copy strong {
+  color: var(--text-strong);
+  font-size: 14px;
+  line-height: 19px;
+}
+
+.automation-empty-copy small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 17px;
 }
 
 .automation-execution-inspector {
@@ -837,6 +868,24 @@
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0;
+}
+
+.automation-create-actions.header-actions {
+  margin: 0;
+}
+
+.automation-create-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+}
+
+.automation-create-trigger.compact {
+  min-height: 34px;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: 6px;
 }
 
 .automation-template-button {

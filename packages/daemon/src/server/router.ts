@@ -158,7 +158,6 @@ import {
   handleSecretStatus,
 } from "../features/providers/routes.js";
 import { handleUserProfile } from "../features/profile/routes.js";
-import { expireStalePendingApprovals } from "../features/runs/approvals.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { handleExecutionActionsCollection } from "../features/runs/execution-actions.js";
 import { createDetachedRunExecutionSink, createSseRunExecutionSink, executeRunRequest } from "../features/runs/orchestrator.js";
@@ -1982,13 +1981,6 @@ export async function routeRequest(
       mediaJobRoute.action,
       ({ response, url, mediaJobId }) =>
         handleRunMediaJob(response, url, storeRegistry, secretResolver, mediaJobId, {
-          expirePendingMediaApprovals: (store, pendingMediaJobId) => {
-            expireStalePendingApprovals(store, {
-              mediaJobId: pendingMediaJobId,
-              cwd: store.paths.cwd,
-              controlPlaneEvents,
-            });
-          },
           startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
           transitionRuntimeWorkUnitTerminal: (input) => {
             transitionWorkUnitTerminal(input.store, {
@@ -2019,13 +2011,6 @@ export async function routeRequest(
         approval,
         now,
         hooks: {
-          expirePendingMediaApprovals: (approvalStore, pendingMediaJobId) => {
-            expireStalePendingApprovals(approvalStore, {
-              mediaJobId: pendingMediaJobId,
-              cwd,
-              controlPlaneEvents,
-            });
-          },
           startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
           transitionRuntimeWorkUnitTerminal: (input) => {
             transitionWorkUnitTerminal(input.store, {

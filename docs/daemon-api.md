@@ -3149,7 +3149,7 @@ The daemon resolves artifact content relative to `.ling-stack/artifacts` and rej
 
 ## Media Jobs
 
-Media jobs are persisted metadata for media-capable provider presets. By default the execution interface uses local static adapters and does not call live media APIs. Seedream `image_generate` can make live HTTP calls only when the provider preset explicitly sets `compat.mediaVendorTransport.mode = "live"`. See [Seedream live smoke](seedream-live-smoke.md) for the full live approval, execution, and artifact verification path.
+Media jobs are persisted metadata for media-capable provider presets. The execution interface uses the Generation Runtime Resolver to decide whether a provider can run the requested image or video operation. Live-capable adapters run directly after runtime readiness passes; media generation no longer creates a `media_cost` approval before execution.
 
 Supported statuses:
 
@@ -3186,7 +3186,7 @@ Rules:
 - `providerPresetId` must reference an enabled provider preset with `api: "media-job"`.
 - The provider preset must include the requested media operation in `capabilities`.
 - Chat provider presets return `unsupported_capability`.
-- Creation only records queued metadata. Live vendor calls happen only through explicit run execution after required approvals; billing, video bytes, and non-Seedream media byte outputs are still out of scope.
+- Creation only records queued metadata. Live vendor calls happen only through explicit run execution after runtime readiness checks pass; billing and provider account charges are handled by the configured vendor account, not by a Ling approval gate.
 
 Response:
 
@@ -3247,9 +3247,9 @@ Response:
 POST /media-jobs/:id/run?cwd=/path/to/project
 ```
 
-The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to vendor adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. A provider preset can set `compat.mediaVendorTransport.mode = "live"` to enter the live gate; the daemon then requires `baseUrl`, `apiKeyRef`, and a configured env secret. Live transport currently supports only Seedream `image_generate` through the OpenAI-compatible `/images/generations` endpoint. It records JSON metadata artifacts and downloads returned HTTP(S) image URLs into local image artifacts under `.ling-stack/artifacts` without sending the provider authorization header to those image URLs. Jimeng, Seedance, billing, video bytes, and other Seedream operations remain out of scope.
+The current execution interface uses the media adapter contract, provider-kind registry, and Generation Runtime Resolver. A live-ready provider preset must have a supported operation, `compat.mediaVendorTransport.mode = "live"` after normalization, `baseUrl`, `apiKeyRef`, and a configured secret. Live transport currently supports OpenAI Images and Seedream `image_generate`, with Seedance video support gated by the connected adapter registry. Image adapters record JSON metadata artifacts and download returned HTTP(S) image URLs into local image artifacts under `.ling-stack/artifacts` without sending the provider authorization header to those image URLs. Jimeng, billing, video bytes without an adapter, and unsupported media operations remain out of scope.
 
-Live-gated jobs do not execute immediately. The first run creates a pending `media_cost` approval, returns it in the response, and moves the job to `waiting_for_approval`. Re-running while the approval is pending returns the existing approval instead of creating a duplicate. Once approved, the next run proceeds to the adapter; for Seedream `image_generate`, the adapter calls the configured `/images/generations` endpoint. Denied or expired approvals fail the job without executing the adapter.
+Live-ready jobs execute directly when `POST /media-jobs/:id/run` is called. The daemon does not create `media_cost` approvals for new media jobs. Legacy jobs or historical approvals that already reference `media_cost` remain readable through the approval APIs, but they are not required for new generation execution.
 
 Runnable statuses are `queued`, `waiting_for_approval`, `failed`, and `cancelled`. `running` and `succeeded` jobs return `409 media_job_not_runnable`. Tests can force the static failure path with `input.forceFailure: true`.
 
@@ -3275,30 +3275,16 @@ Response:
 }
 ```
 
-Live approval response:
+Legacy `media_cost` approvals may still appear in old workspaces through the normal approval APIs. New media job runs do not return an `approval` field:
 
 ```json
 {
   "mediaJob": {
     "id": "media_job_...",
-    "status": "waiting_for_approval",
-    "artifactIds": []
+    "status": "succeeded",
+    "artifactIds": ["artifact_..."]
   },
-  "approval": {
-    "id": "approval_...",
-    "mediaJobId": "media_job_...",
-    "actionType": "media_cost",
-    "risk": "high",
-    "payload": {
-      "type": "media_cost",
-      "providerPresetId": "provider_...",
-      "model": "doubao-seedream-5-0-260128",
-      "operation": "image_generate",
-      "promptPreview": "Create a clean product screenshot style image."
-    },
-    "status": "pending"
-  },
-  "artifacts": []
+  "artifacts": [{ "id": "artifact_...", "mediaJobId": "media_job_...", "type": "image" }]
 }
 ```
 
@@ -3490,7 +3476,7 @@ Response:
 }
 ```
 
-The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `media-job` presets, the check remains static: default disabled transport reports no live vendor HTTP, while `compat.mediaVendorTransport.mode = "live"` validates the Seedream `image_generate` live gate configuration without creating media. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
+The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `media-job` presets, the check uses generation runtime readiness; providers whose live check would create paid output may return static readiness without generating media. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
 
 ## MCP Servers And Tools
 
@@ -3951,7 +3937,7 @@ Request body is optional:
 ```
 
 Approval decisions append `approval_approved`, `approval_denied`, or `approval_expired` to the linked run event log when the run still exists. Listing or fetching approvals lazily normalizes pending requests whose `expiresAt` is already in the past.
-Media job approvals are owned by `mediaJobId`; they are listed and resolved through the same approval endpoints, but do not append media job event stream entries in this slice.
+Legacy media job approvals are owned by `mediaJobId`; they are listed and resolved through the same approval endpoints for historical compatibility, but new media job runs no longer create `media_cost` approval requests.
 
 ## Current Limits
 

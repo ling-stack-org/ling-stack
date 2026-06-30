@@ -6,7 +6,11 @@ import {
   type SecretResolver,
   type ProviderCapability,
   type ProviderPreset,
+  type ProviderPresetInput,
+  type ProviderPresetUpdateInput,
   type RunStore,
+  enrichProviderModelOption,
+  normalizeMediaProviderCompat,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
@@ -78,7 +82,7 @@ export async function handleProvidersCollection(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseProviderPresetCreateRequest(body);
       const now = new Date().toISOString();
-      const preset = store.createProviderPreset(input.presetInput, now);
+      const preset = store.createProviderPreset(providerPresetInputWithAutoMediaTransport(input.presetInput), now);
       const provider = input.apiKey ? saveLocalProviderSecret(store, preset, input.apiKey, now) : preset;
       appendProviderUpdatedEvent(store, controlPlaneEvents, cwd, provider, now);
       writeJson(response, 201, { provider: toPublicProviderPreset(store, provider, secretResolver) });
@@ -124,7 +128,12 @@ export async function handleProviderModelImport(
     let createdCount = 0;
     let updatedCount = 0;
 
-    for (const model of dedupeProviderImportModels(input.models)) {
+    for (const rawModel of dedupeProviderImportModels(input.models)) {
+      const model = enrichProviderModelOption(rawModel, {
+        kind: input.kind,
+        providerId: input.providerId,
+        api: input.api,
+      });
       const modelApi = model.api ?? input.api;
       const modelInput = model.input ?? input.input ?? ["text"];
       const modelThinkingModes = model.thinkingModes ?? input.thinkingModes ?? [];
@@ -158,6 +167,8 @@ export async function handleProviderModelImport(
           contextWindow: modelContextWindow ?? existing.contextWindow,
           maxTokens: modelMaxTokens ?? existing.maxTokens,
           compat: providerImportCompat(input.compat ?? existing.compat, model, {
+            kind: input.kind,
+            providerId: input.providerId,
             api: modelApi,
             input: modelInput,
             capabilities: modelCapabilities,
@@ -199,6 +210,8 @@ export async function handleProviderModelImport(
         contextWindow: modelContextWindow,
         maxTokens: modelMaxTokens,
         compat: providerImportCompat(input.compat, model, {
+          kind: input.kind,
+          providerId: input.providerId,
           api: modelApi,
           input: modelInput,
           capabilities: modelCapabilities,
@@ -235,6 +248,49 @@ function providerThinkingModesIncludeReasoning(thinkingModes: readonly string[])
   return thinkingModes.some((mode) => mode !== "off");
 }
 
+function providerPresetInputWithAutoMediaTransport(input: ProviderPresetInput): ProviderPresetInput {
+  return {
+    ...input,
+    compat: providerCompatWithAutoMediaTransport(input.compat, {
+      kind: input.kind,
+      providerId: input.providerId,
+      modelId: input.model,
+      api: input.api,
+      capabilities: input.capabilities,
+    }),
+  };
+}
+
+function providerPresetUpdateWithAutoMediaTransport(
+  existing: ProviderPreset,
+  input: ProviderPresetUpdateInput,
+): ProviderPresetUpdateInput {
+  const resolved = {
+    kind: input.kind ?? existing.kind,
+    providerId: input.providerId ?? existing.providerId,
+    modelId: input.model ?? existing.model,
+    api: input.api ?? existing.api,
+    capabilities: input.capabilities ?? existing.capabilities,
+  };
+  return {
+    ...input,
+    compat: providerCompatWithAutoMediaTransport(input.compat ?? existing.compat, resolved),
+  };
+}
+
+function providerCompatWithAutoMediaTransport(
+  compat: Record<string, unknown> | undefined,
+  input: {
+    readonly kind?: ProviderPreset["kind"];
+    readonly providerId?: string;
+    readonly modelId?: string;
+    readonly api?: ProviderPreset["api"];
+    readonly capabilities?: readonly string[];
+  },
+): Record<string, unknown> | undefined {
+  return normalizeMediaProviderCompat({ ...input, compat });
+}
+
 function providerCapabilitiesWithReasoning(capabilities: readonly ProviderCapability[], reasoning: boolean): readonly ProviderCapability[] {
   if (!reasoning || capabilities.includes("reasoning")) {
     return capabilities;
@@ -255,6 +311,8 @@ function providerImportCompat(
     readonly capabilityConfidence?: string;
   },
   resolved: {
+    readonly kind: ProviderPreset["kind"];
+    readonly providerId: string;
     readonly api: string;
     readonly input: readonly string[];
     readonly capabilities: readonly string[];
@@ -282,10 +340,18 @@ function providerImportCompat(
   if (!compat && Object.keys(modelMetadata).length === 0) {
     return undefined;
   }
-  return {
+  const baseCompat = {
     ...(compat ?? {}),
     modelMetadata,
   };
+  return normalizeMediaProviderCompat({
+    kind: resolved.kind,
+    providerId: resolved.providerId,
+    modelId: model.id,
+    api: resolved.api as ProviderPreset["api"],
+    capabilities: resolved.capabilities,
+    compat: baseCompat,
+  }) ?? baseCompat;
 }
 
 function removeUndefined<T extends Record<string, unknown>>(value: T): T {
@@ -354,7 +420,7 @@ export async function handleProviderDraftCheck(
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseProviderPresetCreateRequest(body);
     const store = storeRegistry.getStore(cwd);
-    const preset = providerDraftInputToPreset(input.presetInput, input.apiKey, new Date().toISOString());
+    const preset = providerDraftInputToPreset(providerPresetInputWithAutoMediaTransport(input.presetInput), input.apiKey, new Date().toISOString());
     const resolver = input.apiKey ? createDraftProviderSecretResolver(secretResolver, input.apiKey) : secretResolver;
     const result = await checkProviderPreset(store, preset, resolver);
     if (!result.ok && result.code === "bad_request") {
@@ -434,7 +500,10 @@ export async function handleProviderItem(
     try {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseProviderPresetUpdateRequest(body);
-      const updateInput = providerUpdateWithSecretRef(route.providerId, input);
+      const updateInput = providerPresetUpdateWithAutoMediaTransport(
+        preset,
+        providerUpdateWithSecretRef(route.providerId, input),
+      );
       validateProviderPresetUpdate(preset, updateInput);
       const now = new Date().toISOString();
       const updated = store.updateProviderPreset(route.providerId, updateInput, now);

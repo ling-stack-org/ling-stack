@@ -1,6 +1,12 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { expect, type Locator, type Page, type Request, type Route } from "@playwright/test";
-import { buildEffectiveTeammateSkills, buildMemoryMarkdownExport, parseMemoryMarkdownImport } from "@ling-stack/core";
+import {
+  buildEffectiveTeammateSkills,
+  buildMemoryMarkdownExport,
+  normalizeMediaProviderCompat,
+  parseMemoryMarkdownImport,
+  resolveGenerationProviderRuntimeState,
+} from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
 import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
@@ -849,13 +855,14 @@ export function channelEventFilterToggle(scope: Page | Locator): Locator {
 }
 
 export async function openEngineeringChannel(page: Page): Promise<void> {
-  if (await page.getByLabel("Channel message feed").isVisible().catch(() => false)) {
+  const channelMessageFeed = page.getByLabel(/Channel message feed|频道消息列表/);
+  if (await channelMessageFeed.isVisible().catch(() => false)) {
     return;
   }
   const engineeringChannel = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).first();
   await expect(engineeringChannel).toBeVisible();
   await engineeringChannel.click();
-  await expect(page.getByLabel("Channel message feed")).toBeVisible();
+  await expect(channelMessageFeed).toBeVisible();
 }
 
 export async function openChannelChatTools(page: Page): Promise<void> {
@@ -1154,6 +1161,9 @@ function normalizeWorkspaceSettings(settings: Record<string, unknown>): Record<s
     schemaVersion: 1,
     ...settings,
     workspaceCwd: typeof settings.workspaceCwd === "string" ? settings.workspaceCwd : cwd,
+    defaultProviderPresetId: typeof settings.defaultProviderPresetId === "string" && settings.defaultProviderPresetId.trim()
+      ? settings.defaultProviderPresetId
+      : undefined,
     defaultPermissionMode: normalizeDefaultPermissionMode(settings.defaultPermissionMode),
     defaultPermissionPreset: normalizeDefaultPermissionPreset(settings.defaultPermissionPreset),
     skillGovernancePolicy: normalizeSkillGovernancePolicy(settings.skillGovernancePolicy),
@@ -3286,6 +3296,7 @@ export function createMediaProvider(overrides: Record<string, unknown> = {}): Re
     providerId: "seedream",
     model: "doubao-seedream-5-0-260128",
     api: "media-job",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     apiKeyRef: "env:SEEDREAM_API_KEY",
     apiKeyConfigured: true,
     headers: {},
@@ -3726,6 +3737,118 @@ export function createDefaultProviderTemplates(): readonly Record<string, unknow
       apiKeyRef: "env:ZHIPU_API_KEY",
     }),
     createProviderTemplate({
+      templateId: "alibaba-bailian-qwen",
+      kind: "openai-compatible",
+      displayName: "Alibaba Bailian Qwen",
+      description: "Alibaba Cloud Model Studio Bailian OpenAI-compatible chat endpoint for Qwen models.",
+      providerId: "alibaba-bailian",
+      model: "qwen-plus",
+      api: "openai-completions",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKeyRef: "env:DASHSCOPE_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      reasoning: false,
+      thinkingModes: [],
+    }),
+    createProviderTemplate({
+      templateId: "moonshot-kimi",
+      kind: "openai-compatible",
+      displayName: "Moonshot Kimi",
+      description: "Moonshot Kimi OpenAI-compatible chat endpoint.",
+      providerId: "moonshot",
+      model: "kimi-k2-0711-preview",
+      api: "openai-completions",
+      baseUrl: "https://api.moonshot.cn/v1",
+      apiKeyRef: "env:MOONSHOT_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      reasoning: false,
+      thinkingModes: [],
+    }),
+    createProviderTemplate({
+      templateId: "baidu-qianfan-ernie",
+      kind: "openai-compatible",
+      displayName: "Baidu Qianfan ERNIE",
+      description: "Baidu Qianfan OpenAI-compatible chat endpoint for ERNIE models.",
+      providerId: "baidu-qianfan",
+      model: "ernie-4.5-turbo-128k",
+      api: "openai-completions",
+      baseUrl: "https://qianfan.baidubce.com/v2",
+      apiKeyRef: "env:QIANFAN_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      reasoning: false,
+      thinkingModes: [],
+    }),
+    createProviderTemplate({
+      templateId: "tencent-hunyuan",
+      kind: "openai-compatible",
+      displayName: "Tencent Hunyuan",
+      description: "Tencent Hunyuan OpenAI-compatible chat endpoint.",
+      providerId: "tencent-hunyuan",
+      model: "hunyuan-turbos-latest",
+      api: "openai-completions",
+      baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
+      apiKeyRef: "env:HUNYUAN_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      reasoning: false,
+      thinkingModes: [],
+    }),
+    createProviderTemplate({
+      templateId: "siliconflow",
+      kind: "openai-compatible",
+      displayName: "SiliconFlow",
+      description: "SiliconFlow OpenAI-compatible chat endpoint for hosted open models.",
+      providerId: "siliconflow",
+      model: "Qwen/Qwen3-235B-A22B",
+      api: "openai-completions",
+      baseUrl: "https://api.siliconflow.cn/v1",
+      apiKeyRef: "env:SILICONFLOW_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      reasoning: false,
+      thinkingModes: [],
+    }),
+    createProviderTemplate({
+      templateId: "stepfun",
+      kind: "openai-compatible",
+      displayName: "StepFun",
+      description: "StepFun OpenAI-compatible chat endpoint.",
+      providerId: "stepfun",
+      model: "step-2-mini",
+      api: "openai-completions",
+      baseUrl: "https://api.stepfun.com/v1",
+      apiKeyRef: "env:STEPFUN_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      reasoning: false,
+      thinkingModes: [],
+    }),
+    createProviderTemplate({
+      templateId: "baichuan-ai",
+      kind: "openai-compatible",
+      displayName: "Baichuan AI",
+      description: "Baichuan AI OpenAI-compatible chat endpoint.",
+      providerId: "baichuan",
+      model: "Baichuan4-Turbo",
+      api: "openai-completions",
+      baseUrl: "https://api.baichuan-ai.com/v1",
+      apiKeyRef: "env:BAICHUAN_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      reasoning: false,
+      thinkingModes: [],
+    }),
+    createProviderTemplate({
+      templateId: "01ai-yi",
+      kind: "openai-compatible",
+      displayName: "01.AI Yi",
+      description: "01.AI Yi OpenAI-compatible chat endpoint.",
+      providerId: "01ai",
+      model: "yi-lightning",
+      api: "openai-completions",
+      baseUrl: "https://api.lingyiwanwu.com/v1",
+      apiKeyRef: "env:YI_API_KEY",
+      capabilities: ["chat", "tool_call"],
+      reasoning: false,
+      thinkingModes: [],
+    }),
+    createProviderTemplate({
       templateId: "seedream-image",
       kind: "seedream",
       displayName: "Seedream Image",
@@ -3945,7 +4068,7 @@ export function createProviderFromBody(body: Record<string, unknown>, id: string
   const apiKeyConfigured = apiKeyRef?.startsWith("local:")
     ? body.clearApiKey !== true
     : apiKeyRef === "env:LOCAL_RELAY_API_KEY" || existing.apiKeyConfigured === true && body.clearApiKey !== true;
-  return {
+  const provider = {
     id,
     kind: typeof body.kind === "string" ? body.kind : typeof existing.kind === "string" ? existing.kind : "openai-compatible",
     displayName: typeof body.displayName === "string" ? body.displayName : typeof existing.displayName === "string" ? existing.displayName : "Custom Provider",
@@ -3968,6 +4091,15 @@ export function createProviderFromBody(body: Record<string, unknown>, id: string
     createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-25T00:10:00.000Z",
     updatedAt: "2026-05-25T00:10:00.000Z",
   };
+  return normalizeMockProviderForGenerationRuntime(provider);
+}
+
+function normalizeMockProviderForGenerationRuntime(provider: Record<string, unknown>): Record<string, unknown> {
+  const normalizedCompat = normalizeMediaProviderCompat(provider as Parameters<typeof normalizeMediaProviderCompat>[0]);
+  if (normalizedCompat === undefined || normalizedCompat === provider.compat) {
+    return provider;
+  }
+  return { ...provider, compat: normalizedCompat };
 }
 
 export function createChannelFromBody(body: Record<string, unknown>, id: string, existing: Record<string, unknown> = {}): Record<string, unknown> {
@@ -5384,16 +5516,55 @@ function upsertMockTeammateMemoryScope(
 
 export function buildProviderCheckResult(provider: Record<string, unknown>): Record<string, unknown> {
   const checkedAt = "2026-05-25T00:11:00.000Z";
-  if (provider.enabled === false) {
+  const normalizedProvider = normalizeMockProviderForGenerationRuntime(provider);
+  if (normalizedProvider.enabled === false) {
     return { ok: false, code: "provider_disabled", message: "Provider is disabled.", checkedAt };
   }
-  if (provider.apiKeyRef && provider.apiKeyConfigured !== true) {
-    return { ok: false, code: "secret_missing", message: `${String(provider.apiKeyRef)} is not configured.`, checkedAt };
+  if (normalizedProvider.apiKeyRef && normalizedProvider.apiKeyConfigured !== true) {
+    return { ok: false, code: "secret_missing", message: `${String(normalizedProvider.apiKeyRef)} is not configured.`, checkedAt };
   }
-  if (String(provider.displayName).includes("Auth Failed")) {
+  if (String(normalizedProvider.displayName).includes("Auth Failed")) {
     return { ok: false, code: "auth_failed", message: "Invalid API key.", checkedAt };
   }
-  if (provider.api === "media-job") {
+  if (normalizedProvider.api === "media-job") {
+    const operation = mockProviderGenerationOperation(normalizedProvider);
+    const state = resolveGenerationProviderRuntimeState(
+      normalizedProvider as Parameters<typeof resolveGenerationProviderRuntimeState>[0],
+      operation,
+    );
+    if (state.reason === "base_url_missing") {
+      return { ok: false, code: "bad_request", message: "baseUrl is required for live generation transport.", checkedAt };
+    }
+    if (state.reason === "secret_missing") {
+      return { ok: false, code: "secret_missing", message: "API key missing. Add an API key before enabling live generation transport.", checkedAt };
+    }
+    if (state.reason === "live_transport_invalid") {
+      return { ok: false, code: "invalid_request", message: "Invalid generation transport configuration.", checkedAt };
+    }
+    if (!state.canRun) {
+      return {
+        ok: false,
+        code: "unsupported_live_probe",
+        message: "This generation model is recognized, but Ling has not connected a real generation adapter for this provider yet.",
+        checkedAt,
+      };
+    }
+    if (state.familyId === "openai-images") {
+      return {
+        ok: true,
+        code: "static_check",
+        message: "OpenAI Images generation configuration is ready. The check does not create an image.",
+        checkedAt,
+      };
+    }
+    if (state.familyId === "volcengine-seedance") {
+      return {
+        ok: true,
+        code: "static_check",
+        message: "Seedance video generation configuration is ready. The check does not create a video.",
+        checkedAt,
+      };
+    }
     return {
       ok: true,
       code: "live_image_probe_ready",
@@ -5402,6 +5573,27 @@ export function buildProviderCheckResult(provider: Record<string, unknown>): Rec
     };
   }
   return { ok: true, code: "ready", message: "Provider is reachable and accepted the configured model.", checkedAt };
+}
+
+function mockProviderGenerationOperation(provider: Record<string, unknown>): Parameters<typeof resolveGenerationProviderRuntimeState>[1] {
+  const capabilities = Array.isArray(provider.capabilities) ? provider.capabilities : [];
+  if (capabilities.includes("image_generate")) {
+    return "image_generate";
+  }
+  if (capabilities.includes("video_generate")) {
+    return "video_generate";
+  }
+  if (capabilities.includes("image_edit")) {
+    return "image_edit";
+  }
+  return undefined;
+}
+
+function mockMediaJobOperation(value: unknown): Parameters<typeof resolveGenerationProviderRuntimeState>[1] {
+  if (value === "image_generate" || value === "image_edit" || value === "video_generate") {
+    return value;
+  }
+  return undefined;
 }
 
 export function buildMockExternalActionView(state: MockState, action: MockExternalWorkAction): Record<string, unknown> {
@@ -5681,7 +5873,7 @@ export async function handleDaemonRoute(
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const nextSettings = { ...state.workspaceSettings };
-    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
+    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "defaultProviderPresetId", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
       if (body[key] === null) {
         delete nextSettings[key];
       } else if (body[key] !== undefined) {
@@ -5870,7 +6062,12 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/providers") {
-    await route.fulfill({ json: { cwd, providers: state.providers } });
+    await route.fulfill({
+      json: {
+        cwd,
+        providers: state.providers.map((provider) => isRecord(provider) ? normalizeMockProviderForGenerationRuntime(provider) : provider),
+      },
+    });
     return;
   }
   if (request.method() === "GET" && path === "/memory") {
@@ -7855,21 +8052,26 @@ export async function handleDaemonRoute(
         source: "https://api.example.com/v1/models",
         models: [
           { id: "cliproxy-gpt-4o", ownedBy: "cliproxy" },
+          { id: "gpt-image-2", ownedBy: "openai", api: "media-job", input: ["text", "image"], capabilities: ["image_generate"], capabilitySource: "upstream", capabilityConfidence: "known" },
+          { id: "black-forest-labs/flux-2-pro", ownedBy: "black-forest-labs", api: "media-job", input: ["text", "image"], capabilities: ["image_generate"], capabilitySource: "model_catalog", capabilityConfidence: "known" },
+          { id: "stability-ai/stable-diffusion-3.5-large", ownedBy: "stability", api: "media-job", input: ["text", "image"], capabilities: ["image_generate"], capabilitySource: "model_catalog", capabilityConfidence: "known" },
+          { id: "qwen-image-edit", ownedBy: "alibaba", api: "media-job", input: ["text", "image"], capabilities: ["image_generate", "image_edit"], capabilitySource: "model_catalog", capabilityConfidence: "known" },
+          { id: "ideogram-ai/ideogram-v3-quality", ownedBy: "ideogram", api: "media-job", input: ["text", "image"], capabilities: ["image_generate"], capabilitySource: "model_catalog", capabilityConfidence: "known" },
           { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
           { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
           { id: "doubao-1-5-pro-32k-250115", ownedBy: "volcengine" },
-	          {
-	            id: "cliproxy-claude-sonnet",
-	            ownedBy: "cliproxy",
-	            capabilities: ["chat", "reasoning"],
-	            thinkingModes: ["off", "low", "medium", "high", "xhigh"],
-	            thinkingSupport: { levels: ["off", "low", "medium", "high", "xhigh"], maxTokens: 8192 },
-	            contextWindow: 200000,
-	            maxTokens: 8192,
-	            supportedParameters: ["thinking", "tools"],
-	            capabilitySource: "model_catalog",
-	            capabilityConfidence: "known",
-	          },
+          {
+            id: "cliproxy-claude-sonnet",
+            ownedBy: "cliproxy",
+            capabilities: ["chat", "reasoning"],
+            thinkingModes: ["off", "low", "medium", "high", "xhigh"],
+            thinkingSupport: { levels: ["off", "low", "medium", "high", "xhigh"], maxTokens: 8192 },
+            contextWindow: 200000,
+            maxTokens: 8192,
+            supportedParameters: ["thinking", "tools"],
+            capabilitySource: "model_catalog",
+            capabilityConfidence: "known",
+          },
         ],
       },
     });
@@ -7896,28 +8098,28 @@ export async function handleDaemonRoute(
         item.baseUrl === body.baseUrl &&
         item.model === modelId
       );
-	      const providerBody = {
-	        ...body,
-	        displayName,
-	        model: modelId,
-	        api: modelApi,
-	        input: Array.isArray(model.input) ? model.input : body.input,
-	        capabilities: Array.isArray(model.capabilities) ? model.capabilities : body.capabilities,
-	        thinkingModes: Array.isArray(model.thinkingModes) ? model.thinkingModes : body.thinkingModes,
-	        reasoning: Array.isArray(model.thinkingModes) ? model.thinkingModes.some((mode) => mode !== "off") : body.reasoning,
-	        contextWindow: typeof model.contextWindow === "number" ? model.contextWindow : body.contextWindow,
-	        maxTokens: typeof model.maxTokens === "number" ? model.maxTokens : body.maxTokens,
-	        compat: {
-	          ...(isRecord(body.compat) ? body.compat : {}),
-	          modelMetadata: {
-	            id: modelId,
-	            supportedParameters: Array.isArray(model.supportedParameters) ? model.supportedParameters : undefined,
-	            thinkingSupport: isRecord(model.thinkingSupport) ? model.thinkingSupport : undefined,
-	            capabilitySource: typeof model.capabilitySource === "string" ? model.capabilitySource : undefined,
-	            capabilityConfidence: typeof model.capabilityConfidence === "string" ? model.capabilityConfidence : undefined,
-	          },
-	        },
-	      };
+      const providerBody = {
+        ...body,
+        displayName,
+        model: modelId,
+        api: modelApi,
+        input: Array.isArray(model.input) ? model.input : body.input,
+        capabilities: Array.isArray(model.capabilities) ? model.capabilities : body.capabilities,
+        thinkingModes: Array.isArray(model.thinkingModes) ? model.thinkingModes : body.thinkingModes,
+        reasoning: Array.isArray(model.thinkingModes) ? model.thinkingModes.some((mode) => mode !== "off") : body.reasoning,
+        contextWindow: typeof model.contextWindow === "number" ? model.contextWindow : body.contextWindow,
+        maxTokens: typeof model.maxTokens === "number" ? model.maxTokens : body.maxTokens,
+        compat: {
+          ...(isRecord(body.compat) ? body.compat : {}),
+          modelMetadata: {
+            id: modelId,
+            supportedParameters: Array.isArray(model.supportedParameters) ? model.supportedParameters : undefined,
+            thinkingSupport: isRecord(model.thinkingSupport) ? model.thinkingSupport : undefined,
+            capabilitySource: typeof model.capabilitySource === "string" ? model.capabilitySource : undefined,
+            capabilityConfidence: typeof model.capabilityConfidence === "string" ? model.capabilityConfidence : undefined,
+          },
+        },
+      };
       if (providerIndex >= 0) {
         const existing = state.providers[providerIndex];
         const provider = isRecord(existing)
@@ -10971,56 +11173,26 @@ export async function handleDaemonRoute(
       }
     }
     const provider = state.providers.find((item) => isRecord(item) && item.id === job.providerPresetId);
-    const liveGate = isRecord(provider) &&
-      isRecord(provider.compat) &&
-      isRecord(provider.compat.mediaVendorTransport) &&
-      provider.compat.mediaVendorTransport.mode === "live";
-    if (liveGate) {
-      const existingApproval = state.approvals.find((approval) => approval.mediaJobId === job.id && approval.actionType === "media_cost");
-      if (!existingApproval) {
-        const approval: MockApproval = {
-          id: `approval_${job.id}`,
-          mediaJobId: job.id,
-          actionType: "media_cost",
-          risk: "high",
-          title: "Approve generation cost",
-          description: "Seedream Image image_generate requires approval before live generation.",
-          payload: {
-            type: "media_cost",
-            providerPresetId: job.providerPresetId,
-            model: "seedream",
-            operation: job.operation,
-            promptPreview: job.prompt,
-          },
-          status: "pending",
-          createdAt: "2026-05-24T00:01:00.000Z",
-          expiresAt: "2099-01-01T00:01:00.000Z",
-        };
-        state.approvals.unshift(approval);
-        job.status = "waiting_for_approval";
-        job.updatedAt = "2026-05-24T00:01:00.000Z";
-        await route.fulfill({ json: { mediaJob: job, approval, artifacts: [] } });
-        return;
-      }
-      if (existingApproval.status === "pending") {
-        job.status = "waiting_for_approval";
-        await route.fulfill({ json: { mediaJob: job, approval: existingApproval, artifacts: [] } });
-        return;
-      }
-      if (existingApproval.status === "denied" || existingApproval.status === "expired") {
-        job.status = "failed";
-        job.errorMessage = `Media cost approval ${existingApproval.status} before live media execution.`;
-        await route.fulfill({ json: { mediaJob: job, approval: existingApproval, artifacts: [] } });
-        return;
-      }
-    }
-    if (!liveGate) {
+    const normalizedProvider = isRecord(provider) ? normalizeMockProviderForGenerationRuntime(provider) : undefined;
+    const jobOperation = mockMediaJobOperation(job.operation);
+    const runtimeState = normalizedProvider && jobOperation
+      ? resolveGenerationProviderRuntimeState(
+        normalizedProvider as Parameters<typeof resolveGenerationProviderRuntimeState>[0],
+        jobOperation,
+      )
+      : undefined;
+    const canRunGeneration = runtimeState?.canRun === true;
+    if (!canRunGeneration) {
       job.status = "failed";
-      job.errorMessage = "当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。";
+      job.errorMessage = runtimeState?.reason === "base_url_missing"
+        ? "生成模型缺少 Base URL，请在模型工作台补充后重试。"
+        : runtimeState?.reason === "secret_missing"
+          ? "生成模型缺少 API Key，请在模型工作台补充后重试。"
+          : "当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。";
       await route.fulfill({
         status: 400,
         json: {
-          error: "live_media_transport_required",
+          error: runtimeState?.reason === "base_url_missing" ? "bad_request" : runtimeState?.reason === "secret_missing" ? "secret_missing" : "live_media_transport_required",
           message: job.errorMessage,
           mediaJob: job,
           artifacts: [],
@@ -11266,6 +11438,14 @@ export async function handleDaemonRoute(
     approval.resolvedAt = "2026-05-22T00:02:00.000Z";
     approval.resolvedBy = "local-user";
     approval.decisionReason = "Resolved from Playwright";
+    if (approval.mediaJobId && approval.actionType === "media_cost") {
+      const mediaJob = state.mediaJobs.find((item) => item.id === approval.mediaJobId);
+      if (mediaJob) {
+        mediaJob.status = approval.status === "approved" ? "queued" : "failed";
+        mediaJob.errorMessage = approval.status === "denied" ? "Media cost approval denied before live media execution." : undefined;
+        mediaJob.updatedAt = approval.resolvedAt;
+      }
+    }
     if (approval.externalWorkActionId) {
       const action = state.externalWorkActions.find((item) => item.id === approval.externalWorkActionId);
       if (action && (action.status === "waiting_for_approval" || action.status === "proposed")) {

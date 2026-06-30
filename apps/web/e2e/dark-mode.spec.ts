@@ -30,15 +30,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "收件箱" }).click();
-  await expect(page.locator(".approvals-panel")).toBeVisible();
-  await assertDarkPage(page, "review queue", [
-    ".approvals-panel",
-    ".review-queue-layout",
-    ".review-queue-row",
-    ".review-queue-detail",
-    ".approval-row.compact",
-  ]);
+  await expect(navigation.getByRole("button", { name: "收件箱" })).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "图像生成" }).click();
   await expect(page.locator(".media-jobs-page")).toBeVisible();

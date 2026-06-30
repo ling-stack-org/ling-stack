@@ -26,6 +26,8 @@ import type {
   Task,
   TaskEditFormState,
   TaskRunActionState,
+  UpdateWorkspaceSettingsRequest,
+  WorkspaceSettings,
 } from "../types.js";
 
 type RunCommands = ReturnType<typeof useRunCommandController>;
@@ -47,8 +49,14 @@ export interface TaskRunController {
   readonly runUpdatedTaskFromRepair: (task: Task) => Promise<void>;
   readonly checkThenRunUpdatedTaskFromRepair: (task: Task) => Promise<void>;
   readonly rerunRun: (sourceRun: RunSession) => Promise<void>;
-  readonly applyProviderToRun: (provider: ProviderPreset) => Promise<void>;
-  readonly clearProviderFromRun: (provider?: ProviderPreset) => Promise<void>;
+  readonly applyProviderToRun: (provider: ProviderPreset, options?: ProviderDefaultScopeOptions) => Promise<void>;
+  readonly clearProviderFromRun: (provider?: ProviderPreset, options?: ProviderDefaultScopeOptions) => Promise<void>;
+}
+
+type ProviderDefaultScope = "workspace" | "channel";
+
+interface ProviderDefaultScopeOptions {
+  readonly scope?: ProviderDefaultScope;
 }
 
 interface RunPersistedTaskOptions {
@@ -82,11 +90,11 @@ export function useTaskRunController(input: {
   readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
   readonly setErrorMessage: (message: string) => void;
   readonly t: (value: string, values?: Record<string, string | number>) => string;
+  readonly patchWorkspaceSettings: (patch: UpdateWorkspaceSettingsRequest) => Promise<WorkspaceSettings | undefined>;
   readonly buildRerunRequest: RunCommands["buildRerunRequest"];
   readonly buildTaskRunRequest: RunCommands["buildTaskRunRequest"];
   readonly runWithRequest: RunsActions["runWithRequest"];
   readonly checkProviderForRun: (provider: ProviderPreset) => Promise<boolean>;
-  readonly clearProviderUsage: (providerId: string) => Promise<void>;
   readonly confirmChannelExecutionProposalWorkflow: WorkspaceCommands["confirmChannelExecutionProposalWorkflow"];
   readonly deleteTask: WorkspaceCommands["deleteTask"];
   readonly updateChannel: WorkspaceCommands["updateChannel"];
@@ -316,8 +324,9 @@ export function useTaskRunController(input: {
     }
   }
 
-  async function applyProviderToRun(provider: ProviderPreset): Promise<void> {
-    input.setTaskRunProviderId(provider.id);
+  async function applyProviderToRun(provider: ProviderPreset, options: ProviderDefaultScopeOptions = {}): Promise<void> {
+    const scope = options.scope ?? (input.selectedChannelId ? "channel" : "workspace");
+    input.setTaskRunProviderId(scope === "channel" ? provider.id : "");
     input.setForm((current) => ({
       ...current,
       providerPresetId: provider.id,
@@ -328,6 +337,13 @@ export function useTaskRunController(input: {
     }));
 
     const workspaceCwd = input.form.cwd.trim();
+    if (scope === "workspace") {
+      if (workspaceCwd) {
+        await input.patchWorkspaceSettings({ defaultProviderPresetId: provider.id });
+      }
+      return;
+    }
+
     const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
     if (!workspaceCwd || !selectedChannel) {
       return;
@@ -354,15 +370,18 @@ export function useTaskRunController(input: {
     }
   }
 
-  async function clearProviderFromRun(provider?: ProviderPreset): Promise<void> {
+  async function clearProviderFromRun(_provider?: ProviderPreset, options: ProviderDefaultScopeOptions = {}): Promise<void> {
+    const scope = options.scope ?? (input.selectedChannelId ? "channel" : "workspace");
     const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
     input.setForm((current) => ({
       ...current,
       providerPresetId: "",
     }));
     input.setTaskRunProviderId("");
-    if (provider) {
-      await input.clearProviderUsage(provider.id);
+    if (scope === "workspace") {
+      if (input.form.cwd.trim()) {
+        await input.patchWorkspaceSettings({ defaultProviderPresetId: null });
+      }
       return;
     }
     if (!selectedChannel?.defaultProviderPresetId || !input.form.cwd.trim()) {

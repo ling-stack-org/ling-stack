@@ -166,7 +166,7 @@ Result artifacts should be linked after execution, denial, failure, or cancellat
 | `git_push` | local branch, remote, commits to push, protected-branch risk |
 | `external_send` | target service, redacted payload, idempotency key, mutation endpoint |
 | `deploy` | target environment, build artifact refs, rollback info if available |
-| `media_cost` | provider, operation, prompt/input summary, estimated cost token/unit info |
+| `media_cost` | legacy media approval preview: provider, operation, prompt/input summary, estimated cost token/unit info |
 | `credential_change` | secret ref only, never raw value |
 | `provider_change` | changed fields, previous/current non-secret summary |
 | `mcp_tool_call` | server/tool name, arguments with redaction, declared approval risk |

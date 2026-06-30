@@ -7663,6 +7663,7 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
       workspaceCwd: cwd,
       theme: "dark",
       locale: "zh-CN",
+      defaultProviderPresetId: "provider_default_chat",
       channelNotifications: { channel_one: "mentions" },
       channelActivityViews: { channel_one: [{ id: "custom:review", name: "Review" }] },
       skillGovernancePolicy: {
@@ -7676,17 +7677,21 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(patched.settings.workspaceCwd, cwd);
     assert.equal(patched.settings.theme, "dark");
     assert.equal(patched.settings.locale, "zh-CN");
+    assert.equal(patched.settings.defaultProviderPresetId, "provider_default_chat");
     assert.equal(patched.settings.channelNotifications.channel_one, "mentions");
     assert.equal(patched.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reopened = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(reopened.settings.theme, "dark");
+    assert.equal(reopened.settings.defaultProviderPresetId, "provider_default_chat");
     assert.equal(reopened.settings.channelActivityViews.channel_one[0].id, "custom:review");
     assert.equal(reopened.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reset = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      defaultProviderPresetId: null,
       skillGovernancePolicy: null,
     });
+    assert.equal(reset.settings.defaultProviderPresetId, undefined);
     assert.equal(reset.settings.skillGovernancePolicy.generationMode, "semi_auto");
   } finally {
     await daemon.close();

@@ -16,7 +16,7 @@ export interface WorkspaceSettingsController {
   readonly workspaceSettings: WorkspaceSettings | undefined;
   readonly effectiveConfig: EffectiveConfigResponse | undefined;
   readonly updateWorkspaceCwd: (cwd: string) => void;
-  readonly patchWorkspaceSettings: (patch: UpdateWorkspaceSettingsRequest) => void;
+  readonly patchWorkspaceSettings: (patch: UpdateWorkspaceSettingsRequest) => Promise<WorkspaceSettings | undefined>;
 }
 
 export function useWorkspaceSettingsController(input: {
@@ -60,20 +60,29 @@ export function useWorkspaceSettingsController(input: {
     }));
   }
 
-  function patchWorkspaceSettings(patch: UpdateWorkspaceSettingsRequest): void {
+  async function patchWorkspaceSettings(patch: UpdateWorkspaceSettingsRequest): Promise<WorkspaceSettings | undefined> {
     if (!workspaceCwd) {
-      return;
+      return undefined;
     }
-    void updateWorkspaceSettings(workspaceCwd, patch)
-      .then((response) => {
-        setWorkspaceSettings(response.settings);
-        setEffectiveConfig((current) =>
-          current && current.cwd === workspaceCwd
-            ? { ...current, layers: { ...current.layers, workspaceSettings: response.settings } }
-            : current,
-        );
-      })
-      .catch((error: unknown) => input.setErrorMessage(error instanceof Error ? error.message : String(error)));
+    try {
+      const response = await updateWorkspaceSettings(workspaceCwd, patch);
+      setWorkspaceSettings(response.settings);
+      if ("defaultProviderPresetId" in patch) {
+        input.setForm((current) => ({
+          ...current,
+          providerPresetId: response.settings.defaultProviderPresetId ?? "",
+        }));
+      }
+      setEffectiveConfig((current) =>
+        current && current.cwd === workspaceCwd
+          ? { ...current, layers: { ...current.layers, workspaceSettings: response.settings } }
+          : current,
+      );
+      return response.settings;
+    } catch (error: unknown) {
+      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
   }
 
   useEffect(() => {
@@ -105,6 +114,11 @@ export function useWorkspaceSettingsController(input: {
               ? response.values.locale.value
               : currentLocaleRef.current;
         setWorkspaceSettings(workspaceLayer);
+        input.setForm((current) =>
+          current.providerPresetId === (workspaceLayer.defaultProviderPresetId ?? "")
+            ? current
+            : { ...current, providerPresetId: workspaceLayer.defaultProviderPresetId ?? "" },
+        );
         setEffectiveConfig(response);
         input.setThemePreference(nextTheme);
         input.setLocale(nextLocale);

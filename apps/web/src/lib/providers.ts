@@ -10,6 +10,8 @@ import {
   isMediaOnlyModelId,
   mediaModelKind,
 } from "@ling-stack/core/provider-adapters";
+import { inferGenerationModelFamily } from "@ling-stack/core/provider-generation-models";
+import { resolveGenerationProviderRuntimeState } from "@ling-stack/core/provider-media-normalization";
 import {
   resolveProviderModelCapabilitySnapshot,
   type ProviderModelCapabilitySnapshot,
@@ -281,6 +283,19 @@ export function normalizeProviderModelForImport(
   model: ProviderModelOption,
   form: Pick<ProviderFormState, "api" | "kind" | "providerId" | "capabilitiesText" | "inputText">,
 ): ProviderModelOption {
+  const generationFamily = inferGenerationModelFamily(model.id, form);
+  if (generationFamily) {
+    return {
+      ...model,
+      ownedBy: model.ownedBy ?? generationFamily.ownedBy,
+      api: model.api ?? generationFamily.api,
+      input: model.input?.length ? model.input : generationFamily.input,
+      capabilities: model.capabilities?.length ? model.capabilities : generationFamily.capabilities,
+      supportedParameters: model.supportedParameters?.length ? model.supportedParameters : generationFamily.supportedParameters,
+      capabilitySource: model.capabilitySource ?? generationFamily.capabilitySource,
+      capabilityConfidence: model.capabilityConfidence ?? generationFamily.capabilityConfidence,
+    };
+  }
 	  if (
 	    model.capabilities?.length ||
 	    model.api ||
@@ -316,6 +331,20 @@ export function splitProviderCsv(value: string): readonly string[] {
 
 export function canUseProviderForRun(provider: ProviderPreset): boolean {
   return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat") && providerSecretReady(provider);
+}
+
+export function canUseConversationProvider(provider: ProviderPreset): boolean {
+  if (!canUseProviderForRun(provider)) {
+    return false;
+  }
+  if (providerHasGenerationCapability(provider)) {
+    return false;
+  }
+  return inferGenerationModelFamily(provider.model, {
+    kind: provider.kind,
+    providerId: provider.providerId,
+    api: provider.api,
+  }) === undefined;
 }
 
 export function canBatchCheckProvider(provider: ProviderPreset): boolean {
@@ -358,27 +387,40 @@ export function providerSupportsGenerationOperation(
 }
 
 export function isLiveMediaProvider(provider: ProviderPreset): boolean {
-  return (
-    isMediaProvider(provider) &&
-    provider.enabled &&
-    providerSecretReady(provider) &&
-    isRecord(provider.compat) &&
-    isRecord(provider.compat.mediaVendorTransport) &&
-    provider.compat.mediaVendorTransport.mode === "live"
-  );
+  return resolveGenerationProviderRuntimeState(provider).canRun;
 }
 
 export function canUseMediaProviderForOperation(
   provider: ProviderPreset,
   operation: GenerationOperation,
 ): boolean {
-  if (!isLiveMediaProvider(provider) || !provider.capabilities.includes(operation)) {
-    return false;
-  }
-  return provider.kind === "seedream" && operation === "image_generate";
+  return resolveGenerationProviderRuntimeState(provider, operation).canRun;
 }
 
 export const canUseGenerationProviderForOperation = canUseMediaProviderForOperation;
+
+export function providerModelRouteLabel(
+  provider: ProviderPreset,
+  templates: readonly ProviderTemplate[] = [],
+): string {
+  const routeLabel = providerRouteShortLabel(provider, templates);
+  return routeLabel ? `${provider.model} · ${routeLabel}` : provider.model;
+}
+
+export function providerRouteShortLabel(
+  provider: Pick<ProviderPreset, "api" | "baseUrl" | "displayName" | "kind" | "model" | "providerId">,
+  templates: readonly ProviderTemplate[] = [],
+): string {
+  const endpointHost = providerEndpointHost(providerEffectiveBaseUrl(provider, templates));
+  if (endpointHost) {
+    return endpointHost;
+  }
+  const providerId = provider.providerId.trim();
+  if (providerId) {
+    return providerId;
+  }
+  return providerDisplaySourceLabel(provider.displayName, provider.model);
+}
 
 export function providerCapabilityChipLabels(
   provider: Pick<ProviderPreset, "capabilities"> | Pick<ProviderModelOption, "id" | "capabilities">,
@@ -412,6 +454,12 @@ export function providerCapabilityChipLabels(
 }
 
 function inferredGenerationCapabilities(modelId: string | undefined): readonly GenerationOperation[] {
+  const generationFamily = inferGenerationModelFamily(modelId);
+  if (generationFamily) {
+    return generationFamily.capabilities.filter((capability): capability is GenerationOperation =>
+      generationCapabilities.has(capability as GenerationOperation),
+    );
+  }
   const kind = mediaModelKind(modelId);
   if (kind === "seedance") {
     return ["video_generate"];
@@ -550,10 +598,41 @@ export function secretRefSetupGuidance(_ref: string | undefined, t?: ProviderTra
 }
 
 export function providerTemplateKindLabel(template: ProviderTemplate): string {
+  if (template.api === "media-job") {
+    return "media";
+  }
+  if (isDomesticProviderTemplate(template)) {
+    return "domestic";
+  }
   if (template.kind === "openai-compatible") {
     return template.templateId.includes("local") || template.providerId.includes("relay") ? "relay" : "custom";
   }
   return "supplier";
+}
+
+const domesticProviderTemplateIds = new Set([
+  "alibaba-bailian",
+  "baichuan",
+  "baidu-qianfan",
+  "deepseek",
+  "doubao",
+  "01ai",
+  "glm",
+  "minimax",
+  "moonshot",
+  "siliconflow",
+  "stepfun",
+  "tencent-hunyuan",
+]);
+
+function isDomesticProviderTemplate(template: ProviderTemplate): boolean {
+  return (
+    domesticProviderTemplateIds.has(template.providerId) ||
+    template.kind === "doubao" ||
+    template.kind === "deepseek" ||
+    template.kind === "minimax" ||
+    template.kind === "glm"
+  );
 }
 
 export function groupProviderTemplates(templates: readonly ProviderTemplate[]): readonly ProviderTemplateGroup[] {
@@ -562,7 +641,13 @@ export function groupProviderTemplates(templates: readonly ProviderTemplate[]): 
     { label: "Grok", templates: templates.filter((template) => template.providerId === "xai") },
     { label: "Gemini", templates: templates.filter((template) => template.kind === "google" || template.providerId === "google-gemini") },
     { label: "Claude", templates: templates.filter((template) => template.kind === "anthropic" || template.providerId === "anthropic") },
-    { label: "Custom access", templates: templates.filter((template) => providerTemplateKindLabel(template) === "custom" && template.providerId !== "xai") },
+    {
+      label: "Custom access",
+      templates: templates.filter((template) => {
+        const kindLabel = providerTemplateKindLabel(template);
+        return (kindLabel === "custom" || kindLabel === "relay") && template.providerId !== "xai";
+      }),
+    },
     { label: "Domestic AI", templates: templates.filter((template) => providerTemplateKindLabel(template) === "domestic") },
     { label: "Media", templates: templates.filter((template) => providerTemplateKindLabel(template) === "media") },
   ];
@@ -702,8 +787,29 @@ export function extractEnvRef(text: string): string | undefined {
   return text.match(/(?:env|keychain):[A-Za-z0-9._/-]+/)?.[0];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function providerEndpointHost(value: string): string {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return "";
+  }
+  try {
+    return new URL(trimmedValue).host;
+  } catch {
+    return "";
+  }
+}
+
+function providerDisplaySourceLabel(displayName: string, model: string): string {
+  const trimmedDisplayName = displayName.trim();
+  const trimmedModel = model.trim();
+  if (!trimmedDisplayName || !trimmedModel) {
+    return trimmedDisplayName;
+  }
+  const suffixes = [` · ${trimmedModel}`, ` / ${trimmedModel}`, ` - ${trimmedModel}`];
+  const matchingSuffix = suffixes.find((suffix) => trimmedDisplayName.toLowerCase().endsWith(suffix.toLowerCase()));
+  return matchingSuffix
+    ? trimmedDisplayName.slice(0, -matchingSuffix.length).trim()
+    : trimmedDisplayName;
 }
 
 function translateProviderText(

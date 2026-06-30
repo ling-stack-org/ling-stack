@@ -8,13 +8,23 @@ import {
   type MockState,
 } from "./support/mock-state";
 
-test("automations page uses Codex-style inbox, manual composer, templates, and auto scheduler recovery", async ({ page }) => {
+test("automations page uses Codex-style inbox, manual composer, templates, and per-item controls", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
     localStorage.setItem("ling-stack.themePreference", "dark");
   });
   const state = createBaseState({ approvalStatus: "pending" });
   state.providers = [createChatProvider({ id: "provider_local", displayName: "中转站", model: "gpt-test" })];
+  state.threads.unshift({
+    id: "thread_launch_planning",
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Launch planning thread",
+    objective: "Plan the launch follow-up cadence.",
+    status: "succeeded",
+    createdAt: "2026-06-06T00:01:00.000Z",
+    updatedAt: "2026-06-06T00:10:00.000Z",
+  });
   await mockDaemon(page, state);
   const automationState = await mockAutomationRoutes(page, state);
   await page.goto("/");
@@ -23,7 +33,7 @@ test("automations page uses Codex-style inbox, manual composer, templates, and a
   const automationsPage = page.locator(".automations-inbox-page");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(automationsPage.getByRole("heading", { name: "自动化", level: 1 })).toBeVisible();
-  await expect(automationsPage.getByRole("tab", { name: /运行中/ })).toHaveAttribute("aria-selected", "true");
+  await expect(automationsPage.getByRole("tab", { name: /已启用/ })).toHaveAttribute("aria-selected", "true");
   await expect(automationsPage.getByRole("heading", { name: "当前", level: 2 })).toHaveCount(0);
   const tabOverflow = await automationsPage.locator(".automation-tab-list").evaluate((element) => getComputedStyle(element).overflowX);
   expect(tabOverflow).toBe("visible");
@@ -51,15 +61,21 @@ test("automations page uses Codex-style inbox, manual composer, templates, and a
     expect(surface.exists, `${surface.selector} should render`).toBe(true);
     expect(surface.maxChannel, `${surface.selector} should stay on dark theme tokens`).toBeLessThanOrEqual(45);
   }
-  await expect(automationsPage.getByText("本地服务会自动恢复计划任务。")).toBeVisible();
-  await expect(automationsPage.getByRole("button", { name: /通过聊天创建/ })).toBeVisible();
+  const headerActions = automationsPage.locator(".automation-header-actions");
+  await expect(automationsPage.getByText("调度运行中")).toHaveCount(0);
+  await expect(headerActions.getByRole("button", { name: "暂停自动触发" })).toHaveCount(0);
+  await expect(headerActions.getByRole("button", { name: "恢复自动触发" })).toHaveCount(0);
+  await expect(headerActions.getByRole("button", { name: "使用模板" })).toBeVisible();
+  await expect(headerActions.getByRole("button", { name: "手动创建" })).toBeVisible();
+  await expect(headerActions.getByRole("button", { name: "从对话创建" })).toBeVisible();
+  await expect(automationsPage.locator(".automation-inbox-empty").getByRole("button")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Start" })).toHaveCount(0);
 
-  await automationsPage.getByRole("button", { name: /通过聊天创建/ }).click();
-  const chatDialog = page.getByRole("dialog", { name: "通过聊天创建" });
+  await headerActions.getByRole("button", { name: "从对话创建" }).click();
+  const chatDialog = page.getByRole("dialog", { name: "从对话创建" });
   await chatDialog.locator("textarea").fill("每分钟给我发一下你好");
   await chatDialog.getByRole("button", { name: "创建草稿" }).click();
-  await expect(page.getByRole("dialog", { name: "通过聊天创建" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "从对话创建" })).toHaveCount(0);
   const chatDraftRow = automationsPage.locator(".automation-inbox-row.draft", { hasText: "每分钟给我发一下你好" });
   await expect(chatDraftRow).toBeVisible();
   await expect(chatDraftRow.getByText("每 1 分钟")).toBeVisible();
@@ -69,10 +85,7 @@ test("automations page uses Codex-style inbox, manual composer, templates, and a
   await expect(automationsPage.locator(".automation-inbox-row", { hasText: "每分钟给我发一下你好" })).toBeVisible();
   await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
 
-  await page.getByLabel("选择创建方式").click();
-  await expect(page.getByRole("menuitem", { name: /通过聊天创建/ })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /使用模板/ })).toBeVisible();
-  await page.getByRole("menuitem", { name: /手动创建/ }).click();
+  await headerActions.getByRole("button", { name: "手动创建" }).click();
 
   const manualDialog = page.getByRole("dialog", { name: "手动创建" });
   await expect(manualDialog.getByPlaceholder("自动化功能标题")).toBeVisible();
@@ -102,15 +115,20 @@ test("automations page uses Codex-style inbox, manual composer, templates, and a
   await expect(createdRow.getByText("每天 09:00")).toBeVisible();
   await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
 
-  await page.getByLabel("选择创建方式").click();
-  await page.getByRole("menuitem", { name: /使用模板/ }).click();
+  await headerActions.getByRole("button", { name: "使用模板" }).click();
   const templateDialog = page.getByRole("dialog", { name: "自动化模板" });
   await expect(templateDialog.getByRole("button", { name: /Bug 扫描/ })).toBeVisible();
-  await expect(templateDialog.getByRole("button", { name: /迷你游戏/ })).toBeVisible();
-  await templateDialog.getByRole("button", { name: /迷你游戏/ }).click();
+  await expect(templateDialog.getByRole("button", { name: /站会 \/ 周总结/ })).toBeVisible();
+  await templateDialog.getByRole("button", { name: /站会 \/ 周总结/ }).click();
   const filledManualDialog = page.getByRole("dialog", { name: "手动创建" });
-  await expect(filledManualDialog.getByPlaceholder("自动化功能标题")).toHaveValue("迷你游戏");
-  await expect(filledManualDialog.getByPlaceholder("添加提示词，例如：在 $sentry 中查找崩溃")).toHaveValue(/经典小游戏/);
+  await expect(filledManualDialog.getByPlaceholder("自动化功能标题")).toHaveValue("站会 / 周总结");
+  await expect(filledManualDialog.getByRole("button", { name: /Launch planning thread/ })).toBeVisible();
+  await filledManualDialog.getByRole("button", { name: "创建" }).click();
+  await expect.poll(() => automationState.automations.length).toBe(3);
+  await expect(page.getByRole("dialog", { name: "手动创建" })).toHaveCount(0);
+  const conversationAutomationRow = automationsPage.locator(".automation-inbox-row", { hasText: "站会 / 周总结" });
+  await expect(conversationAutomationRow).toBeVisible();
+  await expect(conversationAutomationRow).toContainText("来源会话 · Launch planning thread");
 });
 
 interface MockAutomation {
@@ -293,6 +311,16 @@ async function mockAutomationRoutes(page: Parameters<typeof mockDaemon>[0], stat
       await route.fulfill({ json: { cwd, schedulers: routeState.schedulers } });
       return;
     }
+    if (request.method() === "POST" && path === "/automations/scheduler/start") {
+      routeState.schedulers = [createAutomationScheduler(routeState.automations, "running")];
+      await route.fulfill({ json: { cwd, scheduler: routeState.schedulers[0], duplicate: false } });
+      return;
+    }
+    if (request.method() === "POST" && path === "/automations/scheduler/stop") {
+      routeState.schedulers = [createAutomationScheduler(routeState.automations, "stopped")];
+      await route.fulfill({ json: { cwd, scheduler: routeState.schedulers[0] } });
+      return;
+    }
     const automationRoute = /^\/automations\/([^/]+)(?:\/(preview|run))?$/.exec(path);
     if (automationRoute) {
       const automation = routeState.automations.find((item) => item.id === decodeURIComponent(automationRoute[1]));
@@ -332,7 +360,7 @@ async function mockAutomationRoutes(page: Parameters<typeof mockDaemon>[0], stat
 }
 
 function refreshScheduler(routeState: MockAutomationRouteState): void {
-  routeState.schedulers = [createAutomationScheduler(routeState.automations, "running")];
+  routeState.schedulers = [createAutomationScheduler(routeState.automations, routeState.schedulers[0]?.status ?? "running")];
 }
 
 function createAutomationTemplates(): readonly Record<string, unknown>[] {

@@ -12,6 +12,7 @@ Related docs:
 - [Two-Layer Configuration](two-layer-configuration.md)
 - [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md)
 - [Secrets and Keychain](secrets-keychain.md)
+- [Provider Generation Runtime Resolver](provider-generation-runtime.md)
 
 This design follows `session-persistence`. Session persistence keeps a redacted request snapshot for direct `/runs` calls. Provider presets replace repeated inline provider JSON with reusable, user-facing configurations.
 
@@ -45,11 +46,11 @@ Implemented today:
 - Custom OpenAI-compatible providers can be registered dynamically by the Pi runner adapter when `baseUrl` is present.
 - Persistent provider preset storage, daemon CRUD APIs, CLI/Web setup surfaces, built-in templates, and env secret refs are implemented.
 - Provider health checks perform static validation plus live lightweight probes for OpenAI-compatible chat, OpenAI Responses, and Anthropic Messages.
-- `packages/providers` defines capability interfaces but has no concrete adapters.
+- `packages/providers` defines capability interfaces and media vendor adapters for the currently connected generation families.
+- Generation runtime readiness is resolved by [Provider Generation Runtime Resolver](provider-generation-runtime.md), not by page-specific provider checks.
 
 Not implemented yet:
 
-- Media provider job routing.
 - OS keychain secret refs.
 - Vendor-specific model catalog sync.
 
@@ -185,6 +186,13 @@ type ProviderCapability =
 ```
 
 Capabilities are declared on the preset because model support differs even inside the same vendor. `web_search` means the selected provider adapter can perform hosted web search and return citation evidence; it is not implied by generic OpenAI-compatible chat support.
+
+Generation capabilities are not enough to prove a preset can run. `image_generate`,
+`image_edit`, and `video_generate` all pass through the shared generation runtime
+resolver. The resolver combines preset capabilities, known model-family metadata,
+normalized live transport settings, secret/base URL readiness, and connected adapter
+support. Provider presets remain vendor route records; the resolver is the single
+runtime gate for generation readiness.
 
 Example:
 

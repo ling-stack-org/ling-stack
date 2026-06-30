@@ -56,6 +56,7 @@ export function ApprovalCard({
   const [reasonError, setReasonError] = useState("");
   const isResolving = Boolean(resolvingDecision);
   const requiresSecondConfirmation = approval.risk === "high" || approval.risk === "critical";
+  const requiresDecisionReason = requiresSecondConfirmation && approval.actionType !== "media_cost";
   const trimmedReason = decisionReason.trim();
   const effectiveStatus = effectiveApprovalStatus(approval);
   const timing = translateApprovalTimingLabel(approvalTimingLabel(approval), t);
@@ -69,10 +70,10 @@ export function ApprovalCard({
     if (decision === "approve" && requiresSecondConfirmation) {
       if (confirmDecision !== "approve") {
         setConfirmDecision("approve");
-        setReasonError(trimmedReason ? "" : t("High-risk approvals need a decision reason."));
+        setReasonError(requiresDecisionReason && !trimmedReason ? t("High-risk approvals need a decision reason.") : "");
         return;
       }
-      if (!trimmedReason) {
+      if (requiresDecisionReason && !trimmedReason) {
         setReasonError(t("High-risk approvals need a decision reason."));
         return;
       }
@@ -125,7 +126,7 @@ export function ApprovalCard({
             <textarea
               value={decisionReason}
               rows={compact ? 2 : 3}
-              placeholder={requiresSecondConfirmation ? t("Required before approving high-risk requests") : t("Optional note for the audit log")}
+              placeholder={requiresDecisionReason ? t("Required before approving high-risk requests") : t("Optional note for the audit log")}
               disabled={isResolving}
               onChange={(event) => {
                 setDecisionReason(event.target.value);
@@ -139,7 +140,7 @@ export function ApprovalCard({
           {confirmDecision === "approve" ? (
             <div className="approval-confirm-panel" role="alert">
               <CircleAlert size={15} />
-              <span>{t("High-risk approval. Review the payload and reason, then confirm.")}</span>
+              <span>{t(requiresDecisionReason ? "High-risk approval. Review the payload and reason, then confirm." : "Review the approval payload, then confirm.")}</span>
               <button className="secondary-button compact-button" type="button" onClick={() => setConfirmDecision(undefined)} disabled={isResolving}>
                 {t("Cancel")}
               </button>

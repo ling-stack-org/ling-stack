@@ -95,7 +95,9 @@ All resolved approval states are terminal.
 
 ### Media Job
 
-Media jobs are async work items with optional cost approval.
+Media jobs are async work items. The approval transitions below are legacy compatibility
+states for older `media_cost` records; new media runs execute after generation runtime
+readiness checks without creating media approvals.
 
 Allowed baseline transitions:
 

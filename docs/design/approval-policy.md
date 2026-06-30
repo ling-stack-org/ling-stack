@@ -33,7 +33,7 @@ run requests a risky action
 -> all decisions are recorded as events
 ```
 
-Ling Stack should not claim approval is complete until `write`, `edit`, `bash`, external sends, deploys, and paid media jobs can be intercepted before execution.
+Ling Stack should not claim approval is complete until `write`, `edit`, `bash`, external sends, and deploys can be intercepted before execution. Media generation uses generation runtime readiness instead of a Ling approval gate.
 
 ## Current Baseline
 
@@ -57,7 +57,7 @@ Implemented today:
 Not implemented yet:
 
 - Approval expiry/cancellation UI.
-- External sends, deploys, credential changes, and paid media approvals.
+- External sends, deploys, and credential changes.
 
 ## Scope
 
@@ -121,7 +121,7 @@ Default classification:
 | `git_push` | approval required | External side effect |
 | `external_send` | approval required | Sends data outside local workspace |
 | `deploy` | approval required | Production or environment mutation |
-| `media_cost` | approval required | Paid/high-cost provider action |
+| `media_cost` | legacy only | Historical paid media approval records |
 | `credential_change` | critical approval required | Secret and auth boundary |
 | `provider_change` | medium approval or explicit user action | Affects model routing/cost |
 
@@ -137,7 +137,7 @@ Risk guidance:
 | --- | --- | --- |
 | `low` | Reversible local change inside allowed scope | Create draft file under bound path |
 | `medium` | Local mutation that may affect project behavior | Edit source file, run formatting command |
-| `high` | Broad, destructive, external, or expensive action | `rm`, `git push`, paid media generation |
+| `high` | Broad, destructive, external, or expensive action | `rm`, `git push`, production deploy |
 | `critical` | Credentials, production, history rewrite, irreversible side effects | secret edits, deploy, force push |
 
 ## Default v0.1 Policy
@@ -184,7 +184,6 @@ Recommended default:
     "git_push",
     "external_send",
     "deploy",
-    "media_cost",
     "credential_change",
     "provider_change"
   ],
@@ -723,25 +722,19 @@ Do not rely only on regex. Regex is a guardrail, not a shell security model.
 
 ## Media Cost Approval
 
-Media jobs are not Pi coding tools and can be controlled directly by Ling Stack.
+Media jobs are not Pi coding tools and are controlled directly by Ling Stack's media runtime.
 
-Approval required when:
+Current behavior:
 
-- Provider capability is `image_generate`, `image_edit`, or `video_generate`.
-- The job has a configured estimated cost.
-- The provider is marked high-cost.
-- The output may be sent externally.
+- New image/video generation jobs do not create `media_cost` approvals.
+- Generation execution is gated by provider runtime readiness, configured secret, connected adapter support, and the media job state machine.
+- Provider account billing still applies outside Ling; Ling does not estimate or approve per-job media cost in v0.1.
 
-Media approval payload should show:
+Legacy compatibility:
 
-- provider,
-- model,
-- operation,
-- prompt preview,
-- estimated cost if available,
-- output visibility.
-
-Live media job approvals are owned by `mediaJobId`, not `runId`. A live-gated media job creates or reuses a pending `media_cost` approval before adapter execution, moves to `waiting_for_approval`, and only continues after approval. Denied or expired media approvals fail the media job without executing the adapter.
+- `media_cost` remains an approval action type so old workspace records can be listed and resolved.
+- Historical media approvals are owned by `mediaJobId`, not `runId`.
+- Old media jobs in `waiting_for_approval` can be run directly after the new runtime readiness checks pass.
 
 ## Provider Change Approval
 

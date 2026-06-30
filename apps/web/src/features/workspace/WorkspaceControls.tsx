@@ -1,5 +1,5 @@
 import { useI18n } from "../../i18n.js";
-import { providerRunBlockerLabel } from "../../lib/providers.js";
+import { providerModelRouteLabel, providerRunBlockerLabel } from "../../lib/providers.js";
 import type { ChannelFormState, ProviderPreset } from "../../types.js";
 
 export function ProviderPresetOptions({
@@ -17,7 +17,7 @@ export function ProviderPresetOptions({
         <optgroup label={t("Ready coding task presets")}>
           {runnableProviders.map((provider) => (
             <option key={provider.id} value={provider.id}>
-              {provider.displayName} / {provider.model}
+              {providerModelRouteLabel(provider)}
             </option>
           ))}
         </optgroup>
@@ -26,7 +26,7 @@ export function ProviderPresetOptions({
         <optgroup label={t("Needs setup before task runs")}>
           {blockedProviders.map((provider) => (
             <option key={provider.id} value={provider.id} disabled>
-              {provider.displayName} / {provider.model} - {providerRunBlockerLabel(provider, t)}
+              {providerModelRouteLabel(provider)} - {providerRunBlockerLabel(provider, t)}
             </option>
           ))}
         </optgroup>

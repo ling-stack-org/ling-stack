@@ -15,6 +15,8 @@ export * from "./provider-types.js";
 export * from "./provider-templates.js";
 export * from "./provider-model-catalog.js";
 export * from "./provider-model-capabilities.js";
+export * from "./provider-generation-models.js";
+export * from "./provider-media-normalization.js";
 export * from "./provider-adapters.js";
 export * from "./channel-team-types.js";
 export * from "./channel-team-attention.js";

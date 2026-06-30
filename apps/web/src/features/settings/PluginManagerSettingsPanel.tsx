@@ -19,6 +19,7 @@ import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type { ManagedPluginApplyPresetResponse, ManagedPluginRuntimePreviewResponse, ManagedPluginView } from "../../types.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
+import { SettingsMetaLine } from "./SettingsSubnav.js";
 
 export function PluginManagerSettingsPanel({
   cwd,
@@ -84,12 +85,15 @@ export function PluginManagerSettingsPanel({
         </div>
       </header>
 
-      <div className="settings-plugin-stats" aria-label={t("Plugin stats")}>
-        <span><small>{t("Total")}</small><strong>{plugins.length}</strong></span>
-        <span><small>{t("Enabled")}</small><strong>{enabledCount}</strong></span>
-        <span><small>{t("Trusted local")}</small><strong>{trustedLocalCount}</strong></span>
-        <span><small>{t("Linked")}</small><strong>{linkedCount}</strong></span>
-      </div>
+      <SettingsMetaLine
+        label={t("Plugin stats")}
+        items={[
+          { label: "Total", value: plugins.length },
+          { label: "Enabled", value: enabledCount },
+          { label: "Trusted local", value: trustedLocalCount },
+          { label: "Linked", value: linkedCount },
+        ]}
+      />
 
       {latestApplyResult ? (
         <div className="settings-plugin-apply-result">
@@ -141,13 +145,16 @@ export function PluginManagerSettingsPanel({
                   <span>{plugin.version}</span>
                   <span>{plugin.trustSummary}</span>
                 </div>
-                <div className="settings-plugin-meta-grid">
-                  <MetaRow label={t("Health")} value={healthLabel(plugin)} compact />
-                  <MetaRow label={t("Package")} value={packageLabel(plugin)} compact />
-                  <MetaRow label={t("Contributions")} value={String(plugin.contributions.length)} compact />
-                  <MetaRow label={t("Linked resources")} value={linkedResourceLabel(plugin)} compact />
-                  <MetaRow label={t("Latest event")} value={latestEventLabel(plugin)} compact />
-                </div>
+                <details className="settings-plugin-details">
+                  <summary>{t("Details")}</summary>
+                  <div className="settings-plugin-meta-grid">
+                    <MetaRow label={t("Health")} value={healthLabel(plugin)} compact />
+                    <MetaRow label={t("Package")} value={packageLabel(plugin)} compact />
+                    <MetaRow label={t("Contributions")} value={String(plugin.contributions.length)} compact />
+                    <MetaRow label={t("Linked resources")} value={linkedResourceLabel(plugin)} compact />
+                    <MetaRow label={t("Latest event")} value={latestEventLabel(plugin)} compact />
+                  </div>
+                </details>
                 {plugin.disabledReason ? (
                   <div className="settings-plugin-warning">
                     <XCircle size={15} />

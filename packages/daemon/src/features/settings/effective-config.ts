@@ -158,6 +158,7 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     theme: readNullableTheme(record.theme),
     locale: readNullableString(record.locale, "locale"),
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
+    defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
     defaultPermissionMode: readNullableSessionPermissionMode(record.defaultPermissionMode),
     defaultPermissionPreset: readNullablePermissionPreset(record.defaultPermissionPreset),
     channelNotifications: readNullableStringRecord(record.channelNotifications, "channelNotifications"),

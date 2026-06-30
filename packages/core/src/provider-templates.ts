@@ -134,6 +134,78 @@ export function defaultProviderTemplates(): readonly ProviderTemplate[] {
       baseUrl: "https://open.bigmodel.cn/api/paas/v4",
       apiKeyRef: "env:ZHIPU_API_KEY",
     }),
+    domesticOpenAICompatibleProviderTemplate({
+      templateId: "alibaba-bailian-qwen",
+      displayName: "Alibaba Bailian Qwen",
+      description: "Alibaba Cloud Model Studio Bailian OpenAI-compatible chat endpoint for Qwen models.",
+      providerId: "alibaba-bailian",
+      model: "qwen-plus",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKeyRef: "env:DASHSCOPE_API_KEY",
+    }),
+    domesticOpenAICompatibleProviderTemplate({
+      templateId: "moonshot-kimi",
+      displayName: "Moonshot Kimi",
+      description: "Moonshot Kimi OpenAI-compatible chat endpoint.",
+      providerId: "moonshot",
+      model: "kimi-k2-0711-preview",
+      baseUrl: "https://api.moonshot.cn/v1",
+      apiKeyRef: "env:MOONSHOT_API_KEY",
+    }),
+    domesticOpenAICompatibleProviderTemplate({
+      templateId: "baidu-qianfan-ernie",
+      displayName: "Baidu Qianfan ERNIE",
+      description: "Baidu Qianfan OpenAI-compatible chat endpoint for ERNIE models.",
+      providerId: "baidu-qianfan",
+      model: "ernie-4.5-turbo-128k",
+      baseUrl: "https://qianfan.baidubce.com/v2",
+      apiKeyRef: "env:QIANFAN_API_KEY",
+    }),
+    domesticOpenAICompatibleProviderTemplate({
+      templateId: "tencent-hunyuan",
+      displayName: "Tencent Hunyuan",
+      description: "Tencent Hunyuan OpenAI-compatible chat endpoint.",
+      providerId: "tencent-hunyuan",
+      model: "hunyuan-turbos-latest",
+      baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
+      apiKeyRef: "env:HUNYUAN_API_KEY",
+    }),
+    domesticOpenAICompatibleProviderTemplate({
+      templateId: "siliconflow",
+      displayName: "SiliconFlow",
+      description: "SiliconFlow OpenAI-compatible chat endpoint for hosted open models.",
+      providerId: "siliconflow",
+      model: "Qwen/Qwen3-235B-A22B",
+      baseUrl: "https://api.siliconflow.cn/v1",
+      apiKeyRef: "env:SILICONFLOW_API_KEY",
+    }),
+    domesticOpenAICompatibleProviderTemplate({
+      templateId: "stepfun",
+      displayName: "StepFun",
+      description: "StepFun OpenAI-compatible chat endpoint.",
+      providerId: "stepfun",
+      model: "step-2-mini",
+      baseUrl: "https://api.stepfun.com/v1",
+      apiKeyRef: "env:STEPFUN_API_KEY",
+    }),
+    domesticOpenAICompatibleProviderTemplate({
+      templateId: "baichuan-ai",
+      displayName: "Baichuan AI",
+      description: "Baichuan AI OpenAI-compatible chat endpoint.",
+      providerId: "baichuan",
+      model: "Baichuan4-Turbo",
+      baseUrl: "https://api.baichuan-ai.com/v1",
+      apiKeyRef: "env:BAICHUAN_API_KEY",
+    }),
+    domesticOpenAICompatibleProviderTemplate({
+      templateId: "01ai-yi",
+      displayName: "01.AI Yi",
+      description: "01.AI Yi OpenAI-compatible chat endpoint.",
+      providerId: "01ai",
+      model: "yi-lightning",
+      baseUrl: "https://api.lingyiwanwu.com/v1",
+      apiKeyRef: "env:YI_API_KEY",
+    }),
     mediaProviderTemplate({
       templateId: "seedream-image",
       kind: "seedream",
@@ -183,19 +255,42 @@ function chatProviderTemplate(input: {
   readonly apiKeyRef: string;
   readonly compat?: ProviderPresetInput["compat"];
   readonly capabilities?: ProviderPresetInput["capabilities"];
+  readonly reasoning?: ProviderPresetInput["reasoning"];
+  readonly thinkingModes?: ProviderPresetInput["thinkingModes"];
 }): ProviderTemplate {
+  const capabilities = input.capabilities ?? ["chat", "tool_call", "reasoning"];
+  const reasoning = input.reasoning ?? capabilities.includes("reasoning");
   return {
     ...input,
-    capabilities: input.capabilities ?? ["chat", "tool_call", "reasoning"],
+    capabilities,
     input: ["text"],
     enabled: false,
-	    authHeader: true,
-	    reasoning: true,
-	    thinkingModes: ["off", "minimal", "low", "medium", "high", "xhigh"],
-	    compat: input.compat ?? {},
+    authHeader: true,
+    reasoning,
+    thinkingModes: input.thinkingModes ?? (reasoning ? ["off", "minimal", "low", "medium", "high", "xhigh"] : []),
+    compat: input.compat ?? {},
     contextWindow: 128000,
     maxTokens: 16384,
   };
+}
+
+function domesticOpenAICompatibleProviderTemplate(input: {
+  readonly templateId: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly providerId: string;
+  readonly model: string;
+  readonly baseUrl: string;
+  readonly apiKeyRef: string;
+}): ProviderTemplate {
+  return chatProviderTemplate({
+    ...input,
+    kind: "openai-compatible",
+    api: "openai-completions",
+    capabilities: ["chat", "tool_call"],
+    reasoning: false,
+    thinkingModes: [],
+  });
 }
 
 function mediaProviderTemplate(input: {

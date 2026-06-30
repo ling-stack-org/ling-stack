@@ -35,7 +35,6 @@ export function SettingsWorkspaceToolsPanel({
   counts,
   defaultPermissionMode,
   defaultPermissionPreset,
-  onDefaultPermissionChange,
   onOpenProviders,
   onOpenTeammates,
   onOpenWorkBoard,
@@ -44,7 +43,6 @@ export function SettingsWorkspaceToolsPanel({
   readonly counts: WorkspaceToolCounts;
   readonly defaultPermissionMode: SessionPermissionMode | undefined;
   readonly defaultPermissionPreset: PermissionPreset | undefined;
-  readonly onDefaultPermissionChange: (mode: SessionPermissionMode, preset: PermissionPreset) => void;
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
   readonly onOpenWorkBoard: () => void;
@@ -93,51 +91,67 @@ export function SettingsWorkspaceToolsPanel({
   ];
 
   return (
-    <section className="settings-workspace-tools" aria-labelledby="workspace-tools-settings-title">
-      <header className="settings-configuration-head">
-        <span>{t("Workspace configuration")}</span>
-        <h2 id="workspace-tools-settings-title">{t("Configuration")}</h2>
-        <p>{t("Configure the workspace defaults that new conversations and daily work start from.")}</p>
-      </header>
+    <section className="settings-workspace-tools" aria-label={t("Configuration shortcuts")}>
       <div className="settings-configuration-grid">
         <div className="settings-tool-row-list" aria-label={t("Configuration shortcuts")}>
           {tools.map((tool) => (
             <WorkspaceToolRow key={tool.id} tool={tool} />
           ))}
         </div>
-        <aside className="settings-global-approval-card" aria-labelledby="settings-global-approval-title">
-          <div className="settings-global-approval-head">
-            <span aria-hidden="true">
-              <ShieldCheck size={18} />
-            </span>
-            <div>
-              <strong id="settings-global-approval-title">{t("Global approval default")}</strong>
-              <small>{t("New conversations inherit this setting unless the conversation changes it.")}</small>
-            </div>
-          </div>
-          <div className="settings-authorization-options" aria-label={t("Authorization mode")}>
-            {authorizationOptions.map((option) => (
-              <AuthorizationOptionButton
-                key={option.mode}
-                option={option}
-                selected={option.mode === authorizationMode}
-                onSelect={() => {
-                  const selection = authorizationModeToPermission(option.mode);
-                  onDefaultPermissionChange(selection.permissionMode, selection.permissionPreset);
-                }}
-              />
-            ))}
-          </div>
-          <div className="settings-authorization-note">
-            <strong>{t("Current default")}: {t(authorizationOption.labelKey)}</strong>
-            <span>{t(authorizationOption.descriptionKey)}</span>
-          </div>
-          <button className="secondary-button settings-global-approval-action" type="button" onClick={onOpenApprovalPolicy}>
-            {t("Open advanced policy")}
-          </button>
-        </aside>
       </div>
     </section>
+  );
+}
+
+export function SettingsGlobalApprovalDefaultCard({
+  defaultPermissionMode,
+  defaultPermissionPreset,
+  onDefaultPermissionChange,
+  onOpenAdvancedPolicy,
+}: {
+  readonly defaultPermissionMode: SessionPermissionMode | undefined;
+  readonly defaultPermissionPreset: PermissionPreset | undefined;
+  readonly onDefaultPermissionChange: (mode: SessionPermissionMode, preset: PermissionPreset) => void;
+  readonly onOpenAdvancedPolicy?: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const authorizationMode = permissionToAuthorizationMode(defaultPermissionMode, defaultPermissionPreset);
+  const authorizationOption = authorizationOptions.find((option) => option.mode === authorizationMode) ?? authorizationOptions[1];
+
+  return (
+    <aside className="settings-global-approval-card" aria-labelledby="settings-global-approval-title">
+      <div className="settings-global-approval-head">
+        <span aria-hidden="true">
+          <ShieldCheck size={18} />
+        </span>
+        <div>
+          <strong id="settings-global-approval-title">{t("Global approval default")}</strong>
+          <small>{t("New conversations inherit this setting unless the conversation changes it.")}</small>
+        </div>
+      </div>
+      <div className="settings-authorization-options" aria-label={t("Authorization mode")}>
+        {authorizationOptions.map((option) => (
+          <AuthorizationOptionButton
+            key={option.mode}
+            option={option}
+            selected={option.mode === authorizationMode}
+            onSelect={() => {
+              const selection = authorizationModeToPermission(option.mode);
+              onDefaultPermissionChange(selection.permissionMode, selection.permissionPreset);
+            }}
+          />
+        ))}
+      </div>
+      <div className="settings-authorization-note">
+        <strong>{t("Current default")}: {t(authorizationOption.labelKey)}</strong>
+        <span>{t(authorizationOption.descriptionKey)}</span>
+      </div>
+      {onOpenAdvancedPolicy ? (
+        <button className="secondary-button settings-global-approval-action" type="button" onClick={onOpenAdvancedPolicy}>
+          {t("Open advanced policy")}
+        </button>
+      ) : null}
+    </aside>
   );
 }
 

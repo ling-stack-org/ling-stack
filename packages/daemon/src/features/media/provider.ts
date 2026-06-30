@@ -1,5 +1,7 @@
 import {
+  normalizeProviderPresetForMediaRuntime,
   normalizeProviderBaseUrlForAdapter,
+  resolveMediaProviderRuntimeState,
   type CreateMediaJobInput,
   type ProviderPreset,
   type ProviderStoreFacet,
@@ -21,47 +23,72 @@ export function assertMediaJobProvider(store: ProviderStoreFacet, input: CreateM
   if (!preset) {
     throw new HttpError(404, "provider_not_found", `Provider preset not found: ${input.providerPresetId}`);
   }
-  if (!preset.enabled) {
-    throw new HttpError(400, "provider_disabled", `Provider preset is disabled: ${preset.id}`);
-  }
-  if (preset.api !== "media-job") {
+  const normalizedPreset = normalizeProviderPresetForMediaRuntime(preset);
+  const state = resolveMediaProviderRuntimeState(normalizedPreset, input.operation);
+  if (!state.isMediaProvider) {
     throw new HttpError(400, "unsupported_capability", "Generation tasks require a generation-capable provider preset");
   }
-  if (!preset.capabilities.includes(input.operation)) {
-    throw new HttpError(400, "unsupported_capability", `${preset.displayName} does not support ${input.operation}`);
+  if (!state.supportsOperation) {
+    throw new HttpError(400, "unsupported_capability", `${normalizedPreset.displayName} does not support ${input.operation}`);
   }
-  return preset;
+  if (!state.canRun) {
+    throw mediaRuntimeHttpError(state.reason, normalizedPreset.id);
+  }
+  return normalizedPreset;
 }
 
 export function createMediaAdapterForProvider(store: ProviderStoreFacet, provider: ProviderPreset, secretResolver: SecretResolver) {
-  const gate = resolveMediaVendorTransportGateConfig(provider.compat);
+  const normalizedProvider = normalizeProviderPresetForMediaRuntime(provider);
+  const gate = resolveMediaVendorTransportGateConfig(normalizedProvider.compat);
   if (!gate.ok) {
     throw new HttpError(400, gate.errorCode ?? "invalid_request", gate.errorMessage ?? "Invalid media vendor transport configuration.");
   }
-  const secret: ResolvedSecret = provider.apiKeyRef ? resolveProviderSecret(store, provider, secretResolver) : { configured: false };
+  const secret: ResolvedSecret = normalizedProvider.apiKeyRef ? resolveProviderSecret(store, normalizedProvider, secretResolver) : { configured: false };
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: gate.config?.mode === "live"
       ? createLiveMediaVendorTransport({
-        baseUrl: provider.baseUrl ? normalizeProviderBaseUrlForAdapter(provider) : undefined,
-        apiKeyRef: provider.apiKeyRef,
+        baseUrl: normalizedProvider.baseUrl ? normalizeProviderBaseUrlForAdapter(normalizedProvider) : undefined,
+        apiKeyRef: normalizedProvider.apiKeyRef,
         apiKeyConfigured: secret.configured,
         apiKey: secret.value,
       })
       : undefined,
   });
   const resolution = resolveMediaAdapter(registry, {
-    id: provider.id,
-    kind: provider.kind,
-    displayName: provider.displayName,
-    providerId: provider.providerId,
-    model: provider.model,
-    api: provider.api,
-    baseUrl: provider.baseUrl,
-    apiKeyRef: provider.apiKeyRef,
-    capabilities: provider.capabilities,
+    id: normalizedProvider.id,
+    kind: normalizedProvider.kind,
+    displayName: normalizedProvider.displayName,
+    providerId: normalizedProvider.providerId,
+    model: normalizedProvider.model,
+    api: normalizedProvider.api,
+    baseUrl: normalizedProvider.baseUrl,
+    apiKeyRef: normalizedProvider.apiKeyRef,
+    capabilities: normalizedProvider.capabilities,
   });
   if (!resolution.ok || !resolution.adapter) {
     throw new HttpError(400, resolution.errorCode ?? "unsupported_capability", resolution.errorMessage ?? "Media adapter is not available.");
   }
   return resolution.adapter;
+}
+
+function mediaRuntimeHttpError(reason: ReturnType<typeof resolveMediaProviderRuntimeState>["reason"], providerId: string): HttpError {
+  if (reason === "provider_disabled") {
+    return new HttpError(400, "provider_disabled", `Provider preset is disabled: ${providerId}`);
+  }
+  if (reason === "base_url_missing") {
+    return new HttpError(400, "bad_request", "生成模型缺少 Base URL，请在模型工作台补充后重试。");
+  }
+  if (reason === "secret_missing") {
+    return new HttpError(400, "secret_missing", "生成模型缺少 API Key，请在模型工作台补充后重试。");
+  }
+  if (reason === "live_transport_invalid") {
+    return new HttpError(400, "invalid_request", "生成模型真实生成配置无效，请在模型工作台重新保存。");
+  }
+  if (reason === "live_transport_required") {
+    return new HttpError(400, "live_media_transport_required", "当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。");
+  }
+  if (reason === "unsupported_live_adapter") {
+    return new HttpError(400, "unsupported_capability", "当前只支持 OpenAI Images 图片生成、Seedream 图片生成和 Seedance 视频生成的真实执行，其他生成模型暂未接入真实生成。");
+  }
+  return new HttpError(400, "unsupported_capability", "Generation tasks require a generation-capable provider preset");
 }

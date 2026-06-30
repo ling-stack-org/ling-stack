@@ -23,17 +23,19 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
   await expect(page.getByRole("heading", { name: "Interface preferences" })).toBeVisible();
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.getByRole("heading", { name: "界面偏好" })).toBeVisible();
+  await page.getByRole("button", { name: "返回应用" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toHaveCount(0);
   await expect(page.getByLabel("频道动态")).toBeVisible();
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("搜索动态")).toBeVisible();
@@ -46,17 +48,19 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "文件");
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
 
   await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: /界面偏好/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /个人与界面/ }).click();
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect.poll(() => state.workspaceSettings.locale).toBe("en-US");
+  await page.getByRole("button", { name: "Back to app" }).click();
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Tasks" })).toHaveCount(0);
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
@@ -71,7 +75,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Files");
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
 });
 
@@ -92,7 +96,10 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByText(/已启用 频道/)).toHaveCount(0);
   await expect(page.getByText("Daemon ready")).toHaveCount(0);
   await expect(page.getByText("本地服务已就绪")).toHaveCount(0);
-  await page.locator(".channel-header-actions").getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "更多频道视图" }).click();
+  await page.getByRole("menuitem", { name: "设置" }).click();
   await expect(page.getByLabel("频道管理")).toContainText("运行模型预设");
   await expect(page.getByLabel("频道运行策略")).toBeVisible();
   await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
@@ -148,7 +155,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
   await expect(page.getByRole("heading", { name: "Interface preferences" })).toBeVisible();
   await expect(page.getByRole("button", { name: "System" })).toHaveAttribute("aria-pressed", "true");
 
@@ -168,7 +175,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
   await page.getByRole("button", { name: "System" }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
@@ -186,7 +193,7 @@ test("settings interface preferences do not expose the channel protocol editor",
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Interface preferences" });
   await expect(settingsPanel).not.toContainText("Channel protocol");
   await expect(settingsPanel.getByRole("button", { name: "Open editor" })).toHaveCount(0);
@@ -200,7 +207,8 @@ test("settings runtime runners show daemon readiness blockers", async ({ page })
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Runtime runners/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Execution and permissions/ }).click();
+  await page.getByRole("tab", { name: /Runtime runners/ }).click();
   const settingsPanel = page.locator(".runtime-runner-settings-panel");
   await expect(page.getByRole("heading", { name: "Runtime runners" })).toBeVisible();
   await expect(settingsPanel).toContainText("Pi Runner");
@@ -224,7 +232,8 @@ test("settings developer section contains startup readiness", async ({ page }) =
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections.getByRole("button", { name: /Startup readiness/ })).toHaveCount(0);
 
-  await settingsSections.getByRole("button", { name: /Developer/ }).click();
+  await settingsSections.getByRole("button", { name: /Data and maintenance/ }).click();
+  await page.getByRole("tab", { name: /Startup and diagnostics/ }).click();
   const developerPanel = page.locator(".developer-settings-panel");
   await expect(developerPanel.getByRole("heading", { name: "Developer" })).toBeVisible();
   await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
@@ -274,27 +283,34 @@ test("settings workspace tools use compact rows and live counts", async ({ page 
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
-  await expect(settingsSections.getByText("System", { exact: true })).toBeVisible();
-  await expect(settingsSections.getByText("Extensions", { exact: true })).toBeVisible();
+  await expect(settingsSections.getByText("Workspace", { exact: true })).toBeVisible();
+  await expect(settingsSections.getByText("Maintenance", { exact: true })).toBeVisible();
+  await expect(settingsSections).not.toContainText("System");
+  await expect(settingsSections).not.toContainText("Extensions");
   await expect(settingsSections).not.toContainText("Model, teammates, and board shortcuts");
   await expect(settingsSections).not.toContainText("Profile, preferences, and identity");
 
   const workspaceTools = page.locator(".settings-workspace-tools");
-  await expect(workspaceTools.getByRole("heading", { name: "Configuration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Configuration overview" })).toBeVisible();
   await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(4);
   await expect(workspaceTools.locator(".settings-tool-row.selected")).toHaveCount(0);
+  await expect(workspaceTools.locator(".settings-global-approval-card")).toHaveCount(0);
   await expect(workspaceTools).toContainText("1 available model");
   await expect(workspaceTools).toContainText("2 teammates");
   await expect(workspaceTools).toContainText("1 pending work items");
-  await expect(workspaceTools).toContainText("Global approval default");
-  await expect(workspaceTools.locator(".settings-authorization-option.selected")).toContainText("Smart authorization");
+  await expect(workspaceTools).toContainText("Default: Smart authorization");
+  await expect(workspaceTools).not.toContainText("Global approval default");
   await expect(workspaceTools.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
   await expect(workspaceTools.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
   await expect(workspaceTools.getByRole("button", { name: "Open Work Board" })).toBeVisible();
-  await expect(workspaceTools.locator(".settings-global-approval-card").getByRole("button", { name: "Open advanced policy" })).toBeVisible();
-  await workspaceTools.getByRole("button", { name: "Ask first" }).click();
+  await workspaceTools.getByRole("button", { name: "Open advanced policy" }).click();
+  await expect(settingsSections.getByRole("button", { name: /Execution and permissions/ })).toHaveClass(/active/);
+  await expect(page.locator(".settings-global-approval-card")).toHaveCount(1);
+  await page.locator(".settings-global-approval-card").getByRole("button", { name: "Ask first" }).click();
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("ask_everything");
   await expect.poll(() => state.workspaceSettings.defaultPermissionPreset).toBe("read_only");
 });
@@ -307,8 +323,10 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval policy/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Execution and permissions/ }).click();
+  await page.getByRole("tab", { name: /Approval policy/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
   await expect(page.getByRole("heading", { name: "Approval policy" })).toBeVisible();
   await expect(settingsPanel).not.toContainText("workspace_default");
@@ -339,7 +357,8 @@ test("settings permission preset cards update the effective preview", async ({ p
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval policy/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Execution and permissions/ }).click();
+  await page.getByRole("tab", { name: /Approval policy/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
 
   await settingsPanel.getByRole("button", { name: /Workspace collaboration/ }).click();
@@ -362,8 +381,13 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Plugins/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ }).click();
+  await expect(page.locator(".external-work-settings-panel")).toBeVisible();
+  await expect(page.locator(".mcp-page")).toHaveCount(0);
+  await expect(page.locator(".settings-plugin-manager")).toHaveCount(0);
+  await page.getByRole("tab", { name: /Plugin Manager/ }).click();
 
   const pluginsPanel = page.locator(".settings-plugin-manager");
   await expect(pluginsPanel).toContainText("Cua Driver");
@@ -423,7 +447,8 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
   expect(state.mcpServers.find((server) => server.id === "mcp_cua_driver")?.enabled).toBe(true);
 
   await pluginsPanel.getByRole("button", { name: "MCP settings" }).click();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /MCP tool servers/ })).toHaveClass(/active/);
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ })).toHaveClass(/active/);
+  await expect(page.getByRole("tab", { name: /MCP tool servers/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".mcp-server-row").filter({ hasText: "Cua Driver" })).toBeVisible();
 });
 
@@ -475,18 +500,16 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Skill Library/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ }).click();
+  await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
+  await expect(page.locator(".settings-skill-library")).toHaveCount(0);
+  await page.getByRole("tab", { name: /Skill Library/ }).click();
   const panel = page.locator(".settings-skill-library");
-  const healthPanel = panel.getByRole("region", { name: "Skill Health" });
-  const sourceHealthPanel = panel.getByRole("region", { name: "Skill Source Health" });
   await expect(panel.getByRole("heading", { name: "Skill Library" })).toBeVisible();
-  await expect(panel.getByRole("region", { name: "Skill Governance Policy" })).toHaveCount(0);
-  await expect(healthPanel).toContainText("Duplicate clusters");
-  await expect(healthPanel).toContainText("Duplicate skill cluster");
-  await expect(healthPanel).toContainText("Conflicting skill triggers");
-  await expect(healthPanel).toContainText("implement-duplicate");
-  await expect(sourceHealthPanel).toContainText("Source-backed");
-  await expect(sourceHealthPanel).toContainText("Missing source");
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ })).toHaveClass(/active/);
+  await expect(page.getByRole("tab", { name: /Skills list/ })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("region", { name: "Skill Health" })).toHaveCount(0);
+  await expect(panel.getByRole("region", { name: "Skill Source Health" })).toHaveCount(0);
   const reviewSkillRow = panel.getByRole("row", { name: /Code Review review .* Source-backed/ });
   await expect(reviewSkillRow).toContainText("Source-backed");
   await reviewSkillRow.getByRole("button", { name: /Code Review review/ }).click();
@@ -503,6 +526,10 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(panel.locator(".settings-skill-inspector")).toContainText("Metadata only. No published SKILL.md snapshot is attached yet.");
 
   await panel.getByRole("button", { name: "Sync gstack source" }).click();
+  await expect(page.getByRole("tab", { name: /Source sync/ })).toHaveAttribute("aria-selected", "true");
+  const sourceHealthPanel = panel.getByRole("region", { name: "Skill Source Health" });
+  await expect(sourceHealthPanel).toContainText("Source-backed");
+  await expect(sourceHealthPanel).toContainText("Missing source");
   const sourceSyncPanel = panel.getByRole("region", { name: "gstack source sync" });
   await expect(sourceSyncPanel).toBeVisible();
   await expect(sourceSyncPanel.getByLabel("Include detected roots")).toBeChecked();
@@ -521,9 +548,16 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await sourceSyncPanel.getByRole("button", { name: "Publish selected" }).click();
   await expect(panel).toContainText("Published 2 skill sources");
   await expect.poll(() => state.skillSourceSnapshots.some((item) => isRecord(item) && item.skillId === "implement" && item.reviewStatus === "published")).toBe(true);
+  await page.getByRole("tab", { name: /Skills list/ }).click();
   const implementSkillRow = panel.getByRole("row", { name: /Implementation implement .* Source-backed/ });
   await expect(implementSkillRow).toContainText("Source-backed");
 
+  await page.getByRole("tab", { name: /Review queue/ }).click();
+  const healthPanel = panel.getByRole("region", { name: "Skill Health" });
+  await expect(healthPanel).toContainText("Duplicate clusters");
+  await expect(healthPanel).toContainText("Duplicate skill cluster");
+  await expect(healthPanel).toContainText("Conflicting skill triggers");
+  await expect(healthPanel).toContainText("implement-duplicate");
   const candidatePanel = panel.getByRole("region", { name: "Skill Candidate Review" });
   await expect(candidatePanel).toContainText("Channel canvas protocol skill");
   await expect(candidatePanel).toContainText("No overlap");
@@ -536,6 +570,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await panel.getByRole("button", { name: "Publish to registry" }).click();
   await expect(panel).toContainText("Published 1 skills");
   await expect(panel).toContainText("channel-canvas-protocol-skill");
+  await page.getByRole("tab", { name: /Review queue/ }).click();
   await candidatePanel.getByRole("button", { name: "Reject candidate" }).click();
   await expect(candidatePanel).toContainText("No open skill candidates");
 
@@ -593,8 +628,8 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Skill Governance/ }).click();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skill Governance/ })).toHaveClass(/active/);
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ }).click();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ })).toHaveClass(/active/);
   const panel = page.locator(".skill-governance-settings-panel");
   const governancePanel = panel.getByRole("region", { name: "Skill Governance Policy" });
   await expect(panel.getByRole("heading", { name: "Skill Governance" })).toBeVisible();
@@ -629,8 +664,10 @@ test("settings external work status shows setup and explicit controls", async ({
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("External work");
   await expect(panel).toContainText("openclaw/openclaw");
@@ -669,8 +706,9 @@ test("settings external work token setup saves to daemon and clears the input", 
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("External token");
   await expect(panel).toContainText("env:GITHUB_TOKEN");
@@ -707,8 +745,9 @@ test("settings external work status renders invalid, missing, and Linear states"
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("invalid");
   await expect(panel).toContainText("source.kind is required");

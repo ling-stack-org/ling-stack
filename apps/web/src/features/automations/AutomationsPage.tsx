@@ -16,19 +16,13 @@ import {
   Loader2,
   MessageCircle,
   MessageSquare,
-  Pause,
-  Play,
   Plus,
   RefreshCw,
   Sparkles,
-  Timer,
-  Trash2,
   X,
 } from "lucide-react";
 import { listLingThreads } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import { formatDateTime } from "../../lib/formatting.js";
-import { StatusBadge } from "../../shared/components/index.js";
 import type {
   AutomationContextPreview,
   AutomationDefinition,
@@ -40,7 +34,6 @@ import type {
   AutomationPromptTemplate,
   AutomationReasoningEffort,
   AutomationRun,
-  AutomationSchedulerState,
   AutomationStatus,
   AutomationTarget,
   AutomationTrigger,
@@ -51,14 +44,25 @@ import type {
   LingThread,
   ProviderPreset,
 } from "../../types.js";
+import { AutomationExecutionInspector } from "./AutomationExecutionInspector.js";
+import { AutomationListPane } from "./AutomationListPane.js";
+import {
+  activeAutomations as deriveActiveAutomations,
+  failedAutomations as deriveFailedAutomations,
+  latestRunByAutomationId,
+  pausedAutomations as derivePausedAutomations,
+  succeededAutomations as deriveSucceededAutomations,
+  visibleAutomationsForTab,
+  type AutomationTab,
+  type AutomationTabItem,
+} from "./automation-view-models.js";
 
 const DEFAULT_WORKSPACE_ID = "workspace_default";
 
 type CreateDialog = "" | "templates" | "manual" | "chat";
-type CreateMode = "chat" | "manual" | "templates";
+type CreateMode = Exclude<CreateDialog, "">;
 type RuntimeChoice = AutomationExecutionEnvironment | "thread";
 type ScheduleChoice = "daily" | "workdays" | "weekly" | "custom";
-type AutomationTab = "running" | "paused" | "failed" | "succeeded" | "history";
 
 interface AutomationTemplatePreset {
   readonly id: string;
@@ -84,11 +88,7 @@ export function AutomationsPage({
   isLoading,
   mutatingAutomationId,
   mutatingDraftId,
-  schedulers,
-  schedulerAction,
   onRefresh,
-  onStartScheduler,
-  onStopScheduler,
   onCreateFromTemplate,
   onCreateManualDraft,
   onCreateAutomation,
@@ -121,11 +121,7 @@ export function AutomationsPage({
   readonly isLoading: boolean;
   readonly mutatingAutomationId: string;
   readonly mutatingDraftId: string;
-  readonly schedulers: readonly AutomationSchedulerState[];
-  readonly schedulerAction: "start" | "stop" | "";
   readonly onRefresh: () => void;
-  readonly onStartScheduler: () => void;
-  readonly onStopScheduler: () => void;
   readonly onCreateFromTemplate: (templateId: BuiltinAutomationTemplateId) => Promise<void>;
   readonly onCreateManualDraft: (partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
   readonly onCreateAutomation: (automation: CreateAutomationRequest) => Promise<void>;
@@ -146,52 +142,49 @@ export function AutomationsPage({
 }): JSX.Element {
   const { t } = useI18n();
   const [dialog, setDialog] = useState<CreateDialog>("");
-  const [createMode, setCreateMode] = useState<CreateMode>("chat");
-  const [automationTab, setAutomationTab] = useState<AutomationTab>("running");
-  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [automationTab, setAutomationTab] = useState<AutomationTab>("enabled");
   const [manualPreset, setManualPreset] = useState<AutomationTemplatePreset | undefined>(undefined);
   const [threads, setThreads] = useState<readonly LingThread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
   const activeAutomations = useMemo(
-    () => automations.filter((automation) => automation.status !== "paused" && automation.status !== "archived"),
+    () => deriveActiveAutomations(automations),
     [automations],
   );
   const pausedAutomations = useMemo(
-    () => automations.filter((automation) => automation.status === "paused"),
+    () => derivePausedAutomations(automations),
     [automations],
   );
   const recentRuns = automationRuns.slice(0, 8);
   const runningRunCount = automationRuns.filter((run) => run.status === "running" || run.status === "queued" || run.status === "waiting_for_approval").length;
   const recentFailedRunCount = recentRuns.filter((run) => run.status === "failed").length;
   const readyDraftCount = automationDrafts.filter((draft) => draft.status === "ready_for_confirmation").length;
-  const scheduler = schedulers[0];
-  const latestRunByAutomationId = useMemo(() => {
-    const map = new Map<string, AutomationRun>();
-    for (const run of automationRuns) {
-      if (!map.has(run.automationId)) {
-        map.set(run.automationId, run);
-      }
-    }
-    return map;
-  }, [automationRuns]);
+  const latestRunById = useMemo(() => latestRunByAutomationId(automationRuns), [automationRuns]);
   const failedAutomations = useMemo(
-    () => automations.filter((automation) => automation.status === "error" || latestRunByAutomationId.get(automation.id)?.status === "failed"),
-    [automations, latestRunByAutomationId],
+    () => deriveFailedAutomations(automations, latestRunById),
+    [automations, latestRunById],
   );
   const succeededAutomations = useMemo(
-    () => automations.filter((automation) => latestRunByAutomationId.get(automation.id)?.status === "succeeded"),
-    [automations, latestRunByAutomationId],
+    () => deriveSucceededAutomations(automations, latestRunById),
+    [automations, latestRunById],
   );
-  const visibleAutomations = automationTab === "paused"
-    ? pausedAutomations
-    : automationTab === "failed"
-      ? failedAutomations
-      : automationTab === "succeeded"
-        ? succeededAutomations
-        : activeAutomations;
+  const visibleAutomations = visibleAutomationsForTab({
+    tab: automationTab,
+    enabled: activeAutomations,
+    paused: pausedAutomations,
+    failed: failedAutomations,
+    succeeded: succeededAutomations,
+  });
+  const automationTabs: readonly AutomationTabItem[] = [
+    { id: "enabled", label: t("Enabled automations"), count: activeAutomations.length },
+    { id: "paused", label: t("Paused"), count: pausedAutomations.length },
+    { id: "failed", label: t("Failed"), count: failedAutomations.length },
+    { id: "succeeded", label: t("Succeeded"), count: succeededAutomations.length },
+    { id: "history", label: t("Recent history"), count: recentRuns.length },
+  ];
   const selectedAutomation = automations.find((automation) => automation.id === selectedAutomationId);
   const selectedDraft = automationDrafts.find((draft) => draft.id === selectedDraftId);
-  const selectedRun = selectedAutomation ? latestRunByAutomationId.get(selectedAutomation.id) : recentRuns[0];
+  const selectedRun = selectedAutomation ? latestRunById.get(selectedAutomation.id) : recentRuns[0];
+  const threadTitleById = useMemo(() => new Map(threads.map((thread) => [thread.id, thread.title])), [threads]);
 
   useEffect(() => {
     if (!cwd.trim()) {
@@ -236,8 +229,6 @@ export function AutomationsPage({
   }, [dialog]);
 
   function openCreateDialog(mode: CreateMode): void {
-    setCreateMode(mode);
-    setCreateMenuOpen(false);
     setDialog(mode === "manual" ? "manual" : mode === "templates" ? "templates" : "chat");
   }
 
@@ -268,47 +259,25 @@ export function AutomationsPage({
               running: runningRunCount,
               attention: readyDraftCount + recentFailedRunCount,
             })}
-            {" · "}
-            {scheduler?.nextRunAt ? `${t("Next")} ${formatDateTime(scheduler.nextRunAt)}` : t("Daemon will restore scheduled automations automatically")}
           </p>
         </div>
         <div className="automation-header-actions">
           <button className="secondary-button compact-button automation-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")}>
             {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
           </button>
-          <div className="automation-create-dropdown">
-            <button className="automation-create-trigger" type="button" onClick={() => openCreateDialog(createMode)} disabled={isLoading}>
-              <Plus size={15} />
-              {createMode === "chat" ? t("Create through chat") : createMode === "templates" ? t("Use template") : t("Manual create")}
+          <div className="automation-create-actions header-actions" aria-label={t("Create automation")}>
+            <button className="automation-create-trigger" type="button" onClick={() => openCreateDialog("templates")} disabled={isLoading}>
+              <Layers size={15} />
+              {t("Use template")}
             </button>
-            <button
-              className="automation-create-caret"
-              type="button"
-              aria-label={t("Choose creation mode")}
-              onClick={() => setCreateMenuOpen((open) => !open)}
-              disabled={isLoading}
-            >
-              <ChevronDown size={15} />
+            <button className="secondary-button compact-button automation-create-secondary" type="button" onClick={() => openCreateDialog("manual")} disabled={isLoading}>
+              <CalendarClock size={15} />
+              {t("Manual create")}
             </button>
-            {createMenuOpen ? (
-              <div className="automation-create-menu" role="menu">
-                <button type="button" role="menuitem" onClick={() => openCreateDialog("chat")}>
-                  <MessageSquare size={15} />
-                  {t("Create through chat")}
-                  {createMode === "chat" ? <Check size={14} /> : null}
-                </button>
-                <button type="button" role="menuitem" onClick={() => openCreateDialog("manual")}>
-                  <CalendarClock size={15} />
-                  {t("Manual create")}
-                  {createMode === "manual" ? <Check size={14} /> : null}
-                </button>
-                <button type="button" role="menuitem" onClick={() => openCreateDialog("templates")}>
-                  <Layers size={15} />
-                  {t("Use template")}
-                  {createMode === "templates" ? <Check size={14} /> : null}
-                </button>
-              </div>
-            ) : null}
+            <button className="secondary-button compact-button automation-create-secondary" type="button" onClick={() => openCreateDialog("chat")} disabled={isLoading}>
+              <MessageSquare size={15} />
+              {t("Create from conversation")}
+            </button>
           </div>
         </div>
       </header>
@@ -321,125 +290,41 @@ export function AutomationsPage({
             <span>{readyDraftCount > 0 ? t("Review drafts before enabling.") : t("Check recent failed runs.")}</span>
           </div>
         ) : null}
-        <section className="automation-current-pane" aria-label={t("Running")}>
-          <div className="automation-pane-tabs">
-            <div className="automation-tab-list" role="tablist" aria-label={t("Automation status")}>
-              {([
-                ["running", t("Running"), activeAutomations.length],
-                ["paused", t("Paused"), pausedAutomations.length],
-                ["failed", t("Failed"), failedAutomations.length],
-                ["succeeded", t("Succeeded"), succeededAutomations.length],
-                ["history", t("Recent history"), recentRuns.length],
-              ] as const).map(([tab, label, count]) => (
-                <button
-                  key={tab}
-                  className={automationTab === tab ? "active" : ""}
-                  type="button"
-                  role="tab"
-                  aria-selected={automationTab === tab}
-                  onClick={() => setAutomationTab(tab)}
-                >
-                  {label}
-                  <span>{count}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {automationTab === "history" ? (
-            <AutomationRunList
-              runs={recentRuns}
-              automations={automations}
-              onOpenRun={onOpenRun}
-              t={t}
-            />
-          ) : (
-            <AutomationInboxSection
-              emptyLabel={isLoading ? t("Loading automations...") : t("No automations yet")}
-              automations={visibleAutomations}
-              automationRuns={automationRuns}
-              selectedAutomationId={selectedAutomationId}
-              mutatingAutomationId={mutatingAutomationId}
-              onSelect={(automationId) => {
-                onSelectDraft("");
-                onSelectAutomation(automationId);
-              }}
-              onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
-              onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus(automation.status === "enabled" ? "paused" : "enabled"))}
-              onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
-              onOpenThread={onOpenThread}
-              t={t}
-            />
-          )}
-
-          {automationDrafts.length > 0 ? (
-            <section className="automation-draft-lite-list automation-secondary-section" aria-label={t("Draft review")}>
-              <h2>{t("Draft review")}</h2>
-              {automationDrafts.map((draft) => {
-                const busy = mutatingDraftId === draft.id;
-                const ready = draft.status === "ready_for_confirmation";
-                return (
-                  <div
-                    key={draft.id}
-                    className={draft.id === selectedDraftId ? "automation-inbox-row selected draft" : "automation-inbox-row draft"}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onSelectDraft(draft.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onSelectDraft(draft.id);
-                      }
-                    }}
-                    >
-                    <span className="automation-row-dot" />
-                    <span className="automation-inbox-row-main">
-                      <strong>{draft.title ?? t("Untitled draft")}</strong>
-                      <small>
-                        {automationDraftSourceLabel(draft.source, t)} · {draft.kind ? automationKindLabel(draft.kind, t) : t("Missing")} · {automationTriggerLabel(draft.trigger, t)}
-                      </small>
-                    </span>
-                    <span className="automation-row-actions">
-                      <StatusBadge status={draft.status} />
-                      <button
-                        className="ghost-icon-button"
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void onConfirmDraft(draft.id);
-                        }}
-                        disabled={busy || !ready}
-                        aria-label={t("Confirm automation")}
-                        title={t("Confirm automation")}
-                      >
-                        {busy ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
-                      </button>
-                      <button
-                        className="ghost-icon-button danger"
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void onDiscardDraft(draft.id);
-                        }}
-                        disabled={busy}
-                        aria-label={t("Discard draft")}
-                        title={t("Discard draft")}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </span>
-                  </div>
-                );
-              })}
-            </section>
-          ) : null}
-        </section>
+        <AutomationListPane
+          activeTab={automationTab}
+          tabs={automationTabs}
+          automations={visibleAutomations}
+          automationRuns={automationTab === "history" ? recentRuns : automationRuns}
+          allAutomations={automations}
+          drafts={automationDrafts}
+          selectedAutomationId={selectedAutomationId}
+          selectedDraftId={selectedDraftId}
+          mutatingAutomationId={mutatingAutomationId}
+          mutatingDraftId={mutatingDraftId}
+          isLoading={isLoading}
+          threadTitleById={threadTitleById}
+          onTabChange={setAutomationTab}
+          onSelectAutomation={(automationId) => {
+            onSelectDraft("");
+            onSelectAutomation(automationId);
+          }}
+          onSelectDraft={onSelectDraft}
+          onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
+          onOpenRun={onOpenRun}
+          onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus(automation.status === "enabled" ? "paused" : "enabled"))}
+          onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
+          onOpenThread={onOpenThread}
+          onConfirmDraft={(draftId) => void onConfirmDraft(draftId)}
+          onDiscardDraft={(draftId) => void onDiscardDraft(draftId)}
+          t={t}
+        />
 
         <AutomationExecutionInspector
           automation={selectedAutomation}
           draft={selectedDraft}
           latestRun={selectedRun}
           channels={channels}
+          threadTitleById={threadTitleById}
           preview={selectedAutomation ? previewByAutomationId[selectedAutomation.id] : selectedDraft ? draftPreviewById[selectedDraft.id] : undefined}
           onOpenRun={onOpenRun}
           onOpenThread={onOpenThread}
@@ -479,270 +364,6 @@ export function AutomationsPage({
       ) : null}
     </div>
   );
-}
-
-function AutomationInboxSection({
-  automations,
-  automationRuns,
-  selectedAutomationId,
-  mutatingAutomationId,
-  emptyLabel,
-  onSelect,
-  onRun,
-  onToggle,
-  onArchive,
-  onOpenThread,
-  t,
-}: {
-  readonly automations: readonly AutomationDefinition[];
-  readonly automationRuns: readonly AutomationRun[];
-  readonly selectedAutomationId: string;
-  readonly mutatingAutomationId: string;
-  readonly emptyLabel: string;
-  readonly onSelect: (automationId: string) => void;
-  readonly onRun: (automationId: string) => void;
-  readonly onToggle: (automation: AutomationDefinition) => void;
-  readonly onArchive: (automationId: string) => void;
-  readonly onOpenThread: (threadId: string) => void;
-  readonly t: (value: string) => string;
-}): JSX.Element {
-  if (automations.length === 0) {
-    return (
-      <div className="automation-inbox-empty">
-        <Timer size={18} />
-        <span>{emptyLabel}</span>
-      </div>
-    );
-  }
-  return (
-    <div className="automation-inbox-list">
-      {automations.map((automation) => {
-        const latestRun = automationRuns.find((run) => run.automationId === automation.id);
-        const busy = mutatingAutomationId === automation.id;
-        const primaryActionLabel = automation.status === "paused" ? t("Resume") : t("Run now");
-        const primaryActionDisabled = busy || (automation.status !== "enabled" && automation.status !== "paused");
-        return (
-          <div
-            key={automation.id}
-            className={automation.id === selectedAutomationId ? "automation-inbox-row selected" : "automation-inbox-row"}
-            role="button"
-            tabIndex={0}
-            onClick={() => onSelect(automation.id)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onSelect(automation.id);
-              }
-            }}
-          >
-            <span className="automation-row-dot" />
-            <span className="automation-inbox-row-main">
-              <strong>{automation.title}</strong>
-              <small>{automationModeLabel(automation, t)} · {automationTargetSummary(automation, t)} · {automationScheduleLabel(automation, t)}</small>
-            </span>
-            <span className="automation-row-actions">
-              {latestRun ? <StatusBadge status={latestRun.status} /> : <StatusBadge status={automation.status} />}
-              <button
-                className="automation-row-primary-action"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (automation.status === "paused") {
-                    onToggle(automation);
-                    return;
-                  }
-                  onRun(automation.id);
-                }}
-                disabled={primaryActionDisabled}
-                aria-label={primaryActionLabel}
-                title={primaryActionLabel}
-              >
-                {busy ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                {primaryActionLabel}
-              </button>
-              {automation.status === "enabled" ? (
-                <button
-                  className="ghost-icon-button"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggle(automation);
-                  }}
-                  disabled={busy}
-                  aria-label={t("Pause")}
-                  title={t("Pause")}
-                >
-                  <Pause size={14} />
-                </button>
-              ) : null}
-              <button
-                className="ghost-icon-button"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenThread(automation.threadId);
-                }}
-                aria-label={t("Thread")}
-                title={t("Thread")}
-              >
-                <MessageCircle size={14} />
-              </button>
-              <button
-                className="ghost-icon-button danger"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onArchive(automation.id);
-                }}
-                disabled={busy}
-                aria-label={t("Delete")}
-                title={t("Delete")}
-              >
-                <Trash2 size={14} />
-              </button>
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function AutomationRunList({
-  runs,
-  automations,
-  onOpenRun,
-  t,
-}: {
-  readonly runs: readonly AutomationRun[];
-  readonly automations: readonly AutomationDefinition[];
-  readonly onOpenRun: (runId: string) => void;
-  readonly t: (value: string) => string;
-}): JSX.Element {
-  if (runs.length === 0) {
-    return (
-      <div className="automation-inbox-empty compact">
-        <Play size={16} />
-        <span>{t("No runs yet")}</span>
-      </div>
-    );
-  }
-  return (
-    <div className="automation-inbox-list">
-      {runs.map((run) => (
-        <button
-          key={run.id}
-          className="automation-inbox-row history"
-          type="button"
-          onClick={() => run.runId ? onOpenRun(run.runId) : undefined}
-        >
-          <span className={`status-dot ${run.status}`} />
-          <span className="automation-inbox-row-main">
-            <strong>{automations.find((automation) => automation.id === run.automationId)?.title ?? run.automationId}</strong>
-            <small>{automationRunTriggerLabel(run, t)} · {formatDateTime(run.firedAt)} · {t(run.status)}</small>
-          </span>
-          <span className="automation-row-schedule">{run.runId ? t("Open run") : t(run.status)}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function AutomationExecutionInspector({
-  automation,
-  draft,
-  latestRun,
-  channels,
-  preview,
-  onOpenRun,
-  onOpenThread,
-}: {
-  readonly automation?: AutomationDefinition;
-  readonly draft?: AutomationDraft;
-  readonly latestRun?: AutomationRun;
-  readonly channels: readonly Channel[];
-  readonly preview?: AutomationContextPreview;
-  readonly onOpenRun: (runId: string) => void;
-  readonly onOpenThread: (threadId: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const title = automation?.title ?? draft?.title ?? t("Execution details");
-  const status = latestRun?.status ?? automation?.status ?? draft?.status;
-  const output = inspectorOutputText(latestRun, preview, t);
-  return (
-    <aside className="automation-history-lite automation-execution-inspector" aria-label={t("Execution details")}>
-      <div className="automation-inspector-header">
-        <h2>{t("Execution details")}</h2>
-        {status ? <StatusBadge status={status} /> : null}
-      </div>
-
-      {automation || draft || latestRun ? (
-        <>
-          <div className="automation-inspector-title">
-            <strong>{title}</strong>
-            <span>{latestRun ? formatDateTime(latestRun.firedAt) : automation ? formatDateTime(automation.updatedAt) : draft ? formatDateTime(draft.updatedAt) : ""}</span>
-          </div>
-
-          <section className="automation-inspector-section">
-            <h3>{t("Trigger details")}</h3>
-            <div className="automation-inspector-grid">
-              <span>{t("Trigger")}<strong>{automation ? automationTriggerLabel(automation.trigger, t, automation.rrule) : draft ? automationTriggerLabel(draft.trigger, t) : latestRun ? automationRunTriggerLabel(latestRun, t) : "--"}</strong></span>
-              <span>{t("Target")}<strong>{automation ? targetLabel(automation, channels) : draft?.target?.scope ?? "--"}</strong></span>
-              <span>{t("Runtime")}<strong>{automation ? automationModeLabel(automation, t) : draft ? automationDraftSourceLabel(draft.source, t) : "--"}</strong></span>
-              <span>{t("Thread")}<strong>{automation?.threadId ?? draft?.target?.threadId ?? latestRun?.threadId ?? "--"}</strong></span>
-            </div>
-          </section>
-
-          <section className="automation-inspector-section">
-            <h3>{t("Output result")}</h3>
-            <pre>{output}</pre>
-          </section>
-
-          <div className="automation-inspector-actions">
-            {latestRun?.runId ? (
-              <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(latestRun.runId as string)}>
-                {t("Open run")}
-              </button>
-            ) : null}
-            {automation ? (
-              <button className="secondary-button compact-button" type="button" onClick={() => onOpenThread(automation.threadId)}>
-                {t("Thread")}
-              </button>
-            ) : null}
-          </div>
-        </>
-      ) : (
-        <div className="automation-inspector-empty">
-          <Timer size={18} />
-          <strong>{t("No automation selected")}</strong>
-          <span>{t("Select an automation to inspect trigger and output details.")}</span>
-        </div>
-      )}
-    </aside>
-  );
-}
-
-function inspectorOutputText(
-  run: AutomationRun | undefined,
-  preview: AutomationContextPreview | undefined,
-  t: (value: string, values?: Readonly<Record<string, string | number>>) => string,
-): string {
-  if (run?.errorMessage) {
-    return run.errorMessage;
-  }
-  if (run?.skipReason) {
-    return run.skipReason;
-  }
-  if (run?.outputArtifactIds.length) {
-    return t("{count} output artifact generated", { count: run.outputArtifactIds.length });
-  }
-  if (preview?.contextMarkdown) {
-    return preview.contextMarkdown;
-  }
-  if (run) {
-    return t("Automation run is {status}.", { status: t(run.status) });
-  }
-  return t("No output has been recorded yet.");
 }
 
 function AutomationTemplateModal({
@@ -1061,7 +682,7 @@ function AutomationChatCreateModal({
   const { t } = useI18n();
   const [prompt, setPrompt] = useState("");
   return (
-    <AutomationModal title={t("Create through chat")} icon={<Bot size={18} />} actionLabel={t("Use template")} onAction={onUseTemplate} onClose={onClose}>
+    <AutomationModal title={t("Create from conversation")} icon={<Bot size={18} />} actionLabel={t("Use template")} onAction={onUseTemplate} onClose={onClose}>
       <form
         className="automation-modal-form"
         onSubmit={(event) => {
@@ -1163,129 +784,6 @@ function AutomationModal({
       </div>
     </div>
   );
-}
-
-function ContextPreview({ preview, emptyLabel }: { readonly preview?: AutomationContextPreview; readonly emptyLabel: string }): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="automation-preview">
-      <h3>{t("Context preview")}</h3>
-      {preview ? (
-        <pre>{preview.contextMarkdown}</pre>
-      ) : (
-        <div className="empty-state compact-empty">
-          <RefreshCw />
-          <span>{emptyLabel}</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function automationModeLabel(automation: AutomationDefinition, t: (value: string) => string): string {
-  if (automation.automationMode === "heartbeat") {
-    return t("Automation heartbeat");
-  }
-  return automation.executionEnvironment === "worktree" ? t("Worktree") : t("Local");
-}
-
-function automationTargetSummary(automation: AutomationDefinition, t: (value: string) => string): string {
-  if (automation.automationMode === "heartbeat") {
-    return automation.targetThreadId ? `${t("Conversation")} · ${automation.targetThreadId}` : t("Conversation");
-  }
-  if (automation.target.channelId) {
-    return `#${automation.target.channelId}`;
-  }
-  return t("Workspace");
-}
-
-function automationScheduleLabel(automation: AutomationDefinition, t: (value: string) => string): string {
-  return automationTriggerLabel(automation.trigger, t, automation.rrule);
-}
-
-function automationRunTriggerLabel(run: AutomationRun, t: (value: string) => string): string {
-  if (run.triggerType === "schedule") {
-    return t("Scheduled run");
-  }
-  if (run.triggerType === "manual") {
-    return t("Manual run");
-  }
-  if (run.triggerType === "monitor") {
-    return t("Monitor run");
-  }
-  return t("Automation run");
-}
-
-function automationTriggerLabel(trigger: AutomationTrigger | undefined, t: (value: string) => string, rrule?: string): string {
-  const rruleLabel = rrule ? rruleScheduleLabel(rrule, t) : undefined;
-  if (rruleLabel) {
-    return rruleLabel;
-  }
-  if (!trigger) {
-    return t("Missing");
-  }
-  if (trigger.type !== "schedule") {
-    return t("Manual");
-  }
-  if (trigger.schedule.cadence === "daily") {
-    return `${t("Daily")} ${trigger.schedule.timeOfDay}`;
-  }
-  if (trigger.schedule.cadence === "weekly") {
-    return `${weekdayLabel(trigger.schedule.weekday, t)} ${trigger.schedule.timeOfDay}`;
-  }
-  return `${t("Every")} ${Math.round(trigger.schedule.everyMs / 60000)} ${t("minutes")}`;
-}
-
-function rruleScheduleLabel(rrule: string, t: (value: string) => string): string | undefined {
-  const fields = new Map<string, string>();
-  for (const part of rrule.split(";")) {
-    const [rawKey, ...rawValue] = part.split("=");
-    const key = rawKey?.trim().toUpperCase();
-    const value = rawValue.join("=").trim().toUpperCase();
-    if (key && value) {
-      fields.set(key, value);
-    }
-  }
-  const freq = fields.get("FREQ");
-  const hour = fields.get("BYHOUR")?.split(",")[0] ?? "";
-  const minute = fields.get("BYMINUTE")?.split(",")[0] ?? "";
-  const time = hour && minute ? `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}` : "";
-  const byDay = fields.get("BYDAY") ?? "";
-  if (freq === "WEEKLY" && byDay === "MO,TU,WE,TH,FR") {
-    return `${t("Workdays")}${time ? ` ${time}` : ""}`;
-  }
-  if (freq === "WEEKLY" && byDay) {
-    const weekday = rruleWeekdayIndex(byDay.split(",")[0] ?? "");
-    return `${weekdayLabel(weekday, t)}${time ? ` ${time}` : ""}`;
-  }
-  if (freq === "DAILY") {
-    return `${t("Daily")}${time ? ` ${time}` : ""}`;
-  }
-  if (freq === "MINUTELY") {
-    return `${t("Every")} ${fields.get("INTERVAL") ?? "1"} ${t("minutes")}`;
-  }
-  return undefined;
-}
-
-function rruleWeekdayIndex(day: string): number {
-  const weekdays = new Map([
-    ["SU", 0],
-    ["MO", 1],
-    ["TU", 2],
-    ["WE", 3],
-    ["TH", 4],
-    ["FR", 5],
-    ["SA", 6],
-  ]);
-  return weekdays.get(day.slice(-2).toUpperCase()) ?? 1;
-}
-
-function automationDraftSourceLabel(source: AutomationDraft["source"], t: (value: string) => string): string {
-  return t(`automation.source.${source}`);
-}
-
-function automationKindLabel(kind: AutomationDefinition["kind"], t: (value: string) => string): string {
-  return t(`automation.kind.${kind}`);
 }
 
 function runtimeChoiceLabel(runtime: RuntimeChoice, t: (value: string) => string): string {
@@ -1490,13 +988,4 @@ function buildOutputPolicy(writeArtifact: boolean): AutomationOutputPolicy {
     destinations.push({ type: "markdown_artifact" });
   }
   return { destinations, artifactFormat: "markdown" };
-}
-
-function targetLabel(automation: AutomationDefinition, channels: readonly Channel[]): string {
-  const channelId = automation.channelId ?? automation.target.channelId;
-  const channel = channelId ? channels.find((item) => item.id === channelId) : undefined;
-  if (channel) {
-    return `#${channel.name}`;
-  }
-  return automation.target.scope;
 }

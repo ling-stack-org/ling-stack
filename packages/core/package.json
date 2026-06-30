@@ -36,6 +36,14 @@
     "./provider-model-capabilities": {
       "types": "./dist/provider-model-capabilities.d.ts",
       "default": "./dist/provider-model-capabilities.js"
+    },
+    "./provider-generation-models": {
+      "types": "./dist/provider-generation-models.d.ts",
+      "default": "./dist/provider-generation-models.js"
+    },
+    "./provider-media-normalization": {
+      "types": "./dist/provider-media-normalization.d.ts",
+      "default": "./dist/provider-media-normalization.js"
     }
   },
   "scripts": {

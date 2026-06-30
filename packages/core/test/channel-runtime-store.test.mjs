@@ -57,6 +57,30 @@ test("sqlite channels persist default and edited runtime policy", async () => {
   }
 });
 
+test("sqlite workspace settings persist default provider preset", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-default-provider-"));
+  const now = "2026-06-30T00:00:00.000Z";
+  const updatedAt = "2026-06-30T00:01:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const settings = store.updateWorkspaceSettings({ defaultProviderPresetId: "provider_default_chat" }, now);
+    assert.equal(settings.defaultProviderPresetId, "provider_default_chat");
+    store.close();
+
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      assert.equal(reopened.getWorkspaceSettings().defaultProviderPresetId, "provider_default_chat");
+      const cleared = reopened.updateWorkspaceSettings({ defaultProviderPresetId: null }, updatedAt);
+      assert.equal(cleared.defaultProviderPresetId, undefined);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel creation can use a preallocated channel id", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-preallocated-id-"));
   const now = "2026-06-10T00:00:00.000Z";
