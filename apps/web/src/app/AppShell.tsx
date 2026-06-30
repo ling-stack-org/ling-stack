@@ -1953,7 +1953,7 @@ export function AppShell(): JSX.Element {
             onOpenTeammates={() => openPlainViewWithoutSettingsReturn("teammates")}
             onRefreshChannels={() => void refreshChannels()}
             onCreateChannel={() => void saveChannel()}
-            onSaveChannel={() => selectedChannelId ? void saveChannelEdit(selectedChannelId) : undefined}
+            onSaveChannel={(formOverride) => selectedChannelId ? saveChannelEdit(selectedChannelId, formOverride) : undefined}
             onCreateTask={() => void saveTask()}
             onCreateTaskFromSlashCommand={createTaskFromSlashCommand}
             onSendMessage={sendChannelMessage}
