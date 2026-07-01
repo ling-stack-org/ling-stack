@@ -4104,7 +4104,6 @@ export function WorkspaceClientView({
     setChannelEnvironmentPageOpen(false);
     setEnvironmentCommitDialogOpen(false);
     setConversationDetailOverlay(undefined);
-    setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     if (!progressPopoverCanFitMainLayout) {
@@ -4549,6 +4548,7 @@ export function WorkspaceClientView({
                         setActivityFiltersExpanded(false);
                         setChannelMoreOpen(false);
                         setSidePanelOpen(false);
+                        setProgressPopoverOpen(false);
                         setChannelSettingsPageOpen(false);
                         setChannelEnvironmentPageOpen(false);
                         setEnvironmentCommitDialogOpen(false);
