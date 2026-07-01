@@ -1579,8 +1579,8 @@ Current extraction state:
   wires composer controllers while keeping the surrounding channel/workspace state.
 - Extracted composer draft controller hook: `useChannelComposerDraftController.ts`,
   covering draft/assets/mention/slash picker state, composer busy/send state, pending
-  send preview state, composer refs, attachment preview URL cleanup, and composer feedback
-  timeout lifecycle.
+  send preview state, composer refs, composer resize pointer handling, attachment preview
+  URL cleanup, and composer feedback timeout lifecycle.
 - Extracted composer action controller hook: `useChannelComposerActionsController.ts`,
   covering normal message sends, slash-command task creation, queued run guidance,
   guidance cancel/promote/edit actions, and composer submit routing.
@@ -1605,6 +1605,11 @@ Current extraction state:
   selected-channel notification state, not parent workspace-settings object identity, so
   refreshes do not clear older-message position, background attention toast, or
   jump-to-latest visibility.
+- Extracted conversation block interaction hook: `useChannelConversationBlockInteractions.tsx`,
+  covering focused block shortcuts, copy/focus action menu rendering, keyboard expansion,
+  touch long-press, context-menu handling, and block-level feedback toast cleanup. The
+  parent workspace shell now only passes the message-feed scroll ref and mounts the
+  returned nodes/handlers.
 - Extracted feed assembly hook: `useChannelMessageFeedAssembly.ts`, covering sorted
   conversation/activity feed items, older-message loader eligibility, pending-send
   acknowledgement/reply-start resolution, pending row insertion, and empty-state
